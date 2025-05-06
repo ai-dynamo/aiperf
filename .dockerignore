@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local development files
+*.log
+.DS_Store
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose*.yml
+.devcontainer/
