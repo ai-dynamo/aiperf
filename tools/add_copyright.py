@@ -26,7 +26,7 @@ ROOT_DIR = os.path.dirname(__file__)
 LICENSE_PATH = os.path.join(ROOT_DIR, "COPYRIGHT")
 
 COPYRIGHT_YEAR_PAT = re.compile(
-    r"SPDX-FileCopyrightText: Copyright( \(c\))? (\d{4})?-?(\d{4}) NVIDIA CORPORATION"
+    r"SPDX-FileCopyrightText: Copyright \(c\) (\d{4})?-?(\d{4}) NVIDIA CORPORATION"
 )
 
 
@@ -47,10 +47,9 @@ def update_copyright_year(
 
     match = COPYRIGHT_YEAR_PAT.search(content)
     assert match is not None, f"File {path} does not contain a valid copyright."
-    min_year = match.groups()[1] or match.groups()[2]
-
-    new_copyright = f"SPDX-FileCopyrightText: Copyright{match.groups()[0] or ''} "
-    if min_year < current_year and not disallow_range:
+    min_year = match.groups()[0] or match.groups()[1]
+    new_copyright = "SPDX-FileCopyrightText: Copyright (c) "
+    if int(min_year) < int(current_year) and not disallow_range:
         new_copyright += f"{min_year}-{current_year}"
     else:
         new_copyright += f"{current_year}"
@@ -239,11 +238,6 @@ def html_md(path):
 @register(has_ext([".rst"]))
 def rst(path):
     update_or_add_header(path, prefix_lines(LICENSE_TEXT, ".. "))
-
-
-@register(any_of(path_contains("templates")))
-def genai_perf_templates(path):
-    update_or_add_header(path, "<!--\n" + prefix_lines(LICENSE_TEXT, "# ") + "\n-->")
 
 
 def add_copyrights(paths):
