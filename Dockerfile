@@ -5,9 +5,7 @@ ENV APP_NAME=aiperf
 
 # Create app user
 RUN groupadd -r $USERNAME \
-    && useradd -r -g $USERNAME $USERNAME \
-    && mkdir -p /home/$USERNAME \
-    && chown -R $USERNAME:$USERNAME /home/$USERNAME
+    && useradd -r -g $USERNAME $USERNAME
 
 ### VIRTUAL ENVIRONMENT SETUP ###
 
@@ -60,7 +58,6 @@ RUN apt-get update -y \
     && chmod 0440 /etc/sudoers.d/$USERNAME \
     && mkdir -p /home/$USERNAME \
     && chown -R $USERNAME:$USERNAME /home/$USERNAME \
-    && rm -rf /var/lib/apt/lists/* \
     && chsh -s /bin/bash $USERNAME
 
 # Install some useful tools for local development

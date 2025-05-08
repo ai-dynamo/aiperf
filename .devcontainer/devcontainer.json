@@ -37,7 +37,7 @@
             "extensions": [
                 "ms-python.python",
                 "ms-python.pylint",
-                "ms-python.vscode-pylance",
+                "ms-python.vscode-pylance"
             ],
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",
@@ -62,7 +62,7 @@
     "userEnvProbe": "interactiveShell",
     "containerEnv": {
         "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",
-        "HF_TOKEN": "${localEnv:HF_TOKEN}",
+        "HF_TOKEN": "${localEnv:HF_TOKEN}"
     },
     "mounts": [
         // Default mounts
@@ -70,6 +70,6 @@
         "source=appuser-bashhistory,target=/home/appuser/.commandhistory,type=volume", // For bash history
         "source=appuser-precommit-cache,target=/home/appuser/.cache/pre-commit,type=volume" // For pre-commit cache
         // Uncomment for additional functionality
-        // "source=${localEnv:HF_HOME},target=/home/appuser/.cache/huggingface,type=bind", // Uncomment to enable HF Cache Mount. Make sure to set HF_HOME env var in you .bashrc
+        // "source=${localEnv:HF_HOME},target=/home/appuser/.cache/huggingface,type=bind", // Uncomment to enable HF Cache Mount. Make sure to set HF_HOME env var in your .bashrc
     ]
 }
