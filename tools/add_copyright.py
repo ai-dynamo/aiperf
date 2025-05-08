@@ -1,28 +1,17 @@
-# Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in the
-#    documentation and/or other materials provided with the distribution.
-#  * Neither the name of NVIDIA CORPORATION nor the names of its
-#    contributors may be used to endorse or promote products derived
-#    from this software without specific prior written permission.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
-# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
-# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
-# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import argparse
 import os
 import re
@@ -32,12 +21,12 @@ from typing import Callable, Dict, Optional, Sequence
 
 current_year = str(datetime.now().year)
 
-ROOT_DIR = os.path.join(os.path.dirname(__file__), os.path.pardir)
+ROOT_DIR = os.path.dirname(__file__)
 
-LICENSE_PATH = os.path.join(ROOT_DIR, "LICENSE")
+LICENSE_PATH = os.path.join(ROOT_DIR, "COPYRIGHT")
 
 COPYRIGHT_YEAR_PAT = re.compile(
-    r"Copyright( \(c\))? (\d{4})?-?(\d{4}), NVIDIA CORPORATION"
+    r"SPDX-FileCopyrightText: Copyright( \(c\))? (\d{4})?-?(\d{4}) NVIDIA CORPORATION"
 )
 
 
@@ -60,12 +49,12 @@ def update_copyright_year(
     assert match is not None, f"File {path} does not contain a valid copyright."
     min_year = match.groups()[1] or match.groups()[2]
 
-    new_copyright = f"Copyright{match.groups()[0] or ''} "
+    new_copyright = f"SPDX-FileCopyrightText: Copyright{match.groups()[0] or ''} "
     if min_year < current_year and not disallow_range:
         new_copyright += f"{min_year}-{current_year}"
     else:
         new_copyright += f"{current_year}"
-    new_copyright += ", NVIDIA CORPORATION"
+    new_copyright += " NVIDIA CORPORATION"
 
     updated_content = COPYRIGHT_YEAR_PAT.sub(new_copyright, content)
 
