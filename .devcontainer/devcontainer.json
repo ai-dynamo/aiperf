@@ -18,7 +18,7 @@
     "updateRemoteUserUID": true, // Updates the UID of the remote user to match the host user, avoids permission errors
     "build": {
         "dockerfile": "../Dockerfile",
-        "context": "..",
+        "context": ".",
         "target": "local-dev"
     },
     "runArgs": [
@@ -37,13 +37,13 @@
             "extensions": [
                 "ms-python.python",
                 "ms-python.pylint",
-                "ms-python.vscode-pylance"
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff"
             ],
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",
                 "terminal.integrated.cwd": "/home/appuser/aiperf",
                 "python.defaultInterpreterPath": "/opt/aiperf/venv/bin/python",
-                "python.linting.enabled": true,
                 "python.linting.pylintEnabled": true,
                 "python.linting.ruffEnabled": true,
                 "python.formatting.provider": "ruff",
@@ -60,6 +60,7 @@
     "workspaceFolder": "/home/appuser/aiperf",
     "workspaceMount": "source=${localWorkspaceFolder},target=/home/appuser/aiperf,type=bind,consistency=cached",
     "userEnvProbe": "interactiveShell",
+    "postCreateCommand": "/bin/bash /home/appuser/aiperf/.devcontainer/post-create.sh", // Setup environment and pip installs packages
     "containerEnv": {
         "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",
         "HF_TOKEN": "${localEnv:HF_TOKEN}"
@@ -67,8 +68,9 @@
     "mounts": [
         // Default mounts
         "source=/tmp/,target=/tmp/,type=bind",
-        "source=appuser-bashhistory,target=/home/appuser/.commandhistory,type=volume", // For bash history
-        "source=appuser-precommit-cache,target=/home/appuser/.cache/pre-commit,type=volume" // For pre-commit cache
+        "source=appuser-aiperf-bashhistory,target=/home/appuser/.commandhistory,type=volume", // For bash history
+        "source=appuser-aiperf-precommit-cache,target=/home/appuser/.cache/pre-commit,type=volume", // For pre-commit cache
+        "source=appuser-aiperf-venv,target=/home/appuser/.venv,type=volume" // For venv
         // Uncomment for additional functionality
         // "source=${localEnv:HF_HOME},target=/home/appuser/.cache/huggingface,type=bind", // Uncomment to enable HF Cache Mount. Make sure to set HF_HOME env var in your .bashrc
     ]
