@@ -49,10 +49,6 @@ else
     echo "Virtual environment already exists at ${HOME}/.venv"
 fi
 
-# Pre-commit hooks
-#cd "${HOME}/aiperf" && pre-commit install && retry pre-commit install-hooks
-#pre-commit run --all-files || true # don't fail the build if pre-commit hooks fail
-
 source "${HOME}/.venv/bin/activate"
 # Change the uv cache dir to reside in the same volume as the venv
 # This is to allow uv to hardlink the cache files to the venv for better performance
@@ -61,6 +57,10 @@ export UV_CACHE_DIR="${HOME}/.venv/.cache/uv"
 
 # install the python package in editable mode
 cd "${HOME}/aiperf" && retry uv pip install -e ".[dev]"
+
+# Pre-commit hooks
+cd "${HOME}/aiperf" && pre-commit install && retry pre-commit install-hooks
+pre-commit run --all-files || true # don't fail the build if pre-commit hooks fail
 
 # source the venv and setup alias inside bashrc
 {
