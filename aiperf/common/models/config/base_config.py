@@ -78,7 +78,7 @@ class BaseConfig:
         elif isinstance(value, PosixPath):
             return str(value)
         elif hasattr(value, "__dict__"):
-            return value.__dict__()
+            return value.__dict__
         elif isinstance(value, dict):
             config_dict = {}
             for k, v in value.items():
@@ -159,7 +159,7 @@ class BaseConfig:
         template = ""
         if field.add_to_template:
             json_value = self._get_legal_json_value(self.__getattr__(name))
-            if type(json_value) is list:
+            if isinstance(json_value, list):
                 json_value = ", ".join(map(str, json_value))
 
             template = indent(
@@ -176,7 +176,7 @@ class BaseConfig:
         if name == "_fields" or name == "_values" or name == "_children":
             self.__dict__[name] = value
         else:
-            if type(value) is ConfigField:
+            if isinstance(value, ConfigField):
                 self._fields[name] = value
             elif name in self._fields:
                 self._fields[name].value = value

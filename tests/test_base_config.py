@@ -17,6 +17,7 @@ import unittest
 from copy import deepcopy
 from enum import Enum
 from unittest.mock import patch
+from pathlib import PosixPath
 
 from aiperf.common.models.config.config_field import ConfigField
 from aiperf.common.models.config.base_config import BaseConfig
@@ -369,6 +370,63 @@ class TestBaseConfig(unittest.TestCase):
 
         self.assertEqual(
             str(context.exception), "Required field test_field_B is not set"
+        )
+
+    ###########################################################################
+    # Get Legal JSON Value Testing
+    ###########################################################################
+    def test_get_legal_json_value_enum(self):
+        """
+        Test that _get_legal_json_value correctly handles Enum values.
+        """
+        test_base_config = BaseConfig()
+        test_enum_value = TestEnum.OPTION_1
+        result = test_base_config._get_legal_json_value(test_enum_value)
+        self.assertEqual(result, "option_1")
+
+    def test_get_legal_json_value_posix_path(self):
+        """
+        Test that _get_legal_json_value correctly handles PosixPath values.
+        """
+        test_base_config = BaseConfig()
+        test_path = PosixPath("/test/path")
+        result = test_base_config._get_legal_json_value(test_path)
+        self.assertEqual(result, "/test/path")
+
+    def test_get_legal_json_value_dict(self):
+        """
+        Test that _get_legal_json_value correctly handles dictionary values.
+        """
+        test_base_config = BaseConfig()
+        test_dict = {"key1": TestEnum.OPTION_1, "key2": PosixPath("/test/path")}
+        result = test_base_config._get_legal_json_value(test_dict)
+        expected_result = {"key1": "option_1", "key2": "/test/path"}
+        self.assertEqual(result, expected_result)
+
+    def test_get_legal_json_value_object_with_dict(self):
+        """
+        Test that _get_legal_json_value correctly handles objects with __dict__.
+        """
+
+        class TestObject:
+            def __init__(self):
+                self.attr1 = "value1"
+                self.attr2 = 42
+
+        test_base_config = BaseConfig()
+        test_object = TestObject()
+        result = test_base_config._get_legal_json_value(test_object)
+        self.assertEqual(result, {"attr1": "value1", "attr2": 42})
+
+    def test_get_legal_json_value_invalid_type(self):
+        """
+        Test that _get_legal_json_value raises a ValueError for unsupported types.
+        """
+        test_base_config = BaseConfig()
+        with self.assertRaises(ValueError) as context:
+            test_base_config._get_legal_json_value(set([1, 2, 3]))
+        self.assertEqual(
+            str(context.exception), "Value {1, 2, 3} is not a legal JSON value"
         )
 
 
