@@ -28,6 +28,7 @@ class ConfigField:
     required: Whether a value is required to be set by the user.
     add_to_template: Whether the field should be added to the template.
     template_comment: A comment to add to the template.
+    verbose_template_comment: A more detailed comment, used instead when creating the verbose template.
     value: The value of the configuration field.
     bounds: A dictionary with upper and lower bounds.
     choices: A list of choices or an Enum.
