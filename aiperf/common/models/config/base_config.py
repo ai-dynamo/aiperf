@@ -1,16 +1,18 @@
-# Copyright 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#  http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+
 
 import copy
 from enum import Enum
@@ -102,27 +104,29 @@ class BaseConfig:
     # Template Creation Methods
     ###########################################################################
     def create_template(self, header: str, level: int = 1, verbose=False) -> str:
-        indention = "  " * level
+        indentation = "  " * level
 
-        template = self._add_header_to_template(header, indention)
-        template += self._add_fields_to_template(indention, verbose)
+        template = self._add_header_to_template(header, indentation)
+        template += self._add_fields_to_template(indentation, verbose)
         template += "\n"
         template += self._add_children_to_template(level, verbose)
 
         return template
 
-    def _add_header_to_template(self, header: str, indention: str) -> str:
+    def _add_header_to_template(self, header: str, indentation: str) -> str:
         template = ""
         if header:
-            template = indent(f"{header}:\n", indention)
+            template = indent(f"{header}:\n", indentation)
         return template
 
-    def _add_fields_to_template(self, indention: str, verbose: bool) -> str:
+    def _add_fields_to_template(self, indentation: str, verbose: bool) -> str:
         template = ""
         for name, field in self._fields.items():
             template_comment = self._get_template_comment(field, verbose)
-            template += self._create_template_from_comment(template_comment, indention)
-            template += self._add_field_to_template(field, name, indention)
+            template += self._create_template_from_comment(
+                template_comment, indentation
+            )
+            template += self._add_field_to_template(field, name, indentation)
 
             if verbose and field.verbose_template_comment:
                 template += "\n"
@@ -144,17 +148,17 @@ class BaseConfig:
         else:
             return field.template_comment if field.template_comment else ""
 
-    def _create_template_from_comment(self, comment: str, indention: str) -> str:
+    def _create_template_from_comment(self, comment: str, indentation: str) -> str:
         template = ""
         if comment:
             comment_lines = comment.split("\n")
             for comment_line in comment_lines:
-                template += indent(f"  # {comment_line}\n", indention)
+                template += indent(f"  # {comment_line}\n", indentation)
 
         return template
 
     def _add_field_to_template(
-        self, field: ConfigField, name: str, indention: str
+        self, field: ConfigField, name: str, indentation: str
     ) -> str:
         template = ""
         if field.add_to_template:
@@ -164,7 +168,7 @@ class BaseConfig:
 
             template = indent(
                 f"  {name}: {json_value}\n",
-                indention,
+                indentation,
             )
         return template
 
@@ -196,7 +200,7 @@ class BaseConfig:
         elif name in self._children:
             return self._children[name]
         else:
-            if not name in self._fields:
+            if name not in self._fields:
                 raise AttributeError(f"{name} not found in ConfigFields")
 
             if self._fields[name].is_set_by_user:
