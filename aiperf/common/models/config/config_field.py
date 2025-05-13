@@ -95,7 +95,7 @@ class ConfigField:
                 )
 
     def _check_choices(self) -> None:
-        if not self.choices or not self.value:
+        if self.choices is None or self.value is None:
             return
 
         value_list = (
