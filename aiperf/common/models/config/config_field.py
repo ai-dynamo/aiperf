@@ -62,7 +62,7 @@ class ConfigField:
                 if key not in ["upper", "max", "lower", "min"]:
                     raise ValueError(
                         f"User Config: {key} is not a valid key for bounds. "
-                        f"Valid keys are 'upper', 'max, 'lower', or 'min'."
+                        f"Valid keys are 'upper', 'max', 'lower', or 'min'."
                     )
                 if key in ["upper", "max"]:
                     self.bounds["upper"] = value
@@ -106,17 +106,17 @@ class ConfigField:
             for value in value_list:
                 if value not in self.choices:
                     raise ValueError(
-                        f"User Config: {value} not in list of choices: f{self.choices}"
+                        f"User Config: {value} not in list of choices: {self.choices}"
                     )
         elif issubclass(self.choices, Enum):
             for value in value_list:
                 if not isinstance(value, Enum):
                     raise ValueError(
-                        f"User Config: {value} is not in list of choices: f{self.choices}"
+                        f"User Config: {value} is not in list of choices: {self.choices}"
                     )
                 if value.name not in [e.name for e in self.choices]:
                     raise ValueError(
-                        f"User Config: {value.name} not in list of choices: f{self.choices}"
+                        f"User Config: {value.name} not in list of choices: {self.choices}"
                     )
 
     def __setattr__(self, name, value):
