@@ -188,6 +188,10 @@ def any_of(*funcs: Callable[[str], bool]) -> Callable[[str], bool]:
     return lambda path: any(func(path) for func in funcs)
 
 
+def path_begins_with(expected: str):
+    return lambda path: os.path.abspath(path).startswith(os.path.abspath(expected))
+
+
 #
 # File handlers for different types of files.
 # Many types of files require very similar handling - those are combined where possible.
@@ -238,6 +242,25 @@ def html_md(path):
 @register(has_ext([".rst"]))
 def rst(path):
     update_or_add_header(path, prefix_lines(LICENSE_TEXT, ".. "))
+
+
+@register(
+    any_of(
+        has_ext([".toml"]),
+        path_begins_with("."),
+        path_contains("LICENSE"),
+        path_contains("COPYRIGHT"),
+        path_contains("Makefile"),
+    )
+)
+def skip_processing(path):
+    """
+    Skip processing for files that are not source files or are
+    configuration files.
+    """
+    # NOTE: This is a no-op function, but it allows us to register
+    # a handler for files we want to skip.
+    pass
 
 
 def add_copyrights(paths):
