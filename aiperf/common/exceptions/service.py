@@ -47,7 +47,7 @@ class ServiceCleanupException(ServiceException):
 
 
 class ServiceMessageProcessingException(ServiceException):
-    """Exception raised for service response processing errors."""
+    """Exception raised for service message processing errors."""
 
     pass
 
