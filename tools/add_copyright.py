@@ -16,6 +16,7 @@ import argparse
 import os
 import re
 import sys
+from pathlib import Path
 from datetime import datetime
 from typing import Callable, Dict, Optional, Sequence
 
@@ -188,8 +189,12 @@ def any_of(*funcs: Callable[[str], bool]) -> Callable[[str], bool]:
     return lambda path: any(func(path) for func in funcs)
 
 
-def path_begins_with(expected: str):
-    return lambda path: os.path.abspath(path).startswith(os.path.abspath(expected))
+def is_hidden_file(filepath: str) -> bool:
+    # Extract just the filename using Path.name
+    filename = Path(filepath).name
+
+    # Check if the filename starts with a period
+    return filename.startswith(".")
 
 
 #
@@ -247,10 +252,10 @@ def rst(path):
 @register(
     any_of(
         has_ext([".toml"]),
-        path_begins_with("."),
         path_contains("LICENSE"),
         path_contains("COPYRIGHT"),
         path_contains("Makefile"),
+        path_contains("devcontainer.json"),
     )
 )
 def skip_processing(path):
@@ -265,6 +270,8 @@ def skip_processing(path):
 
 def add_copyrights(paths):
     for path in paths:
+        if is_hidden_file(path):
+            continue
         for match, handler in FILE_TYPE_HANDLERS.items():
             if match(path):
                 handler(path)
