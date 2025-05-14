@@ -13,6 +13,20 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-__all__ = ["WorkerManager"]
+__all__ = [
+    "ServiceState",
+    "MessageType",
+    "CommandType",
+    "Topic",
+    "CommBackend",
+    "ServiceRunType",
+]
 
-from aiperf.services.worker_manager.worker_manager import WorkerManager
+from aiperf.common.enums.base import (
+    ServiceState,
+    MessageType,
+    CommandType,
+    Topic,
+    CommBackend,
+    ServiceRunType,
+)

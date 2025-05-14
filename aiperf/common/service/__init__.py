@@ -12,7 +12,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+from aiperf.common.service.base import BaseService
 
-__all__ = ["WorkerManager"]
 
-from aiperf.services.worker_manager.worker_manager import WorkerManager
+__all__ = ["BaseService"]
