@@ -12,6 +12,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-from .dataset_manager import DatasetManager
 
 __all__ = ["DatasetManager"]
+
+from aiperf.services.dataset_manager.dataset_manager import DatasetManager

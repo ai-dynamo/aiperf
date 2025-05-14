@@ -22,7 +22,7 @@ __all__ = [
     "ServiceRunType",
 ]
 
-from .base import (
+from aiperf.common.enums.base import (
     ServiceState,
     MessageType,
     CommandType,

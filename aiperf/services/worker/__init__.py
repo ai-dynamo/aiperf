@@ -13,6 +13,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from .worker import Worker
-
 __all__ = ["Worker"]
+
+from aiperf.services.worker.worker import Worker
