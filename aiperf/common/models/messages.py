@@ -15,12 +15,11 @@
 """Pydantic models for messages used in inter-service communication."""
 
 import time
-import uuid
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from aiperf.common.models.payloads import PayloadType, RequestPayload, ResponsePayload
+from aiperf.common.models.payloads import PayloadType
 
 
 class BaseMessage(BaseModel):
@@ -41,45 +40,6 @@ class BaseMessage(BaseModel):
         description="ID of the request",
     )
     payload: PayloadType = Field(
-        default=None,
-        discriminator="message_type",
-        description="Payload of the response",
-    )
-
-
-class BaseRequestMessage(BaseMessage):
-    """Base request response model with common fields for all request messages.
-    The payload must override the RequestPayload type.
-    """
-
-    message_type: RequestPayload = Field(
-        default=None,
-        description="Type of the response",
-    )
-    request_id: str = Field(
-        default_factory=lambda: uuid.uuid4().hex[:8],
-        description="ID of the request",
-    )
-    payload: RequestPayload = Field(
-        default=None,
-        discriminator="message_type",
-        description="Payload of the response",
-    )
-
-
-class BaseResponseMessage(BaseMessage):
-    """Base response response model with common fields for all response messages.
-    The payload must override the ResponsePayload type.
-    """
-
-    message_type: ResponsePayload = Field(
-        default=None,
-        description="Type of the response",
-    )
-    request_id: str = Field(
-        description="ID of the request",
-    )
-    payload: ResponsePayload = Field(
         default=None,
         discriminator="message_type",
         description="Payload of the response",
