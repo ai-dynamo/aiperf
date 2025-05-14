@@ -13,6 +13,5 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from .worker_manager import WorkerManager
 
-__all__ = ["WorkerManager"]
+from .base import *  # noqa: F403

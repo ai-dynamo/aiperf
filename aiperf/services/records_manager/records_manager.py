@@ -17,10 +17,10 @@ import sys
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import Topic
 from aiperf.common.models.messages import BaseMessage
-from aiperf.common.service import ServiceBase
+from aiperf.common.service import BaseService
 
 
-class RecordsManager(ServiceBase):
+class RecordsManager(BaseService):
     def __init__(self, config: ServiceConfig) -> None:
         super().__init__(service_type="records_manager", config=config)
 

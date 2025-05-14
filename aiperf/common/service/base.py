@@ -28,7 +28,7 @@ from aiperf.common.models.messages import (
 )
 
 
-class ServiceBase(ABC):
+class BaseService(ABC):
     """Base class for all AIPerf services, providing common functionality for communication,
     state management, and lifecycle operations.
 

@@ -21,15 +21,15 @@ from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceRunType, Topic
 from aiperf.common.models.messages import BaseMessage, RegistrationMessage
-from aiperf.common.service import ServiceBase
-from aiperf.services.dataset_manager.main import DatasetManager
-from aiperf.services.post_processor_manager.main import PostProcessorManager
-from aiperf.services.records_manager.main import RecordsManager
-from aiperf.services.timing_manager.main import TimingManager
-from aiperf.services.worker_manager.main import WorkerManager
+from aiperf.common.service import BaseService
+from aiperf.services.dataset_manager import DatasetManager
+from aiperf.services.post_processor_manager import PostProcessorManager
+from aiperf.services.records_manager import RecordsManager
+from aiperf.services.timing_manager import TimingManager
+from aiperf.services.worker_manager import WorkerManager
 
 
-class SystemController(ServiceBase):
+class SystemController(BaseService):
     def __init__(self, config: ServiceConfig) -> None:
         super().__init__(
             service_type="system_controller", config=config, autostart=True

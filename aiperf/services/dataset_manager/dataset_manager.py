@@ -17,42 +17,38 @@ import sys
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import Topic
 from aiperf.common.models.messages import BaseMessage
-from aiperf.common.service import ServiceBase
+from aiperf.common.service import BaseService
 
 
-class PostProcessorManager(ServiceBase):
-    """Manager responsible for post-processing results data."""
-
-    def __init__(self, config: ServiceConfig) -> None:
-        super().__init__(service_type="post_processor_manager", config=config)
+class DatasetManager(BaseService):
+    def __init__(self, config: ServiceConfig):
+        super().__init__(service_type="dataset_manager", config=config)
 
     async def _initialize(self) -> None:
-        self.logger.debug("Initializing post processor manager")
-        # TODO: Implement post processor manager initialization
+        self.logger.debug("Initializing dataset manager")
+        # TODO: Implement dataset manager initialization
 
     async def _on_start(self) -> None:
-        self.logger.debug("Starting post processor manager")
-        # TODO: Implement post processor manager start
+        self.logger.debug("Starting dataset manager")
+        # TODO: Implement dataset manager start
 
     async def _on_stop(self) -> None:
-        self.logger.debug("Stopping post processor manager")
-        # TODO: Implement post processor manager stop
+        self.logger.debug("Stopping dataset manager")
+        # TODO: Implement dataset manager stop
 
     async def _cleanup(self) -> None:
-        self.logger.debug("Cleaning up post processor manager")
-        # TODO: Implement post processor manager cleanup
+        self.logger.debug("Cleaning up dataset manager")
+        # TODO: Implement dataset manager cleanup
 
     async def _process_message(self, topic: Topic, message: BaseMessage) -> None:
-        self.logger.debug(
-            f"Processing message in post processor manager: {topic}, {message}"
-        )
-        # TODO: Implement post processor manager message processing
+        self.logger.debug(f"Processing message in dataset manager: {topic}, {message}")
+        # TODO: Implement dataset manager message processing
 
 
 def main() -> None:
     from aiperf.common.bootstrap import bootstrap_and_run_service
 
-    bootstrap_and_run_service(PostProcessorManager)
+    bootstrap_and_run_service(DatasetManager)
 
 
 if __name__ == "__main__":
