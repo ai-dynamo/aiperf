@@ -12,40 +12,33 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-
-__all__ = [
-    "StrEnum",
-    "CommBackend",
-    "CommType",
-    "DataTopic",
-    "Topic",
-    "TopicType",
-    "CommandType",
-    "MessageType",
-    "ServiceRegistrationStatus",
-    "ServiceRunType",
-    "ServiceState",
-    "ServiceType",
-]
-
 from aiperf.common.enums.base import StrEnum
 
-from aiperf.common.enums.comms import (
-    CommBackend,
-    CommType,
-    DataTopic,
-    Topic,
-    TopicType,
-)
 
-from aiperf.common.enums.message import (
-    CommandType,
-    MessageType,
-)
+# Message-related enums
+class MessageType(StrEnum):
+    """Types of messages exchanged between services."""
 
-from aiperf.common.enums.service import (
-    ServiceRegistrationStatus,
-    ServiceRunType,
-    ServiceState,
-    ServiceType,
-)
+    UNKNOWN = "unknown"
+    REGISTRATION = "registration"
+    HEARTBEAT = "heartbeat"
+    COMMAND = "command"
+    RESPONSE = "response"
+    STATUS = "status"
+    DATA = "data"
+    ERROR = "error"
+    CONVERSATION = "conversation"
+    RESULT = "result"
+    WORKER_REQUEST = "worker_request"
+    WORKER_RESPONSE = "worker_response"
+    CREDIT_DROP = "credit_drop"
+    CREDIT_RETURN = "credit_return"
+
+
+class CommandType(StrEnum):
+    """Commands that can be sent to services."""
+
+    START = "start"
+    STOP = "stop"
+    CONFIGURE = "configure"
+    STATUS = "status"
