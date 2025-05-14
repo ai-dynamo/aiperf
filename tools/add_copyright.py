@@ -16,6 +16,7 @@ import argparse
 import os
 import re
 import sys
+from pathlib import Path
 from datetime import datetime
 from typing import Callable, Dict, Optional, Sequence
 
@@ -188,6 +189,14 @@ def any_of(*funcs: Callable[[str], bool]) -> Callable[[str], bool]:
     return lambda path: any(func(path) for func in funcs)
 
 
+def is_hidden_file(filepath: str) -> bool:
+    # Extract just the filename using Path.name
+    filename = Path(filepath).name
+
+    # Check if the filename starts with a period
+    return filename.startswith(".")
+
+
 #
 # File handlers for different types of files.
 # Many types of files require very similar handling - those are combined where possible.
@@ -240,8 +249,29 @@ def rst(path):
     update_or_add_header(path, prefix_lines(LICENSE_TEXT, ".. "))
 
 
+@register(
+    any_of(
+        has_ext([".toml"]),
+        path_contains("LICENSE"),
+        path_contains("COPYRIGHT"),
+        path_contains("Makefile"),
+        path_contains("devcontainer.json"),
+    )
+)
+def skip_processing(path):
+    """
+    Skip processing for files that are not source files or are
+    configuration files.
+    """
+    # NOTE: This is a no-op function, but it allows us to register
+    # a handler for files we want to skip.
+    pass
+
+
 def add_copyrights(paths):
     for path in paths:
+        if is_hidden_file(path):
+            continue
         for match, handler in FILE_TYPE_HANDLERS.items():
             if match(path):
                 handler(path)

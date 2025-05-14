@@ -1,3 +1,19 @@
+<!--
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#  http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+-->
 # Developers Guide
 Execute the following commands to set up your development environment for `aiperf`.
 Make sure you are in the root directory of the `aiperf` repository.
@@ -78,17 +94,17 @@ aiperf/
 
 AIPerf implements a distributed microservices architecture with the following key components:
 
-- **System Controller**: Primary responsibility is to orchestrate the system. It will ensure all blocks are ready and healthy. It will also help orchestrating graceful shutdowns. This is the component that will contain the methods users can interact with. 
-- **Dataset Manager**: Primary responsibility is to manage the data: generation or acquisition. For  synthetic generation, it contains the code to generate the prompts or tokens. It will have an API for dataset acquisition of a dataset if available in a remote repository or database. 
+- **System Controller**: Primary responsibility is to orchestrate the system. It will ensure all blocks are ready and healthy. It will also help orchestrating graceful shutdowns. This is the component that will contain the methods users can interact with.
+- **Dataset Manager**: Primary responsibility is to manage the data: generation or acquisition. For  synthetic generation, it contains the code to generate the prompts or tokens. It will have an API for dataset acquisition of a dataset if available in a remote repository or database.
 
-- **Worker Manager**: Primary responsibility is to pull data from the dataset manager after receiving the timing credit from the timing manager. It will then push the request data to the worker to issue to the request. 
+- **Worker Manager**: Primary responsibility is to pull data from the dataset manager after receiving the timing credit from the timing manager. It will then push the request data to the worker to issue to the request.
 - **Worker**: Primarily responsible for converting the data into the appropriate format for the interface being used by the server. Also responsible for managing the conversation between turns.
 
-- **Timing Manager**: Primary responsibility is to generate the schedule and issuing timing credits for requests. 
+- **Timing Manager**: Primary responsibility is to generate the schedule and issuing timing credits for requests.
 
-- **Records Manager**: Primarily responsible for holding the results returned from the workers. 
+- **Records Manager**: Primarily responsible for holding the results returned from the workers.
 
-- **Post-Processor Manager**: Primarily responsible for iterating over the records to generate metrics and other conclusions from the records. 
+- **Post-Processor Manager**: Primarily responsible for iterating over the records to generate metrics and other conclusions from the records.
 
 
 #### Communication System
@@ -155,7 +171,7 @@ class ExampleService(ServiceBase):
     def __init__(self, config: ServiceConfig) -> None:
         super().__init__(service_type="example_service", config=config)
         self.my_resource = None
-        
+
     async def _initialize(self) -> None:
         """Initialize service-specific resources."""
         self.logger.debug("Initializing Example Service")
@@ -164,26 +180,26 @@ class ExampleService(ServiceBase):
         await self._subscribe_to_topic(Topic.DATA)
         # Initialize resources
         self.my_resource = SomeResource()
-        
+
     async def _on_start(self) -> None:
         """Main service logic."""
         self.logger.debug("Running Example Service")
         # Implement your service's main logic here
         # This method should typically set up ongoing tasks or loops
-        
+
     async def _on_stop(self) -> None:
         """Handle graceful shutdown."""
         self.logger.debug("Stopping Example Service")
         # Cancel any ongoing tasks
         # Prepare for cleanup
-        
+
     async def _cleanup(self) -> None:
         """Release resources."""
         self.logger.debug("Cleaning up Example Service")
         # Release any resources
         if self.my_resource:
             await self.my_resource.close()
-            
+
     async def _process_message(self, topic: Topic, message: BaseMessage) -> None:
         """Handle incoming messages."""
         self.logger.debug(f"Processing message: {topic}, {message}")
@@ -193,11 +209,11 @@ class ExampleService(ServiceBase):
         elif topic == Topic.DATA:
             # Handle data messages
             await self._handle_data(message)
-            
+
     async def _handle_command(self, message: BaseMessage) -> None:
         """Handle command messages."""
         # Implement command handling logic
-        
+
     async def _handle_data(self, message: BaseMessage) -> None:
         """Handle data messages."""
         # Implement data handling logic
