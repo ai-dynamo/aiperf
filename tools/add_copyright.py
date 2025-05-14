@@ -213,7 +213,7 @@ def register(match: Callable[[str], bool]):
 
 @register(
     any_of(
-        has_ext([".py", ".pyi", ".sh", ".bash", ".yaml", ".yml", ".pbtxt"]),
+        has_ext([".py", ".pyi", ".sh", ".bash", ".pbtxt"]),
         basename_is("CMakeLists.txt"),
         path_contains("Dockerfile"),
     )
@@ -249,28 +249,24 @@ def rst(path):
     update_or_add_header(path, prefix_lines(LICENSE_TEXT, ".. "))
 
 
-@register(
-    any_of(
-        has_ext([".toml"]),
-        path_contains("LICENSE"),
-        path_contains("COPYRIGHT"),
-        path_contains("Makefile"),
-        path_contains("devcontainer.json"),
-    )
-)
-def skip_processing(path):
-    """
-    Skip processing for files that are not source files or are
-    configuration files.
-    """
-    # NOTE: This is a no-op function, but it allows us to register
-    # a handler for files we want to skip.
-    pass
+SKIP_PATTERNS = [
+    ".toml",
+    ".yml",
+    ".yaml",
+    "LICENSE",
+    "COPYRIGHT",
+    "Makefile",
+    "devcontainer.json",
+]
+
+
+def should_skip(path):
+    return any(pattern in path for pattern in SKIP_PATTERNS)
 
 
 def add_copyrights(paths):
     for path in paths:
-        if is_hidden_file(path):
+        if is_hidden_file(path) or should_skip(path):
             continue
         for match, handler in FILE_TYPE_HANDLERS.items():
             if match(path):
