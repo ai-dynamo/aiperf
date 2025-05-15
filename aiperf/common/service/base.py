@@ -13,7 +13,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 import asyncio
-import contextlib
 import logging
 import signal
 import uuid
@@ -22,17 +21,9 @@ from typing import Optional
 from aiperf.common.comms.communication import BaseCommunication
 from aiperf.common.comms.communication_factory import CommunicationFactory
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import (
-    ServiceState,
-    Topic,
-)
+from aiperf.common.enums import ServiceState
 from aiperf.common.models.messages import BaseMessage
-from aiperf.common.models.payloads import (
-    HeartbeatPayload,
-    PayloadType,
-    RegistrationPayload,
-    StatusPayload,
-)
+from aiperf.common.models.payloads import PayloadType
 from aiperf.common.service.abstract import AbstractBaseService
 
 
@@ -77,14 +68,13 @@ class BaseService(AbstractBaseService):
 
     async def initialize(self) -> None:
         """Initialize the service communication and signal handlers."""
+        # Set up signal handlers for graceful shutdown
+        self.setup_signal_handlers()
 
         # Allow time for the event loop to start
         await asyncio.sleep(0.1)
 
         self._state = ServiceState.INITIALIZING
-
-        # Set up signal handlers for graceful shutdown
-        self.setup_signal_handlers()
 
         # Initialize communication
         self.comms = CommunicationFactory.create_communication(self.service_config)
@@ -105,32 +95,32 @@ class BaseService(AbstractBaseService):
             )
             await self.comms.create_clients(*self.required_clients)
 
-        await self.set_state(ServiceState.READY)
+        # Initialize any derived service components
+        await self._initialize()
 
-    async def send_heartbeat(self) -> None:
-        """Send a heartbeat notification to the system controller."""
-        heartbeat_message = self.create_heartbeat_message()
-        self.logger.debug("Sending heartbeat: %s", heartbeat_message)
-        await self.comms.publish(
-            topic=Topic.HEARTBEAT,
-            message=heartbeat_message,
-        )
+    async def run(self) -> None:
+        """Run the worker."""
+        try:
+            # Initialize the service
+            await self.initialize()
 
-    async def register(self) -> None:
-        """Publish a registration request to the system controller.
+            # Set the service to ready state
+            await self.set_state(ServiceState.READY)
 
-        This method should be called after the service has been initialized and is ready to
-        start processing messages.
-        """
-        self.logger.debug(
-            "Attempting to register service %s (%s) with system controller",
-            self.service_type,
-            self.service_id,
-        )
-        await self.comms.publish(
-            topic=Topic.REGISTRATION,
-            message=self.create_registration_message(),
-        )
+            # Start the service
+            await self.start()
+
+            # Wait forever for the stop event to be set
+            await self.stop_event.wait()
+
+        except asyncio.exceptions.CancelledError:
+            self.logger.debug("Service %s execution cancelled", self.service_type)
+        except BaseException:
+            self.logger.exception("Service %s execution failed:", self.service_type)
+            await self.set_state(ServiceState.ERROR)
+        finally:
+            # Shutdown the service
+            await self.stop()
 
     async def start(self) -> None:
         """Start the service and its components.
@@ -172,12 +162,6 @@ class BaseService(AbstractBaseService):
         if not self.stop_event.is_set():
             self.stop_event.set()
 
-        # Cancel heartbeat task if running
-        if self._heartbeat_task and not self._heartbeat_task.done():
-            self._heartbeat_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._heartbeat_task
-
         # Custom stop logic implemented by derived classes
         await self._on_stop()
 
@@ -214,57 +198,15 @@ class BaseService(AbstractBaseService):
         )
         return message
 
-    def create_heartbeat_message(self) -> BaseMessage:
-        """Create a heartbeat notification message."""
-        return self.create_message(
-            HeartbeatPayload(
-                service_type=self.service_type,
-            )
-        )
-
-    def create_registration_message(self) -> BaseMessage:
-        """Create a registration request message."""
-        return self.create_message(
-            RegistrationPayload(
-                service_type=self.service_type,
-            )
-        )
-
-    def create_status_message(self, state: ServiceState) -> BaseMessage:
-        """Create a status notification message."""
-        return self.create_message(
-            StatusPayload(
-                state=state,
-                service_type=self.service_type,
-            )
-        )
-
-    async def start_heartbeat_task(self) -> None:
-        """Start a background task to send heartbeats at regular intervals."""
-
-        async def heartbeat_loop() -> None:
-            while not self.stop_event.is_set():
-                # Sleep first to avoid sending a heartbeat before the registration message
-                # has been published
-                await asyncio.sleep(self._heartbeat_interval)
-                await self.send_heartbeat()
-
-        self._heartbeat_task = asyncio.create_task(heartbeat_loop())
-        self.logger.debug(
-            "%s: Started heartbeat task with interval %fs",
-            self.service_type,
-            self._heartbeat_interval,
-        )
-
     def setup_signal_handlers(self) -> None:
         """This method will set up signal handlers for the SIGTERM and SIGINT signals in order
         to trigger a graceful shutdown of the service.
         """
         loop = asyncio.get_running_loop()
 
-        def signal_handler(signal: int) -> None:
+        def signal_handler(sig: int) -> None:
             # Create a task and store it so it doesn't get garbage collected
-            task = asyncio.create_task(self.handle_signal(signal))
+            task = asyncio.create_task(self.handle_signal(sig))
             # Store the task somewhere to prevent it from being garbage collected
             # before it completes
             self._signal_tasks.add(task)
@@ -273,13 +215,13 @@ class BaseService(AbstractBaseService):
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
 
-    async def handle_signal(self, signal: int) -> None:
+    async def handle_signal(self, sig: int) -> None:
         """Handle received signals by triggering graceful shutdown.
 
         Args:
-            signal: The signal number received
+            sig: The signal number received
         """
-        signal_name = signal.Signals(signal).name
+        signal_name = signal.Signals(sig).name
         self.logger.debug(
             "%s: Received signal %s, initiating graceful shutdown",
             self.service_type,

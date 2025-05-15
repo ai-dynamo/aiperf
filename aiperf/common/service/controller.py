@@ -12,12 +12,10 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-import asyncio
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import (
     ClientType,
     PubClientType,
-    ServiceState,
     SubClientType,
     CommandType,
 )
@@ -60,28 +58,3 @@ class BaseControllerService(BaseService):
         return self.create_message(
             CommandPayload(command=command, target_service_id=target_service_id)
         )
-
-    # TODO: Complete the implementation of the controller service methods
-    async def run(self) -> None:
-        """This method will be the primary entry point for the service
-        and will be called by the bootstrap script. It does not return until the service
-        is completely shutdown."""
-
-        try:
-            # Initialize the service
-            await self.initialize()
-
-            # Start the service
-            await self.start()
-
-            # Wait forever for the stop event to be set
-            await self.stop_event.wait()
-
-        except asyncio.exceptions.CancelledError:
-            self.logger.debug("Service %s execution cancelled", self.service_type)
-        except BaseException:
-            self.logger.exception("Service %s execution failed:", self.service_type)
-            await self.set_state(ServiceState.ERROR)
-        finally:
-            # Shutdown the service
-            await self.stop()
