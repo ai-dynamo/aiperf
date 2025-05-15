@@ -15,7 +15,6 @@
 import asyncio
 from datetime import datetime, timedelta
 from multiprocessing import Process
-from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,7 +29,7 @@ class MultiProcessRunInfo(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    process: Optional[Process] = Field(default=None)
+    process: Process | None = Field(default=None)
     service_type: ServiceType = Field(
         ...,
         description="Type of service running in the process",
@@ -43,7 +42,7 @@ class MultiProcessManager(BaseServiceManager):
     """
 
     def __init__(
-        self, required_service_types: List[ServiceType], config: ServiceConfig
+        self, required_service_types: list[ServiceType], config: ServiceConfig
     ):
         super().__init__(required_service_types, config)
 
@@ -174,11 +173,14 @@ class MultiProcessManager(BaseServiceManager):
                 timeout=5.0,  # Overall timeout
             )
             self.logger.info(
-                f"{multi_process_info.service_type} process stopped (pid: {multi_process_info.process.pid})"
+                f"{multi_process_info.service_type} process stopped "
+                f"(pid: {multi_process_info.process.pid})"
             )
         except asyncio.TimeoutError:
             self.logger.warning(
-                f"{multi_process_info.service_type} process (pid: {multi_process_info.process.pid}) did not terminate gracefully, killing"
+                f"{multi_process_info.service_type} process (pid: "
+                f"{multi_process_info.process.pid}) did not terminate "
+                "gracefully, killing"
             )
             multi_process_info.process.kill()
 

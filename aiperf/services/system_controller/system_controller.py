@@ -15,7 +15,6 @@
 import asyncio
 import sys
 import time
-from typing import List, Optional
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import (
@@ -42,7 +41,7 @@ class SystemController(BaseControllerService):
         super().__init__(service_config=service_config, service_id=service_id)
 
         # List of required service types, in the order they should be started
-        self.required_service_types: List[ServiceType] = [
+        self.required_service_types: list[ServiceType] = [
             ServiceType.DATASET_MANAGER,
             ServiceType.TIMING_MANAGER,
             ServiceType.WORKER_MANAGER,
@@ -50,7 +49,7 @@ class SystemController(BaseControllerService):
             ServiceType.POST_PROCESSOR_MANAGER,
         ]
 
-        self.service_manager: Optional[BaseServiceManager] = None
+        self.service_manager: BaseServiceManager | None = None
 
     @property
     def service_type(self) -> ServiceType:
@@ -89,7 +88,8 @@ class SystemController(BaseControllerService):
         )
 
         self.logger.debug(
-            "System controller waiting for 1 second to ensure that the communication is initialized"
+            "System controller waiting for 1 second to ensure that the "
+            "communication is initialized"
         )
 
         # wait 1 second to ensure that the communication is initialized
@@ -172,7 +172,8 @@ class SystemController(BaseControllerService):
 
         is_required = service_type in self.required_service_types
         self.logger.info(
-            f"Registered {'required' if is_required else 'non-required'} service: {service_type} with ID: {service_id}"
+            f"Registered {'required' if is_required else 'non-required'} "
+            f"service: {service_type} with ID: {service_id}"
         )
 
         # Send configure command to the newly registered service
@@ -207,7 +208,8 @@ class SystemController(BaseControllerService):
             self.logger.debug(f"Updated heartbeat for {service_id} to {timestamp}")
         else:
             self.logger.warning(
-                f"Received heartbeat from unknown service: {service_id} ({service_type})"
+                f"Received heartbeat from unknown service: {service_id} "
+                f"({service_type})"
             )
 
     async def _process_status_message(self, message: BaseMessage) -> None:
@@ -230,7 +232,8 @@ class SystemController(BaseControllerService):
             self.logger.debug(f"Updated state for {service_id} to {state}")
         else:
             self.logger.warning(
-                f"Received status update from unknown service: {service_id} ({service_type})"
+                f"Received status update from unknown service: {service_id} "
+                f"({service_type})"
             )
 
     async def send_command_to_service(

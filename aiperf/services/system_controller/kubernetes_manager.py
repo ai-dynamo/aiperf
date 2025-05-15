@@ -13,7 +13,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 import asyncio
-from typing import List
 
 from pydantic import BaseModel
 
@@ -36,7 +35,7 @@ class KubernetesServiceManager(BaseServiceManager):
     """
 
     def __init__(
-        self, required_service_types: List[ServiceType], config: ServiceConfig
+        self, required_service_types: list[ServiceType], config: ServiceConfig
     ):
         super().__init__(required_service_types, config)
 

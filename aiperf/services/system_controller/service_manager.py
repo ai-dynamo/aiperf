@@ -15,7 +15,6 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceType
@@ -28,18 +27,18 @@ class BaseServiceManager(ABC):
     """
 
     def __init__(
-        self, required_service_types: List[ServiceType], config: ServiceConfig
+        self, required_service_types: list[ServiceType], config: ServiceConfig
     ):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.required_service_types = required_service_types
         self.config = config
         # Maps to track service information
-        self.service_map: Dict[ServiceType, List[ServiceRunInfo]] = {}
+        self.service_map: dict[ServiceType, list[ServiceRunInfo]] = {}
 
         # Create service ID map for component lookups
-        self.service_id_map: Dict[str, ServiceRunInfo] = {}
+        self.service_id_map: dict[str, ServiceRunInfo] = {}
 
-    def get(self, service_id: str) -> Optional[ServiceRunInfo]:
+    def get(self, service_id: str) -> ServiceRunInfo | None:
         """
         Get the service run information by service ID.
         """
