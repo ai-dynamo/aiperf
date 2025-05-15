@@ -40,6 +40,6 @@ def bootstrap_and_run_service(
 
         service_config = load_service_config()
 
-    # service_type is filled in by all the service class implementations
+    # Create the service instance and run it
     service = service_class(service_config=service_config)
     uvloop.run(service.run())
