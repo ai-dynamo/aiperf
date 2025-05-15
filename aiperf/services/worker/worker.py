@@ -13,7 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 import sys
-from typing import Any, Dict
+from typing import Any
 
 from aiperf.common.config.service_config import WorkerConfig
 
@@ -32,19 +32,19 @@ class Worker:
         """Stop the worker."""
         # TODO: Implement worker stop
 
-    async def process_credit(self, credit_data: Dict[str, Any]) -> None:
+    async def process_credit(self, credit_data: dict[str, Any]) -> None:
         """Process a credit by initiating a conversation."""
         # TODO: Implement worker process credit
 
-    async def handle_conversation(self, conversation_data: Dict[str, Any]) -> None:
+    async def handle_conversation(self, conversation_data: dict[str, Any]) -> None:
         """Handle a conversation with the server."""
         # TODO: Implement worker handle conversation
 
-    async def send_request(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def send_request(self, request_data: dict[str, Any]) -> dict[str, Any]:
         """Send a request to the server."""
         # TODO: Implement worker send request
 
-    async def publish_result(self, result_data: Dict[str, Any]) -> None:
+    async def publish_result(self, result_data: dict[str, Any]) -> None:
         """Publish a result to the worker manager."""
         # TODO: Implement worker publish result
 

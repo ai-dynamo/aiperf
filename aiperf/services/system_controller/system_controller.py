@@ -15,7 +15,7 @@
 import asyncio
 import sys
 from multiprocessing import Process
-from typing import Any, Dict
+from typing import Any
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config.service_config import ServiceConfig
@@ -111,7 +111,7 @@ class SystemController(BaseService):
         ]
 
         # Create and start all service tasks
-        self.service_tasks: Dict[str, asyncio.Task] = {}
+        self.service_tasks: dict[str, asyncio.Task] = {}
         for service_name, service_class in service_configs:
             service_instance = service_class(self.config)
             task = asyncio.create_task(service_instance.run())
@@ -158,7 +158,7 @@ class SystemController(BaseService):
         ]
 
         # Create and start all service processes
-        self.service_processes: Dict[str, Process] = {}
+        self.service_processes: dict[str, Process] = {}
         for service_name, service_class in service_configs:
             process = Process(
                 target=bootstrap_and_run_service,
