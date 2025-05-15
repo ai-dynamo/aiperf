@@ -15,45 +15,93 @@
 from aiperf.common.enums.base import StrEnum
 
 
-# Service-related enums
 class ServiceRunType(StrEnum):
-    """Different ways to run a service."""
+    """The different ways the SystemController should run the component services."""
 
     MULTIPROCESSING = "process"
+    """Run each service as a separate process.
+    This is the default way for single-node deployments."""
+
     KUBERNETES = "k8s"
+    """Run each service as a separate Kubernetes pod.
+    This is the default way for multi-node deployments."""
 
 
 class ServiceState(StrEnum):
     """States a service can be in throughout its lifecycle."""
 
     UNKNOWN = "unknown"
+    """The service state is unknown. Placeholder for services that have not yet initialized."""
+
     INITIALIZING = "initializing"
+    """The service is currently initializing. This is a temporary state that should be followed by READY."""
+
     READY = "ready"
+    """The service has initialized and is ready to be configured or started."""
+
     STARTING = "starting"
+    """The service is starting. This is a temporary state that should be followed by RUNNING."""
+
     RUNNING = "running"
+    """The service is running."""
+
     STOPPING = "stopping"
+    """The service is stopping. This is a temporary state that should be followed by STOPPED."""
+
     STOPPED = "stopped"
+    """The service is stopped."""
+
     ERROR = "error"
+    """The service is currently in an error state."""
 
 
 class ServiceType(StrEnum):
-    """Types of services in the AIPerf system."""
+    """Types of services in the AIPerf system.
+
+    This is used to identify the service type when registering with the SystemController.
+    It can also be used for tracking purposes if multiple instances of the same service type are running.
+    """
 
     SYSTEM_CONTROLLER = "system_controller"
+    """The SystemController service."""
+
     DATASET_MANAGER = "dataset_manager"
+    """The DatasetManager service."""
+
     TIMING_MANAGER = "timing_manager"
-    WORKER_MANAGER = "worker_manager"
+    """The TimingManager service."""
+
     RECORDS_MANAGER = "records_manager"
+    """The RecordsManager service."""
+
     POST_PROCESSOR_MANAGER = "post_processor_manager"
+    """The PostProcessorManager service."""
+
+    WORKER_MANAGER = "worker_manager"
+    """The WorkerManager service."""
+
     WORKER = "worker"
-    TEST = "test_service"  # Used in tests
+    """The Worker service."""
+
+    TEST = "test_service"
+    """Used in tests."""
 
 
 class ServiceRegistrationStatus(StrEnum):
-    """Status of service registration."""
+    """Defines the various states a service can be in during registration with the SystemController."""
 
     UNREGISTERED = "unregistered"
+    """The service is not registered with the SystemController. This is the initial state."""
+
     WAITING = "waiting"
+    """The service is waiting for the SystemController to register it.
+    This is a temporary state that should be followed by REGISTERED."""
+
     REGISTERED = "registered"
+    """The service is registered with the SystemController."""
+
     TIMEOUT = "timeout"
+    """The service registration timed out."""
+
     ERROR = "error"
+    """The service registration failed."""

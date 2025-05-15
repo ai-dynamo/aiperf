@@ -21,43 +21,60 @@ class CommBackend(StrEnum):
     """Supported communication backends."""
 
     ZMQ_TCP = "zmq_tcp"
-
-
-class CommType(StrEnum):
-    """Communication type for response bus operations."""
-
-    PUB = "pub"
-    SUB = "sub"
-    PUSH = "push"
-    PULL = "pull"
-    REP = "rep"
-    REQ = "req"
+    """ZeroMQ backend using TCP sockets."""
 
 
 class Topic(StrEnum):
-    """Communication topics for the main response bus."""
+    """Communication topics for the main messaging bus.
+    Right now, there is some overlap between Topic and MessageType."""
 
     CREDIT_DROP = "credit_drop"
+    """The topic for credit drop messages."""
+
     CREDIT_RETURN = "credit_return"
+    """The topic for credit return messages."""
+
     REGISTRATION = "registration"
+    """The topic for registration messages."""
+
     COMMAND = "command"
+    """The topic for command messages."""
+
     RESPONSE = "response"
+    """The topic for response messages."""
+
     STATUS = "status"
+    """The topic for status messages."""
+
     HEARTBEAT = "heartbeat"
+    """The topic for heartbeat messages."""
 
 
+# TODO: Is this separation needed? Or should we just use the Topic enum?
 class DataTopic(StrEnum):
-    """Specific data topics for different service domains."""
+    """TBD. Specific data topics for use in the future."""
 
     DATASET = "dataset_data"
-    TIMING = "timing_data"
+    """The topic for dataset data."""
+
     RECORDS = "records_data"
+    """The topic for records data."""
+
     WORKER = "worker_data"
+    """The topic for worker data."""
+
     POST_PROCESSOR = "post_processor_data"
-    CREDIT = "credit"
+    """The topic for post processor data."""
+
     RESULTS = "results"
+    """The topic for results data."""
+
     METRICS = "metrics"
+    """The topic for metrics data."""
+
     CONVERSATION = "conversation_data"
+    """The topic for conversation data."""
 
 
 TopicType = Union[Topic, DataTopic]
+"""TopicType is a union of all the various different topic types supported by the system."""

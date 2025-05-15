@@ -16,7 +16,6 @@
 __all__ = [
     "StrEnum",
     "CommBackend",
-    "CommType",
     "DataTopic",
     "Topic",
     "TopicType",
@@ -32,7 +31,6 @@ from aiperf.common.enums.base import StrEnum
 
 from aiperf.common.enums.comms import (
     CommBackend,
-    CommType,
     DataTopic,
     Topic,
     TopicType,

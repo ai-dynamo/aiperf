@@ -17,28 +17,57 @@ from aiperf.common.enums.base import StrEnum
 
 # Message-related enums
 class MessageType(StrEnum):
-    """Types of messages exchanged between services."""
+    """The various types of messages that can be sent between services.
+
+    The message type is used to determine what Pydantic model the payload maps to. The mappings
+    between message types and payload types are defined in the payload definitions.
+    """
 
     UNKNOWN = "unknown"
+    """A placeholder value for when the message type is not known."""
+
     REGISTRATION = "registration"
+    """A message sent by a component service to register itself with the
+    system controller."""
+
     HEARTBEAT = "heartbeat"
+    """A message sent by a component service to the system controller to indicate it
+    is still running."""
+
     COMMAND = "command"
+    """A message sent by the system controller to a component service to command it
+    to do something."""
+
     RESPONSE = "response"
+    """A message sent by a component service to the system controller to respond
+    to a command."""
+
     STATUS = "status"
-    DATA = "data"
+    """A notification sent by a component service to the system controller to
+    report its status."""
+
     ERROR = "error"
-    CONVERSATION = "conversation"
-    RESULT = "result"
-    WORKER_REQUEST = "worker_request"
-    WORKER_RESPONSE = "worker_response"
+    """A message sent by a component service to the system controller to
+    report an error."""
+
     CREDIT_DROP = "credit_drop"
+    """A message sent by the Timing Manager service to allocate credits
+    for a worker."""
+
     CREDIT_RETURN = "credit_return"
+    """A message sent by the Worker services to return credits to the credit pool."""
 
 
 class CommandType(StrEnum):
-    """Commands that can be sent to services."""
+    """List of commands that the SystemController can send to component services."""
+
+    CONFIGURE = "configure"
+    """A command to configure the service with the configuration present
+    in the payload."""
 
     START = "start"
+    """A command to start the service. The service should have already
+    been configured."""
+
     STOP = "stop"
-    CONFIGURE = "configure"
-    STATUS = "status"
+    """A command to stop the service."""
