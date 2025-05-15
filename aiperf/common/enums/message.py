@@ -57,6 +57,9 @@ class MessageType(StrEnum):
     CREDIT_RETURN = "credit_return"
     """A message sent by the Worker services to return credits to the credit pool."""
 
+    DATA = "data"
+    """A message containing data. This is TBD."""
+
 
 class CommandType(StrEnum):
     """List of commands that the SystemController can send to component services."""
