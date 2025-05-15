@@ -16,8 +16,8 @@ import argparse
 import os
 import re
 import sys
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, Dict, Optional, Sequence
 
 current_year = str(datetime.now().year)

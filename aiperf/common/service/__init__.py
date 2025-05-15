@@ -14,5 +14,4 @@
 #  limitations under the License.
 from aiperf.common.service.base import BaseService
 
-
 __all__ = ["BaseService"]

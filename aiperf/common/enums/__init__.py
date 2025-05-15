@@ -23,10 +23,10 @@ __all__ = [
 ]
 
 from aiperf.common.enums.base import (
-    ServiceState,
-    MessageType,
     CommandType,
-    Topic,
     CommBackend,
+    MessageType,
     ServiceRunType,
+    ServiceState,
+    Topic,
 )
