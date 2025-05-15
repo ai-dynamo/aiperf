@@ -15,7 +15,7 @@
 """Pydantic models for message structures used in inter-service communication."""
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -86,7 +86,7 @@ class ResponseMessage(BaseMessage):
         ...,
         description="ID of the command this is responding to",
     )
-    data: Dict[str, Any] = Field(
+    data: dict[str, Any] = Field(
         default_factory=dict,
         description="Response data",
     )
@@ -96,7 +96,7 @@ class DataMessage(BaseMessage):
     """Data message for sharing information between services."""
 
     message_type: MessageType = MessageType.DATA
-    data: Dict[str, Any] = Field(
+    data: dict[str, Any] = Field(
         default_factory=dict,
         description="Data payload",
     )
@@ -129,7 +129,7 @@ class CreditMessage(BaseMessage):
     """Credit message sent by the timing manager to authorize a request."""
 
     message_type: MessageType = MessageType.CREDIT.value
-    credit: Dict[str, Any] = Field(
+    credit: dict[str, Any] = Field(
         ...,
         description="Credit data",
     )
@@ -139,7 +139,7 @@ class ResultMessage(BaseMessage):
     """Result message sent by workers to report results."""
 
     message_type: MessageType = MessageType.DATA.value  # Using DATA type for results
-    result: Dict[str, Any] = Field(
+    result: dict[str, Any] = Field(
         ...,
         description="Result data",
     )

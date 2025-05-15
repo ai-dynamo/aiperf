@@ -38,10 +38,11 @@ repos:
     hooks:
       # Run the linter.
       - id: ruff
-        args: [ --fix ]
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
       # Run the formatter.
       - id: ruff-format
-        types_or: [ python, pyi ]
+        types_or: [python, pyi]
   - repo: https://github.com/codespell-project/codespell
     rev: v2.2.4
     hooks:

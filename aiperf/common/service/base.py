@@ -23,8 +23,8 @@ from aiperf.common.enums import ServiceState, Topic
 from aiperf.common.models.messages import (
     BaseMessage,
     HeartbeatMessage,
-    StatusMessage,
     RegistrationMessage,
+    StatusMessage,
 )
 
 
