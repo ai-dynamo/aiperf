@@ -21,13 +21,13 @@ def bootstrap_and_run_service(
 ):
     """Bootstrap the service and run it.
 
-    This function will load the service configuration, create an instance of the service,
-    and run it.
+    This function will load the service configuration,
+    create an instance of the service, and run it.
 
     Args:
         service_class: The service class of the service to run
-        service_config: The service configuration to use, if not provided, the service configuration
-                will be loaded from the config file
+        service_config: The service configuration to use, if not provided, the service
+            configuration will be loaded from the config file
 
     """
     import uvloop

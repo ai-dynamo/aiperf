@@ -12,7 +12,6 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-from typing import Union
 
 from aiperf.common.enums.base import StrEnum
 
@@ -76,5 +75,6 @@ class DataTopic(StrEnum):
     """The topic for conversation data."""
 
 
-TopicType = Union[Topic, DataTopic]
-"""TopicType is a union of all the various different topic types supported by the system."""
+TopicType = Topic | DataTopic
+"""TopicType is a union of all the various different topic types supported by
+the system."""

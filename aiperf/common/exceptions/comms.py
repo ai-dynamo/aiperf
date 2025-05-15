@@ -47,13 +47,15 @@ class CommunicationSubscribeError(AIPerfException):
 
 
 class CommunicationPullError(AIPerfException):
-    """Exception raised when communication channels fail to pull a response from a topic."""
+    """Exception raised when communication channels fail to pull a response from
+    a topic."""
 
     message: str = "Communication channels failed to pull a response from a topic"
 
 
 class CommunicationPushError(AIPerfException):
-    """Exception raised when communication channels fail to push a response to a topic."""
+    """Exception raised when communication channels fail to push a response to
+    a topic."""
 
     message: str = "Communication channels failed to push a response to a topic"
 

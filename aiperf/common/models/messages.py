@@ -15,7 +15,6 @@
 """Pydantic models for messages used in inter-service communication."""
 
 import time
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -27,7 +26,7 @@ class BaseMessage(BaseModel):
     The payload can be any of the payload types defined by the payloads.py module.
     """
 
-    service_id: Optional[str] = Field(
+    service_id: str | None = Field(
         default=None,
         description="ID of the service sending the response",
     )
@@ -35,7 +34,7 @@ class BaseMessage(BaseModel):
         default_factory=time.time_ns,
         description="Time when the response was created",
     )
-    request_id: Optional[str] = Field(
+    request_id: str | None = Field(
         default=None,
         description="ID of the request",
     )

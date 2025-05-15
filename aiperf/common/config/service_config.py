@@ -35,7 +35,8 @@ class ServiceConfig(BaseModel):
     )
     heartbeat_timeout: float = Field(
         default=60.0,
-        description="Time in seconds after which a service is considered dead if no heartbeat received",
+        description="Time in seconds after which a service is considered dead if no "
+        "heartbeat received",
     )
     registration_timeout: float = Field(
         default=60.0,

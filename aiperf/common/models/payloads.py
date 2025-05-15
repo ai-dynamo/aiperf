@@ -16,7 +16,7 @@
 
 import time
 import uuid
-from typing import Any, Dict, Literal, Optional, Union
+from typing import Any, Literal, Union
 
 from pydantic import BaseModel, Field
 
@@ -53,7 +53,7 @@ class ErrorPayload(BasePayload):
         ...,
         description="Error response",
     )
-    error_details: Optional[Dict[str, Any]] = Field(
+    error_details: dict[str, Any] | None = Field(
         default=None,
         description="Additional details about the error",
     )
@@ -113,7 +113,7 @@ class CommandPayload(BasePayload):
         default=False,
         description="Whether a response is required for this command",
     )
-    target_service_id: Optional[str] = Field(
+    target_service_id: str | None = Field(
         default=None,
         description="ID of the target service for this command",
     )
@@ -161,7 +161,7 @@ class ResponsePayload(BasePayload):
 
 # Only put concrete payload types here, with unique message_type values,
 # otherwise the discriminator will complain.
-PayloadType = Union[
+PayloadType = Union[  # noqa: UP007
     DataPayload,
     HeartbeatPayload,
     RegistrationPayload,

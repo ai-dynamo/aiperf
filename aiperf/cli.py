@@ -21,7 +21,7 @@ from rich.logging import RichHandler
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.services.system_controller import SystemController
+from aiperf.services.system_controller.system_controller import SystemController
 
 # TODO: Each service may have to initialize logging from a common
 #  configuration due to running on separate processes
@@ -45,12 +45,15 @@ def main() -> None:
         type=str,
         default="process",
         choices=["process", "k8s"],
-        help="Process manager backend to use (multiprocessing: 'process', or kubernetes: 'k8s')",
+        help="Process manager backend to use "
+        "(multiprocessing: 'process', or kubernetes: 'k8s')",
     )
     args = parser.parse_args()
 
     # Set logging level for the root logger (affects all loggers)
     logging.root.setLevel(getattr(logging, args.log_level))
+
+    # Set up logging to use Rich
     if not logging.root.handlers:
         handler = RichHandler(
             rich_tracebacks=True,
@@ -67,7 +70,7 @@ def main() -> None:
 
     if args.config:
         # In a real implementation, this would load from the specified file
-        logger.info(f"Loading configuration from {args.config}")
+        logger.info("Loading configuration from %s", args.config)
         # config.load_from_file(args.config)
 
     # Create and start the system controller

@@ -13,11 +13,10 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 import time
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from aiperf.common.enums import ServiceType, ServiceRegistrationStatus, ServiceState
+from aiperf.common.enums import ServiceRegistrationStatus, ServiceState, ServiceType
 
 
 class ServiceRunInfo(BaseModel):
@@ -35,11 +34,11 @@ class ServiceRunInfo(BaseModel):
         ...,
         description="The ID of the service",
     )
-    first_seen: Optional[int] = Field(
+    first_seen: int | None = Field(
         default_factory=time.time_ns,
         description="The first time the service was seen",
     )
-    last_seen: Optional[int] = Field(
+    last_seen: int | None = Field(
         default_factory=time.time_ns,
         description="The last time the service was seen",
     )

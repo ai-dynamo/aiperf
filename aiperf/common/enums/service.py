@@ -31,22 +31,26 @@ class ServiceState(StrEnum):
     """States a service can be in throughout its lifecycle."""
 
     UNKNOWN = "unknown"
-    """The service state is unknown. Placeholder for services that have not yet initialized."""
+    """The service state is unknown. Placeholder for services that have not yet
+    initialized."""
 
     INITIALIZING = "initializing"
-    """The service is currently initializing. This is a temporary state that should be followed by READY."""
+    """The service is currently initializing. This is a temporary state that should be
+    followed by READY."""
 
     READY = "ready"
     """The service has initialized and is ready to be configured or started."""
 
     STARTING = "starting"
-    """The service is starting. This is a temporary state that should be followed by RUNNING."""
+    """The service is starting. This is a temporary state that should be followed
+    by RUNNING."""
 
     RUNNING = "running"
     """The service is running."""
 
     STOPPING = "stopping"
-    """The service is stopping. This is a temporary state that should be followed by STOPPED."""
+    """The service is stopping. This is a temporary state that should be followed
+    by STOPPED."""
 
     STOPPED = "stopped"
     """The service is stopped."""
@@ -58,8 +62,9 @@ class ServiceState(StrEnum):
 class ServiceType(StrEnum):
     """Types of services in the AIPerf system.
 
-    This is used to identify the service type when registering with the SystemController.
-    It can also be used for tracking purposes if multiple instances of the same service type are running.
+    This is used to identify the service type when registering with the
+    SystemController. It can also be used for tracking purposes if multiple
+    instances of the same service type are running.
     """
 
     SYSTEM_CONTROLLER = "system_controller"
@@ -88,10 +93,12 @@ class ServiceType(StrEnum):
 
 
 class ServiceRegistrationStatus(StrEnum):
-    """Defines the various states a service can be in during registration with the SystemController."""
+    """Defines the various states a service can be in during registration with
+    the SystemController."""
 
     UNREGISTERED = "unregistered"
-    """The service is not registered with the SystemController. This is the initial state."""
+    """The service is not registered with the SystemController. This is the
+    initial state."""
 
     WAITING = "waiting"
     """The service is waiting for the SystemController to register it.

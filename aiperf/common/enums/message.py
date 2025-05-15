@@ -19,8 +19,9 @@ from aiperf.common.enums.base import StrEnum
 class MessageType(StrEnum):
     """The various types of messages that can be sent between services.
 
-    The message type is used to determine what Pydantic model the payload maps to. The mappings
-    between message types and payload types are defined in the payload definitions.
+    The message type is used to determine what Pydantic model the payload maps to.
+    The mappings between message types and payload types are defined in the
+    payload definitions.
     """
 
     UNKNOWN = "unknown"
