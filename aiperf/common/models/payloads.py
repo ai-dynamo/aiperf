@@ -16,6 +16,7 @@
 
 import time
 import uuid
+from abc import ABC
 from typing import Any, Literal, Union
 
 from pydantic import BaseModel, Field
@@ -23,7 +24,7 @@ from pydantic import BaseModel, Field
 from aiperf.common.enums import CommandType, MessageType, ServiceState, ServiceType
 
 
-class BasePayload(BaseModel):
+class BasePayload(BaseModel, ABC):
     """Base model for all payload data. Each payload type must inherit
     from this class, and override the `message_type` field.
 
@@ -142,21 +143,6 @@ class CreditReturnPayload(BasePayload):
         ...,
         description="Amount of credits to return",
     )
-
-
-class RequestPayload(BasePayload):
-    """Base request payload sent to services to request a resource."""
-
-    target_service_id: str = Field(
-        ...,
-        description="ID of the target service for this request",
-    )
-
-
-class ResponsePayload(BasePayload):
-    """Base response payload sent to services to respond to a request."""
-
-    pass
 
 
 # Only put concrete payload types here, with unique message_type values,

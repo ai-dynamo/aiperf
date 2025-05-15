@@ -54,14 +54,13 @@ def main() -> None:
     logging.root.setLevel(getattr(logging, args.log_level))
 
     # Set up logging to use Rich
-    if not logging.root.handlers:
-        handler = RichHandler(
-            rich_tracebacks=True,
-            show_path=True,
-            console=Console(),
-            tracebacks_show_locals=True,
-        )
-        logging.root.addHandler(handler)
+    handler = RichHandler(
+        rich_tracebacks=True,
+        show_path=True,
+        console=Console(),
+        tracebacks_show_locals=True,
+    )
+    logging.root.addHandler(handler)
 
     # Load configuration
     config = ServiceConfig(
