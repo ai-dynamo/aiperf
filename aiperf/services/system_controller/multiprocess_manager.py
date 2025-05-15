@@ -22,9 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceRegistrationStatus, ServiceType
-from aiperf.services.system_controller.service_manager import (
-    ServiceManagerBase,
-)
+from aiperf.services.system_controller.service_manager import BaseServiceManager
 
 
 class MultiProcessRunInfo(BaseModel):
@@ -39,7 +37,7 @@ class MultiProcessRunInfo(BaseModel):
     )
 
 
-class MultiProcessManager(ServiceManagerBase):
+class MultiProcessManager(BaseServiceManager):
     """
     Service Manager for starting and stopping services as multiprocessing processes.
     """

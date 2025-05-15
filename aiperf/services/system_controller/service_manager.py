@@ -22,7 +22,7 @@ from aiperf.common.enums import ServiceType
 from aiperf.common.models.service import ServiceRunInfo
 
 
-class ServiceManagerBase(ABC):
+class BaseServiceManager(ABC):
     """
     Base class for service managers.
     """
@@ -47,22 +47,27 @@ class ServiceManagerBase(ABC):
 
     @abstractmethod
     async def initialize_all_services(self) -> None:
+        """Initialize all required services."""
         pass
 
     @abstractmethod
     async def stop_all_services(self) -> None:
+        """Stop all managed services."""
         pass
 
     @abstractmethod
     async def wait_for_all_services_registration(
         self, stop_event: asyncio.Event, timeout_seconds: int = 30
     ) -> bool:
+        """Wait for all required services to be registered."""
         pass
 
     @abstractmethod
     async def wait_for_all_services_start(self) -> bool:
+        """Wait for all required services to be started."""
         pass
 
     @abstractmethod
     async def wait_for_all_services_stop(self) -> bool:
+        """Wait for all managed services to be stopped."""
         pass

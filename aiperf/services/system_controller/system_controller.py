@@ -15,7 +15,7 @@
 import asyncio
 import sys
 import time
-from typing import List
+from typing import List, Optional
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import (
@@ -29,17 +29,15 @@ from aiperf.common.enums import (
 from aiperf.common.exceptions.service import ServiceInitializationException
 from aiperf.common.models.messages import BaseMessage
 from aiperf.common.models.service import ServiceRunInfo
-from aiperf.common.service.controller import ControllerServiceBase
+from aiperf.common.service.controller import BaseControllerService
 from aiperf.services.system_controller.kubernetes_manager import (
     KubernetesServiceManager,
 )
 from aiperf.services.system_controller.multiprocess_manager import MultiProcessManager
-from aiperf.services.system_controller.service_manager import (
-    ServiceManagerBase,
-)
+from aiperf.services.system_controller.service_manager import BaseServiceManager
 
 
-class SystemController(ControllerServiceBase):
+class SystemController(BaseControllerService):
     def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
 
@@ -52,7 +50,7 @@ class SystemController(ControllerServiceBase):
             ServiceType.POST_PROCESSOR_MANAGER,
         ]
 
-        self.service_manager: ServiceManagerBase = None
+        self.service_manager: Optional[BaseServiceManager] = None
 
     @property
     def service_type(self) -> ServiceType:

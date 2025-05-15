@@ -19,9 +19,7 @@ from pydantic import BaseModel
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceType
-from aiperf.services.system_controller.service_manager import (
-    ServiceManagerBase,
-)
+from aiperf.services.system_controller.service_manager import BaseServiceManager
 
 
 class ServiceKubernetesRunInfo(BaseModel):
@@ -32,7 +30,7 @@ class ServiceKubernetesRunInfo(BaseModel):
     namespace: str
 
 
-class KubernetesServiceManager(ServiceManagerBase):
+class KubernetesServiceManager(BaseServiceManager):
     """
     Service Manager for starting and stopping services in a Kubernetes cluster.
     """
