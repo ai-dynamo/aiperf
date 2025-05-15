@@ -25,14 +25,14 @@ from aiperf.common.enums import (
     SubClientType,
     Topic,
 )
-from aiperf.common.models.messages import BaseMessage
-from aiperf.common.models.payloads import (
+from aiperf.common.models.message_models import BaseMessage
+from aiperf.common.models.payload_models import (
     HeartbeatPayload,
     PayloadType,
     RegistrationPayload,
     StatusPayload,
 )
-from aiperf.common.service.base import BaseService
+from aiperf.common.service.base_service import BaseService
 
 
 class BaseComponentService(BaseService, ABC):

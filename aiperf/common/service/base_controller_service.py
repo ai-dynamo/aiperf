@@ -12,6 +12,8 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+from abc import ABC
+
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import (
     ClientType,
@@ -19,12 +21,12 @@ from aiperf.common.enums import (
     PubClientType,
     SubClientType,
 )
-from aiperf.common.models.messages import BaseMessage
-from aiperf.common.models.payloads import CommandPayload
-from aiperf.common.service.base import BaseService
+from aiperf.common.models.message_models import BaseMessage
+from aiperf.common.models.payload_models import CommandPayload
+from aiperf.common.service.base_service import BaseService
 
 
-class BaseControllerService(BaseService):
+class BaseControllerService(BaseService, ABC):
     """Base class for all controller services, such as the System Controller.
 
     This class provides a common interface for all controller services in the AIPerf

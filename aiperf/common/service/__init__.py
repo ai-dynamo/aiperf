@@ -15,6 +15,6 @@
 
 __all__ = ["BaseService", "BaseComponentService", "BaseControllerService"]
 
-from aiperf.common.service.base import BaseService
-from aiperf.common.service.component import BaseComponentService
-from aiperf.common.service.controller import BaseControllerService
+from aiperf.common.service.base_component_service import BaseComponentService
+from aiperf.common.service.base_controller_service import BaseControllerService
+from aiperf.common.service.base_service import BaseService
