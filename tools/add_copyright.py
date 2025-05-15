@@ -16,9 +16,10 @@ import argparse
 import os
 import re
 import sys
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, Optional, Sequence
+from typing import Callable, Optional
 
 current_year = str(datetime.now().year)
 
@@ -43,7 +44,7 @@ def update_copyright_year(
     If the copyright is not present in the file, this function has no effect.
     """
     if content is None:
-        with open(path, "r") as f:
+        with open(path) as f:
             content = f.read()
 
     match = COPYRIGHT_YEAR_PAT.search(content)
@@ -74,7 +75,7 @@ def update_and_get_license() -> str:
     # License file should always have the current year.
     update_copyright_year(LICENSE_PATH, disallow_range=True)
 
-    with open(LICENSE_PATH, "r") as license_file:
+    with open(LICENSE_PATH) as license_file:
         return license_file.read()
 
 
@@ -131,7 +132,7 @@ def update_or_add_header(
             controls how the contents of the file are updated. By default, the copyright
             header is prepended to the file.
     """
-    with open(path, "r") as f:
+    with open(path) as f:
         content = f.read()
 
     if has_copyright(content):
@@ -161,7 +162,7 @@ def update_or_add_header(
 # This mapping stores callables that return whether a handler wants to process a specified
 # file based on the path along with callables that will accept the file path and update
 # it with the copyright header.
-FILE_TYPE_HANDLERS: Dict[Callable[[str], bool], Callable[[str], None]] = {}
+FILE_TYPE_HANDLERS: dict[Callable[[str], bool], Callable[[str], None]] = {}
 
 
 #
