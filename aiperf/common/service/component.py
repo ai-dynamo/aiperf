@@ -13,8 +13,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 import asyncio
-from abc import ABC, abstractmethod
 import contextlib
+from abc import ABC, abstractmethod
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import (
@@ -38,11 +38,11 @@ from aiperf.common.service.base import BaseService
 class BaseComponentService(BaseService, ABC):
     """Base class for all component services.
 
-    This class provides a common interface for all component services in the AIPerf framework
-    such as the Timing Manager, Dataset Manager, etc.
+    This class provides a common interface for all component services in the AIPerf
+    framework such as the Timing Manager, Dataset Manager, etc.
 
-    It inherits from the BaseService class and implements the required methods for component
-    services.
+    It inherits from the BaseService class and implements the required methods for
+    component services.
     """
 
     def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
@@ -52,7 +52,8 @@ class BaseComponentService(BaseService, ABC):
     def required_clients(self) -> list[ClientType]:
         """The communication clients required by the service.
 
-        The component services subscribe to controller messages and publish component messages.
+        The component services subscribe to controller messages and publish
+        component messages.
         """
         return [PubClientType.COMPONENT, SubClientType.CONTROLLER]
 
@@ -63,9 +64,9 @@ class BaseComponentService(BaseService, ABC):
         This method is called when a configure command is received from the controller.
         It should be implemented by the derived class to configure the service.
 
-        The service should validate the payload and configure itself accordingly. If successful,
-        the service should publish a success message to the controller. On failure, the service
-        should publish an error message to the controller.
+        The service should validate the payload and configure itself accordingly.
+        If successful, the service should publish a success message to the controller.
+        On failure, the service should publish an error message to the controller.
 
         Args:
             payload: The configuration payload. This is a union type of all the possible
@@ -75,8 +76,8 @@ class BaseComponentService(BaseService, ABC):
         pass
 
     async def run(self) -> None:
-        """This method will start the service and initialize its components. It will also subscribe
-        to the command topic and process commands as they are received.
+        """This method will start the service and initialize its components. It will
+        also subscribe to the command topic and process commands as they are received.
         """
         try:
             # Initialize the service
@@ -99,8 +100,8 @@ class BaseComponentService(BaseService, ABC):
             await self.set_state(ServiceState.READY)
 
             # Note: Do not start the service here, let the system controller start it
-            # This is because the service needs to be configured first and may need to wait
-            # for other services to register before it can start
+            # This is because the service needs to be configured first and may need
+            # to wait for other services to register before it can start
 
             # Start the heartbeat task
             await self.start_heartbeat_task()
@@ -129,8 +130,8 @@ class BaseComponentService(BaseService, ABC):
     async def register(self) -> None:
         """Publish a registration request to the system controller.
 
-        This method should be called after the service has been initialized and is ready to
-        start processing messages.
+        This method should be called after the service has been initialized and is
+        ready to start processing messages.
         """
         self.logger.debug(
             "Attempting to register service %s (%s) with system controller",
@@ -215,8 +216,8 @@ class BaseComponentService(BaseService, ABC):
 
         async def heartbeat_loop() -> None:
             while not self.stop_event.is_set():
-                # Sleep first to avoid sending a heartbeat before the registration message
-                # has been published
+                # Sleep first to avoid sending a heartbeat before the registration
+                # message has been published
                 await asyncio.sleep(self._heartbeat_interval)
                 await self.send_heartbeat()
 

@@ -16,7 +16,6 @@ import asyncio
 import logging
 import signal
 import uuid
-from typing import Optional
 
 from aiperf.common.comms.communication import BaseCommunication
 from aiperf.common.comms.communication_factory import CommunicationFactory
@@ -28,12 +27,12 @@ from aiperf.common.service.abstract import AbstractBaseService
 
 
 class BaseService(AbstractBaseService):
-    """Base class for all AIPerf services, providing common functionality for communication,
-    state management, and lifecycle operations.
+    """Base class for all AIPerf services, providing common functionality for
+    communication, state management, and lifecycle operations.
 
-    This class provides the foundation for implementing the various services of the AIPerf system.
-    Some of the abstract methods are implemented here, while others are still required to be
-    implemented by derived classes.
+    This class provides the foundation for implementing the various services of the
+    AIPerf system. Some of the abstract methods are implemented here, while others
+    are still required to be implemented by derived classes.
     """
 
     def __init__(self, service_config: ServiceConfig, service_id: str = None):
@@ -51,7 +50,7 @@ class BaseService(AbstractBaseService):
         self._heartbeat_interval = self.service_config.heartbeat_interval
 
         self.stop_event = asyncio.Event()
-        self.comms: Optional[BaseCommunication] = None
+        self.comms: BaseCommunication | None = None
 
         # Set to store signal handler tasks
         self._signal_tasks = set()
@@ -61,7 +60,8 @@ class BaseService(AbstractBaseService):
         """The current state of the service."""
         return self._state
 
-    # Note: Not using as a setter so it can be overridden by derived classes and still be async
+    # Note: Not using as a setter so it can be overridden by derived classes and still
+    # be async
     async def set_state(self, state: ServiceState) -> None:
         """Set the state of the service."""
         self._state = state
@@ -81,7 +81,8 @@ class BaseService(AbstractBaseService):
         success = await self.comms.initialize()
         if not success:
             self.logger.error(
-                f"{self.service_type}: Failed to initialize {self.service_config.comm_backend} communication"
+                f"{self.service_type}: Failed to initialize "
+                f"{self.service_config.comm_backend} communication"
             )
             self._state = ServiceState.ERROR
             return
@@ -125,7 +126,8 @@ class BaseService(AbstractBaseService):
     async def start(self) -> None:
         """Start the service and its components.
 
-        This method should be called to start the service after it has been initialized and configured.
+        This method should be called to start the service after it has been initialized
+        and configured.
         """
         self.logger.debug(
             "Starting %s service (id: %s)", self.service_type, self.service_id
@@ -180,7 +182,7 @@ class BaseService(AbstractBaseService):
         )
 
     def create_message(
-        self, payload: PayloadType, request_id: Optional[str] = None
+        self, payload: PayloadType, request_id: str | None = None
     ) -> BaseMessage:
         """Create a message of the given type, and pre-fill the service_id.
 
@@ -199,8 +201,8 @@ class BaseService(AbstractBaseService):
         return message
 
     def setup_signal_handlers(self) -> None:
-        """This method will set up signal handlers for the SIGTERM and SIGINT signals in order
-        to trigger a graceful shutdown of the service.
+        """This method will set up signal handlers for the SIGTERM and SIGINT signals
+        in order to trigger a graceful shutdown of the service.
         """
         loop = asyncio.get_running_loop()
 

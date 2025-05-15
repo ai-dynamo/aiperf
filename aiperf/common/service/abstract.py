@@ -58,8 +58,8 @@ class AbstractBaseService(ABC):
     @abstractmethod
     async def run(self) -> None:
         """Run the service. This method will be the primary entry point for the service
-        and will be called by the bootstrap script. It should not return until the service
-        is completely shutdown.
+        and will be called by the bootstrap script. It should not return until the
+        service is completely shutdown.
 
         This method will be implemented by the base class.
         """

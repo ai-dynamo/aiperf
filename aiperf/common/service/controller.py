@@ -15,9 +15,9 @@
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import (
     ClientType,
+    CommandType,
     PubClientType,
     SubClientType,
-    CommandType,
 )
 from aiperf.common.models.messages import BaseMessage
 from aiperf.common.models.payloads import CommandPayload
@@ -27,9 +27,9 @@ from aiperf.common.service.base import BaseService
 class BaseControllerService(BaseService):
     """Base class for all controller services, such as the System Controller.
 
-    This class provides a common interface for all controller services in the AIPerf framework.
-    It inherits from the BaseService class and implements the required methods for controller
-    services.
+    This class provides a common interface for all controller services in the AIPerf
+    framework. It inherits from the BaseService class and implements the required
+    methods for controller services.
     """
 
     def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
@@ -39,7 +39,8 @@ class BaseControllerService(BaseService):
     def required_clients(self) -> list[ClientType]:
         """The communication clients required by the service.
 
-        The controller service subscribes to controller messages and publishes to components.
+        The controller service subscribes to controller messages and publishes
+        to components.
         """
         return [PubClientType.CONTROLLER, SubClientType.COMPONENT]
 
