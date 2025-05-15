@@ -41,6 +41,21 @@ line-length = 88
 indent-width = 4
 exclude = ["__pycache__", "build", "dist", ".venv", "venv"]
 
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
 
 [tool.pytest.ini_options]
 # Basic pytest configuration
