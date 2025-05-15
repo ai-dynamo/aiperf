@@ -23,7 +23,6 @@ from aiperf.common.comms.communication import BaseCommunication
 from aiperf.common.comms.communication_factory import CommunicationFactory
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import (
-    CommandType,
     ServiceState,
     Topic,
 )
@@ -33,7 +32,6 @@ from aiperf.common.models.payloads import (
     PayloadType,
     RegistrationPayload,
     StatusPayload,
-    CommandPayload,
 )
 from aiperf.common.service.abstract import AbstractBaseService
 
@@ -42,24 +40,28 @@ class BaseService(AbstractBaseService):
     """Base class for all AIPerf services, providing common functionality for communication,
     state management, and lifecycle operations.
 
-    This class provides the foundation for implementing the various components of the AIPerf system,
-    such as the System Controller, Dataset Manager, Timing Manager, Worker Manager, etc.
+    This class provides the foundation for implementing the various services of the AIPerf system.
+    Some of the abstract methods are implemented here, while others are still required to be
+    implemented by derived classes.
     """
 
     def __init__(self, service_config: ServiceConfig, service_id: str = None):
         self.service_id: str = service_id or uuid.uuid4().hex
         self.service_config = service_config
-        self.logger = logging.getLogger(self.__class__.__name__)
+
+        self.logger = logging.getLogger(self.service_type)
         self.logger.debug(
-            f"Initializing service {self.service_id} {self.service_type} {self.__class__.__name__}"
+            f"Initializing {self.service_type} service (id: {self.service_id})"
         )
+
         self._state: ServiceState = ServiceState.UNKNOWN
+
         self._heartbeat_task = None
-        self._heartbeat_interval = (
-            self.service_config.heartbeat_interval
-        )  # Default interval in seconds
+        self._heartbeat_interval = self.service_config.heartbeat_interval
+
         self.stop_event = asyncio.Event()
         self.comms: Optional[BaseCommunication] = None
+
         # Set to store signal handler tasks
         self._signal_tasks = set()
 
@@ -68,102 +70,45 @@ class BaseService(AbstractBaseService):
         """The current state of the service."""
         return self._state
 
+    # Note: Not using as a setter so it can be overridden by derived classes and still be async
     async def set_state(self, state: ServiceState) -> None:
         """Set the state of the service."""
         self._state = state
-        if self.comms.is_initialized:
-            await self.comms.publish(
-                topic=Topic.STATUS,
-                message=self.create_status_message(state),
-            )
 
-    def create_message(
-        self, payload: PayloadType, request_id: Optional[str] = None
-    ) -> BaseMessage:
-        """Create a response of the given type.
+    async def initialize(self) -> None:
+        """Initialize the service communication and signal handlers."""
 
-        Pre-fills the service_id and service_type.
+        # Allow time for the event loop to start
+        await asyncio.sleep(0.1)
 
-        Args:
-            payload: The payload of the response
-            Optional[request_id]: The request id of the response this is a response to
-
-        Returns:
-            A response of the given type
-        """
-        message = BaseMessage(
-            service_id=self.service_id,
-            request_id=request_id,
-            payload=payload,
-        )
-        return message
-
-    def create_heartbeat_message(self) -> BaseMessage:
-        """Create a heartbeat response."""
-        return self.create_message(
-            HeartbeatPayload(
-                service_type=self.service_type,
-            )
-        )
-
-    def create_registration_message(self) -> BaseMessage:
-        """Create a registration response."""
-        return self.create_message(
-            RegistrationPayload(
-                service_type=self.service_type,
-            )
-        )
-
-    def create_status_message(self, state: ServiceState) -> BaseMessage:
-        """Create a status response."""
-        return self.create_message(
-            StatusPayload(
-                state=state,
-                service_type=self.service_type,
-            )
-        )
-
-    def create_command_message(
-        self, command: CommandType, target_service_id: str
-    ) -> BaseMessage:
-        """Create a command response."""
-        return self.create_message(
-            CommandPayload(command=command, target_service_id=target_service_id)
-        )
-
-    async def _base_init(self) -> None:
-        """Initialize the service communication and signal handlers.
-
-        This method should be called by derived classes to initialize the service.
-        """
-        await asyncio.sleep(0.1)  # Allow time for the event loop to start
+        self._state = ServiceState.INITIALIZING
 
         # Set up signal handlers for graceful shutdown
-        self._setup_signal_handlers()
-
-        # Initialize the service
-        self._state = ServiceState.INITIALIZING
+        self.setup_signal_handlers()
 
         # Initialize communication
         self.comms = CommunicationFactory.create_communication(self.service_config)
         success = await self.comms.initialize()
         if not success:
             self.logger.error(
-                f"Failed to initialize {self.service_config.comm_backend} communication"
+                f"{self.service_type}: Failed to initialize {self.service_config.comm_backend} communication"
             )
             self._state = ServiceState.ERROR
             return
 
-        self.logger.debug(
-            "Creating communication clients (%s), service: %s",
-            self.required_clients,
-            self.service_type,
-        )
-        # Create the communication clients ahead of time
-        await self.comms.create_clients(*self.required_clients)
+        if len(self.required_clients) > 0:
+            # Create the communication clients ahead of time
+            self.logger.debug(
+                "%s: Creating communication clients (%s)",
+                self.service_type,
+                self.required_clients,
+            )
+            await self.comms.create_clients(*self.required_clients)
 
-    async def _send_heartbeat(self) -> None:
-        """Send a heartbeat response to the system controller."""
+        await self.set_state(ServiceState.READY)
+
+    async def send_heartbeat(self) -> None:
+        """Send a heartbeat notification to the system controller."""
         heartbeat_message = self.create_heartbeat_message()
         self.logger.debug("Sending heartbeat: %s", heartbeat_message)
         await self.comms.publish(
@@ -171,21 +116,8 @@ class BaseService(AbstractBaseService):
             message=heartbeat_message,
         )
 
-    async def _start_heartbeat_task(self) -> None:
-        """Start a background task to send heartbeats at regular intervals."""
-
-        async def heartbeat_loop() -> None:
-            while True:
-                await asyncio.sleep(self._heartbeat_interval)
-                await self._send_heartbeat()
-
-        self._heartbeat_task = asyncio.create_task(heartbeat_loop())
-        self.logger.debug(
-            "Started heartbeat task with interval %ss", self._heartbeat_interval
-        )
-
-    async def _register(self) -> None:
-        """Register the service with the system controller.
+    async def register(self) -> None:
+        """Publish a registration request to the system controller.
 
         This method should be called after the service has been initialized and is ready to
         start processing messages.
@@ -200,13 +132,139 @@ class BaseService(AbstractBaseService):
             message=self.create_registration_message(),
         )
 
-    def _setup_signal_handlers(self) -> None:
-        """Set up signal handlers for graceful shutdown."""
+    async def start(self) -> None:
+        """Start the service and its components.
+
+        This method should be called to start the service after it has been initialized and configured.
+        """
+        self.logger.debug(
+            "Starting %s service (id: %s)", self.service_type, self.service_id
+        )
+        await self.set_state(ServiceState.STARTING)
+
+        try:
+            await self._on_start()
+            await self.set_state(ServiceState.RUNNING)
+        except Exception:
+            self.logger.exception(
+                "Failed to start service %s (id: %s)",
+                self.service_type,
+                self.service_id,
+            )
+            await self.set_state(ServiceState.ERROR)
+            raise
+
+    async def stop(self) -> None:
+        """Stop the service and clean up its components. It will also cancel the
+        heartbeat task if it is running.
+        """
+        if self.state == ServiceState.STOPPED:
+            self.logger.warning(
+                "Service %s state %s is already STOPPED, ignoring stop request",
+                self.service_type,
+                self.state,
+            )
+            return
+
+        await self.set_state(ServiceState.STOPPING)
+
+        # Signal the run method to exit if it hasn't already
+        if not self.stop_event.is_set():
+            self.stop_event.set()
+
+        # Cancel heartbeat task if running
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+
+        # Custom stop logic implemented by derived classes
+        await self._on_stop()
+
+        # Shutdown communication component
+        if self.comms and not self.comms.is_shutdown:
+            await self.comms.shutdown()
+
+        # Custom cleanup logic implemented by derived classes
+        await self._cleanup()
+
+        # Set the state to STOPPED. Communications are shutdown, so we don't need to
+        # publish a status message
+        self._state = ServiceState.STOPPED
+        self.logger.debug(
+            "Service %s (id: %s) stopped", self.service_type, self.service_id
+        )
+
+    def create_message(
+        self, payload: PayloadType, request_id: Optional[str] = None
+    ) -> BaseMessage:
+        """Create a message of the given type, and pre-fill the service_id.
+
+        Args:
+            payload: The payload of the message
+            Optional[request_id]: The request id of the message this is a response to
+
+        Returns:
+            A message of the given type
+        """
+        message = BaseMessage(
+            service_id=self.service_id,
+            request_id=request_id,
+            payload=payload,
+        )
+        return message
+
+    def create_heartbeat_message(self) -> BaseMessage:
+        """Create a heartbeat notification message."""
+        return self.create_message(
+            HeartbeatPayload(
+                service_type=self.service_type,
+            )
+        )
+
+    def create_registration_message(self) -> BaseMessage:
+        """Create a registration request message."""
+        return self.create_message(
+            RegistrationPayload(
+                service_type=self.service_type,
+            )
+        )
+
+    def create_status_message(self, state: ServiceState) -> BaseMessage:
+        """Create a status notification message."""
+        return self.create_message(
+            StatusPayload(
+                state=state,
+                service_type=self.service_type,
+            )
+        )
+
+    async def start_heartbeat_task(self) -> None:
+        """Start a background task to send heartbeats at regular intervals."""
+
+        async def heartbeat_loop() -> None:
+            while not self.stop_event.is_set():
+                # Sleep first to avoid sending a heartbeat before the registration message
+                # has been published
+                await asyncio.sleep(self._heartbeat_interval)
+                await self.send_heartbeat()
+
+        self._heartbeat_task = asyncio.create_task(heartbeat_loop())
+        self.logger.debug(
+            "%s: Started heartbeat task with interval %fs",
+            self.service_type,
+            self._heartbeat_interval,
+        )
+
+    def setup_signal_handlers(self) -> None:
+        """This method will set up signal handlers for the SIGTERM and SIGINT signals in order
+        to trigger a graceful shutdown of the service.
+        """
         loop = asyncio.get_running_loop()
 
-        def signal_handler(sig: int) -> None:
+        def signal_handler(signal: int) -> None:
             # Create a task and store it so it doesn't get garbage collected
-            task = asyncio.create_task(self._handle_signal(sig))
+            task = asyncio.create_task(self.handle_signal(signal))
             # Store the task somewhere to prevent it from being garbage collected
             # before it completes
             self._signal_tasks.add(task)
@@ -215,64 +273,17 @@ class BaseService(AbstractBaseService):
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
 
-        # self.logger.debug("Signal handlers set up for graceful shutdown")
-
-    async def _handle_signal(self, sig: int) -> None:
+    async def handle_signal(self, signal: int) -> None:
         """Handle received signals by triggering graceful shutdown.
 
         Args:
-            sig: The signal number received
+            signal: The signal number received
         """
-        sig_name = signal.Signals(sig).name
-        self.logger.debug(f"Received signal {sig_name}, initiating graceful shutdown")
+        signal_name = signal.Signals(signal).name
+        self.logger.debug(
+            "%s: Received signal %s, initiating graceful shutdown",
+            self.service_type,
+            signal_name,
+        )
 
-        # Stop the service if it's running
-        if self._state == ServiceState.RUNNING:
-            await self.stop()
-        else:
-            # Just set the stop event to break out of the run loop
-            self.stop_event.set()
-
-    async def _start(self) -> None:
-        """Start the service and its components.
-
-        This method should be called to start the service after it has been initialized.
-        """
-        self.logger.debug("Starting %s service %s", self.service_type, self.service_id)
-        await self.set_state(ServiceState.STARTING)
-        try:
-            await self._on_start()
-            await self.set_state(ServiceState.RUNNING)
-        except BaseException:
-            self.logger.exception(
-                "Failed to start service %s: %s", self.service_type, self.service_id
-            )
-            await self.set_state(ServiceState.ERROR)
-            raise
-
-    async def stop(self) -> None:
-        """Stop the service and clean up its components."""
-        if self.state != ServiceState.RUNNING:
-            self.logger.warning(
-                "Service %s is not running, cannot stop", self.service_type
-            )
-            return
-        await self.set_state(ServiceState.STOPPING)
-        # Signal the run method to exit if it hasn't already
-        self.stop_event.set()
-
-        # Cancel heartbeat task if running
-        if self._heartbeat_task and not self._heartbeat_task.done():
-            self._heartbeat_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._heartbeat_task
-
-        await self._on_stop()
-
-        # Shutdown communication component
-        if self.comms:
-            await self.comms.shutdown()
-
-        await self._cleanup()
-
-        self._state = ServiceState.STOPPED
+        await self.stop()

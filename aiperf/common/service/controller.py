@@ -12,18 +12,25 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-from abc import ABC
-
+import asyncio
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import ClientType, PubClientType, ServiceState, SubClientType
+from aiperf.common.enums import (
+    ClientType,
+    PubClientType,
+    ServiceState,
+    SubClientType,
+    CommandType,
+)
+from aiperf.common.models.messages import BaseMessage
+from aiperf.common.models.payloads import CommandPayload
 from aiperf.common.service.base import BaseService
 
 
-class ControllerServiceBase(BaseService, ABC):
-    """Base class for all controller services.
+class BaseControllerService(BaseService):
+    """Base class for all controller services, such as the System Controller.
 
     This class provides a common interface for all controller services in the AIPerf framework.
-    It inherits from the ServiceBase class and implements the required methods for controller
+    It inherits from the BaseService class and implements the required methods for controller
     services.
     """
 
@@ -32,21 +39,49 @@ class ControllerServiceBase(BaseService, ABC):
 
     @property
     def required_clients(self) -> list[ClientType]:
-        """The communication clients required by the service."""
-        # The controller service subscribes to controller messages and publishes to components
+        """The communication clients required by the service.
+
+        The controller service subscribes to controller messages and publishes to components.
+        """
         return [PubClientType.CONTROLLER, SubClientType.COMPONENT]
+
+    def create_command_message(
+        self, command: CommandType, target_service_id: str
+    ) -> BaseMessage:
+        """Create a command message to be sent to a specific service.
+
+        Args:
+            command: The command to send
+            target_service_id: The ID of the service to send the command to
+
+        Returns:
+            A command message
+        """
+        return self.create_message(
+            CommandPayload(command=command, target_service_id=target_service_id)
+        )
 
     # TODO: Complete the implementation of the controller service methods
     async def run(self) -> None:
-        """Start the service and initialize its components."""
-        await self._base_init()
+        """This method will be the primary entry point for the service
+        and will be called by the bootstrap script. It does not return until the service
+        is completely shutdown."""
 
-        await self._initialize()
+        try:
+            # Initialize the service
+            await self.initialize()
 
-        await self.set_state(ServiceState.READY)
+            # Start the service
+            await self.start()
 
-        # Start the service
-        await self._start()
+            # Wait forever for the stop event to be set
+            await self.stop_event.wait()
 
-        # Wait forever for the stop event to be set
-        await self.stop_event.wait()
+        except asyncio.exceptions.CancelledError:
+            self.logger.debug("Service %s execution cancelled", self.service_type)
+        except BaseException:
+            self.logger.exception("Service %s execution failed:", self.service_type)
+            await self.set_state(ServiceState.ERROR)
+        finally:
+            # Shutdown the service
+            await self.stop()

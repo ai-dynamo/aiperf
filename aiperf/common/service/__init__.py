@@ -13,8 +13,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-__all__ = ["BaseService", "ComponentServiceBase", "ControllerServiceBase"]
+__all__ = ["BaseService", "BaseComponentService", "BaseControllerService"]
 
 from aiperf.common.service.base import BaseService
-from aiperf.common.service.component import ComponentServiceBase
-from aiperf.common.service.controller import ControllerServiceBase
+from aiperf.common.service.component import BaseComponentService
+from aiperf.common.service.controller import BaseControllerService
