@@ -12,68 +12,37 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-from typing import Union
+import time
 
 from pydantic import BaseModel, Field
 
-from aiperf.common.enums import ServiceRunType
-
-
-class AsyncIORunInfo(BaseModel):
-    """Information about a service's run in asyncio."""
-
-    task_id: str = Field(
-        ...,
-        description="ID of the task",
-    )
-
-
-class MultiProcessingRunInfo(BaseModel):
-    """Information about a service's run in multiprocessing."""
-
-    process_id: str = Field(
-        ...,
-        description="ID of the process",
-    )
-
-
-class KubernetesRunInfo(BaseModel):
-    """Information about a service's run in Kubernetes."""
-
-    pod_id: str = Field(
-        ...,
-        description="ID of the pod",
-    )
-    node_id: str = Field(
-        ...,
-        description="ID of the node",
-    )
-    namespace: str = Field(
-        ...,
-        description="Namespace of the pod",
-    )
-    deployment_id: str = Field(
-        ...,
-        description="ID of the deployment",
-    )
+from aiperf.common.enums import ServiceRegistrationStatus, ServiceState, ServiceType
 
 
 class ServiceRunInfo(BaseModel):
-    """Information about a running service."""
+    """Base model for tracking service run information."""
 
+    service_type: ServiceType = Field(
+        ...,
+        description="The type of service",
+    )
+    registration_status: ServiceRegistrationStatus = Field(
+        ...,
+        description="The registration status of the service",
+    )
     service_id: str = Field(
         ...,
-        description="ID of the service",
+        description="The ID of the service",
     )
-    service_type: str = Field(
-        ...,
-        description="Type of the service",
+    first_seen: int | None = Field(
+        default_factory=time.time_ns,
+        description="The first time the service was seen",
     )
-    run_type: ServiceRunType = Field(
-        ...,
-        description="Type of the run",
+    last_seen: int | None = Field(
+        default_factory=time.time_ns,
+        description="The last time the service was seen",
     )
-    run_info: Union[AsyncIORunInfo, MultiProcessingRunInfo, KubernetesRunInfo] = Field(
-        ...,
-        description="Information about the run",
+    state: ServiceState = Field(
+        default=ServiceState.UNKNOWN,
+        description="The current state of the service",
     )
