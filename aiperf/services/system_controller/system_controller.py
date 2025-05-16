@@ -25,20 +25,25 @@ from aiperf.common.enums import (
     ServiceType,
     Topic,
 )
-from aiperf.common.exceptions.service import ServiceInitializationException
-from aiperf.common.models.messages import BaseMessage
-from aiperf.common.models.service import ServiceRunInfo
-from aiperf.common.service.controller import BaseControllerService
-from aiperf.services.system_controller.kubernetes_manager import (
+from aiperf.common.errors import Error
+from aiperf.common.errors.comm_errors import CommNotInitializedError
+from aiperf.common.errors.service_errors import ServiceInitializationError
+from aiperf.common.models.message_models import BaseMessage
+from aiperf.common.models.service_models import ServiceRunInfo
+from aiperf.common.service.base_controller_service import BaseControllerService
+from aiperf.services.system_controller.base_service_manager import BaseServiceManager
+from aiperf.services.system_controller.kubernetes_service_manager import (
     KubernetesServiceManager,
 )
-from aiperf.services.system_controller.multiprocess_manager import MultiProcessManager
-from aiperf.services.system_controller.service_manager import BaseServiceManager
+from aiperf.services.system_controller.multiprocess_service_manager import (
+    MultiProcessServiceManager,
+)
 
 
 class SystemController(BaseControllerService):
     def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
+        self.logger.debug("Creating System Controller")
 
         # List of required service types, in the order they should be started
         self.required_service_types: list[ServiceType] = [
@@ -56,12 +61,17 @@ class SystemController(BaseControllerService):
         """The type of service."""
         return ServiceType.SYSTEM_CONTROLLER
 
-    async def _initialize(self) -> None:
+    async def run(self) -> Error | None:
+        """Run the system controller."""
+        self.logger.info("AIPerf System is STARTING")
+        return await super().run()
+
+    async def _initialize(self) -> Error | None:
         """Initialize system controller-specific components."""
         self.logger.debug("Initializing System Controller")
 
         if self.service_config.service_run_type == ServiceRunType.MULTIPROCESSING:
-            self.service_manager = MultiProcessManager(
+            self.service_manager = MultiProcessServiceManager(
                 self.required_service_types, self.service_config
             )
         elif self.service_config.service_run_type == ServiceRunType.KUBERNETES:
@@ -74,18 +84,33 @@ class SystemController(BaseControllerService):
             )
 
         # Subscribe to relevant messages
-        await self.comms.subscribe(
+        subscribe_err = await self.comms.subscribe(
             topic=Topic.REGISTRATION,
             callback=self._process_registration_message,
         )
-        await self.comms.subscribe(
+        if subscribe_err:
+            self.logger.error(
+                "Failed to subscribe to registration topic: %s", subscribe_err
+            )
+            return subscribe_err
+
+        heartbeat_err = await self.comms.subscribe(
             topic=Topic.HEARTBEAT,
             callback=self._process_heartbeat_message,
         )
-        await self.comms.subscribe(
+        if heartbeat_err:
+            self.logger.error(
+                "Failed to subscribe to heartbeat topic: %s", heartbeat_err
+            )
+            return heartbeat_err
+
+        status_err = await self.comms.subscribe(
             topic=Topic.STATUS,
             callback=self._process_status_message,
         )
+        if status_err:
+            self.logger.error("Failed to subscribe to status topic: %s", status_err)
+            return status_err
 
         self.logger.debug(
             "System controller waiting for 1 second to ensure that the "
@@ -95,7 +120,9 @@ class SystemController(BaseControllerService):
         # wait 1 second to ensure that the communication is initialized
         await asyncio.sleep(1)
 
-    async def _on_start(self) -> None:
+        return None
+
+    async def _on_start(self) -> Error | None:
         """Start the system controller and launch required services."""
         self.logger.debug("Starting System Controller")
 
@@ -103,25 +130,50 @@ class SystemController(BaseControllerService):
         await self.service_manager.initialize_all_services()
 
         # Wait for all required services to be registered
-        registered = await self.service_manager.wait_for_all_services_registration(
-            self.stop_event
+        registration_err = (
+            await self.service_manager.wait_for_all_services_registration(
+                self.stop_event
+            )
         )
         if self.stop_event.is_set():
-            self.logger.info("System Controller stopped before all services registered")
-            return  # Don't continue with the rest of the initialization
-        if not registered:
+            self.logger.debug(
+                "System Controller stopped before all services registered"
+            )
+            return None  # Don't continue with the rest of the initialization
+
+        # Check if all required services are registered
+        if registration_err:
             self.logger.error(
                 "Not all required services registered within the timeout period"
             )
-            raise ServiceInitializationException(
-                "Not all required services registered within the timeout period"
+            return ServiceInitializationError(
+                error_message="Not all required services registered within the timeout period"
             )
         else:
-            self.logger.info("All required services registered successfully")
+            self.logger.debug("All required services registered successfully")
 
+        self.logger.info("AIPerf System is READY")
         # Wait for all required services to be started
         await self.start_all_services()
-        await self.service_manager.wait_for_all_services_start()
+        start_err = await self.service_manager.wait_for_all_services_start()
+        if self.stop_event.is_set():
+            self.logger.debug("System Controller stopped before all services started")
+            return None  # Don't continue with the rest of the initialization
+
+        # Check if all required services are started
+        if start_err:
+            self.logger.error(
+                "Not all required services started within the timeout period"
+            )
+            return ServiceInitializationError(
+                error_message="Not all required services started within the timeout period"
+            )
+        else:
+            self.logger.debug("All required services started successfully")
+
+        self.logger.info("AIPerf System is RUNNING")
+
+        return None
 
     async def start_all_services(self) -> None:
         """Start all required services."""
@@ -133,17 +185,25 @@ class SystemController(BaseControllerService):
                     command=CommandType.START,
                 )
 
-    async def _on_stop(self) -> None:
+    async def _on_stop(self) -> Error | None:
         """Stop the system controller and all running services."""
         self.logger.debug("Stopping System Controller")
-        await self.service_manager.stop_all_services()
+        self.logger.info("AIPerf System is SHUTTING DOWN")
 
-    async def _cleanup(self) -> None:
+        stop_err = await self.service_manager.stop_all_services()
+        if stop_err:
+            self.logger.error("Failed to stop all services: %s", stop_err)
+            return stop_err
+
+        return None
+
+    async def _cleanup(self) -> Error | None:
         """Clean up system controller-specific components."""
         self.logger.debug("Cleaning up System Controller")
         # TODO: Additional cleanup if needed
+        return None
 
-    async def _process_registration_message(self, message: BaseMessage) -> None:
+    async def _process_registration_message(self, message: BaseMessage) -> Error | None:
         """Process a registration response from a service.
 
         Args:
@@ -171,25 +231,28 @@ class SystemController(BaseControllerService):
         self.service_manager.service_map[service_type].append(service_info)
 
         is_required = service_type in self.required_service_types
-        self.logger.info(
+        self.logger.debug(
             f"Registered {'required' if is_required else 'non-required'} "
             f"service: {service_type} with ID: {service_id}"
         )
 
         # Send configure command to the newly registered service
-        success = await self.send_command_to_service(
+        configure_err = await self.send_command_to_service(
             target_service_id=service_id, command=CommandType.CONFIGURE
         )
-        if success:
-            self.logger.debug(
-                f"Sent configure command to {service_type} (ID: {service_id})"
+        if configure_err:
+            self.logger.error(
+                f"Failed to send configure command to {service_type} (ID: {service_id}): {configure_err}"
             )
-        else:
-            self.logger.warning(
-                f"Failed to send configure command to {service_type} (ID: {service_id})"
-            )
+            return configure_err
 
-    async def _process_heartbeat_message(self, message: BaseMessage) -> None:
+        self.logger.debug(
+            f"Sent configure command to {service_type} (ID: {service_id})"
+        )
+
+        return None
+
+    async def _process_heartbeat_message(self, message: BaseMessage) -> Error | None:
         """Process a heartbeat response from a service.
 
         Args:
@@ -238,7 +301,7 @@ class SystemController(BaseControllerService):
 
     async def send_command_to_service(
         self, target_service_id: str, command: CommandType
-    ) -> bool:
+    ) -> Error | None:
         """Send a command to a specific service.
 
         Args:
@@ -246,11 +309,11 @@ class SystemController(BaseControllerService):
             command: The command to send (from CommandType enum)
 
         Returns:
-            True if the command was sent successfully
+            Error if the command was not sent successfully, None otherwise
         """
         if not self.comms:
             self.logger.error("Cannot send command: Communication is not initialized")
-            return False
+            return CommNotInitializedError()
 
         # Create command response using the helper method
         command_message = self.create_command_message(
@@ -266,7 +329,7 @@ class SystemController(BaseControllerService):
 
 
 def main() -> None:
-    from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.common.bootstrap_utils import bootstrap_and_run_service
 
     bootstrap_and_run_service(SystemController)
 

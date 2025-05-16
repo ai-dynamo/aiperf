@@ -18,7 +18,8 @@ from abc import ABC, abstractmethod
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceType
-from aiperf.common.models.service import ServiceRunInfo
+from aiperf.common.errors.base_error import Error
+from aiperf.common.models.service_models import ServiceRunInfo
 
 
 class BaseServiceManager(ABC):
@@ -32,6 +33,7 @@ class BaseServiceManager(ABC):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.required_service_types = required_service_types
         self.config = config
+
         # Maps to track service information
         self.service_map: dict[ServiceType, list[ServiceRunInfo]] = {}
 
@@ -45,28 +47,23 @@ class BaseServiceManager(ABC):
         return self.service_id_map.get(service_id)
 
     @abstractmethod
-    async def initialize_all_services(self) -> None:
+    async def initialize_all_services(self) -> Error | None:
         """Initialize all required services."""
         pass
 
     @abstractmethod
-    async def stop_all_services(self) -> None:
+    async def stop_all_services(self) -> Error | None:
         """Stop all managed services."""
         pass
 
     @abstractmethod
     async def wait_for_all_services_registration(
         self, stop_event: asyncio.Event, timeout_seconds: int = 30
-    ) -> bool:
+    ) -> Error | None:
         """Wait for all required services to be registered."""
         pass
 
     @abstractmethod
-    async def wait_for_all_services_start(self) -> bool:
+    async def wait_for_all_services_start(self) -> Error | None:
         """Wait for all required services to be started."""
-        pass
-
-    @abstractmethod
-    async def wait_for_all_services_stop(self) -> bool:
-        """Wait for all managed services to be stopped."""
         pass
