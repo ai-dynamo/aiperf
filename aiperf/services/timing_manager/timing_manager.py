@@ -12,41 +12,120 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+import asyncio
 import sys
+import time
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import Topic
-from aiperf.common.models.messages import BaseMessage
-from aiperf.common.service import BaseService
+from aiperf.common.enums import (
+    ClientType,
+    PullClientType,
+    PushClientType,
+    ServiceState,
+    ServiceType,
+    Topic,
+)
+from aiperf.common.models.message_models import BaseMessage
+from aiperf.common.models.payload_models import (
+    BasePayload,
+    CreditDropPayload,
+)
+from aiperf.common.service.base_component_service import BaseComponentService
 
 
-class TimingManager(BaseService):
-    def __init__(self, config: ServiceConfig):
-        super().__init__(service_type="timing_manager", config=config)
+class TimingManager(BaseComponentService):
+    def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
+        super().__init__(service_config=service_config, service_id=service_id)
+        self._credits_available = 100
+        self.logger.debug("Initializing timing manager")
+
+    @property
+    def service_type(self) -> ServiceType:
+        """The type of service."""
+        return ServiceType.TIMING_MANAGER
+
+    @property
+    def required_clients(self) -> list[ClientType]:
+        """The communication clients required by the service."""
+        return [
+            *super().required_clients,
+            PullClientType.CREDIT_RETURN,
+            PushClientType.CREDIT_DROP,
+        ]
 
     async def _initialize(self) -> None:
+        """Initialize timing manager-specific components."""
         self.logger.debug("Initializing timing manager")
         # TODO: Implement timing manager initialization
 
     async def _on_start(self) -> None:
+        """Start the timing manager."""
         self.logger.debug("Starting timing manager")
         # TODO: Implement timing manager start
+        await self.comms.pull(
+            topic=Topic.CREDIT_RETURN,
+            callback=self._on_credit_return,
+        )
+        await self.set_state(ServiceState.RUNNING)
+        await asyncio.sleep(3)
+        asyncio.create_task(self._issue_credit_drops())
+
+    async def _issue_credit_drops(self) -> None:
+        """Issue credit drops to workers."""
+        self.logger.debug("Issuing credit drops to workers")
+        # TODO: Actually implement real credit drop logic
+        while self.state == ServiceState.RUNNING:
+            try:
+                await asyncio.sleep(0.1)
+                if self._credits_available <= 0:
+                    self.logger.warning("No credits available, skipping credit drop")
+                    continue
+                self.logger.debug("Issuing credit drop")
+                # TODO: Actually implement real credit drop logic
+                self._credits_available -= 1
+                await self.comms.push(
+                    topic=Topic.CREDIT_DROP,
+                    message=self.create_message(
+                        payload=CreditDropPayload(
+                            amount=1,
+                            timestamp=time.time_ns(),
+                        ),
+                    ),
+                )
+            except asyncio.CancelledError:
+                self.logger.debug("Credit drop task cancelled")
+                break
+            except Exception as e:
+                self.logger.error(f"Error issuing credit drop: {e}")
+                await asyncio.sleep(0.1)
 
     async def _on_stop(self) -> None:
+        """Stop the timing manager."""
         self.logger.debug("Stopping timing manager")
         # TODO: Implement timing manager stop
 
     async def _cleanup(self) -> None:
+        """Clean up timing manager-specific components."""
         self.logger.debug("Cleaning up timing manager")
         # TODO: Implement timing manager cleanup
 
-    async def _process_message(self, topic: Topic, message: BaseMessage) -> None:
-        self.logger.debug(f"Processing message in timing manager: {topic}, {message}")
-        # TODO: Implement timing manager message processing
+    async def _on_credit_return(self, message: BaseMessage) -> None:
+        """Process a credit return response.
+
+        Args:
+            message: The response received from the pull request
+        """
+        self.logger.debug(f"Processing credit return: {message.payload}")
+        self._credits_available += message.payload.amount
+
+    async def _configure(self, payload: BasePayload) -> None:
+        """Configure the timing manager."""
+        self.logger.debug(f"Configuring timing manager with payload: {payload}")
+        # TODO: Implement timing manager configuration
 
 
 def main() -> None:
-    from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.common.bootstrap_utils import bootstrap_and_run_service
 
     bootstrap_and_run_service(TimingManager)
 

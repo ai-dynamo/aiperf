@@ -15,42 +15,51 @@
 import sys
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import Topic
-from aiperf.common.models.messages import BaseMessage
-from aiperf.common.service import BaseService
+from aiperf.common.enums import ServiceType
+from aiperf.common.models.payload_models import BasePayload
+from aiperf.common.service.base_component_service import BaseComponentService
 
 
-class PostProcessorManager(BaseService):
+class PostProcessorManager(BaseComponentService):
     """Manager responsible for post-processing results data."""
 
-    def __init__(self, config: ServiceConfig) -> None:
-        super().__init__(service_type="post_processor_manager", config=config)
+    def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
+        super().__init__(service_config=service_config, service_id=service_id)
+        self.logger.debug("Initializing post processor manager")
+
+    @property
+    def service_type(self) -> ServiceType:
+        """The type of service."""
+        return ServiceType.POST_PROCESSOR_MANAGER
 
     async def _initialize(self) -> None:
+        """Initialize post processor manager-specific components."""
         self.logger.debug("Initializing post processor manager")
         # TODO: Implement post processor manager initialization
 
     async def _on_start(self) -> None:
+        """Start the post processor manager."""
         self.logger.debug("Starting post processor manager")
         # TODO: Implement post processor manager start
 
     async def _on_stop(self) -> None:
+        """Stop the post processor manager."""
         self.logger.debug("Stopping post processor manager")
         # TODO: Implement post processor manager stop
 
     async def _cleanup(self) -> None:
+        """Clean up post processor manager-specific components."""
         self.logger.debug("Cleaning up post processor manager")
         # TODO: Implement post processor manager cleanup
 
-    async def _process_message(self, topic: Topic, message: BaseMessage) -> None:
-        self.logger.debug(
-            f"Processing message in post processor manager: {topic}, {message}"
-        )
-        # TODO: Implement post processor manager message processing
+    async def _configure(self, payload: BasePayload) -> None:
+        """Configure the post processor manager."""
+        self.logger.debug(f"Configuring post processor manager with payload: {payload}")
+        # TODO: Implement post processor manager configuration
 
 
 def main() -> None:
-    from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.common.bootstrap_utils import bootstrap_and_run_service
 
     bootstrap_and_run_service(PostProcessorManager)
 
