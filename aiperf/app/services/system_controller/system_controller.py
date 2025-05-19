@@ -218,15 +218,6 @@ class SystemController(BaseControllerService):
                         command=CommandType.START,
                     )
 
-                    ###########
-
-                    await self.send_command_to_service(
-                        target_service_id=service_info.service_id,
-                        command=CommandType.START,
-                    )
-
-                    ############
-
                 except Exception as e:
                     self.logger.warning("Failed to start service: %s", e)
                     # Continue to the next service
