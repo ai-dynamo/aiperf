@@ -1,0 +1,867 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the AIPerf project">
+      
+      
+        <meta name="author" content="NVIDIA CORPORATION & AFFILIATES">
+      
+      
+      
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+    
+    
+      
+        <title>Development - AIPerf Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#developers-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AIPerf Documentation" class="md-header__button md-logo" aria-label="AIPerf Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AIPerf Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Development
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AIPerf Documentation" class="md-nav__button md-logo" aria-label="AIPerf Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AIPerf Documentation
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../index.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Development
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Development
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#development-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Development Environment
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Code Overview
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Code Overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#project-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project Structure
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#core-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core Components
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Components">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#communication-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      Communication System
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#command-line-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Command Line Interface
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#message-processing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Message Processing
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#service-inheritance-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Service Inheritance Model
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Service Inheritance Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#base-service-responsibilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      Base Service Responsibilities
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#service-implementation-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      Service Implementation Requirements
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-service-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example Service Implementation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-the-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using the Service
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#development-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Development Environment
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Code Overview
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Code Overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#project-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project Structure
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#core-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core Components
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Components">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#communication-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      Communication System
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#command-line-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Command Line Interface
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#message-processing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Message Processing
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#service-inheritance-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Service Inheritance Model
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Service Inheritance Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#base-service-responsibilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      Base Service Responsibilities
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#service-implementation-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      Service Implementation Requirements
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-service-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example Service Implementation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-the-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using the Service
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<!--
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#  http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+-->
+<h1 id="developers-guide">Developers Guide<a class="headerlink" href="#developers-guide" title="Permanent link">&para;</a></h1>
+<p>Execute the following commands to set up your development environment for <code>aiperf</code>.
+Make sure you are in the root directory of the <code>aiperf</code> repository.</p>
+<h2 id="development-environment">Development Environment<a class="headerlink" href="#development-environment" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Install uv
+https://docs.astral.sh/uv/getting-started/installation/</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>curl<span class="w"> </span>-LsSf<span class="w"> </span>https://astral.sh/uv/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
+</code></pre></div>
+
+<ul>
+<li>Create virtual env</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>venv
+</code></pre></div>
+
+<ul>
+<li>Activate venv</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+</code></pre></div>
+
+<ul>
+<li>Install <code>aiperf</code> package in editable development mode</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[dev]&quot;</span>
+</code></pre></div>
+
+<ul>
+<li>Run <code>aiperf</code> in asyncio mode (current default)</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>aiperf<span class="w"> </span>--run-type<span class="w"> </span>async
+</code></pre></div>
+
+<p>Press <code>Ctrl-C</code> to stop the process</p>
+<ul>
+<li>Run <code>aiperf</code> in multiprocessing mode</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>aiperf<span class="w"> </span>--run-type<span class="w"> </span>process
+</code></pre></div>
+
+<p>Press <code>Ctrl-C</code> to stop the process</p>
+<ul>
+<li>Run <code>aiperf</code> with <code>--help</code> to see available commands</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>aiperf<span class="w"> </span>--help
+</code></pre></div>
+
+<h2 id="code-overview">Code Overview<a class="headerlink" href="#code-overview" title="Permanent link">&para;</a></h2>
+<h3 id="project-structure">Project Structure<a class="headerlink" href="#project-structure" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="nx">aiperf</span><span class="o">/</span>
+<span class="err">├──</span><span class="w"> </span><span class="nx">aiperf</span><span class="o">/</span><span class="w">              </span><span class="err">#</span><span class="w"> </span><span class="nx">Main</span><span class="w"> </span><span class="nx">python</span><span class="w"> </span><span class="kn">package</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">app</span><span class="o">/</span><span class="w">                 </span><span class="err">#</span><span class="w"> </span><span class="nx">Application</span><span class="w"> </span><span class="nx">components</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">cli</span><span class="p">.</span><span class="nx">py</span><span class="w">               </span><span class="err">#</span><span class="w"> </span><span class="nx">Command</span><span class="w"> </span><span class="nx">line</span><span class="w"> </span><span class="kd">interface</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">common</span><span class="o">/</span><span class="w">              </span><span class="err">#</span><span class="w"> </span><span class="nx">Shared</span><span class="w"> </span><span class="nx">utilities</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="nx">models</span>
+<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">config</span><span class="o">/</span><span class="w">             </span><span class="err">#</span><span class="w"> </span><span class="nx">Configuration</span><span class="w"> </span><span class="nx">management</span>
+<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">enums</span><span class="p">.</span><span class="nx">py</span><span class="w">            </span><span class="err">#</span><span class="w"> </span><span class="nx">Enum</span><span class="w"> </span><span class="nx">definitions</span>
+<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">exceptions</span><span class="o">/</span><span class="w">         </span><span class="err">#</span><span class="w"> </span><span class="nx">Custom</span><span class="w"> </span><span class="nx">exceptions</span>
+<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">models</span><span class="o">/</span><span class="w">             </span><span class="err">#</span><span class="w"> </span><span class="nx">Pydantic</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="nx">models</span>
+<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">messages</span><span class="p">.</span><span class="nx">py</span><span class="w">         </span><span class="err">#</span><span class="w"> </span><span class="nx">Message</span><span class="w"> </span><span class="nx">definitions</span>
+<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">service</span><span class="p">.</span><span class="nx">py</span><span class="w">          </span><span class="err">#</span><span class="w"> </span><span class="nx">Service</span><span class="w"> </span><span class="nx">related</span><span class="w"> </span><span class="nx">model</span><span class="w"> </span><span class="nx">definitions</span>
+<span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">service</span><span class="p">.</span><span class="nx">py</span><span class="w">          </span><span class="err">#</span><span class="w"> </span><span class="nx">Base</span><span class="w"> </span><span class="nx">service</span><span class="w"> </span><span class="nx">implementation</span>
+<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">services</span><span class="o">/</span><span class="w">            </span><span class="err">#</span><span class="w"> </span><span class="nx">System</span><span class="w"> </span><span class="nx">services</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="nx">dataset_manager</span><span class="o">/</span><span class="w">        </span><span class="err">#</span><span class="w"> </span><span class="nx">Handles</span><span class="w"> </span><span class="nx">dataset</span><span class="w"> </span><span class="nx">operations</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="nx">post_processor_manager</span><span class="o">/</span><span class="w"> </span><span class="err">#</span><span class="w"> </span><span class="nx">Processes</span><span class="w"> </span><span class="nx">results</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="nx">records_manager</span><span class="o">/</span><span class="w">        </span><span class="err">#</span><span class="w"> </span><span class="nx">Manages</span><span class="w"> </span><span class="nx">test</span><span class="w"> </span><span class="nx">records</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="nx">system_controller</span><span class="o">/</span><span class="w">      </span><span class="err">#</span><span class="w"> </span><span class="nx">Controls</span><span class="w"> </span><span class="nx">system</span><span class="w"> </span><span class="nx">operation</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="nx">timing_manager</span><span class="o">/</span><span class="w">         </span><span class="err">#</span><span class="w"> </span><span class="nx">Handles</span><span class="w"> </span><span class="nx">timing</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="nx">credits</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="nx">worker</span><span class="o">/</span><span class="w">                 </span><span class="err">#</span><span class="w"> </span><span class="nx">Executes</span><span class="w"> </span><span class="nx">benchmarks</span>
+<span class="err">│</span><span class="w">       </span><span class="err">└──</span><span class="w"> </span><span class="nx">worker_manager</span><span class="o">/</span><span class="w">         </span><span class="err">#</span><span class="w"> </span><span class="nx">Manages</span><span class="w"> </span><span class="nx">worker</span><span class="w"> </span><span class="nx">processes</span>
+<span class="err">├──</span><span class="w"> </span><span class="nx">docs</span><span class="o">/</span><span class="w">                </span><span class="err">#</span><span class="w"> </span><span class="nx">Documentation</span>
+<span class="err">├──</span><span class="w"> </span><span class="nx">tests</span><span class="o">/</span><span class="w">               </span><span class="err">#</span><span class="w"> </span><span class="nx">Test</span><span class="w"> </span><span class="nx">suite</span>
+<span class="err">├──</span><span class="w"> </span><span class="nx">pyproject</span><span class="p">.</span><span class="nx">toml</span><span class="w">       </span><span class="err">#</span><span class="w"> </span><span class="nx">Project</span><span class="w"> </span><span class="nx">configuration</span>
+<span class="err">├──</span><span class="w"> </span><span class="nx">Makefile</span><span class="w">             </span><span class="err">#</span><span class="w"> </span><span class="nx">Build</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="nx">automation</span><span class="w"> </span><span class="nx">scripts</span>
+<span class="err">└──</span><span class="w"> </span><span class="nx">README</span><span class="p">.</span><span class="nx">md</span><span class="w">            </span><span class="err">#</span><span class="w"> </span><span class="nx">Project</span><span class="w"> </span><span class="nx">readme</span>
+</code></pre></div>
+
+<h3 id="core-components">Core Components<a class="headerlink" href="#core-components" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>This comes from the AIPerf Design Document</p>
+</blockquote>
+<p>AIPerf implements a distributed microservices architecture with the following key components:</p>
+<ul>
+<li><strong>System Controller</strong>: Primary responsibility is to orchestrate the system. It will ensure all blocks are ready and healthy. It will also help orchestrating graceful shutdowns. This is the component that will contain the methods users can interact with.</li>
+<li>
+<p><strong>Dataset Manager</strong>: Primary responsibility is to manage the data: generation or acquisition. For  synthetic generation, it contains the code to generate the prompts or tokens. It will have an API for dataset acquisition of a dataset if available in a remote repository or database.</p>
+</li>
+<li>
+<p><strong>Worker Manager</strong>: Primary responsibility is to pull data from the dataset manager after receiving the timing credit from the timing manager. It will then push the request data to the worker to issue to the request.</p>
+</li>
+<li>
+<p><strong>Worker</strong>: Primarily responsible for converting the data into the appropriate format for the interface being used by the server. Also responsible for managing the conversation between turns.</p>
+</li>
+<li>
+<p><strong>Timing Manager</strong>: Primary responsibility is to generate the schedule and issuing timing credits for requests.</p>
+</li>
+<li>
+<p><strong>Records Manager</strong>: Primarily responsible for holding the results returned from the workers.</p>
+</li>
+<li>
+<p><strong>Post-Processor Manager</strong>: Primarily responsible for iterating over the records to generate metrics and other conclusions from the records.</p>
+</li>
+</ul>
+<h4 id="communication-system">Communication System<a class="headerlink" href="#communication-system" title="Permanent link">&para;</a></h4>
+<p>Services communicate using a message-based system with the following components:</p>
+<ul>
+<li><strong>Topics</strong>: Categorized channels for message distribution (commands, status, data, etc.)</li>
+<li><strong>Messages</strong>: Strongly-typed data structures for inter-service communication</li>
+<li><strong>Service States</strong>: Lifecycle states that services transition through (initializing, running, stopping, etc.)</li>
+</ul>
+<h4 id="command-line-interface">Command Line Interface<a class="headerlink" href="#command-line-interface" title="Permanent link">&para;</a></h4>
+<p>The CLI (<code>aiperf/cli.py</code>) provides the entry point to the system</p>
+<h4 id="message-processing">Message Processing<a class="headerlink" href="#message-processing" title="Permanent link">&para;</a></h4>
+<p>To handle messages:</p>
+<ol>
+<li>Subscribe to relevant topics using <code>_subscribe_to_topic(Topic)</code></li>
+<li>Implement message processing logic in <code>_process_message(topic, message)</code></li>
+<li>Send messages using <code>_publish_message(topic, message)</code></li>
+</ol>
+<h3 id="service-inheritance-model">Service Inheritance Model<a class="headerlink" href="#service-inheritance-model" title="Permanent link">&para;</a></h3>
+<p>AIPerf uses an inheritance-based architecture where all system services inherit from a common <code>ServiceBase</code> abstract class. This approach provides a consistent interface and shared functionality across services.</p>
+<h4 id="base-service-responsibilities">Base Service Responsibilities<a class="headerlink" href="#base-service-responsibilities" title="Permanent link">&para;</a></h4>
+<p>The <code>ServiceBase</code> class (<code>aiperf/common/service.py</code>) provides automatically for all services:</p>
+<ul>
+<li><strong>Lifecycle Management</strong>: Standard initialize/run/stop/cleanup methods</li>
+<li><strong>State Transitions</strong>: Manages service state changes (INITIALIZING → RUNNING → STOPPING → STOPPED)</li>
+<li><strong>Communication</strong>: Methods for publishing messages and subscribing to topics</li>
+<li><strong>Heartbeat</strong>: Automatic heartbeat generation for service health monitoring</li>
+</ul>
+<h4 id="service-implementation-requirements">Service Implementation Requirements<a class="headerlink" href="#service-implementation-requirements" title="Permanent link">&para;</a></h4>
+<p>When implementing a new service that inherits from <code>ServiceBase</code>, you must:</p>
+<ol>
+<li><strong>Implement Abstract Methods</strong>:</li>
+<li><code>_initialize()</code>: Set up service-specific resources</li>
+<li><code>_on_start()</code>: Main service logic</li>
+<li><code>_on_stop()</code>: Handle graceful shutdown</li>
+<li><code>_cleanup()</code>: Release resources</li>
+<li>
+<p><code>_process_message()</code>: Handle incoming messages</p>
+</li>
+<li>
+<p><strong>Configuration</strong>:</p>
+</li>
+<li>Define service-specific configuration needs</li>
+<li>Pass configuration to the base class constructor</li>
+</ol>
+<h4 id="example-service-implementation">Example Service Implementation<a class="headerlink" href="#example-service-implementation" title="Permanent link">&para;</a></h4>
+<p>Here's a simplified example of a service implementation:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">ServiceBase</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.config.service_config</span><span class="w"> </span><span class="kn">import</span> <span class="n">ServiceConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.enums</span><span class="w"> </span><span class="kn">import</span> <span class="n">Topic</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.models.messages</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseMessage</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ExampleService</span><span class="p">(</span><span class="n">ServiceBase</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">ServiceConfig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">service_type</span><span class="o">=</span><span class="s2">&quot;example_service&quot;</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">my_resource</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize service-specific resources.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Initializing Example Service&quot;</span><span class="p">)</span>
+        <span class="c1"># Subscribe to required topics</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subscribe_to_topic</span><span class="p">(</span><span class="n">Topic</span><span class="o">.</span><span class="n">COMMAND</span><span class="p">)</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subscribe_to_topic</span><span class="p">(</span><span class="n">Topic</span><span class="o">.</span><span class="n">DATA</span><span class="p">)</span>
+        <span class="c1"># Initialize resources</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">my_resource</span> <span class="o">=</span> <span class="n">SomeResource</span><span class="p">()</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_on_start</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Main service logic.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Running Example Service&quot;</span><span class="p">)</span>
+        <span class="c1"># Implement your service&#39;s main logic here</span>
+        <span class="c1"># This method should typically set up ongoing tasks or loops</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_on_stop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Handle graceful shutdown.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Stopping Example Service&quot;</span><span class="p">)</span>
+        <span class="c1"># Cancel any ongoing tasks</span>
+        <span class="c1"># Prepare for cleanup</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Release resources.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Cleaning up Example Service&quot;</span><span class="p">)</span>
+        <span class="c1"># Release any resources</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">my_resource</span><span class="p">:</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">my_resource</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_process_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">topic</span><span class="p">:</span> <span class="n">Topic</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">BaseMessage</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Handle incoming messages.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Processing message: </span><span class="si">{</span><span class="n">topic</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">message</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">topic</span> <span class="o">==</span> <span class="n">Topic</span><span class="o">.</span><span class="n">COMMAND</span><span class="p">:</span>
+            <span class="c1"># Handle command messages</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_handle_command</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">topic</span> <span class="o">==</span> <span class="n">Topic</span><span class="o">.</span><span class="n">DATA</span><span class="p">:</span>
+            <span class="c1"># Handle data messages</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_handle_data</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_handle_command</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">BaseMessage</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Handle command messages.&quot;&quot;&quot;</span>
+        <span class="c1"># Implement command handling logic</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_handle_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">BaseMessage</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Handle data messages.&quot;&quot;&quot;</span>
+        <span class="c1"># Implement data handling logic</span>
+</code></pre></div>
+
+<h4 id="using-the-service">Using the Service<a class="headerlink" href="#using-the-service" title="Permanent link">&para;</a></h4>
+<p>To instantiate and run a service:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.bootstrap</span><span class="w"> </span><span class="kn">import</span> <span class="n">bootstrap_and_run_service</span>
+
+    <span class="n">bootstrap_and_run_service</span><span class="p">(</span><span class="n">ExampleService</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+
+<p>The <code>bootstrap_and_run_service</code> function handles:
+1. Setting up the event loop (using uvloop)
+2. Creating an instance of your service
+3. Running the service's lifecycle methods
+4. Handling graceful shutdown</p>
+<p>This inheritance model ensures consistent behavior across all services while allowing for service-specific customization.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>
