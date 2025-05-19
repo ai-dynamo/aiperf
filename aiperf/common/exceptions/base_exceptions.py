@@ -13,7 +13,25 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-__all__ = ["ServiceConfig", "load_service_config"]
 
-from aiperf.common.config.config_loader import load_service_config
-from aiperf.common.config.service_config import ServiceConfig
+class AIPerfError(Exception):
+    """Base class for all exceptions raised by AIPerf."""
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__}: {super().__str__()}"
+
+
+class AIPerfMultiError(AIPerfError):
+    """
+    # TODO: Document
+    """
+
+    def __init__(self, exceptions) -> None:
+        super().__init__(f"{','.join([str(e) for e in exceptions])}")
+        self.exceptions = exceptions
+
+
+class AIPerfMetaclassError(AIPerfError):
+    """Exception raised for AIPerf metaclass errors."""
+
+    message: str = "AIPerf metaclass error. Please check the decorators defined on the class members."

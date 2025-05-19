@@ -19,9 +19,9 @@ from argparse import ArgumentParser
 from rich.console import Console
 from rich.logging import RichHandler
 
-from aiperf.common.bootstrap import bootstrap_and_run_service
+from aiperf.app.services.system_controller.system_controller import SystemController
+from aiperf.common.bootstrap_utils import bootstrap_and_run_service
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.services.system_controller.system_controller import SystemController
 
 # TODO: Each service may have to initialize logging from a common
 #  configuration due to running on separate processes
@@ -69,14 +69,14 @@ def main() -> None:
 
     if args.config:
         # In a real implementation, this would load from the specified file
-        logger.info("Loading configuration from %s", args.config)
+        logger.debug("Loading configuration from %s", args.config)
         # config.load_from_file(args.config)
 
     # Create and start the system controller
-    logger.info("Creating System Controller")
 
     logger.info("Starting AIPerf System")
     bootstrap_and_run_service(SystemController, service_config=config)
+    logger.info("AIPerf System exited")
 
 
 if __name__ == "__main__":

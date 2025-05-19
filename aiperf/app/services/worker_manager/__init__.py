@@ -12,8 +12,6 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+__all__ = ["WorkerManager"]
 
-__all__ = ["ServiceConfig", "load_service_config"]
-
-from aiperf.common.config.config_loader import load_service_config
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.app.services.worker_manager.worker_manager import WorkerManager

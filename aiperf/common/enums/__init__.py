@@ -22,7 +22,7 @@ __all__ = [
     "RepClientType",
     "ReqClientType",
     "SubClientType",
-    "CommBackend",
+    "CommunicationBackend",
     "DataTopic",
     "Topic",
     "TopicType",
@@ -34,8 +34,8 @@ __all__ = [
     "ServiceType",
 ]
 
-from aiperf.common.enums.base import StrEnum
-from aiperf.common.enums.comm_clients import (
+from aiperf.common.enums.base_enums import StrEnum
+from aiperf.common.enums.comm_clients_enums import (
     ClientType,
     PubClientType,
     PullClientType,
@@ -44,17 +44,17 @@ from aiperf.common.enums.comm_clients import (
     ReqClientType,
     SubClientType,
 )
-from aiperf.common.enums.comms import (
-    CommBackend,
+from aiperf.common.enums.comm_enums import (
+    CommunicationBackend,
     DataTopic,
     Topic,
     TopicType,
 )
-from aiperf.common.enums.message import (
+from aiperf.common.enums.message_enums import (
     CommandType,
     MessageType,
 )
-from aiperf.common.enums.service import (
+from aiperf.common.enums.service_enums import (
     ServiceRegistrationStatus,
     ServiceRunType,
     ServiceState,

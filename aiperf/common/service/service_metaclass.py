@@ -12,8 +12,24 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+from aiperf.common.base_metaclass import BaseMetaclass, register_metaclass
+from aiperf.common.decorators import AIPerfHooks
 
-__all__ = ["ServiceConfig", "load_service_config"]
 
-from aiperf.common.config.config_loader import load_service_config
-from aiperf.common.config.service_config import ServiceConfig
+@register_metaclass(
+    AIPerfHooks.INIT,
+    AIPerfHooks.START,
+    AIPerfHooks.STOP,
+    AIPerfHooks.CLEANUP,
+    AIPerfHooks.RUN,
+    AIPerfHooks.CONFIGURE,
+    AIPerfHooks.TASK,
+)
+class ServiceMetaclass(BaseMetaclass):
+    """Meta class for services.
+
+    This meta class is used to collect the hooks for a service. All of the logic
+    for the hooks is implemented in the BaseMetaclass.
+    """
+
+    pass
