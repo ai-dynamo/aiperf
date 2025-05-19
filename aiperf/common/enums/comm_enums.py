@@ -13,10 +13,10 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from aiperf.common.enums.base import StrEnum
+from aiperf.common.enums.base_enums import StrEnum
 
 
-class CommBackend(StrEnum):
+class CommunicationBackend(StrEnum):
     """Supported communication backends."""
 
     ZMQ_TCP = "zmq_tcp"
