@@ -1,0 +1,24 @@
+site_name: AIPerf Documentation
+site_description: Documentation for the AIPerf project
+site_author: NVIDIA CORPORATION & AFFILIATES
+
+nav:
+  - Home: index.md
+  - Development: Development.md
+
+theme:
+  name: material
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          setup_commands:
+            - import sys; sys.path.append(".")
+
+markdown_extensions:
+  - admonition
+  - codehilite
+  - toc:
+      permalink: true
