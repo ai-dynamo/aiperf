@@ -14,8 +14,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          setup_commands:
-            - import sys; sys.path.append(".")
+          paths: ["."]
 
 markdown_extensions:
   - admonition
