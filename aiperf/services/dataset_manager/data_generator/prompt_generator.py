@@ -21,17 +21,28 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from aiperf.common.exceptions import (
-    SyntheticDataConfigurationException,
-    SyntheticDataInitializationException,
+    GeneratorConfigurationException,
+    GeneratorInitializationException,
 )
 from aiperf.common.tokenizer import Tokenizer
 
-logger = logging.getLogger("SyntheticPromptGenerator")
+logger = logging.getLogger("PromptGenerator")
 
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
 
 
-class SyntheticPromptGenerator:
+class PromptGenerator:
+    """A class for generating synthetic prompts from a text corpus.
+
+    This class loads a text corpus (e.g., Shakespearean text), tokenizes it,
+    and uses the tokenized corpus to generate synthetic prompts of specified
+    lengths. It supports generating prompts with a target number of tokens
+    (with optional randomization around a mean and standard deviation) and
+    can reuse previously generated token blocks to optimize generation for
+    certain use cases. It also allows for the creation of a pool of prefix
+    prompts that can be randomly selected.
+    """
+
     _tokenized_corpus = None
     _corpus_length = 0
     _prefix_prompts: list[str] = []
@@ -118,7 +129,7 @@ class SyntheticPromptGenerator:
             ValueError: If the tokenized corpus is not initialized
         """
         if not cls._tokenized_corpus:
-            raise SyntheticDataInitializationException(
+            raise GeneratorInitializationException(
                 "Tokenized corpus is not initialized."
             )
         if num_tokens > cls._corpus_length:
@@ -185,7 +196,7 @@ class SyntheticPromptGenerator:
         size_to_use = block_size
         last_hash_length = num_tokens - ((len(prompt_hash_list) - 1) * block_size)
         if last_hash_length <= 0 or block_size < last_hash_length:
-            raise SyntheticDataConfigurationException(
+            raise GeneratorConfigurationException(
                 f"Input_length: {num_tokens}, Hash_ids: {prompt_hash_list}, Block_size: {block_size} "
                 f"are not compatible. The final hash id length: {last_hash_length} must be greater "
                 f"than 0 and less than or equal to {block_size}."

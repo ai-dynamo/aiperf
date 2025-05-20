@@ -17,27 +17,27 @@ from contextlib import nullcontext as does_not_raise
 
 import pytest
 
-from aiperf.common.exceptions import SyntheticDataConfigurationException
+from aiperf.common.exceptions import GeneratorConfigurationException
 
 # TODO: Need ConfigCommand to run the tests
 # from genai_perf.config.input.config_command import ConfigCommand
 from aiperf.common.tokenizer import get_tokenizer
-from aiperf.services.dataset_manager.data_generator import SyntheticPromptGenerator
+from aiperf.services.dataset_manager.data_generator import PromptGenerator
 
 
-class TestSyntheticPromptGenerator:
+class TestPromptGenerator:
     # TODO: Uncomment when ConfigCommand is ready
     def test_synthetic_prompt_default(self):
         # config = ConfigCommand({"model_name": "test_model"})
         # config.tokenizer.name = "gpt2"
         tokenizer = get_tokenizer("gpt2")
-        _ = SyntheticPromptGenerator.create_synthetic_prompt(tokenizer)
+        _ = PromptGenerator.create_synthetic_prompt(tokenizer)
 
     def test_synthetic_prompt_zero_token(self):
         # config = ConfigCommand({"model_name": "test_model"})
         # config.tokenizer.name = "gpt2"
         tokenizer = get_tokenizer("gpt2")
-        prompt = SyntheticPromptGenerator.create_synthetic_prompt(
+        prompt = PromptGenerator.create_synthetic_prompt(
             tokenizer=tokenizer,
             prompt_tokens_mean=0,
             prompt_tokens_stddev=0,
@@ -52,7 +52,7 @@ class TestSyntheticPromptGenerator:
         # config = ConfigCommand({"model_name": "test_model"})
         # config.tokenizer.name = "gpt2"
         tokenizer = get_tokenizer("gpt2")
-        prompt = SyntheticPromptGenerator.create_synthetic_prompt(
+        prompt = PromptGenerator.create_synthetic_prompt(
             tokenizer=tokenizer,
             prompt_tokens_mean=prompt_tokens,
             prompt_tokens_stddev=0,
@@ -64,8 +64,8 @@ class TestSyntheticPromptGenerator:
         "test_num_tokens, context",
         [
             (12, does_not_raise()),
-            (9, pytest.raises(SyntheticDataConfigurationException)),
-            (16, pytest.raises(SyntheticDataConfigurationException)),
+            (9, pytest.raises(GeneratorConfigurationException)),
+            (16, pytest.raises(GeneratorConfigurationException)),
         ],
     )
     def test_generate_prompt_with_token_reuse(self, test_num_tokens, context):
@@ -73,7 +73,7 @@ class TestSyntheticPromptGenerator:
         # config.tokenizer.name = "gpt2"
         tokenizer = get_tokenizer("gpt2")
         with context:
-            _ = SyntheticPromptGenerator._generate_prompt_with_token_reuse(
+            _ = PromptGenerator._generate_prompt_with_token_reuse(
                 tokenizer=tokenizer,
                 num_tokens=test_num_tokens,
                 prompt_hash_list=[1, 2, 3],

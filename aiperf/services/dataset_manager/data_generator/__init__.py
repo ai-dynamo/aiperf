@@ -13,18 +13,18 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from aiperf.services.dataset_manager.data_generator.synthetic_audio_generator import (
-    SyntheticAudioGenerator,
+from aiperf.services.dataset_manager.data_generator.audio_generator import (
+    AudioGenerator,
 )
-from aiperf.services.dataset_manager.data_generator.synthetic_image_generator import (
-    SyntheticImageGenerator,
+from aiperf.services.dataset_manager.data_generator.image_generator import (
+    ImageGenerator,
 )
-from aiperf.services.dataset_manager.data_generator.synthetic_prompt_generator import (
-    SyntheticPromptGenerator,
+from aiperf.services.dataset_manager.data_generator.prompt_generator import (
+    PromptGenerator,
 )
 
 __all__ = [
-    "SyntheticPromptGenerator",
-    "SyntheticImageGenerator",
-    "SyntheticAudioGenerator",
+    "PromptGenerator",
+    "ImageGenerator",
+    "AudioGenerator",
 ]

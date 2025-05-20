@@ -15,25 +15,25 @@
 from aiperf.common.exceptions.base import AIPerfException
 
 
-class SyntheticDataException(AIPerfException):
-    """Base class for all exceptions raised by synthetic data generator modules."""
+class GeneratorException(AIPerfException):
+    """Base class for all exceptions raised by data generator modules."""
 
     pass
 
 
-class SyntheticDataInitializationException(SyntheticDataException):
-    """Exception raised for synthetic data generator initialization errors."""
+class GeneratorInitializationException(GeneratorException):
+    """Exception raised for data generator initialization errors."""
 
     pass
 
 
-class SyntheticDataGenerationException(SyntheticDataException):
-    """Exception raised for synthetic data generation errors."""
+class DataGenerationException(GeneratorException):
+    """Exception raised for data generation errors."""
 
     pass
 
 
-class SyntheticDataConfigurationException(SyntheticDataException):
-    """Exception raised for synthetic data generator configuration errors."""
+class GeneratorConfigurationException(GeneratorException):
+    """Exception raised for data generator configuration errors."""
 
     pass

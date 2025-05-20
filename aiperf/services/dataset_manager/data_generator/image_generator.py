@@ -24,12 +24,16 @@ from PIL import Image
 from aiperf.common import utils
 from aiperf.common.enums import ImageFormat
 
-logger = logging.getLogger("SyntheticImageGenerator")
+logger = logging.getLogger("ImageGenerator")
 
 
-class SyntheticImageGenerator:
-    """A simple synthetic image generator that generates multiple synthetic
-    images from the source images.
+class ImageGenerator:
+    """A class that generates images from source images.
+
+    This class provides methods to create synthetic images by resizing
+    source images (located in the 'assets/source_images' directory)
+    to specified dimensions and converting them to a chosen image format (e.g., PNG, JPEG).
+    The dimensions can be randomized based on mean and standard deviation values.
     """
 
     @classmethod
@@ -41,7 +45,7 @@ class SyntheticImageGenerator:
         image_height_stddev: int,
         image_format: Optional[ImageFormat] = None,
     ) -> str:
-        """Generate a synthetic image with the provided parameters.
+        """Generate an image with the provided parameters.
 
         Args:
             image_width_mean: The mean width of the image.
@@ -51,7 +55,7 @@ class SyntheticImageGenerator:
             image_format: The format of the image.
 
         Returns:
-            A base64 encoded string of the synthetic image.
+            A base64 encoded string of the generated image.
         """
         if image_format is None:
             image_format = random.choice(list(ImageFormat))

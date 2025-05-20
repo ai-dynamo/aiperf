@@ -47,7 +47,16 @@ SUPPORTED_BIT_DEPTHS = {
 }
 
 
-class SyntheticAudioGenerator:
+class AudioGenerator:
+    """
+    A class for generating synthetic audio data.
+
+    This class provides methods to create audio samples with specified
+    characteristics such as format (WAV, MP3), length, sampling rate,
+    bit depth, and number of channels. It supports validation of audio
+    parameters to ensure compatibility with chosen formats.
+    """
+
     @staticmethod
     def _sample_positive_normal(
         mean: float, stddev: float, min_value: float = 0.1
@@ -120,7 +129,7 @@ class SyntheticAudioGenerator:
     @staticmethod
     def create_synthetic_audio(config) -> str:
         """
-        Generate synthetic audio data with specified parameters.
+        Generate audio data with specified parameters.
 
         Args:
             config: ConfigAudio object containing audio generation parameters
@@ -140,7 +149,7 @@ class SyntheticAudioGenerator:
             raise ValueError("Only mono (1) and stereo (2) channels are supported")
 
         # Sample audio length (in seconds) using rejection sampling
-        audio_length = SyntheticAudioGenerator._sample_positive_normal(
+        audio_length = AudioGenerator._sample_positive_normal(
             config.length.mean, config.length.stddev
         )
 
@@ -151,8 +160,8 @@ class SyntheticAudioGenerator:
         bit_depth = np.random.choice(config.depths)
 
         # Validate sampling rate and bit depth
-        SyntheticAudioGenerator._validate_sampling_rate(sampling_rate, config.format)
-        SyntheticAudioGenerator._validate_bit_depth(bit_depth)
+        AudioGenerator._validate_sampling_rate(sampling_rate, config.format)
+        AudioGenerator._validate_bit_depth(bit_depth)
 
         # Generate synthetic audio data (gaussian noise)
         num_samples = int(audio_length * sampling_rate)

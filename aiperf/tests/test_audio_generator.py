@@ -21,8 +21,8 @@ import soundfile as sf
 
 # TODO: uncomment when ConfigAudio is implemented
 # from genai_perf.config.input.config_input import ConfigAudio
-from aiperf.services.dataset_manager.data_generator.synthetic_audio_generator import (
-    SyntheticAudioGenerator,
+from aiperf.services.dataset_manager.data_generator.audio_generator import (
+    AudioGenerator,
 )
 
 
@@ -60,7 +60,7 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
 #    config_audio.depths = [16]  # Fixed bit depth for test
 #    config_audio.format = AudioFormat.WAV
 #
-#    data_uri = SyntheticAudioGenerator.create_synthetic_audio(config_audio)
+#    data_uri = AudioGenerator.create_synthetic_audio(config_audio)
 #
 #    audio_data, sample_rate = decode_audio(data_uri)
 #    actual_length = len(audio_data) / sample_rate
@@ -78,7 +78,7 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
 #        config_audio.depths = [16]
 #        config_audio.format = AudioFormat.WAV
 #
-#        SyntheticAudioGenerator.create_synthetic_audio(config_audio)
+#        AudioGenerator.create_synthetic_audio(config_audio)
 #
 #
 # @pytest.mark.parametrize(
@@ -101,11 +101,11 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
 #    config_audio.depths = [bit_depth]
 #    config_audio.format = AudioFormat.WAV
 #
-#    data_uri1 = SyntheticAudioGenerator.create_synthetic_audio(config_audio)
+#    data_uri1 = AudioGenerator.create_synthetic_audio(config_audio)
 #
 #    np.random.seed(123)
 #    random.seed(123)
-#    data_uri2 = SyntheticAudioGenerator.create_synthetic_audio(config_audio)
+#    data_uri2 = AudioGenerator.create_synthetic_audio(config_audio)
 #
 #    # Compare the actual audio data
 #    audio_data1, _ = decode_audio(data_uri1)
@@ -123,7 +123,7 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
 #    config_audio.depths = [16]  # Fixed bit depth for test
 #    config_audio.format = audio_format
 #
-#    data_uri = SyntheticAudioGenerator.create_synthetic_audio(config_audio)
+#    data_uri = AudioGenerator.create_synthetic_audio(config_audio)
 #
 #    # Check data URI format
 #    assert data_uri.startswith(
@@ -144,7 +144,7 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
 #        config_audio.depths = [12]  # Unsupported bit depth
 #        config_audio.format = AudioFormat.WAV
 #
-#        SyntheticAudioGenerator.create_synthetic_audio(config_audio)
+#        AudioGenerator.create_synthetic_audio(config_audio)
 #
 #    assert "Supported bit depths are:" in str(exc_info.value)
 #
@@ -159,7 +159,7 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
 #    config_audio.format = AudioFormat.WAV
 #    config_audio.num_channels = channels
 #
-#    data_uri = SyntheticAudioGenerator.create_synthetic_audio(config_audio)
+#    data_uri = AudioGenerator.create_synthetic_audio(config_audio)
 #
 #    audio_data, _ = decode_audio(data_uri)
 #    if channels == 1:
@@ -185,7 +185,7 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
 #    config_audio.depths = [bit_depth]
 #    config_audio.format = AudioFormat.WAV
 #
-#    data_uri = SyntheticAudioGenerator.create_synthetic_audio(config_audio)
+#    data_uri = AudioGenerator.create_synthetic_audio(config_audio)
 #
 #    _, sample_rate = decode_audio(data_uri)
 #    assert sample_rate == sampling_rate_khz * 1000, "unexpected sampling rate"
@@ -200,7 +200,7 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
 #        config_audio.depths = [16]
 #        config_audio.format = AudioFormat.MP3
 #
-#        SyntheticAudioGenerator.create_synthetic_audio(config_audio)
+#        AudioGenerator.create_synthetic_audio(config_audio)
 #    assert "MP3 format only supports" in str(
 #        exc_info.value
 #    ), "error message should mention supported rates"
@@ -211,7 +211,7 @@ def test_positive_normal_sampling():
     stddev = 0.2
     min_value = 0.1
     samples = [
-        SyntheticAudioGenerator._sample_positive_normal(mean, stddev, min_value)
+        AudioGenerator._sample_positive_normal(mean, stddev, min_value)
         for _ in range(1000)
     ]
 

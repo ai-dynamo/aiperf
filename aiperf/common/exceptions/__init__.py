@@ -18,6 +18,11 @@ from aiperf.common.exceptions.config import (
     ConfigurationParseException,
     ConfigurationValidationException,
 )
+from aiperf.common.exceptions.data_generator import (
+    DataGenerationException,
+    GeneratorConfigurationException,
+    GeneratorInitializationException,
+)
 from aiperf.common.exceptions.service import (
     ServiceCleanupException,
     ServiceInitializationException,
@@ -26,11 +31,6 @@ from aiperf.common.exceptions.service import (
     ServiceStartException,
     ServiceStatusException,
     ServiceStopException,
-)
-from aiperf.common.exceptions.synthetic_data import (
-    SyntheticDataConfigurationException,
-    SyntheticDataGenerationException,
-    SyntheticDataInitializationException,
 )
 from aiperf.common.exceptions.tokenizer import (
     TokenizationException,
@@ -50,10 +50,10 @@ __all__ = [
     "ServiceMessageProcessingException",
     "ServiceRegistrationException",
     "ServiceStatusException",
-    # Synthetic data exceptions
-    "SyntheticDataInitializationException",
-    "SyntheticDataGenerationException",
-    "SyntheticDataConfigurationException",
+    # Data generator exceptions
+    "GeneratorInitializationException",
+    "GeneratorConfigurationException",
+    "DataGenerationException",
     # Tokenizer exceptions
     "TokenizerInitializationException",
     "TokenizationException",
