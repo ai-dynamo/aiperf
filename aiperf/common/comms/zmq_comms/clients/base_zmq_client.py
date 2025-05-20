@@ -17,6 +17,7 @@ import contextlib
 import logging
 import uuid
 from abc import ABC
+from collections import defaultdict
 from collections.abc import Callable
 
 import zmq.asyncio
@@ -36,7 +37,14 @@ from aiperf.common.utils import call_all_functions_self
 
 
 class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
-    """Base class for all ZMQ clients."""
+    """Base class for all ZMQ clients.
+
+    This class provides a common interface for all ZMQ clients in the AIPerf
+    framework. It inherits from the ZMQClientMetaclass, allowing derived
+    classes to implement specific hooks.
+    """
+
+    _aiperf_hooks: dict[str, list[Callable]] = defaultdict(list)
 
     def __init__(
         self,
@@ -70,10 +78,12 @@ class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
 
     @property
     def is_initialized(self) -> bool:
+        """Check if the client is initialized."""
         return self.initialized_event.is_set()
 
     @property
     def is_shutdown(self) -> bool:
+        """Check if the client is shutdown."""
         return self.stop_event.is_set()
 
     @property
@@ -83,6 +93,11 @@ class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
 
     @property
     def socket(self) -> zmq.asyncio.Socket:
+        """Get the zmq socket for the client.
+
+        Raises:
+            CommunicationNotInitializedError: If the client is not initialized
+        """
         if not self._socket:
             raise CommunicationNotInitializedError()
         return self._socket
@@ -95,7 +110,16 @@ class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
         return self._aiperf_hooks[hook_type]
 
     async def _run_hooks(self, hook_type: AIPerfHooks, *args, **kwargs) -> None:
-        """Run the hooks for the given hook type."""
+        """Run the hooks for the given hook type.
+
+        Args:
+            hook_type: The type of hook to run
+            *args: The arguments to pass to the hooks
+            **kwargs: The keyword arguments to pass to the hooks
+
+        Raises:
+            AIPerfMultiError: If any of the hooks raise an exception
+        """
         await call_all_functions_self(self, self._get_hooks(hook_type), *args, **kwargs)
 
     def _ensure_initialized(self) -> None:
@@ -111,7 +135,15 @@ class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
             raise CommunicationShutdownError()
 
     async def initialize(self) -> None:
-        """Initialize the communication."""
+        """Initialize the communication, and start the tasks.
+
+        This method will:
+        - Create the zmq socket
+        - Bind or connect the socket to the address
+        - Set the socket options
+        - Run the AIPerfHooks.INIT hooks
+        - Start the tasks registered with the AIPerfHooks.TASK hooks
+        """
         try:
             self._socket = self.context.socket(self.socket_type)
             if self.bind:
@@ -159,7 +191,13 @@ class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
             raise CommunicationInitializationError from e
 
     async def shutdown(self) -> None:
-        """Shutdown the communication."""
+        """Shutdown the communication.
+
+        This method will:
+        - Close the zmq socket
+        - Run the AIPerfHooks.CLEANUP hooks
+        - Cancel all registered tasks
+        """
         if self.is_shutdown:
             return
 

@@ -21,7 +21,7 @@ from aiperf.common.models.message_models import Message
 
 
 class BaseCommunication(ABC):
-    """Base class for communication between AIPerf components."""
+    """Base class for specifying the base communication layer for AIPerf components."""
 
     @abstractmethod
     async def initialize(self) -> None:
@@ -50,16 +50,16 @@ class BaseCommunication(ABC):
 
     @abstractmethod
     async def shutdown(self) -> None:
-        """Gracefully shutdown communication channels.
-
-        Raises:
-            Exception object if an exception occurred, or None if shutdown was successful
-        """
+        """Gracefully shutdown communication channels."""
         pass
 
     @abstractmethod
     async def create_clients(self, *client_types: ClientType) -> None:
-        """Create the communication clients."""
+        """Create the communication clients.
+
+        Args:
+            *client_types: The client types to create
+        """
         pass
 
     @abstractmethod
@@ -68,10 +68,7 @@ class BaseCommunication(ABC):
 
         Args:
             topic: Topic to publish to
-            message: Message to publish (must be a Pydantic model)
-
-        Raises:
-            Exception object if an exception occurred, or None if response was published successfully
+            message: Message to publish
         """
         pass
 
@@ -85,7 +82,7 @@ class BaseCommunication(ABC):
 
         Args:
             topic: Topic to subscribe to
-            callback: Function to call when a response is received (receives Message object)
+            callback: Function to call when a response is received
         """
         pass
 
@@ -100,11 +97,11 @@ class BaseCommunication(ABC):
 
         Args:
             target: Target component to send request to
-            request_data: Request data (must be a Message instance)
+            request_data: Request data
             timeout: Timeout in seconds
 
         Returns:
-            Response message (Message instance) if successful, or Exception object if an exception occurred
+            Response message if successful
         """
         pass
 
@@ -114,10 +111,7 @@ class BaseCommunication(ABC):
 
         Args:
             target: Target component to send response to
-            response: Response message (must be a Message instance)
-
-        Raises:
-            Exception object if an exception occurred, or None if response was sent successfully
+            response: Response message
         """
         pass
 
@@ -126,11 +120,8 @@ class BaseCommunication(ABC):
         """Push data to a target.
 
         Args:
-            topic: Topic to push to (must be a TopicType instance)
-            message: Message to be pushed (must be a Message instance)
-
-        Raises:
-            Exception object if an exception occurred, or None if data was pushed successfully
+            topic: Topic to push to
+            message: Message to be pushed
         """
         pass
 
@@ -143,10 +134,7 @@ class BaseCommunication(ABC):
         """Pull data from a source.
 
         Args:
-            topic: Topic to pull from (must be a TopicType instance)
-            callback: function to call when data is received. (receives Message object)
-
-        Raises:
-            Exception object if an exception occurred, or None if pull registration was successful.
+            topic: Topic to pull from
+            callback: function to call when data is received.
         """
         pass

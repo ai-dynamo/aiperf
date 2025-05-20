@@ -22,6 +22,7 @@ from zmq import SocketType
 from aiperf.common.comms.zmq_comms.clients.base_zmq_client import BaseZMQClient
 from aiperf.common.decorators import aiperf_task
 from aiperf.common.models.message_models import BaseMessage, Message
+from aiperf.common.utils import call_all_functions
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,11 @@ class ZMQPullClient(BaseZMQClient):
 
     @aiperf_task
     async def _pull_receiver(self) -> None:
-        """Background task for receiving data from the pull socket."""
+        """Background task for receiving data from the pull socket.
+
+        This method is a coroutine that will run indefinitely until the client is
+        shutdown. It will wait for messages from the socket and handle them.
+        """
         while not self.is_shutdown:
             try:
                 if not self.is_initialized:
@@ -64,15 +69,8 @@ class ZMQPullClient(BaseZMQClient):
 
                 # Call callbacks with BaseMessage object
                 if topic in self._pull_callbacks:
-                    for callback in self._pull_callbacks[topic]:
-                        try:
-                            await callback(message)
-                        except Exception as e:
-                            logger.error(
-                                f"Exception in pull callback for topic {topic}: {e}"
-                            )
-                else:
-                    logger.warning(f"No callbacks registered for pull topic {topic}")
+                    await call_all_functions(self._pull_callbacks[topic], message)
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -91,7 +89,8 @@ class ZMQPullClient(BaseZMQClient):
             callback: function to call when data is received.
 
         Raises:
-            Comm if an exception occurred registering the pull callback, None otherwise
+            CommunicationNotInitializedError: If the client is not initialized
+            CommunicationPullError: If an exception occurred registering the pull callback
         """
         self._ensure_initialized()
 

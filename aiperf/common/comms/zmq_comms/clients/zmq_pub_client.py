@@ -54,7 +54,8 @@ class ZMQPubClient(BaseZMQClient):
             message: Message to publish (must be a Pydantic model)
 
         Raises:
-            Exception if message was not published successfully, None otherwise
+            CommunicationNotInitializedError: If the client is not initialized
+            CommunicationPublishError: If the message was not published successfully
         """
         self._ensure_initialized()
 
@@ -64,6 +65,7 @@ class ZMQPubClient(BaseZMQClient):
 
             # Publish message
             await self.socket.send_multipart([topic.encode(), message_json.encode()])
+
         except Exception as e:
             logger.error("Exception publishing message to topic %s: %s", topic, e)
             raise CommunicationPublishError(

@@ -12,7 +12,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-from typing import Self, Union
+from typing import Union
 
 from aiperf.common.enums.base_enums import StrEnum
 from aiperf.common.enums.comm_enums import DataTopic, Topic, TopicType
@@ -22,20 +22,23 @@ from aiperf.common.exceptions.comm_exceptions import (
 
 
 class PubClientType(StrEnum):
-    """Enum for communication client types based on service needs."""
+    """
+    Enum for specifying the client type for publishing messages. Includes a helper method
+    for retrieving the appropriate client type based on the topic.
+    """
 
     CONTROLLER = "controller_pub"
     COMPONENT = "component_pub"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> Self:
+    def from_topic(cls, topic: TopicType) -> "PubClientType":
         """Determine the appropriate ClientType based on topic.
 
         Args:
             topic: The topic to communicate on
 
         Returns:
-            TODO: document
+            The appropriate ClientType for the given topic
         """
         match topic:
             case Topic.HEARTBEAT | Topic.REGISTRATION | Topic.STATUS | Topic.RESPONSE:
@@ -49,20 +52,23 @@ class PubClientType(StrEnum):
 
 
 class SubClientType(StrEnum):
-    """Enum for communication client types based on service needs."""
+    """
+    Enum for specifying the client type for subscribing to messages. Includes a helper method
+    for retrieving the appropriate client type based on the topic.
+    """
 
     CONTROLLER = "controller_sub"
     COMPONENT = "component_sub"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> Self:
+    def from_topic(cls, topic: TopicType) -> "SubClientType":
         """Determine the appropriate ClientType based on topic.
 
-                Args:
-                    topic: The topic to communicate on
+        Args:
+            topic: The topic to communicate on
 
-                Returns:
-        TODO: document
+        Returns:
+            The appropriate ClientType for the given topic
         """
         match topic:
             case Topic.HEARTBEAT | Topic.REGISTRATION | Topic.STATUS | Topic.RESPONSE:
@@ -76,7 +82,10 @@ class SubClientType(StrEnum):
 
 
 class PushClientType(StrEnum):
-    """Enum for communication client types based on service needs."""
+    """
+    Enum for specifying the client type for pushing messages. Includes a helper method
+    for retrieving the appropriate client type based on the topic.
+    """
 
     RECORDS = "records_push"
     INFERENCE_RESULTS = "inference_results_push"
@@ -84,14 +93,14 @@ class PushClientType(StrEnum):
     CREDIT_RETURN = "credit_return_push"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> Self:
+    def from_topic(cls, topic: TopicType) -> "PushClientType":
         """Determine the appropriate ClientType based on communication type and topic.
 
-                Args:
-                    topic: The topic to communicate on
+        Args:
+            topic: The topic to communicate on
 
-                Returns:
-        TODO: document
+        Returns:
+            The appropriate ClientType for the given topic
         """
         match topic:
             case Topic.CREDIT_DROP:
@@ -109,7 +118,10 @@ class PushClientType(StrEnum):
 
 
 class PullClientType(StrEnum):
-    """Enum for communication client types based on service needs."""
+    """
+    Enum for specifying the client type for pulling messages. Includes a helper method
+    for retrieving the appropriate client type based on the topic.
+    """
 
     RECORDS = "records_pull"
     INFERENCE_RESULTS = "inference_results_pull"
@@ -117,14 +129,14 @@ class PullClientType(StrEnum):
     CREDIT_RETURN = "credit_return_pull"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> Self:
+    def from_topic(cls, topic: TopicType) -> "PullClientType":
         """Determine the appropriate ClientType based on topic.
 
-                Args:
-                    topic: The topic to communicate on
+        Args:
+            topic: The topic to communicate on
 
-                Returns:
-        TODO: document
+        Returns:
+            The appropriate ClientType for the given topic
         """
         match topic:
             case Topic.CREDIT_DROP:
@@ -142,19 +154,22 @@ class PullClientType(StrEnum):
 
 
 class ReqClientType(StrEnum):
-    """Enum for communication client types based on service needs."""
+    """
+    Enum for specifying the client type for requesting messages. Includes a helper method
+    for retrieving the appropriate client type based on the topic.
+    """
 
     CONVERSATION_DATA = "conversation_data_req"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> Self:
+    def from_topic(cls, topic: TopicType) -> "ReqClientType":
         """Determine the appropriate ClientType based on topic.
 
-                Args:
-                    topic: The topic to communicate on
+        Args:
+            topic: The topic to communicate on
 
-                Returns:
-        TODO: document
+        Returns:
+            The appropriate ClientType for the given topic
         """
         match topic:
             case DataTopic.CONVERSATION:
@@ -166,19 +181,22 @@ class ReqClientType(StrEnum):
 
 
 class RepClientType(StrEnum):
-    """Enum for communication client types based on service needs."""
+    """
+    Enum for specifying the client type for responding to messages. Includes a helper method
+    for retrieving the appropriate client type based on the topic.
+    """
 
     CONVERSATION_DATA = "conversation_data_rep"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> Self:
+    def from_topic(cls, topic: TopicType) -> "RepClientType":
         """Determine the appropriate ClientType based on topic.
 
-                Args:
-                    topic: The topic to communicate on
+        Args:
+            topic: The topic to communicate on
 
-                Returns:
-        TODO: document
+        Returns:
+            The appropriate ClientType for the given topic
         """
         match topic:
             case DataTopic.CONVERSATION:
@@ -197,3 +215,4 @@ ClientType = Union[  # noqa: UP007
     ReqClientType,
     RepClientType,
 ]
+"""Union of all client types."""

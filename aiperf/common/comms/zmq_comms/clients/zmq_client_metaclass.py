@@ -20,7 +20,7 @@ from aiperf.common.decorators import AIPerfHooks
 class ZMQClientMetaclass(BaseMetaclass):
     """Meta class for ZMQ clients.
 
-    This meta class is used to collect the hooks for a ZMQ client.
+    This meta class is used to specify the supported hooks for ZMQ clients.
     """
 
     pass

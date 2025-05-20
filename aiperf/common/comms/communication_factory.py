@@ -33,10 +33,9 @@ logger = logging.getLogger(__name__)
 
 
 class CommunicationFactory:
-    """Factory for creating communication instances.
-
-    Responsible for creating the appropriate communication implementation
-    based on the communication type specified in the configuration.
+    """Factory for creating communication instances. Provides a registry of communication types and
+    methods for registering new communication types and creating communication instances from existing
+    registered types.
     """
 
     # Registry of communication types
@@ -49,8 +48,8 @@ class CommunicationFactory:
         """Register a new communication type.
 
         Args:
-            comm_type: Communication type string
-            comm_class: Communication class
+            comm_type: String representation of the communication type
+            comm_class: The class that implements the communication type
         """
         cls._comm_registry[comm_type] = comm_class
         logger.debug("Registered communication type: %s", comm_type)
@@ -60,7 +59,7 @@ class CommunicationFactory:
         """Register a new communication type.
 
         Args:
-            comm_type: Communication type string
+            comm_type: String representation of the communication type
 
         Returns:
             Decorator for the communication class
@@ -91,6 +90,10 @@ class CommunicationFactory:
 
         Returns:
             BaseCommunication instance
+
+        Raises:
+            CommunicationTypeUnknownError: If the communication type is not registered
+            CommunicationCreateError: If there was an error creating the communication instance
         """
         if service_config.comm_backend not in cls._comm_registry:
             logger.error("Unknown communication type: %s", service_config.comm_backend)

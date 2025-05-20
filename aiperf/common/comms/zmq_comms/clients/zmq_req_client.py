@@ -52,7 +52,11 @@ class ZMQReqClient(BaseZMQClient):
 
     @aiperf_task
     async def _process_messages(self) -> None:
-        """Process incoming response messages in the background."""
+        """Process incoming response messages in the background.
+
+        This method is a coroutine that will run indefinitely until the client is
+        shutdown. It will wait for messages from the socket and handle them.
+        """
         while not self.is_shutdown:
             try:
                 if not self.is_initialized:
@@ -67,7 +71,7 @@ class ZMQReqClient(BaseZMQClient):
                 await asyncio.sleep(0.1)
 
     async def _handle_response(self, response_json: str) -> None:
-        """Handle a response response.
+        """Handle a response message.
 
         Args:
             response_json: The JSON response string

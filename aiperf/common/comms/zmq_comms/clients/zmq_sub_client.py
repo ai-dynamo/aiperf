@@ -80,7 +80,11 @@ class ZMQSubClient(BaseZMQClient):
 
     @aiperf_task
     async def _sub_receiver(self) -> None:
-        """Background task for receiving messages from subscribed topics."""
+        """Background task for receiving messages from subscribed topics.
+
+        This method is a coroutine that will run indefinitely until the client is
+        shutdown. It will wait for messages from the socket and handle them.
+        """
         while not self.is_shutdown:
             try:
                 if not self.is_initialized:

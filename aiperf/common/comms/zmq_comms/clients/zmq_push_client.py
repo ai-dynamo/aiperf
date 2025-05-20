@@ -53,7 +53,8 @@ class ZMQPushClient(BaseZMQClient):
             message: Message to be sent must be a Message object
 
         Raises:
-            Exception if data was not pushed successfully, None otherwise
+            CommunicationNotInitializedError: If the client is not initialized
+            CommunicationPushError: If the data was not pushed successfully
         """
         self._ensure_initialized()
 
