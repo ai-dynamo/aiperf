@@ -14,7 +14,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: ["."]
+          paths: [.]
 
 markdown_extensions:
   - admonition
