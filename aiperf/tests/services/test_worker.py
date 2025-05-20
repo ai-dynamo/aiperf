@@ -1,0 +1,76 @@
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#  http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+"""
+Tests for the worker service.
+"""
+
+import pytest
+from pydantic import BaseModel
+
+from aiperf.app.services.worker.worker import Worker
+from aiperf.common.enums import ServiceState, ServiceType
+from aiperf.common.service.base_service import BaseService
+from aiperf.tests.base_test_service import BaseTestService
+from aiperf.tests.utils.async_test_utils import async_fixture
+
+
+class WorkerTestConfig(BaseModel):
+    """
+    Test configuration for the workers.
+    """
+
+    # TODO: Replace this with the actual configuration model once available
+    pass
+
+
+@pytest.mark.asyncio
+class TestWorker(BaseTestService):
+    """
+    Tests for the worker service.
+
+    This test class extends BaseTestService since Worker is a direct subclass
+    of BaseService, not a BaseComponentService.
+    """
+
+    @pytest.fixture
+    def service_class(self) -> type[BaseService]:
+        """Return the service class to be tested."""
+        return Worker
+
+    @pytest.fixture
+    def worker_config(self) -> WorkerTestConfig:
+        """
+        Return a test configuration for the worker.
+        """
+        return WorkerTestConfig()
+
+    async def test_worker_initialization(self, initialized_service: Worker) -> None:
+        """
+        Test that the worker initializes with the correct configuration.
+
+        Verifies the worker service is properly instantiated with its configuration.
+        """
+        # Basic existence checks
+        service = await async_fixture(initialized_service)
+        assert service is not None
+        assert service.service_config is not None
+        assert service.service_type == ServiceType.WORKER
+
+        # Initialize the worker
+        await service.initialize()
+
+        # Check the worker is properly initialized
+        assert service.is_initialized
+        assert service.state == ServiceState.READY

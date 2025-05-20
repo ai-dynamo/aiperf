@@ -13,8 +13,5 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 """
-AIPerf testing package.
-
-This package contains a comprehensive testing framework for the AIPerf services,
-including base classes, fixtures, and utilities for unit and integration testing.
+AIPerf testing utilities.
 """
