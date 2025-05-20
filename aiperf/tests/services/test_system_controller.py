@@ -76,7 +76,7 @@ class TestSystemController(BaseTestControllerService):
             assert callable(mock_communication.mock_data.subscriptions[topic])
 
     @pytest.fixture(autouse=True)
-    def test_service_manager_with_multiprocess(
+    def service_manager_with_multiprocess(
         self, monkeypatch, service_config
     ) -> MultiProcessServiceManager:
         """
