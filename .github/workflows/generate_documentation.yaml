@@ -1,16 +1,15 @@
 name: Generate and Deploy Documentation
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
+    types: [closed]
     branches:
       - main
   workflow_dispatch:
 
 jobs:
   build-deploy-docs:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
