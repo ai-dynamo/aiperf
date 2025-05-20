@@ -20,6 +20,8 @@ __all__ = [
     "Topic",
     "CommBackend",
     "ServiceRunType",
+    "ImageFormat",
+    "AudioFormat",
 ]
 
 from aiperf.common.enums.base import (
@@ -30,3 +32,4 @@ from aiperf.common.enums.base import (
     ServiceState,
     Topic,
 )
+from aiperf.common.enums.data_format import AudioFormat, ImageFormat

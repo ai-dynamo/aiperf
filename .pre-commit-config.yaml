@@ -17,6 +17,7 @@ repos:
     rev: v5.0.0  # Use the latest stable version
     hooks:
       - id: check-added-large-files
+        args: ['--maxkb=5000']
       - id: check-case-conflict
       - id: check-executables-have-shebangs
       - id: check-merge-conflict
