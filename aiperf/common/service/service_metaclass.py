@@ -24,6 +24,7 @@ from aiperf.common.decorators import AIPerfHooks
     AIPerfHooks.RUN,
     AIPerfHooks.CONFIGURE,
     AIPerfHooks.TASK,
+    AIPerfHooks.SET_STATE,
 )
 class ServiceMetaclass(BaseMetaclass):
     """Meta class for services.

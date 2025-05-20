@@ -13,9 +13,10 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 import asyncio
+from typing import cast
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.decorators import aiperf_task, on_run
+from aiperf.common.decorators import AIPerfHooks, aiperf_task, on_run, on_set_state
 from aiperf.common.enums import (
     ClientType,
     CommandType,
@@ -29,7 +30,12 @@ from aiperf.common.exceptions.service_exceptions import (
     ServiceHeartbeatError,
     ServiceRegistrationError,
 )
-from aiperf.common.models.message_models import Message
+from aiperf.common.models.message_models import (
+    CommandMessage,
+    HeartbeatMessage,
+    RegistrationMessage,
+    StatusMessage,
+)
 from aiperf.common.models.payload_models import (
     HeartbeatPayload,
     RegistrationPayload,
@@ -174,7 +180,7 @@ class BaseComponentService(BaseService):
         except Exception as e:
             raise ServiceRegistrationError() from e
 
-    async def process_command_message(self, message: Message) -> None:
+    async def process_command_message(self, message: CommandMessage) -> None:
         """Process a command message received from the controller.
 
         This method will process the command message and execute the appropriate action.
@@ -190,45 +196,54 @@ class BaseComponentService(BaseService):
             self.stop_event.set()
 
         elif cmd == CommandType.CONFIGURE:
-            await self._configure(message.payload)
+            await self._run_hooks(AIPerfHooks.CONFIGURE, message)
 
         else:
             self.logger.warning(f"{self.service_type} received unknown command: {cmd}")
 
-    async def set_state(self, state: ServiceState) -> None:
-        """Set the state of the service.
+    @on_set_state
+    async def _on_set_state(self, state: ServiceState) -> None:
+        """Action to take when the service state is set.
 
         This method will also publish the status message to the status topic if the
         communications are initialized.
         """
-        self._state = state
         if self._comms and self._comms.is_initialized:
             await self.comms.publish(
                 topic=Topic.STATUS,
                 message=self.create_status_message(state),
             )
 
-    def create_heartbeat_message(self) -> Message:
+    def create_heartbeat_message(self) -> HeartbeatMessage:
         """Create a heartbeat notification message."""
-        return self.create_message(
-            HeartbeatPayload(
-                service_type=self.service_type,
-            )
+        return cast(
+            HeartbeatMessage,
+            self.create_message(
+                HeartbeatPayload(
+                    service_type=self.service_type,
+                )
+            ),
         )
 
-    def create_registration_message(self) -> Message:
+    def create_registration_message(self) -> RegistrationMessage:
         """Create a registration request message."""
-        return self.create_message(
-            RegistrationPayload(
-                service_type=self.service_type,
-            )
+        return cast(
+            RegistrationMessage,
+            self.create_message(
+                RegistrationPayload(
+                    service_type=self.service_type,
+                )
+            ),
         )
 
-    def create_status_message(self, state: ServiceState) -> Message:
+    def create_status_message(self, state: ServiceState) -> StatusMessage:
         """Create a status notification message."""
-        return self.create_message(
-            StatusPayload(
-                state=state,
-                service_type=self.service_type,
-            )
+        return cast(
+            StatusMessage,
+            self.create_message(
+                StatusPayload(
+                    state=state,
+                    service_type=self.service_type,
+                )
+            ),
         )

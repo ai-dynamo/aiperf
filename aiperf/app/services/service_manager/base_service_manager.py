@@ -23,7 +23,8 @@ from aiperf.common.models.service_models import ServiceRunInfo
 
 class BaseServiceManager(ABC):
     """
-    Base class for service managers.
+    Base class for service managers. It provides a common interface for
+    managing services and a way to look up service information by service ID.
     """
 
     def __init__(

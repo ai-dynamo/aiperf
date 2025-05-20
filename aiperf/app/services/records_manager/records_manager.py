@@ -28,7 +28,14 @@ from aiperf.common.service.base_component_service import BaseComponentService
 
 
 class RecordsManager(BaseComponentService):
-    def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
+    """
+    The RecordsManager service is primarily responsible for holding the
+    results returned from the workers.
+    """
+
+    def __init__(
+        self, service_config: ServiceConfig, service_id: str | None = None
+    ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Initializing records manager")
 
@@ -69,6 +76,8 @@ class RecordsManager(BaseComponentService):
 
 
 def main() -> None:
+    """Main entry point for the records manager."""
+
     from aiperf.common.bootstrap_utils import bootstrap_and_run_service
 
     bootstrap_and_run_service(RecordsManager)

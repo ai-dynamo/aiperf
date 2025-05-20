@@ -18,6 +18,8 @@ from aiperf.common.enums import (
     ClientType,
     ServiceType,
 )
+from aiperf.common.enums.service_enums import ServiceState
+from aiperf.common.models.message_models import Message
 
 
 class BaseServiceInterface(ABC):
@@ -45,6 +47,17 @@ class BaseServiceInterface(ABC):
 
         This property should be implemented by derived classes to specify the
         type/name of the service."""
+        # TODO: We can do this better by using a decorator to set the service type
+        pass
+
+    @abstractmethod
+    async def set_state(self, state: ServiceState) -> None:
+        """Set the state of the service.
+
+        This method will be implemented by the base class, and extra
+        functionality can be added by derived classes via the `@on_set_state`
+        decorator.
+        """
         pass
 
     @abstractmethod
@@ -56,12 +69,13 @@ class BaseServiceInterface(ABC):
         pass
 
     @abstractmethod
-    async def run_forever(self) -> None:
-        """Run the service. This method will be the primary entry point for the service
-        and will be called by the bootstrap script. It should not return until the
-        service is completely shutdown.
+    async def start(self) -> None:
+        """Start the service. It should be called after the service has been initialized
+        and configured.
 
-        This method will be implemented by the base class.
+        This method will be implemented by the base class, and extra
+        functionality can be added by derived classes via the `@on_start`
+        decorator.
         """
         pass
 
@@ -69,16 +83,31 @@ class BaseServiceInterface(ABC):
     async def stop(self) -> None:
         """Stop the service.
 
-        This method will be implemented by the base class.
+        This method will be implemented by the base class, and extra
+        functionality can be added by derived classes via the `@on_stop`
+        decorator.
         """
         pass
 
     @abstractmethod
-    async def start(self) -> None:
-        """Start the service. It should be called after the service has been initialized
-        and configured.
+    async def configure(self, message: Message) -> None:
+        """Configure the service with the given configuration.
 
-        This method will be implemented by the base class.
+        This method will be implemented by the base class, and extra
+        functionality can be added by derived classes via the `@on_configure`
+        decorator.
+        """
+        pass
+
+    @abstractmethod
+    async def run_forever(self) -> None:
+        """Run the service. This method will be the primary entry point for the service
+        and will be called by the bootstrap script. It should not return until the
+        service is completely shutdown.
+
+        This method will be implemented by the base class. Any additional
+        functionality can be added by derived classes via the `@on_run`
+        decorator.
         """
         pass
 

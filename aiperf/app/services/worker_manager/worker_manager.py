@@ -43,7 +43,15 @@ class WorkerProcess(BaseModel):
 
 
 class WorkerManager(BaseComponentService):
-    def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
+    """
+    The WorkerManager service is primary responsibility is to pull data from the dataset manager
+    after receiving the timing credit from the timing manager. It will then push the request data
+    to the worker to issue to the request.
+    """
+
+    def __init__(
+        self, service_config: ServiceConfig, service_id: str | None = None
+    ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Initializing worker manager")
         self.workers: dict[str, WorkerProcess] = {}
@@ -192,6 +200,8 @@ class WorkerManager(BaseComponentService):
 
 
 def main() -> None:
+    """Main entry point for the worker manager."""
+
     from aiperf.common.bootstrap_utils import bootstrap_and_run_service
 
     bootstrap_and_run_service(WorkerManager)

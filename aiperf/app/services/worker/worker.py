@@ -15,8 +15,6 @@
 import asyncio
 import sys
 
-import uvloop
-
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import (
     on_cleanup,
@@ -38,9 +36,14 @@ from aiperf.common.service.base_service import BaseService
 
 
 class Worker(BaseService):
-    """Worker responsible for sending requests to the server."""
+    """Worker is primarily responsible for converting the data into the appropriate
+    format for the interface being used by the server. Also responsible for managing
+    the conversation between turns.
+    """
 
-    def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
+    def __init__(
+        self, service_config: ServiceConfig, service_id: str | None = None
+    ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Initializing worker")
 
@@ -107,10 +110,20 @@ class Worker(BaseService):
         )
 
 
-if __name__ == "__main__":
-    # Load the service configuration
+def main() -> None:
+    """Main entry point for the worker."""
+
+    import uvloop
+
     from aiperf.common.config.config_loader import load_service_config
 
+    # Load the service configuration
     cfg = load_service_config()
+
+    # Create and run the worker
     worker = Worker(cfg)
-    sys.exit(uvloop.run(worker.run_forever()))
+    uvloop.run(worker.run_forever())
+
+
+if __name__ == "__main__":
+    sys.exit(main())

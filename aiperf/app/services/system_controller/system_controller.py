@@ -85,7 +85,12 @@ class SystemController(BaseControllerService):
 
     @on_init
     async def _initialize(self) -> None:
-        """Initialize system controller-specific components."""
+        """Initialize system controller-specific components.
+
+        This method will:
+        - Initialize the service manager
+        - Subscribe to relevant messages
+        """
         self.logger.debug("Initializing System Controller")
 
         if self.service_config.service_run_type == ServiceRunType.MULTIPROCESSING:
@@ -141,7 +146,13 @@ class SystemController(BaseControllerService):
 
     @on_start
     async def _start(self) -> None:
-        """Start the system controller and launch required services."""
+        """Start the system controller and launch required services.
+
+        This method will:
+        - Initialize all required services
+        - Wait for all required services to be registered
+        - Start all required services
+        """
         self.logger.debug("Starting System Controller")
 
         # Start all required services
@@ -191,7 +202,11 @@ class SystemController(BaseControllerService):
 
     @on_stop
     async def _stop(self) -> None:
-        """Stop the system controller and all running services."""
+        """Stop the system controller and all running services.
+
+        This method will:
+        - Stop all running services
+        """
         self.logger.debug("Stopping System Controller")
         self.logger.info("AIPerf System is SHUTTING DOWN")
 
@@ -218,15 +233,6 @@ class SystemController(BaseControllerService):
                         command=CommandType.START,
                     )
 
-                    ###########
-
-                    await self.send_command_to_service(
-                        target_service_id=service_info.service_id,
-                        command=CommandType.START,
-                    )
-
-                    ############
-
                 except Exception as e:
                     self.logger.warning("Failed to start service: %s", e)
                     # Continue to the next service
@@ -234,7 +240,9 @@ class SystemController(BaseControllerService):
                     continue
 
     async def _process_registration_message(self, message: RegistrationMessage) -> None:
-        """Process a registration response from a service.
+        """Process a registration response from a service. It will
+        add the service to the service manager and send a configure command
+        to the service.
 
         Args:
             message: The registration response to process
@@ -282,7 +290,8 @@ class SystemController(BaseControllerService):
         )
 
     async def _process_heartbeat_message(self, message: HeartbeatMessage) -> None:
-        """Process a heartbeat response from a service.
+        """Process a heartbeat response from a service. It will
+        update the last seen timestamp and state of the service.
 
         Args:
             message: The heartbeat response to process
@@ -305,7 +314,8 @@ class SystemController(BaseControllerService):
             )
 
     async def _process_status_message(self, message: StatusMessage) -> None:
-        """Process a status response from a service.
+        """Process a status response from a service. It will
+        update the state of the service with the service manager.
 
         Args:
             message: The status response to process
@@ -342,7 +352,8 @@ class SystemController(BaseControllerService):
             payload: Optional payload to send with the command.
 
         Raises:
-            Exception if the command was not sent successfully, None otherwise
+            CommunicationNotInitializedError if the communication is not initialized
+            CommunicationPublishError if the command was not sent successfully
         """
         if not self._comms:
             self.logger.error("Cannot send command: Communication is not initialized")
@@ -367,6 +378,8 @@ class SystemController(BaseControllerService):
 
 
 def main() -> None:
+    """Main entry point for the system controller."""
+
     from aiperf.common.bootstrap_utils import bootstrap_and_run_service
 
     bootstrap_and_run_service(SystemController)

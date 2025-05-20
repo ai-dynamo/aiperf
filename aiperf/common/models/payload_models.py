@@ -118,6 +118,10 @@ class CommandPayload(BasePayload):
         default=None,
         description="ID of the target service for this command",
     )
+    data: BaseModel | None = Field(
+        default=None,
+        description="Data to send with the command",
+    )
 
 
 class CreditDropPayload(BasePayload):

@@ -68,18 +68,22 @@ class BaseControllerService(BaseService):
         self,
         command: CommandType,
         target_service_id: str,
-        payload: Any | None = None,
+        data: Any | None = None,
     ) -> Message:
         """Create a command message to be sent to a specific service.
 
         Args:
             command: The command to send
             target_service_id: The ID of the service to send the command to
-            payload: Optional payload to send with the command.
+            data: Optional data to send with the command.
 
         Returns:
             A command message
         """
         return self.create_message(
-            CommandPayload(command=command, target_service_id=target_service_id)
+            CommandPayload(
+                command=command,
+                target_service_id=target_service_id,
+                data=data,
+            )
         )

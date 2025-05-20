@@ -42,7 +42,14 @@ from aiperf.common.service.base_component_service import BaseComponentService
 
 
 class TimingManager(BaseComponentService):
-    def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
+    """
+    The TimingManager service is responsible to generate the schedule and issuing
+    timing credits for requests.
+    """
+
+    def __init__(
+        self, service_config: ServiceConfig, service_id: str | None = None
+    ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self._credit_lock = asyncio.Lock()
         self._credits_available = 100
@@ -151,6 +158,7 @@ class TimingManager(BaseComponentService):
 
 
 def main() -> None:
+    """Main entry point for the timing manager."""
     from aiperf.common.bootstrap_utils import bootstrap_and_run_service
 
     bootstrap_and_run_service(TimingManager)

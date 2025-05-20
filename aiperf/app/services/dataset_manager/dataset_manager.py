@@ -28,7 +28,17 @@ from aiperf.common.service.base_component_service import BaseComponentService
 
 
 class DatasetManager(BaseComponentService):
-    def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
+    """
+    The DatasetManager primary responsibility is to manage the data generation or acquisition.
+    For synthetic generation, it contains the code to generate the prompts or tokens.
+    It will have an API for dataset acquisition of a dataset if available in a remote repository or database.
+    """
+
+    def __init__(
+        self,
+        service_config: ServiceConfig,
+        service_id: str | None = None,
+    ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Initializing dataset manager")
 
@@ -69,6 +79,8 @@ class DatasetManager(BaseComponentService):
 
 
 def main() -> None:
+    """Main entry point for the dataset manager."""
+
     from aiperf.common.bootstrap_utils import bootstrap_and_run_service
 
     bootstrap_and_run_service(DatasetManager)
