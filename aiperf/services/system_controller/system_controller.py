@@ -50,11 +50,11 @@ from aiperf.common.models.message import (
 )
 from aiperf.common.models.service import ServiceRunInfo
 from aiperf.common.service.base_controller_service import BaseControllerService
-from aiperf.services.service_manager.base_service_manager import BaseServiceManager
-from aiperf.services.service_manager.kubernetes_service_manager import (
+from aiperf.services.service_manager.base import BaseServiceManager
+from aiperf.services.service_manager.kubernetes import (
     KubernetesServiceManager,
 )
-from aiperf.services.service_manager.multiprocess_service_manager import (
+from aiperf.services.service_manager.multiprocess import (
     MultiProcessServiceManager,
 )
 

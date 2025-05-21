@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceRegistrationStatus, ServiceType
-from aiperf.services.service_manager.base_service_manager import BaseServiceManager
+from aiperf.services.service_manager.base import BaseServiceManager
 
 
 class MultiProcessRunInfo(BaseModel):
