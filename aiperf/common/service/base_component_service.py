@@ -25,7 +25,7 @@ from aiperf.common.enums import (
     SubClientType,
     Topic,
 )
-from aiperf.common.exceptions.comm_exceptions import CommunicationSubscribeError
+from aiperf.common.exceptions.comms import CommunicationSubscribeError
 from aiperf.common.exceptions.service import (
     ServiceHeartbeatError,
     ServiceRegistrationError,

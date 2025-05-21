@@ -32,7 +32,7 @@ from aiperf.common.enums import (
     ServiceType,
     Topic,
 )
-from aiperf.common.exceptions.comm_exceptions import (
+from aiperf.common.exceptions.comms import (
     CommunicationNotInitializedError,
     CommunicationPublishError,
     CommunicationSubscribeError,
@@ -66,7 +66,7 @@ class SystemController(BaseControllerService):
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Creating System Controller")
 
-        # List of required service types, in the order they should be started
+        # List of required service types, in no particular order
         self.required_service_types: list[ServiceType] = [
             ServiceType.DATASET_MANAGER,
             ServiceType.TIMING_MANAGER,
@@ -304,7 +304,7 @@ class SystemController(BaseControllerService):
 
         # Update the last heartbeat timestamp if the component exists
         try:
-            service_info = self.service_manager.get(service_id)
+            service_info = self.service_manager.service_id_map.get(service_id)
             service_info.last_seen = timestamp
             service_info.state = message.payload.state
             self.logger.debug(f"Updated heartbeat for {service_id} to {timestamp}")
@@ -330,7 +330,7 @@ class SystemController(BaseControllerService):
 
         # Update the component state if the component exists
         try:
-            service_info = self.service_manager.get(service_id)
+            service_info = self.service_manager.service_id_map.get(service_id)
             service_info.state = message.payload.state
             self.logger.debug(f"Updated state for {service_id} to {state}")
         except Exception:

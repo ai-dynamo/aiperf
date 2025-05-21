@@ -40,12 +40,6 @@ class BaseServiceManager(ABC):
         # Create service ID map for component lookups
         self.service_id_map: dict[str, ServiceRunInfo] = {}
 
-    def get(self, service_id: str) -> ServiceRunInfo | None:
-        """
-        Get the service run information by service ID.
-        """
-        return self.service_id_map.get(service_id)
-
     @abstractmethod
     async def initialize_all_services(self) -> None:
         """Initialize all required services."""

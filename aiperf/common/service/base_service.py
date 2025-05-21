@@ -29,7 +29,7 @@ from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import AIPerfHooks
 from aiperf.common.enums import ServiceState
 from aiperf.common.exceptions.base import AIPerfMultiError
-from aiperf.common.exceptions.comm_exceptions import (
+from aiperf.common.exceptions.comms import (
     CommunicationClientCreationError,
     CommunicationCreateError,
     CommunicationNotInitializedError,
