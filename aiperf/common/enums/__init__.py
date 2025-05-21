@@ -34,7 +34,7 @@ __all__ = [
     "ServiceType",
 ]
 
-from aiperf.common.enums.base_enums import StrEnum
+from aiperf.common.enums.base import StrEnum
 from aiperf.common.enums.comm_clients_enums import (
     ClientType,
     PubClientType,
@@ -50,11 +50,11 @@ from aiperf.common.enums.comm_enums import (
     Topic,
     TopicType,
 )
-from aiperf.common.enums.message_enums import (
+from aiperf.common.enums.message import (
     CommandType,
     MessageType,
 )
-from aiperf.common.enums.service_enums import (
+from aiperf.common.enums.service import (
     ServiceRegistrationStatus,
     ServiceRunType,
     ServiceState,

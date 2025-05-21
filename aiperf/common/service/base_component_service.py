@@ -26,17 +26,17 @@ from aiperf.common.enums import (
     Topic,
 )
 from aiperf.common.exceptions.comm_exceptions import CommunicationSubscribeError
-from aiperf.common.exceptions.service_exceptions import (
+from aiperf.common.exceptions.service import (
     ServiceHeartbeatError,
     ServiceRegistrationError,
 )
-from aiperf.common.models.message_models import (
+from aiperf.common.models.message import (
     CommandMessage,
     HeartbeatMessage,
     RegistrationMessage,
     StatusMessage,
 )
-from aiperf.common.models.payload_models import (
+from aiperf.common.models.payload import (
     HeartbeatPayload,
     RegistrationPayload,
     StatusPayload,

@@ -13,7 +13,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-__all__ = ["ServiceConfig", "load_service_config"]
+__all__ = ["RecordsManager"]
 
-from aiperf.common.config.loader import load_service_config
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.services.records_manager.records_manager import RecordsManager

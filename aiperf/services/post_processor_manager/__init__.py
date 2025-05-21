@@ -13,7 +13,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-__all__ = ["ServiceConfig", "load_service_config"]
+__all__ = ["PostProcessorManager"]
 
-from aiperf.common.config.loader import load_service_config
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.services.post_processor_manager.post_processor_manager import (
+    PostProcessorManager,
+)

@@ -13,7 +13,28 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-__all__ = ["ServiceConfig", "load_service_config"]
+from aiperf.common.exceptions.base import AIPerfError
 
-from aiperf.common.config.loader import load_service_config
-from aiperf.common.config.service_config import ServiceConfig
+
+class ConfigError(AIPerfError):
+    """Base class for all exceptions raised by configuration errors."""
+
+    message: str = "Configuration error"
+
+
+class ConfigLoadError(ConfigError):
+    """Exception raised for configuration load errors."""
+
+    message: str = "Failed to load configuration"
+
+
+class ConfigParseError(ConfigError):
+    """Exception raised for configuration parse errors."""
+
+    message: str = "Failed to parse configuration"
+
+
+class ConfigValidationError(ConfigError):
+    """Exception raised for configuration validation errors."""
+
+    message: str = "Failed to validate configuration"

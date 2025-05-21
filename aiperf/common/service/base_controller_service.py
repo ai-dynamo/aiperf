@@ -23,8 +23,8 @@ from aiperf.common.enums import (
     PubClientType,
     SubClientType,
 )
-from aiperf.common.models.message_models import Message
-from aiperf.common.models.payload_models import CommandPayload
+from aiperf.common.models.message import Message
+from aiperf.common.models.payload import CommandPayload
 from aiperf.common.service.base_service import BaseService
 
 

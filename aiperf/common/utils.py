@@ -16,7 +16,7 @@ import inspect
 import traceback
 from collections.abc import Callable
 
-from aiperf.common.exceptions.base_exceptions import AIPerfMultiError
+from aiperf.common.exceptions.base import AIPerfMultiError
 
 
 async def call_all_functions_self(

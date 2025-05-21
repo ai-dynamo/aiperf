@@ -28,20 +28,20 @@ from aiperf.common.comms.communication_factory import CommunicationFactory
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import AIPerfHooks
 from aiperf.common.enums import ServiceState
-from aiperf.common.exceptions.base_exceptions import AIPerfMultiError
+from aiperf.common.exceptions.base import AIPerfMultiError
 from aiperf.common.exceptions.comm_exceptions import (
     CommunicationClientCreationError,
     CommunicationCreateError,
     CommunicationNotInitializedError,
 )
-from aiperf.common.exceptions.service_exceptions import (
+from aiperf.common.exceptions.service import (
     ServiceInitializationError,
     ServiceRunError,
     ServiceStartError,
     ServiceStopError,
 )
-from aiperf.common.models.message_models import BaseMessage, Message
-from aiperf.common.models.payload_models import Payload
+from aiperf.common.models.message import BaseMessage, Message
+from aiperf.common.models.payload import Payload
 from aiperf.common.service.base_service_interface import BaseServiceInterface
 from aiperf.common.service.service_metaclass import ServiceMetaclass
 from aiperf.common.utils import call_all_functions_self
