@@ -74,12 +74,26 @@ class ImageGenerator:
 
     @classmethod
     def _sample_source_image(cls):
-        """Sample one image among the source images."""
+        """Sample one image among the source images.
+
+        Returns:
+            A PIL Image object randomly selected from the source images.
+        """
         filepath = Path(__file__).parent.resolve() / "assets" / "source_images" / "*"
         filenames = glob.glob(str(filepath))
         return Image.open(random.choice(filenames))
 
     @classmethod
     def _sample_random_positive_integer(cls, mean: int, stddev: int) -> int:
+        """Sample a random positive integer from a Gaussian distribution.
+
+        Args:
+            mean: The mean of the Gaussian distribution.
+            stddev: The standard deviation of the Gaussian distribution.
+
+        Returns:
+            A positive integer sampled from the distribution. If the sampled
+            number is zero, it returns 1.
+        """
         n = int(abs(random.gauss(mean, stddev)))
         return n if n != 0 else 1  # avoid zero

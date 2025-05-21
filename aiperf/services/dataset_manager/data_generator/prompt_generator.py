@@ -64,6 +64,8 @@ class PromptGenerator:
             tokenizer: Tokenizer instance.
             prompt_tokens_mean: Mean number of tokens in the prompt.
             prompt_tokens_stddev: Standard deviation for the number of tokens in the prompt.
+            hash_ids: Optional list of integers for token reuse.
+            block_size: Size of the token block for reuse.
 
         Returns:
             A synthetic prompt as a string.
@@ -91,6 +93,7 @@ class PromptGenerator:
 
         Args:
             tokenizer: Tokenizer for tokenizing the corpus.
+            corpus_file: Path to the corpus file.
         """
         corpus_path = pathlib.Path(__file__).parent / corpus_file
 
@@ -126,7 +129,7 @@ class PromptGenerator:
             A synthetic prompt of tokens.
 
         Raises:
-            ValueError: If the tokenized corpus is not initialized
+            GeneratorInitializationException: If the tokenized corpus is not initialized
         """
         if not cls._tokenized_corpus:
             raise GeneratorInitializationException(
@@ -158,11 +161,7 @@ class PromptGenerator:
 
         Returns:
             A synthetic prompt as a string.
-
-        Raises:
-            ValueError: If the tokenized corpus is not initialized
         """
-
         return tokenizer.decode(cls._generate_prompt_tokens(num_tokens))
 
     @classmethod
@@ -191,6 +190,9 @@ class PromptGenerator:
 
         Returns:
             str: A synthetic prompt as a string.
+
+        Raises:
+            GeneratorConfigurationException: If the input parameters are not compatible.
         """
         final_prompt: list[int] = []
         size_to_use = block_size
@@ -243,5 +245,12 @@ class PromptGenerator:
 
         Returns:
             A random prefix prompt.
+
+        Raises:
+            GeneratorInitializationException: If the prefix prompts pool is empty.
         """
+        if not cls._prefix_prompts:
+            raise GeneratorInitializationException(
+                "Prefix prompts pool is empty. Call `create_prefix_prompts_pool` first."
+            )
         return random.choice(cls._prefix_prompts)
