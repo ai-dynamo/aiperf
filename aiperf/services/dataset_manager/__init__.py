@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-__all__ = ["DatasetManager"]
+__all__ = ["DatasetManager", "utils"]
 
+from aiperf.services.dataset_manager import utils
 from aiperf.services.dataset_manager.dataset_manager import DatasetManager

@@ -21,8 +21,8 @@ from typing import Optional
 
 from PIL import Image
 
-from aiperf.common import utils
 from aiperf.common.enums import ImageFormat
+from aiperf.services.dataset_manager import utils
 
 logger = logging.getLogger("ImageGenerator")
 
