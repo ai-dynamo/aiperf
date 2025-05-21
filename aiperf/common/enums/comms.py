@@ -13,7 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from aiperf.common.enums import StrEnum
+from aiperf.common.enums.base import StrEnum
 
 
 class CommunicationBackend(StrEnum):

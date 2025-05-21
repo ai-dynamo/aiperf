@@ -23,7 +23,7 @@ from collections.abc import Callable
 import zmq.asyncio
 from zmq import SocketType
 
-from aiperf.common.comms.zmq_comms.clients.zmq_client_metaclass import (
+from aiperf.common.comms.zmq.clients.metaclass import (
     ZMQClientMetaclass,
 )
 from aiperf.common.decorators import AIPerfHooks

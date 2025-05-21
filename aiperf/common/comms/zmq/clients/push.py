@@ -18,7 +18,7 @@ import logging
 import zmq.asyncio
 from zmq import SocketType
 
-from aiperf.common.comms.zmq_comms.clients.base_zmq_client import BaseZMQClient
+from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.exceptions.comms import (
     CommunicationPushError,
 )

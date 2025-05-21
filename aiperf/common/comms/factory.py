@@ -16,7 +16,7 @@
 import logging
 from collections.abc import Callable
 
-from aiperf.common.comms.base_communication import BaseCommunication
+from aiperf.common.comms.base import BaseCommunication
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import CommunicationBackend
 from aiperf.common.exceptions.comms import (

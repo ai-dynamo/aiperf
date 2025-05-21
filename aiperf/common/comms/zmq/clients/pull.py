@@ -19,7 +19,7 @@ from collections.abc import Callable
 import zmq.asyncio
 from zmq import SocketType
 
-from aiperf.common.comms.zmq_comms.clients.base_zmq_client import BaseZMQClient
+from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.decorators import aiperf_task
 from aiperf.common.models.message import BaseMessage, Message
 from aiperf.common.utils import call_all_functions

@@ -17,4 +17,4 @@ __all__ = [
     "ZMQCommunication",
 ]
 
-from aiperf.common.comms.zmq_comms.zmq_communication import ZMQCommunication
+from aiperf.common.comms.zmq.zmq_comms import ZMQCommunication

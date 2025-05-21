@@ -19,7 +19,7 @@ import uuid
 import zmq.asyncio
 from zmq import SocketType
 
-from aiperf.common.comms.zmq_comms.clients.base_zmq_client import BaseZMQClient
+from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.decorators import aiperf_task, on_cleanup
 from aiperf.common.exceptions.comms import (
     CommunicationRequestError,

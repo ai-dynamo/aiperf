@@ -15,7 +15,7 @@
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from aiperf.common.enums import StrEnum
+from aiperf.common.enums.base import StrEnum
 from aiperf.common.enums.service import ServiceState
 
 

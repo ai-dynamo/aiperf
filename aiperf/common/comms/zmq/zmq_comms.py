@@ -20,15 +20,15 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.comms.base_communication import BaseCommunication
-from aiperf.common.comms.communication_factory import CommunicationFactory
-from aiperf.common.comms.zmq_comms.clients import ZMQClient
-from aiperf.common.comms.zmq_comms.clients.zmq_pub_client import ZMQPubClient
-from aiperf.common.comms.zmq_comms.clients.zmq_pull_client import ZMQPullClient
-from aiperf.common.comms.zmq_comms.clients.zmq_push_client import ZMQPushClient
-from aiperf.common.comms.zmq_comms.clients.zmq_rep_client import ZMQRepClient
-from aiperf.common.comms.zmq_comms.clients.zmq_req_client import ZMQReqClient
-from aiperf.common.comms.zmq_comms.clients.zmq_sub_client import ZMQSubClient
+from aiperf.common.comms.base import BaseCommunication
+from aiperf.common.comms.factory import CommunicationFactory
+from aiperf.common.comms.zmq.clients import ZMQClient
+from aiperf.common.comms.zmq.clients.pub import ZMQPubClient
+from aiperf.common.comms.zmq.clients.pull import ZMQPullClient
+from aiperf.common.comms.zmq.clients.push import ZMQPushClient
+from aiperf.common.comms.zmq.clients.rep import ZMQRepClient
+from aiperf.common.comms.zmq.clients.req import ZMQReqClient
+from aiperf.common.comms.zmq.clients.sub import ZMQSubClient
 from aiperf.common.enums import (
     ClientType,
     PubClientType,
