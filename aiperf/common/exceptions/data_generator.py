@@ -27,12 +27,6 @@ class GeneratorInitializationException(GeneratorException):
     pass
 
 
-class DataGenerationException(GeneratorException):
-    """Exception raised for data generation errors."""
-
-    pass
-
-
 class GeneratorConfigurationException(GeneratorException):
     """Exception raised for data generator configuration errors."""
 

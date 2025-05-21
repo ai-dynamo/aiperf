@@ -14,7 +14,6 @@
 #  limitations under the License.
 
 import glob
-import logging
 import random
 from pathlib import Path
 from typing import Optional
@@ -23,8 +22,6 @@ from PIL import Image
 
 from aiperf.common.enums import ImageFormat
 from aiperf.services.dataset_manager import utils
-
-logger = logging.getLogger("ImageGenerator")
 
 
 class ImageGenerator:

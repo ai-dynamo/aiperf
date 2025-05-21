@@ -19,7 +19,6 @@ from aiperf.common.exceptions.config import (
     ConfigurationValidationException,
 )
 from aiperf.common.exceptions.data_generator import (
-    DataGenerationException,
     GeneratorConfigurationException,
     GeneratorInitializationException,
 )
@@ -32,10 +31,7 @@ from aiperf.common.exceptions.service import (
     ServiceStatusException,
     ServiceStopException,
 )
-from aiperf.common.exceptions.tokenizer import (
-    TokenizationException,
-    TokenizerInitializationException,
-)
+from aiperf.common.exceptions.tokenizer import TokenizerInitializationException
 
 __all__ = [
     # Config exceptions
@@ -53,8 +49,6 @@ __all__ = [
     # Data generator exceptions
     "GeneratorInitializationException",
     "GeneratorConfigurationException",
-    "DataGenerationException",
     # Tokenizer exceptions
     "TokenizerInitializationException",
-    "TokenizationException",
 ]
