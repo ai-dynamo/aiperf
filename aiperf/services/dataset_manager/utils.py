@@ -20,7 +20,15 @@ from PIL import Image
 
 
 def encode_image(img: Image, format: str) -> str:
-    """Encodes an image into base64 encoding."""
+    """Encodes an image into base64 encoded string.
+
+    Args:
+        img: The PIL Image object to encode.
+        format: The image format to use (e.g., "JPEG", "PNG").
+
+    Returns:
+        A base64 encoded string representation of the image.
+    """
     # JPEG does not support P or RGBA mode (commonly used for PNG) so it needs
     # to be converted to RGB before an image can be saved as JPEG format.
     if format == "JPEG" and img.mode != "RGB":

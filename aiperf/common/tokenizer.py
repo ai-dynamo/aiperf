@@ -28,22 +28,26 @@ from aiperf.common.exceptions import TokenizerInitializationException
 
 class Tokenizer:
     """
-    A small wrapper class around Huggingface Tokenizer
+    This class provides a simplified interface for using Huggingface
+    tokenizers, with default arguments for common operations.
     """
 
     def __init__(self) -> None:
         """
-        Initialize the tokenizer with default values
+        Initialize the tokenizer with default values for call, encode, and decode.
         """
-
-        # default tokenizer parameters for __call__, encode, decode methods
         self._call_args = {"add_special_tokens": False}
         self._encode_args = {"add_special_tokens": False}
         self._decode_args = {"skip_special_tokens": True}
 
     def set_tokenizer(self, name: str, trust_remote_code: bool, revision: str) -> None:
         """
-        Downloading the tokenizer from Huggingface.co or local filesystem
+        Set the tokenizer from Huggingface.co or local filesystem.
+
+        Args:
+            name: The name or path of the tokenizer.
+            trust_remote_code: Whether to trust remote code when loading the tokenizer.
+            revision: The specific model version to use.
         """
         try:
             # Silence tokenizer warning on import and first use
@@ -63,18 +67,64 @@ class Tokenizer:
         self._tokenizer = tokenizer
 
     def __call__(self, text, **kwargs) -> "BatchEncoding":
+        """
+        Call the underlying Huggingface tokenizer with default arguments,
+        which can be overridden by kwargs.
+
+        Args:
+            text: The input text to tokenize.
+
+        Returns:
+            A BatchEncoding object containing the tokenized output.
+        """
         return self._tokenizer(text, **{**self._call_args, **kwargs})
 
     def encode(self, text, **kwargs) -> list[int]:
+        """
+        Encode the input text into a list of token IDs.
+
+        This method calls the underlying Huggingface tokenizer's encode
+        method with default arguments, which can be overridden by kwargs.
+
+        Args:
+            text: The input text to encode.
+
+        Returns:
+            A list of token IDs.
+        """
         return self._tokenizer.encode(text, **{**self._encode_args, **kwargs})
 
     def decode(self, token_ids, **kwargs) -> str:
+        """
+        Decode a list of token IDs back into a string.
+
+        This method calls the underlying Huggingface tokenizer's decode
+        method with default arguments, which can be overridden by kwargs.
+
+        Args:
+            token_ids: A list of token IDs to decode.
+
+        Returns:
+            The decoded string.
+        """
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
 
     def bos_token_id(self) -> int:
+        """
+        Get the beginning-of-sequence (BOS) token ID.
+
+        Returns:
+            The BOS token ID.
+        """
         return self._tokenizer.bos_token_id
 
     def __repr__(self) -> str:
+        """
+        Return a string representation of the underlying tokenizer.
+
+        Returns:
+            The string representation of the tokenizer.
+        """
         return self._tokenizer.__repr__()
 
 
