@@ -132,7 +132,7 @@ class ZMQRepClient(BaseZMQClient):
         except Exception as e:
             logger.error(f"Exception sending response to {target}: {e}")
             raise CommunicationResponseError(
-                "Exception sending response to %s", target
+                f"Exception sending response to {target}"
             ) from e
 
     @aiperf_task

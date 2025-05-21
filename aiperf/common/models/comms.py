@@ -73,7 +73,7 @@ class ZMQCommunicationConfig(BaseModel):
 
     @property
     def inference_push_pull_address(self) -> str:
-        """Get the inference pub/sub address based on protocol configuration."""
+        """Get the inference push/pull address based on protocol configuration."""
         return f"tcp://{self.protocol_config.host}:{self.protocol_config.inference_push_pull_port}"
 
     @property
