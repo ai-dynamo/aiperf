@@ -39,8 +39,8 @@ from aiperf.common.enums import (
     SubClientType,
     TopicType,
 )
-from aiperf.common.enums.comm_enums import CommunicationBackend
-from aiperf.common.exceptions.comm_exceptions import (
+from aiperf.common.enums.comms import CommunicationBackend
+from aiperf.common.exceptions.comms import (
     CommunicationClientCreationError,
     CommunicationNotInitializedError,
     CommunicationPublishError,
@@ -50,8 +50,8 @@ from aiperf.common.exceptions.comm_exceptions import (
     CommunicationShutdownError,
     CommunicationSubscribeError,
 )
-from aiperf.common.models.comm_models import ZMQCommunicationConfig
-from aiperf.common.models.message_models import Message
+from aiperf.common.models.comms import ZMQCommunicationConfig
+from aiperf.common.models.message import Message
 
 logger = logging.getLogger(__name__)
 

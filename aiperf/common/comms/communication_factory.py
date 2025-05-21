@@ -19,12 +19,12 @@ from collections.abc import Callable
 from aiperf.common.comms.base_communication import BaseCommunication
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import CommunicationBackend
-from aiperf.common.exceptions.comm_exceptions import (
+from aiperf.common.exceptions.comms import (
     CommunicationCreateError,
     CommunicationTypeAlreadyRegisteredError,
     CommunicationTypeUnknownError,
 )
-from aiperf.common.models.comm_models import (
+from aiperf.common.models.comms import (
     ZMQCommunicationConfig,
     ZMQTCPTransportConfig,
 )

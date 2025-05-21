@@ -12,7 +12,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-from aiperf.common.enums.base import StrEnum
+from aiperf.common.enums import StrEnum
 
 
 # Message-related enums
@@ -65,13 +65,13 @@ class MessageType(StrEnum):
 class CommandType(StrEnum):
     """List of commands that the SystemController can send to component services."""
 
-    CONFIGURE = "configure"
-    """A command to configure the service with the configuration present
-    in the payload."""
-
     START = "start"
     """A command to start the service. The service should have already
     been configured."""
 
     STOP = "stop"
     """A command to stop the service."""
+
+    CONFIGURE = "configure"
+    """A command to configure the service with the configuration present
+    in the payload."""
