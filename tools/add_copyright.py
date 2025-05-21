@@ -16,10 +16,9 @@ import argparse
 import os
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
 
 current_year = str(datetime.now().year)
 
@@ -37,7 +36,7 @@ def has_copyright(content: str) -> bool:
 
 
 def update_copyright_year(
-    path: str, content: Optional[str] = None, disallow_range: bool = False
+    path: str, content: str | None = None, disallow_range: bool = False
 ) -> None:
     """
     Updates the copyright year in the provided file.
@@ -87,8 +86,8 @@ LICENSE_TEXT = update_and_get_license()
 
 
 def prefix_lines(content: str, prefix: str) -> str:
-    # NOTE: This could have been done via `textwrap.indent`, but we're not actually indenting,
-    # so it seems semantically wrong to do that.
+    # NOTE: This could have been done via `textwrap.indent`, but we're not
+    # actually indenting, so it seems semantically wrong to do that.
     return prefix + f"\n{prefix}".join(content.splitlines())
 
 
@@ -120,7 +119,7 @@ def insert_after(regex: str) -> Callable[[str, str], str]:
 
 
 def update_or_add_header(
-    path: str, header: str, add_header: Optional[Callable[[str, str], str]] = None
+    path: str, header: str, add_header: Callable[[str, str], str] | None = None
 ):
     """
     Updates in place or adds a new copyright header to the specified file.
@@ -159,9 +158,9 @@ def update_or_add_header(
 # header. For example, for C++ files, the header must be prefixed with `//` and for
 # shell scripts, it must be prefixed with `#` and must be inserted *after* the shebang.
 #
-# This mapping stores callables that return whether a handler wants to process a specified
-# file based on the path along with callables that will accept the file path and update
-# it with the copyright header.
+# This mapping stores callables that return whether a handler wants to process a
+# specified file based on the path along with callables that will accept the file path
+# and update it with the copyright header.
 FILE_TYPE_HANDLERS: dict[Callable[[str], bool], Callable[[str], None]] = {}
 
 
@@ -224,8 +223,9 @@ def py_or_shell_like(path):
         path,
         prefix_lines(LICENSE_TEXT, "# "),
         # Insert the header *after* the shebang.
-        # NOTE: This could break if there is a shebang-like pattern elsewhere in the file.
-        # In that case, this could be edited to check only the first line of the file (after removing whitespace).
+        # NOTE: This could break if there is a shebang-like pattern elsewhere in
+        # the file. In that case, this could be edited to check only the first line
+        # of the file (after removing whitespace).
         insert_after(r"#!(.*)\n"),
     )
 

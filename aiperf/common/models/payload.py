@@ -42,17 +42,17 @@ class BasePayload(BaseModel, ABC):
 
 
 class ErrorPayload(BasePayload):
-    """Error payload sent by services to report an error."""
+    """Exception payload sent by services to report an error."""
 
     message_type: Literal[MessageType.ERROR] = MessageType.ERROR
 
-    error_code: str = Field(
-        ...,
-        description="Error code",
+    error_code: str | None = Field(
+        default=None,
+        description="Exception code",
     )
-    error: str = Field(
-        ...,
-        description="Error response",
+    error_message: str | None = Field(
+        default=None,
+        description="Exception message",
     )
     error_details: dict[str, Any] | None = Field(
         default=None,
@@ -118,6 +118,10 @@ class CommandPayload(BasePayload):
         default=None,
         description="ID of the target service for this command",
     )
+    data: BaseModel | None = Field(
+        default=None,
+        description="Data to send with the command",
+    )
 
 
 class CreditDropPayload(BasePayload):
@@ -147,7 +151,7 @@ class CreditReturnPayload(BasePayload):
 
 # Only put concrete payload types here, with unique message_type values,
 # otherwise the discriminator will complain.
-PayloadType = Union[  # noqa: UP007
+Payload = Union[  # noqa: UP007
     DataPayload,
     HeartbeatPayload,
     RegistrationPayload,

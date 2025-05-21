@@ -13,7 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.service.base import BaseService
+from aiperf.common.service.base_service import BaseService
 
 
 def bootstrap_and_run_service(
@@ -32,8 +32,6 @@ def bootstrap_and_run_service(
     """
     import uvloop
 
-    uvloop.install()
-
     # Load the service configuration
     if service_config is None:
         from aiperf.common.config.loader import load_service_config
@@ -42,4 +40,4 @@ def bootstrap_and_run_service(
 
     # Create the service instance and run it
     service = service_class(service_config=service_config)
-    uvloop.run(service.run())
+    uvloop.run(service.run_forever())

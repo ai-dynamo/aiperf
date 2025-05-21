@@ -13,10 +13,10 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 import asyncio
-import contextlib
-from abc import ABC, abstractmethod
+from typing import cast
 
 from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.decorators import AIPerfHooks, aiperf_task, on_run, on_set_state
 from aiperf.common.enums import (
     ClientType,
     CommandType,
@@ -25,27 +25,44 @@ from aiperf.common.enums import (
     SubClientType,
     Topic,
 )
-from aiperf.common.models.message_models import BaseMessage
-from aiperf.common.models.payload_models import (
+from aiperf.common.exceptions.comms import CommunicationSubscribeError
+from aiperf.common.exceptions.service import (
+    ServiceHeartbeatError,
+    ServiceRegistrationError,
+)
+from aiperf.common.models.message import (
+    CommandMessage,
+    HeartbeatMessage,
+    RegistrationMessage,
+    StatusMessage,
+)
+from aiperf.common.models.payload import (
     HeartbeatPayload,
-    PayloadType,
     RegistrationPayload,
     StatusPayload,
 )
 from aiperf.common.service.base_service import BaseService
 
 
-class BaseComponentService(BaseService, ABC):
-    """Base class for all component services.
+class BaseComponentService(BaseService):
+    """Base class for all Component services.
 
-    This class provides a common interface for all component services in the AIPerf
+    This class provides a common interface for all Component services in the AIPerf
     framework such as the Timing Manager, Dataset Manager, etc.
 
-    It inherits from the BaseService class and implements the required methods for
-    component services.
+    It extends the BaseService by:
+    - Subscribing to the command topic
+    - Processing command messages
+    - Sending registration requests to the system controller
+    - Sending heartbeat notifications to the system controller
+    - Sending status notifications to the system controller
+    - Helpers to create heartbeat, registration, and status messages
+    - Request the appropriate communication clients for a component service
     """
 
-    def __init__(self, service_config: ServiceConfig, service_id: str = None) -> None:
+    def __init__(
+        self, service_config: ServiceConfig, service_id: str | None = None
+    ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
 
     @property
@@ -55,77 +72,94 @@ class BaseComponentService(BaseService, ABC):
         The component services subscribe to controller messages and publish
         component messages.
         """
-        return [PubClientType.COMPONENT, SubClientType.CONTROLLER]
+        return [
+            *(super().required_clients or []),
+            PubClientType.COMPONENT,
+            SubClientType.CONTROLLER,
+        ]
 
-    @abstractmethod
-    async def _configure(self, payload: PayloadType) -> None:
-        """Configure the service with the given configuration payload.
+    # TODO: The configure method is turning into a service hook
+    # @abstractmethod
+    # async def _configure(self, payload: Payload) -> None:
+    #     """Configure the service with the given configuration payload.
 
-        This method is called when a configure command is received from the controller.
-        It should be implemented by the derived class to configure the service.
+    #     This method is called when a configure command is received from the controller.
+    #     It should be implemented by the derived class to configure the service.
 
-        The service should validate the payload and configure itself accordingly.
-        If successful, the service should publish a success message to the controller.
-        On failure, the service should publish an error message to the controller.
+    #     The service should validate the payload and configure itself accordingly.
+    #     If successful, the service should publish a success message to the controller.
+    #     On failure, the service should publish an error message to the controller.
 
-        Args:
-            payload: The configuration payload. This is a union type of all the possible
-            configuration payloads.
+    #     Args:
+    #         payload: The configuration payload. This is a union type of all the possible
+    #         configuration payloads.
 
+    #     """
+    #     pass
+
+    @on_run
+    async def _on_run(self) -> None:
+        """Automatically subscribe to the command topic and register the service
+        with the system controller when the run hook is called.
+
+        This method will:
+        - Subscribe to the command topic
+        - Wait for the communication to be fully initialized
+        - Register the service with the system controller
         """
-        pass
-
-    async def run(self) -> None:
-        """This method will start the service and initialize its components. It will
-        also subscribe to the command topic and process commands as they are received.
-        """
+        # Subscribe to the command topic
         try:
-            # Initialize the service
-            await self.initialize()
-
-            # Subscribe to the command topic
             await self.comms.subscribe(
                 Topic.COMMAND,
                 self.process_command_message,
             )
+        except Exception as e:
+            self.logger.error("Exception subscribing to command topic: %s", e)
+            raise CommunicationSubscribeError(
+                "Failed to subscribe to command topic"
+            ) from e
 
-            # TODO: Find a way to wait for the communication to be fully initialized
-            # Wait for 1 second to ensure the communication is fully initialized
-            await asyncio.sleep(1)
+        # TODO: Find a way to wait for the communication to be fully initialized
+        # FIXME: This is a hack to ensure the communication is fully initialized
+        await asyncio.sleep(1)
 
-            # Register the service
+        # Register the service
+        try:
             await self.register()
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            raise ServiceRegistrationError() from e
 
-            # Set the service to ready state
-            await self.set_state(ServiceState.READY)
+    @aiperf_task
+    async def _heartbeat_task(self) -> None:
+        """Starts a background task to send heartbeats at regular intervals. It
+        will continue to send heartbeats even if an error occurs until the stop
+        event is set.
+        """
+        while not self.stop_event.is_set():
+            # Sleep first to avoid sending a heartbeat before the registration
+            # message has been published
+            await asyncio.sleep(self._heartbeat_interval)
 
-            # Note: Do not start the service here, let the system controller start it
-            # This is because the service needs to be configured first and may need
-            # to wait for other services to register before it can start
+            try:
+                await self.send_heartbeat()
+            except Exception as e:
+                self.logger.warning("Exception sending heartbeat: %s", e)
+                # continue to keep sending heartbeats regardless of the error
 
-            # Start the heartbeat task
-            await self.start_heartbeat_task()
-
-            # Wait forever for the stop event to be set
-            await self.stop_event.wait()
-
-        except asyncio.exceptions.CancelledError:
-            self.logger.debug("Service %s execution cancelled", self.service_type)
-        except BaseException:
-            self.logger.exception("Service %s execution failed:", self.service_type)
-            await self.set_state(ServiceState.ERROR)
-        finally:
-            # Shutdown the service
-            await self.stop()
+        self.logger.debug("Heartbeat task stopped")
 
     async def send_heartbeat(self) -> None:
         """Send a heartbeat notification to the system controller."""
         heartbeat_message = self.create_heartbeat_message()
         self.logger.debug("Sending heartbeat: %s", heartbeat_message)
-        await self.comms.publish(
-            topic=Topic.HEARTBEAT,
-            message=heartbeat_message,
-        )
+        try:
+            await self.comms.publish(
+                topic=Topic.HEARTBEAT,
+                message=heartbeat_message,
+            )
+        except Exception as e:
+            raise ServiceHeartbeatError from e
 
     async def register(self) -> None:
         """Publish a registration request to the system controller.
@@ -138,12 +172,15 @@ class BaseComponentService(BaseService, ABC):
             self.service_type,
             self.service_id,
         )
-        await self.comms.publish(
-            topic=Topic.REGISTRATION,
-            message=self.create_registration_message(),
-        )
+        try:
+            await self.comms.publish(
+                topic=Topic.REGISTRATION,
+                message=self.create_registration_message(),
+            )
+        except Exception as e:
+            raise ServiceRegistrationError() from e
 
-    async def process_command_message(self, message: BaseMessage) -> None:
+    async def process_command_message(self, message: CommandMessage) -> None:
         """Process a command message received from the controller.
 
         This method will process the command message and execute the appropriate action.
@@ -154,76 +191,59 @@ class BaseComponentService(BaseService, ABC):
         cmd = message.payload.command
         if cmd == CommandType.START:
             await self.start()
+
         elif cmd == CommandType.STOP:
-            await self.stop()
+            self.stop_event.set()
+
         elif cmd == CommandType.CONFIGURE:
-            await self._configure(message.payload)
+            await self._run_hooks(AIPerfHooks.CONFIGURE, message)
+
         else:
             self.logger.warning(f"{self.service_type} received unknown command: {cmd}")
 
-    async def set_state(self, state: ServiceState) -> None:
-        """Set the state of the service.
+    @on_set_state
+    async def _on_set_state(self, state: ServiceState) -> None:
+        """Action to take when the service state is set.
 
         This method will also publish the status message to the status topic if the
         communications are initialized.
         """
-        self._state = state
-        if self.comms and self.comms.is_initialized:
+        if self._comms and self._comms.is_initialized:
             await self.comms.publish(
                 topic=Topic.STATUS,
                 message=self.create_status_message(state),
             )
 
-    async def stop(self) -> None:
-        """Stop the service."""
-        await super().stop()
-        await self.stop_heartbeat_task()
-
-    async def stop_heartbeat_task(self) -> None:
-        """Stop the heartbeat task if it is running."""
-        if self._heartbeat_task and not self._heartbeat_task.done():
-            self._heartbeat_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._heartbeat_task
-
-    def create_heartbeat_message(self) -> BaseMessage:
+    def create_heartbeat_message(self) -> HeartbeatMessage:
         """Create a heartbeat notification message."""
-        return self.create_message(
-            HeartbeatPayload(
-                service_type=self.service_type,
-            )
+        return cast(
+            HeartbeatMessage,
+            self.create_message(
+                HeartbeatPayload(
+                    service_type=self.service_type,
+                )
+            ),
         )
 
-    def create_registration_message(self) -> BaseMessage:
+    def create_registration_message(self) -> RegistrationMessage:
         """Create a registration request message."""
-        return self.create_message(
-            RegistrationPayload(
-                service_type=self.service_type,
-            )
+        return cast(
+            RegistrationMessage,
+            self.create_message(
+                RegistrationPayload(
+                    service_type=self.service_type,
+                )
+            ),
         )
 
-    def create_status_message(self, state: ServiceState) -> BaseMessage:
+    def create_status_message(self, state: ServiceState) -> StatusMessage:
         """Create a status notification message."""
-        return self.create_message(
-            StatusPayload(
-                state=state,
-                service_type=self.service_type,
-            )
-        )
-
-    async def start_heartbeat_task(self) -> None:
-        """Start a background task to send heartbeats at regular intervals."""
-
-        async def heartbeat_loop() -> None:
-            while not self.stop_event.is_set():
-                # Sleep first to avoid sending a heartbeat before the registration
-                # message has been published
-                await asyncio.sleep(self._heartbeat_interval)
-                await self.send_heartbeat()
-
-        self._heartbeat_task = asyncio.create_task(heartbeat_loop())
-        self.logger.debug(
-            "%s: Started heartbeat task with interval %fs",
-            self.service_type,
-            self._heartbeat_interval,
+        return cast(
+            StatusMessage,
+            self.create_message(
+                StatusPayload(
+                    state=state,
+                    service_type=self.service_type,
+                )
+            ),
         )
