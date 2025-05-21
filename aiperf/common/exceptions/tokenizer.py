@@ -24,9 +24,3 @@ class TokenizerInitializationException(TokenizerException):
     """Exception raised for errors during tokenizer initialization."""
 
     pass
-
-
-class TokenizationException(TokenizerException):
-    """Exception raised for errors during the tokenization process."""
-
-    pass
