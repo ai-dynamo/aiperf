@@ -18,15 +18,15 @@ from aiperf.common.tokenizer import Tokenizer
 
 class TestTokenizer:
     def test_empty_tokenizer(self):
-        tokenizer = Tokenizer.get_tokenizer()
+        tokenizer = Tokenizer()
         assert tokenizer._tokenizer is None
 
     def test_non_empty_tokenizer(self):
-        tokenizer = Tokenizer.get_tokenizer(name="gpt2")
+        tokenizer = Tokenizer.from_pretrained("gpt2")
         assert tokenizer._tokenizer is not None
 
     def test_all_args(self):
-        tokenizer = Tokenizer.get_tokenizer(
+        tokenizer = Tokenizer.from_pretrained(
             name="gpt2",
             trust_remote_code=True,
             revision="11c5a3d5811f50298f278a704980280950aedb10",
@@ -34,7 +34,7 @@ class TestTokenizer:
         assert tokenizer._tokenizer is not None
 
     def test_default_args(self):
-        tokenizer = Tokenizer.get_tokenizer(name="hf-internal-testing/llama-tokenizer")
+        tokenizer = Tokenizer.from_pretrained("hf-internal-testing/llama-tokenizer")
         assert tokenizer._tokenizer is not None
 
         # There are 3 special tokens in the default tokenizer

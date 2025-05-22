@@ -40,9 +40,9 @@ class Tokenizer:
         self._decode_args = {"skip_special_tokens": True}
 
     @classmethod
-    def get_tokenizer(
+    def from_pretrained(
         cls,
-        name: str | None = None,
+        name: str,
         trust_remote_code: bool = False,
         revision: str = "main",
     ) -> "Tokenizer":
@@ -50,8 +50,7 @@ class Tokenizer:
         Return tokenizer for the given model name
         """
         tokenizer = cls()
-        if name:
-            tokenizer._set_tokenizer(name, trust_remote_code, revision)
+        tokenizer._set_tokenizer(name, trust_remote_code, revision)
         return tokenizer
 
     def _set_tokenizer(self, name: str, trust_remote_code: bool, revision: str) -> None:

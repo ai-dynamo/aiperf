@@ -24,11 +24,11 @@ from aiperf.services.dataset.generator.prompt import PromptGenerator
 
 class TestPromptGenerator:
     def test_synthetic_prompt_default(self):
-        tokenizer = Tokenizer.get_tokenizer("gpt2")
+        tokenizer = Tokenizer.from_pretrained("gpt2")
         _ = PromptGenerator.create_synthetic_prompt(tokenizer)
 
     def test_synthetic_prompt_zero_token(self):
-        tokenizer = Tokenizer.get_tokenizer("gpt2")
+        tokenizer = Tokenizer.from_pretrained("gpt2")
         prompt = PromptGenerator.create_synthetic_prompt(
             tokenizer=tokenizer,
             prompt_tokens_mean=0,
@@ -40,7 +40,7 @@ class TestPromptGenerator:
 
     def test_synthetic_prompt_nonzero_tokens(self):
         prompt_tokens = 123
-        tokenizer = Tokenizer.get_tokenizer("gpt2")
+        tokenizer = Tokenizer.from_pretrained("gpt2")
         prompt = PromptGenerator.create_synthetic_prompt(
             tokenizer=tokenizer,
             prompt_tokens_mean=prompt_tokens,
@@ -57,7 +57,7 @@ class TestPromptGenerator:
         ],
     )
     def test_generate_prompt_with_token_reuse(self, test_num_tokens, context):
-        tokenizer = Tokenizer.get_tokenizer("gpt2")
+        tokenizer = Tokenizer.from_pretrained("gpt2")
         with context:
             _ = PromptGenerator._generate_prompt_with_token_reuse(
                 tokenizer=tokenizer,
