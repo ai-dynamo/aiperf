@@ -65,13 +65,13 @@ class MessageType(StrEnum):
 class CommandType(StrEnum):
     """List of commands that the SystemController can send to component services."""
 
-    CONFIGURE = "configure"
-    """A command to configure the service with the configuration present
-    in the payload."""
-
     START = "start"
     """A command to start the service. The service should have already
     been configured."""
 
     STOP = "stop"
     """A command to stop the service."""
+
+    CONFIGURE = "configure"
+    """A command to configure the service with the configuration present
+    in the payload."""

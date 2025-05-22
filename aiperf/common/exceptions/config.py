@@ -13,28 +13,28 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from aiperf.common.exceptions.base import AIPerfException
+from aiperf.common.exceptions.base import AIPerfError
 
 
-class ConfigurationException(AIPerfException):
+class ConfigError(AIPerfError):
     """Base class for all exceptions raised by configuration errors."""
 
-    pass
+    message: str = "Configuration error"
 
 
-class ConfigurationLoadException(ConfigurationException):
+class ConfigLoadError(ConfigError):
     """Exception raised for configuration load errors."""
 
-    pass
+    message: str = "Failed to load configuration"
 
 
-class ConfigurationParseException(ConfigurationException):
+class ConfigParseError(ConfigError):
     """Exception raised for configuration parse errors."""
 
-    pass
+    message: str = "Failed to parse configuration"
 
 
-class ConfigurationValidationException(ConfigurationException):
+class ConfigValidationError(ConfigError):
     """Exception raised for configuration validation errors."""
 
-    pass
+    message: str = "Failed to validate configuration"

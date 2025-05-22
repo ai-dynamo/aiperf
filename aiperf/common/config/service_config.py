@@ -14,7 +14,7 @@
 #  limitations under the License.
 from pydantic import BaseModel, Field
 
-from aiperf.common.enums import CommBackend, ServiceRunType
+from aiperf.common.enums import CommunicationBackend, ServiceRunType
 
 
 class ServiceConfig(BaseModel):
@@ -29,8 +29,8 @@ class ServiceConfig(BaseModel):
         default=ServiceRunType.MULTIPROCESSING,
         description="Type of service run (MULTIPROCESSING, KUBERNETES)",
     )
-    comm_backend: CommBackend = Field(
-        default=CommBackend.ZMQ_TCP,
+    comm_backend: CommunicationBackend = Field(
+        default=CommunicationBackend.ZMQ_TCP,
         description="Communication backend to use",
     )
     heartbeat_timeout: float = Field(
