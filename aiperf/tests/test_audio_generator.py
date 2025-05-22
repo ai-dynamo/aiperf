@@ -21,9 +21,7 @@ import soundfile as sf
 
 # TODO: uncomment when ConfigAudio is implemented
 # from genai_perf.config.input.config_input import ConfigAudio
-from aiperf.services.dataset_manager.generator.audio import (
-    AudioGenerator,
-)
+from aiperf.services.dataset.generator.audio import AudioGenerator
 
 
 def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:

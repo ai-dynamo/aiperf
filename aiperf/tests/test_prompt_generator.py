@@ -19,7 +19,7 @@ import pytest
 
 from aiperf.common.exceptions.generator import GeneratorConfigurationError
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.dataset_manager.generator.prompt import PromptGenerator
+from aiperf.services.dataset.generator.prompt import PromptGenerator
 
 
 class TestPromptGenerator:

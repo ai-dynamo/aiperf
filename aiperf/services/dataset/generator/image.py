@@ -20,7 +20,7 @@ from pathlib import Path
 from PIL import Image
 
 from aiperf.common.enums import ImageFormat
-from aiperf.services.dataset_manager.generator import utils
+from aiperf.services.dataset.generator import utils
 
 
 class ImageGenerator:
@@ -77,6 +77,8 @@ class ImageGenerator:
         """
         filepath = Path(__file__).parent.resolve() / "assets" / "source_images" / "*"
         filenames = glob.glob(str(filepath))
+        if not filenames:
+            raise ValueError(f"No source images found in '{filepath}'")
         return Image.open(random.choice(filenames))
 
     @classmethod

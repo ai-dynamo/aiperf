@@ -21,9 +21,7 @@ import pytest
 from PIL import Image
 
 from aiperf.common.enums import ImageFormat
-from aiperf.services.dataset_manager.generator.image import (
-    ImageGenerator,
-)
+from aiperf.services.dataset.generator.image import ImageGenerator
 
 
 def decode_image(base64_string):
