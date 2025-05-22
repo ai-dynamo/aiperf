@@ -46,9 +46,12 @@ PYTHON_VERSION ?= 3.12
 # The command to activate the virtual environment
 activate_venv = . $(VENV_PATH)/bin/activate
 
-# Get the app name and version from uv
-APP_NAME := $(shell $(activate_venv) && uv version | cut -d ' ' -f 1)
-APP_VERSION := $(shell $(activate_venv) && uv version | cut -d ' ' -f 2)
+# Try and get the app name and version from uv
+APP_NAME := $(shell $(activate_venv) 2>/dev/null && uv version 2>/dev/null | cut -d ' ' -f 1)
+APP_VERSION := $(shell $(activate_venv) 2>/dev/null && uv version 2>/dev/null | cut -d ' ' -f 2)
+
+# The folder where uv is installed
+UV_PATH ?= $(HOME)/.local/bin
 
 # The name of the docker image (defaults to the app name)
 DOCKER_IMAGE_NAME ?= $(APP_NAME)
@@ -76,7 +79,7 @@ dim := $(shell tput dim)
 # to include it in the help command.
 
 help: #? show this help
-	$(MAKE) internal-help --no-print-directory | less
+	@$(MAKE) internal-help --no-print-directory | less
 
 
 # Internal
@@ -122,6 +125,9 @@ docker: #? build the docker image.
 docker-run: #? run the docker container.
 	docker run -it --rm $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args)
 
+version: #? print the version of the project.
+	@PATH=$(UV_PATH):$(PATH) uv version
+
 clean: #? clean up the pytest and ruff caches, coverage reports, and *.pyc files.
 	rm -rf .pytest_cache/
 	rm -rf .ruff_cache/
@@ -132,7 +138,7 @@ clean: #? clean up the pytest and ruff caches, coverage reports, and *.pyc files
 
 first-time-setup: #? convenience command to setup the environment for the first time
 	@# Install uv if it is not installed
-	@export PATH=${HOME}/.local/bin:$(PATH) && \
+	@export PATH=$(UV_PATH):$(PATH) && \
 	if ! command -v uv &> /dev/null; then \
 		printf "$(bold)$(green)Installing uv...$(reset)\n"; \
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
@@ -140,15 +146,15 @@ first-time-setup: #? convenience command to setup the environment for the first 
 		printf "$(bold)$(green)uv already installed$(reset)\n"; \
 	fi
 	@# Create virtual environment if it does not exist
-	@export PATH=${HOME}/.local/bin:$(PATH) && \
+	@export PATH=$(UV_PATH):$(PATH) && \
 	if [ ! -d "$(VENV_PATH)" ]; then \
 		printf "$(bold)$(green)Creating virtual environment...$(reset)\n"; \
-		PATH=${HOME}/.local/bin:$(PATH) uv venv --python $(PYTHON_VERSION); \
+		uv venv --python $(PYTHON_VERSION); \
 	else \
 		printf "$(bold)$(green)Virtual environment already exists$(reset)\n"; \
 	fi
 	@# Install the project
 	@printf "$(bold)$(green)Installing project...$(reset)\n"
-	@export PATH=${HOME}/.local/bin:$(PATH) && $(MAKE) install
+	@PATH=$(UV_PATH):$(PATH) $(MAKE) install
 	@printf "$(bold)$(green)Done!$(reset)\n"
 
