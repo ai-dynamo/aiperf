@@ -13,8 +13,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 """
-AIPerf testing package.
+AIPerf service tests.
 
-This package contains a comprehensive testing framework for the AIPerf services,
-including base classes, fixtures, and utilities for unit and integration testing.
+This package contains tests for the individual AIPerf services, including the
+system controller, dataset manager, timing manager, worker manager, etc.
 """
