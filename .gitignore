@@ -1,6 +1,11 @@
 .idea
 *.pyc
-__pychache__
-.venv
 .coverage
-
+__pychache__/
+.venv/
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+.env.*
