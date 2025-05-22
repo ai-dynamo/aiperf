@@ -12,6 +12,15 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-__all__ = ["WorkerManager"]
+from aiperf.common.base_metaclass import BaseMetaclass, register_metaclass
+from aiperf.common.decorators import AIPerfHooks
 
-from aiperf.services.worker_manager.worker_manager import WorkerManager
+
+@register_metaclass(AIPerfHooks.INIT, AIPerfHooks.CLEANUP, AIPerfHooks.TASK)
+class ZMQClientMetaclass(BaseMetaclass):
+    """Meta class for ZMQ clients.
+
+    This meta class is used to specify the supported hooks for ZMQ clients.
+    """
+
+    pass

@@ -69,14 +69,14 @@ def main() -> None:
 
     if args.config:
         # In a real implementation, this would load from the specified file
-        logger.info("Loading configuration from %s", args.config)
+        logger.debug("Loading configuration from %s", args.config)
         # config.load_from_file(args.config)
 
     # Create and start the system controller
-    logger.info("Creating System Controller")
 
     logger.info("Starting AIPerf System")
     bootstrap_and_run_service(SystemController, service_config=config)
+    logger.info("AIPerf System exited")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,9 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-__all__ = ["WorkerManager"]
 
-from aiperf.services.worker_manager.worker_manager import WorkerManager
+__all__ = ["BaseCommunication", "CommunicationFactory", "ZMQCommunication"]
+
+from aiperf.common.comms.base import BaseCommunication
+from aiperf.common.comms.factory import CommunicationFactory
+from aiperf.common.comms.zmq.zmq_comms import ZMQCommunication

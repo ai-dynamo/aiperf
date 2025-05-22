@@ -16,7 +16,7 @@
 from aiperf.common.enums.base import StrEnum
 
 
-class CommBackend(StrEnum):
+class CommunicationBackend(StrEnum):
     """Supported communication backends."""
 
     ZMQ_TCP = "zmq_tcp"
@@ -76,5 +76,5 @@ class DataTopic(StrEnum):
 
 
 TopicType = Topic | DataTopic
-"""TopicType is a union of all the various different topic types supported by
-the system."""
+"""Union of all the various different topic types supported by the system, for use in
+type hinting."""
