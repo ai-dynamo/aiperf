@@ -47,7 +47,12 @@ class Tokenizer:
         revision: str = "main",
     ) -> "Tokenizer":
         """
-        Return tokenizer for the given model name
+        Factory to load a tokenizer for the given pretrained model name.
+
+        Args:
+            name: The name or path of the pretrained tokenizer model.
+            trust_remote_code: Whether to trust remote code when loading the tokenizer.
+            revision: The specific model version to use.
         """
         tokenizer = cls()
         tokenizer._set_tokenizer(name, trust_remote_code, revision)
