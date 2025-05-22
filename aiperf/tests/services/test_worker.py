@@ -19,9 +19,9 @@ Tests for the worker service.
 import pytest
 from pydantic import BaseModel
 
-from aiperf.app.services.worker.worker import Worker
 from aiperf.common.enums import ServiceState, ServiceType
 from aiperf.common.service.base_service import BaseService
+from aiperf.services.worker.worker import Worker
 from aiperf.tests.base_test_service import BaseTestService
 from aiperf.tests.utils.async_test_utils import async_fixture
 

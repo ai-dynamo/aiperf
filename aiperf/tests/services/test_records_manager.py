@@ -19,9 +19,9 @@ Tests for the records manager service.
 import pytest
 from pydantic import BaseModel
 
-from aiperf.app.services.records_manager.records_manager import RecordsManager
 from aiperf.common.enums import ServiceType
 from aiperf.common.service.base_service import BaseService
+from aiperf.services.records_manager.records_manager import RecordsManager
 from aiperf.tests.base_test_component_service import BaseTestComponentService
 from aiperf.tests.utils.async_test_utils import async_fixture
 

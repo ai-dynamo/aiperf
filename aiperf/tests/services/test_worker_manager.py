@@ -21,11 +21,9 @@ import multiprocessing
 import pytest
 from pydantic import BaseModel
 
-from aiperf.app.services.worker_manager.worker_manager import (
-    WorkerManager,
-)
 from aiperf.common.enums import ServiceType
 from aiperf.common.service.base_service import BaseService
+from aiperf.services.worker_manager.worker_manager import WorkerManager
 from aiperf.tests.base_test_component_service import BaseTestComponentService
 from aiperf.tests.utils.async_test_utils import async_fixture
 

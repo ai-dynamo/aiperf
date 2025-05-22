@@ -19,11 +19,11 @@ Tests for the post processor manager service.
 import pytest
 from pydantic import BaseModel
 
-from aiperf.app.services.post_processor_manager.post_processor_manager import (
-    PostProcessorManager,
-)
 from aiperf.common.enums import ServiceType
 from aiperf.common.service.base_service import BaseService
+from aiperf.services.post_processor_manager.post_processor_manager import (
+    PostProcessorManager,
+)
 from aiperf.tests.base_test_component_service import BaseTestComponentService
 from aiperf.tests.utils.async_test_utils import async_fixture
 

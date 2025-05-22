@@ -20,19 +20,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.comms.zmq_comms.zmq_communication import ZMQCommunication
+from aiperf.common.comms.zmq import ZMQCommunication
 from aiperf.common.enums import (
     PubClientType,
     SubClientType,
     Topic,
 )
-from aiperf.common.exceptions.comm_exceptions import CommunicationInitializationError
-from aiperf.common.models.comm_models import (
+from aiperf.common.exceptions.comms import CommunicationInitializationError
+from aiperf.common.models.comms import (
     ZMQCommunicationConfig,
     ZMQTCPTransportConfig,
 )
-from aiperf.common.models.message_models import BaseMessage, Message
-from aiperf.common.models.payload_models import DataPayload
+from aiperf.common.models.message import BaseMessage, Message
+from aiperf.common.models.payload import DataPayload
 
 
 @pytest.mark.asyncio
@@ -103,11 +103,11 @@ class TestZMQCommunication:
         # Patch the specific client classes and ensure they return our mock
         with (
             patch(
-                "aiperf.common.comms.zmq_comms.clients.ZMQPubClient",
+                "aiperf.common.comms.zmq.clients.ZMQPubClient",
                 return_value=mock_client,
             ),
             patch(
-                "aiperf.common.comms.zmq_comms.clients.ZMQSubClient",
+                "aiperf.common.comms.zmq.clients.ZMQSubClient",
                 return_value=mock_client,
             ),
         ):

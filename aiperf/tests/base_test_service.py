@@ -24,9 +24,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import ServiceState
-from aiperf.common.enums.comm_enums import CommunicationBackend
-from aiperf.common.enums.service_enums import ServiceRunType
+from aiperf.common.enums import (
+    CommunicationBackend,
+    ServiceRunType,
+    ServiceState,
+)
 from aiperf.common.service.base_service import BaseService
 from aiperf.tests.utils.async_test_utils import async_fixture, async_noop
 
@@ -60,7 +62,7 @@ class BaseTestService(ABC):
         This ensures no real communication is attempted during tests.
         """
         with patch(
-            "aiperf.common.comms.communication_factory.CommunicationFactory.create_communication",
+            "aiperf.common.comms.factory.CommunicationFactory.create_communication",
             return_value=mock_communication,
         ):
             yield

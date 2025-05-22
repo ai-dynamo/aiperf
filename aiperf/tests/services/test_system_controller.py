@@ -21,15 +21,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
-from aiperf.app.services.service_manager.multiprocess_service_manager import (
-    MultiProcessServiceManager,
-)
-from aiperf.app.services.system_controller.system_controller import SystemController
 from aiperf.common.enums import (
     ServiceType,
     Topic,
 )
 from aiperf.common.service.base_service import BaseService
+from aiperf.services.service_manager.multiprocess import (
+    MultiProcessServiceManager,
+)
+from aiperf.services.system_controller.system_controller import SystemController
 from aiperf.tests.base_test_controller_service import BaseTestControllerService
 from aiperf.tests.base_test_service import async_fixture
 
@@ -121,11 +121,11 @@ class TestSystemController(BaseTestControllerService):
 
         with (
             patch(
-                "aiperf.app.services.system_controller.system_controller.SystemController._forever_loop",
+                "aiperf.services.system_controller.system_controller.SystemController._forever_loop",
                 return_value=None,
             ) as mock_forever_loop,
             patch(
-                "aiperf.app.services.system_controller.system_controller.SystemController.start",
+                "aiperf.services.system_controller.system_controller.SystemController.start",
                 return_value=None,
             ) as mock_start,
         ):
