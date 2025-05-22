@@ -13,60 +13,96 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from aiperf.common.exceptions.base import AIPerfException
+from aiperf.common.exceptions.base import AIPerfError
 
 
-class CommunicationNotInitializedError(AIPerfException):
+class CommunicationError(AIPerfError):
+    """Base class for all communication exceptions."""
+
+    message: str = "Communication exception occurred"
+
+
+class CommunicationNotInitializedError(CommunicationError):
     """Exception raised when communication channels are not initialized."""
 
     message: str = "Communication channels are not initialized"
 
 
-class CommunicationInitializationError(AIPerfException):
+class CommunicationInitializationError(CommunicationError):
     """Exception raised when communication channels fail to initialize."""
 
-    message: str = "Communication channels failed to initialize"
+    message: str = "Failed to initialize communication channels"
 
 
-class CommunicationPublishError(AIPerfException):
-    """Exception raised when communication channels fail to publish a response."""
+class CommunicationPublishError(CommunicationError):
+    """Exception raised when communication channels fail to publish a message."""
 
-    message: str = "Communication channels failed to publish a response"
+    message: str = "Failed to publish message"
 
 
-class CommunicationShutdownError(AIPerfException):
+class CommunicationShutdownError(CommunicationError):
     """Exception raised when communication channels fail to shutdown."""
 
-    message: str = "Communication channels failed to shutdown"
+    message: str = "Failed to shutdown communication channels"
 
 
-class CommunicationSubscribeError(AIPerfException):
+class CommunicationSubscribeError(CommunicationError):
     """Exception raised when communication channels fail to subscribe to a topic."""
 
-    message: str = "Communication channels failed to subscribe to a topic"
+    message: str = "Failed to subscribe to a topic"
 
 
-class CommunicationPullError(AIPerfException):
-    """Exception raised when communication channels fail to pull a response from
+class CommunicationPullError(CommunicationError):
+    """Exception raised when communication channels fail to pull a message from
     a topic."""
 
-    message: str = "Communication channels failed to pull a response from a topic"
+    message: str = "Failed to pull a message from a topic"
 
 
-class CommunicationPushError(AIPerfException):
-    """Exception raised when communication channels fail to push a response to
+class CommunicationPushError(CommunicationError):
+    """Exception raised when communication channels fail to push a message to
     a topic."""
 
-    message: str = "Communication channels failed to push a response to a topic"
+    message: str = "Failed to push a message to a topic"
 
 
-class CommunicationRequestError(AIPerfException):
+class CommunicationRequestError(CommunicationError):
     """Exception raised when communication channels fail to send a request."""
 
-    message: str = "Communication channels failed to send a request"
+    message: str = "Failed to send a request"
 
 
-class CommunicationResponseError(AIPerfException):
+class CommunicationResponseError(CommunicationError):
     """Exception raised when communication channels fail to receive a response."""
 
-    message: str = "Communication channels failed to receive a response"
+    message: str = "Failed to receive a response"
+
+
+class CommunicationClientCreationError(CommunicationError):
+    """Exception raised when communication channels fail to create a client."""
+
+    message: str = "Failed to create a client"
+
+
+class CommunicationClientNotFoundError(CommunicationError):
+    """Exception raised when a communication client is not found."""
+
+    message: str = "Communication client not found"
+
+
+class CommunicationCreateError(CommunicationError):
+    """Exception raised when communication channels fail to create a client."""
+
+    message: str = "Failed to create a communication client"
+
+
+class CommunicationTypeUnknownError(CommunicationError):
+    """Exception raised when the communication type is unknown."""
+
+    message: str = "Communication type is unknown"
+
+
+class CommunicationTypeAlreadyRegisteredError(CommunicationError):
+    """Exception raised when the communication type is already registered."""
+
+    message: str = "Communication type is already registered"
