@@ -34,6 +34,6 @@ def encode_image(img: Image, format: str) -> str:
     if format == "JPEG" and img.mode != "RGB":
         img = img.convert("RGB")
 
-    buffered = BytesIO()
-    img.save(buffered, format=format)
-    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+    buffer = BytesIO()
+    img.save(buffer, format=format)
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")

@@ -18,7 +18,6 @@ import os
 import pathlib
 import random
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
 
 from aiperf.common.exceptions import (
     GeneratorConfigurationException,
@@ -26,7 +25,7 @@ from aiperf.common.exceptions import (
 )
 from aiperf.common.tokenizer import Tokenizer
 
-logger = logging.getLogger("PromptGenerator")
+logger = logging.getLogger(__name__)
 
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
 
@@ -54,7 +53,7 @@ class PromptGenerator:
         tokenizer: Tokenizer,
         prompt_tokens_mean: int = 550,
         prompt_tokens_stddev: int = 250,
-        hash_ids: Optional[list[int]] = None,
+        hash_ids: list[int] | None = None,
         block_size: int = 512,
     ) -> str:
         """

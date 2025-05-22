@@ -18,25 +18,17 @@ from contextlib import nullcontext as does_not_raise
 import pytest
 
 from aiperf.common.exceptions import GeneratorConfigurationException
-
-# TODO: Need ConfigCommand to run the tests
-# from genai_perf.config.input.config_command import ConfigCommand
-from aiperf.common.tokenizer import get_tokenizer
-from aiperf.services.dataset_manager.data_generator import PromptGenerator
+from aiperf.common.tokenizer import Tokenizer
+from aiperf.services.dataset_manager.generator.prompt import PromptGenerator
 
 
 class TestPromptGenerator:
-    # TODO: Uncomment when ConfigCommand is ready
     def test_synthetic_prompt_default(self):
-        # config = ConfigCommand({"model_name": "test_model"})
-        # config.tokenizer.name = "gpt2"
-        tokenizer = get_tokenizer("gpt2")
+        tokenizer = Tokenizer.get_tokenizer("gpt2")
         _ = PromptGenerator.create_synthetic_prompt(tokenizer)
 
     def test_synthetic_prompt_zero_token(self):
-        # config = ConfigCommand({"model_name": "test_model"})
-        # config.tokenizer.name = "gpt2"
-        tokenizer = get_tokenizer("gpt2")
+        tokenizer = Tokenizer.get_tokenizer("gpt2")
         prompt = PromptGenerator.create_synthetic_prompt(
             tokenizer=tokenizer,
             prompt_tokens_mean=0,
@@ -48,17 +40,13 @@ class TestPromptGenerator:
 
     def test_synthetic_prompt_nonzero_tokens(self):
         prompt_tokens = 123
-        tolerance = 2
-        # config = ConfigCommand({"model_name": "test_model"})
-        # config.tokenizer.name = "gpt2"
-        tokenizer = get_tokenizer("gpt2")
+        tokenizer = Tokenizer.get_tokenizer("gpt2")
         prompt = PromptGenerator.create_synthetic_prompt(
             tokenizer=tokenizer,
             prompt_tokens_mean=prompt_tokens,
             prompt_tokens_stddev=0,
         )
-        assert len(tokenizer.encode(prompt)) <= 123 + tolerance
-        assert len(tokenizer.encode(prompt)) >= 123 - tolerance
+        assert len(tokenizer.encode(prompt)) == prompt_tokens
 
     @pytest.mark.parametrize(
         "test_num_tokens, context",
@@ -69,9 +57,7 @@ class TestPromptGenerator:
         ],
     )
     def test_generate_prompt_with_token_reuse(self, test_num_tokens, context):
-        # config = ConfigCommand({"model_name": "test_model"})
-        # config.tokenizer.name = "gpt2"
-        tokenizer = get_tokenizer("gpt2")
+        tokenizer = Tokenizer.get_tokenizer("gpt2")
         with context:
             _ = PromptGenerator._generate_prompt_with_token_reuse(
                 tokenizer=tokenizer,

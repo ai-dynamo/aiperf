@@ -16,12 +16,11 @@
 import glob
 import random
 from pathlib import Path
-from typing import Optional
 
 from PIL import Image
 
 from aiperf.common.enums import ImageFormat
-from aiperf.services.dataset_manager import utils
+from aiperf.services.dataset_manager.generator import utils
 
 
 class ImageGenerator:
@@ -40,7 +39,7 @@ class ImageGenerator:
         image_width_stddev: int,
         image_height_mean: int,
         image_height_stddev: int,
-        image_format: Optional[ImageFormat] = None,
+        image_format: ImageFormat | None = None,
     ) -> str:
         """Generate an image with the provided parameters.
 

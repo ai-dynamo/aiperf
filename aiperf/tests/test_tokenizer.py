@@ -13,57 +13,29 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-# TODO: uncomment when ConfigCommand and TokenizerDefaults are implemented
-# from genai_perf.config.input.config_command import ConfigCommand
-# from genai_perf.config.input.config_defaults import TokenizerDefaults
-from aiperf.common.tokenizer import get_tokenizer
+from aiperf.common.tokenizer import Tokenizer
 
 
 class TestTokenizer:
-    # TODO: uncomment when ConfigCommand and TokenizerDefaults are implemented
-    # def _create_tokenizer_config(
-    #    self, name, trust_remote_code=False, revision=TokenizerDefaults.REVISION
-    # ):
-    #    config = ConfigCommand({"model_name": "test_model"})
-    #    config.tokenizer.name = name
-    #    config.tokenizer.trust_remote_code = trust_remote_code
-    #    config.tokenizer.revision = revision
+    def test_empty_tokenizer(self):
+        tokenizer = Tokenizer.get_tokenizer()
+        assert tokenizer._tokenizer is None
 
-    #    return config
+    def test_non_empty_tokenizer(self):
+        tokenizer = Tokenizer.get_tokenizer(name="gpt2")
+        assert tokenizer._tokenizer is not None
 
-    def test_default_tokenizer(self):
-        # config = self._create_tokenizer_config(name="gpt2")
-        get_tokenizer(name="gpt2")
-
-    def test_non_default_tokenizer(self):
-        # config = self._create_tokenizer_config(name="gpt2")
-        get_tokenizer(name="gpt2")
-
-    def test_default_tokenizer_all_args(self):
-        # config = self._create_tokenizer_config(
-        #    name="gpt2",
-        #    trust_remote_code=False,
-        #    revision=TokenizerDefaults.REVISION,
-        # )
-        get_tokenizer(name="gpt2")
-
-    def test_non_default_tokenizer_all_args(self):
-        # config = self._create_tokenizer_config(
-        #    name="gpt2",
-        #    trust_remote_code=False,
-        #    revision="11c5a3d5811f50298f278a704980280950aedb10",
-        # )
-        get_tokenizer(
+    def test_all_args(self):
+        tokenizer = Tokenizer.get_tokenizer(
             name="gpt2",
-            trust_remote_code=False,
+            trust_remote_code=True,
             revision="11c5a3d5811f50298f278a704980280950aedb10",
         )
+        assert tokenizer._tokenizer is not None
 
     def test_default_args(self):
-        # config = self._create_tokenizer_config(
-        #    name="hf-internal-testing/llama-tokenizer"
-        # )
-        tokenizer = get_tokenizer(name="hf-internal-testing/llama-tokenizer")
+        tokenizer = Tokenizer.get_tokenizer(name="hf-internal-testing/llama-tokenizer")
+        assert tokenizer._tokenizer is not None
 
         # There are 3 special tokens in the default tokenizer
         #  - <unk>: 0  (unknown)

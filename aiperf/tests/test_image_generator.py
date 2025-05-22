@@ -21,7 +21,7 @@ import pytest
 from PIL import Image
 
 from aiperf.common.enums import ImageFormat
-from aiperf.services.dataset_manager.data_generator.image_generator import (
+from aiperf.services.dataset_manager.generator.image import (
     ImageGenerator,
 )
 

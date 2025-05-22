@@ -13,13 +13,13 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from aiperf.services.dataset_manager.data_generator.audio_generator import (
+from aiperf.services.dataset_manager.generator.audio import (
     AudioGenerator,
 )
-from aiperf.services.dataset_manager.data_generator.image_generator import (
+from aiperf.services.dataset_manager.generator.image import (
     ImageGenerator,
 )
-from aiperf.services.dataset_manager.data_generator.prompt_generator import (
+from aiperf.services.dataset_manager.generator.prompt import (
     PromptGenerator,
 )
 

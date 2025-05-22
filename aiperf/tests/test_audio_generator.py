@@ -21,7 +21,7 @@ import soundfile as sf
 
 # TODO: uncomment when ConfigAudio is implemented
 # from genai_perf.config.input.config_input import ConfigAudio
-from aiperf.services.dataset_manager.data_generator.audio_generator import (
+from aiperf.services.dataset_manager.generator.audio import (
     AudioGenerator,
 )
 

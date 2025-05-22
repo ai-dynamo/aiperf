@@ -21,8 +21,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from transformers import BatchEncoding
 
-# TODO: Need ConfigCommand for get_tokenizer
-# from genai_perf.config.input.config_command import ConfigCommand
 from aiperf.common.exceptions import TokenizerInitializationException
 
 
@@ -36,11 +34,27 @@ class Tokenizer:
         """
         Initialize the tokenizer with default values for call, encode, and decode.
         """
+        self._tokenizer = None
         self._call_args = {"add_special_tokens": False}
         self._encode_args = {"add_special_tokens": False}
         self._decode_args = {"skip_special_tokens": True}
 
-    def set_tokenizer(self, name: str, trust_remote_code: bool, revision: str) -> None:
+    @classmethod
+    def get_tokenizer(
+        cls,
+        name: str | None = None,
+        trust_remote_code: bool = False,
+        revision: str = "main",
+    ) -> "Tokenizer":
+        """
+        Return tokenizer for the given model name
+        """
+        tokenizer = cls()
+        if name:
+            tokenizer._set_tokenizer(name, trust_remote_code, revision)
+        return tokenizer
+
+    def _set_tokenizer(self, name: str, trust_remote_code: bool, revision: str) -> None:
         """
         Set the tokenizer from Huggingface.co or local filesystem.
 
@@ -77,6 +91,8 @@ class Tokenizer:
         Returns:
             A BatchEncoding object containing the tokenized output.
         """
+        if self._tokenizer is None:
+            raise TokenizerInitializationException("Tokenizer is not initialized.")
         return self._tokenizer(text, **{**self._call_args, **kwargs})
 
     def encode(self, text, **kwargs) -> list[int]:
@@ -92,6 +108,8 @@ class Tokenizer:
         Returns:
             A list of token IDs.
         """
+        if self._tokenizer is None:
+            raise TokenizerInitializationException("Tokenizer is not initialized.")
         return self._tokenizer.encode(text, **{**self._encode_args, **kwargs})
 
     def decode(self, token_ids, **kwargs) -> str:
@@ -107,15 +125,16 @@ class Tokenizer:
         Returns:
             The decoded string.
         """
+        if self._tokenizer is None:
+            raise TokenizerInitializationException("Tokenizer is not initialized.")
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
 
     def bos_token_id(self) -> int:
         """
-        Get the beginning-of-sequence (BOS) token ID.
-
-        Returns:
-            The BOS token ID.
+        Return the beginning-of-sequence (BOS) token ID.
         """
+        if self._tokenizer is None:
+            raise TokenizerInitializationException("Tokenizer is not initialized.")
         return self._tokenizer.bos_token_id
 
     def __repr__(self) -> str:
@@ -127,24 +146,11 @@ class Tokenizer:
         """
         return self._tokenizer.__repr__()
 
+    def __str__(self) -> str:
+        """
+        Return a user-friendly string representation of the underlying tokenizer.
 
-def get_empty_tokenizer() -> Tokenizer:
-    """
-    Return a Tokenizer without a tokenizer set
-    """
-    return Tokenizer()
-
-
-# TODO: Need ConfigCommand for get_tokenizer
-# def get_tokenizer(config: ConfigCommand) -> Tokenizer:
-def get_tokenizer(
-    name: str,
-    trust_remote_code: bool = False,
-    revision: str = "main",
-) -> Tokenizer:
-    """
-    Return tokenizer for the given model name
-    """
-    tokenizer = Tokenizer()
-    tokenizer.set_tokenizer(name, trust_remote_code, revision)
-    return tokenizer
+        Returns:
+            The string representation of the tokenizer.
+        """
+        return self._tokenizer.__str__()
