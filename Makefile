@@ -74,15 +74,18 @@ dim := $(shell tput dim)
 .DEFAULT_GOAL := help
 
 
-# Help command is automatically generated based on the comments in the Makefile.
-# Place a comment after each make target in the format `#?` <command description>
-# to include it in the help command.
-
 help: #? show this help
 	@$(MAKE) internal-help --no-print-directory | less
 
-
-# Internal
+#
+# Help command is automatically generated based on the comments in the Makefile.
+# Place a comment after each make target in the format `#? <command description>`
+# to include it in the help command.
+#
+# NOTE: Currently the help command does not support more than 1 alias for a single target.
+#       any more than one alias will cause the help command to not show the target.
+#
+# Internal Commands:
 # DO NOT add #? documentation regarding this internal-help command
 # to avoid it being included in the external facing list of commands.
 internal-help:
@@ -95,13 +98,13 @@ internal-help:
 	@{ \
 		sed -ne "/@sed/!s/^\([^ :]*\)\s\+\([^ :]*\):\s*#?\(.*\)/$(bold)$(green)\1$(reset) $(dim)[\2$(reset)$(dim)]$(reset):$(italic)\3$(reset)/p" $(MAKEFILE_LIST); \
 		sed -ne "/@sed/!s/^\([^ :]*\):\s*#?\(.*\)/$(bold)$(green)\1$(reset):$(italic)\2$(reset)/p" $(MAKEFILE_LIST) | grep -v " \["; \
-	} | sort | fold -s -w 100
+	} | sort
 	@printf "────────────────────────────────────────────────────────────────────────────\n"
 
 ruff lint: #? run the ruff linters
 	$(activate_venv) && ruff check .
 
-ruff-fix lint-fix: #? fix the formatting of the project using ruff.
+ruff-fix lint-fix: #? auto-fix the linter errors of the project using ruff.
 	$(activate_venv) && ruff check . --fix
 
 format fmt: #? format the project using ruff.
@@ -145,6 +148,7 @@ first-time-setup: #? convenience command to setup the environment for the first 
 	else \
 		printf "$(bold)$(green)uv already installed$(reset)\n"; \
 	fi
+
 	@# Create virtual environment if it does not exist
 	@export PATH=$(UV_PATH):$(PATH) && \
 	if [ ! -d "$(VENV_PATH)" ]; then \
@@ -153,8 +157,14 @@ first-time-setup: #? convenience command to setup the environment for the first 
 	else \
 		printf "$(bold)$(green)Virtual environment already exists$(reset)\n"; \
 	fi
+
 	@# Install the project
 	@printf "$(bold)$(green)Installing project...$(reset)\n"
-	@PATH=$(UV_PATH):$(PATH) $(MAKE) install
-	@printf "$(bold)$(green)Done!$(reset)\n"
+	@PATH=$(UV_PATH):$(PATH) $(MAKE) --no-print-directory install
 
+	@# Install pre-commit hooks
+	@printf "$(bold)$(green)Installing pre-commit hooks...$(reset)\n"
+	$(activate_venv) && pre-commit install --install-hooks
+
+	@# Print a success message
+	@printf "$(bold)$(green)Done!$(reset)\n"
