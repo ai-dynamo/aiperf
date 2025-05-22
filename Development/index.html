@@ -16,6 +16,8 @@
         <link rel="prev" href="..">
       
       
+        <link rel="next" href="../api/">
+      
       
       <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
@@ -403,6 +405,28 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -736,22 +760,24 @@ https://docs.astral.sh/uv/getting-started/installation/</li>
 </ol>
 <h4 id="example-service-implementation">Example Service Implementation<a class="headerlink" href="#example-service-implementation" title="Permanent link">&para;</a></h4>
 <p>Here's a simplified example of a service implementation:</p>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">ServiceBase</span>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.service.base_service</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseService</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.config.service_config</span><span class="w"> </span><span class="kn">import</span> <span class="n">ServiceConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.enums</span><span class="w"> </span><span class="kn">import</span> <span class="n">Topic</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.models.messages</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseMessage</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.enums</span><span class="w"> </span><span class="kn">import</span> <span class="n">Topic</span><span class="p">,</span> <span class="n">ClientType</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.models.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Message</span>
 
-<span class="k">class</span><span class="w"> </span><span class="nc">ExampleService</span><span class="p">(</span><span class="n">ServiceBase</span><span class="p">):</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ExampleService</span><span class="p">(</span><span class="n">BaseService</span><span class="p">):</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">ServiceConfig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">service_type</span><span class="o">=</span><span class="s2">&quot;example_service&quot;</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">)</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">service_type</span><span class="o">=</span><span class="s2">&quot;example_service&quot;</span><span class="p">,</span> <span class="n">service_config</span><span class="o">=</span><span class="n">config</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">my_resource</span> <span class="o">=</span> <span class="kc">None</span>
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize service-specific resources.&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Initializing Example Service&quot;</span><span class="p">)</span>
         <span class="c1"># Subscribe to required topics</span>
-        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subscribe_to_topic</span><span class="p">(</span><span class="n">Topic</span><span class="o">.</span><span class="n">COMMAND</span><span class="p">)</span>
-        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subscribe_to_topic</span><span class="p">(</span><span class="n">Topic</span><span class="o">.</span><span class="n">DATA</span><span class="p">)</span>
+        <span class="c1"># TODO: Fix this documentation</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subscribe_to_topic</span><span class="p">(</span><span class="n">ClientType</span><span class="o">.</span><span class="n">CONTROLLER_SUB</span><span class="p">,</span> <span class="n">Topic</span><span class="o">.</span><span class="n">COMMAND</span><span class="p">)</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subscribe_to_topic</span><span class="p">(</span><span class="n">ClientType</span><span class="o">.</span><span class="n">INFERENCE_REQUEST_SUB</span><span class="p">,</span> <span class="n">Topic</span><span class="o">.</span><span class="n">DATA</span><span class="p">)</span>
         <span class="c1"># Initialize resources</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">my_resource</span> <span class="o">=</span> <span class="n">SomeResource</span><span class="p">()</span>
 
@@ -774,9 +800,9 @@ https://docs.astral.sh/uv/getting-started/installation/</li>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">my_resource</span><span class="p">:</span>
             <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">my_resource</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
 
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_process_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">topic</span><span class="p">:</span> <span class="n">Topic</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">BaseMessage</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_process_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">topic</span><span class="p">:</span> <span class="n">Topic</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">Message</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Handle incoming messages.&quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Processing message: </span><span class="si">{</span><span class="n">topic</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">message</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Processing response: </span><span class="si">{</span><span class="n">topic</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">message</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">topic</span> <span class="o">==</span> <span class="n">Topic</span><span class="o">.</span><span class="n">COMMAND</span><span class="p">:</span>
             <span class="c1"># Handle command messages</span>
             <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_handle_command</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
@@ -784,11 +810,11 @@ https://docs.astral.sh/uv/getting-started/installation/</li>
             <span class="c1"># Handle data messages</span>
             <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_handle_data</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
 
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_handle_command</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">BaseMessage</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_handle_command</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">Message</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Handle command messages.&quot;&quot;&quot;</span>
         <span class="c1"># Implement command handling logic</span>
 
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_handle_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">BaseMessage</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_handle_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">Message</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Handle data messages.&quot;&quot;&quot;</span>
         <span class="c1"># Implement data handling logic</span>
 </code></pre></div>
