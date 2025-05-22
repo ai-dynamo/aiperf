@@ -14,6 +14,8 @@
 #  limitations under the License.
 
 from pydantic import BaseModel
+from pydantic.dataclasses import dataclass
+from enum import Enum
 
 
 class Range(BaseModel):
@@ -23,3 +25,27 @@ class Range(BaseModel):
 
     min: int
     max: int
+
+
+#
+# Enums
+class OutputFormat(Enum):
+    TENSORRTLLM = "TENSORRTLLM"
+    VLLM = "VLLM"
+
+
+#
+# Config Defaults
+@dataclass(frozen=True)
+class UserDefaults:
+    MODEL_NAMES = None
+    VERBOSE = False
+    TEMPLATE_FILENAME = "aiperf_config.yaml"
+
+
+@dataclass(frozen=True)
+class EndPointDefaults:
+    BACKEND = OutputFormat.TENSORRTLLM
+    TYPE = "kserve"
+    STREAMING = False
+    SERVER_METRICS_URLS = ["http://localhost:8002/metrics"]

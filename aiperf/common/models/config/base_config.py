@@ -13,222 +13,156 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-
-import copy
-from enum import Enum
-from pathlib import PosixPath
-from textwrap import indent
+import io
 from typing import Any, Dict
+from pydantic import (
+    BaseModel,
+    SerializationInfo,
+    model_serializer,
+)
 
-from aiperf.common.models.config.config_field import ConfigField
+import ruamel.yaml
+from ruamel.yaml import YAML, RoundTripRepresenter, safe_dump
+from ruamel.yaml.comments import CommentedMap
+from enum import Enum
+
+ruamel.yaml.representer.RoundTripRepresenter.ignore_aliases = lambda self, data: True
 
 
-class BaseConfig:
-    """
-    A base class that holds a collection of configuration fields (ConfigField).
+class BaseConfig(BaseModel):
+    @model_serializer(mode="wrap")
+    def serialize(self, handler, info: SerializationInfo):
+        context = info.context or {}
+        if context.get("verbose", False):
+            print(f"{self.__class__.__name__} Verbose: {context['verbose']}")
+        data = handler(self, info)
+        # Could add/remove fields or adjust based on context here
+        return data
 
-    The __getattr__ and __setattr__ methods are custom to allow
-    the user to access the value of the ConfigField directly.
+    def serialize_to_yaml(self, indent: int = 2) -> str:
+        """
+        Serialize a Pydantic model to a YAML string.
 
-    Examples:
-      field_a.field_b = 5 sets the value of field_b to 5
-      field_a.field_b returns the value of field_b
+        Args:
+            indent: The per-level indentation to use.
+        """
+        # Dump model to dict with context (flags propagate recursively)
+        context = {
+            "verbose": getattr(self, "verbose", False),
+        }
 
-      field_a.get_field("field_b") returns the ConfigField object of field_b
-    """
+        data = self.model_dump(context=context)
 
-    def __init__(self):
-        self._fields = {}
-        self._children = {}
+        # Attach comments recursively
+        commented_data = self._attach_comments(
+            data=data,
+            model=self,
+            context=context,
+            indent=indent,
+        )
 
-        # This exists just to make looking up values when debugging easier
-        self._values = {}
+        # Dump to YAML
+        yaml = YAML(pure=True)
+        yaml.indent(mapping=indent, sequence=indent, offset=indent)
+        yaml.default_flow_style = False
 
-    ###########################################################################
-    # Top-Level Methods
-    ###########################################################################
-    def get_field(self, name) -> ConfigField:
-        if name not in self._fields:
-            raise ValueError(f"{name} not found in ConfigFields")
+        # Register for all Enum subclasses
+        # yaml.representer.add_multi_representer(Enum, self._enum_representer)
 
-        return self._fields[name]
-
-    def any_field_set_by_user(self) -> bool:
-        return any(field.is_set_by_user for field in self._fields.values())
-
-    def check_required_fields_are_set(self) -> None:
-        for name, field in self._fields.items():
-            if field.required and not field.is_set_by_user:
-                raise ValueError(f"Required field {name} is not set")
-
-        for child in self._children.values():
-            child.check_required_fields_are_set()
-
-    def model_dump(self) -> Dict[str, Any]:
-        config_dict = {}
-        for key, value in self._values.items():
-            if hasattr(value, "model_dump"):
-                config_dict[key] = value.model_dump()
-            else:
-                config_dict[key] = self._get_legal_json_value(value)
-
-        return config_dict
-
-    def _get_legal_json_value(self, value: Any) -> Any:
-        if isinstance(value, Enum):
-            return value.name.lower()
-        elif isinstance(value, PosixPath):
-            return str(value)
-        elif hasattr(value, "__dict__"):
-            return value.__dict__
-        elif isinstance(value, dict):
-            config_dict = {}
-            for k, v in value.items():
-                config_dict[k] = self._get_legal_json_value(v)
-
-            return config_dict
-        elif (
-            isinstance(value, int)
-            or isinstance(value, float)
-            or isinstance(value, str)
-            or isinstance(value, bool)
-            or isinstance(value, list)
-        ):
-            return value
-        elif value is None:
-            return ""
+        # Control vertical spacing based on verbose flag
+        if context.get("verbose", False):
+            # If verbose is True, output will include comments and spaces
+            yaml.compact(seq_seq=False, seq_map=False)
         else:
-            raise ValueError(f"Value {value} is not a legal JSON value")
+            # If verbose is False, output will be compact without spaces
+            yaml.compact(seq_seq=True, seq_map=True)
 
-    ###########################################################################
-    # Template Creation Methods
-    ###########################################################################
-    def create_template(self, header: str, level: int = 1, verbose=False) -> str:
-        indentation = "  " * level
+        stream = io.StringIO()
+        yaml.dump(commented_data, stream)
+        return stream.getvalue()
 
-        template = self._add_header_to_template(header, indentation)
-        template += self._add_fields_to_template(indentation, verbose)
-        template += "\n"
-        template += self._add_children_to_template(level, verbose)
+    def _attach_comments(
+        self,
+        data: Any,
+        model: BaseModel,
+        context: dict,
+        indent: int = 2,
+        indent_level: int = 0,
+    ) -> Any:
+        """
+        Recursively convert dicts to ruamel.yaml CommentedMap and attach comments from
+        Pydantic field descriptions, or based on context (e.g., verbose flag).
 
-        return template
+        Args:
+            data: The raw data to convert to a CommentedMap.
+            model: The Pydantic model that contains the field descriptions.
+            context: The Pydantic serializer context which contains the serializer flags.
+            indent: The per-level indentation to use for the comments.
+            indent_level: The current level of indentation. The actual indentation is
+                `indent * indent_level`.
 
-    def _add_header_to_template(self, header: str, indentation: str) -> str:
-        template = ""
-        if header:
-            template = indent(f"{header}:\n", indentation)
-        return template
+        Returns:
+            The data with comments attached.
+        """
+        if isinstance(data, dict):
+            # Create a CommentedMap to store the commented data. This is a special type of
+            # dict provided by the ruamel.yaml library that preserves the order of the keys and
+            # allows for comments to be attached to the keys.
+            commented_map = CommentedMap()
 
-    def _add_fields_to_template(self, indentation: str, verbose: bool) -> str:
-        template = ""
-        for name, field in self._fields.items():
-            template_comment = self._get_template_comment(field, verbose)
-            template += self._create_template_from_comment(
-                template_comment, indentation
-            )
-            template += self._add_field_to_template(field, name, indentation)
+            for field_name, value in data.items():
+                field = model.model_fields.get(field_name)
 
-            if verbose and field.verbose_template_comment:
-                template += "\n"
+                if self._do_not_add_field_to_template(field):
+                    continue
 
-        return template
+                value = self._preprocess_value(value)
 
-    def _add_children_to_template(self, level: int, verbose: bool) -> str:
-        template = ""
-        for name, child in self._children.items():
-            template += child.create_template(
-                header=name, level=level + 1, verbose=verbose
-            )
+                if self._is_a_nested_config(field, value):
+                    # Recursively process nested models
+                    commented_map[field_name] = self._attach_comments(
+                        value,
+                        getattr(model, field_name),
+                        context=context,
+                        indent=indent,
+                        indent_level=indent_level + 1,
+                    )
+                else:
+                    # Attach the value to the commented map
+                    commented_map[field_name] = value
 
-        return template
+                # Attach comment if verbose and description exists
+                if context.get("verbose") and field and field.description:
+                    # Set the comment before the key, with the specified indentation
+                    commented_map.yaml_set_comment_before_after_key(
+                        field_name,
+                        before=field.description,
+                        indent=indent * indent_level,
+                    )
 
-    def _get_template_comment(self, field: ConfigField, verbose: bool) -> str:
-        if verbose and field.verbose_template_comment:
-            return field.verbose_template_comment
-        else:
-            return field.template_comment if field.template_comment else ""
+            return commented_map
 
-    def _create_template_from_comment(self, comment: str, indentation: str) -> str:
-        template = ""
-        if comment:
-            comment_lines = comment.split("\n")
-            for comment_line in comment_lines:
-                template += indent(f"  # {comment_line}\n", indentation)
+    def _do_not_add_field_to_template(self, field: Any) -> bool:
+        return (
+            field
+            and field.json_schema_extra
+            and not field.json_schema_extra.get("add_to_template")
+        )
 
-        return template
+    def _is_a_nested_config(self, field: Any, value: Any) -> bool:
+        return (
+            isinstance(value, dict)
+            and field
+            and issubclass(field.annotation, BaseModel)
+        )
 
-    def _add_field_to_template(
-        self, field: ConfigField, name: str, indentation: str
-    ) -> str:
-        template = ""
-        if field.add_to_template:
-            json_value = self._get_legal_json_value(self.__getattr__(name))
-            if isinstance(json_value, list):
-                json_value = ", ".join(map(str, json_value))
+    def _preprocess_value(self, value: Any) -> Any:
+        """
+        Preprocess the value before serialization.
+        """
 
-            template = indent(
-                f"  {name}: {json_value}\n",
-                indentation,
-            )
-        return template
-
-    ###########################################################################
-    # Dunder Methods
-    ###########################################################################
-    def __setattr__(self, name, value):
-        # This prevents recursion failure in __init__
-        if name == "_fields" or name == "_values" or name == "_children":
-            self.__dict__[name] = value
-        else:
-            if isinstance(value, ConfigField):
-                self._fields[name] = value
-            elif name in self._fields:
-                self._fields[name].value = value
-            else:
-                self._children[name] = value
-                self._values[name] = value
-                return
-
-            if self._fields[name].is_set_by_user:
-                self._values[name] = self._fields[name].value
-            else:
-                self._values[name] = self._fields[name].default
-
-    def __getattr__(self, name):
-        if name == "_fields" or name == "_values":
-            return self.__dict__[name]
-        elif name in self._children:
-            return self._children[name]
-        else:
-            if name not in self._fields:
-                raise AttributeError(f"{name} not found in ConfigFields")
-
-            if self._fields[name].is_set_by_user:
-                return self._fields[name].value
-            else:
-                return self._fields[name].default
-
-    def __deepcopy__(self, memo):
-        # new_copy = BaseConfig()
-        cls = self.__class__
-        new_copy = cls.__new__(cls)
-        new_copy.__init__()
-        memo[id(self)] = new_copy
-
-        for key, value in self._fields.items():
-            new_value = copy.deepcopy(value, memo)
-            new_copy.__setattr__(key, new_value)
-
-        for key, value in self._children.items():
-            new_value = copy.deepcopy(value, memo)
-            new_copy.__setattr__(key, new_value)
-
-        return new_copy
-
-    def __delitem__(self, key):
-        if key in self._fields:
-            del self._fields[key]
-            del self._values[key]
-        else:
-            del self._children[key]
-        return
+        if isinstance(value, list):
+            return ", ".join(map(str, value))
+        elif isinstance(value, Enum):
+            return str(value.value).lower()
+        return value
