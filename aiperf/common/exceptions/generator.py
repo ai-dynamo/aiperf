@@ -12,22 +12,23 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-from aiperf.common.exceptions.base import AIPerfException
+
+from aiperf.common.exceptions.base import AIPerfError
 
 
-class GeneratorException(AIPerfException):
+class GeneratorError(AIPerfError):
     """Base class for all exceptions raised by data generator modules."""
 
     pass
 
 
-class GeneratorInitializationException(GeneratorException):
+class GeneratorInitializationError(GeneratorError):
     """Exception raised for data generator initialization errors."""
 
     pass
 
 
-class GeneratorConfigurationException(GeneratorException):
+class GeneratorConfigurationError(GeneratorError):
     """Exception raised for data generator configuration errors."""
 
     pass

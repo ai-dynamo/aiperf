@@ -20,9 +20,7 @@ import numpy as np
 import soundfile as sf
 
 from aiperf.common.enums import AudioFormat
-from aiperf.common.exceptions.data_generator import (
-    GeneratorConfigurationException,
-)
+from aiperf.common.exceptions.generator import GeneratorConfigurationError
 
 # TODO: Needs ConfigAudio
 # from genai_perf.config.input.config_input import ConfigAudio
@@ -77,10 +75,10 @@ class AudioGenerator:
             A positive sample from the normal distribution
 
         Raises:
-            GeneratorConfigurationException: If mean is less than min_value
+            GeneratorConfigurationError: If mean is less than min_value
         """
         if mean < min_value:
-            raise GeneratorConfigurationException(
+            raise GeneratorConfigurationError(
                 f"Mean value ({mean}) must be greater than min_value ({min_value})"
             )
 
@@ -99,14 +97,14 @@ class AudioGenerator:
             audio_format: Audio format
 
         Raises:
-            GeneratorConfigurationException: If sampling rate is not supported for the given format
+            GeneratorConfigurationError: If sampling rate is not supported for the given format
         """
         if (
             audio_format == AudioFormat.MP3
             and sampling_rate not in MP3_SUPPORTED_SAMPLE_RATES
         ):
             supported_rates = sorted(MP3_SUPPORTED_SAMPLE_RATES)
-            raise GeneratorConfigurationException(
+            raise GeneratorConfigurationError(
                 f"MP3 format only supports the following sample rates (in Hz): {supported_rates}. "
                 f"Got {sampling_rate} Hz. Please choose a supported rate from the list."
             )
@@ -120,11 +118,11 @@ class AudioGenerator:
             bit_depth: Bit depth in bits
 
         Raises:
-            GeneratorConfigurationException: If bit depth is not supported
+            GeneratorConfigurationError: If bit depth is not supported
         """
         if bit_depth not in SUPPORTED_BIT_DEPTHS:
             supported_depths = sorted(SUPPORTED_BIT_DEPTHS.keys())
-            raise GeneratorConfigurationException(
+            raise GeneratorConfigurationError(
                 f"Unsupported bit depth: {bit_depth}. "
                 f"Supported bit depths are: {supported_depths}"
             )
@@ -144,7 +142,7 @@ class AudioGenerator:
             Data URI containing base64-encoded audio data with format specification
 
         Raises:
-            GeneratorConfigurationException: If any of the following conditions are met:
+            GeneratorConfigurationError: If any of the following conditions are met:
                 - audio_length_mean is less than 0.1 seconds
                 - channels is not 1 (mono) or 2 (stereo)
                 - sampling rate is not supported for MP3 format
@@ -152,7 +150,7 @@ class AudioGenerator:
                 - audio format is not supported (must be 'wav' or 'mp3')
         """
         if config.num_channels not in (1, 2):
-            raise GeneratorConfigurationException(
+            raise GeneratorConfigurationError(
                 "Only mono (1) and stereo (2) channels are supported"
             )
 
@@ -200,7 +198,7 @@ class AudioGenerator:
         elif config.format == AudioFormat.WAV:
             _, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
         else:
-            raise GeneratorConfigurationException(
+            raise GeneratorConfigurationError(
                 f"Unsupported audio format: {config.format.name}. "
                 f"Supported formats are: {AudioFormat.WAV.name}, {AudioFormat.MP3.name}"
             )

@@ -19,9 +19,9 @@ import pathlib
 import random
 from concurrent.futures import ThreadPoolExecutor
 
-from aiperf.common.exceptions import (
-    GeneratorConfigurationException,
-    GeneratorInitializationException,
+from aiperf.common.exceptions.generator import (
+    GeneratorConfigurationError,
+    GeneratorInitializationError,
 )
 from aiperf.common.tokenizer import Tokenizer
 
@@ -128,12 +128,10 @@ class PromptGenerator:
             A synthetic prompt of tokens.
 
         Raises:
-            GeneratorInitializationException: If the tokenized corpus is not initialized
+            GeneratorInitializationError: If the tokenized corpus is not initialized
         """
         if not cls._tokenized_corpus:
-            raise GeneratorInitializationException(
-                "Tokenized corpus is not initialized."
-            )
+            raise GeneratorInitializationError("Tokenized corpus is not initialized.")
         if num_tokens > cls._corpus_length:
             logger.warning(
                 f"Requested prompt length {num_tokens} is longer than the corpus. "
@@ -191,13 +189,13 @@ class PromptGenerator:
             str: A synthetic prompt as a string.
 
         Raises:
-            GeneratorConfigurationException: If the input parameters are not compatible.
+            GeneratorConfigurationError: If the input parameters are not compatible.
         """
         final_prompt: list[int] = []
         size_to_use = block_size
         last_hash_length = num_tokens - ((len(prompt_hash_list) - 1) * block_size)
         if last_hash_length <= 0 or block_size < last_hash_length:
-            raise GeneratorConfigurationException(
+            raise GeneratorConfigurationError(
                 f"Input_length: {num_tokens}, Hash_ids: {prompt_hash_list}, Block_size: {block_size} "
                 f"are not compatible. The final hash id length: {last_hash_length} must be greater "
                 f"than 0 and less than or equal to {block_size}."
@@ -246,10 +244,10 @@ class PromptGenerator:
             A random prefix prompt.
 
         Raises:
-            GeneratorInitializationException: If the prefix prompts pool is empty.
+            GeneratorInitializationError: If the prefix prompts pool is empty.
         """
         if not cls._prefix_prompts:
-            raise GeneratorInitializationException(
+            raise GeneratorInitializationError(
                 "Prefix prompts pool is empty. Call `create_prefix_prompts_pool` first."
             )
         return random.choice(cls._prefix_prompts)

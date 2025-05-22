@@ -13,14 +13,16 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+from aiperf.common.exceptions.base import AIPerfError
 
-class TokenizerException(Exception):
+
+class TokenizerError(AIPerfError):
     """Base class for tokenizer exceptions."""
 
     pass
 
 
-class TokenizerInitializationException(TokenizerException):
+class TokenizerInitializationError(TokenizerError):
     """Exception raised for errors during tokenizer initialization."""
 
     pass
