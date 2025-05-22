@@ -25,6 +25,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install mkdocs mkdocs-material mkdocstrings[python]
 
+      - name: Generate API Reference Markdown
+        run: |
+          python tools/generate_api_md.py
+
       - name: Build documentation
         run: |
           mkdocs build
