@@ -18,7 +18,7 @@ from collections.abc import Callable
 from typing import Any
 
 from aiperf.common.decorators import AIPerfHooks
-from aiperf.common.exceptions.base import AIPerfMetaclassError
+from aiperf.common.exceptions import AIPerfMetaclassError
 
 
 class BaseMetaclass(ABCMeta):

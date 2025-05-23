@@ -20,19 +20,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.comms.zmq import ZMQCommunication
-from aiperf.common.enums import (
+from aiperf.common.comms.client_enums import (
     PubClientType,
     SubClientType,
+)
+from aiperf.common.comms.zmq import ZMQCommunication
+from aiperf.common.enums import (
     Topic,
 )
-from aiperf.common.exceptions.comms import CommunicationInitializationError
-from aiperf.common.models.comms import (
+from aiperf.common.exceptions import CommunicationInitializationError
+from aiperf.common.models import (
+    BaseMessage,
+    DataPayload,
+    Message,
     ZMQCommunicationConfig,
     ZMQTCPTransportConfig,
 )
-from aiperf.common.models.message import BaseMessage, Message
-from aiperf.common.models.payload import DataPayload
 
 
 @pytest.mark.asyncio

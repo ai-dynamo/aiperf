@@ -21,9 +21,8 @@ import pytest
 from pydantic import BaseModel, Field
 
 from aiperf.common.comms.zmq import ZMQCommunication
-from aiperf.common.enums.comms import Topic
-from aiperf.common.models.message import BaseMessage, Message
-from aiperf.common.models.payload import DataPayload
+from aiperf.common.enums import Topic
+from aiperf.common.models import BaseMessage, DataPayload, Message
 
 
 class MockCommunicationData(BaseModel):

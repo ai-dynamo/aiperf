@@ -15,6 +15,5 @@
 
 __all__ = ["BaseCommunication", "CommunicationFactory", "ZMQCommunication"]
 
-from aiperf.common.comms.base import BaseCommunication
-from aiperf.common.comms.factory import CommunicationFactory
+from aiperf.common.comms.base import BaseCommunication, CommunicationFactory
 from aiperf.common.comms.zmq.zmq_comms import ZMQCommunication

@@ -17,7 +17,7 @@ from contextlib import nullcontext as does_not_raise
 
 import pytest
 
-from aiperf.common.exceptions.generator import GeneratorConfigurationError
+from aiperf.common.exceptions import GeneratorConfigurationError
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset.generator.prompt import PromptGenerator
 

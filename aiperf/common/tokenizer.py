@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from transformers import BatchEncoding
 
-from aiperf.common.exceptions.tokenizer import TokenizerInitializationError
+from aiperf.common.exceptions import TokenizerInitializationError
 
 
 class Tokenizer:

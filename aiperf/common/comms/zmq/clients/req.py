@@ -21,11 +21,10 @@ from zmq import SocketType
 
 from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.decorators import aiperf_task, on_cleanup
-from aiperf.common.exceptions.comms import (
+from aiperf.common.exceptions import (
     CommunicationRequestError,
 )
-from aiperf.common.models.message import BaseMessage, Message
-from aiperf.common.models.payload import ErrorPayload
+from aiperf.common.models import BaseMessage, ErrorPayload, Message
 
 logger = logging.getLogger(__name__)
 

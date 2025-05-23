@@ -23,25 +23,21 @@ from collections.abc import Callable
 
 import setproctitle
 
-from aiperf.common.comms.base import BaseCommunication
-from aiperf.common.comms.factory import CommunicationFactory
+from aiperf.common.comms import BaseCommunication, CommunicationFactory
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import AIPerfHooks
 from aiperf.common.enums import ServiceState
-from aiperf.common.exceptions.base import AIPerfMultiError
-from aiperf.common.exceptions.comms import (
+from aiperf.common.exceptions import (
+    AIPerfMultiError,
     CommunicationClientCreationError,
     CommunicationCreateError,
     CommunicationNotInitializedError,
-)
-from aiperf.common.exceptions.service import (
     ServiceInitializationError,
     ServiceRunError,
     ServiceStartError,
     ServiceStopError,
 )
-from aiperf.common.models.message import BaseMessage, Message
-from aiperf.common.models.payload import Payload
+from aiperf.common.models import BaseMessage, Message, Payload
 from aiperf.common.service.base_service_interface import BaseServiceInterface
 from aiperf.common.service.service_metaclass import ServiceMetaclass
 from aiperf.common.utils import call_all_functions_self

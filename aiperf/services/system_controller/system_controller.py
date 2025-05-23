@@ -32,23 +32,21 @@ from aiperf.common.enums import (
     ServiceType,
     Topic,
 )
-from aiperf.common.exceptions.comms import (
+from aiperf.common.exceptions import (
     CommunicationNotInitializedError,
     CommunicationPublishError,
     CommunicationSubscribeError,
-)
-from aiperf.common.exceptions.config import ConfigError
-from aiperf.common.exceptions.service import (
+    ConfigError,
     ServiceConfigureError,
     ServiceInitializationError,
     ServiceStopError,
 )
-from aiperf.common.models.message import (
+from aiperf.common.models import (
     HeartbeatMessage,
     RegistrationMessage,
+    ServiceRunInfo,
     StatusMessage,
 )
-from aiperf.common.models.service import ServiceRunInfo
 from aiperf.common.service.base_controller_service import BaseControllerService
 from aiperf.services.service_manager.base import BaseServiceManager
 from aiperf.services.service_manager.kubernetes import (

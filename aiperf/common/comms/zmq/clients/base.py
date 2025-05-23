@@ -27,7 +27,7 @@ from aiperf.common.comms.zmq.clients.metaclass import (
     ZMQClientMetaclass,
 )
 from aiperf.common.decorators import AIPerfHooks
-from aiperf.common.exceptions.comms import (
+from aiperf.common.exceptions import (
     CommunicationError,
     CommunicationInitializationError,
     CommunicationNotInitializedError,
