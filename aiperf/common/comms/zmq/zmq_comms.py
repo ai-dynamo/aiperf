@@ -20,6 +20,7 @@ from typing import Any
 
 import zmq.asyncio
 
+from aiperf.common.comms import CommunicationFactory
 from aiperf.common.comms.base import BaseCommunication
 from aiperf.common.comms.client_enums import (
     ClientType,
@@ -30,7 +31,6 @@ from aiperf.common.comms.client_enums import (
     ReqClientType,
     SubClientType,
 )
-from aiperf.common.comms.factory import CommunicationFactory
 from aiperf.common.comms.zmq.clients import ZMQClient
 from aiperf.common.comms.zmq.clients.pub import ZMQPubClient
 from aiperf.common.comms.zmq.clients.pull import ZMQPullClient

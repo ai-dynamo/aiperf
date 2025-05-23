@@ -23,8 +23,7 @@ from collections.abc import Callable
 
 import setproctitle
 
-from aiperf.common.comms.base import BaseCommunication
-from aiperf.common.comms.factory import CommunicationFactory
+from aiperf.common.comms import BaseCommunication, CommunicationFactory
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import AIPerfHooks
 from aiperf.common.enums import ServiceState
