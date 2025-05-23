@@ -34,6 +34,11 @@ from aiperf.common.models import (
 logger = logging.getLogger(__name__)
 
 
+################################################################################
+# Base Communication Class
+################################################################################
+
+
 class BaseCommunication(ABC):
     """Base class for specifying the base communication layer for AIPerf components."""
 
@@ -152,6 +157,11 @@ class BaseCommunication(ABC):
             callback: function to call when data is received.
         """
         pass
+
+
+################################################################################
+# Communication Factory
+################################################################################
 
 
 class CommunicationFactory:
