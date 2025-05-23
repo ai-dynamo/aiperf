@@ -22,24 +22,15 @@ from pydantic import (
 )
 
 import ruamel.yaml
-from ruamel.yaml import YAML, RoundTripRepresenter, safe_dump
+from ruamel.yaml import YAML, safe_dump
 from ruamel.yaml.comments import CommentedMap
 from enum import Enum
 
-ruamel.yaml.representer.RoundTripRepresenter.ignore_aliases = lambda self, data: True
+ADD_TO_TEMPLATE = "add_to_template"
 
 
 class BaseConfig(BaseModel):
-    @model_serializer(mode="wrap")
-    def serialize(self, handler, info: SerializationInfo):
-        context = info.context or {}
-        if context.get("verbose", False):
-            print(f"{self.__class__.__name__} Verbose: {context['verbose']}")
-        data = handler(self, info)
-        # Could add/remove fields or adjust based on context here
-        return data
-
-    def serialize_to_yaml(self, indent: int = 2) -> str:
+    def serialize_to_yaml(self, indent: int = 4) -> str:
         """
         Serialize a Pydantic model to a YAML string.
 
@@ -64,29 +55,17 @@ class BaseConfig(BaseModel):
         # Dump to YAML
         yaml = YAML(pure=True)
         yaml.indent(mapping=indent, sequence=indent, offset=indent)
-        yaml.default_flow_style = False
-
-        # Register for all Enum subclasses
-        # yaml.representer.add_multi_representer(Enum, self._enum_representer)
-
-        # Control vertical spacing based on verbose flag
-        if context.get("verbose", False):
-            # If verbose is True, output will include comments and spaces
-            yaml.compact(seq_seq=False, seq_map=False)
-        else:
-            # If verbose is False, output will be compact without spaces
-            yaml.compact(seq_seq=True, seq_map=True)
 
         stream = io.StringIO()
         yaml.dump(commented_data, stream)
         return stream.getvalue()
 
+    @staticmethod
     def _attach_comments(
-        self,
         data: Any,
         model: BaseModel,
         context: dict,
-        indent: int = 2,
+        indent: int,
         indent_level: int = 0,
     ) -> Any:
         """
@@ -113,19 +92,25 @@ class BaseConfig(BaseModel):
             for field_name, value in data.items():
                 field = model.model_fields.get(field_name)
 
-                if self._do_not_add_field_to_template(field):
+                if not BaseConfig._should_add_field_to_template(field):
                     continue
 
-                value = self._preprocess_value(value)
+                value = BaseConfig._preprocess_value(value)
 
-                if self._is_a_nested_config(field, value):
+                if BaseConfig._is_a_nested_config(field, value):
                     # Recursively process nested models
-                    commented_map[field_name] = self._attach_comments(
+                    commented_map[field_name] = BaseConfig._attach_comments(
                         value,
                         getattr(model, field_name),
                         context=context,
                         indent=indent,
                         indent_level=indent_level + 1,
+                    )
+
+                    commented_map.yaml_set_comment_before_after_key(
+                        field_name,
+                        before="\n",
+                        indent=indent * (indent_level + 1),
                     )
                 else:
                     # Attach the value to the commented map
@@ -136,27 +121,33 @@ class BaseConfig(BaseModel):
                     # Set the comment before the key, with the specified indentation
                     commented_map.yaml_set_comment_before_after_key(
                         field_name,
-                        before=field.description,
+                        before="\n" + field.description,
                         indent=indent * indent_level,
                     )
 
             return commented_map
 
-    def _do_not_add_field_to_template(self, field: Any) -> bool:
-        return (
-            field
-            and field.json_schema_extra
-            and not field.json_schema_extra.get("add_to_template")
-        )
+    @staticmethod
+    def _should_add_field_to_template(field: Any) -> bool:
+        # Check if the field should be added to the template based on json_schema_extra
+        # and the add_to_template flag.
+        # If add_to_template is False, we skip adding the field to the template.
+        # If add_to_template is True or not present, we include the field in the template.
+        if field and field.json_schema_extra:
+            return field.json_schema_extra.get(ADD_TO_TEMPLATE, True)
+        else:
+            return True
 
-    def _is_a_nested_config(self, field: Any, value: Any) -> bool:
+    @staticmethod
+    def _is_a_nested_config(field: Any, value: Any) -> bool:
         return (
             isinstance(value, dict)
             and field
             and issubclass(field.annotation, BaseModel)
         )
 
-    def _preprocess_value(self, value: Any) -> Any:
+    @staticmethod
+    def _preprocess_value(value: Any) -> Any:
         """
         Preprocess the value before serialization.
         """
