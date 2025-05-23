@@ -22,7 +22,7 @@ from zmq import SocketType
 
 from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.decorators import aiperf_task
-from aiperf.common.exceptions.comms import (
+from aiperf.common.exceptions import (
     CommunicationSubscribeError,
 )
 from aiperf.common.models.message import BaseMessage, Message

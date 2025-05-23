@@ -19,7 +19,7 @@ import pathlib
 import random
 from concurrent.futures import ThreadPoolExecutor
 
-from aiperf.common.exceptions.generator import (
+from aiperf.common.exceptions import (
     GeneratorConfigurationError,
     GeneratorInitializationError,
 )

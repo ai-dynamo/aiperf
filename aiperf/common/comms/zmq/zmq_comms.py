@@ -40,7 +40,7 @@ from aiperf.common.enums import (
     TopicType,
 )
 from aiperf.common.enums.comms import CommunicationBackend
-from aiperf.common.exceptions.comms import (
+from aiperf.common.exceptions import (
     CommunicationClientCreationError,
     CommunicationNotInitializedError,
     CommunicationPublishError,

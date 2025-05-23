@@ -20,7 +20,7 @@ import numpy as np
 import soundfile as sf
 
 from aiperf.common.enums import AudioFormat
-from aiperf.common.exceptions.generator import GeneratorConfigurationError
+from aiperf.common.exceptions import GeneratorConfigurationError
 
 # TODO: Needs ConfigAudio
 # from genai_perf.config.input.config_input import ConfigAudio

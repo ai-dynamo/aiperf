@@ -28,13 +28,11 @@ from aiperf.common.comms.factory import CommunicationFactory
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import AIPerfHooks
 from aiperf.common.enums import ServiceState
-from aiperf.common.exceptions.base import AIPerfMultiError
-from aiperf.common.exceptions.comms import (
+from aiperf.common.exceptions import (
+    AIPerfMultiError,
     CommunicationClientCreationError,
     CommunicationCreateError,
     CommunicationNotInitializedError,
-)
-from aiperf.common.exceptions.service import (
     ServiceInitializationError,
     ServiceRunError,
     ServiceStartError,

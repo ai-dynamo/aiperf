@@ -26,7 +26,7 @@ from aiperf.common.enums import (
     SubClientType,
     Topic,
 )
-from aiperf.common.exceptions.comms import CommunicationInitializationError
+from aiperf.common.exceptions import CommunicationInitializationError
 from aiperf.common.models.comms import (
     ZMQCommunicationConfig,
     ZMQTCPTransportConfig,

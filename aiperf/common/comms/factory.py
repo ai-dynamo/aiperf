@@ -19,7 +19,7 @@ from collections.abc import Callable
 from aiperf.common.comms.base import BaseCommunication
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import CommunicationBackend
-from aiperf.common.exceptions.comms import (
+from aiperf.common.exceptions import (
     CommunicationCreateError,
     CommunicationTypeAlreadyRegisteredError,
     CommunicationTypeUnknownError,

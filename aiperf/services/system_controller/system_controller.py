@@ -32,13 +32,11 @@ from aiperf.common.enums import (
     ServiceType,
     Topic,
 )
-from aiperf.common.exceptions.comms import (
+from aiperf.common.exceptions import (
     CommunicationNotInitializedError,
     CommunicationPublishError,
     CommunicationSubscribeError,
-)
-from aiperf.common.exceptions.config import ConfigError
-from aiperf.common.exceptions.service import (
+    ConfigError,
     ServiceConfigureError,
     ServiceInitializationError,
     ServiceStopError,
