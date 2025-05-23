@@ -52,7 +52,7 @@ class MultiProcessServiceManager(BaseServiceManager):
 
         # TODO: This is a hack to get the service classes
         # TODO: We should find a better way to do this
-        from aiperf.services.dataset_manager import DatasetManager
+        from aiperf.services.dataset import DatasetManager
         from aiperf.services.post_processor_manager import PostProcessorManager
         from aiperf.services.records_manager import RecordsManager
         from aiperf.services.timing_manager import TimingManager

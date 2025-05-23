@@ -47,25 +47,12 @@ class Topic(StrEnum):
     Right now, there is some overlap between Topic and MessageType."""
 
     CREDIT_DROP = "credit_drop"
-    """The topic for credit drop messages."""
-
     CREDIT_RETURN = "credit_return"
-    """The topic for credit return messages."""
-
     REGISTRATION = "registration"
-    """The topic for registration messages."""
-
     COMMAND = "command"
-    """The topic for command messages."""
-
     RESPONSE = "response"
-    """The topic for response messages."""
-
     STATUS = "status"
-    """The topic for status messages."""
-
     HEARTBEAT = "heartbeat"
-    """The topic for heartbeat messages."""
 
 
 # TODO: Is this separation needed? Or should we just use the Topic enum?
@@ -73,25 +60,12 @@ class DataTopic(StrEnum):
     """TBD. Specific data topics for use in the future."""
 
     DATASET = "dataset_data"
-    """The topic for dataset data."""
-
     RECORDS = "records_data"
-    """The topic for records data."""
-
     WORKER = "worker_data"
-    """The topic for worker data."""
-
     POST_PROCESSOR = "post_processor_data"
-    """The topic for post processor data."""
-
     RESULTS = "results"
-    """The topic for results data."""
-
     METRICS = "metrics"
-    """The topic for metrics data."""
-
     CONVERSATION = "conversation_data"
-    """The topic for conversation data."""
 
 
 TopicType = Topic | DataTopic
@@ -174,15 +148,8 @@ class CommandType(StrEnum):
     """List of commands that the SystemController can send to component services."""
 
     START = "start"
-    """A command to start the service. The service should have already
-    been configured."""
-
     STOP = "stop"
-    """A command to stop the service."""
-
     CONFIGURE = "configure"
-    """A command to configure the service with the configuration present
-    in the payload."""
 
 
 ################################################################################
@@ -206,8 +173,6 @@ class ServiceState(StrEnum):
     """States a service can be in throughout its lifecycle."""
 
     UNKNOWN = "unknown"
-    """The service state is unknown. Placeholder for services that have not yet
-    initialized."""
 
     INITIALIZING = "initializing"
     """The service is currently initializing. This is a temporary state that should be
@@ -221,14 +186,12 @@ class ServiceState(StrEnum):
     by RUNNING."""
 
     RUNNING = "running"
-    """The service is running."""
 
     STOPPING = "stopping"
     """The service is stopping. This is a temporary state that should be followed
     by STOPPED."""
 
     STOPPED = "stopped"
-    """The service is stopped."""
 
     ERROR = "error"
     """The service is currently in an error state."""
@@ -243,28 +206,13 @@ class ServiceType(StrEnum):
     """
 
     SYSTEM_CONTROLLER = "system_controller"
-    """The SystemController service."""
-
     DATASET_MANAGER = "dataset_manager"
-    """The DatasetManager service."""
-
     TIMING_MANAGER = "timing_manager"
-    """The TimingManager service."""
-
     RECORDS_MANAGER = "records_manager"
-    """The RecordsManager service."""
-
     POST_PROCESSOR_MANAGER = "post_processor_manager"
-    """The PostProcessorManager service."""
-
     WORKER_MANAGER = "worker_manager"
-    """The WorkerManager service."""
-
     WORKER = "worker"
-    """The Worker service."""
-
     TEST = "test_service"
-    """Used in tests."""
 
 
 class ServiceRegistrationStatus(StrEnum):

@@ -13,6 +13,10 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+################################################################################
+# Base Exceptions
+################################################################################
+
 
 class AIPerfError(Exception):
     """Base class for all exceptions raised by AIPerf."""
@@ -31,6 +35,11 @@ class AIPerfMultiError(AIPerfError):
 
 class AIPerfMetaclassError(AIPerfError):
     """Exception raised for AIPerf metaclass errors."""
+
+
+################################################################################
+# Communication Exceptions
+################################################################################
 
 
 class CommunicationError(AIPerfError):
@@ -95,6 +104,11 @@ class CommunicationTypeAlreadyRegisteredError(CommunicationError):
     """Exception raised when the communication type is already registered."""
 
 
+################################################################################
+# Configuration Exceptions
+################################################################################
+
+
 class ConfigError(AIPerfError):
     """Base class for all exceptions raised by configuration errors."""
 
@@ -111,6 +125,11 @@ class ConfigValidationError(ConfigError):
     """Exception raised for configuration validation errors."""
 
 
+################################################################################
+# Dataset Generator Exceptions
+################################################################################
+
+
 class GeneratorError(AIPerfError):
     """Base class for all exceptions raised by data generator modules."""
 
@@ -121,6 +140,11 @@ class GeneratorInitializationError(GeneratorError):
 
 class GeneratorConfigurationError(GeneratorError):
     """Exception raised for data generator configuration errors."""
+
+
+################################################################################
+# Service Exceptions
+################################################################################
 
 
 class ServiceError(AIPerfError):
@@ -176,6 +200,11 @@ class ServiceConfigureError(ServiceError):
 
 class ServiceHeartbeatError(ServiceError):
     """Exception raised for service heartbeat errors."""
+
+
+################################################################################
+# Tokenizer Exceptions
+################################################################################
 
 
 class TokenizerError(AIPerfError):
