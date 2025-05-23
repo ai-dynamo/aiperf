@@ -1,0 +1,261 @@
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#  http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+from enum import Enum
+
+
+class StrEnum(str, Enum):
+    """Base class for string-based enums.
+
+    Using this as a base class allows enum values to be used directly as
+    strings without having to use .value.
+    """
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class CommunicationBackend(StrEnum):
+    """Supported communication backends."""
+
+    ZMQ_TCP = "zmq_tcp"
+    """ZeroMQ backend using TCP sockets."""
+
+
+class Topic(StrEnum):
+    """Communication topics for the main messaging bus.
+    Right now, there is some overlap between Topic and MessageType."""
+
+    CREDIT_DROP = "credit_drop"
+    """The topic for credit drop messages."""
+
+    CREDIT_RETURN = "credit_return"
+    """The topic for credit return messages."""
+
+    REGISTRATION = "registration"
+    """The topic for registration messages."""
+
+    COMMAND = "command"
+    """The topic for command messages."""
+
+    RESPONSE = "response"
+    """The topic for response messages."""
+
+    STATUS = "status"
+    """The topic for status messages."""
+
+    HEARTBEAT = "heartbeat"
+    """The topic for heartbeat messages."""
+
+
+# TODO: Is this separation needed? Or should we just use the Topic enum?
+class DataTopic(StrEnum):
+    """TBD. Specific data topics for use in the future."""
+
+    DATASET = "dataset_data"
+    """The topic for dataset data."""
+
+    RECORDS = "records_data"
+    """The topic for records data."""
+
+    WORKER = "worker_data"
+    """The topic for worker data."""
+
+    POST_PROCESSOR = "post_processor_data"
+    """The topic for post processor data."""
+
+    RESULTS = "results"
+    """The topic for results data."""
+
+    METRICS = "metrics"
+    """The topic for metrics data."""
+
+    CONVERSATION = "conversation_data"
+    """The topic for conversation data."""
+
+
+TopicType = Topic | DataTopic
+"""Union of all the various different topic types supported by the system, for use in
+type hinting."""
+
+
+class ImageFormat(StrEnum):
+    PNG = "PNG"
+    JPEG = "JPEG"
+
+
+class AudioFormat(StrEnum):
+    WAV = "WAV"
+    MP3 = "MP3"
+
+
+# Message-related enums
+class MessageType(StrEnum):
+    """The various types of messages that can be sent between services.
+
+    The message type is used to determine what Pydantic model the payload maps to.
+    The mappings between message types and payload types are defined in the
+    payload definitions.
+    """
+
+    UNKNOWN = "unknown"
+    """A placeholder value for when the message type is not known."""
+
+    REGISTRATION = "registration"
+    """A message sent by a component service to register itself with the
+    system controller."""
+
+    HEARTBEAT = "heartbeat"
+    """A message sent by a component service to the system controller to indicate it
+    is still running."""
+
+    COMMAND = "command"
+    """A message sent by the system controller to a component service to command it
+    to do something."""
+
+    RESPONSE = "response"
+    """A message sent by a component service to the system controller to respond
+    to a command."""
+
+    STATUS = "status"
+    """A notification sent by a component service to the system controller to
+    report its status."""
+
+    ERROR = "error"
+    """A message sent by a component service to the system controller to
+    report an error."""
+
+    CREDIT_DROP = "credit_drop"
+    """A message sent by the Timing Manager service to allocate credits
+    for a worker."""
+
+    CREDIT_RETURN = "credit_return"
+    """A message sent by the Worker services to return credits to the credit pool."""
+
+    DATA = "data"
+    """A message containing data. This is TBD."""
+
+
+class CommandType(StrEnum):
+    """List of commands that the SystemController can send to component services."""
+
+    START = "start"
+    """A command to start the service. The service should have already
+    been configured."""
+
+    STOP = "stop"
+    """A command to stop the service."""
+
+    CONFIGURE = "configure"
+    """A command to configure the service with the configuration present
+    in the payload."""
+
+
+class ServiceRunType(StrEnum):
+    """The different ways the SystemController should run the component services."""
+
+    MULTIPROCESSING = "process"
+    """Run each service as a separate process.
+    This is the default way for single-node deployments."""
+
+    KUBERNETES = "k8s"
+    """Run each service as a separate Kubernetes pod.
+    This is the default way for multi-node deployments."""
+
+
+class ServiceState(StrEnum):
+    """States a service can be in throughout its lifecycle."""
+
+    UNKNOWN = "unknown"
+    """The service state is unknown. Placeholder for services that have not yet
+    initialized."""
+
+    INITIALIZING = "initializing"
+    """The service is currently initializing. This is a temporary state that should be
+    followed by READY."""
+
+    READY = "ready"
+    """The service has initialized and is ready to be configured or started."""
+
+    STARTING = "starting"
+    """The service is starting. This is a temporary state that should be followed
+    by RUNNING."""
+
+    RUNNING = "running"
+    """The service is running."""
+
+    STOPPING = "stopping"
+    """The service is stopping. This is a temporary state that should be followed
+    by STOPPED."""
+
+    STOPPED = "stopped"
+    """The service is stopped."""
+
+    ERROR = "error"
+    """The service is currently in an error state."""
+
+
+class ServiceType(StrEnum):
+    """Types of services in the AIPerf system.
+
+    This is used to identify the service type when registering with the
+    SystemController. It can also be used for tracking purposes if multiple
+    instances of the same service type are running.
+    """
+
+    SYSTEM_CONTROLLER = "system_controller"
+    """The SystemController service."""
+
+    DATASET_MANAGER = "dataset_manager"
+    """The DatasetManager service."""
+
+    TIMING_MANAGER = "timing_manager"
+    """The TimingManager service."""
+
+    RECORDS_MANAGER = "records_manager"
+    """The RecordsManager service."""
+
+    POST_PROCESSOR_MANAGER = "post_processor_manager"
+    """The PostProcessorManager service."""
+
+    WORKER_MANAGER = "worker_manager"
+    """The WorkerManager service."""
+
+    WORKER = "worker"
+    """The Worker service."""
+
+    TEST = "test_service"
+    """Used in tests."""
+
+
+class ServiceRegistrationStatus(StrEnum):
+    """Defines the various states a service can be in during registration with
+    the SystemController."""
+
+    UNREGISTERED = "unregistered"
+    """The service is not registered with the SystemController. This is the
+    initial state."""
+
+    WAITING = "waiting"
+    """The service is waiting for the SystemController to register it.
+    This is a temporary state that should be followed by REGISTERED."""
+
+    REGISTERED = "registered"
+    """The service is registered with the SystemController."""
+
+    TIMEOUT = "timeout"
+    """The service registration timed out."""
+
+    ERROR = "error"
+    """The service registration failed."""

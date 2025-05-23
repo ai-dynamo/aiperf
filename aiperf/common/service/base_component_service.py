@@ -15,16 +15,14 @@
 import asyncio
 from typing import cast
 
+from aiperf.common.comms.client_enums import (
+    ClientType,
+    PubClientType,
+    SubClientType,
+)
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import AIPerfHooks, aiperf_task, on_run, on_set_state
-from aiperf.common.enums import (
-    ClientType,
-    CommandType,
-    PubClientType,
-    ServiceState,
-    SubClientType,
-    Topic,
-)
+from aiperf.common.enums import CommandType, ServiceState, Topic
 from aiperf.common.exceptions import (
     CommunicationSubscribeError,
     ServiceHeartbeatError,

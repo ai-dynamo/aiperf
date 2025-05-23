@@ -21,6 +21,15 @@ from typing import Any
 import zmq.asyncio
 
 from aiperf.common.comms.base import BaseCommunication
+from aiperf.common.comms.client_enums import (
+    ClientType,
+    PubClientType,
+    PullClientType,
+    PushClientType,
+    RepClientType,
+    ReqClientType,
+    SubClientType,
+)
 from aiperf.common.comms.factory import CommunicationFactory
 from aiperf.common.comms.zmq.clients import ZMQClient
 from aiperf.common.comms.zmq.clients.pub import ZMQPubClient
@@ -30,16 +39,9 @@ from aiperf.common.comms.zmq.clients.rep import ZMQRepClient
 from aiperf.common.comms.zmq.clients.req import ZMQReqClient
 from aiperf.common.comms.zmq.clients.sub import ZMQSubClient
 from aiperf.common.enums import (
-    ClientType,
-    PubClientType,
-    PullClientType,
-    PushClientType,
-    RepClientType,
-    ReqClientType,
-    SubClientType,
+    CommunicationBackend,
     TopicType,
 )
-from aiperf.common.enums.comms import CommunicationBackend
 from aiperf.common.exceptions import (
     CommunicationClientCreationError,
     CommunicationNotInitializedError,

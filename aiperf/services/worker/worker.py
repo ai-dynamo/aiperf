@@ -15,6 +15,11 @@
 import asyncio
 import sys
 
+from aiperf.common.comms.client_enums import (
+    ClientType,
+    PullClientType,
+    PushClientType,
+)
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import (
     on_cleanup,
@@ -23,13 +28,7 @@ from aiperf.common.decorators import (
     on_start,
     on_stop,
 )
-from aiperf.common.enums import (
-    ClientType,
-    PullClientType,
-    PushClientType,
-    ServiceType,
-    Topic,
-)
+from aiperf.common.enums import ServiceType, Topic
 from aiperf.common.models.message import CreditDropMessage
 from aiperf.common.models.payload import CreditReturnPayload
 from aiperf.common.service.base_service import BaseService

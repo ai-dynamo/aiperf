@@ -16,7 +16,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from aiperf.common.enums import ClientType, TopicType
+from aiperf.common.comms.client_enums import ClientType
+from aiperf.common.enums import TopicType
 from aiperf.common.models.message import Message
 
 

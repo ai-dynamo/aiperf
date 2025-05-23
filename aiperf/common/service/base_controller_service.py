@@ -15,14 +15,14 @@
 
 from typing import Any
 
-from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.decorators import on_run
-from aiperf.common.enums import (
+from aiperf.common.comms.client_enums import (
     ClientType,
-    CommandType,
     PubClientType,
     SubClientType,
 )
+from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.decorators import on_run
+from aiperf.common.enums import CommandType
 from aiperf.common.models.message import Message
 from aiperf.common.models.payload import CommandPayload
 from aiperf.common.service.base_service import BaseService

@@ -14,11 +14,8 @@
 #  limitations under the License.
 from abc import ABC, abstractmethod
 
-from aiperf.common.enums import (
-    ClientType,
-    ServiceType,
-)
-from aiperf.common.enums.service import ServiceState
+from aiperf.common.comms.client_enums import ClientType
+from aiperf.common.enums import ServiceState, ServiceType
 from aiperf.common.models.message import Message
 
 

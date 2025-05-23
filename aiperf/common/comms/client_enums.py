@@ -14,8 +14,7 @@
 #  limitations under the License.
 from typing import Union
 
-from aiperf.common.enums.base import StrEnum
-from aiperf.common.enums.comms import DataTopic, Topic, TopicType
+from aiperf.common.enums import DataTopic, StrEnum, Topic, TopicType
 from aiperf.common.exceptions import (
     CommunicationClientNotFoundError,
 )
