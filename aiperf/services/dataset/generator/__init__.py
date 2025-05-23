@@ -13,6 +13,18 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-__all__ = ["DatasetManager"]
+from aiperf.services.dataset.generator.audio import (
+    AudioGenerator,
+)
+from aiperf.services.dataset.generator.image import (
+    ImageGenerator,
+)
+from aiperf.services.dataset.generator.prompt import (
+    PromptGenerator,
+)
 
-from aiperf.services.dataset_manager.dataset_manager import DatasetManager
+__all__ = [
+    "PromptGenerator",
+    "ImageGenerator",
+    "AudioGenerator",
+]

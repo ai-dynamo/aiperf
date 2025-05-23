@@ -32,6 +32,8 @@ __all__ = [
     "ServiceRunType",
     "ServiceState",
     "ServiceType",
+    "ImageFormat",
+    "AudioFormat",
 ]
 
 from aiperf.common.enums.base import StrEnum
@@ -50,6 +52,7 @@ from aiperf.common.enums.comms import (
     Topic,
     TopicType,
 )
+from aiperf.common.enums.data_format import AudioFormat, ImageFormat
 from aiperf.common.enums.message import (
     CommandType,
     MessageType,
