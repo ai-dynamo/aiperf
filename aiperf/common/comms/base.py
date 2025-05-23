@@ -18,7 +18,7 @@ from typing import Any
 
 from aiperf.common.comms.client_enums import ClientType
 from aiperf.common.enums import TopicType
-from aiperf.common.models.message import Message
+from aiperf.common.models import Message
 
 
 class BaseCommunication(ABC):

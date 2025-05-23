@@ -30,7 +30,7 @@ from aiperf.common.decorators import (
 )
 from aiperf.common.enums import ServiceRunType, ServiceType
 from aiperf.common.exceptions import ConfigError
-from aiperf.common.models.payload import BasePayload
+from aiperf.common.models import BasePayload
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.services.worker.worker import Worker
 

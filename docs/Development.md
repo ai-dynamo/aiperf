@@ -165,7 +165,7 @@ Here's a simplified example of a service implementation:
 from aiperf.common.service.base_service import BaseService
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import Topic, ClientType
-from aiperf.common.models.message import Message
+from aiperf.common.models import Message
 
 
 class ExampleService(BaseService):

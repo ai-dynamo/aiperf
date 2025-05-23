@@ -29,8 +29,7 @@ from aiperf.common.decorators import (
     on_stop,
 )
 from aiperf.common.enums import ServiceType, Topic
-from aiperf.common.models.message import CreditDropMessage
-from aiperf.common.models.payload import CreditReturnPayload
+from aiperf.common.models import CreditDropMessage, CreditReturnPayload
 from aiperf.common.service.base_service import BaseService
 
 

@@ -22,7 +22,7 @@ from aiperf.common.enums import (
     CommandType,
     Topic,
 )
-from aiperf.common.models.payload import CommandPayload
+from aiperf.common.models import CommandPayload
 from aiperf.common.service.base_controller_service import BaseControllerService
 from aiperf.tests.base_test_service import BaseTestService, async_fixture
 

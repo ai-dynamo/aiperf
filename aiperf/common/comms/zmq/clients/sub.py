@@ -25,7 +25,7 @@ from aiperf.common.decorators import aiperf_task
 from aiperf.common.exceptions import (
     CommunicationSubscribeError,
 )
-from aiperf.common.models.message import BaseMessage, Message
+from aiperf.common.models import BaseMessage, Message
 from aiperf.common.utils import call_all_functions
 
 logger = logging.getLogger(__name__)

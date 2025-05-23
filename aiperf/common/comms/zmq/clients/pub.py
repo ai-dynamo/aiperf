@@ -22,7 +22,7 @@ from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.exceptions import (
     CommunicationPublishError,
 )
-from aiperf.common.models.message import Message
+from aiperf.common.models import Message
 
 logger = logging.getLogger(__name__)
 

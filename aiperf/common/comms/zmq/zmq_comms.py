@@ -52,8 +52,7 @@ from aiperf.common.exceptions import (
     CommunicationShutdownError,
     CommunicationSubscribeError,
 )
-from aiperf.common.models.comms import ZMQCommunicationConfig
-from aiperf.common.models.message import Message
+from aiperf.common.models import Message, ZMQCommunicationConfig
 
 logger = logging.getLogger(__name__)
 

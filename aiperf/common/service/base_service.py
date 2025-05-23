@@ -38,8 +38,7 @@ from aiperf.common.exceptions import (
     ServiceStartError,
     ServiceStopError,
 )
-from aiperf.common.models.message import BaseMessage, Message
-from aiperf.common.models.payload import Payload
+from aiperf.common.models import BaseMessage, Message, Payload
 from aiperf.common.service.base_service_interface import BaseServiceInterface
 from aiperf.common.service.service_metaclass import ServiceMetaclass
 from aiperf.common.utils import call_all_functions_self

@@ -29,12 +29,13 @@ from aiperf.common.enums import (
     Topic,
 )
 from aiperf.common.exceptions import CommunicationInitializationError
-from aiperf.common.models.comms import (
+from aiperf.common.models import (
+    BaseMessage,
+    DataPayload,
+    Message,
     ZMQCommunicationConfig,
     ZMQTCPTransportConfig,
 )
-from aiperf.common.models.message import BaseMessage, Message
-from aiperf.common.models.payload import DataPayload
 
 
 @pytest.mark.asyncio

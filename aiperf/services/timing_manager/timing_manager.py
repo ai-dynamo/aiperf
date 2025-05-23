@@ -31,10 +31,10 @@ from aiperf.common.decorators import (
     on_stop,
 )
 from aiperf.common.enums import ServiceState, ServiceType, Topic
-from aiperf.common.models.message import Message
-from aiperf.common.models.payload import (
+from aiperf.common.models import (
     BasePayload,
     CreditDropPayload,
+    Message,
 )
 from aiperf.common.service.base_component_service import BaseComponentService
 

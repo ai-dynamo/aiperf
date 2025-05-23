@@ -24,7 +24,7 @@ from aiperf.common.exceptions import (
     CommunicationTypeAlreadyRegisteredError,
     CommunicationTypeUnknownError,
 )
-from aiperf.common.models.comms import (
+from aiperf.common.models import (
     ZMQCommunicationConfig,
     ZMQTCPTransportConfig,
 )

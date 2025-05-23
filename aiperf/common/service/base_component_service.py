@@ -28,15 +28,13 @@ from aiperf.common.exceptions import (
     ServiceHeartbeatError,
     ServiceRegistrationError,
 )
-from aiperf.common.models.message import (
+from aiperf.common.models import (
     CommandMessage,
     HeartbeatMessage,
-    RegistrationMessage,
-    StatusMessage,
-)
-from aiperf.common.models.payload import (
     HeartbeatPayload,
+    RegistrationMessage,
     RegistrationPayload,
+    StatusMessage,
     StatusPayload,
 )
 from aiperf.common.service.base_service import BaseService

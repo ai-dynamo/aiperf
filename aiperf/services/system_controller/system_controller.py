@@ -41,12 +41,12 @@ from aiperf.common.exceptions import (
     ServiceInitializationError,
     ServiceStopError,
 )
-from aiperf.common.models.message import (
+from aiperf.common.models import (
     HeartbeatMessage,
     RegistrationMessage,
+    ServiceRunInfo,
     StatusMessage,
 )
-from aiperf.common.models.service import ServiceRunInfo
 from aiperf.common.service.base_controller_service import BaseControllerService
 from aiperf.services.service_manager.base import BaseServiceManager
 from aiperf.services.service_manager.kubernetes import (
