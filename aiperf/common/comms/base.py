@@ -174,19 +174,6 @@ class CommunicationFactory:
     _comm_registry: dict[CommunicationBackend | str, type[BaseCommunication]] = {}
 
     @classmethod
-    def register_comm_type(
-        cls, comm_type: CommunicationBackend | str, comm_class: type[BaseCommunication]
-    ) -> None:
-        """Register a new communication type.
-
-        Args:
-            comm_type: String representation of the communication type
-            comm_class: The class that implements the communication type
-        """
-        cls._comm_registry[comm_type] = comm_class
-        logger.debug("Registered communication type: %s", comm_type)
-
-    @classmethod
     def register(cls, comm_type: CommunicationBackend | str) -> Callable:
         """Register a new communication type.
 
@@ -228,7 +215,6 @@ class CommunicationFactory:
             CommunicationCreateError: If there was an error creating the communication instance
         """
         if service_config.comm_backend not in cls._comm_registry:
-            logger.error("Unknown communication type: %s", service_config.comm_backend)
             raise CommunicationTypeUnknownError(
                 f"Unknown communication type: {service_config.comm_backend}"
             )
@@ -242,9 +228,4 @@ class CommunicationFactory:
 
             return comm_class(**kwargs)
         except Exception as e:
-            logger.error(
-                "Exception creating communication for type %s: %s",
-                service_config.comm_backend,
-                e,
-            )
             raise CommunicationCreateError from e
