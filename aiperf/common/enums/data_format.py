@@ -13,14 +13,14 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from enum import Enum
+from aiperf.common.enums.base import StrEnum
 
 
-class ImageFormat(Enum):
+class ImageFormat(StrEnum):
     PNG = "PNG"
     JPEG = "JPEG"
 
 
-class AudioFormat(Enum):
+class AudioFormat(StrEnum):
     WAV = "WAV"
     MP3 = "MP3"
