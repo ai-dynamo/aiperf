@@ -14,6 +14,10 @@
 #  limitations under the License.
 from enum import Enum
 
+################################################################################
+# Base Enums
+################################################################################
+
 
 class StrEnum(str, Enum):
     """Base class for string-based enums.
@@ -24,6 +28,11 @@ class StrEnum(str, Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+################################################################################
+# Communication Enums
+################################################################################
 
 
 class CommunicationBackend(StrEnum):
@@ -90,6 +99,11 @@ TopicType = Topic | DataTopic
 type hinting."""
 
 
+################################################################################
+# Data Format Enums
+################################################################################
+
+
 class ImageFormat(StrEnum):
     PNG = "PNG"
     JPEG = "JPEG"
@@ -100,7 +114,11 @@ class AudioFormat(StrEnum):
     MP3 = "MP3"
 
 
+################################################################################
 # Message-related enums
+################################################################################
+
+
 class MessageType(StrEnum):
     """The various types of messages that can be sent between services.
 
@@ -147,6 +165,11 @@ class MessageType(StrEnum):
     """A message containing data. This is TBD."""
 
 
+################################################################################
+# Command Enums
+################################################################################
+
+
 class CommandType(StrEnum):
     """List of commands that the SystemController can send to component services."""
 
@@ -160,6 +183,11 @@ class CommandType(StrEnum):
     CONFIGURE = "configure"
     """A command to configure the service with the configuration present
     in the payload."""
+
+
+################################################################################
+# Service Enums
+################################################################################
 
 
 class ServiceRunType(StrEnum):
