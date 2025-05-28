@@ -95,8 +95,6 @@ class BaseConfig(BaseModel):
                 if not BaseConfig._should_add_field_to_template(field):
                     continue
 
-                value = BaseConfig._preprocess_value(value)
-
                 if BaseConfig._is_a_nested_config(field, value):
                     # Recursively process nested models
                     commented_map[field_name] = BaseConfig._attach_comments(
@@ -114,7 +112,7 @@ class BaseConfig(BaseModel):
                     )
                 else:
                     # Attach the value to the commented map
-                    commented_map[field_name] = value
+                    commented_map[field_name] = BaseConfig._preprocess_value(value)
 
                 # Attach comment if verbose and description exists
                 if context.get("verbose") and field and field.description:
@@ -152,8 +150,7 @@ class BaseConfig(BaseModel):
         Preprocess the value before serialization.
         """
 
-        if isinstance(value, list):
-            return ", ".join(map(str, value))
-        elif isinstance(value, Enum):
+        if isinstance(value, Enum):
             return str(value.value).lower()
-        return value
+        else:
+            return value

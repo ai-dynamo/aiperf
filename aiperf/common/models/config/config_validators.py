@@ -17,6 +17,8 @@ from typing import Any, List
 from pathlib import Path
 from typing import Dict, Optional
 
+from enum import Enum
+
 """
 This module provides utility functions for validating and parsing configuration inputs.
 """
@@ -44,6 +46,14 @@ def parse_str_or_list(input: Any) -> List[Any]:
         raise ValueError(f"User Config: {input} - must be a string or list")
 
     return output
+
+
+def print_str_or_list(input: Any) -> str:
+    if isinstance(input, list):
+        return ", ".join(map(str, input))
+    elif isinstance(input, Enum):
+        return str(input.value).lower()
+    return input
 
 
 def parse_str_or_list_of_positive_values(input: Any) -> List[Any]:
