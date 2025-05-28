@@ -35,6 +35,9 @@ import inspect
 from collections.abc import Awaitable, Callable
 from enum import Enum
 
+from aiperf.common.enums import ServiceState
+from aiperf.common.exceptions import UnsupportedHookError
+
 ################################################################################
 # Hook Types
 ################################################################################
@@ -64,10 +67,6 @@ HookType = AIPerfHook | str
 
 AIPERF_HOOK_TYPE = "__aiperf_hook_type__"
 """Constant attribute name that marks a function's hook type."""
-
-
-class UnsupportedHookError(Exception):
-    """Exception raised when a hook is defined on a class that does not support it."""
 
 
 ################################################################################
@@ -151,9 +150,10 @@ class HookSystem:
 
         coroutines: list[Awaitable] = []
         for func in self.get_hooks(hook_type):
-            result = func(*args, **kwargs)
-            if inspect.isawaitable(result):
-                coroutines.append(result)
+            if inspect.iscoroutinefunction(func):
+                coroutines.append(func(*args, **kwargs))
+            else:
+                coroutines.append(asyncio.to_thread(func, *args, **kwargs))
 
         if coroutines:
             await asyncio.gather(*coroutines)
@@ -182,12 +182,26 @@ class HooksMixin:
 
         # Register all functions that are decorated with a hook decorator
         for attr_name in dir(self):
-            attr = getattr(self, attr_name)
+            try:
+                attr = getattr(self, attr_name)
+            except Exception:
+                # Skip attributes that cause an exception to be raised
+                continue
+
             if callable(attr) and hasattr(attr, AIPERF_HOOK_TYPE):
                 # Get the hook type from the function
                 hook_type = getattr(attr, AIPERF_HOOK_TYPE)
                 # Register the function with the hook type
-                self._hook_system.register_hook(hook_type, attr)
+                self.register_hook(hook_type, attr)
+
+    def register_hook(self, hook_type: HookType, func: Callable):
+        """Register a hook function for a given hook type.
+
+        Args:
+            hook_type: The hook type to register the function for.
+            func: The function to register.
+        """
+        self._hook_system.register_hook(hook_type, func)
 
     async def run_hooks(self, hook_type: HookType, *args, **kwargs):
         """Run all the hooks serially. See :meth:`HookSystem.run_hooks`."""
@@ -240,61 +254,77 @@ def supports_hooks(
     return decorator
 
 
-def hook_decorator(hook_type: HookType) -> Callable[[Callable], Callable]:
+def hook_decorator(hook_type: HookType, func: Callable) -> Callable:
     """Generic decorator to specify that the function should be called during
     a specific hook.
 
     Args:
         hook_type: The hook type to decorate the function with.
-
+        func: The function to decorate.
     Returns:
         The decorated function.
     """
-
-    def decorator(func: Callable) -> Callable:
-        setattr(func, AIPERF_HOOK_TYPE, hook_type)
-        return func
-
-    return decorator
+    setattr(func, AIPERF_HOOK_TYPE, hook_type)
+    return func
 
 
 ################################################################################
 # Syntactic sugar for the hook decorators.
 ################################################################################
 
-on_init = hook_decorator(AIPerfHook.ON_INIT)
-"""Decorator to specify that the function should be called during initialization.
-See :func:`aiperf.common.hooks.hook_decorator`."""
 
-on_start = hook_decorator(AIPerfHook.ON_START)
-"""Decorator to specify that the function should be called during start.
-See :func:`aiperf.common.hooks.hook_decorator`."""
+def on_init(func: Callable) -> Callable:
+    """Decorator to specify that the function should be called during initialization.
+    See :func:`aiperf.common.hooks.hook_decorator`."""
+    return hook_decorator(AIPerfHook.ON_INIT, func)
 
-on_stop = hook_decorator(AIPerfHook.ON_STOP)
-"""Decorator to specify that the function should be called during stop.
-See :func:`aiperf.common.hooks.hook_decorator`."""
 
-on_configure = hook_decorator(AIPerfHook.ON_CONFIGURE)
-"""Decorator to specify that the function should be called during the service configuration.
-See :func:`aiperf.common.hooks.hook_decorator`."""
+def on_start(func: Callable) -> Callable:
+    """Decorator to specify that the function should be called during start.
+    See :func:`aiperf.common.hooks.hook_decorator`."""
+    return hook_decorator(AIPerfHook.ON_START, func)
 
-on_comms_init = hook_decorator(AIPerfHook.ON_COMMS_INIT)
-"""Decorator to specify that the function should be called during communication initialization.
-See :func:`aiperf.common.hooks.hook_decorator`."""
 
-on_cleanup = hook_decorator(AIPerfHook.ON_CLEANUP)
-"""Decorator to specify that the function should be called during cleanup.
-See :func:`aiperf.common.hooks.hook_decorator`."""
+def on_stop(func: Callable) -> Callable:
+    """Decorator to specify that the function should be called during stop.
+    See :func:`aiperf.common.hooks.hook_decorator`."""
+    return hook_decorator(AIPerfHook.ON_STOP, func)
 
-on_run = hook_decorator(AIPerfHook.ON_RUN)
-"""Decorator to specify that the function should be called during run.
-See :func:`aiperf.common.hooks.hook_decorator`."""
 
-on_set_state = hook_decorator(AIPerfHook.ON_SET_STATE)
-"""Decorator to specify that the function should be called when the service state is set.
-See :func:`aiperf.common.hooks.hook_decorator`."""
+def on_configure(func: Callable) -> Callable:
+    """Decorator to specify that the function should be called during the service configuration.
+    See :func:`aiperf.common.hooks.hook_decorator`."""
+    return hook_decorator(AIPerfHook.ON_CONFIGURE, func)
 
-aiperf_task = hook_decorator(AIPerfHook.AIPERF_TASK)
-"""Decorator to indicate that the function is a task function. It will be started
-and stopped automatically by the base class lifecycle.
-See :func:`aiperf.common.hooks.hook_decorator`."""
+
+def on_comms_init(func: Callable) -> Callable:
+    """Decorator to specify that the function should be called during communication initialization.
+    See :func:`aiperf.common.hooks.hook_decorator`."""
+    return hook_decorator(AIPerfHook.ON_COMMS_INIT, func)
+
+
+def on_cleanup(func: Callable) -> Callable:
+    """Decorator to specify that the function should be called during cleanup.
+    See :func:`aiperf.common.hooks.hook_decorator`."""
+    return hook_decorator(AIPerfHook.ON_CLEANUP, func)
+
+
+def on_run(func: Callable) -> Callable:
+    """Decorator to specify that the function should be called during run.
+    See :func:`aiperf.common.hooks.hook_decorator`."""
+    return hook_decorator(AIPerfHook.ON_RUN, func)
+
+
+def on_set_state(
+    func: Callable[[ServiceState], None],
+) -> Callable[[ServiceState], None]:
+    """Decorator to specify that the function should be called when the service state is set.
+    See :func:`aiperf.common.hooks.hook_decorator`."""
+    return hook_decorator(AIPerfHook.ON_SET_STATE, func)
+
+
+def aiperf_task(func: Callable) -> Callable:
+    """Decorator to indicate that the function is a task function. It will be started
+    and stopped automatically by the base class lifecycle.
+    See :func:`aiperf.common.hooks.hook_decorator`."""
+    return hook_decorator(AIPerfHook.AIPERF_TASK, func)

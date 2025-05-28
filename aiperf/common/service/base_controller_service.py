@@ -21,8 +21,8 @@ from aiperf.common.comms.client_enums import (
     SubClientType,
 )
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.decorators import on_run
 from aiperf.common.enums import CommandType
+from aiperf.common.hooks import on_run
 from aiperf.common.models import CommandPayload, Message
 from aiperf.common.service.base_service import BaseService
 

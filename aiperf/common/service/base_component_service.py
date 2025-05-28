@@ -21,13 +21,13 @@ from aiperf.common.comms.client_enums import (
     SubClientType,
 )
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.decorators import AIPerfHooks, aiperf_task, on_run, on_set_state
 from aiperf.common.enums import CommandType, ServiceState, Topic
 from aiperf.common.exceptions import (
     CommunicationSubscribeError,
     ServiceHeartbeatError,
     ServiceRegistrationError,
 )
+from aiperf.common.hooks import AIPerfHook, aiperf_task, on_run, on_set_state
 from aiperf.common.models import (
     CommandMessage,
     HeartbeatMessage,
@@ -192,7 +192,7 @@ class BaseComponentService(BaseService):
             self.stop_event.set()
 
         elif cmd == CommandType.CONFIGURE:
-            await self._run_hooks(AIPerfHooks.CONFIGURE, message)
+            await self._run_hooks(AIPerfHook.CONFIGURE, message)
 
         else:
             self.logger.warning(f"{self.service_type} received unknown command: {cmd}")

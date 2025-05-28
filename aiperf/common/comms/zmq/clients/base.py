@@ -67,6 +67,7 @@ class BaseZMQClient(HooksMixin):
         self.socket_ops: dict = socket_ops or {}
         self.client_id: str = f"{self.socket_type.name}_client_{uuid.uuid4().hex[:8]}"
         self._task_registry: dict[str, asyncio.Task] = {}
+        super().__init__()
 
     @property
     def is_initialized(self) -> bool:
@@ -148,7 +149,7 @@ class BaseZMQClient(HooksMixin):
             # Start all registered tasks
             for hook in self.get_hooks(AIPerfHook.AIPERF_TASK):
                 # TODO: support task intervals
-                self._task_registry[hook.__name__] = asyncio.create_task(hook(self))
+                self._task_registry[hook.__name__] = asyncio.create_task(hook())
 
             self.initialized_event.set()
             self.logger.debug(

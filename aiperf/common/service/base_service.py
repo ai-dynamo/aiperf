@@ -95,6 +95,7 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
             # setproctitle is not available on all platforms, so we ignore the error
             self.logger.debug("Failed to set process title, ignoring")
 
+        super().__init__()
         self.logger.debug("__init__ finished for %s", self.__class__.__name__)
 
     @property

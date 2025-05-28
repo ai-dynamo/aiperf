@@ -201,3 +201,12 @@ class TokenizerError(AIPerfError):
 
 class TokenizerInitializationError(TokenizerError):
     """Exception raised for errors during tokenizer initialization."""
+
+
+################################################################################
+# Hook Exceptions
+################################################################################
+
+
+class UnsupportedHookError(AIPerfError):
+    """Exception raised when a hook is defined on a class that does not support it."""
