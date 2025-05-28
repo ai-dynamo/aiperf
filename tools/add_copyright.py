@@ -1,24 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 import argparse
 import os
 import re
 import sys
 from collections.abc import Callable, Sequence
 from datetime import datetime
-from pathlib import Path
 
 current_year = str(datetime.now().year)
 
@@ -27,7 +14,7 @@ ROOT_DIR = os.path.dirname(__file__)
 LICENSE_PATH = os.path.join(ROOT_DIR, "COPYRIGHT")
 
 COPYRIGHT_YEAR_PAT = re.compile(
-    r"SPDX-FileCopyrightText: Copyright \(c\) (\d{4})?-?(\d{4}) NVIDIA CORPORATION"
+    r"SPDX-FileCopyrightText: Copyright( \(c\))? (\d{4})?-?(\d{4}) NVIDIA CORPORATION"
 )
 
 
@@ -48,9 +35,10 @@ def update_copyright_year(
 
     match = COPYRIGHT_YEAR_PAT.search(content)
     assert match is not None, f"File {path} does not contain a valid copyright."
-    min_year = match.groups()[0] or match.groups()[1]
-    new_copyright = "SPDX-FileCopyrightText: Copyright (c) "
-    if int(min_year) < int(current_year) and not disallow_range:
+    min_year = match.groups()[1] or match.groups()[2]
+
+    new_copyright = f"SPDX-FileCopyrightText: Copyright{match.groups()[0] or ''} "
+    if min_year < current_year and not disallow_range:
         new_copyright += f"{min_year}-{current_year}"
     else:
         new_copyright += f"{current_year}"
@@ -86,8 +74,8 @@ LICENSE_TEXT = update_and_get_license()
 
 
 def prefix_lines(content: str, prefix: str) -> str:
-    # NOTE: This could have been done via `textwrap.indent`, but we're not
-    # actually indenting, so it seems semantically wrong to do that.
+    # NOTE: This could have been done via `textwrap.indent`, but we're not actually indenting,
+    # so it seems semantically wrong to do that.
     return prefix + f"\n{prefix}".join(content.splitlines())
 
 
@@ -158,9 +146,9 @@ def update_or_add_header(
 # header. For example, for C++ files, the header must be prefixed with `//` and for
 # shell scripts, it must be prefixed with `#` and must be inserted *after* the shebang.
 #
-# This mapping stores callables that return whether a handler wants to process a
-# specified file based on the path along with callables that will accept the file path
-# and update it with the copyright header.
+# This mapping stores callables that return whether a handler wants to process a specified
+# file based on the path along with callables that will accept the file path and update
+# it with the copyright header.
 FILE_TYPE_HANDLERS: dict[Callable[[str], bool], Callable[[str], None]] = {}
 
 
@@ -189,14 +177,6 @@ def any_of(*funcs: Callable[[str], bool]) -> Callable[[str], bool]:
     return lambda path: any(func(path) for func in funcs)
 
 
-def is_hidden_file(filepath: str) -> bool:
-    # Extract just the filename using Path.name
-    filename = Path(filepath).name
-
-    # Check if the filename starts with a period
-    return filename.startswith(".")
-
-
 #
 # File handlers for different types of files.
 # Many types of files require very similar handling - those are combined where possible.
@@ -213,7 +193,7 @@ def register(match: Callable[[str], bool]):
 
 @register(
     any_of(
-        has_ext([".py", ".pyi", ".sh", ".bash", ".pbtxt"]),
+        has_ext([".py", ".pyi", ".sh", ".bash", ".yaml", ".yml", ".pbtxt"]),
         basename_is("CMakeLists.txt"),
         path_contains("Dockerfile"),
     )
@@ -223,9 +203,8 @@ def py_or_shell_like(path):
         path,
         prefix_lines(LICENSE_TEXT, "# "),
         # Insert the header *after* the shebang.
-        # NOTE: This could break if there is a shebang-like pattern elsewhere in
-        # the file. In that case, this could be edited to check only the first line
-        # of the file (after removing whitespace).
+        # NOTE: This could break if there is a shebang-like pattern elsewhere in the file.
+        # In that case, this could be edited to check only the first line of the file (after removing whitespace).
         insert_after(r"#!(.*)\n"),
     )
 
@@ -250,25 +229,8 @@ def rst(path):
     update_or_add_header(path, prefix_lines(LICENSE_TEXT, ".. "))
 
 
-SKIP_PATTERNS = [
-    ".toml",
-    ".yml",
-    ".yaml",
-    "LICENSE",
-    "COPYRIGHT",
-    "Makefile",
-    "devcontainer.json",
-]
-
-
-def should_skip(path):
-    return any(pattern in path for pattern in SKIP_PATTERNS)
-
-
 def add_copyrights(paths):
     for path in paths:
-        if is_hidden_file(path) or should_skip(path):
-            continue
         for match, handler in FILE_TYPE_HANDLERS.items():
             if match(path):
                 handler(path)
