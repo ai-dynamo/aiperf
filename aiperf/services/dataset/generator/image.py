@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image
 
 from aiperf.common.enums import ImageFormat
-from aiperf.services.dataset.generator import utils
+from aiperf.services.dataset import utils
 
 
 class ImageGenerator:
