@@ -23,9 +23,8 @@ from collections.abc import Callable
 
 import setproctitle
 
-from aiperf.common.comms import BaseCommunication, CommunicationFactory
+from aiperf.common.comms.base import BaseCommunication, CommunicationFactory
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.decorators import AIPerfHooks
 from aiperf.common.enums import ServiceState
 from aiperf.common.exceptions import (
     AIPerfMultiError,
@@ -37,13 +36,22 @@ from aiperf.common.exceptions import (
     ServiceStartError,
     ServiceStopError,
 )
+from aiperf.common.hooks import AIPerfHook, HooksMixin, supports_hooks
 from aiperf.common.models import BaseMessage, Message, Payload
 from aiperf.common.service.base_service_interface import BaseServiceInterface
-from aiperf.common.service.service_metaclass import ServiceMetaclass
-from aiperf.common.utils import call_all_functions_self
 
 
-class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
+@supports_hooks(
+    AIPerfHook.ON_INIT,
+    AIPerfHook.ON_START,
+    AIPerfHook.ON_STOP,
+    AIPerfHook.ON_CLEANUP,
+    AIPerfHook.ON_RUN,
+    AIPerfHook.ON_CONFIGURE,
+    AIPerfHook.AIPERF_TASK,
+    AIPerfHook.ON_SET_STATE,
+)
+class BaseService(BaseServiceInterface, ABC, HooksMixin):
     """Base class for all AIPerf services, providing common functionality for
     communication, state management, and lifecycle operations.
 
@@ -123,26 +131,6 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
         """
         return self.stop_event.is_set()
 
-    def _get_hooks(self, hook_type: AIPerfHooks) -> list[Callable]:
-        """Get all the hooks for the given hook type."""
-        self.logger.debug(
-            f"Getting hooks for {self.service_id}.{hook_type}: {self._aiperf_hooks[hook_type]}"
-        )
-        return self._aiperf_hooks[hook_type]
-
-    async def _run_hooks(self, hook_type: AIPerfHooks, *args, **kwargs) -> None:
-        """Run all the hooks for the given hook type.
-
-        Args:
-            hook_type: The type of hook to run
-            *args: The arguments to pass to the hooks
-            **kwargs: The keyword arguments to pass to the hooks
-
-        Raises:
-            AIPerfMultiError: If any of the hooks raise an exception
-        """
-        await call_all_functions_self(self, self._get_hooks(hook_type), *args, **kwargs)
-
     # Note: Not using as a setter so it can be overridden by derived classes and still
     # be async
     async def set_state(self, state: ServiceState) -> None:
@@ -151,10 +139,10 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
 
         This method will:
         - Set the service state to the given state
-        - Call all registered `AIPerfHooks.SET_STATE` hooks
+        - Call all registered `AIPerfHook.SET_STATE` hooks
         """
         self._state = state
-        await self._run_hooks(AIPerfHooks.SET_STATE, state)
+        await self.run_hooks(AIPerfHook.ON_SET_STATE, state)
 
     async def initialize(self) -> None:
         """Initialize the service communication and signal handlers. This method implements
@@ -165,7 +153,7 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
         - Set up signal handlers for graceful shutdown
         - Allow time for the event loop to start
         - Initialize communication
-        - Call all registered `AIPerfHooks.INIT` hooks
+        - Call all registered `AIPerfHook.INIT` hooks
         - Set the service to `ServiceState.READY` state
         - Set the initialized asyncio event
         """
@@ -216,7 +204,7 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
 
         # Initialize any derived service components
         try:
-            await self._run_hooks(AIPerfHooks.INIT)
+            await self.run_hooks(AIPerfHook.ON_INIT)
         except AIPerfMultiError as e:
             self.logger.exception(
                 "Failed to initialize service %s (id: %s)",
@@ -236,7 +224,7 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
         This method will:
         - Call the initialize method to initialize the service
         - Start all the registered tasks
-        - Call all registered `AIPerfHooks.RUN` hooks
+        - Call all registered `AIPerfHook.RUN` hooks
         - Wait for the stop event to be set
         - Shuts down the service when the stop event is set
 
@@ -258,12 +246,12 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
                 raise ServiceRunError from e
 
             # Start all registered tasks
-            for hook in self._get_hooks(AIPerfHooks.TASK):
+            for hook in self.get_hooks(AIPerfHook.AIPERF_TASK):
                 # TODO: support task intervals
                 self._task_registry[hook.__name__] = asyncio.create_task(hook(self))
 
             try:
-                await self._run_hooks(AIPerfHooks.RUN)
+                await self.run_hooks(AIPerfHook.ON_RUN)
             except AIPerfMultiError as e:
                 self.logger.exception(
                     "Failed to run service %s (id: %s)",
@@ -332,7 +320,7 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
 
         This method will:
         - Set the service to `ServiceState.STARTING` state
-        - Call all registered `AIPerfHooks.START` hooks
+        - Call all registered `AIPerfHook.START` hooks
         - Set the service to `ServiceState.RUNNING` state
         """
 
@@ -342,7 +330,7 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
             )
             _ = await self.set_state(ServiceState.STARTING)
 
-            await self._run_hooks(AIPerfHooks.START)
+            await self.run_hooks(AIPerfHook.ON_START)
 
             _ = await self.set_state(ServiceState.RUNNING)
 
@@ -369,10 +357,10 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
 
         This method will:
         - Set the service to `ServiceState.STOPPING` state
-        - Call all registered `AIPerfHooks.STOP` hooks
+        - Call all registered `AIPerfHook.STOP` hooks
         - Shutdown the service communication component
         - Cancel all registered tasks
-        - Call all registered `AIPerfHooks.CLEANUP` hooks
+        - Call all registered `AIPerfHook.CLEANUP` hooks
         - Set the service to `ServiceState.STOPPED` state
         """
         try:
@@ -393,7 +381,7 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
 
             # Custom stop logic implemented by derived classes
             with contextlib.suppress(asyncio.CancelledError):
-                await self._run_hooks(AIPerfHooks.STOP)
+                await self.run_hooks(AIPerfHook.ON_STOP)
 
             # Shutdown communication component
             if self._comms and not self._comms.is_shutdown:
@@ -409,7 +397,7 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
 
             # Custom cleanup logic implemented by derived classes
             with contextlib.suppress(asyncio.CancelledError):
-                await self._run_hooks(AIPerfHooks.CLEANUP)
+                await self.run_hooks(AIPerfHook.ON_CLEANUP)
 
             # Set the state to STOPPED. Communications are shutdown, so we don't need to
             # publish a status message
@@ -436,9 +424,9 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
         the `BaseServiceInterface.configure` method.
 
         This method will:
-        - Call all registered AIPerfHooks.CONFIGURE hooks
+        - Call all registered AIPerfHook.CONFIGURE hooks
         """
-        await self._run_hooks(AIPerfHooks.CONFIGURE, message)
+        await self.run_hooks(AIPerfHook.ON_CONFIGURE, message)
 
     def create_message(
         self, payload: Payload, request_id: str | None = None

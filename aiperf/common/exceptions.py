@@ -33,10 +33,6 @@ class AIPerfMultiError(AIPerfError):
         self.exceptions = exceptions
 
 
-class AIPerfMetaclassError(AIPerfError):
-    """Exception raised for AIPerf metaclass errors."""
-
-
 ################################################################################
 # Communication Exceptions
 ################################################################################
@@ -152,14 +148,6 @@ class ServiceError(AIPerfError):
 
     # TODO: possibly have the base exception class accept the service information
     #       and add it to the pre-defined messages for each exception
-
-
-class ServiceMetaclassError(AIPerfError):
-    """Exception raised for service metaclass errors."""
-
-    message: str = (
-        "Service metaclass error. Please check the service definition decorators."
-    )
 
 
 class ServiceInitializationError(ServiceError):

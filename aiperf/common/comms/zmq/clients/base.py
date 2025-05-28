@@ -16,35 +16,27 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from abc import ABC
-from collections import defaultdict
-from collections.abc import Callable
 
 import zmq.asyncio
 from zmq import SocketType
 
-from aiperf.common.comms.zmq.clients.metaclass import (
-    ZMQClientMetaclass,
-)
-from aiperf.common.decorators import AIPerfHooks
 from aiperf.common.exceptions import (
     CommunicationError,
     CommunicationInitializationError,
     CommunicationNotInitializedError,
     CommunicationShutdownError,
 )
-from aiperf.common.utils import call_all_functions_self
+from aiperf.common.hooks import AIPerfHook, HooksMixin, supports_hooks
 
 
-class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
+@supports_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_CLEANUP, AIPerfHook.AIPERF_TASK)
+class BaseZMQClient(HooksMixin):
     """Base class for all ZMQ clients.
 
     This class provides a common interface for all ZMQ clients in the AIPerf
     framework. It inherits from the ZMQClientMetaclass, allowing derived
     classes to implement specific hooks.
     """
-
-    _aiperf_hooks: dict[str, list[Callable]] = defaultdict(list)
 
     def __init__(
         self,
@@ -102,26 +94,6 @@ class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
             raise CommunicationNotInitializedError()
         return self._socket
 
-    def _get_hooks(self, hook_type: AIPerfHooks) -> list[Callable]:
-        """Get the hooks for the given hook type."""
-        self.logger.debug(
-            f"Getting hooks for {self.client_id}.{hook_type}: {self._aiperf_hooks[hook_type]}"
-        )
-        return self._aiperf_hooks[hook_type]
-
-    async def _run_hooks(self, hook_type: AIPerfHooks, *args, **kwargs) -> None:
-        """Run the hooks for the given hook type.
-
-        Args:
-            hook_type: The type of hook to run
-            *args: The arguments to pass to the hooks
-            **kwargs: The keyword arguments to pass to the hooks
-
-        Raises:
-            AIPerfMultiError: If any of the hooks raise an exception
-        """
-        await call_all_functions_self(self, self._get_hooks(hook_type), *args, **kwargs)
-
     def _ensure_initialized(self) -> None:
         """Ensure the communication channels are initialized and not shutdown.
 
@@ -141,8 +113,8 @@ class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
         - Create the zmq socket
         - Bind or connect the socket to the address
         - Set the socket options
-        - Run the AIPerfHooks.INIT hooks
-        - Start the tasks registered with the AIPerfHooks.TASK hooks
+        - Run the AIPerfHook.ON_INIT hooks
+        - Start the tasks registered with the AIPerfHook.AIPERF_TASK hooks
         """
         try:
             self._socket = self.context.socket(self.socket_type)
@@ -171,10 +143,10 @@ class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
             for key, val in self.socket_ops.items():
                 self._socket.setsockopt(key, val)
 
-            await self._run_hooks(AIPerfHooks.INIT)
+            await self.run_hooks(AIPerfHook.ON_INIT)
 
             # Start all registered tasks
-            for hook in self._get_hooks(AIPerfHooks.TASK):
+            for hook in self.get_hooks(AIPerfHook.AIPERF_TASK):
                 # TODO: support task intervals
                 self._task_registry[hook.__name__] = asyncio.create_task(hook(self))
 
@@ -195,7 +167,7 @@ class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
 
         This method will:
         - Close the zmq socket
-        - Run the AIPerfHooks.CLEANUP hooks
+        - Run the AIPerfHook.ON_CLEANUP hooks
         - Cancel all registered tasks
         """
         if self.is_shutdown:
@@ -221,7 +193,7 @@ class BaseZMQClient(ABC, metaclass=ZMQClientMetaclass):
             self._socket = None
 
         try:
-            await self._run_hooks(AIPerfHooks.CLEANUP)
+            await self.run_hooks(AIPerfHook.ON_CLEANUP)
 
         except Exception as e:
             self.logger.error(
