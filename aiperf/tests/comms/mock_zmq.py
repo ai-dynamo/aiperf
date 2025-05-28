@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Create mock modules to prevent actual ZMQ imports before any real imports happen
 from collections.abc import Callable, Coroutine
 from typing import Any

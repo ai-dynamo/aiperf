@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """
 Base test class for component services.
 """
@@ -7,10 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.enums import (
-    ServiceState,
-    Topic,
-)
+from aiperf.common.enums import ServiceState, Topic
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.common.service.base_service import BaseService
 from aiperf.tests.base_test_service import BaseTestService, async_fixture

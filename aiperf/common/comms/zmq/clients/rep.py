@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 import asyncio
 import logging
 
@@ -7,9 +8,7 @@ from zmq import SocketType
 
 from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.decorators import aiperf_task, on_cleanup
-from aiperf.common.exceptions import (
-    CommunicationResponseError,
-)
+from aiperf.common.exceptions import CommunicationResponseError
 from aiperf.common.models import BaseMessage, Message
 
 logger = logging.getLogger(__name__)

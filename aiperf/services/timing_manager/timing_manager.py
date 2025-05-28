@@ -1,14 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 import asyncio
 import contextlib
 import sys
 import time
 
-from aiperf.common.comms.client_enums import (
-    ClientType,
-    PullClientType,
-    PushClientType,
-)
+from aiperf.common.comms.client_enums import ClientType, PullClientType, PushClientType
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import (
     on_cleanup,
@@ -18,11 +15,7 @@ from aiperf.common.decorators import (
     on_stop,
 )
 from aiperf.common.enums import ServiceState, ServiceType, Topic
-from aiperf.common.models import (
-    BasePayload,
-    CreditDropPayload,
-    Message,
-)
+from aiperf.common.models import BasePayload, CreditDropPayload, Message
 from aiperf.common.service.base_component_service import BaseComponentService
 
 

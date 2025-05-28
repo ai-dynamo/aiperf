@@ -1,12 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Any
 
-from aiperf.common.comms.client_enums import (
-    ClientType,
-    PubClientType,
-    SubClientType,
-)
+from aiperf.common.comms.client_enums import ClientType, PubClientType, SubClientType
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import on_run
 from aiperf.common.enums import CommandType

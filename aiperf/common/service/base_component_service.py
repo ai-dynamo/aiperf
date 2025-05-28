@@ -1,12 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 import asyncio
 from typing import cast
 
-from aiperf.common.comms.client_enums import (
-    ClientType,
-    PubClientType,
-    SubClientType,
-)
+from aiperf.common.comms.client_enums import ClientType, PubClientType, SubClientType
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.decorators import AIPerfHooks, aiperf_task, on_run, on_set_state
 from aiperf.common.enums import CommandType, ServiceState, Topic

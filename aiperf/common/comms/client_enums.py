@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 from typing import Union
 
 from aiperf.common.enums import DataTopic, StrEnum, Topic, TopicType
-from aiperf.common.exceptions import (
-    CommunicationClientNotFoundError,
-)
+from aiperf.common.exceptions import CommunicationClientNotFoundError
 
 
 class PubClientType(StrEnum):

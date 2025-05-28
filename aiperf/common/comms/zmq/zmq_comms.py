@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 import asyncio
 import logging
 import uuid
@@ -25,10 +26,7 @@ from aiperf.common.comms.zmq.clients.push import ZMQPushClient
 from aiperf.common.comms.zmq.clients.rep import ZMQRepClient
 from aiperf.common.comms.zmq.clients.req import ZMQReqClient
 from aiperf.common.comms.zmq.clients.sub import ZMQSubClient
-from aiperf.common.enums import (
-    CommunicationBackend,
-    TopicType,
-)
+from aiperf.common.enums import CommunicationBackend, TopicType
 from aiperf.common.exceptions import (
     CommunicationClientCreationError,
     CommunicationNotInitializedError,

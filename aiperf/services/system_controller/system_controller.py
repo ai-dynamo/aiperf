@@ -1,16 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 import asyncio
 import sys
 import time
 from typing import Any
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.decorators import (
-    on_cleanup,
-    on_init,
-    on_start,
-    on_stop,
-)
+from aiperf.common.decorators import on_cleanup, on_init, on_start, on_stop
 from aiperf.common.enums import (
     CommandType,
     ServiceRegistrationStatus,
@@ -36,12 +32,8 @@ from aiperf.common.models import (
 )
 from aiperf.common.service.base_controller_service import BaseControllerService
 from aiperf.services.service_manager.base import BaseServiceManager
-from aiperf.services.service_manager.kubernetes import (
-    KubernetesServiceManager,
-)
-from aiperf.services.service_manager.multiprocess import (
-    MultiProcessServiceManager,
-)
+from aiperf.services.service_manager.kubernetes import KubernetesServiceManager
+from aiperf.services.service_manager.multiprocess import MultiProcessServiceManager
 
 
 class SystemController(BaseControllerService):
