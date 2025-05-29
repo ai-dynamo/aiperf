@@ -84,14 +84,6 @@ class CommunicationCreateError(CommunicationError):
     """Exception raised when communication channels fail to create a client."""
 
 
-class CommunicationTypeUnknownError(CommunicationError):
-    """Exception raised when the communication type is unknown."""
-
-
-class CommunicationTypeAlreadyRegisteredError(CommunicationError):
-    """Exception raised when the communication type is already registered."""
-
-
 ################################################################################
 # Configuration Exceptions
 ################################################################################
