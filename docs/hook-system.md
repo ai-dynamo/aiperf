@@ -233,6 +233,51 @@ graph TD
     linkStyle 4 stroke:#666,stroke-width:2px
 ```
 
+## Hook Registration and Execution Order
+
+Hooks are registered in a **predictable, deterministic order** that ensures proper initialization flow:
+
+### 1. **Across Classes**: Base → Derived
+```python
+class BaseService(HooksMixin):
+    @on_init
+    async def base_setup(self):        # Registered 1st
+        pass
+
+class MyService(BaseService):
+    @on_init
+    async def service_setup(self):     # Registered 2nd
+        pass
+```
+
+### 2. **Within Classes**: Definition Order
+```python
+class MyService(BaseService):
+    @on_init
+    async def setup_database(self):    # Registered 1st
+        pass
+
+    @on_init
+    async def setup_cache(self):       # Registered 2nd
+        pass
+
+    @on_init
+    async def setup_metrics(self):     # Registered 3rd
+        pass
+```
+
+> 💡 **Key Point**: Base class hooks always run before derived class hooks, ensuring that foundational components (communication, signals) are initialized before service-specific functionality.
+
+> ⚠️ **Important**: To maintain this execution order, you must use `run_hooks()` (serial execution). Using `run_hooks_async()` runs hooks concurrently and **does not guarantee execution order**, even though registration order is still deterministic.
+
+```python
+# ✅ Preserves execution order (serial)
+await self.run_hooks(AIPerfHook.ON_INIT)
+
+# ❌ No execution order guarantee (concurrent)
+await self.run_hooks_async(AIPerfHook.ON_INIT)
+```
+
 ## Advanced Features
 
 ### Runtime Hook Registration
@@ -580,4 +625,4 @@ class MyService(BaseService):  # BaseService inherits from AIPerfTaskMixin
     # Tasks will automatically stop when service shuts down
 ```
 
-The `@aiperf_task` decorator provides a powerful mechanism for implementing background services that require continuous operation, making it ideal for monitoring, communication, data processing, and maintenance tasks within the AIPerf framework.
+The `

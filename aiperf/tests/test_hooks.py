@@ -34,16 +34,16 @@ class BaseClass(HooksMixin):
 
 class MockHooks(BaseClass):
     @on_init
-    async def on_init_1(self):
-        self.add_called_hook(self.on_init_1)
+    async def on_init_3(self):
+        self.add_called_hook(self.on_init_3)
 
     @on_init
     async def on_init_2(self):
         self.add_called_hook(self.on_init_2)
 
     @on_init
-    async def on_init_3(self):
-        self.add_called_hook(self.on_init_3)
+    async def on_init_1(self):
+        self.add_called_hook(self.on_init_1)
 
     @on_cleanup
     async def on_cleanup_1(self):
@@ -73,11 +73,13 @@ def test_hook_decorators():
     test_hooks = MockHooks()
 
     assert test_hooks.get_hooks(AIPerfHook.ON_INIT) == [
-        test_hooks.on_init_1,
-        test_hooks.on_init_2,
         test_hooks.on_init_3,
-    ]
-    assert test_hooks.get_hooks(AIPerfHook.ON_CLEANUP) == [test_hooks.on_cleanup_1]
+        test_hooks.on_init_2,
+        test_hooks.on_init_1,
+    ], "Init hooks should be registered in the order they are defined"
+    assert test_hooks.get_hooks(AIPerfHook.ON_CLEANUP) == [test_hooks.on_cleanup_1], (
+        "Cleanup hooks should be registered"
+    )
 
 
 def test_hook_inheritance():
@@ -85,48 +87,71 @@ def test_hook_inheritance():
     test_hooks_inheritance = MockHooksInheritance()
 
     assert test_hooks_inheritance.get_hooks(AIPerfHook.ON_INIT) == [
-        test_hooks_inheritance.on_init_1,
-        test_hooks_inheritance.on_init_2,
         test_hooks_inheritance.on_init_3,
+        test_hooks_inheritance.on_init_2,
+        test_hooks_inheritance.on_init_1,
         test_hooks_inheritance.on_init_4,
-    ]
+    ], "Init hooks should be registered in the order they are defined"
+
     assert test_hooks_inheritance.get_hooks(AIPerfHook.ON_CLEANUP) == [
         test_hooks_inheritance.on_cleanup_1,
         test_hooks_inheritance.on_cleanup_2,
-    ]
+    ], "Cleanup hooks should be registered in the order they are defined"
+
     assert test_hooks_inheritance.get_hooks(AIPerfHook.ON_START) == [
         test_hooks_inheritance.on_start_1
-    ]
+    ], "Start hook should be registered"
 
 
+@pytest.mark.asyncio
 async def test_run_hooks_init():
     test_hooks = MockHooks()
 
     await test_hooks.initialize()
 
-    assert test_hooks.on_init_1 in test_hooks.called_hooks
-    assert test_hooks.on_init_2 in test_hooks.called_hooks
-    assert test_hooks.on_init_3 in test_hooks.called_hooks
+    assert test_hooks.on_init_1 in test_hooks.called_hooks, (
+        "Init hook 1 should be called"
+    )
+    assert test_hooks.on_init_2 in test_hooks.called_hooks, (
+        "Init hook 2 should be called"
+    )
+    assert test_hooks.on_init_3 in test_hooks.called_hooks, (
+        "Init hook 3 should be called"
+    )
 
 
+@pytest.mark.asyncio
 async def test_run_hooks_cleanup():
     test_hooks = MockHooksInheritance()
 
     await test_hooks.cleanup()
 
-    assert test_hooks.on_cleanup_1 in test_hooks.called_hooks
-    assert test_hooks.on_cleanup_2 in test_hooks.called_hooks
-    assert test_hooks.on_init_1 not in test_hooks.called_hooks
+    assert test_hooks.on_cleanup_1 in test_hooks.called_hooks, (
+        "Cleanup hook 1 should be called"
+    )
+    assert test_hooks.on_cleanup_2 in test_hooks.called_hooks, (
+        "Cleanup hook 2 should be called"
+    )
+    assert test_hooks.on_init_1 not in test_hooks.called_hooks, (
+        "Init hook 1 should not be called"
+    )
 
 
+@pytest.mark.asyncio
 async def test_inherited_run_hooks_start():
     test_hooks = MockHooksInheritance()
 
     await test_hooks.start()
 
-    assert test_hooks.on_start_1 in test_hooks.called_hooks
-    assert test_hooks.on_init_1 not in test_hooks.called_hooks
-    assert test_hooks.on_cleanup_1 not in test_hooks.called_hooks
+    assert test_hooks.on_start_1 in test_hooks.called_hooks, (
+        "Start hook should be called"
+    )
+    assert test_hooks.on_init_1 not in test_hooks.called_hooks, (
+        "Init hook should not be called"
+    )
+    assert test_hooks.on_cleanup_1 not in test_hooks.called_hooks, (
+        "Cleanup hook should not be called"
+    )
 
 
 def test_unsupported_hook_decorator():
@@ -144,6 +169,7 @@ def test_unsupported_hook_decorator():
         TestHooksUnsupported()  # this should raise an UnsupportedHookError
 
 
+@pytest.mark.asyncio
 async def test_instance_additional_hooks():
     """Test that additional hooks can be added to a class that supports hooks."""
     test_hooks = MockHooksInheritance()
@@ -160,10 +186,15 @@ async def test_instance_additional_hooks():
 
     await test_hooks.start()
 
-    assert custom_start_hook in test_hooks.called_hooks
-    assert test_hooks.on_start_1 in test_hooks.called_hooks
+    assert custom_start_hook in test_hooks.called_hooks, (
+        "Custom start hook should be called"
+    )
+    assert test_hooks.on_start_1 in test_hooks.called_hooks, (
+        "Base start hook should be called"
+    )
 
 
+@pytest.mark.asyncio
 async def test_instance_additional_supported_hooks():
     """Test that additional hook types can be supported by a class"""
     test_hooks = MockHooks()
@@ -196,10 +227,15 @@ async def test_instance_additional_supported_hooks():
     await test_hooks.initialize()
 
     # Expect the custom init and stop hooks to have been called
-    assert custom_init_hook in test_hooks.called_hooks
-    assert custom_stop_hook in test_hooks.called_hooks
+    assert custom_init_hook in test_hooks.called_hooks, (
+        "Custom init hook should be called"
+    )
+    assert custom_stop_hook in test_hooks.called_hooks, (
+        "Custom stop hook should be called"
+    )
 
 
+@pytest.mark.asyncio
 async def test_inheritance_hook_order():
     """Test that the hook order is correct when using inheritance."""
 
@@ -218,10 +254,13 @@ async def test_inheritance_hook_order():
 
     await test_hooks.initialize()
 
-    assert test_hooks.on_init_0 in test_hooks.called_hooks
-    assert test_hooks.on_init_1 in test_hooks.called_hooks
+    assert test_hooks.on_init_0 in test_hooks.called_hooks, (
+        "Subclass hook should be called"
+    )
+    assert test_hooks.on_init_1 in test_hooks.called_hooks, "Base hook should be called"
 
 
+@pytest.mark.asyncio
 async def test_inheritance_hook_override():
     """Test that a hook that is overridden in a subclass does not call the base class hook."""
 
@@ -235,5 +274,53 @@ async def test_inheritance_hook_override():
 
     await test_hooks.initialize()
 
-    assert test_hooks.on_init_1 in test_hooks.called_hooks
-    assert MockHooks.on_init_1 not in test_hooks.called_hooks
+    assert test_hooks.on_init_1 in test_hooks.called_hooks, (
+        "Subclass hook should be called"
+    )
+    assert MockHooks.on_init_1 not in test_hooks.called_hooks, (
+        "Base hook should not be called"
+    )
+
+
+def test_hook_ordering():
+    """Test that the hook ordering is correct."""
+
+    @supports_hooks(AIPerfHook.ON_INIT)
+    class Hooks(HooksMixin):
+        @on_init
+        async def on_init_2(self):
+            pass
+
+        @on_init
+        async def on_init_3(self):
+            pass
+
+        @on_init
+        async def on_init_1(self):
+            pass
+
+    hooks = Hooks()
+
+    # Ensure the hooks are added in the order they are defined
+    assert hooks.get_hooks(AIPerfHook.ON_INIT) == [
+        hooks.on_init_2,
+        hooks.on_init_3,
+        hooks.on_init_1,
+    ], "Hooks should be registered in the order they are defined"
+
+    class Hooks2(Hooks):
+        @on_init
+        async def on_init_0(self):
+            pass
+
+    hooks2 = Hooks2()
+
+    # Ensure that base hooks are registered before the subclass hooks
+    assert hooks2.get_hooks(AIPerfHook.ON_INIT) == [
+        # Base hooks
+        hooks2.on_init_2,
+        hooks2.on_init_3,
+        hooks2.on_init_1,
+        # Subclass hooks
+        hooks2.on_init_0,
+    ], "Base hooks should be registered before subclass hooks"
