@@ -626,5 +626,3 @@ class MyService(BaseService):  # BaseService inherits from AIPerfTaskMixin
     # Tasks will automatically start when service initializes
     # Tasks will automatically stop when service shuts down
 ```
-
-The `
