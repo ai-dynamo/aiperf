@@ -6,7 +6,6 @@ import time
 from typing import Any
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.decorators import on_cleanup, on_init, on_start, on_stop
 from aiperf.common.enums import (
     CommandType,
     ServiceRegistrationStatus,
@@ -23,6 +22,12 @@ from aiperf.common.exceptions import (
     ServiceConfigureError,
     ServiceInitializationError,
     ServiceStopError,
+)
+from aiperf.common.hooks import (
+    on_cleanup,
+    on_init,
+    on_start,
+    on_stop,
 )
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.models import (

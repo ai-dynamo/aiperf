@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.decorators import (
+from aiperf.common.enums import ServiceRunType, ServiceType
+from aiperf.common.exceptions import ConfigError
+from aiperf.common.hooks import (
     on_cleanup,
     on_configure,
     on_init,

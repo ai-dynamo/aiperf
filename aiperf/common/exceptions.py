@@ -16,13 +16,9 @@ class AIPerfError(Exception):
 class AIPerfMultiError(AIPerfError):
     """Exception raised when running multiple tasks and one or more fail."""
 
-    def __init__(self, exceptions) -> None:
-        super().__init__(f"{','.join([str(e) for e in exceptions])}")
+    def __init__(self, message: str, exceptions: list[Exception]) -> None:
+        super().__init__(f"{message}: {','.join([str(e) for e in exceptions])}")
         self.exceptions = exceptions
-
-
-class AIPerfMetaclassError(AIPerfError):
-    """Exception raised for AIPerf metaclass errors."""
 
 
 ################################################################################
@@ -134,14 +130,6 @@ class ServiceError(AIPerfError):
     #       and add it to the pre-defined messages for each exception
 
 
-class ServiceMetaclassError(AIPerfError):
-    """Exception raised for service metaclass errors."""
-
-    message: str = (
-        "Service metaclass error. Please check the service definition decorators."
-    )
-
-
 class ServiceInitializationError(ServiceError):
     """Exception raised for service initialization errors."""
 
@@ -193,6 +181,15 @@ class TokenizerError(AIPerfError):
 
 class TokenizerInitializationError(TokenizerError):
     """Exception raised for errors during tokenizer initialization."""
+
+
+################################################################################
+# Hook Exceptions
+################################################################################
+
+
+class UnsupportedHookError(AIPerfError):
+    """Exception raised when a hook is defined on a class that does not support it."""
 
 
 ################################################################################

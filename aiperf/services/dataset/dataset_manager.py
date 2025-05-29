@@ -3,7 +3,8 @@
 import sys
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.decorators import (
+from aiperf.common.enums import ServiceType
+from aiperf.common.hooks import (
     on_cleanup,
     on_configure,
     on_init,
