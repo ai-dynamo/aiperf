@@ -77,8 +77,13 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
 
     logger = logging.getLogger(__name__)
 
-    _registry: dict[ClassEnumT | str, type[ClassProtocolT]] = {}
-    _override_priorities: dict[ClassEnumT | str, int] = {}
+    _registry: dict[ClassEnumT | str, type[ClassProtocolT]]
+    _override_priorities: dict[ClassEnumT | str, int]
+
+    def __init_subclass__(cls) -> None:
+        cls._registry = {}
+        cls._override_priorities = {}
+        super().__init_subclass__()
 
     @classmethod
     def register(
@@ -101,20 +106,33 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
             if class_type in cls._registry and existing_priority >= override_priority:
                 # TODO: Will logging be initialized before this method is called?
                 cls.logger.warning(
-                    f"{class_type!r} class {cls._registry[class_type].__name__} already registered with same or higher priority "
-                    f"({existing_priority}). The new registration of class {class_cls.__name__} with priority "
-                    f"{override_priority} will be ignored."
+                    "%r class %s already registered with same or higher priority "
+                    "(%s). The new registration of class %s with priority "
+                    "%s will be ignored.",
+                    class_type,
+                    cls._registry[class_type].__name__,
+                    existing_priority,
+                    class_cls.__name__,
+                    override_priority,
                 )
                 return class_cls
 
             if class_type not in cls._registry:
                 cls.logger.debug(
-                    f"{class_type!r} class {class_cls.__name__} registered with priority {override_priority}."
+                    "%r class %s registered with priority %s.",
+                    class_type,
+                    class_cls.__name__,
+                    override_priority,
                 )
             else:
                 cls.logger.debug(
-                    f"{class_type!r} class {class_cls.__name__} with priority {override_priority} overrides "
-                    f"already registered class {cls._registry[class_type].__name__} with lower priority ({existing_priority})."
+                    "%r class %s with priority %s overrides "
+                    "already registered class %s with lower priority (%s).",
+                    class_type,
+                    class_cls.__name__,
+                    override_priority,
+                    cls._registry[class_type].__name__,
+                    existing_priority,
                 )
             cls._registry[class_type] = class_cls
             cls._override_priorities[class_type] = override_priority
@@ -145,7 +163,7 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
         if class_type not in cls._registry:
             raise FactoryCreationError(f"No implementation found for {class_type!r}.")
         try:
-            return cls._registry[class_type](config, **kwargs)
+            return cls._registry[class_type](config=config, **kwargs)
         except Exception as e:
             raise FactoryCreationError(
                 f"Error creating {class_type!r} instance: {e}"

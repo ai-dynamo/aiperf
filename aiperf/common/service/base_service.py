@@ -165,8 +165,8 @@ class BaseService(BaseServiceInterface, ABC, metaclass=ServiceMetaclass):
         # Initialize communication
         try:
             self._comms = CommunicationFactory.create_instance(
-                CommunicationBackend.ZMQ_TCP,
-                config=ZMQCommunicationConfig(),
+                self.service_config.comm_backend,
+                config=self.service_config.comm_config,
             )
         except Exception as e:
             self.logger.exception(
