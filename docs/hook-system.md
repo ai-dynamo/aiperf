@@ -15,13 +15,15 @@ The AIPerf Hook System provides a powerful, extensible mechanism for implementin
 The system defines standard lifecycle hooks:
 
 - **`ON_INIT`**: Initialization phase
+- **`ON_RUN`**: Main execution phase
+- **`ON_CONFIGURE`**: Configuration updates
 - **`ON_START`**: Service startup
 - **`ON_STOP`**: Service shutdown
 - **`ON_CLEANUP`**: Resource cleanup
-- **`ON_RUN`**: Main execution phase
-- **`ON_CONFIGURE`**: Configuration updates
+
+And additional usability hooks:
+
 - **`ON_SET_STATE`**: State transitions
-- **`ON_COMMS_INIT`**: Communication initialization
 - **`AIPERF_TASK`**: Background task registration
 
 ### 2. Hook System (`HookSystem`)

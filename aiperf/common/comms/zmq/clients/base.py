@@ -18,8 +18,8 @@ from aiperf.common.hooks import AIPerfHook, AIPerfTaskMixin, supports_hooks
 
 @supports_hooks(
     AIPerfHook.ON_INIT,
-    AIPerfHook.ON_CLEANUP,
     AIPerfHook.ON_STOP,
+    AIPerfHook.ON_CLEANUP,
     AIPerfHook.AIPERF_TASK,
 )
 class BaseZMQClient(AIPerfTaskMixin):

@@ -41,14 +41,15 @@ class AIPerfHook(Enum):
     decorator of the class you wish to use the hook in.
     """
 
-    ON_CLEANUP = "__aiperf_on_cleanup__"
     ON_INIT = "__aiperf_on_init__"
-    ON_COMMS_INIT = "__aiperf_on_comms_init__"
-    ON_STOP = "__aiperf_on_stop__"
-    ON_START = "__aiperf_on_start__"
-    ON_CONFIGURE = "__aiperf_on_configure__"
     ON_RUN = "__aiperf_on_run__"
+    ON_CONFIGURE = "__aiperf_on_configure__"
+    ON_START = "__aiperf_on_start__"
+    ON_STOP = "__aiperf_on_stop__"
+    ON_CLEANUP = "__aiperf_on_cleanup__"
+
     ON_SET_STATE = "__aiperf_on_set_state__"
+
     AIPERF_TASK = "__aiperf_task__"
 
 
@@ -245,12 +246,6 @@ def on_configure(func: Callable) -> Callable:
     """Decorator to specify that the function should be called during the service configuration.
     See :func:`aiperf.common.hooks.hook_decorator`."""
     return hook_decorator(AIPerfHook.ON_CONFIGURE, func)
-
-
-def on_comms_init(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during communication initialization.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_COMMS_INIT, func)
 
 
 def on_cleanup(func: Callable) -> Callable:

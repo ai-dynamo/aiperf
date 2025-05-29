@@ -29,13 +29,13 @@ from aiperf.common.service.base_service_interface import BaseServiceInterface
 
 @supports_hooks(
     AIPerfHook.ON_INIT,
+    AIPerfHook.ON_RUN,
+    AIPerfHook.ON_CONFIGURE,
     AIPerfHook.ON_START,
     AIPerfHook.ON_STOP,
     AIPerfHook.ON_CLEANUP,
-    AIPerfHook.ON_RUN,
-    AIPerfHook.ON_CONFIGURE,
-    AIPerfHook.AIPERF_TASK,
     AIPerfHook.ON_SET_STATE,
+    AIPerfHook.AIPERF_TASK,
 )
 class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
     """Base class for all AIPerf services, providing common functionality for
