@@ -37,12 +37,8 @@ from aiperf.common.models import (
 )
 from aiperf.common.service.base_controller_service import BaseControllerService
 from aiperf.services.service_manager.base import BaseServiceManager
-from aiperf.services.service_manager.kubernetes import (
-    KubernetesServiceManager,
-)
-from aiperf.services.service_manager.multiprocess import (
-    MultiProcessServiceManager,
-)
+from aiperf.services.service_manager.kubernetes import KubernetesServiceManager
+from aiperf.services.service_manager.multiprocess import MultiProcessServiceManager
 
 
 class SystemController(BaseControllerService):

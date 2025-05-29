@@ -8,14 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.comms.client_enums import (
-    PubClientType,
-    SubClientType,
-)
+from aiperf.common.comms.client_enums import PubClientType, SubClientType
 from aiperf.common.comms.zmq import ZMQCommunication
-from aiperf.common.enums import (
-    Topic,
-)
+from aiperf.common.enums import Topic
 from aiperf.common.exceptions import CommunicationInitializationError
 from aiperf.common.models import (
     BaseMessage,

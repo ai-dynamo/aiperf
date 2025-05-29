@@ -3,9 +3,7 @@
 from typing import Union
 
 from aiperf.common.enums import DataTopic, StrEnum, Topic, TopicType
-from aiperf.common.exceptions import (
-    CommunicationClientNotFoundError,
-)
+from aiperf.common.exceptions import CommunicationClientNotFoundError
 
 
 class PubClientType(StrEnum):

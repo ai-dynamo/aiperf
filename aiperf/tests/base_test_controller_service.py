@@ -6,10 +6,7 @@ Base test class for controller services.
 
 from unittest.mock import MagicMock
 
-from aiperf.common.enums import (
-    CommandType,
-    Topic,
-)
+from aiperf.common.enums import CommandType, Topic
 from aiperf.common.models import CommandPayload
 from aiperf.common.service.base_controller_service import BaseControllerService
 from aiperf.tests.base_test_service import BaseTestService, async_fixture
