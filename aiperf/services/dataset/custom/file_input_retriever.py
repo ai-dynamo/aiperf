@@ -33,6 +33,19 @@ class ImageConfig:
     batch_size: int = 1
 
 
+# TODO: temporary
+@dataclass
+class TurnDelayConfig:
+    ratio: float = 1.0
+
+
+# TODO: temporary
+@dataclass
+class SyntheticTokensConfig:
+    mean: int = 10
+    stddev: int = 2
+
+
 # XXX: Temporary class to hold the configuration for the custom data
 @dataclass
 class CustomDataConfig:
@@ -44,6 +57,8 @@ class CustomDataConfig:
     batch_size: int = 1
     num_dataset_entries: int = 100
     image: ImageConfig | None = None
+    turn_delay: TurnDelayConfig | None = None
+    synthetic_tokens: SyntheticTokensConfig | None = None
 
 
 class FileInputRetriever:

@@ -79,6 +79,12 @@ def load_json_str(json_str: str, func: Callable = lambda x: x) -> dict[str, Any]
         json_str: JSON encoded string
         func: A function that takes deserialized JSON object. This can be used to
             run validation checks on the object. Defaults to identity function.
+
+    Returns:
+        The deserialized JSON object.
+
+    Raises:
+        RuntimeError: If the JSON string is invalid.
     """
     try:
         # TODO: Consider using orjson for faster JSON parsing
