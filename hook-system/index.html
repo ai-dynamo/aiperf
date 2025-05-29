@@ -1,0 +1,1346 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the AIPerf project">
+      
+      
+        <meta name="author" content="NVIDIA CORPORATION & AFFILIATES">
+      
+      
+      
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+    
+    
+      
+        <title>Hook system - AIPerf Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#aiperf-hook-system" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AIPerf Documentation" class="md-header__button md-logo" aria-label="AIPerf Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AIPerf Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Hook system
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AIPerf Documentation" class="md-nav__button md-logo" aria-label="AIPerf Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AIPerf Documentation
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Development
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core Components
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Components">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-hook-types-aiperfhook" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Hook Types (AIPerfHook)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-hook-system-hooksystem" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Hook System (HookSystem)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-hooks-mixin-hooksmixin" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Hooks Mixin (HooksMixin)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      Usage Patterns
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Usage Patterns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basic-implementation-self-contained" class="md-nav__link">
+    <span class="md-ellipsis">
+      Basic Implementation - Self Contained
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#basic-implementation-inheritance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Basic Implementation - Inheritance
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hook-execution-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Hook Execution Flow
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inheritance-and-hook-composition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inheritance and Hook Composition
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hook-registration-and-execution-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      Hook Registration and Execution Order
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hook Registration and Execution Order">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-across-classes-base-derived" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Across Classes: Base → Derived
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-within-classes-definition-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Within Classes: Definition Order
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#advanced-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Advanced Features
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Advanced Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runtime-hook-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Runtime Hook Registration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serial-vs-concurrent-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      Serial vs Concurrent Execution
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error Handling
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Error Handling">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unsupported-hook-error" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unsupported Hook Error
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-error-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Multi-Error Handling
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#best-practices" class="md-nav__link">
+    <span class="md-ellipsis">
+      Best Practices
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Best Practices">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-hook-naming-convention" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Hook Naming Convention
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-resource-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Resource Management
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-error-isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Error Isolation
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-considerations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Performance Considerations
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-special-aiperf_task-decorator" class="md-nav__link">
+    <span class="md-ellipsis">
+      The Special @aiperf_task Decorator
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The Special @aiperf_task Decorator">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-aiperf_task-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      How @aiperf_task Works
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-aiperftaskmixin" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using AIPerfTaskMixin
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-differences-from-other-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Key Differences from Other Hooks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-lifecycle-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task Lifecycle Management
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#best-practices-for-aiperf_task" class="md-nav__link">
+    <span class="md-ellipsis">
+      Best Practices for @aiperf_task
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Best Practices for @aiperf_task">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-always-handle-cancellation" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Always Handle Cancellation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-use-stop-events-for-graceful-shutdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Use Stop Events for Graceful Shutdown
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-include-error-handling-and-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Include Error Handling and Recovery
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-avoid-blocking-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Avoid Blocking Operations
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#real-world-use-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Real-World Use Cases
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Real-World Use Cases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#network-communication-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Network Communication Tasks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#periodic-maintenance-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Periodic Maintenance Tasks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-check-and-heartbeat-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Health Check and Heartbeat Tasks
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-registry-and-debugging" class="md-nav__link">
+    <span class="md-ellipsis">
+      Task Registry and Debugging
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integration-with-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      Integration with Services
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<!--
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
+-->
+<h1 id="aiperf-hook-system">AIPerf Hook System<a class="headerlink" href="#aiperf-hook-system" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>TODO: Once we create a Mixin for self.stop_event, we can avoid having the user to call <code>while not self.stop_event.is_set()</code></strong></p>
+</blockquote>
+<p>The AIPerf Hook System provides a powerful, extensible mechanism for implementing lifecycle management and event-driven programming patterns. It enables clean separation of concerns by allowing components to register callbacks that execute at specific points during service execution.</p>
+<h2 id="core-components">Core Components<a class="headerlink" href="#core-components" title="Permanent link">&para;</a></h2>
+<h3 id="1-hook-types-aiperfhook">1. Hook Types (<code>AIPerfHook</code>)<a class="headerlink" href="#1-hook-types-aiperfhook" title="Permanent link">&para;</a></h3>
+<p>The system defines standard lifecycle hooks:</p>
+<ul>
+<li><strong><code>ON_INIT</code></strong>: Initialization phase</li>
+<li><strong><code>ON_RUN</code></strong>: Main execution phase</li>
+<li><strong><code>ON_CONFIGURE</code></strong>: Configuration updates</li>
+<li><strong><code>ON_START</code></strong>: Service startup</li>
+<li><strong><code>ON_STOP</code></strong>: Service shutdown</li>
+<li><strong><code>ON_CLEANUP</code></strong>: Resource cleanup</li>
+</ul>
+<p>And additional usability hooks:</p>
+<ul>
+<li><strong><code>ON_SET_STATE</code></strong>: State transitions</li>
+<li><strong><code>AIPERF_TASK</code></strong>: Background task registration</li>
+</ul>
+<h3 id="2-hook-system-hooksystem">2. Hook System (<code>HookSystem</code>)<a class="headerlink" href="#2-hook-system-hooksystem" title="Permanent link">&para;</a></h3>
+<p>Manages hook registration and execution:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">HookSystem</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">supported_hooks</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="n">HookType</span><span class="p">]):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">supported_hooks</span> <span class="o">=</span> <span class="n">supported_hooks</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="n">HookType</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">Callable</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+</code></pre></div>
+
+<h3 id="3-hooks-mixin-hooksmixin">3. Hooks Mixin (<code>HooksMixin</code>)<a class="headerlink" href="#3-hooks-mixin-hooksmixin" title="Permanent link">&para;</a></h3>
+<p>Provides the interface for hook-enabled classes:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">HooksMixin</span><span class="p">:</span>
+    <span class="n">supported_hooks</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="n">HookType</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_hook_system</span> <span class="o">=</span> <span class="n">HookSystem</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">supported_hooks</span><span class="p">)</span>
+        <span class="c1"># Auto-register decorated methods</span>
+</code></pre></div>
+
+<h2 id="usage-patterns">Usage Patterns<a class="headerlink" href="#usage-patterns" title="Permanent link">&para;</a></h2>
+<h3 id="basic-implementation-self-contained">Basic Implementation - Self Contained<a class="headerlink" href="#basic-implementation-self-contained" title="Permanent link">&para;</a></h3>
+<p>Hooks can be defined and used by the same class</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">HooksMixin</span><span class="p">,</span> <span class="n">supports_hooks</span><span class="p">,</span> <span class="n">on_init</span><span class="p">,</span> <span class="n">on_cleanup</span><span class="p">,</span> <span class="n">AIPerfHook</span>
+
+<span class="nd">@supports_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">,</span> <span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_CLEANUP</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">MyService</span><span class="p">(</span><span class="n">HooksMixin</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resources</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="c1"># Make sure to call __init__ on the HooksMixin</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+
+    <span class="c1"># Hook definitions</span>
+
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_setup_database</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize database connection.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">db</span> <span class="o">=</span> <span class="k">await</span> <span class="n">connect_to_database</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resources</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">db</span><span class="p">)</span>
+
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_setup_cache</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize cache system.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cache</span> <span class="o">=</span> <span class="k">await</span> <span class="n">setup_redis_cache</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resources</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cache</span><span class="p">)</span>
+
+    <span class="nd">@on_cleanup</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_cleanup_resources</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Clean up all resources.&quot;&quot;&quot;</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="p">[</span>
+            <span class="n">resource</span><span class="o">.</span><span class="n">close</span><span class="p">()</span> <span class="k">for</span> <span class="n">resource</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">resources</span>
+        <span class="p">])</span>
+
+    <span class="c1"># Top-level functions that will call the hooks</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks_async</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks_async</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_CLEANUP</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="basic-implementation-inheritance">Basic Implementation - Inheritance<a class="headerlink" href="#basic-implementation-inheritance" title="Permanent link">&para;</a></h3>
+<p>Hooks can also be used to call additional functionality defined in subclasses. By calling <code>await self.run_hooks_async(AIPerfHook.ON_INIT)</code>, the base class is able to call all registered init functions no matter the subclass that defined it.</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">HooksMixin</span><span class="p">,</span> <span class="n">supports_hooks</span><span class="p">,</span> <span class="n">on_init</span><span class="p">,</span> <span class="n">on_cleanup</span><span class="p">,</span> <span class="n">AIPerfHook</span>
+
+<span class="nd">@supports_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">,</span> <span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_CLEANUP</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">MyHookService</span><span class="p">(</span><span class="n">HooksMixin</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Defines the top-level functionality that will call the registered hooks.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># Make sure to call __init__ on the HooksMixin</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Runs all of the registered ON_INIT hooks&quot;&quot;&quot;</span>
+        <span class="c1"># Note: Using run_hooks without the _async will run them serially</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Runs all of the registered ON_CLEANUP hooks&quot;&quot;&quot;</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks_async</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_CLEANUP</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">CustomService</span><span class="p">(</span><span class="n">MyHookService</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Defines functions that will be called by the lifecycle hooks&quot;&quot;&quot;</span>
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_setup_database</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize database connection.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">db</span> <span class="o">=</span> <span class="k">await</span> <span class="n">connect_to_database</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resources</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">db</span><span class="p">)</span>
+
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_setup_cache</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize cache system.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cache</span> <span class="o">=</span> <span class="k">await</span> <span class="n">setup_redis_cache</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resources</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cache</span><span class="p">)</span>
+
+    <span class="nd">@on_cleanup</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_cleanup_cache</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">cache</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+    <span class="nd">@on_cleanup</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_cleanup_database</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+
+<h3 id="hook-execution-flow">Hook Execution Flow<a class="headerlink" href="#hook-execution-flow" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="n">sequenceDiagram</span>
+<span class="w">    </span><span class="s">participant</span><span class="w"> </span><span class="s">C</span><span class="w"> </span><span class="s">as</span><span class="w"> </span><span class="s">📱</span><span class="w"> </span><span class="s">Client</span>
+<span class="w">    </span><span class="n">participant</span><span class="w"> </span><span class="n">CS</span><span class="w"> </span><span class="n">as</span><span class="w"> </span>🔧<span class="w"> </span><span class="n">CustomService</span>
+<span class="w">    </span><span class="n">participant</span><span class="w"> </span><span class="n">MHS</span><span class="w"> </span><span class="n">as</span><span class="w"> </span>⚙️<span class="w"> </span><span class="n">MyHookService</span>
+<span class="w">    </span><span class="n">participant</span><span class="w"> </span><span class="n">HM</span><span class="w"> </span><span class="n">as</span><span class="w"> </span>🎯<span class="w"> </span><span class="n">HooksMixin</span>
+
+<span class="w">    </span><span class="n">Note</span><span class="w"> </span><span class="n">over</span><span class="w"> </span><span class="n">C</span><span class="p">,</span><span class="w"> </span><span class="n">HM</span><span class="p">:</span><span class="w"> </span><span class="n">Hook</span><span class="w"> </span><span class="n">System</span><span class="w"> </span><span class="n">Setup</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">Registration</span>
+<span class="w">    </span><span class="n">MHS</span><span class="o">--&gt;&gt;</span><span class="n">HM</span><span class="p">:</span><span class="w"> </span>📋<span class="w"> </span><span class="p">@</span><span class="n">supports_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="p">.</span><span class="n">ON_INIT</span><span class="p">,</span><span class="w"> </span><span class="k">...</span><span class="c">)</span>
+<span class="w">    </span><span class="n">CS</span><span class="o">--&gt;&gt;</span><span class="n">HM</span><span class="p">:</span><span class="w"> </span>🔗<span class="w"> </span><span class="p">@</span><span class="n">on_init</span><span class="w"> </span><span class="p">(</span><span class="n">registration</span><span class="p">)</span>
+
+<span class="w">    </span><span class="n">Note</span><span class="w"> </span><span class="n">over</span><span class="w"> </span><span class="n">C</span><span class="p">,</span><span class="w"> </span><span class="n">HM</span><span class="p">:</span><span class="w"> </span><span class="n">Hook</span><span class="w"> </span><span class="n">Execution</span><span class="w"> </span><span class="n">Flow</span>
+<span class="w">    </span><span class="n">C</span><span class="o">-&gt;&gt;+</span><span class="n">MHS</span><span class="p">:</span><span class="w"> </span>🚀<span class="w"> </span><span class="n">initialize</span><span class="p">()</span>
+<span class="w">    </span><span class="n">MHS</span><span class="o">-&gt;&gt;+</span><span class="n">HM</span><span class="p">:</span><span class="w"> </span>⚡<span class="w"> </span><span class="n">run_hooks_async</span><span class="p">(</span><span class="n">ON_INIT</span><span class="p">)</span>
+
+<span class="w">    </span><span class="n">Note</span><span class="w"> </span><span class="n">over</span><span class="w"> </span><span class="n">HM</span><span class="p">:</span><span class="w"> </span><span class="n">Parallel</span><span class="w"> </span><span class="n">Hook</span><span class="w"> </span><span class="n">Execution</span>
+<span class="w">    </span><span class="n">loop</span><span class="w"> </span>🔄<span class="w"> </span><span class="n">For</span><span class="w"> </span><span class="n">each</span><span class="w"> </span><span class="n">registered</span><span class="w"> </span><span class="n">hook</span>
+<span class="w">        </span><span class="n">HM</span><span class="o">-&gt;&gt;+</span><span class="n">CS</span><span class="p">:</span><span class="w"> </span>🎬<span class="w"> </span><span class="nb">Execute</span><span class="w"> </span><span class="n">hook</span><span class="w"> </span><span class="k">function</span>
+<span class="w">        </span><span class="n">CS</span><span class="o">--&gt;&gt;-</span><span class="n">HM</span><span class="p">:</span><span class="w"> </span>✅<span class="w"> </span><span class="n">Hook</span><span class="w"> </span><span class="n">completed</span>
+<span class="w">    </span><span class="k">end</span>
+
+<span class="w">    </span><span class="n">HM</span><span class="o">--&gt;&gt;-</span><span class="n">MHS</span><span class="p">:</span><span class="w"> </span>🏁<span class="w"> </span><span class="n">All</span><span class="w"> </span><span class="n">hooks</span><span class="w"> </span><span class="n">completed</span>
+<span class="w">    </span><span class="n">MHS</span><span class="o">--&gt;&gt;-</span><span class="n">C</span><span class="p">:</span><span class="w"> </span>✨<span class="w"> </span><span class="n">Initialization</span><span class="w"> </span><span class="n">complete</span>
+
+<span class="w">    </span><span class="c">%% Custom styling for better visibility</span>
+<span class="w">    </span><span class="c">%%{init: {</span>
+<span class="w">        </span><span class="s">&#39;theme&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;dark&#39;</span><span class="p">,</span>
+<span class="w">        </span><span class="s">&#39;themeVariables&#39;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="s">&#39;primaryColor&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;#2196f3&#39;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&#39;primaryTextColor&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;#ffffff&#39;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&#39;primaryBorderColor&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;#1976d2&#39;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&#39;lineColor&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;#90a4ae&#39;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&#39;secondaryColor&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;#9c27b0&#39;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&#39;tertiaryColor&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;#4caf50&#39;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&#39;background&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;#263238&#39;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&#39;noteTextColor&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;#ffffff&#39;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&#39;noteBkgColor&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;#37474f&#39;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&#39;noteBorderColor&#39;</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;#546e7a&#39;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}}</span><span class="c">%%</span>
+</code></pre></div>
+
+<h3 id="inheritance-and-hook-composition">Inheritance and Hook Composition<a class="headerlink" href="#inheritance-and-hook-composition" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="nd">@supports_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">,</span> <span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_CLEANUP</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">BaseService</span><span class="p">(</span><span class="n">HooksMixin</span><span class="p">):</span>
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">base_init</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Base service initializing&quot;</span><span class="p">)</span>
+
+<span class="nd">@supports_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_START</span><span class="p">)</span>  <span class="c1"># Adds ON_START to inherited hooks</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">WebService</span><span class="p">(</span><span class="n">BaseService</span><span class="p">):</span>
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">web_init</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Web service initializing&quot;</span><span class="p">)</span>
+
+    <span class="nd">@on_start</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">start_server</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">server</span> <span class="o">=</span> <span class="k">await</span> <span class="n">start_web_server</span><span class="p">()</span>
+</code></pre></div>
+
+<p><strong>Hook inheritance flow:</strong></p>
+<div class="codehilite"><pre><span></span><code>graph<span class="w"> </span>TD
+<span class="w">    </span>A[&quot;**BaseService**&quot;]<span class="w"> </span>--&gt;<span class="w"> </span>B[&quot;*WebService*&quot;]
+<span class="w">    </span>A<span class="w"> </span>--&gt;<span class="w"> </span>C[&quot;<span class="nt">&lt;b&gt;</span>Hooks:<span class="nt">&lt;/b&gt;&lt;br/&gt;</span>•<span class="w"> </span>ON_INIT<span class="nt">&lt;br/&gt;</span>•<span class="w"> </span>ON_CLEANUP&quot;]
+<span class="w">    </span>B<span class="w"> </span>--&gt;<span class="w"> </span>D[&quot;<span class="nt">&lt;b&gt;</span>Inherited<span class="w"> </span>Hooks:<span class="nt">&lt;/b&gt;&lt;br/&gt;</span>•<span class="w"> </span>ON_INIT<span class="nt">&lt;br/&gt;</span>•<span class="w"> </span>ON_CLEANUP<span class="nt">&lt;br/&gt;&lt;br/&gt;&lt;b&gt;</span>Added<span class="w"> </span>Hook:<span class="nt">&lt;/b&gt;&lt;br/&gt;</span>•<span class="w"> </span>ON_START&quot;]
+
+<span class="w">    </span>E[&quot;Hook<span class="w"> </span>Execution<span class="nt">&lt;br/&gt;</span>Order&quot;]<span class="w"> </span>--&gt;<span class="w"> </span>F[&quot;base_init()&quot;]
+<span class="w">    </span>F<span class="w"> </span>--&gt;<span class="w"> </span>G[&quot;web_init()&quot;]
+
+<span class="w">    </span>%%<span class="w"> </span>Styling<span class="w"> </span>for<span class="w"> </span>better<span class="w"> </span>visibility
+<span class="w">    </span>style<span class="w"> </span>A<span class="w"> </span>fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000
+<span class="w">    </span>style<span class="w"> </span>B<span class="w"> </span>fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
+<span class="w">    </span>style<span class="w"> </span>C<span class="w"> </span>fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:#000
+<span class="w">    </span>style<span class="w"> </span>D<span class="w"> </span>fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
+<span class="w">    </span>style<span class="w"> </span>E<span class="w"> </span>fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
+<span class="w">    </span>style<span class="w"> </span>F<span class="w"> </span>fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000
+<span class="w">    </span>style<span class="w"> </span>G<span class="w"> </span>fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000
+
+<span class="w">    </span>%%<span class="w"> </span>Better<span class="w"> </span>arrow<span class="w"> </span>styling
+<span class="w">    </span>linkStyle<span class="w"> </span>0<span class="w"> </span>stroke:#666,stroke-width:2px
+<span class="w">    </span>linkStyle<span class="w"> </span>1<span class="w"> </span>stroke:#666,stroke-width:2px
+<span class="w">    </span>linkStyle<span class="w"> </span>2<span class="w"> </span>stroke:#666,stroke-width:2px
+<span class="w">    </span>linkStyle<span class="w"> </span>3<span class="w"> </span>stroke:#666,stroke-width:2px
+<span class="w">    </span>linkStyle<span class="w"> </span>4<span class="w"> </span>stroke:#666,stroke-width:2px
+</code></pre></div>
+
+<h2 id="hook-registration-and-execution-order">Hook Registration and Execution Order<a class="headerlink" href="#hook-registration-and-execution-order" title="Permanent link">&para;</a></h2>
+<p>Hooks are registered in a <strong>predictable, deterministic order</strong> that ensures proper initialization flow:</p>
+<h3 id="1-across-classes-base-derived">1. <strong>Across Classes</strong>: Base → Derived<a class="headerlink" href="#1-across-classes-base-derived" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">BaseService</span><span class="p">(</span><span class="n">HooksMixin</span><span class="p">):</span>
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">base_setup</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>        <span class="c1"># Registered 1st</span>
+        <span class="k">pass</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MyService</span><span class="p">(</span><span class="n">BaseService</span><span class="p">):</span>
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">service_setup</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>     <span class="c1"># Registered 2nd</span>
+        <span class="k">pass</span>
+</code></pre></div>
+
+<h3 id="2-within-classes-definition-order">2. <strong>Within Classes</strong>: Definition Order<a class="headerlink" href="#2-within-classes-definition-order" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MyService</span><span class="p">(</span><span class="n">BaseService</span><span class="p">):</span>
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">setup_database</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>    <span class="c1"># Registered 1st</span>
+        <span class="k">pass</span>
+
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">setup_cache</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>       <span class="c1"># Registered 2nd</span>
+        <span class="k">pass</span>
+
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">setup_metrics</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>     <span class="c1"># Registered 3rd</span>
+        <span class="k">pass</span>
+</code></pre></div>
+
+<blockquote>
+<p>💡 <strong>Key Point</strong>: Base class hooks always run before derived class hooks, ensuring that foundational components (communication, signals) are initialized before service-specific functionality.</p>
+<p>⚠️ <strong>Important</strong>: To maintain this execution order, you must use <code>run_hooks()</code> (serial execution). Using <code>run_hooks_async()</code> runs hooks concurrently and <strong>does not guarantee execution order</strong>, even though registration order is still deterministic.</p>
+</blockquote>
+<div class="codehilite"><pre><span></span><code><span class="c1"># ✅ Preserves execution order (serial)</span>
+<span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">)</span>
+
+<span class="c1"># ❌ No execution order guarantee (concurrent)</span>
+<span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks_async</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="advanced-features">Advanced Features<a class="headerlink" href="#advanced-features" title="Permanent link">&para;</a></h2>
+<h3 id="runtime-hook-registration">Runtime Hook Registration<a class="headerlink" href="#runtime-hook-registration" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="n">service</span> <span class="o">=</span> <span class="n">MyService</span><span class="p">()</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">custom_monitoring_hook</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">send_metrics_to_monitoring_system</span><span class="p">()</span>
+
+<span class="c1"># Register hook at runtime using class instance</span>
+<span class="n">service</span><span class="o">.</span><span class="n">register_hook</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_START</span><span class="p">,</span> <span class="n">custom_monitoring_hook</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="serial-vs-concurrent-execution">Serial vs Concurrent Execution<a class="headerlink" href="#serial-vs-concurrent-execution" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Serial execution (hooks run one after another). Each one is awaited individually.</span>
+<span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">)</span>
+
+<span class="c1"># Concurrent execution (all hooks run simultaneously and are gathered at the end)</span>
+<span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks_async</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="error-handling">Error Handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h2>
+<h3 id="unsupported-hook-error">Unsupported Hook Error<a class="headerlink" href="#unsupported-hook-error" title="Permanent link">&para;</a></h3>
+<p>When a hook decorator is defined on a function within a class that does not support that hook type, an exception is raised. The reason for this is to cause traceability and prevent users from trying to hook into a functionality that is not implemented.</p>
+<div class="codehilite"><pre><span></span><code><span class="nd">@supports_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LimitedService</span><span class="p">(</span><span class="n">HooksMixin</span><span class="p">):</span>
+    <span class="nd">@on_start</span>  <span class="c1"># This will raise UnsupportedHookError</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">invalid_hook</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">pass</span>
+</code></pre></div>
+
+<h3 id="multi-error-handling">Multi-Error Handling<a class="headerlink" href="#multi-error-handling" title="Permanent link">&para;</a></h3>
+<p>When multiple hooks fail, the system collects all errors:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">try</span><span class="p">:</span>
+    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">AIPerfMultiError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">error</span> <span class="ow">in</span> <span class="n">e</span><span class="o">.</span><span class="n">errors</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Hook failed: </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
+<h3 id="1-hook-naming-convention">1. Hook Naming Convention<a class="headerlink" href="#1-hook-naming-convention" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MyService</span><span class="p">(</span><span class="n">BaseService</span><span class="p">):</span>
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_initialize_database</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>  <span class="c1"># Prefix with underscore</span>
+        <span class="k">pass</span>
+
+    <span class="nd">@on_cleanup</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_cleanup_connections</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>  <span class="c1"># Descriptive names</span>
+        <span class="k">pass</span>
+</code></pre></div>
+
+<h3 id="2-resource-management">2. Resource Management<a class="headerlink" href="#2-resource-management" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="nd">@on_init</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_setup_resources</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">resources</span> <span class="o">=</span> <span class="p">[]</span>
+
+<span class="nd">@on_cleanup</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_cleanup_resources</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">resource</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">resources</span><span class="p">):</span>  <span class="c1"># LIFO cleanup</span>
+        <span class="k">await</span> <span class="n">resource</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+
+<h3 id="3-error-isolation">3. Error Isolation<a class="headerlink" href="#3-error-isolation" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="nd">@on_init</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_safe_initialization</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">risky_operation</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Non-critical init failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="c1"># Don&#39;t re-raise if operation is optional</span>
+</code></pre></div>
+
+<h2 id="performance-considerations">Performance Considerations<a class="headerlink" href="#performance-considerations" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Concurrent execution</strong>: Use <code>run_hooks_async()</code> for independent hooks</li>
+<li><strong>Serial execution</strong>: Use <code>run_hooks()</code> when hooks have dependencies (ie. base class hooks must be called before subclass hooks)</li>
+<li><strong>Hook registration</strong>: Happens once during <code>__init__</code>, minimal overhead</li>
+<li><strong>Memory usage</strong>: Hooks are stored as method references bound to self, not duplicated</li>
+</ul>
+<p>The AIPerf Hook System provides a robust foundation for building extensible, maintainable services with clear lifecycle management and event-driven architecture patterns.</p>
+<h2 id="the-special-aiperf_task-decorator">The Special <code>@aiperf_task</code> Decorator<a class="headerlink" href="#the-special-aiperf_task-decorator" title="Permanent link">&para;</a></h2>
+<p>The <code>@aiperf_task</code> decorator is unique among the AIPerf hooks because it doesn't follow the typical hook execution pattern. Instead of being executed at specific lifecycle moments like other hooks, functions decorated with <code>@aiperf_task</code> are <strong>automatically registered as long-running background tasks</strong> that start when the service initializes and run continuously until the service shuts down.</p>
+<h3 id="how-aiperf_task-works">How <code>@aiperf_task</code> Works<a class="headerlink" href="#how-aiperf_task-works" title="Permanent link">&para;</a></h3>
+<p>The <code>@aiperf_task</code> decorator works through the <code>AIPerfTaskMixin</code> class, which provides automatic task lifecycle management:</p>
+<ol>
+<li><strong>Discovery</strong>: All methods decorated with <code>@aiperf_task</code> are discovered during class initialization</li>
+<li><strong>Automatic Startup</strong>: Tasks are automatically started during the <code>ON_INIT</code> hook phase</li>
+<li><strong>Registration</strong>: Each task is created using <code>asyncio.create_task()</code> and stored in <code>registered_tasks</code></li>
+<li><strong>Automatic Shutdown</strong>: Tasks are cancelled and cleaned up during the <code>ON_STOP</code> hook phase</li>
+</ol>
+<h3 id="using-aiperftaskmixin">Using <code>AIPerfTaskMixin</code><a class="headerlink" href="#using-aiperftaskmixin" title="Permanent link">&para;</a></h3>
+<p>To use <code>@aiperf_task</code> decorated methods, your class must inherit from <code>AIPerfTaskMixin</code>:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">AIPerfTaskMixin</span><span class="p">,</span> <span class="n">aiperf_task</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">BackgroundService</span><span class="p">(</span><span class="n">AIPerfTaskMixin</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">metrics</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>  <span class="c1"># Important: call super().__init__()</span>
+
+    <span class="nd">@aiperf_task</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_monitor_system_health</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Continuously monitor system health metrics.&quot;&quot;&quot;</span>
+        <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="c1"># Collect system metrics</span>
+                <span class="n">cpu_usage</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_cpu_usage</span><span class="p">()</span>
+                <span class="n">memory_usage</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_memory_usage</span><span class="p">()</span>
+
+                <span class="bp">self</span><span class="o">.</span><span class="n">metrics</span><span class="o">.</span><span class="n">update</span><span class="p">({</span>
+                    <span class="s1">&#39;cpu&#39;</span><span class="p">:</span> <span class="n">cpu_usage</span><span class="p">,</span>
+                    <span class="s1">&#39;memory&#39;</span><span class="p">:</span> <span class="n">memory_usage</span><span class="p">,</span>
+                    <span class="s1">&#39;timestamp&#39;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+                <span class="p">})</span>
+
+                <span class="c1"># Check if metrics exceed thresholds</span>
+                <span class="k">if</span> <span class="n">cpu_usage</span> <span class="o">&gt;</span> <span class="mi">90</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;High CPU usage: </span><span class="si">{</span><span class="n">cpu_usage</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+
+                <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>  <span class="c1"># Poll every 5 seconds</span>
+
+            <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Health monitoring task cancelled&quot;</span><span class="p">)</span>
+                <span class="k">break</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Error in health monitoring: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Manual lifecycle control</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">start_service</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Start the service and all background tasks.&quot;&quot;&quot;</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">)</span>  <span class="c1"># This starts all @aiperf_task methods</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop_service</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Stop the service and all background tasks.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">set</span><span class="p">()</span>  <span class="c1"># Signal tasks to stop</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_STOP</span><span class="p">)</span>   <span class="c1"># This cancels and waits for all tasks</span>
+</code></pre></div>
+
+<h3 id="key-differences-from-other-hooks">Key Differences from Other Hooks<a class="headerlink" href="#key-differences-from-other-hooks" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Regular Hooks (<code>@on_init</code>, <code>@on_start</code>, etc.)</th>
+<th><code>@aiperf_task</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Execution</strong></td>
+<td>Called once at specific lifecycle events</td>
+<td>Run continuously as background tasks</td>
+</tr>
+<tr>
+<td><strong>Lifecycle</strong></td>
+<td>Short-lived, return after completion</td>
+<td>Long-lived, run until service shutdown</td>
+</tr>
+<tr>
+<td><strong>Cancellation</strong></td>
+<td>Not applicable</td>
+<td>Automatically cancelled on service stop</td>
+</tr>
+<tr>
+<td><strong>Purpose</strong></td>
+<td>Setup, teardown, event handling</td>
+<td>Background processing, monitoring, polling</td>
+</tr>
+<tr>
+<td><strong>Mixin Required</strong></td>
+<td><code>HooksMixin</code></td>
+<td><code>AIPerfTaskMixin</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="task-lifecycle-management">Task Lifecycle Management<a class="headerlink" href="#task-lifecycle-management" title="Permanent link">&para;</a></h3>
+<p>The <code>AIPerfTaskMixin</code> handles the complete lifecycle of <code>@aiperf_task</code> decorated methods:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">AIPerfTaskMixin</span><span class="p">(</span><span class="n">HooksMixin</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">registered_tasks</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Task</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="nd">@on_init</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_start_tasks</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Start all the registered tasks.&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">hook</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">AIPERF_TASK</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">registered_tasks</span><span class="p">[</span><span class="n">hook</span><span class="o">.</span><span class="vm">__name__</span><span class="p">]</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">hook</span><span class="p">())</span>
+
+    <span class="nd">@on_stop</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_stop_tasks</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Stop all the registered tasks.&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">registered_tasks</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="n">task</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
+
+        <span class="c1"># Wait for all tasks to complete</span>
+        <span class="k">with</span> <span class="n">contextlib</span><span class="o">.</span><span class="n">suppress</span><span class="p">(</span><span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">):</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">registered_tasks</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+</code></pre></div>
+
+<h3 id="best-practices-for-aiperf_task">Best Practices for <code>@aiperf_task</code><a class="headerlink" href="#best-practices-for-aiperf_task" title="Permanent link">&para;</a></h3>
+<h4 id="1-always-handle-cancellation">1. <strong>Always Handle Cancellation</strong><a class="headerlink" href="#1-always-handle-cancellation" title="Permanent link">&para;</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="nd">@aiperf_task</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_background_worker</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+            <span class="k">await</span> <span class="n">do_work</span><span class="p">()</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+        <span class="c1"># Perform cleanup if necessary</span>
+        <span class="k">await</span> <span class="n">cleanup_resources</span><span class="p">()</span>
+        <span class="k">raise</span>  <span class="c1"># Re-raise to properly cancel the task</span>
+</code></pre></div>
+
+<h4 id="2-use-stop-events-for-graceful-shutdown">2. <strong>Use Stop Events for Graceful Shutdown</strong><a class="headerlink" href="#2-use-stop-events-for-graceful-shutdown" title="Permanent link">&para;</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="nd">@aiperf_task</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_poller</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">poll_external_service</span><span class="p">()</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+            <span class="k">break</span>
+</code></pre></div>
+
+<h4 id="3-include-error-handling-and-recovery">3. <strong>Include Error Handling and Recovery</strong><a class="headerlink" href="#3-include-error-handling-and-recovery" title="Permanent link">&para;</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="nd">@aiperf_task</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_resilient_worker</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="n">retry_count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">max_retries</span> <span class="o">=</span> <span class="mi">3</span>
+
+    <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">potentially_failing_operation</span><span class="p">()</span>
+            <span class="n">retry_count</span> <span class="o">=</span> <span class="mi">0</span>  <span class="c1"># Reset on success</span>
+
+        <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+            <span class="k">break</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">retry_count</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="n">retry_count</span> <span class="o">&gt;</span> <span class="n">max_retries</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Task failed </span><span class="si">{</span><span class="n">max_retries</span><span class="si">}</span><span class="s2"> times, stopping&quot;</span><span class="p">)</span>
+                <span class="k">break</span>
+
+            <span class="n">backoff_time</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="mi">2</span> <span class="o">**</span> <span class="n">retry_count</span><span class="p">,</span> <span class="mi">60</span><span class="p">)</span>  <span class="c1"># Exponential backoff</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">backoff_time</span><span class="p">)</span>
+</code></pre></div>
+
+<h4 id="4-avoid-blocking-operations">4. <strong>Avoid Blocking Operations</strong><a class="headerlink" href="#4-avoid-blocking-operations" title="Permanent link">&para;</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="nd">@aiperf_task</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_file_processor</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="c1"># Use asyncio.to_thread for blocking I/O</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">to_thread</span><span class="p">(</span><span class="n">cpu_intensive_operation</span><span class="p">)</span>
+            <span class="k">await</span> <span class="n">process_result</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+
+        <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+            <span class="k">break</span>
+</code></pre></div>
+
+<h3 id="real-world-use-cases">Real-World Use Cases<a class="headerlink" href="#real-world-use-cases" title="Permanent link">&para;</a></h3>
+<h4 id="network-communication-tasks"><strong>Network Communication Tasks</strong><a class="headerlink" href="#network-communication-tasks" title="Permanent link">&para;</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="nd">@aiperf_task</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_message_receiver</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Continuously receive messages from ZMQ socket.&quot;&quot;&quot;</span>
+    <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_shutdown</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">message</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">socket</span><span class="o">.</span><span class="n">recv_string</span><span class="p">()</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">handle_message</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+            <span class="k">break</span>
+</code></pre></div>
+
+<h4 id="periodic-maintenance-tasks"><strong>Periodic Maintenance Tasks</strong><a class="headerlink" href="#periodic-maintenance-tasks" title="Permanent link">&para;</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="nd">@aiperf_task</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_cleanup_old_files</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Clean up old log files every hour.&quot;&quot;&quot;</span>
+    <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">cleanup_logs_older_than</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">7</span><span class="p">)</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">3600</span><span class="p">)</span>  <span class="c1"># Wait 1 hour</span>
+        <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+            <span class="k">break</span>
+</code></pre></div>
+
+<h4 id="health-check-and-heartbeat-tasks"><strong>Health Check and Heartbeat Tasks</strong><a class="headerlink" href="#health-check-and-heartbeat-tasks" title="Permanent link">&para;</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="nd">@aiperf_task</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_send_heartbeat</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Send periodic heartbeat messages.&quot;&quot;&quot;</span>
+    <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">heartbeat</span> <span class="o">=</span> <span class="n">HeartbeatMessage</span><span class="p">(</span>
+                <span class="n">service_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">service_id</span><span class="p">,</span>
+                <span class="n">timestamp</span><span class="o">=</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">(),</span>
+                <span class="n">status</span><span class="o">=</span><span class="s2">&quot;healthy&quot;</span>
+            <span class="p">)</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">publish_heartbeat</span><span class="p">(</span><span class="n">heartbeat</span><span class="p">)</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">heartbeat_interval</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+            <span class="k">break</span>
+</code></pre></div>
+
+<h3 id="task-registry-and-debugging">Task Registry and Debugging<a class="headerlink" href="#task-registry-and-debugging" title="Permanent link">&para;</a></h3>
+<p>All <code>@aiperf_task</code> decorated methods are stored in <code>self.registered_tasks</code> with their function name as the key:</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Access running tasks programmatically</span>
+<span class="k">for</span> <span class="n">task_name</span><span class="p">,</span> <span class="n">task</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">registered_tasks</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Task </span><span class="si">{</span><span class="n">task_name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="s1">&#39;running&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="ow">not</span><span class="w"> </span><span class="n">task</span><span class="o">.</span><span class="n">done</span><span class="p">()</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;finished&#39;</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Check if a specific task is running</span>
+<span class="k">if</span> <span class="s1">&#39;_monitor_system_health&#39;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">registered_tasks</span><span class="p">:</span>
+    <span class="n">task</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">registered_tasks</span><span class="p">[</span><span class="s1">&#39;_monitor_system_health&#39;</span><span class="p">]</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">task</span><span class="o">.</span><span class="n">done</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Health monitoring is active&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="integration-with-services">Integration with Services<a class="headerlink" href="#integration-with-services" title="Permanent link">&para;</a></h3>
+<p>When using with AIPerf services that inherit from <code>BaseService</code>, the lifecycle is automatically managed:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.service.base_service</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseService</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MyService</span><span class="p">(</span><span class="n">BaseService</span><span class="p">):</span>  <span class="c1"># BaseService inherits from AIPerfTaskMixin</span>
+    <span class="nd">@aiperf_task</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_background_processor</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">process_work</span><span class="p">()</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Tasks will automatically start when service initializes</span>
+    <span class="c1"># Tasks will automatically stop when service shuts down</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>
