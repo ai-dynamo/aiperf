@@ -18,6 +18,7 @@ from aiperf.common.decorators import (
 )
 from aiperf.common.enums import ServiceRunType, ServiceType
 from aiperf.common.exceptions import ConfigError
+from aiperf.common.factories import ServiceFactory
 from aiperf.common.models import BasePayload
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.services.worker.worker import Worker
@@ -30,6 +31,7 @@ class WorkerProcess(BaseModel):
     process: Any = Field(None, description="Process object or task")
 
 
+@ServiceFactory.register(ServiceType.WORKER_MANAGER)
 class WorkerManager(BaseComponentService):
     """
     The WorkerManager service is primary responsibility is to pull data from the dataset manager

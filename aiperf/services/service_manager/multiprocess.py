@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceRegistrationStatus, ServiceType
+from aiperf.common.factories import ServiceFactory
 from aiperf.services.service_manager.base import BaseServiceManager
 
 
@@ -38,28 +39,9 @@ class MultiProcessServiceManager(BaseServiceManager):
         """Start all required services as multiprocessing processes."""
         self.logger.debug("Starting all required services as multiprocessing processes")
 
-        # TODO: This is a hack to get the service classes
-        # TODO: We should find a better way to do this
-        from aiperf.services.dataset import DatasetManager
-        from aiperf.services.post_processor_manager import PostProcessorManager
-        from aiperf.services.records_manager import RecordsManager
-        from aiperf.services.timing_manager import TimingManager
-        from aiperf.services.worker_manager import WorkerManager
-
-        service_class_map = {
-            ServiceType.DATASET_MANAGER: DatasetManager,
-            ServiceType.TIMING_MANAGER: TimingManager,
-            ServiceType.WORKER_MANAGER: WorkerManager,
-            ServiceType.RECORDS_MANAGER: RecordsManager,
-            ServiceType.POST_PROCESSOR_MANAGER: PostProcessorManager,
-        }
-
         # Create and start all service processes
         for service_type in self.required_service_types:
-            service_class = service_class_map.get(service_type)
-            if not service_class:
-                self.logger.error(f"No service class found for {service_type}")
-                continue
+            service_class = ServiceFactory.get_class_from_type(service_type)
 
             process = Process(
                 target=bootstrap_and_run_service,
