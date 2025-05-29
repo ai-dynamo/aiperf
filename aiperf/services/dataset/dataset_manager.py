@@ -11,10 +11,12 @@ from aiperf.common.decorators import (
     on_stop,
 )
 from aiperf.common.enums import ServiceType
+from aiperf.common.factories import ServiceFactory
 from aiperf.common.models import BasePayload
 from aiperf.common.service.base_component_service import BaseComponentService
 
 
+@ServiceFactory.register(ServiceType.DATASET_MANAGER)
 class DatasetManager(BaseComponentService):
     """
     The DatasetManager primary responsibility is to manage the data generation or acquisition.

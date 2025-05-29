@@ -15,10 +15,12 @@ from aiperf.common.decorators import (
     on_stop,
 )
 from aiperf.common.enums import ServiceState, ServiceType, Topic
+from aiperf.common.factories import ServiceFactory
 from aiperf.common.models import BasePayload, CreditDropPayload, Message
 from aiperf.common.service.base_component_service import BaseComponentService
 
 
+@ServiceFactory.register(ServiceType.TIMING_MANAGER)
 class TimingManager(BaseComponentService):
     """
     The TimingManager service is responsible to generate the schedule and issuing

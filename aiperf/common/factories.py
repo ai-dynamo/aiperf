@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     )
     from aiperf.common.enums import (
         CommunicationBackend,  # noqa: F401 - for type checking
+        ServiceType,  # noqa: F401 - for type checking
+    )
+    from aiperf.common.service.base_service import (
+        BaseService,  # noqa: F401 - for type checking
     )
 
 ClassEnumT = TypeVar("ClassEnumT", bound=StrEnum, infer_variance=True)
@@ -144,15 +148,15 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
     def create_instance(
         cls,
         class_type: ClassEnumT | str,
-        config: Any | None = None,
+        *args: Any,
         **kwargs: Any,
     ) -> ClassProtocolT:
         """Create a new class instance.
 
         Args:
             class_type: The type of class to create
-            config: The configuration for the class
-            **kwargs: Additional arguments for the class
+            *args: Positional arguments for the class
+            **kwargs: Keyword arguments for the class
 
         Returns:
             The created class instance
@@ -163,11 +167,30 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
         if class_type not in cls._registry:
             raise FactoryCreationError(f"No implementation found for {class_type!r}.")
         try:
-            return cls._registry[class_type](config=config, **kwargs)
+            return cls._registry[class_type](*args, **kwargs)
         except Exception as e:
             raise FactoryCreationError(
                 f"Error creating {class_type!r} instance: {e}"
             ) from e
+
+    @classmethod
+    def get_class_from_type(cls, class_type: ClassEnumT | str) -> type[ClassProtocolT]:
+        """Get the class from a class type.
+
+        Args:
+            class_type: The class type to get the class from
+
+        Returns:
+            The class for the given class type
+
+        Raises:
+            TypeError: If the class type is not registered
+        """
+        if class_type not in cls._registry:
+            raise TypeError(
+                f"No class found for {class_type!r}. Please register the class first."
+            )
+        return cls._registry[class_type]
 
 
 ################################################################################
@@ -191,4 +214,22 @@ class CommunicationFactory(FactoryMixin["CommunicationBackend", "BaseCommunicati
             config=ZMQTCPCommunicationConfig(
                 host="localhost", port=5555, timeout=10.0),
         )
+    """
+
+
+class ServiceFactory(FactoryMixin["ServiceType", "BaseService"]):
+    """Factory for registering and creating BaseService instances based on the specified service type.
+
+    Example:
+    ```python
+        # Register a new service type
+        @ServiceFactory.register(ServiceType.DATASET_MANAGER)
+        class DatasetManager(BaseService):
+            pass
+
+        # Create a new service instance
+        service = ServiceFactory.create_instance(
+            ServiceType.DATASET_MANAGER,
+        )
+    ```
     """
