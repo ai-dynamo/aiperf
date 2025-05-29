@@ -7,11 +7,9 @@ import signal
 import uuid
 from abc import ABC
 
-import setproctitle
-
-from aiperf.common.comms.base import BaseCommunication, CommunicationFactory
+from aiperf.common.comms.base import BaseCommunication
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import ServiceState
+from aiperf.common.enums import CommunicationBackend, ServiceState
 from aiperf.common.exceptions import (
     AIPerfMultiError,
     CommunicationClientCreationError,
@@ -24,6 +22,8 @@ from aiperf.common.exceptions import (
 )
 from aiperf.common.hooks import AIPerfHook, AIPerfTaskMixin, supports_hooks
 from aiperf.common.models import BaseMessage, Message, Payload
+from aiperf.common.factories import CommunicationFactory
+from aiperf.common.models import BaseMessage, Message, Payload, ZMQCommunicationConfig
 from aiperf.common.service.base_service_interface import BaseServiceInterface
 
 
@@ -70,10 +70,11 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         # Set to store signal handler tasks
         self._signal_tasks = set()
 
-        # noinspection PyBroadException
         try:
+            import setproctitle
+
             setproctitle.setproctitle(f"aiperf {self.service_id}")
-        except:  # noqa: E722
+        except Exception:
             # setproctitle is not available on all platforms, so we ignore the error
             self.logger.debug("Failed to set process title, ignoring")
 
@@ -148,7 +149,10 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
 
         # Initialize communication
         try:
-            self._comms = CommunicationFactory.create_communication(self.service_config)
+            self._comms = CommunicationFactory.create_instance(
+                self.service_config.comm_backend,
+                config=self.service_config.comm_config,
+            )
         except Exception as e:
             self.logger.exception(
                 "Failed to create communication for service %s (id: %s)",

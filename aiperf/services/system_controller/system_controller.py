@@ -29,6 +29,7 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
+from aiperf.common.factories import ServiceFactory
 from aiperf.common.models import (
     HeartbeatMessage,
     RegistrationMessage,
@@ -41,7 +42,14 @@ from aiperf.services.service_manager.kubernetes import KubernetesServiceManager
 from aiperf.services.service_manager.multiprocess import MultiProcessServiceManager
 
 
+@ServiceFactory.register(ServiceType.SYSTEM_CONTROLLER)
 class SystemController(BaseControllerService):
+    """System Controller service.
+
+    This service is responsible for managing the lifecycle of all other services.
+    It will start, stop, and configure all other services.
+    """
+
     def __init__(
         self, service_config: ServiceConfig, service_id: str | None = None
     ) -> None:

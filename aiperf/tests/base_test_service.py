@@ -45,7 +45,7 @@ class BaseTestService(ABC):
         This ensures no real communication is attempted during tests.
         """
         with patch(
-            "aiperf.common.comms.base.CommunicationFactory.create_communication",
+            "aiperf.common.factories.CommunicationFactory.create_instance",
             return_value=mock_communication,
         ):
             yield

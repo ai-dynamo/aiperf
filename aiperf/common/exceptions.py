@@ -80,14 +80,6 @@ class CommunicationCreateError(CommunicationError):
     """Exception raised when communication channels fail to create a client."""
 
 
-class CommunicationTypeUnknownError(CommunicationError):
-    """Exception raised when the communication type is unknown."""
-
-
-class CommunicationTypeAlreadyRegisteredError(CommunicationError):
-    """Exception raised when the communication type is already registered."""
-
-
 ################################################################################
 # Configuration Exceptions
 ################################################################################
@@ -198,3 +190,12 @@ class TokenizerInitializationError(TokenizerError):
 
 class UnsupportedHookError(AIPerfError):
     """Exception raised when a hook is defined on a class that does not support it."""
+
+
+################################################################################
+# Factory Exceptions
+################################################################################
+
+
+class FactoryCreationError(AIPerfError):
+    """Exception raised when a factory encounters an error while creating a class."""
