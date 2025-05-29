@@ -347,6 +347,9 @@ class AIPerfTaskMixin(HooksMixin):
     start and stop the tasks.
     """
 
+    # TODO: Once we create a Mixin for `self.stop_event`, we can avoid
+    # having the user to call `while not self.stop_event.is_set()`
+
     def __init__(self):
         super().__init__()
         self.registered_tasks: dict[str, asyncio.Task] = {}

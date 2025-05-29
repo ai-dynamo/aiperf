@@ -4,6 +4,8 @@
 -->
 # AIPerf Hook System
 
+> **TODO: Once we create a Mixin for self.stop_event, we can avoid having the user to call `while not self.stop_event.is_set()`**
+
 The AIPerf Hook System provides a powerful, extensible mechanism for implementing lifecycle management and event-driven programming patterns. It enables clean separation of concerns by allowing components to register callbacks that execute at specific points during service execution.
 
 ## Core Components
