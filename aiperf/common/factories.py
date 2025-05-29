@@ -20,13 +20,9 @@ if TYPE_CHECKING:
         BaseService,  # noqa: F401 - for type checking
     )
 
-ClassEnumT = TypeVar("ClassEnumT", bound=StrEnum, infer_variance=True)
-ClassProtocolT = TypeVar("ClassProtocolT", bound=Any, infer_variance=True)
+ClassEnumT = TypeVar("ClassEnumT", bound=StrEnum)
+ClassProtocolT = TypeVar("ClassProtocolT", bound=Any)
 
-__all__ = [
-    "FactoryMixin",
-    "CommunicationFactory",
-]
 
 ################################################################################
 # Generic Base Factory Mixin
@@ -227,9 +223,14 @@ class ServiceFactory(FactoryMixin["ServiceType", "BaseService"]):
         class DatasetManager(BaseService):
             pass
 
-        # Create a new service instance
-        service = ServiceFactory.create_instance(
-            ServiceType.DATASET_MANAGER,
+        # Create a new service instance in a separate process
+        service_class = ServiceFactory.get_class_from_type(service_type)
+
+        process = Process(
+            target=bootstrap_and_run_service,
+            name=f"{service_type}_process",
+            args=(service_class, self.config),
+            daemon=False,
         )
     ```
     """
