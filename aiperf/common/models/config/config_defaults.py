@@ -84,7 +84,7 @@ class InputDefaults:
     EXTRA = ""
     GOODPUT = {}
     HEADER = ""
-    FILE = ""
+    FILE = None
     NUM_DATASET_ENTRIES = 100
     RANDOM_SEED = 0
 

@@ -112,7 +112,7 @@ def parse_goodput(goodputs: Dict[str, Any]) -> Dict[str, float]:
     return constraints
 
 
-def parse_file(value: str) -> Optional[Path]:
+def parse_file(value: Optional[str]) -> Optional[Path]:
     """
     Parses the given string value and returns a Path object if the value represents
     a valid file, directory, or a specific synthetic/payload format. Returns None if
@@ -128,6 +128,8 @@ def parse_file(value: str) -> Optional[Path]:
 
     if not value:
         return None
+    elif not isinstance(value, str):
+        raise ValueError(f"Expected a string, but got {type(value).__name__}")
     elif value.startswith("synthetic:") or value.startswith("payload"):
         return Path(value)
     else:
