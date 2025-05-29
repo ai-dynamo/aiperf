@@ -12,10 +12,25 @@ class StrEnum(str, Enum):
 
     Using this as a base class allows enum values to be used directly as
     strings without having to use .value.
+
+    Example:
+        >>> class Pet(StrEnum):
+        ...     DOG = "dog"
+        ...     CAT = "cat"
+        ...
+        >>> Pet.DOG
+        'dog'
+        >>> print(f"{Pet.DOG}")
+        'dog'
+        >>> print(f"{Pet.DOG!r}")
+        'Pet.DOG'
     """
 
     def __str__(self) -> str:
         return self.value
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}.{self.name}"
 
 
 ################################################################################

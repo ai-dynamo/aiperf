@@ -201,3 +201,12 @@ class TokenizerError(AIPerfError):
 
 class TokenizerInitializationError(TokenizerError):
     """Exception raised for errors during tokenizer initialization."""
+
+
+################################################################################
+# Factory Exceptions
+################################################################################
+
+
+class FactoryCreationError(AIPerfError):
+    """Exception raised when a factory encounters an error while creating a class."""
