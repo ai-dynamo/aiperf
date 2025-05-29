@@ -196,6 +196,7 @@ def supports_hooks(
                 base, HooksMixin
             )  # Only include classes that inherit from HooksMixin
         ]
+
         # Set the supported hooks to be the union of the existing base hooks and the new supported hook types.
         cls.supported_hooks = set.union(*base_hooks, set(supported_hook_types))
         return cls
