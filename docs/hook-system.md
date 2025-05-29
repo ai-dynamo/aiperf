@@ -109,7 +109,8 @@ class MyHookService(HooksMixin):
 
     async def initialize(self):
         """Runs all of the registered ON_INIT hooks"""
-        await self.run_hooks_async(AIPerfHook.ON_INIT)
+        # Note: Using run_hooks without the _async will run them serially
+        await self.run_hooks(AIPerfHook.ON_INIT)
 
     async def cleanup(self):
         """Runs all of the registered ON_CLEANUP hooks"""
@@ -144,23 +145,44 @@ class CustomService(MyHookService):
 
 ```mermaid
 sequenceDiagram
-    participant Client
-    participant CustomService
-    participant MyHookService
-    participant HooksMixin
+    participant C as 📱 Client
+    participant CS as 🔧 CustomService
+    participant MHS as ⚙️ MyHookService
+    participant HM as 🎯 HooksMixin
 
-    MyHookService-->>HooksMixin: @supported_hooks(AIPerfHook.ON_INIT, ...)
-    CustomService-->>HooksMixin: @on_init registration
-    Client->>MyHookService: initialize()
-    MyHookService->>HooksMixin: run_hooks_async(ON_INIT)
+    Note over C, HM: Hook System Setup & Registration
+    MHS-->>HM: 📋 @supports_hooks(AIPerfHook.ON_INIT, ...)
+    CS-->>HM: 🔗 @on_init (registration)
 
-    loop For each registered hook
-        HooksMixin->>CustomService: Execute hook function
+    Note over C, HM: Hook Execution Flow
+    C->>+MHS: 🚀 initialize()
+    MHS->>+HM: ⚡ run_hooks_async(ON_INIT)
+
+    Note over HM: Parallel Hook Execution
+    loop 🔄 For each registered hook
+        HM->>+CS: 🎬 Execute hook function
+        CS-->>-HM: ✅ Hook completed
     end
-    CustomService-->>HooksMixin: Await all hooks completion
 
-    HooksMixin->>MyHookService: All hooks completed
-    MyHookService->>Client: Initialization complete
+    HM-->>-MHS: 🏁 All hooks completed
+    MHS-->>-C: ✨ Initialization complete
+
+    %% Custom styling for better visibility
+    %%{init: {
+        'theme': 'dark',
+        'themeVariables': {
+            'primaryColor': '#2196f3',
+            'primaryTextColor': '#ffffff',
+            'primaryBorderColor': '#1976d2',
+            'lineColor': '#90a4ae',
+            'secondaryColor': '#9c27b0',
+            'tertiaryColor': '#4caf50',
+            'background': '#263238',
+            'noteTextColor': '#ffffff',
+            'noteBkgColor': '#37474f',
+            'noteBorderColor': '#546e7a'
+        }
+    }}%%
 ```
 
 ### Inheritance and Hook Composition
@@ -187,15 +209,28 @@ class WebService(BaseService):
 
 ```mermaid
 graph TD
-    A[BaseService] --> B[WebService]
-    A --> C["Hooks: ON_INIT, ON_CLEANUP"]
-    B --> D["Inherited: ON_INIT, ON_CLEANUP<br/>Added: ON_START"]
+    A["**BaseService**"] --> B["*WebService*"]
+    A --> C["<b>Hooks:</b><br/>• ON_INIT<br/>• ON_CLEANUP"]
+    B --> D["<b>Inherited Hooks:</b><br/>• ON_INIT<br/>• ON_CLEANUP<br/><br/><b>Added Hook:</b><br/>• ON_START"]
 
-    E[Hook Execution Order] --> F[base_init]
-    F --> G[web_init]
+    E["Hook Execution<br/>Order"] --> F["base_init()"]
+    F --> G["web_init()"]
 
-    style C fill:#e1f5fe
-    style D fill:#f3e5f5
+    %% Styling for better visibility
+    style A fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000
+    style B fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
+    style C fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:#000
+    style D fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
+    style E fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
+    style F fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000
+    style G fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000
+
+    %% Better arrow styling
+    linkStyle 0 stroke:#666,stroke-width:2px
+    linkStyle 1 stroke:#666,stroke-width:2px
+    linkStyle 2 stroke:#666,stroke-width:2px
+    linkStyle 3 stroke:#666,stroke-width:2px
+    linkStyle 4 stroke:#666,stroke-width:2px
 ```
 
 ## Advanced Features
