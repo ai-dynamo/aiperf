@@ -6,8 +6,6 @@ import logging
 import signal
 import uuid
 from abc import ABC
-from collections import defaultdict
-from collections.abc import Callable
 
 import setproctitle
 
@@ -24,7 +22,7 @@ from aiperf.common.exceptions import (
     ServiceStartError,
     ServiceStopError,
 )
-from aiperf.common.hooks import AIPerfHook, HooksMixin, supports_hooks
+from aiperf.common.hooks import AIPerfHook, AIPerfTaskMixin, supports_hooks
 from aiperf.common.models import BaseMessage, Message, Payload
 from aiperf.common.service.base_service_interface import BaseServiceInterface
 
@@ -39,7 +37,7 @@ from aiperf.common.service.base_service_interface import BaseServiceInterface
     AIPerfHook.AIPERF_TASK,
     AIPerfHook.ON_SET_STATE,
 )
-class BaseService(BaseServiceInterface, ABC, HooksMixin):
+class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
     """Base class for all AIPerf services, providing common functionality for
     communication, state management, and lifecycle operations.
 
@@ -47,8 +45,6 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
     AIPerf system. Some of the abstract methods are implemented here, while others
     are still required to be implemented by derived classes.
     """
-
-    _aiperf_hooks: dict[str, list[Callable]] = defaultdict(list)
 
     def __init__(
         self, service_config: ServiceConfig, service_id: str | None = None
@@ -65,8 +61,6 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
 
         self._state: ServiceState = ServiceState.UNKNOWN
         self._heartbeat_interval = self.service_config.heartbeat_interval
-
-        self._task_registry: dict[str, asyncio.Task] = {}
 
         self.stop_event = asyncio.Event()
         self.initialized_event = asyncio.Event()
@@ -128,7 +122,7 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
 
         This method will:
         - Set the service state to the given state
-        - Call all registered `AIPerfHook.SET_STATE` hooks
+        - Call all registered `AIPerfHook.ON_SET_STATE` hooks
         """
         self._state = state
         await self.run_hooks(AIPerfHook.ON_SET_STATE, state)
@@ -142,7 +136,7 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
         - Set up signal handlers for graceful shutdown
         - Allow time for the event loop to start
         - Initialize communication
-        - Call all registered `AIPerfHook.INIT` hooks
+        - Call all registered `AIPerfHook.ON_INIT` hooks
         - Set the service to `ServiceState.READY` state
         - Set the initialized asyncio event
         """
@@ -212,7 +206,6 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
 
         This method will:
         - Call the initialize method to initialize the service
-        - Start all the registered tasks
         - Call all registered `AIPerfHook.RUN` hooks
         - Wait for the stop event to be set
         - Shuts down the service when the stop event is set
@@ -233,11 +226,6 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
                     self.service_id,
                 )
                 raise ServiceRunError from e
-
-            # Start all registered tasks
-            for hook in self.get_hooks(AIPerfHook.AIPERF_TASK):
-                # TODO: support task intervals
-                self._task_registry[hook.__name__] = asyncio.create_task(hook(self))
 
             try:
                 await self.run_hooks(AIPerfHook.ON_RUN)
@@ -309,7 +297,7 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
 
         This method will:
         - Set the service to `ServiceState.STARTING` state
-        - Call all registered `AIPerfHook.START` hooks
+        - Call all registered `AIPerfHook.ON_START` hooks
         - Set the service to `ServiceState.RUNNING` state
         """
 
@@ -346,10 +334,9 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
 
         This method will:
         - Set the service to `ServiceState.STOPPING` state
-        - Call all registered `AIPerfHook.STOP` hooks
+        - Call all registered `AIPerfHook.ON_STOP` hooks
         - Shutdown the service communication component
-        - Cancel all registered tasks
-        - Call all registered `AIPerfHook.CLEANUP` hooks
+        - Call all registered `AIPerfHook.ON_CLEANUP` hooks
         - Set the service to `ServiceState.STOPPED` state
         """
         try:
@@ -375,14 +362,6 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
             # Shutdown communication component
             if self._comms and not self._comms.is_shutdown:
                 await self._comms.shutdown()
-
-            # Cancel all registered tasks
-            for task in self._task_registry.values():
-                task.cancel()
-
-            # Wait for all tasks to complete
-            with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.gather(*self._task_registry.values())
 
             # Custom cleanup logic implemented by derived classes
             with contextlib.suppress(asyncio.CancelledError):
@@ -413,7 +392,7 @@ class BaseService(BaseServiceInterface, ABC, HooksMixin):
         the `BaseServiceInterface.configure` method.
 
         This method will:
-        - Call all registered AIPerfHook.CONFIGURE hooks
+        - Call all registered AIPerfHook.ON_CONFIGURE hooks
         """
         await self.run_hooks(AIPerfHook.ON_CONFIGURE, message)
 

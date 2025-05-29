@@ -17,6 +17,7 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage cov clean install docker docker-run first-time-setup \
+		test-verbose \
 		internal-help help
 
 
@@ -90,28 +91,31 @@ internal-help:
 	@printf "────────────────────────────────────────────────────────────────────────────\n"
 
 ruff lint: #? run the ruff linters
-	$(activate_venv) && ruff check .
+	$(activate_venv) && ruff check . $(args)
 
 ruff-fix lint-fix: #? auto-fix the linter errors of the project using ruff.
-	$(activate_venv) && ruff check . --fix
+	$(activate_venv) && ruff check . --fix $(args)
 
 format fmt: #? format the project using ruff.
-	$(activate_venv) && ruff format .
+	$(activate_venv) && ruff format . $(args)
 
 check-format check-fmt: #? check the formatting of the project using ruff.
-	$(activate_venv) && ruff format . --check
+	$(activate_venv) && ruff format . --check $(args)
 
 test: #? run the tests using pytest.
-	$(activate_venv) && pytest aiperf/tests
+	$(activate_venv) && pytest aiperf/tests $(args)
+
+test-verbose: #? run the tests using pytest with DEBUG logging
+	$(activate_venv) && pytest aiperf/tests -v -s --log-cli-level DEBUG
 
 coverage cov: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest aiperf/tests --cov=aiperf --cov-report=html
+	$(activate_venv) && pytest aiperf/tests --cov=aiperf --cov-report=html $(args)
 
 install: #? install the project in editable mode.
-	$(activate_venv) && uv pip install -e ".[dev]"
+	$(activate_venv) && uv pip install -e ".[dev]" $(args)
 
 docker: #? build the docker image.
-	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) .
+	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args) .
 
 docker-run: #? run the docker container.
 	docker run -it --rm $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args)

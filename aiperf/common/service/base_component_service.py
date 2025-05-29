@@ -180,7 +180,7 @@ class BaseComponentService(BaseService):
             self.stop_event.set()
 
         elif cmd == CommandType.CONFIGURE:
-            await self._run_hooks(AIPerfHook.CONFIGURE, message)
+            await self.run_hooks(AIPerfHook.ON_CONFIGURE, message)
 
         else:
             self.logger.warning(f"{self.service_type} received unknown command: {cmd}")

@@ -16,8 +16,8 @@ class AIPerfError(Exception):
 class AIPerfMultiError(AIPerfError):
     """Exception raised when running multiple tasks and one or more fail."""
 
-    def __init__(self, exceptions) -> None:
-        super().__init__(f"{','.join([str(e) for e in exceptions])}")
+    def __init__(self, message: str, exceptions: list[Exception]) -> None:
+        super().__init__(f"{message}: {','.join([str(e) for e in exceptions])}")
         self.exceptions = exceptions
 
 

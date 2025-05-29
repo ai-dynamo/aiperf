@@ -19,12 +19,15 @@ classes with existing hooks will inherit the hooks from the base classes as well
 """
 
 import asyncio
+import contextlib
 import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from enum import Enum
+from typing import Any
 
 from aiperf.common.enums import ServiceState
-from aiperf.common.exceptions import UnsupportedHookError
+from aiperf.common.exceptions import AIPerfMultiError, UnsupportedHookError
 
 ################################################################################
 # Hook Types
@@ -60,6 +63,8 @@ AIPERF_HOOK_TYPE = "__aiperf_hook_type__"
 ################################################################################
 # Hook System
 ################################################################################
+
+logger = logging.getLogger(__name__)
 
 
 class HookSystem:
@@ -118,10 +123,19 @@ class HookSystem:
         if hook_type not in self.supported_hooks:
             raise UnsupportedHookError(f"Hook {hook_type} is not supported by class.")
 
+        exceptions: list[Exception] = []
         for func in self.get_hooks(hook_type):
-            result = func(*args, **kwargs)
-            if inspect.isawaitable(result):
-                await result
+            try:
+                if inspect.iscoroutinefunction(func):
+                    await func(*args, **kwargs)
+                else:
+                    await asyncio.to_thread(func, *args, **kwargs)
+            except Exception as e:
+                logger.error(f"Error running hook {func.__name__}: {e}")
+                exceptions.append(e)
+
+        if exceptions:
+            raise AIPerfMultiError("Errors running hooks", exceptions)
 
     async def run_hooks_async(self, hook_type: HookType, *args, **kwargs):
         """
@@ -144,64 +158,11 @@ class HookSystem:
                 coroutines.append(asyncio.to_thread(func, *args, **kwargs))
 
         if coroutines:
-            await asyncio.gather(*coroutines)
+            results = await asyncio.gather(*coroutines, return_exceptions=True)
 
-
-################################################################################
-# Hooks Mixin
-################################################################################
-
-
-class HooksMixin:
-    """
-    Mixin to add hook support to a class. It abstracts away the details of the
-    :class:`HookSystem` and provides a simple interface for registering and running hooks.
-    """
-
-    # Class attributes that are set by the :func:`supports_hooks` decorator
-    supported_hooks: set[HookType] = set()
-
-    def __init__(self):
-        """
-        Initialize the hook system and register all functions that are decorated with a hook decorator.
-        """
-        # Initialize the hook system
-        self._hook_system = HookSystem(self.supported_hooks)
-
-        # Register all functions that are decorated with a hook decorator
-        for attr_name in dir(self):
-            try:
-                attr = getattr(self, attr_name)
-            except Exception:
-                # Skip attributes that cause an exception to be raised
-                continue
-
-            if callable(attr) and hasattr(attr, AIPERF_HOOK_TYPE):
-                # Get the hook type from the function
-                hook_type = getattr(attr, AIPERF_HOOK_TYPE)
-                # Register the function with the hook type
-                self.register_hook(hook_type, attr)
-
-    def register_hook(self, hook_type: HookType, func: Callable):
-        """Register a hook function for a given hook type.
-
-        Args:
-            hook_type: The hook type to register the function for.
-            func: The function to register.
-        """
-        self._hook_system.register_hook(hook_type, func)
-
-    async def run_hooks(self, hook_type: HookType, *args, **kwargs):
-        """Run all the hooks serially. See :meth:`HookSystem.run_hooks`."""
-        await self._hook_system.run_hooks(hook_type, *args, **kwargs)
-
-    async def run_hooks_async(self, hook_type: HookType, *args, **kwargs):
-        """Run all the hooks concurrently. See :meth:`HookSystem.run_hooks_async`."""
-        await self._hook_system.run_hooks_async(hook_type, *args, **kwargs)
-
-    def get_hooks(self, hook_type: HookType) -> list[Callable]:
-        """Get all the registered hooks for the given hook type. See :meth:`HookSystem.get_hooks`."""
-        return self._hook_system.get_hooks(hook_type)
+            exceptions = [result for result in results if isinstance(result, Exception)]
+            if exceptions:
+                raise AIPerfMultiError("Errors running hooks", exceptions)
 
 
 ################################################################################
@@ -304,8 +265,8 @@ def on_run(func: Callable) -> Callable:
 
 
 def on_set_state(
-    func: Callable[[ServiceState], None],
-) -> Callable[[ServiceState], None]:
+    func: Callable[[Any, ServiceState], None],
+) -> Callable[[Any, ServiceState], None]:
     """Decorator to specify that the function should be called when the service state is set.
     See :func:`aiperf.common.hooks.hook_decorator`."""
     return hook_decorator(AIPerfHook.ON_SET_STATE, func)
@@ -316,3 +277,96 @@ def aiperf_task(func: Callable) -> Callable:
     and stopped automatically by the base class lifecycle.
     See :func:`aiperf.common.hooks.hook_decorator`."""
     return hook_decorator(AIPerfHook.AIPERF_TASK, func)
+
+
+################################################################################
+# Hooks Mixin
+################################################################################
+
+
+class HooksMixin:
+    """
+    Mixin to add hook support to a class. It abstracts away the details of the
+    :class:`HookSystem` and provides a simple interface for registering and running hooks.
+    """
+
+    # Class attributes that are set by the :func:`supports_hooks` decorator
+    supported_hooks: set[HookType] = set()
+
+    def __init__(self):
+        """
+        Initialize the hook system and register all functions that are decorated with a hook decorator.
+        """
+        # Initialize the hook system
+        self._hook_system = HookSystem(self.supported_hooks)
+
+        # Register all functions that are decorated with a hook decorator
+        # Iterate through MRO in reverse order to ensure base class hooks are registered first
+        for cls in reversed(self.__class__.__mro__):
+            # Skip object and other non-hook classes
+            if not issubclass(cls, HooksMixin):
+                continue
+
+            # Get methods defined directly in this class (not inherited)
+            for _, attr in cls.__dict__.items():
+                if callable(attr) and hasattr(attr, AIPERF_HOOK_TYPE):
+                    # Get the hook type from the function
+                    hook_type = getattr(attr, AIPERF_HOOK_TYPE)
+                    # Bind the method to the instance
+                    bound_method = attr.__get__(self, cls)
+                    # Register the function with the hook type
+                    self.register_hook(hook_type, bound_method)
+
+    def register_hook(self, hook_type: HookType, func: Callable):
+        """Register a hook function for a given hook type.
+
+        Args:
+            hook_type: The hook type to register the function for.
+            func: The function to register.
+        """
+        self._hook_system.register_hook(hook_type, func)
+
+    async def run_hooks(self, hook_type: HookType, *args, **kwargs):
+        """Run all the hooks serially. See :meth:`HookSystem.run_hooks`."""
+        await self._hook_system.run_hooks(hook_type, *args, **kwargs)
+
+    async def run_hooks_async(self, hook_type: HookType, *args, **kwargs):
+        """Run all the hooks concurrently. See :meth:`HookSystem.run_hooks_async`."""
+        await self._hook_system.run_hooks_async(hook_type, *args, **kwargs)
+
+    def get_hooks(self, hook_type: HookType) -> list[Callable]:
+        """Get all the registered hooks for the given hook type. See :meth:`HookSystem.get_hooks`."""
+        return self._hook_system.get_hooks(hook_type)
+
+
+@supports_hooks(AIPerfHook.AIPERF_TASK, AIPerfHook.ON_INIT, AIPerfHook.ON_STOP)
+class AIPerfTaskMixin(HooksMixin):
+    """Mixin to add task support to a class. It abstracts away the details of the
+    :class:`AIPerfTask` and provides a simple interface for registering and running tasks.
+    It hooks into the :meth:`HooksMixin.on_init` and :meth:`HooksMixin.on_stop` hooks to
+    start and stop the tasks.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.registered_tasks: dict[str, asyncio.Task] = {}
+
+    @on_init
+    async def _start_tasks(self):
+        """Start all the registered tasks in the background."""
+        for hook in self.get_hooks(AIPerfHook.AIPERF_TASK):
+            if inspect.iscoroutinefunction(hook):
+                task = asyncio.create_task(hook())
+            else:
+                task = asyncio.create_task(asyncio.to_thread(hook))
+            self.registered_tasks[hook.__name__] = task
+
+    @on_stop
+    async def _stop_tasks(self):
+        """Stop all the background tasks. This will wait for all the tasks to complete."""
+        for task in self.registered_tasks.values():
+            task.cancel()
+
+        # Wait for all tasks to complete
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.gather(*self.registered_tasks.values())

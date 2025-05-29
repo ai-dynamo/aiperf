@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+
 import pytest
 
 from aiperf.common.exceptions import UnsupportedHookError
@@ -20,6 +21,10 @@ class BaseClass(HooksMixin):
         super().__init__()
         self.called_hooks = set()
 
+    def add_called_hook(self, hook_name: str):
+        self.called_hooks.add(hook_name)
+        print(f"Hook called: {self.__class__.__name__}.{hook_name}")
+
     async def initialize(self) -> None:
         await self.run_hooks_async(AIPerfHook.ON_INIT)
 
@@ -30,37 +35,37 @@ class BaseClass(HooksMixin):
 class MockHooks(BaseClass):
     @on_init
     async def on_init_1(self):
-        self.called_hooks.add(self.on_init_1)
+        self.add_called_hook(self.on_init_1)
 
     @on_init
     async def on_init_2(self):
-        self.called_hooks.add(self.on_init_2)
+        self.add_called_hook(self.on_init_2)
 
     @on_init
     async def on_init_3(self):
-        self.called_hooks.add(self.on_init_3)
+        self.add_called_hook(self.on_init_3)
 
     @on_cleanup
     async def on_cleanup_1(self):
-        self.called_hooks.add(self.on_cleanup_1)
+        self.add_called_hook(self.on_cleanup_1)
 
 
 @supports_hooks(AIPerfHook.ON_START)
 class MockHooksInheritance(MockHooks):
     @on_init
     async def on_init_4(self):
-        self.called_hooks.add(self.on_init_4)
+        self.add_called_hook(self.on_init_4)
 
     @on_cleanup
     async def on_cleanup_2(self):
-        self.called_hooks.add(self.on_cleanup_2)
+        self.add_called_hook(self.on_cleanup_2)
 
     async def start(self):
         await self.run_hooks_async(AIPerfHook.ON_START)
 
     @on_start
     async def on_start_1(self):
-        self.called_hooks.add(self.on_start_1)
+        self.add_called_hook(self.on_start_1)
 
 
 def test_hook_decorators():
@@ -133,7 +138,7 @@ def test_unsupported_hook_decorator():
     class TestHooksUnsupported(MockHooks):
         @on_start
         async def _on_start_1(self):
-            self.called_hooks.add(self._on_start_1)
+            self.add_called_hook(self._on_start_1)
 
     with pytest.raises(UnsupportedHookError):
         TestHooksUnsupported()  # this should raise an UnsupportedHookError
@@ -144,7 +149,7 @@ async def test_instance_additional_hooks():
     test_hooks = MockHooksInheritance()
 
     async def custom_start_hook():
-        test_hooks.called_hooks.add(custom_start_hook)
+        test_hooks.add_called_hook(custom_start_hook)
 
     test_hooks.register_hook(AIPerfHook.ON_START, custom_start_hook)
 
@@ -164,7 +169,7 @@ async def test_instance_additional_supported_hooks():
     test_hooks = MockHooks()
 
     async def custom_stop_hook():
-        test_hooks.called_hooks.add(custom_stop_hook)
+        test_hooks.add_called_hook(custom_stop_hook)
 
     # this should raise an UnsupportedHookError because the hook type is not supported
     with pytest.raises(UnsupportedHookError):
@@ -193,3 +198,42 @@ async def test_instance_additional_supported_hooks():
     # Expect the custom init and stop hooks to have been called
     assert custom_init_hook in test_hooks.called_hooks
     assert custom_stop_hook in test_hooks.called_hooks
+
+
+async def test_inheritance_hook_order():
+    """Test that the hook order is correct when using inheritance."""
+
+    class MockHooksInheritance2(MockHooks):
+        @on_init
+        async def on_init_99(self):
+            assert self.on_init_1 in self.called_hooks
+            self.add_called_hook(self.on_init_99)
+
+        @on_init
+        async def on_init_0(self):
+            assert self.on_init_1 in self.called_hooks
+            self.add_called_hook(self.on_init_0)
+
+    test_hooks = MockHooksInheritance2()
+
+    await test_hooks.initialize()
+
+    assert test_hooks.on_init_0 in test_hooks.called_hooks
+    assert test_hooks.on_init_1 in test_hooks.called_hooks
+
+
+async def test_inheritance_hook_override():
+    """Test that a hook that is overridden in a subclass does not call the base class hook."""
+
+    class MockHooksInheritance3(MockHooks):
+        @on_init
+        async def on_init_1(self):
+            assert MockHooks.on_init_1 not in self.called_hooks
+            self.add_called_hook(self.on_init_1)
+
+    test_hooks = MockHooksInheritance3()
+
+    await test_hooks.initialize()
+
+    assert test_hooks.on_init_1 in test_hooks.called_hooks
+    assert MockHooks.on_init_1 not in test_hooks.called_hooks

@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import contextlib
 import logging
 import uuid
 
@@ -14,15 +13,20 @@ from aiperf.common.exceptions import (
     CommunicationNotInitializedError,
     CommunicationShutdownError,
 )
-from aiperf.common.hooks import AIPerfHook, HooksMixin, supports_hooks
+from aiperf.common.hooks import AIPerfHook, AIPerfTaskMixin, supports_hooks
 
 
-@supports_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_CLEANUP, AIPerfHook.AIPERF_TASK)
-class BaseZMQClient(HooksMixin):
+@supports_hooks(
+    AIPerfHook.ON_INIT,
+    AIPerfHook.ON_CLEANUP,
+    AIPerfHook.ON_STOP,
+    AIPerfHook.AIPERF_TASK,
+)
+class BaseZMQClient(AIPerfTaskMixin):
     """Base class for all ZMQ clients.
 
     This class provides a common interface for all ZMQ clients in the AIPerf
-    framework. It inherits from the ZMQClientMetaclass, allowing derived
+    framework. It inherits from the :class:`AIPerfTaskMixin`, allowing derived
     classes to implement specific hooks.
     """
 
@@ -54,7 +58,6 @@ class BaseZMQClient(HooksMixin):
         self._socket: zmq.asyncio.Socket | None = None
         self.socket_ops: dict = socket_ops or {}
         self.client_id: str = f"{self.socket_type.name}_client_{uuid.uuid4().hex[:8]}"
-        self._task_registry: dict[str, asyncio.Task] = {}
         super().__init__()
 
     @property
@@ -96,14 +99,13 @@ class BaseZMQClient(HooksMixin):
             raise CommunicationShutdownError()
 
     async def initialize(self) -> None:
-        """Initialize the communication, and start the tasks.
+        """Initialize the communication.
 
         This method will:
         - Create the zmq socket
         - Bind or connect the socket to the address
         - Set the socket options
         - Run the AIPerfHook.ON_INIT hooks
-        - Start the tasks registered with the AIPerfHook.AIPERF_TASK hooks
         """
         try:
             self._socket = self.context.socket(self.socket_type)
@@ -134,11 +136,6 @@ class BaseZMQClient(HooksMixin):
 
             await self.run_hooks(AIPerfHook.ON_INIT)
 
-            # Start all registered tasks
-            for hook in self.get_hooks(AIPerfHook.AIPERF_TASK):
-                # TODO: support task intervals
-                self._task_registry[hook.__name__] = asyncio.create_task(hook())
-
             self.initialized_event.set()
             self.logger.debug(
                 "ZMQ %s socket initialized and connected to %s (%s)",
@@ -157,7 +154,6 @@ class BaseZMQClient(HooksMixin):
         This method will:
         - Close the zmq socket
         - Run the AIPerfHook.ON_CLEANUP hooks
-        - Cancel all registered tasks
         """
         if self.is_shutdown:
             return
@@ -182,6 +178,7 @@ class BaseZMQClient(HooksMixin):
             self._socket = None
 
         try:
+            await self.run_hooks(AIPerfHook.ON_STOP)
             await self.run_hooks(AIPerfHook.ON_CLEANUP)
 
         except Exception as e:
@@ -189,13 +186,3 @@ class BaseZMQClient(HooksMixin):
                 "Exception cleaning up ZMQ socket: %s (%s)", e, self.client_id
             )
             raise CommunicationError("Failed to cleanup ZMQ socket") from e
-
-        # Cancel all registered tasks
-        for task in self._task_registry.values():
-            task.cancel()
-
-        # Wait for all tasks to complete
-        with contextlib.suppress(asyncio.CancelledError):
-            await asyncio.gather(*self._task_registry.values())
-
-        self._task_registry.clear()

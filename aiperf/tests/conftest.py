@@ -7,6 +7,7 @@ This file contains fixtures that are automatically discovered by pytest
 and made available to test functions in the same directory and subdirectories.
 """
 
+import logging
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +16,8 @@ import pytest
 from aiperf.tests.comms.mock_zmq import (
     mock_zmq_communication,  # noqa: F401 : used as a fixture
 )
+
+logging.basicConfig(level=logging.DEBUG)
 
 
 @pytest.fixture

@@ -21,7 +21,6 @@ from aiperf.common.service.base_service import BaseService
 from aiperf.tests.utils.async_test_utils import async_fixture, async_noop
 
 
-@pytest.mark.asyncio
 class BaseTestService(ABC):
     """
     Base test class for all service tests.
@@ -100,8 +99,13 @@ class BaseTestService(ABC):
             await service.initialize()
         ```
         """
-        service = service_class(service_config=service_config)
-        yield service
+        # Patch the heartbeat task otherwise it will run forever
+        with patch(
+            "aiperf.common.service.base_component_service.BaseComponentService._heartbeat_task",
+            lambda: None,
+        ):
+            service = service_class(service_config=service_config)
+            yield service
 
     @pytest.fixture
     async def initialized_service(
@@ -159,6 +163,8 @@ class BaseTestService(ABC):
         # Check that the service is initialized and in the READY state
         assert service.is_initialized
         assert service.state == ServiceState.READY
+
+        await service.stop()
 
     @pytest.mark.asyncio
     async def test_service_start_stop(self, initialized_service: BaseService) -> None:
