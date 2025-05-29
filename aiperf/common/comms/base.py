@@ -13,11 +13,7 @@ from aiperf.common.exceptions import (
     CommunicationTypeAlreadyRegisteredError,
     CommunicationTypeUnknownError,
 )
-from aiperf.common.models import (
-    Message,
-    ZMQCommunicationConfig,
-    ZMQTCPTransportConfig,
-)
+from aiperf.common.models import Message, ZMQCommunicationConfig, ZMQTCPTransportConfig
 
 logger = logging.getLogger(__name__)
 
