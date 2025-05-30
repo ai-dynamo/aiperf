@@ -13,13 +13,12 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from typing import Annotated, Dict, List, Any
+from typing import Annotated
 
-from pydantic import Field, BeforeValidator
+from pydantic import BeforeValidator, Field
 
 from aiperf.common.models.config.base_config import BaseConfig
 from aiperf.common.models.config.config_defaults import AudioDefaults, AudioFormat
-
 from aiperf.common.models.config.config_validators import (
     parse_str_or_list_of_positive_values,
 )
@@ -50,7 +49,7 @@ class AudioConfig(BaseConfig):
         ),
     ]
     depths: Annotated[
-        List[int],
+        list[int],
         Field(
             default=AudioDefaults.DEPTHS,
             min_length=1,
@@ -59,7 +58,7 @@ class AudioConfig(BaseConfig):
         BeforeValidator(parse_str_or_list_of_positive_values),
     ]
     sample_rates: Annotated[
-        List[int],
+        list[int],
         Field(
             default=AudioDefaults.SAMPLE_RATES,
             min_length=1,

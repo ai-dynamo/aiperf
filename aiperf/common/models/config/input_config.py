@@ -13,14 +13,13 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from typing import Annotated, Dict, List, Any
+from typing import Annotated, Any
 
-from pydantic import Field, BeforeValidator
+from pydantic import BeforeValidator, Field
 
-from aiperf.common.models.config.base_config import BaseConfig
 from aiperf.common.models.config.audio_config import AudioConfig
+from aiperf.common.models.config.base_config import BaseConfig
 from aiperf.common.models.config.config_defaults import InputDefaults
-
 from aiperf.common.models.config.config_validators import parse_file, parse_goodput
 
 
@@ -46,7 +45,7 @@ class InputConfig(BaseConfig):
         ),
     ]
     goodput: Annotated[
-        Dict[str, Any],
+        dict[str, Any],
         Field(
             default=InputDefaults.GOODPUT,
             description="An option to provide constraints in order to compute goodput.\

@@ -1,9 +1,13 @@
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
+from pathlib import PosixPath
+
 import pytest
 from pydantic import ValidationError
-from aiperf.common.models.config.input_config import InputConfig
-from aiperf.common.models.config.config_defaults import InputDefaults
+
 from aiperf.common.models.config.audio_config import AudioConfig
-from pathlib import PosixPath
+from aiperf.common.models.config.config_defaults import InputDefaults
+from aiperf.common.models.config.input_config import InputConfig
 
 
 def test_input_config_defaults():

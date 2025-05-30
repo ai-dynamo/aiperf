@@ -13,19 +13,18 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from typing import Annotated, List, Any, ClassVar
+from typing import Annotated
 
-from pydantic import BaseModel, Field, AfterValidator, BeforeValidator, model_serializer
+from pydantic import AfterValidator, BeforeValidator, Field
 
-from aiperf.common.models.config.base_config import BaseConfig, ADD_TO_TEMPLATE
+from aiperf.common.models.config.base_config import ADD_TO_TEMPLATE, BaseConfig
 from aiperf.common.models.config.config_defaults import UserDefaults
-from aiperf.common.models.config.endpoint_config import EndPointConfig
-from aiperf.common.models.config.input_config import InputConfig
-
 from aiperf.common.models.config.config_validators import (
     parse_str_or_list,
     print_str_or_list,
 )
+from aiperf.common.models.config.endpoint_config import EndPointConfig
+from aiperf.common.models.config.input_config import InputConfig
 
 
 class UserConfig(BaseConfig):
@@ -34,7 +33,7 @@ class UserConfig(BaseConfig):
     """
 
     model_names: Annotated[
-        str | List[str],
+        str | list[str],
         Field(
             default=UserDefaults.MODEL_NAMES,
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",

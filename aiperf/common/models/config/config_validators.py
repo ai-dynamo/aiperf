@@ -13,18 +13,16 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from typing import Any, List
-from pathlib import Path
-from typing import Dict, Optional
-
 from enum import Enum
+from pathlib import Path
+from typing import Any
 
 """
 This module provides utility functions for validating and parsing configuration inputs.
 """
 
 
-def parse_str_or_list(input: Any) -> List[Any]:
+def parse_str_or_list(input: Any) -> list[Any]:
     """
     Parses the input to ensure it is either a string or a list. If the input is a string,
     it splits the string by commas and trims any whitespace around each element, returning
@@ -56,7 +54,7 @@ def print_str_or_list(input: Any) -> str:
     return input
 
 
-def parse_str_or_list_of_positive_values(input: Any) -> List[Any]:
+def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
     """
     Parses the input to ensure it is a list of positive integers or floats.
     This function first converts the input into a list using `parse_str_or_list`.
@@ -74,7 +72,7 @@ def parse_str_or_list_of_positive_values(input: Any) -> List[Any]:
     output = parse_str_or_list(input)
 
     for value in output:
-        if not isinstance(value, (int, float)) or value <= 0:
+        if not isinstance(value, (int | float)) or value <= 0:
             raise ValueError(
                 f"User Config: {output} - all values {value} must be a positive integer or float"
             )
@@ -82,7 +80,7 @@ def parse_str_or_list_of_positive_values(input: Any) -> List[Any]:
     return output
 
 
-def parse_goodput(goodputs: Dict[str, Any]) -> Dict[str, float]:
+def parse_goodput(goodputs: dict[str, Any]) -> dict[str, float]:
     """
     Parses and validates a dictionary of goodput values, ensuring that all values
     are non-negative integers or floats, and converts them to floats.
@@ -99,7 +97,7 @@ def parse_goodput(goodputs: Dict[str, Any]) -> Dict[str, float]:
 
     constraints = {}
     for target_metric, target_value in goodputs.items():
-        if isinstance(target_value, int) or isinstance(target_value, float):
+        if isinstance(target_value, (int | float)):
             if target_value < 0:
                 raise ValueError(
                     f"User Config: Goodput values must be non-negative ({target_metric}: {target_value})"
@@ -112,7 +110,7 @@ def parse_goodput(goodputs: Dict[str, Any]) -> Dict[str, float]:
     return constraints
 
 
-def parse_file(value: Optional[str]) -> Optional[Path]:
+def parse_file(value: str | None) -> Path | None:
     """
     Parses the given string value and returns a Path object if the value represents
     a valid file, directory, or a specific synthetic/payload format. Returns None if

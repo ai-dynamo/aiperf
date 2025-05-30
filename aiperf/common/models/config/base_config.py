@@ -14,17 +14,14 @@
 #  limitations under the License.
 
 import io
-from typing import Any, Dict
+from enum import Enum
+from typing import Any
+
 from pydantic import (
     BaseModel,
-    SerializationInfo,
-    model_serializer,
 )
-
-import ruamel.yaml
-from ruamel.yaml import YAML, safe_dump
+from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
-from enum import Enum
 
 ADD_TO_TEMPLATE = "add_to_template"
 

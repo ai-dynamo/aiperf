@@ -13,17 +13,16 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from typing import Annotated, List, Any
+from typing import Annotated
 
-from pydantic import Field, BeforeValidator
+from pydantic import BeforeValidator, Field
 
 from aiperf.common.models.config.base_config import BaseConfig
 from aiperf.common.models.config.config_defaults import (
     EndPointDefaults,
-    OutputFormat,
     ModelSelectionStrategy,
+    OutputFormat,
 )
-
 from aiperf.common.models.config.config_validators import parse_str_or_list
 
 
@@ -75,7 +74,7 @@ class EndPointConfig(BaseConfig):
     ]
 
     server_metrics_urls: Annotated[
-        List[str],
+        list[str],
         Field(
             default=EndPointDefaults.SERVER_METRICS_URLS,
             description="The list of Triton server metrics URLs. \

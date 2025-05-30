@@ -1,5 +1,5 @@
-import pytest
-from pydantic import ValidationError
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
 from aiperf.common.models.config.audio_config import AudioConfig
 from aiperf.common.models.config.config_defaults import AudioDefaults, AudioFormat
 

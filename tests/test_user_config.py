@@ -13,15 +13,12 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import pytest
-from pydantic import ValidationError
-from aiperf.common.models.config.user_config import UserConfig
+from unittest.mock import mock_open, patch
+
 from aiperf.common.models.config.config_defaults import UserDefaults
 from aiperf.common.models.config.endpoint_config import EndPointConfig
 from aiperf.common.models.config.input_config import InputConfig
-import json
-from pathlib import Path
-from unittest.mock import mock_open, patch
+from aiperf.common.models.config.user_config import UserConfig
 
 
 def test_user_config_serialization_to_file():

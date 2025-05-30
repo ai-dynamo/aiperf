@@ -13,9 +13,9 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from pydantic import BaseModel
-from pydantic.dataclasses import dataclass
 from enum import Enum
+
+from pydantic.dataclasses import dataclass
 
 
 class CaseInsensitiveEnum(str, Enum):

@@ -1,10 +1,9 @@
-import pytest
-
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
 from enum import Enum
-from pydantic import ValidationError
-from aiperf.common.models.config.endpoint_config import EndPointConfig
+
 from aiperf.common.models.config.config_defaults import EndPointDefaults
-from aiperf.common.models.config.config_validators import parse_str_or_list
+from aiperf.common.models.config.endpoint_config import EndPointConfig
 
 
 def test_endpoint_config_defaults():
