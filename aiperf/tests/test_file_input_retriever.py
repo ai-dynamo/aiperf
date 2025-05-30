@@ -65,11 +65,6 @@ class TestFileInputRetriever:
             '{"text": "Who is this person?", "image": "s3://some/path/to/image2.png"}\n'
             '{"text": "What the color of the sky?", "image": "file://some/path/to/image3.png"}\n'
         )
-        deprecated_text_input = (
-            '{"text_input": "Who is Albert Einstein?"}\n'
-            '{"text_input": "What is the speed of light?"}\n'
-        )
-        conflicting_key = '{"text": "This is a conflicting key", "text_input": "This is a conflicting key"}\n'
 
         file_contents = {
             "single_prompt.jsonl": single_prompt,
@@ -78,8 +73,6 @@ class TestFileInputRetriever:
             "multiple_images.jsonl": multiple_images,
             "multi_modal.jsonl": multi_modal,
             "multi_modal_url.jsonl": multi_modal_url,
-            "deprecated_text_input.jsonl": deprecated_text_input,
-            "conflicting_key.jsonl": conflicting_key,
         }
         filename = Path(filepath).name
         return mock_open(read_data=file_contents.get(filename))()
@@ -236,32 +229,6 @@ class TestFileInputRetriever:
         assert len(file_data.rows) == 2
         assert file_data.rows[0].texts[0] == "What is this image?"
         assert file_data.rows[0].images[0] == "mock_base64_image"
-
-    @patch("pathlib.Path.exists", return_value=True)
-    @patch("builtins.open", side_effect=open_side_effect)
-    def test_get_input_file_deprecated_text_input(self, mock_file, mock_exists, config):
-        config.filename = Path("deprecated_text_input.jsonl")
-        file_retriever = FileInputRetriever(config)
-        file_data = file_retriever._get_input_dataset_from_file(
-            Path("deprecated_text_input.jsonl")
-        )
-
-        assert file_data is not None
-        assert len(file_data.rows) == 2
-        assert file_data.rows[0].texts[0] == "Who is Albert Einstein?"
-        assert file_data.rows[1].texts[0] == "What is the speed of light?"
-
-    @patch("pathlib.Path.exists", return_value=True)
-    @patch("builtins.open", side_effect=open_side_effect)
-    def test_get_input_file_conflicting_key(self, mock_file, mock_exists, config):
-        config.filename = Path("conflicting_key.jsonl")
-        file_retriever = FileInputRetriever(config)
-
-        with pytest.raises(
-            ValueError,
-            match="Each data entry must have only one of 'text_input' or 'text' key name.",
-        ):
-            file_retriever._get_input_dataset_from_file(Path("conflicting_key.jsonl"))
 
     def test_get_input_file_without_file_existing(self, config):
         config.filename = Path("nonexistent_file.jsonl")

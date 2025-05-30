@@ -102,9 +102,6 @@ class PayloadInputRetriever:
 
         Returns:
             The extracted or generated prompt.
-
-        Raises:
-            ValueError: If both "text" and "text_input" fields are present.
         """
         input_length = data.get("input_length")
         prompt_tokens_mean = (
@@ -115,21 +112,15 @@ class PayloadInputRetriever:
         )
         hash_ids = data.get("hash_ids")
         prompt = data.get("text")
-        prompt_alt = data.get("text_input")
-        # Check if only one of the keys is provided
-        if prompt and prompt_alt:
-            raise ValueError(
-                "Each data entry must have only one of 'text_input' or 'text' key name."
-            )
+
         # If none of the keys are provided, generate a synthetic prompt
-        if not prompt and not prompt_alt:
+        if not prompt:
             prompt = PromptGenerator.create_synthetic_prompt(
                 self.tokenizer,
                 prompt_tokens_mean,
                 prompt_tokens_stddev,
                 hash_ids,
             )
-        prompt = prompt if prompt else prompt_alt
         return str(prompt)
 
     def _get_payload_metadata(self, data: dict) -> dict:
@@ -161,7 +152,6 @@ class PayloadInputRetriever:
         """
         excluded_keys = {
             "text",
-            "text_input",
             "hash_ids",
             "input_length",
             "output_length",

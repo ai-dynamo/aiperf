@@ -144,14 +144,7 @@ class FileInputRetriever:
             for line in file:
                 if line.strip():
                     data = utils.load_json_str(line)
-                    # None if not provided
                     prompt = data.get("text")
-                    prompt_alt = data.get("text_input")
-                    if prompt and prompt_alt:
-                        raise ValueError(
-                            "Each data entry must have only one of 'text_input' or 'text' key name."
-                        )
-                    prompt = prompt if prompt else prompt_alt
                     if use_prefix_prompts:
                         prefix_prompt = PromptGenerator.get_random_prefix_prompt()
                         prompt = f"{prefix_prompt} {prompt}"

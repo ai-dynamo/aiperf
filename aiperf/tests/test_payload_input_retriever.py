@@ -3,7 +3,7 @@
 
 import io
 from pathlib import Path
-from unittest.mock import mock_open, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -46,22 +46,9 @@ class TestPayloadInputRetriever:
                 [{}, {"custom_field": "value"}],
             ),
             (
-                '{"text_input": "Legacy prompt", "timestamp": 456}\n'
-                '{"text": "New prompt", "timestamp": 432, "session_id": "def"}\n',
-                ["Legacy prompt", "New prompt"],
-                [{"timestamp": 456}, {"timestamp": 432, "session_id": "def"}],
-                [{}, {}],
-            ),
-            (
                 '{"text": "What is AI?", "timestamp": 123, "session_id": "abc"}',
                 ["What is AI?"],
                 [{"timestamp": 123, "session_id": "abc"}],
-                [{}],
-            ),
-            (
-                '{"text_input": "Legacy prompt", "timestamp": 456}',
-                ["Legacy prompt"],
-                [{"timestamp": 456}],
                 [{}],
             ),
             ('{"timestamp": 789}\n', ["Synthetic prompt"], [{"timestamp": 789}], [{}]),
@@ -95,7 +82,7 @@ class TestPayloadInputRetriever:
         assert data_dict["payload_metadata_list"] == expected_payload_metadata_list
         assert data_dict["optional_data_list"] == expected_optional_data_list
 
-        if "text" not in input_data and "text_input" not in input_data:
+        if "text" not in input_data:
             mock_synthetic_prompt.assert_called_once()
 
     def test_convert_content_to_data_file(self, retriever):
@@ -151,17 +138,6 @@ class TestPayloadInputRetriever:
         assert isinstance(dataset, GenericDataset)
         assert str(retriever.config.filename) in dataset.files_data
         assert dataset.files_data[str(retriever.config.filename)] == mock_file_data
-
-    @patch("builtins.open", new_callable=mock_open)
-    def test_conflicting_keys_error(self, mock_file, retriever):
-        conflicting_data = '{"text": "Prompt", "text_input": "Conflicting prompt"}\n'
-        mock_file.return_value = io.StringIO(conflicting_data)
-
-        with pytest.raises(
-            ValueError,
-            match="Each data entry must have only one of 'text_input' or 'text' key name.",
-        ):
-            retriever._get_content_from_input_file(Path("test_input.jsonl"))
 
     @pytest.mark.parametrize(
         "delay, delay_ratio, expected_delay",
