@@ -11,11 +11,11 @@ from aiperf.services.dataset.generator.prompt import PromptGenerator
 
 
 class TestPromptGenerator:
-    def test_synthetic_prompt_default(self):
+    def test_synthetic_prompt_default(self, mock_hf_tokenizer):
         tokenizer = Tokenizer.from_pretrained("gpt2")
         _ = PromptGenerator.create_synthetic_prompt(tokenizer)
 
-    def test_synthetic_prompt_zero_token(self):
+    def test_synthetic_prompt_zero_token(self, mock_hf_tokenizer):
         tokenizer = Tokenizer.from_pretrained("gpt2")
         prompt = PromptGenerator.create_synthetic_prompt(
             tokenizer=tokenizer,
@@ -26,7 +26,7 @@ class TestPromptGenerator:
         assert prompt == ""
         assert len(tokenizer.encode(prompt)) == 0
 
-    def test_synthetic_prompt_nonzero_tokens(self):
+    def test_synthetic_prompt_nonzero_tokens(self, mock_hf_tokenizer):
         prompt_tokens = 123
         tokenizer = Tokenizer.from_pretrained("gpt2")
         prompt = PromptGenerator.create_synthetic_prompt(
@@ -44,7 +44,9 @@ class TestPromptGenerator:
             (16, pytest.raises(GeneratorConfigurationError)),
         ],
     )
-    def test_generate_prompt_with_token_reuse(self, test_num_tokens, context):
+    def test_generate_prompt_with_token_reuse(
+        self, test_num_tokens, context, mock_hf_tokenizer
+    ):
         tokenizer = Tokenizer.from_pretrained("gpt2")
         with context:
             _ = PromptGenerator._generate_prompt_with_token_reuse(

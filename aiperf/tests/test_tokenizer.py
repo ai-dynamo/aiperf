@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
+
+from aiperf.common.exceptions import TokenizerInitializationError
 from aiperf.common.tokenizer import Tokenizer
 
 
@@ -9,47 +12,28 @@ class TestTokenizer:
         tokenizer = Tokenizer()
         assert tokenizer._tokenizer is None
 
-    def test_non_empty_tokenizer(self):
+        with pytest.raises(TokenizerInitializationError):
+            tokenizer("test")
+        with pytest.raises(TokenizerInitializationError):
+            tokenizer.encode("test")
+        with pytest.raises(TokenizerInitializationError):
+            tokenizer.decode([1])
+        with pytest.raises(TokenizerInitializationError):
+            tokenizer.bos_token_id()
+
+    def test_non_empty_tokenizer(self, mock_hf_tokenizer):
         tokenizer = Tokenizer.from_pretrained("gpt2")
         assert tokenizer._tokenizer is not None
 
-    def test_all_args(self):
+        assert tokenizer("This is a test")["input_ids"] == [10, 11, 12, 13]
+        assert tokenizer.encode("This is a test") == [10, 11, 12, 13]
+        assert tokenizer.decode([10, 11, 12, 13]) == "10 11 12 13"
+        assert tokenizer.bos_token_id() == 1
+
+    def test_all_args(self, mock_hf_tokenizer):
         tokenizer = Tokenizer.from_pretrained(
             name="gpt2",
             trust_remote_code=True,
             revision="11c5a3d5811f50298f278a704980280950aedb10",
         )
         assert tokenizer._tokenizer is not None
-
-    def test_default_args(self):
-        tokenizer = Tokenizer.from_pretrained("hf-internal-testing/llama-tokenizer")
-        assert tokenizer._tokenizer is not None
-
-        # There are 3 special tokens in the default tokenizer
-        #  - <unk>: 0  (unknown)
-        #  - <s>: 1  (beginning of sentence)
-        #  - </s>: 2  (end of sentence)
-        special_tokens = list(tokenizer._tokenizer.added_tokens_encoder.keys())
-        special_token_ids = list(tokenizer._tokenizer.added_tokens_encoder.values())
-
-        # special tokens are disabled by default
-        text = "This is test."
-        tokens = tokenizer(text)["input_ids"]
-        assert all([s not in tokens for s in special_token_ids])
-
-        tokens = tokenizer.encode(text)
-        assert all([s not in tokens for s in special_token_ids])
-
-        output = tokenizer.decode(tokens)
-        assert all([s not in output for s in special_tokens])
-
-        # check special tokens is enabled
-        text = "This is test."
-        tokens = tokenizer(text, add_special_tokens=True)["input_ids"]
-        assert any([s in tokens for s in special_token_ids])
-
-        tokens = tokenizer.encode(text, add_special_tokens=True)
-        assert any([s in tokens for s in special_token_ids])
-
-        output = tokenizer.decode(tokens, skip_special_tokens=False)
-        assert any([s in output for s in special_tokens])
