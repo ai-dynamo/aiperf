@@ -13,48 +13,10 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from enum import Enum
 
 from pydantic.dataclasses import dataclass
 
-
-class CaseInsensitiveEnum(str, Enum):
-    """
-    A custom enumeration class that extends `str` and `Enum` to provide case-insensitive
-    lookup for its members. This allows string values to match enumeration members
-    regardless of their case.
-    Methods:
-        _missing_(cls, value):
-            A class method that is called when a value is not found in the enumeration.
-            If the value is a string, it performs a case-insensitive comparison with
-            the enumeration members and returns the matching member if found. If no
-            match is found, it returns `None`.
-    """
-
-    @classmethod
-    def _missing_(cls, value):
-        if isinstance(value, str):
-            for member in cls:
-                if member.value.lower() == value.lower():
-                    return member
-        return None
-
-
-#
-# Enums
-class OutputFormat(CaseInsensitiveEnum):
-    TENSORRTLLM = "TENSORRTLLM"
-    VLLM = "VLLM"
-
-
-class ModelSelectionStrategy(CaseInsensitiveEnum):
-    ROUND_ROBIN = "ROUND_ROBIN"
-    RANDOM = "RANDOM"
-
-
-class AudioFormat(CaseInsensitiveEnum):
-    WAV = "WAV"
-    MP3 = "MP3"
+from aiperf.common.enums import AudioFormat, ModelSelectionStrategy, OutputFormat
 
 
 #

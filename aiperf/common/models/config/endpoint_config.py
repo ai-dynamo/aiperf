@@ -17,12 +17,9 @@ from typing import Annotated
 
 from pydantic import BeforeValidator, Field
 
+from aiperf.common.enums import ModelSelectionStrategy, OutputFormat
 from aiperf.common.models.config.base_config import BaseConfig
-from aiperf.common.models.config.config_defaults import (
-    EndPointDefaults,
-    ModelSelectionStrategy,
-    OutputFormat,
-)
+from aiperf.common.models.config.config_defaults import EndPointDefaults
 from aiperf.common.models.config.config_validators import parse_str_or_list
 
 
