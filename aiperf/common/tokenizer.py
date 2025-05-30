@@ -11,6 +11,13 @@ if TYPE_CHECKING:
 
 from aiperf.common.exceptions import TokenizerInitializationError
 
+# Silence tokenizer warning on import and first use
+with (
+    contextlib.redirect_stdout(io.StringIO()) as _,
+    contextlib.redirect_stderr(io.StringIO()),
+):
+    from transformers import AutoTokenizer
+
 
 class Tokenizer:
     """
@@ -42,35 +49,14 @@ class Tokenizer:
             trust_remote_code: Whether to trust remote code when loading the tokenizer.
             revision: The specific model version to use.
         """
-        tokenizer = cls()
-        tokenizer._set_tokenizer(name, trust_remote_code, revision)
-        return tokenizer
-
-    def _set_tokenizer(self, name: str, trust_remote_code: bool, revision: str) -> None:
-        """
-        Set the tokenizer from Huggingface.co or local filesystem.
-
-        Args:
-            name: The name or path of the tokenizer.
-            trust_remote_code: Whether to trust remote code when loading the tokenizer.
-            revision: The specific model version to use.
-        """
         try:
-            # Silence tokenizer warning on import and first use
-            with (
-                contextlib.redirect_stdout(io.StringIO()) as _,
-                contextlib.redirect_stderr(io.StringIO()),
-            ):
-                from transformers import AutoTokenizer
-                from transformers import logging as token_logger
-
-                token_logger.set_verbosity_error()
-                tokenizer = AutoTokenizer.from_pretrained(
-                    name, trust_remote_code=trust_remote_code, revision=revision
-                )
+            tokenizer_cls = cls()
+            tokenizer_cls._tokenizer = AutoTokenizer.from_pretrained(
+                name, trust_remote_code=trust_remote_code, revision=revision
+            )
         except Exception as e:
             raise TokenizerInitializationError(e) from e
-        self._tokenizer = tokenizer
+        return tokenizer_cls
 
     def __call__(self, text, **kwargs) -> "BatchEncoding":
         """

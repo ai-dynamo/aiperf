@@ -10,19 +10,13 @@ class CaseInsensitiveStrEnum(str, Enum):
     """
     CaseInsensitiveStrEnum is a custom enumeration class that extends `str` and `Enum` to provide case-insensitive
     lookup functionality for its members.
-    Methods:
-        __str__():
-            Returns the string representation of the enum member, which is its value.
-        _missing_(value):
-            A class method that is invoked when a value is not found in the enumeration. It performs a case-insensitive
-            search for the value among the enum members. If a match is found, the corresponding enum member is returned.
-            Otherwise, it returns None.
-    Usage:
-        This class can be used to define enumerations where case-insensitive matching of values is required.
     """
-
+    
     def __str__(self) -> str:
         return self.value
+      
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}.{self.name}"
 
     @classmethod
     def _missing_(cls, value):
@@ -31,7 +25,7 @@ class CaseInsensitiveStrEnum(str, Enum):
                 if member.value.lower() == value.lower():
                     return member
         return None
-
+      
 
 ################################################################################
 # Communication Enums

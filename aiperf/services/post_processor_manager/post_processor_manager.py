@@ -3,7 +3,8 @@
 import sys
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.decorators import (
+from aiperf.common.enums import ServiceType
+from aiperf.common.hooks import (
     on_cleanup,
     on_configure,
     on_init,
@@ -11,10 +12,12 @@ from aiperf.common.decorators import (
     on_stop,
 )
 from aiperf.common.enums import ServiceType
+from aiperf.common.factories import ServiceFactory
 from aiperf.common.models import BasePayload
 from aiperf.common.service.base_component_service import BaseComponentService
 
 
+@ServiceFactory.register(ServiceType.POST_PROCESSOR_MANAGER)
 class PostProcessorManager(BaseComponentService):
     """PostProcessorManager is primarily responsible for iterating over the
     records to generate metrics and other conclusions from the records.
