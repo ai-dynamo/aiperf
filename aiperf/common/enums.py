@@ -11,10 +11,10 @@ class CaseInsensitiveStrEnum(str, Enum):
     CaseInsensitiveStrEnum is a custom enumeration class that extends `str` and `Enum` to provide case-insensitive
     lookup functionality for its members.
     """
-    
+
     def __str__(self) -> str:
         return self.value
-      
+
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}.{self.name}"
 
@@ -25,7 +25,7 @@ class CaseInsensitiveStrEnum(str, Enum):
                 if member.value.lower() == value.lower():
                     return member
         return None
-      
+
 
 ################################################################################
 # Communication Enums
