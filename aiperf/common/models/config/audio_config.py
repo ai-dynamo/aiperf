@@ -59,7 +59,7 @@ class AudioConfig(BaseConfig):
         BeforeValidator(parse_str_or_list_of_positive_values),
     ]
     sample_rates: Annotated[
-        list[int],
+        list[float],
         Field(
             default=AudioDefaults.SAMPLE_RATES,
             min_length=1,
