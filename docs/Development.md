@@ -13,8 +13,9 @@ This guide will help you set up your development environment and understand the 
 - Linux environment (preferred)
 
 ### Development Environment Setup
+**Choose ONE option below!**
 
-#### Devcontainer (Preferred)
+#### Option A: Devcontainer (Preferred)
 Supported by:
 - VS Code
 - Cursor
@@ -23,17 +24,23 @@ Supported by:
 Use your IDE to re-open the project folder inside the devcontainer. Usually available as a popup when you first load the project.
 This will automatically build and install all required dependencies
 
-#### Using Make (Native Alternative)
-   ```bash
-   make first-time-setup
-   ```
-   This command will:
-   - Install uv if not present
-   - Create a virtual environment
-   - Install dependencies
-   - Install pre-commit hooks
+#### Option B: Using Make (Native Alternative)
+<details>
 
-#### Manual (Native Alternative)
+```bash
+make first-time-setup
+```
+This command will:
+- Install uv if not present
+- Create a virtual environment
+- Install dependencies
+- Install pre-commit hooks
+
+</details>
+
+#### Option C: Manual (Native Alternative)
+<details>
+
 ```bash
 # Install uv package manager
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -50,6 +57,7 @@ uv pip install -e ".[dev]"
 # Install pre-commit hooks
 pre-commit install --install-hooks
 ```
+</details>
 
 ### Running AIPerf
 
@@ -237,7 +245,7 @@ flowchart LR
     W2["`**Worker 2**`"]
     WN["`**Worker N**`"]
 
-    CLI -->|Bootstraps| SC
+    CLI -->| SC
     CLIConfig --> CLI
     ConfigFile --> CLI
 
