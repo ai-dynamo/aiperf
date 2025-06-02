@@ -2,233 +2,521 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 -->
-# Developers Guide
-Execute the following commands to set up your development environment for `aiperf`.
-Make sure you are in the root directory of the `aiperf` repository.
+# AIPerf Developers Guide
 
-## Development Environment
-- Install uv
-https://docs.astral.sh/uv/getting-started/installation/
+This guide will help you set up your development environment and understand the AIPerf system architecture.
+
+## Quick Start
+
+### Prerequisites
+- Python 3.10 or higher
+- Linux environment (preferred)
+
+### Development Environment Setup
+
+#### Devcontainer (Preferred)
+Supported by:
+- VS Code
+- Cursor
+- Pycharm
+
+Use your IDE to re-open the project folder inside the devcontainer. Usually available as a popup when you first load the project.
+This will automatically build and install all required dependencies
+
+#### Using Make (Native Alternative)
+   ```bash
+   make first-time-setup
+   ```
+   This command will:
+   - Install uv if not present
+   - Create a virtual environment
+   - Install dependencies
+   - Install pre-commit hooks
+
+#### Manual (Native Alternative)
 ```bash
+# Install uv package manager
 curl -LsSf https://astral.sh/uv/install.sh | sh
-```
 
-- Create virtual env
-```bash
-uv venv
-```
+# Create virtual environment
+uv venv --python 3.12
 
-- Activate venv
-```bash
+# Activate virtual environment
 source .venv/bin/activate
-```
 
-- Install `aiperf` package in editable development mode
-```bash
+# Install package in editable development mode
 uv pip install -e ".[dev]"
+
+# Install pre-commit hooks
+pre-commit install --install-hooks
 ```
 
-- Run `aiperf` in asyncio mode (current default)
+### Running AIPerf
+
+- **Default mode**:
+  ```bash
+  aiperf
+  ```
+
+- **Kubernetes mode (not yet supported)**:
+  ```bash
+  aiperf --run-type k8s
+  ```
+
+- **With debug logging**:
+  ```bash
+  aiperf --log-level DEBUG
+  ```
+
+- **View all options**:
+  ```bash
+  aiperf --help
+  ```
+
+Press `Ctrl-C` to stop the process normally.
+
+> Note: Press `Ctrl-Z` followed by `disown`, then `pkill -9 aiperf` if the process gets "stuck".
+
+Each process is named after the service_id. To see the running processes, run:
 ```bash
-aiperf --run-type async
-```
-Press `Ctrl-C` to stop the process
+pgrep -a "aiperf
 
-- Run `aiperf` in multiprocessing mode
+2879138 aiperf system_controller_e3291509
+2879170 aiperf dataset_manager_d821a161
+2879173 aiperf timing_manager_5e8caf4b
+2879175 aiperf worker_manager_77393965
+2879177 aiperf records_manager_c16acdb0
+2879179 aiperf post_processor_manager_d595537b
+```
+
+## Development Commands
+
+The project includes an optional Makefile for common development tasks:
+
 ```bash
-aiperf --run-type process
+make help              # Show all available commands
+make test              # Run tests
+make test-verbose      # Run tests with debug logging
+make coverage          # Run tests with coverage report
+make lint              # Run linting with ruff
+make lint-fix          # Auto-fix linting issues
+make format            # Format code with ruff
+make check-format      # Check code formatting
+make clean             # Clean up cache files
+make docker            # Build docker image
+make install           # Install in editable mode
 ```
-Press `Ctrl-C` to stop the process
 
-- Run `aiperf` with `--help` to see available commands
-```bash
-aiperf --help
-```
+You can also look inside at the commands it runs if you prefer to run things manually.
 
-## Code Overview
+## Project Architecture
 
-### Project Structure
+### Directory Structure
 
 ```
 aiperf/
-├── aiperf/              # Main python package
-│   ├── app/                 # Application components
-│   ├── cli.py               # Command line interface
-│   ├── common/              # Shared utilities and models
-│   │   ├── config/             # Configuration management
-│   │   ├── enums.py            # Enum definitions
-│   │   ├── exceptions/         # Custom exceptions
-│   │   ├── models/             # Pydantic data models
-│   │   │   ├── messages.py         # Message definitions
-│   │   │   └── service.py          # Service related model definitions
-│   │   └── service.py          # Base service implementation
-│   └── services/            # System services
-│       ├── dataset_manager/        # Handles dataset operations
-│       ├── post_processor_manager/ # Processes results
-│       ├── records_manager/        # Manages test records
-│       ├── system_controller/      # Controls system operation
-│       ├── timing_manager/         # Handles timing and credits
-│       ├── worker/                 # Executes benchmarks
-│       └── worker_manager/         # Manages worker processes
-├── docs/                # Documentation
-├── tests/               # Test suite
-├── pyproject.toml       # Project configuration
-├── Makefile             # Build and automation scripts
-└── README.md            # Project readme
+├── aiperf/                      # Main Python package
+│   ├── cli.py                   # Command line interface
+│   ├── common/                  # Shared utilities and components
+│   │   ├── bootstrap.py         # Service bootstrapping
+│   │   ├── comms/               # Communication system
+│   │   │   ├── base.py          # Base communication classes
+│   │   │   ├── client_enums.py  # Client type definitions
+│   │   │   └── zmq/             # ZeroMQ implementation
+│   │   ├── config/              # Configuration management
+│   │   │   ├── service_config.py # Service configuration models
+│   │   │   └── loader.py        # Configuration loading utilities
+│   │   ├── service/             # Base service framework
+│   │   │   ├── base_service.py              # Core service implementation
+│   │   │   ├── base_service_interface.py    # Service interface definition
+│   │   │   ├── base_component_service.py    # Component service base
+│   │   │   └── base_controller_service.py   # Controller service base
+│   │   ├── enums.py             # System-wide enumerations
+│   │   ├── models.py            # Pydantic data models
+│   │   ├── exceptions.py        # Custom exception classes
+│   │   ├── factories.py         # Service factory patterns
+│   │   ├── hooks.py             # Service lifecycle hooks
+│   │   ├── tokenizer.py         # Text tokenization utilities
+│   │   └── utils.py             # General utilities
+│   ├── services/                # Microservices implementation
+│   │   ├── system_controller/   # System orchestration service
+│   │   ├── dataset/             # Dataset management service
+│   │   ├── timing_manager/      # Request timing and credit management
+│   │   ├── worker_manager/      # Worker process management
+│   │   ├── worker/              # Request execution workers
+│   │   ├── records_manager/     # Result storage and management
+│   │   ├── post_processor_manager/ # Result processing and metrics
+│   │   └── service_manager/     # Service lifecycle management
+│   └── tests/                   # Test suite
+│       ├── conftest.py          # Pytest configuration
+│       ├── services/            # Service-specific tests
+│       ├── comms/               # Communication tests
+│       └── utils/               # Utility tests
+├── docs/                        # Documentation
+├── tools/                       # Development tools
+├── .devcontainer/               # VS Code dev container config
+├── .github/                     # GitHub workflows
+├── pyproject.toml               # Project configuration
+├── Makefile                     # Development automation
+├── Dockerfile                   # Container configuration
+└── README.md                    # Project overview
 ```
 
-### Core Components
-> This comes from the AIPerf Design Document
+## System Architecture
 
-AIPerf implements a distributed microservices architecture with the following key components:
+AIPerf implements a distributed microservices architecture built around a message-passing system using ZeroMQ.
 
-- **System Controller**: Primary responsibility is to orchestrate the system. It will ensure all blocks are ready and healthy. It will also help orchestrating graceful shutdowns. This is the component that will contain the methods users can interact with.
-- **Dataset Manager**: Primary responsibility is to manage the data: generation or acquisition. For  synthetic generation, it contains the code to generate the prompts or tokens. It will have an API for dataset acquisition of a dataset if available in a remote repository or database.
+### Core Services
 
-- **Worker Manager**: Primary responsibility is to pull data from the dataset manager after receiving the timing credit from the timing manager. It will then push the request data to the worker to issue to the request.
-- **Worker**: Primarily responsible for converting the data into the appropriate format for the interface being used by the server. Also responsible for managing the conversation between turns.
+1. **System Controller** (`system_controller`)
+   - Is bootstrapped by the CLI
+   - Orchestrates the entire system
+   - Manages service lifecycle and health monitoring
+   - Handles service registration and coordination
 
-- **Timing Manager**: Primary responsibility is to generate the schedule and issuing timing credits for requests.
+2. **Dataset Manager** (`dataset`)
+   - Manages data generation and acquisition
+   - Provides synthetic prompt/token generation
+   - Handles remote dataset retrieval
 
-- **Records Manager**: Primarily responsible for holding the results returned from the workers.
+3. **Worker Manager** (`worker_manager`)
+   - Coordinates request distribution to workers
+   - Manages timing credits from the timing manager
+   - Handles worker process lifecycle
 
-- **Post-Processor Manager**: Primarily responsible for iterating over the records to generate metrics and other conclusions from the records.
+4. **Worker** (`worker`)
+   - Executes actual inference requests
+   - Formats data for specific API interfaces
+   - Manages multi-turn conversations
 
+5. **Timing Manager** (`timing_manager`)
+   - Generates request schedules
+   - Issues timing credits for request throttling
+   - Controls system load patterns
 
-#### Communication System
+6. **Records Manager** (`records_manager`)
+   - Stores and manages test results
+   - Provides result persistence and retrieval
 
-Services communicate using a message-based system with the following components:
+7. **Post-Processor Manager** (`post_processor_manager`)
+   - Processes collected results
+   - Generates metrics and performance reports
+   - Provides analysis and conclusions
 
-- **Topics**: Categorized channels for message distribution (commands, status, data, etc.)
-- **Messages**: Strongly-typed data structures for inter-service communication
-- **Service States**: Lifecycle states that services transition through (initializing, running, stopping, etc.)
+### Service Bootstrapping Flow
 
-#### Command Line Interface
+The following diagram shows how services are bootstrapped in the AIPerf system:
 
-The CLI (`aiperf/cli.py`) provides the entry point to the system
+```mermaid
+%%{init: {'theme':'dark'}}%%
+flowchart LR
+    CLI["`**CLI**
+    aiperf`"]
+    CLIConfig["`**CLI Options**
+    --run-type
+    --log-level
+    --config`"]
+    ConfigFile["`**Config File**
+    YAML Config`"]
 
+    SC["`**System Controller**
+    Orchestrates System`"]
 
-#### Message Processing
+    DS["`**Dataset Manager**
+    Data Generation`"]
+    TM["`**Timing Manager**
+    Request Scheduling`"]
+    WM["`**Worker Manager**
+    Worker Queue`"]
+    RM["`**Records Manager**
+    Result Storage`"]
+    PM["`**Post-Processor Manager**
+    Metrics & Analysis`"]
 
-To handle messages:
+    W1["`**Worker 1**`"]
+    W2["`**Worker 2**`"]
+    WN["`**Worker N**`"]
 
-1. Subscribe to relevant topics using `_subscribe_to_topic(Topic)`
-2. Implement message processing logic in `_process_message(topic, message)`
-3. Send messages using `_publish_message(topic, message)`
+    CLI -->|Bootstraps| SC
+    CLIConfig --> CLI
+    ConfigFile --> CLI
 
+    SC -->|Configure & Start| DS
+    SC -->|Configure & Start| TM
+    SC -->|Configure & Start| WM
+    SC -->|Configure & Start| RM
+    SC -->|Configure & Start| PM
 
-### Service Inheritance Model
+    WM -->|Spawn & Configure| W1
+    WM -->|Spawn & Configure| W2
+    WM -->|Spawn & Configure| WN
 
-AIPerf uses an inheritance-based architecture where all system services inherit from a common `ServiceBase` abstract class. This approach provides a consistent interface and shared functionality across services.
+    style CLI fill:#1e3a8a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
+    style ConfigFile fill:#7c2d12,stroke:#f97316,stroke-width:2px,color:#ffffff
+    style CLIConfig fill:#7c2d12,stroke:#f97316,stroke-width:2px,color:#ffffff
+    style SC fill:#166534,stroke:#22c55e,stroke-width:3px,color:#ffffff
+    style DS fill:#4338ca,stroke:#8b5cf6,stroke-width:2px,color:#ffffff
+    style TM fill:#4338ca,stroke:#8b5cf6,stroke-width:2px,color:#ffffff
+    style WM fill:#dc2626,stroke:#f87171,stroke-width:2px,color:#ffffff
+    style RM fill:#4338ca,stroke:#8b5cf6,stroke-width:2px,color:#ffffff
+    style PM fill:#4338ca,stroke:#8b5cf6,stroke-width:2px,color:#ffffff
+    style W1 fill:#be185d,stroke:#f472b6,stroke-width:2px,color:#ffffff
+    style W2 fill:#be185d,stroke:#f472b6,stroke-width:2px,color:#ffffff
+    style WN fill:#be185d,stroke:#f472b6,stroke-width:2px,color:#ffffff
+```
 
-#### Base Service Responsibilities
+### Communication System
 
-The `ServiceBase` class (`aiperf/common/service.py`) provides automatically for all services:
+Services communicate using a strongly-typed message system:
 
-- **Lifecycle Management**: Standard initialize/run/stop/cleanup methods
-- **State Transitions**: Manages service state changes (INITIALIZING → RUNNING → STOPPING → STOPPED)
-- **Communication**: Methods for publishing messages and subscribing to topics
-- **Heartbeat**: Automatic heartbeat generation for service health monitoring
+- **Topics**: Categorized message channels (commands, status, data, heartbeat, etc.)
+- **Messages**: Pydantic models ensuring type safety
+- **Service States**: Well-defined lifecycle states with transitions
 
-#### Service Implementation Requirements
+Key communication patterns:
+- **Command/Response**: System controller to services
+- **Status Updates**: Services to system controller
+- **Heartbeat**: Automatic health monitoring
+- **Credit System**: Resource allocation and throttling
 
-When implementing a new service that inherits from `ServiceBase`, you must:
+### Service Framework
 
-1. **Implement Abstract Methods**:
-   - `_initialize()`: Set up service-specific resources
-   - `_on_start()`: Main service logic
-   - `_on_stop()`: Handle graceful shutdown
-   - `_cleanup()`: Release resources
-   - `_process_message()`: Handle incoming messages
+All services inherit from `BaseService` which provides:
 
-2. **Configuration**:
-   - Define service-specific configuration needs
-   - Pass configuration to the base class constructor
+#### Automatic Features
+- **Lifecycle Management**: `initialize()` → `run()` → `configure()` → `start()` → `stop()` → `cleanup()`
+- **State Management**: Automatic state transitions with validation
+- **Communication**: Message publishing/subscribing with type safety
+- **Health Monitoring**: Automatic heartbeat generation
+- **Error Handling**: Structured exception handling and recovery
 
-#### Example Service Implementation
+### Implementation Requirements
+#### Implement base service requirements
+```python
+    def __init__(
+        self, service_config: ServiceConfig, service_id: str | None = None
+    ) -> None:
+        super().__init__(service_config=service_config, service_id=service_id)
+        self.logger.debug("Initializing records manager")
 
-Here's a simplified example of a service implementation:
+    @property
+    def service_type(self) -> ServiceType:
+        """The type of service."""
+        return ServiceType.RECORDS_MANAGER
+```
+
+#### Service Factory Registration
+Register the service with the ServiceFactory:
 
 ```python
-from aiperf.common.service.base_service import BaseService
-from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import Topic, ClientType
-from aiperf.common.models import Message
-
-
-class ExampleService(BaseService):
-    def __init__(self, config: ServiceConfig) -> None:
-        super().__init__(service_type="example_service", service_config=config)
-        self.my_resource = None
-
-    async def _initialize(self) -> None:
-        """Initialize service-specific resources."""
-        self.logger.debug("Initializing Example Service")
-        # Subscribe to required topics
-        # TODO: Fix this documentation
-        await self._subscribe_to_topic(ClientType.CONTROLLER_SUB, Topic.COMMAND)
-        await self._subscribe_to_topic(ClientType.INFERENCE_REQUEST_SUB, Topic.DATA)
-        # Initialize resources
-        self.my_resource = SomeResource()
-
-    async def _on_start(self) -> None:
-        """Main service logic."""
-        self.logger.debug("Running Example Service")
-        # Implement your service's main logic here
-        # This method should typically set up ongoing tasks or loops
-
-    async def _on_stop(self) -> None:
-        """Handle graceful shutdown."""
-        self.logger.debug("Stopping Example Service")
-        # Cancel any ongoing tasks
-        # Prepare for cleanup
-
-    async def _cleanup(self) -> None:
-        """Release resources."""
-        self.logger.debug("Cleaning up Example Service")
-        # Release any resources
-        if self.my_resource:
-            await self.my_resource.close()
-
-    async def _process_message(self, topic: Topic, message: Message) -> None:
-        """Handle incoming messages."""
-        self.logger.debug(f"Processing response: {topic}, {message}")
-        if topic == Topic.COMMAND:
-            # Handle command messages
-            await self._handle_command(message)
-        elif topic == Topic.DATA:
-            # Handle data messages
-            await self._handle_data(message)
-
-    async def _handle_command(self, message: Message) -> None:
-        """Handle command messages."""
-        # Implement command handling logic
-
-    async def _handle_data(self, message: Message) -> None:
-        """Handle data messages."""
-        # Implement data handling logic
+@ServiceFactory.register(ServiceType.RECORDS_MANAGER)
+class RecordsManager(BaseComponentService):
+    """
+    The RecordsManager service is primarily responsible for holding the
+    results returned from the workers.
+    """
 ```
 
-#### Using the Service
+#### Service Lifecycle Hooks
+Use decorators to hook into lifecycle events:
 
-To instantiate and run a service:
+```python
+    @on_init
+    async def _initialize(self) -> None:
+        """Initialize records manager-specific components."""
+        self.logger.debug("Initializing records manager")
+        # TODO: Implement records manager initialization
+
+    @on_start
+    async def _start(self) -> None:
+        """Start the records manager."""
+        self.logger.debug("Starting records manager")
+        # TODO: Implement records manager start
+
+    @on_stop
+    async def _stop(self) -> None:
+        """Stop the records manager."""
+        self.logger.debug("Stopping records manager")
+        # TODO: Implement records manager stop
+
+    @on_cleanup
+    async def _cleanup(self) -> None:
+        """Clean up records manager-specific components."""
+        self.logger.debug("Cleaning up records manager")
+        # TODO: Implement records manager cleanup
+
+    @on_configure
+    async def _configure(self, payload: BasePayload) -> None:
+        """Configure the records manager."""
+        self.logger.debug(f"Configuring records manager with payload: {payload}")
+        # TODO: Implement records manager configuration
+```
+
+### Running Services
+
+#### Bootstrapping
+Services are launched using the bootstrap system:
 
 ```python
 def main() -> None:
+    """Main entry point for the records manager."""
+
     from aiperf.common.bootstrap import bootstrap_and_run_service
 
-    bootstrap_and_run_service(ExampleService)
+    bootstrap_and_run_service(RecordsManager)
 
 
 if __name__ == "__main__":
     sys.exit(main())
 ```
 
-The `bootstrap_and_run_service` function handles:
-1. Setting up the event loop (using uvloop)
-2. Creating an instance of your service
-3. Running the service's lifecycle methods
-4. Handling graceful shutdown
+The bootstrap system:
+- Sets up uvloop for high-performance async I/O
+- Loads service configuration
+- Manages service lifecycle
+- Handles graceful shutdown
 
-This inheritance model ensures consistent behavior across all services while allowing for service-specific customization.
+#### Configuration Management
+Services are configured using Pydantic models:
+
+(TBD) Coming SOON
+
+```python
+from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.enums import ServiceRunType
+
+config = ServiceConfig(
+    service_run_type=ServiceRunType.MULTIPROCESSING,
+    # Additional configuration options
+)
+```
+
+## Testing
+
+### Running Tests
+
+```bash
+# Run all tests (provide basic coverage, no logging)
+make test
+
+# Run with verbose output and debug logging, basic coverage
+make test-verbose
+
+# Run with HTML coverage report, and no logging
+make coverage
+
+# Run specific test file
+pytest aiperf/tests/test_specific_file.py -v
+```
+
+### Test Structure
+
+- **Unit Tests**: Test individual components in isolation
+- **Integration Tests**: Test service interactions
+- **Base Test Classes**: Shared test utilities and fixtures
+
+### Test Utilities
+
+The test suite provides base classes for testing services:
+
+- `BaseTestService`: Base class for testing services
+- `BaseTestControllerService`: For testing controller services
+- `BaseTestComponentService`: For testing component-specific functionality
+
+## Code Quality
+
+### Linting and Formatting
+
+The project uses `ruff` for both linting and formatting:
+
+```bash
+# Check code style
+ruff check .
+
+# Auto-fix issues
+ruff check . --fix
+
+# Format code
+ruff format .
+
+# Check formatting
+ruff format . --check
+```
+
+### Pre-commit Hooks
+
+Pre-commit hooks are automatically installed and run:
+- Code formatting with ruff
+- Import sorting
+- Basic syntax checking
+- Test execution on changed files
+
+### Configuration
+
+Quality tools are configured in `pyproject.toml`:
+- **Ruff**: Line length 88, comprehensive rule set
+- **Pytest**: Async mode, coverage reporting
+- **Coverage**: HTML reports, skip covered lines
+
+## Development Best Practices
+
+### Code Style
+- Follow PEP 8 guidelines
+- Use Pydantic models for data structures
+- Prefer enums for string choices (using our custom `StrEnum`)
+- Implement DRY principles
+- Use type hints throughout
+
+### Testing
+- Write tests for all new functionality
+- Use pytest fixtures for shared setup
+- Parameterize tests when appropriate
+- Aim for high test coverage
+- Test both success and failure cases
+
+### Service Development
+- Always inherit from appropriate base service class
+- Use lifecycle hooks for setup/teardown
+- Implement proper error handling
+- Follow message-passing patterns
+- Document service responsibilities clearly
+
+### Configuration
+- Use Pydantic models for configuration
+- Validate configuration at startup
+- Provide sensible defaults
+- Support environment variable overrides
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Services not starting**: Check logs for initialization errors
+2. **Communication failures**: Verify ZeroMQ ports are available
+3. **Test failures**: Ensure virtual environment is activated
+4. **Import errors**: Run `pip install -e ".[dev]"` to update dependencies
+
+### Debugging
+
+- Use `--log-level DEBUG` for detailed logging
+- Check service states in system controller logs
+- Monitor heartbeat messages for service health
+- Use `make test-verbose` for detailed test output
+
+### Performance
+
+- Services use uvloop for high-performance async I/O
+- ZeroMQ provides efficient inter-service communication
+- Multiprocessing mode distributes load across CPU cores
+- Kubernetes mode enables horizontal scaling
+
+## Contributing
+
+1. Follow the development setup instructions
+2. Create feature branches from main
+3. Write tests for new functionality
+4. Ensure all quality checks pass
+5. Submit pull requests with clear descriptions following proper naming
+
+For questions or issues, refer to the project documentation or open an issue in the repository.
 
