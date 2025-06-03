@@ -245,7 +245,7 @@ flowchart LR
     W2["`**Worker 2**`"]
     WN["`**Worker N**`"]
 
-    CLI -->| SC
+    CLI -->|Bootstraps| SC
     CLIConfig --> CLI
     ConfigFile --> CLI
 
