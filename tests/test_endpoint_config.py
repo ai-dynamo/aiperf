@@ -3,8 +3,8 @@
 
 from enum import Enum
 
-from aiperf.common.models.config.config_defaults import EndPointDefaults
-from aiperf.common.models.config.endpoint_config import EndPointConfig
+from aiperf.common.config.config_defaults import EndPointDefaults
+from aiperf.common.config.endpoint_config import EndPointConfig
 
 
 def test_endpoint_config_defaults():

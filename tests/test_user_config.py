@@ -3,10 +3,10 @@
 
 from unittest.mock import mock_open, patch
 
-from aiperf.common.models.config.config_defaults import UserDefaults
-from aiperf.common.models.config.endpoint_config import EndPointConfig
-from aiperf.common.models.config.input_config import InputConfig
-from aiperf.common.models.config.user_config import UserConfig
+from aiperf.common.config.config_defaults import UserDefaults
+from aiperf.common.config.endpoint_config import EndPointConfig
+from aiperf.common.config.input_config import InputConfig
+from aiperf.common.config.user_config import UserConfig
 
 
 def test_user_config_serialization_to_file():

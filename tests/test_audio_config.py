@@ -2,8 +2,8 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import AudioFormat
-from aiperf.common.models.config.audio_config import AudioConfig
-from aiperf.common.models.config.config_defaults import AudioDefaults
+from aiperf.common.config.audio_config import AudioConfig
+from aiperf.common.config.config_defaults import AudioDefaults
 
 
 def test_audio_config_defaults():

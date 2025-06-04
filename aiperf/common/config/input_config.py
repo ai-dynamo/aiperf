@@ -6,10 +6,10 @@ from typing import Annotated, Any
 
 from pydantic import BeforeValidator, Field
 
-from aiperf.common.models.config.audio_config import AudioConfig
-from aiperf.common.models.config.base_config import BaseConfig
-from aiperf.common.models.config.config_defaults import InputDefaults
-from aiperf.common.models.config.config_validators import parse_file, parse_goodput
+from aiperf.common.config.audio_config import AudioConfig
+from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.config_defaults import InputDefaults
+from aiperf.common.config.config_validators import parse_file, parse_goodput
 
 
 class InputConfig(BaseConfig):
