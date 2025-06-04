@@ -11,6 +11,7 @@ from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceRunType, ServiceType
 from aiperf.common.exceptions import ConfigError
+from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
     on_configure,
@@ -18,9 +19,6 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
-from aiperf.common.enums import ServiceRunType, ServiceType
-from aiperf.common.exceptions import ConfigError
-from aiperf.common.factories import ServiceFactory
 from aiperf.common.models import BasePayload
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.services.worker.worker import Worker

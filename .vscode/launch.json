@@ -1,0 +1,15 @@
+{
+    "configurations": [
+        {
+            "name": "pytest",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "${workspaceFolder}/aiperf/tests",
+            "module": "pytest",
+            "args": [
+                ""
+            ]
+        }
+    ],
+    "version": "0.2.0"
+}

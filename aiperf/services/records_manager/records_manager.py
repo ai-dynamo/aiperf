@@ -4,6 +4,7 @@ import sys
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceType
+from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
     on_configure,
@@ -11,8 +12,6 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
-from aiperf.common.enums import ServiceType
-from aiperf.common.factories import ServiceFactory
 from aiperf.common.models import BasePayload
 from aiperf.common.service.base_component_service import BaseComponentService
 
