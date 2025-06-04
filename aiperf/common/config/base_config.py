@@ -15,16 +15,17 @@ ADD_TO_TEMPLATE = "add_to_template"
 
 
 class BaseConfig(BaseModel):
-    def serialize_to_yaml(self, indent: int = 4) -> str:
+    def serialize_to_yaml(self, verbose: bool = False, indent: int = 4) -> str:
         """
         Serialize a Pydantic model to a YAML string.
 
         Args:
+            verbose: Whether to include verbose comments in the YAML output.
             indent: The per-level indentation to use.
         """
         # Dump model to dict with context (flags propagate recursively)
         context = {
-            "verbose": getattr(self, "verbose", False),
+            "verbose": verbose,
         }
 
         data = self.model_dump(context=context)

@@ -40,7 +40,7 @@ def test_serialize_to_yaml():
         verbose=True,
     )
 
-    yaml_output = config.serialize_to_yaml(indent=2)
+    yaml_output = config.serialize_to_yaml(verbose=config.verbose, indent=2)
 
     assert "nested:" in yaml_output
     assert "field1: value1" in yaml_output
@@ -65,7 +65,7 @@ def test_attach_comments_with_verbose():
         verbose=True,
     )
 
-    yaml_output = config.serialize_to_yaml(indent=2)
+    yaml_output = config.serialize_to_yaml(verbose=config.verbose, indent=2)
 
     # Check if comments are attached when verbose is True
     assert (
