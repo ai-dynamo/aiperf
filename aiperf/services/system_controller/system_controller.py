@@ -23,13 +23,13 @@ from aiperf.common.exceptions import (
     ServiceInitializationError,
     ServiceStopError,
 )
+from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
     on_init,
     on_start,
     on_stop,
 )
-from aiperf.common.factories import ServiceFactory
 from aiperf.common.models import (
     HeartbeatMessage,
     RegistrationMessage,

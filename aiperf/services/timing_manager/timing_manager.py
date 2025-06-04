@@ -50,6 +50,12 @@ class TimingManager(BaseComponentService):
         self.logger.debug("Initializing timing manager")
         # TODO: Implement timing manager initialization
 
+    @on_configure
+    async def _configure(self, payload: BasePayload) -> None:
+        """Configure the timing manager."""
+        self.logger.debug(f"Configuring timing manager with payload: {payload}")
+        # TODO: Implement timing manager configuration
+
     @on_start
     async def _start(self) -> None:
         """Start the timing manager."""
@@ -80,12 +86,6 @@ class TimingManager(BaseComponentService):
         """Clean up timing manager-specific components."""
         self.logger.debug("Cleaning up timing manager")
         # TODO: Implement timing manager cleanup
-
-    @on_configure
-    async def _configure(self, payload: BasePayload) -> None:
-        """Configure the timing manager."""
-        self.logger.debug(f"Configuring timing manager with payload: {payload}")
-        # TODO: Implement timing manager configuration
 
     async def _issue_credit_drops(self) -> None:
         """Issue credit drops to workers."""

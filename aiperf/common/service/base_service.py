@@ -9,7 +9,7 @@ from abc import ABC
 
 from aiperf.common.comms.base import BaseCommunication
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import CommunicationBackend, ServiceState
+from aiperf.common.enums import ServiceState
 from aiperf.common.exceptions import (
     AIPerfMultiError,
     CommunicationClientCreationError,
@@ -20,10 +20,9 @@ from aiperf.common.exceptions import (
     ServiceStartError,
     ServiceStopError,
 )
+from aiperf.common.factories import CommunicationFactory
 from aiperf.common.hooks import AIPerfHook, AIPerfTaskMixin, supports_hooks
 from aiperf.common.models import BaseMessage, Message, Payload
-from aiperf.common.factories import CommunicationFactory
-from aiperf.common.models import BaseMessage, Message, Payload, ZMQCommunicationConfig
 from aiperf.common.service.base_service_interface import BaseServiceInterface
 
 

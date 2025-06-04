@@ -43,7 +43,7 @@
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",
                 "terminal.integrated.cwd": "/home/appuser/aiperf",
-                "python.defaultInterpreterPath": "/opt/aiperf/venv/bin/python",
+                "python.defaultInterpreterPath": "/home/appuser/.venv/bin/python",
                 "python.linting.pylintEnabled": true,
                 "python.linting.ruffEnabled": true,
                 "python.formatting.provider": "ruff",
