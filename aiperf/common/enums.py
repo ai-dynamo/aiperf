@@ -20,6 +20,17 @@ class CaseInsensitiveStrEnum(str, Enum):
 
     @classmethod
     def _missing_(cls, value):
+        """
+        Handles cases where a value is not directly found in the enumeration.
+
+        This method is called when an attempt is made to access an enumeration
+        member using a value that does not directly match any of the defined
+        members. It provides custom logic to handle such cases.
+
+        Returns:
+            The matching enumeration member if a case-insensitive match is found
+            for string values; otherwise, returns None.
+        """
         if isinstance(value, str):
             for member in cls:
                 if member.value.lower() == value.lower():
