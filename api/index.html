@@ -32526,7 +32526,8 @@ are still required to be implemented by derived classes.</p>
 
               <details class="quote">
                 <summary>Source code in <code>aiperf/common/service/base_service.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 30</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 29</span>
+<span class="normal"> 30</span>
 <span class="normal"> 31</span>
 <span class="normal"> 32</span>
 <span class="normal"> 33</span>
@@ -32949,8 +32950,7 @@ are still required to be implemented by derived classes.</p>
 <span class="normal">450</span>
 <span class="normal">451</span>
 <span class="normal">452</span>
-<span class="normal">453</span>
-<span class="normal">454</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@supports_hooks</span><span class="p">(</span>
+<span class="normal">453</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@supports_hooks</span><span class="p">(</span>
     <span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">,</span>
     <span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_RUN</span><span class="p">,</span>
     <span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_CONFIGURE</span><span class="p">,</span>
@@ -33549,14 +33549,14 @@ the <code>BaseServiceInterface.configure</code> method.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/common/service/base_service.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">394</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">393</span>
+<span class="normal">394</span>
 <span class="normal">395</span>
 <span class="normal">396</span>
 <span class="normal">397</span>
 <span class="normal">398</span>
 <span class="normal">399</span>
-<span class="normal">400</span>
-<span class="normal">401</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">configure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">Message</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">400</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">configure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">Message</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Configure the service with the given configuration. This method implements</span>
 <span class="sd">    the `BaseServiceInterface.configure` method.</span>
 
@@ -33665,7 +33665,8 @@ message this is a response to</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/common/service/base_service.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">403</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">402</span>
+<span class="normal">403</span>
 <span class="normal">404</span>
 <span class="normal">405</span>
 <span class="normal">406</span>
@@ -33682,8 +33683,7 @@ message this is a response to</p>
 <span class="normal">417</span>
 <span class="normal">418</span>
 <span class="normal">419</span>
-<span class="normal">420</span>
-<span class="normal">421</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">create_message</span><span class="p">(</span>
+<span class="normal">420</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">create_message</span><span class="p">(</span>
     <span class="bp">self</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="n">Payload</span><span class="p">,</span> <span class="n">request_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Message</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Create a message of the given type, and pre-fill the service_id.</span>
@@ -33737,7 +33737,8 @@ the <code>BaseServiceInterface.initialize</code> method.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/common/service/base_service.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">131</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">130</span>
+<span class="normal">131</span>
 <span class="normal">132</span>
 <span class="normal">133</span>
 <span class="normal">134</span>
@@ -33810,8 +33811,7 @@ the <code>BaseServiceInterface.initialize</code> method.</p>
 <span class="normal">201</span>
 <span class="normal">202</span>
 <span class="normal">203</span>
-<span class="normal">204</span>
-<span class="normal">205</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">204</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Initialize the service communication and signal handlers. This method implements</span>
 <span class="sd">    the `BaseServiceInterface.initialize` method.</span>
 
@@ -33919,7 +33919,8 @@ the <code>BaseServiceInterface.run_forever</code> method.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/common/service/base_service.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">207</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">206</span>
+<span class="normal">207</span>
 <span class="normal">208</span>
 <span class="normal">209</span>
 <span class="normal">210</span>
@@ -33966,8 +33967,7 @@ the <code>BaseServiceInterface.run_forever</code> method.</p>
 <span class="normal">251</span>
 <span class="normal">252</span>
 <span class="normal">253</span>
-<span class="normal">254</span>
-<span class="normal">255</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_forever</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">254</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_forever</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Run the service in a loop until the stop event is set. This method implements</span>
 <span class="sd">    the `BaseServiceInterface.run_forever` method.</span>
 
@@ -34046,7 +34046,8 @@ the <code>BaseServiceInterface.set_state</code> method.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/common/service/base_service.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">120</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">119</span>
+<span class="normal">120</span>
 <span class="normal">121</span>
 <span class="normal">122</span>
 <span class="normal">123</span>
@@ -34054,8 +34055,7 @@ the <code>BaseServiceInterface.set_state</code> method.</p>
 <span class="normal">125</span>
 <span class="normal">126</span>
 <span class="normal">127</span>
-<span class="normal">128</span>
-<span class="normal">129</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">set_state</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="n">ServiceState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">128</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">set_state</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="n">ServiceState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Set the state of the service. This method implements</span>
 <span class="sd">    the `BaseServiceInterface.set_state` method.</span>
 
@@ -34098,7 +34098,8 @@ and configured.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/common/service/base_service.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">295</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">294</span>
+<span class="normal">295</span>
 <span class="normal">296</span>
 <span class="normal">297</span>
 <span class="normal">298</span>
@@ -34135,8 +34136,7 @@ and configured.</p>
 <span class="normal">329</span>
 <span class="normal">330</span>
 <span class="normal">331</span>
-<span class="normal">332</span>
-<span class="normal">333</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">332</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Start the service and its components. This method implements</span>
 <span class="sd">    the `BaseServiceInterface.start` method.</span>
 
@@ -34208,7 +34208,8 @@ the <code>BaseServiceInterface.stop</code> method.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/common/service/base_service.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">335</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">334</span>
+<span class="normal">335</span>
 <span class="normal">336</span>
 <span class="normal">337</span>
 <span class="normal">338</span>
@@ -34264,8 +34265,7 @@ the <code>BaseServiceInterface.stop</code> method.</p>
 <span class="normal">388</span>
 <span class="normal">389</span>
 <span class="normal">390</span>
-<span class="normal">391</span>
-<span class="normal">392</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">391</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Stop the service and clean up its components. This method implements</span>
 <span class="sd">    the `BaseServiceInterface.stop` method.</span>
 
@@ -36360,7 +36360,8 @@ It will have an API for dataset acquisition of a dataset if available in a remot
 
               <details class="quote">
                 <summary>Source code in <code>aiperf/services/dataset/dataset_manager.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">20</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">19</span>
+<span class="normal">20</span>
 <span class="normal">21</span>
 <span class="normal">22</span>
 <span class="normal">23</span>
@@ -36407,8 +36408,7 @@ It will have an API for dataset acquisition of a dataset if available in a remot
 <span class="normal">64</span>
 <span class="normal">65</span>
 <span class="normal">66</span>
-<span class="normal">67</span>
-<span class="normal">68</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@ServiceFactory</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">ServiceType</span><span class="o">.</span><span class="n">DATASET_MANAGER</span><span class="p">)</span>
+<span class="normal">67</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@ServiceFactory</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">ServiceType</span><span class="o">.</span><span class="n">DATASET_MANAGER</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">DatasetManager</span><span class="p">(</span><span class="n">BaseComponentService</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    The DatasetManager primary responsibility is to manage the data generation or acquisition.</span>
@@ -36519,12 +36519,12 @@ It will have an API for dataset acquisition of a dataset if available in a remot
 
             <details class="quote">
               <summary>Source code in <code>aiperf/services/dataset/dataset_manager.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">72</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">71</span>
+<span class="normal">72</span>
 <span class="normal">73</span>
 <span class="normal">74</span>
 <span class="normal">75</span>
-<span class="normal">76</span>
-<span class="normal">77</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">76</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Main entry point for the dataset manager.&quot;&quot;&quot;</span>
 
     <span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.bootstrap</span><span class="w"> </span><span class="kn">import</span> <span class="n">bootstrap_and_run_service</span>
@@ -38861,7 +38861,8 @@ records to generate metrics and other conclusions from the records.</p>
 
               <details class="quote">
                 <summary>Source code in <code>aiperf/services/post_processor_manager/post_processor_manager.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">20</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">19</span>
+<span class="normal">20</span>
 <span class="normal">21</span>
 <span class="normal">22</span>
 <span class="normal">23</span>
@@ -38904,8 +38905,7 @@ records to generate metrics and other conclusions from the records.</p>
 <span class="normal">60</span>
 <span class="normal">61</span>
 <span class="normal">62</span>
-<span class="normal">63</span>
-<span class="normal">64</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@ServiceFactory</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">ServiceType</span><span class="o">.</span><span class="n">POST_PROCESSOR_MANAGER</span><span class="p">)</span>
+<span class="normal">63</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@ServiceFactory</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">ServiceType</span><span class="o">.</span><span class="n">POST_PROCESSOR_MANAGER</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">PostProcessorManager</span><span class="p">(</span><span class="n">BaseComponentService</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;PostProcessorManager is primarily responsible for iterating over the</span>
 <span class="sd">    records to generate metrics and other conclusions from the records.</span>
@@ -39012,12 +39012,12 @@ records to generate metrics and other conclusions from the records.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/services/post_processor_manager/post_processor_manager.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">68</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">67</span>
+<span class="normal">68</span>
 <span class="normal">69</span>
 <span class="normal">70</span>
 <span class="normal">71</span>
-<span class="normal">72</span>
-<span class="normal">73</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">72</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Main entry point for the post processor manager.&quot;&quot;&quot;</span>
 
     <span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.bootstrap</span><span class="w"> </span><span class="kn">import</span> <span class="n">bootstrap_and_run_service</span>
@@ -39089,7 +39089,8 @@ results returned from the workers.</p>
 
               <details class="quote">
                 <summary>Source code in <code>aiperf/services/records_manager/records_manager.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">20</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">19</span>
+<span class="normal">20</span>
 <span class="normal">21</span>
 <span class="normal">22</span>
 <span class="normal">23</span>
@@ -39133,8 +39134,7 @@ results returned from the workers.</p>
 <span class="normal">61</span>
 <span class="normal">62</span>
 <span class="normal">63</span>
-<span class="normal">64</span>
-<span class="normal">65</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@ServiceFactory</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">ServiceType</span><span class="o">.</span><span class="n">RECORDS_MANAGER</span><span class="p">)</span>
+<span class="normal">64</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@ServiceFactory</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">ServiceType</span><span class="o">.</span><span class="n">RECORDS_MANAGER</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">RecordsManager</span><span class="p">(</span><span class="n">BaseComponentService</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    The RecordsManager service is primarily responsible for holding the</span>
@@ -39242,12 +39242,12 @@ results returned from the workers.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/services/records_manager/records_manager.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">69</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">68</span>
+<span class="normal">69</span>
 <span class="normal">70</span>
 <span class="normal">71</span>
 <span class="normal">72</span>
-<span class="normal">73</span>
-<span class="normal">74</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">73</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Main entry point for the records manager.&quot;&quot;&quot;</span>
 
     <span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.bootstrap</span><span class="w"> </span><span class="kn">import</span> <span class="n">bootstrap_and_run_service</span>
@@ -41931,6 +41931,12 @@ timing credits for requests.</p>
         <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Initializing timing manager&quot;</span><span class="p">)</span>
         <span class="c1"># TODO: Implement timing manager initialization</span>
 
+    <span class="nd">@on_configure</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_configure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="n">BasePayload</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Configure the timing manager.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Configuring timing manager with payload: </span><span class="si">{</span><span class="n">payload</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="c1"># TODO: Implement timing manager configuration</span>
+
     <span class="nd">@on_start</span>
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_start</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Start the timing manager.&quot;&quot;&quot;</span>
@@ -41961,12 +41967,6 @@ timing credits for requests.</p>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Clean up timing manager-specific components.&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Cleaning up timing manager&quot;</span><span class="p">)</span>
         <span class="c1"># TODO: Implement timing manager cleanup</span>
-
-    <span class="nd">@on_configure</span>
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_configure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="n">BasePayload</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Configure the timing manager.&quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Configuring timing manager with payload: </span><span class="si">{</span><span class="n">payload</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="c1"># TODO: Implement timing manager configuration</span>
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_issue_credit_drops</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Issue credit drops to workers.&quot;&quot;&quot;</span>
@@ -42491,7 +42491,9 @@ to the worker to issue to the request.</p>
 
               <details class="quote">
                 <summary>Source code in <code>aiperf/services/worker_manager/worker_manager.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 36</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 34</span>
+<span class="normal"> 35</span>
+<span class="normal"> 36</span>
 <span class="normal"> 37</span>
 <span class="normal"> 38</span>
 <span class="normal"> 39</span>
@@ -42643,9 +42645,7 @@ to the worker to issue to the request.</p>
 <span class="normal">185</span>
 <span class="normal">186</span>
 <span class="normal">187</span>
-<span class="normal">188</span>
-<span class="normal">189</span>
-<span class="normal">190</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@ServiceFactory</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">ServiceType</span><span class="o">.</span><span class="n">WORKER_MANAGER</span><span class="p">)</span>
+<span class="normal">188</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@ServiceFactory</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">ServiceType</span><span class="o">.</span><span class="n">WORKER_MANAGER</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">WorkerManager</span><span class="p">(</span><span class="n">BaseComponentService</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    The WorkerManager service is primary responsibility is to pull data from the dataset manager</span>
@@ -42871,11 +42871,11 @@ to the worker to issue to the request.</p>
 
               <details class="quote">
                 <summary>Source code in <code>aiperf/services/worker_manager/worker_manager.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">29</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">27</span>
+<span class="normal">28</span>
+<span class="normal">29</span>
 <span class="normal">30</span>
-<span class="normal">31</span>
-<span class="normal">32</span>
-<span class="normal">33</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">WorkerProcess</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="normal">31</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">WorkerProcess</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Information about a worker process.&quot;&quot;&quot;</span>
 
     <span class="n">worker_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;ID of the worker process&quot;</span><span class="p">)</span>
@@ -42920,12 +42920,12 @@ to the worker to issue to the request.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/services/worker_manager/worker_manager.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">194</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">192</span>
+<span class="normal">193</span>
+<span class="normal">194</span>
 <span class="normal">195</span>
 <span class="normal">196</span>
-<span class="normal">197</span>
-<span class="normal">198</span>
-<span class="normal">199</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="normal">197</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Main entry point for the worker manager.&quot;&quot;&quot;</span>
 
     <span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.bootstrap</span><span class="w"> </span><span class="kn">import</span> <span class="n">bootstrap_and_run_service</span>
