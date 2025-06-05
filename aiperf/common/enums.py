@@ -264,5 +264,16 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
 ####################################################################################
 # Data Exporter Enums
 ####################################################################################
+
+
 class DataExporterType(CaseInsensitiveStrEnum):
     CONSOLE = "console"
+
+
+#################################################################################
+# Post Processor Enums
+################################################################################
+
+
+class PostProcessorType(CaseInsensitiveStrEnum):
+    METRIC_SUMMARY = "metric_summary"
