@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import Union
 
-from aiperf.common.enums import CaseInsensitiveStrEnum, DataTopic, Topic, TopicType
+from aiperf.common.enums import DataTopic, CaseInsensitiveStrEnum, Topic, TopicType
 from aiperf.common.exceptions import CommunicationClientNotFoundError
 
 
