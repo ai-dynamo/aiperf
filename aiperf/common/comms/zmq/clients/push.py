@@ -8,7 +8,7 @@ from zmq import SocketType
 
 from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.exceptions import CommunicationPushError
-from aiperf.common.models import Message
+from aiperf.common.messages import Message
 
 logger = logging.getLogger(__name__)
 

@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import Union
 
-from aiperf.common.enums import DataTopic, StrEnum, Topic, TopicType
+from aiperf.common.enums import CaseInsensitiveStrEnum, DataTopic, Topic, TopicType
 from aiperf.common.exceptions import CommunicationClientNotFoundError
 
 
-class PubClientType(StrEnum):
+class PubClientType(CaseInsensitiveStrEnum):
     """
     Enum for specifying the client type for publishing messages. Includes a helper method
     for retrieving the appropriate client type based on the topic.
@@ -36,7 +36,7 @@ class PubClientType(StrEnum):
                 )
 
 
-class SubClientType(StrEnum):
+class SubClientType(CaseInsensitiveStrEnum):
     """
     Enum for specifying the client type for subscribing to messages. Includes a helper method
     for retrieving the appropriate client type based on the topic.
@@ -66,7 +66,7 @@ class SubClientType(StrEnum):
                 )
 
 
-class PushClientType(StrEnum):
+class PushClientType(CaseInsensitiveStrEnum):
     """
     Enum for specifying the client type for pushing messages. Includes a helper method
     for retrieving the appropriate client type based on the topic.
@@ -102,7 +102,7 @@ class PushClientType(StrEnum):
                 )
 
 
-class PullClientType(StrEnum):
+class PullClientType(CaseInsensitiveStrEnum):
     """
     Enum for specifying the client type for pulling messages. Includes a helper method
     for retrieving the appropriate client type based on the topic.
@@ -138,7 +138,7 @@ class PullClientType(StrEnum):
                 )
 
 
-class ReqClientType(StrEnum):
+class ReqClientType(CaseInsensitiveStrEnum):
     """
     Enum for specifying the client type for requesting messages. Includes a helper method
     for retrieving the appropriate client type based on the topic.
@@ -165,7 +165,7 @@ class ReqClientType(StrEnum):
                 )
 
 
-class RepClientType(StrEnum):
+class RepClientType(CaseInsensitiveStrEnum):
     """
     Enum for specifying the client type for responding to messages. Includes a helper method
     for retrieving the appropriate client type based on the topic.

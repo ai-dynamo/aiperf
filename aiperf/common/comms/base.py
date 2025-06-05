@@ -7,7 +7,7 @@ from typing import Any
 
 from aiperf.common.comms.client_enums import ClientType
 from aiperf.common.enums import TopicType
-from aiperf.common.models import Message
+from aiperf.common.messages import Message
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class BaseCommunication(ABC):
 
     @abstractmethod
     async def publish(self, topic: TopicType, message: Message) -> None:
-        """Publish a response to a topic.
+        """Publish a message to a topic.
 
         Args:
             topic: Topic to publish to
@@ -79,7 +79,7 @@ class BaseCommunication(ABC):
 
         Args:
             topic: Topic to subscribe to
-            callback: Function to call when a response is received
+            callback: Function to call when a message is received
         """
         pass
 

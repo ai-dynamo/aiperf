@@ -7,7 +7,11 @@ from aiperf.common.comms.client_enums import ClientType, PullClientType, PushCli
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceType, Topic
 from aiperf.common.hooks import on_cleanup, on_init, on_run, on_start, on_stop
-from aiperf.common.models import CreditDropMessage, CreditReturnPayload
+from aiperf.common.messages import (
+    CreditDropMessage,
+    CreditReturnMessage,
+    CreditReturnPayload,
+)
 from aiperf.common.service.base_service import BaseService
 
 
@@ -81,6 +85,7 @@ class Worker(BaseService):
         await self.comms.push(
             topic=Topic.CREDIT_RETURN,
             message=self.create_message(
+                CreditReturnMessage,
                 payload=CreditReturnPayload(amount=1),
             ),
         )

@@ -6,12 +6,12 @@ from typing import Annotated
 
 from pydantic import BeforeValidator, Field
 
-from aiperf.common.enums import AudioFormat
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import AudioDefaults
 from aiperf.common.config.config_validators import (
     parse_str_or_list_of_positive_values,
 )
+from aiperf.common.enums import AudioFormat
 
 
 class AudioConfig(BaseConfig):

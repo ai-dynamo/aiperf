@@ -64,7 +64,7 @@ pre-commit install --install-hooks
 - **Default mode**:
   ```bash
   aiperf
-  
+
   # also same as running
   aiperf --run-type process
   ```

@@ -7,7 +7,7 @@ from aiperf.common.comms.client_enums import ClientType, PubClientType, SubClien
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import CommandType
 from aiperf.common.hooks import on_run
-from aiperf.common.models import CommandPayload, Message
+from aiperf.common.messages import CommandMessage, CommandPayload, Message
 from aiperf.common.service.base_service import BaseService
 
 
@@ -64,9 +64,10 @@ class BaseControllerService(BaseService):
             A command message
         """
         return self.create_message(
+            CommandMessage,
             CommandPayload(
                 command=command,
                 target_service_id=target_service_id,
                 data=data,
-            )
+            ),
         )

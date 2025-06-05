@@ -12,10 +12,8 @@ from aiperf.common.comms.client_enums import PubClientType, SubClientType
 from aiperf.common.comms.zmq import ZMQCommunication
 from aiperf.common.enums import Topic
 from aiperf.common.exceptions import CommunicationInitializationError
+from aiperf.common.messages import DataMessage, DataPayload, Message
 from aiperf.common.models import (
-    BaseMessage,
-    DataPayload,
-    Message,
     ZMQCommunicationConfig,
     ZMQTCPTransportConfig,
 )
@@ -44,8 +42,8 @@ class TestZMQCommunication:
 
     @pytest.fixture
     def test_message(self):
-        """Create a test response for communication tests."""
-        return BaseMessage(
+        """Create a test message for communication tests."""
+        return DataMessage(
             service_id="test-service",
             payload=DataPayload(),
         )

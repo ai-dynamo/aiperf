@@ -22,7 +22,11 @@ from aiperf.common.exceptions import (
 )
 from aiperf.common.factories import CommunicationFactory
 from aiperf.common.hooks import AIPerfHook, AIPerfTaskMixin, supports_hooks
-from aiperf.common.models import BaseMessage, Message, Payload
+from aiperf.common.messages import (
+    BaseMessage,
+    Message,
+    PayloadT,
+)
 from aiperf.common.service.base_service_interface import BaseServiceInterface
 
 
@@ -125,7 +129,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         - Call all registered `AIPerfHook.ON_SET_STATE` hooks
         """
         self._state = state
-        await self.run_hooks(AIPerfHook.ON_SET_STATE, state)
+        asyncio.create_task(self.run_hooks(AIPerfHook.ON_SET_STATE, state))
 
     async def initialize(self) -> None:
         """Initialize the service communication and signal handlers. This method implements
@@ -400,8 +404,11 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         await self.run_hooks(AIPerfHook.ON_CONFIGURE, message)
 
     def create_message(
-        self, payload: Payload, request_id: str | None = None
-    ) -> Message:
+        self,
+        message_class: type[BaseMessage[PayloadT]],
+        payload: PayloadT,
+        request_id: str | None = None,
+    ) -> BaseMessage[PayloadT]:
         """Create a message of the given type, and pre-fill the service_id.
 
         Args:
@@ -412,11 +419,11 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         Returns:
             A message of the given type
         """
-        message = BaseMessage(
+        message = message_class(
             service_id=self.service_id,
             request_id=request_id,
             payload=payload,
-        )
+        )  # type: ignore[call-arg] : asking for message_type which is already set by the message class
         return message
 
     def _setup_signal_handlers(self) -> None:

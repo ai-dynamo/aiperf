@@ -7,7 +7,7 @@ Base test class for controller services.
 from unittest.mock import MagicMock
 
 from aiperf.common.enums import CommandType, Topic
-from aiperf.common.models import CommandPayload
+from aiperf.common.messages import CommandMessage, CommandPayload
 from aiperf.common.service.base_controller_service import BaseControllerService
 from aiperf.tests.base_test_service import BaseTestService, async_fixture
 
@@ -40,7 +40,7 @@ class BaseTestControllerService(BaseTestService):
             command=command,
             target_service_id=test_service_id,
         )
-        command_message = service.create_message(command_payload)
+        command_message = service.create_message(CommandMessage, command_payload)
 
         # Publish the command
         await service.comms.publish(Topic.COMMAND, command_message)

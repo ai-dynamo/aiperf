@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from typing import cast
 
 from aiperf.common.comms.client_enums import ClientType, PubClientType, SubClientType
 from aiperf.common.config.service_config import ServiceConfig
@@ -12,7 +11,7 @@ from aiperf.common.exceptions import (
     ServiceRegistrationError,
 )
 from aiperf.common.hooks import AIPerfHook, aiperf_task, on_run, on_set_state
-from aiperf.common.models import (
+from aiperf.common.messages import (
     CommandMessage,
     HeartbeatMessage,
     HeartbeatPayload,
@@ -196,34 +195,28 @@ class BaseComponentService(BaseService):
 
     def create_heartbeat_message(self) -> HeartbeatMessage:
         """Create a heartbeat notification message."""
-        return cast(
+        return self.create_message(
             HeartbeatMessage,
-            self.create_message(
-                HeartbeatPayload(
-                    service_type=self.service_type,
-                )
+            HeartbeatPayload(
+                service_type=self.service_type,
             ),
         )
 
     def create_registration_message(self) -> RegistrationMessage:
         """Create a registration request message."""
-        return cast(
+        return self.create_message(
             RegistrationMessage,
-            self.create_message(
-                RegistrationPayload(
-                    service_type=self.service_type,
-                )
+            RegistrationPayload(
+                service_type=self.service_type,
             ),
         )
 
     def create_status_message(self, state: ServiceState) -> StatusMessage:
         """Create a status notification message."""
-        return cast(
+        return self.create_message(
             StatusMessage,
-            self.create_message(
-                StatusPayload(
-                    state=state,
-                    service_type=self.service_type,
-                )
+            StatusPayload(
+                state=state,
+                service_type=self.service_type,
             ),
         )

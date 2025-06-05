@@ -12,7 +12,7 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
-from aiperf.common.models import BasePayload
+from aiperf.common.messages import Message
 from aiperf.common.service.base_component_service import BaseComponentService
 
 
@@ -62,7 +62,7 @@ class DatasetManager(BaseComponentService):
         # TODO: Implement dataset manager cleanup
 
     @on_configure
-    async def _configure(self, payload: BasePayload) -> None:
+    async def _configure(self, payload: Message) -> None:
         """Configure the dataset manager."""
         self.logger.debug(f"Configuring dataset manager with payload: {payload}")
         # TODO: Implement dataset manager configuration

@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 from aiperf.common.comms.client_enums import ClientType
 from aiperf.common.enums import ServiceState, ServiceType
-from aiperf.common.models import Message
+from aiperf.common.messages import Message
 
 
 class BaseServiceInterface(ABC):
