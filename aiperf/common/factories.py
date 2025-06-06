@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from aiperf.common.enums import StrEnum
+from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.exceptions import FactoryCreationError
 
 if TYPE_CHECKING:
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
         BaseService,  # noqa: F401 - for type checking
     )
 
-ClassEnumT = TypeVar("ClassEnumT", bound=StrEnum)
+ClassEnumT = TypeVar("ClassEnumT", bound=CaseInsensitiveStrEnum)
 ClassProtocolT = TypeVar("ClassProtocolT", bound=Any)
 
 
@@ -38,7 +38,7 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
     ```python
         # Define a new enum for the expected implementation types
         # This is optional, but recommended for type safety.
-        class DatasetLoaderType(StrEnum):
+        class DatasetLoaderType(CaseInsensitiveStrEnum):
             FILE = "file"
             S3 = "s3"
 

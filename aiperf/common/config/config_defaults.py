@@ -1,7 +1,6 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 
-
 from dataclasses import dataclass
 
 from aiperf.common.enums import AudioFormat, ModelSelectionStrategy, OutputFormat
@@ -11,7 +10,9 @@ from aiperf.common.enums import AudioFormat, ModelSelectionStrategy, OutputForma
 # Config Defaults
 @dataclass(frozen=True)
 class UserDefaults:
+    # TODO: Does MODEL_NAMES need to be in defaults if it is None?
     MODEL_NAMES = None
+
     VERBOSE = False
     TEMPLATE_FILENAME = "aiperf_config.yaml"
 
@@ -46,5 +47,5 @@ class AudioDefaults:
     LENGTH_STDDEV = 0
     FORMAT = AudioFormat.WAV
     DEPTHS = [16]
-    SAMPLE_RATES = [16]
+    SAMPLE_RATES = [16.0]
     NUM_CHANNELS = 1

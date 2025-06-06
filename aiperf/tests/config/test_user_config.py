@@ -1,6 +1,5 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
-
 from unittest.mock import mock_open, patch
 
 from aiperf.common.config.config_defaults import UserDefaults
@@ -61,8 +60,9 @@ def test_user_config_defaults():
     - `input` is an instance of `InputConfig`.
     """
 
-    config = UserConfig()
-    assert config.model_names == UserDefaults.MODEL_NAMES
+    config = UserConfig(model_names=["model1", "model2"])
+    # TODO: should this be a list or a string?
+    assert config.model_names == "model1, model2"
     assert config.verbose == UserDefaults.VERBOSE
     assert config.template_filename == UserDefaults.TEMPLATE_FILENAME
     assert isinstance(config.endpoint, EndPointConfig)

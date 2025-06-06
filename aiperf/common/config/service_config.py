@@ -44,7 +44,7 @@ class ServiceConfig(BaseModel):
         description="Interval in seconds between heartbeat messages",
     )
     min_workers: int = Field(
-        default=5,
+        default=100,
         description="Minimum number of idle workers to maintain",
     )
     max_workers: int = Field(

@@ -1,6 +1,5 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
-
 import io
 from enum import Enum
 from typing import Any
@@ -76,7 +75,7 @@ class BaseConfig(BaseModel):
             commented_map = CommentedMap()
 
             for field_name, value in data.items():
-                field = model.model_fields.get(field_name)
+                field = model.__class__.model_fields.get(field_name)
 
                 if not BaseConfig._should_add_field_to_template(field):
                     continue
