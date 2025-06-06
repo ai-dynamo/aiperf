@@ -60,9 +60,8 @@ def test_user_config_defaults():
     - `input` is an instance of `InputConfig`.
     """
 
-    config = UserConfig(model_names=["model1", "model2"])
-    # TODO: should this be a list or a string?
-    assert config.model_names == "model1, model2"
+    config = UserConfig()
+    assert config.model_names == UserDefaults.MODEL_NAMES
     assert config.verbose == UserDefaults.VERBOSE
     assert config.template_filename == UserDefaults.TEMPLATE_FILENAME
     assert isinstance(config.endpoint, EndPointConfig)
@@ -87,6 +86,6 @@ def test_user_config_custom_values():
         "template_filename": "custom_template.yaml",
     }
     config = UserConfig(**custom_values)
-    assert config.model_names == "model1, model2"
+    assert config.model_names == ["model1", "model2"]
     assert config.verbose is True
     assert config.template_filename == "custom_template.yaml"

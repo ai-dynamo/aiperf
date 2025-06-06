@@ -26,8 +26,7 @@ class UserConfig(BaseConfig):
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
         ),
         BeforeValidator(parse_str_or_list),
-        AfterValidator(print_str_or_list),
-    ]
+    ] = UserDefaults.MODEL_NAMES
 
     verbose: Annotated[
         bool,

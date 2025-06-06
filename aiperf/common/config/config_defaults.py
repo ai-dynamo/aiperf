@@ -10,9 +10,7 @@ from aiperf.common.enums import AudioFormat, ModelSelectionStrategy, OutputForma
 # Config Defaults
 @dataclass(frozen=True)
 class UserDefaults:
-    # TODO: Does MODEL_NAMES need to be in defaults if it is None?
-    MODEL_NAMES = None
-
+    MODEL_NAMES = ""
     VERBOSE = False
     TEMPLATE_FILENAME = "aiperf_config.yaml"
 
