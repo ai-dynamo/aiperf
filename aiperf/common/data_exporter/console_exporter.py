@@ -5,11 +5,10 @@ from rich.console import Console
 from rich.table import Table
 
 from aiperf.common.config.endpoint_config import EndPointConfig
-from aiperf.common.data_exporter.interface import DataExporterInterface
 from aiperf.common.data_exporter.record import Record
 
 
-class ConsoleExporter(DataExporterInterface):
+class ConsoleExporter:
     """A class that exports data to the console"""
 
     STAT_COLUMN_KEYS = ["avg", "min", "max", "p99", "p90", "p75"]
