@@ -2,9 +2,9 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass
-from pydantic import BaseModel
-from typing import Any, List, TypeAlias
+from typing import Any, TypeAlias
 
+from pydantic import BaseModel
 
 Timestamp: TypeAlias = int
 
@@ -34,7 +34,7 @@ class Record:
     """
 
     request: Message
-    responses: List[Message]
+    responses: list[Message]
 
 
 class Records(BaseModel):
@@ -42,15 +42,15 @@ class Records(BaseModel):
     A collection of records, each containing a request timestamp and a list of responses.
     """
 
-    records: List[Record] = []
+    records: list[Record] = []
 
-    def add_record(self, request: Message, responses: List[Message]) -> None:
+    def add_record(self, request: Message, responses: list[Message]) -> None:
         """
         Add a new record with the given request timestamp and responses.
         """
         self.records.append(Record(request=request, responses=responses))
 
-    def get_records(self) -> List[Record]:
+    def get_records(self) -> list[Record]:
         """
         Retrieve all records.
         """

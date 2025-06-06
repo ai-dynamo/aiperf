@@ -1,4 +1,5 @@
-import pytest
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
 from aiperf.services.records_manager.records import Message, Record, Records
 
 
@@ -78,6 +79,7 @@ def test_records_empty_initialization():
     instance returns an empty list, confirming correct empty state initialization.
     """
     records = Records()
+    assert records.get_records() == []
 
 
 def test_records_serialization_and_deserialization():
