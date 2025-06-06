@@ -39,7 +39,8 @@ class BaseMessage(BaseModel):
 
 
 class BaseServiceMessage(BaseMessage):
-    """Base message from a service, that requires a service_id field."""
+    """Base message that is sent from a service. Requires a service_id field to specify
+    the service that sent the message."""
 
     service_id: str = Field(
         ...,
@@ -48,7 +49,9 @@ class BaseServiceMessage(BaseMessage):
 
 
 class BaseStatusMessage(BaseServiceMessage):
-    """Base message containing status data."""
+    """Base message containing status data.
+    This message is sent by a service to the system controller to report its status.
+    """
 
     # override request_ns to be auto-filled if not provided
     request_ns: int | None = Field(
@@ -71,13 +74,17 @@ class BaseStatusMessage(BaseServiceMessage):
 
 
 class StatusMessage(BaseStatusMessage):
-    """Message containing status data."""
+    """Message containing status data.
+    This message is sent by a service to the system controller to report its status.
+    """
 
     message_type: Literal[MessageType.STATUS] = MessageType.STATUS
 
 
 class RegistrationMessage(BaseStatusMessage):
-    """Message containing registration data."""
+    """Message containing registration data.
+    This message is sent by a service to the system controller to register itself.
+    """
 
     message_type: Literal[MessageType.REGISTRATION] = MessageType.REGISTRATION
 
@@ -85,7 +92,10 @@ class RegistrationMessage(BaseStatusMessage):
 
 
 class HeartbeatMessage(BaseStatusMessage):
-    """Message containing heartbeat data."""
+    """Message containing heartbeat data.
+    This message is sent by a service to the system controller to indicate that it is
+    still running.
+    """
 
     message_type: Literal[MessageType.HEARTBEAT] = MessageType.HEARTBEAT
 
@@ -93,7 +103,9 @@ class HeartbeatMessage(BaseStatusMessage):
 
 
 class CommandMessage(BaseServiceMessage):
-    """Message containing command data."""
+    """Message containing command data.
+    This message is sent by the system controller to a service to command it to do something.
+    """
 
     message_type: Literal[MessageType.COMMAND] = MessageType.COMMAND
 
@@ -120,7 +132,10 @@ class CommandMessage(BaseServiceMessage):
 
 
 class CreditDropMessage(BaseServiceMessage):
-    """Message indicating that a credit has been dropped."""
+    """Message indicating that a credit has been dropped.
+    This message is sent by the timing manager to a workers to indicate that credit(s)
+    have been dropped.
+    """
 
     message_type: Literal[MessageType.CREDIT_DROP] = MessageType.CREDIT_DROP
 
@@ -134,7 +149,10 @@ class CreditDropMessage(BaseServiceMessage):
 
 
 class CreditReturnMessage(BaseServiceMessage):
-    """Message indicating that a credit has been returned."""
+    """Message indicating that a credit has been returned.
+    This message is sent by a worker to the timing manager to indicate that work has
+    been completed.
+    """
 
     message_type: Literal[MessageType.CREDIT_RETURN] = MessageType.CREDIT_RETURN
 
@@ -163,7 +181,6 @@ class ErrorMessage(BaseServiceMessage):
     )
 
 
-# TODO: this documentation is outdated and needs to be updated
 # Discriminated union type - only include message types that include a message_type field
 Message = Annotated[
     HeartbeatMessage
@@ -188,41 +205,43 @@ method.
 
 Example:
 ```python
->>> message = DataMessage(
+>>> message = StatusMessage(
 ...     service_id="service_1",
 ...     request_id="request_1",
 ...     request_ns=1716278400000000000,
-...     data="Hello, world!",
+...     state=ServiceState.READY,
+...     service_type=ServiceType.TEST,
 ... )
 >>> json_string = message.model_dump_json()
 >>> print(json_string)
-{"data": "Hello, world!", "service_id": "service_1", "request_id": "request_1", "request_ns": 1716278400000000000, "message_type": "data"}
+{"state": "ready", "service_type": "test", "service_id": "service_1", "request_id": "request_1", "request_ns": 1716278400000000000, "message_type": "status"}
 >>> deserialized_message = MessageTypeAdapter.validate_json(json_string)
 >>> print(deserialized_message)
-DataMessage(
-    message_type=MessageType.DATA,
-    data="Hello, world!",
+StatusMessage(
+    message_type=MessageType.STATUS,
+    state=ServiceState.READY,
+    service_type=ServiceType.TEST,
     service_id="service_1",
     request_id="request_1",
     request_ns=1716278400000000000,
 )
->>> print(deserialized_message.data)
-Hello, world!
+>>> print(deserialized_message.state)
+ready
 ```
 """
 
-# TODO: this documentation is outdated and needs to be updated
 # Create a TypeAdapter for JSON validation of messages
 MessageTypeAdapter = TypeAdapter(Message)
 """TypeAdapter for JSON validation of messages.
 Example:
 ```python
->>> json_string = '{"data": "Hello, world!", "service_id": "service_1", "request_id": "request_1", "request_ns": 1716278400000000000, "message_type": "data"}'
+>>> json_string = '{"state": "ready", "service_type": "test", "service_id": "service_1", "request_id": "request_1", "request_ns": 1716278400000000000, "message_type": "status"}'
 >>> message = MessageTypeAdapter.validate_json(json_string)
 >>> print(message)
-DataMessage(
-    message_type=MessageType.DATA,
-    data="Hello, world!",
+StatusMessage(
+    message_type=MessageType.STATUS,
+    state=ServiceState.READY,
+    service_type=ServiceType.TEST,
     service_id="service_1",
     request_id="request_1",
     request_ns=1716278400000000000,

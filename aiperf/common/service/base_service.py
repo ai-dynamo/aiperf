@@ -125,7 +125,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         - Call all registered `AIPerfHook.ON_SET_STATE` hooks
         """
         self._state = state
-        asyncio.create_task(self.run_hooks(AIPerfHook.ON_SET_STATE, state))
+        await self.run_hooks(AIPerfHook.ON_SET_STATE, state)
 
     async def initialize(self) -> None:
         """Initialize the service communication and signal handlers. This method implements
