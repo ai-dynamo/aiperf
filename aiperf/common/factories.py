@@ -38,7 +38,7 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
     ```python
         # Define a new enum for the expected implementation types
         # This is optional, but recommended for type safety.
-        class DatasetLoaderType(StrEnum):
+        class DatasetLoaderType(CaseInsensitiveStrEnum):
             FILE = "file"
             S3 = "s3"
 
