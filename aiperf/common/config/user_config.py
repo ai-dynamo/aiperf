@@ -1,7 +1,6 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 
-
 from typing import Annotated
 
 from pydantic import AfterValidator, BeforeValidator, Field
@@ -22,32 +21,28 @@ class UserConfig(BaseConfig):
     """
 
     model_names: Annotated[
-        str | list[str],
+        list[str],
         Field(
-            default=UserDefaults.MODEL_NAMES,
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
         ),
         BeforeValidator(parse_str_or_list),
-        AfterValidator(print_str_or_list),
-    ]
+    ] = UserDefaults.MODEL_NAMES
 
     verbose: Annotated[
         bool,
         Field(
-            default=UserDefaults.VERBOSE,
             description="Enable verbose output.",
             json_schema_extra={ADD_TO_TEMPLATE: False},
         ),
-    ]
+    ] = UserDefaults.VERBOSE
 
     template_filename: Annotated[
         str,
         Field(
-            default=UserDefaults.TEMPLATE_FILENAME,
             description="Path to the template file.",
             json_schema_extra={ADD_TO_TEMPLATE: False},
         ),
-    ]
+    ] = UserDefaults.TEMPLATE_FILENAME
 
     endpoint: EndPointConfig = EndPointConfig()
     input: InputConfig = InputConfig()

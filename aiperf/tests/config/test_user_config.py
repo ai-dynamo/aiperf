@@ -1,6 +1,5 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
-
 from unittest.mock import mock_open, patch
 
 from aiperf.common.config.config_defaults import UserDefaults
@@ -87,6 +86,6 @@ def test_user_config_custom_values():
         "template_filename": "custom_template.yaml",
     }
     config = UserConfig(**custom_values)
-    assert config.model_names == "model1, model2"
+    assert config.model_names == ["model1", "model2"]
     assert config.verbose is True
     assert config.template_filename == "custom_template.yaml"

@@ -1,7 +1,6 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 
-
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator, Field
@@ -20,23 +19,22 @@ class InputConfig(BaseConfig):
     batch_size: Annotated[
         int,
         Field(
-            default=InputDefaults.BATCH_SIZE,
             description="The batch size of text requests GenAI-Perf should send.\
             \nThis is currently supported with the embeddings and rankings endpoint types",
         ),
-    ]
+    ] = InputDefaults.BATCH_SIZE
+
     extra: Annotated[
         Any,
         Field(
-            default=InputDefaults.EXTRA,
             description="Provide additional inputs to include with every request.\
             \nInputs should be in an 'input_name:value' format.",
         ),
-    ]
+    ] = InputDefaults.EXTRA
+
     goodput: Annotated[
         dict[str, Any],
         Field(
-            default=InputDefaults.GOODPUT,
             description="An option to provide constraints in order to compute goodput.\
             \nSpecify goodput constraints as 'key:value' pairs,\
             \nwhere the key is a valid metric name, and the value is a number representing\
@@ -46,19 +44,19 @@ class InputConfig(BaseConfig):
             \n  output_token_throughput_per_user:600",
         ),
         BeforeValidator(parse_goodput),
-    ]
+    ] = InputDefaults.GOODPUT
+
     header: Annotated[
         Any,
         Field(
-            default=InputDefaults.HEADER,
             description="Adds a custom header to the requests.\
             \nHeaders must be specified as 'Header:Value' pairs.",
         ),
-    ]
+    ] = InputDefaults.HEADER
+
     file: Annotated[
         Any,
         Field(
-            default=InputDefaults.FILE,
             description="The file or directory containing the content to use for profiling.\
             \nExample:\
             \n  text: \"Your prompt here\"\
@@ -69,23 +67,23 @@ class InputConfig(BaseConfig):
             \n  synthetic: queries,passages",
         ),
         BeforeValidator(parse_file),
-    ]
+    ] = InputDefaults.FILE
+
     num_dataset_entries: Annotated[
         int,
         Field(
-            default=InputDefaults.NUM_DATASET_ENTRIES,
             ge=1,
             description="The number of unique payloads to sample from.\
             \nThese will be reused until benchmarking is complete.",
         ),
-    ]
+    ] = InputDefaults.NUM_DATASET_ENTRIES
+
     random_seed: Annotated[
         int,
         Field(
-            default=InputDefaults.RANDOM_SEED,
             description="The seed used to generate random values.",
         ),
-    ]
+    ] = InputDefaults.RANDOM_SEED
 
     audio: AudioConfig = AudioConfig()
     # image = ConfigImage()
