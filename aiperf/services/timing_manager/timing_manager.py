@@ -12,7 +12,6 @@ from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_cleanup, on_configure, on_init, on_start, on_stop
 from aiperf.common.messages import (
     CreditDropMessage,
-    CreditDropPayload,
     CreditReturnMessage,
     Message,
 )
@@ -56,9 +55,9 @@ class TimingManager(BaseComponentService):
         # TODO: Implement timing manager initialization
 
     @on_configure
-    async def _configure(self, payload: Message) -> None:
+    async def _configure(self, message: Message) -> None:
         """Configure the timing manager."""
-        self.logger.debug(f"Configuring timing manager with payload: {payload}")
+        self.logger.debug(f"Configuring timing manager with message: {message}")
         # TODO: Implement timing manager configuration
 
     @on_start
@@ -111,12 +110,10 @@ class TimingManager(BaseComponentService):
 
                 await self.comms.push(
                     topic=Topic.CREDIT_DROP,
-                    message=self.create_message(
-                        CreditDropMessage,
-                        payload=CreditDropPayload(
-                            amount=1,
-                            timestamp=time.time_ns(),
-                        ),
+                    message=CreditDropMessage(
+                        service_id=self.service_id,
+                        amount=1,
+                        credit_drop_ns=time.time_ns(),
                     ),
                 )
             except asyncio.CancelledError:
@@ -132,9 +129,9 @@ class TimingManager(BaseComponentService):
         Args:
             message: The credit return message received from the pull request
         """
-        self.logger.debug(f"Processing credit return: {message.payload}")
+        self.logger.debug(f"Processing credit return: {message}")
         async with self._credit_lock:
-            self._credits_available += message.payload.amount
+            self._credits_available += message.amount
 
 
 def main() -> None:

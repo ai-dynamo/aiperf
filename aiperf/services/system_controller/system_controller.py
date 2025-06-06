@@ -238,7 +238,7 @@ class SystemController(BaseControllerService):
             message: The registration message to process
         """
         service_id = message.service_id
-        service_type = message.payload.service_type
+        service_type = message.service_type
 
         self.logger.debug(
             f"Processing registration from {service_type} with ID: {service_id}"
@@ -290,8 +290,8 @@ class SystemController(BaseControllerService):
             message: The heartbeat message to process
         """
         service_id = message.service_id
-        service_type = message.payload.service_type
-        timestamp = message.timestamp
+        service_type = message.service_type
+        timestamp = message.request_ns
 
         self.logger.debug(f"Received heartbeat from {service_type} (ID: {service_id})")
 
@@ -299,7 +299,7 @@ class SystemController(BaseControllerService):
         try:
             service_info = self.service_manager.service_id_map.get(service_id)
             service_info.last_seen = timestamp
-            service_info.state = message.payload.state
+            service_info.state = message.state
             self.logger.debug(f"Updated heartbeat for {service_id} to {timestamp}")
         except Exception:
             self.logger.warning(
@@ -314,8 +314,8 @@ class SystemController(BaseControllerService):
             message: The status message to process
         """
         service_id = message.service_id
-        service_type = message.payload.service_type
-        state = message.payload.state
+        service_type = message.service_type
+        state = message.state
 
         self.logger.debug(
             f"Received status update from {service_type} (ID: {service_id}): {state}"
@@ -324,7 +324,7 @@ class SystemController(BaseControllerService):
         # Update the component state if the component exists
         try:
             service_info = self.service_manager.service_id_map.get(service_id)
-            service_info.state = message.payload.state
+            service_info.state = message.state
             self.logger.debug(f"Updated state for {service_id} to {state}")
         except Exception:
             self.logger.warning(

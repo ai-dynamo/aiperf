@@ -357,9 +357,9 @@ Use decorators to hook into lifecycle events:
         # TODO: Implement records manager cleanup
 
     @on_configure
-    async def _configure(self, payload: BasePayload) -> None:
+    async def _configure(self, message: Message) -> None:
         """Configure the records manager."""
-        self.logger.debug(f"Configuring records manager with payload: {payload}")
+        self.logger.debug(f"Configuring records manager with message: {message}")
         # TODO: Implement records manager configuration
 ```
 

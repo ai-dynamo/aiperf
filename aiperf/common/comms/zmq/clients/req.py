@@ -12,7 +12,6 @@ from aiperf.common.exceptions import CommunicationRequestError
 from aiperf.common.hooks import aiperf_task, on_cleanup
 from aiperf.common.messages import (
     ErrorMessage,
-    ErrorPayload,
     Message,
     MessageTypeAdapter,
 )
@@ -91,9 +90,7 @@ class ZMQReqClient(BaseZMQClient):
                 error_response = ErrorMessage(
                     service_id=self.client_id,
                     request_id=request_id,
-                    payload=ErrorPayload(
-                        error_message="Socket was shut down",
-                    ),
+                    error_message="Socket was shut down",
                 )
                 future.set_result(error_response.model_dump_json())
 

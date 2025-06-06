@@ -183,9 +183,9 @@ class WorkerManager(BaseComponentService):
             process.kill()
 
     @on_configure
-    async def _configure(self, payload: Message) -> None:
+    async def _configure(self, message: Message) -> None:
         """Configure the worker manager."""
-        self.logger.debug(f"Configuring worker manager with payload: {payload}")
+        self.logger.debug(f"Configuring worker manager with message: {message}")
         # TODO: Implement worker manager configuration
 
 

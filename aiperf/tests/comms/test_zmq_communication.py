@@ -10,9 +10,9 @@ import pytest
 
 from aiperf.common.comms.client_enums import PubClientType, SubClientType
 from aiperf.common.comms.zmq import ZMQCommunication
-from aiperf.common.enums import Topic
+from aiperf.common.enums import ServiceState, ServiceType, Topic
 from aiperf.common.exceptions import CommunicationInitializationError
-from aiperf.common.messages import DataMessage, DataPayload, Message
+from aiperf.common.messages import Message, StatusMessage
 from aiperf.common.models import (
     ZMQCommunicationConfig,
     ZMQTCPTransportConfig,
@@ -43,9 +43,10 @@ class TestZMQCommunication:
     @pytest.fixture
     def test_message(self):
         """Create a test message for communication tests."""
-        return DataMessage(
+        return StatusMessage(
             service_id="test-service",
-            payload=DataPayload(),
+            service_type=ServiceType.TEST,
+            state=ServiceState.READY,
         )
 
     @pytest.mark.asyncio

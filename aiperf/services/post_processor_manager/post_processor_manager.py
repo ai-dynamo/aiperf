@@ -58,9 +58,9 @@ class PostProcessorManager(BaseComponentService):
         # TODO: Implement post processor manager cleanup
 
     @on_configure
-    async def _configure(self, payload: Message) -> None:
+    async def _configure(self, message: Message) -> None:
         """Configure the post processor manager."""
-        self.logger.debug(f"Configuring post processor manager with payload: {payload}")
+        self.logger.debug(f"Configuring post processor manager with message: {message}")
         # TODO: Implement post processor manager configuration
 
 

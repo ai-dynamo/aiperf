@@ -3,13 +3,12 @@
 
 from typing import Annotated
 
-from pydantic import AfterValidator, BeforeValidator, Field
+from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import ADD_TO_TEMPLATE, BaseConfig
 from aiperf.common.config.config_defaults import UserDefaults
 from aiperf.common.config.config_validators import (
     parse_str_or_list,
-    print_str_or_list,
 )
 from aiperf.common.config.endpoint_config import EndPointConfig
 from aiperf.common.config.input_config import InputConfig
