@@ -12,17 +12,17 @@ version = "0.1.0"
 description = "AIPerf is a package for performance testing of AI models"
 authors = []
 dependencies = [
-  "pyzmq==26.4.0",
-  "pydantic==2.11.4",
-  "uvloop==0.21.0",
   "aiohttp==3.11.18",
-  "rich==14.0.0",
   "numpy==2.2.6",
+  "pydantic==2.11.4",
+  "pyzmq==26.4.0",
   "pillow==11.1.0",
-  "soundfile==0.13.1",
-  "transformers==4.52.0",
-  "setproctitle==1.3.6",
+  "rich==14.0.0",
   "ruamel.yaml==0.18.12",
+  "setproctitle==1.3.6",
+  "soundfile==0.13.1",
+  "transformers>=4.52.0",
+  "uvloop==0.21.0",
 ]
 readme = "README.md"
 requires-python = ">=3.10"

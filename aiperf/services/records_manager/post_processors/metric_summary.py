@@ -3,7 +3,11 @@
 
 import logging
 
+from aiperf.common.enums import PostProcessorType
+from aiperf.common.factories import PostProcessFactory
 
+
+@PostProcessFactory.register(PostProcessorType.METRIC_SUMMARY)
 class MetricSummary:
     """
     MetricSummary is a post-processor that generates a summary of metrics from the records.
@@ -14,7 +18,7 @@ class MetricSummary:
         self.logger = logging.getLogger(__name__)
         self.logger.debug("Initializing MetricSummary post-processor")
 
-    def process(self, records: dict) -> dict:
+    def process(self, records: list) -> dict:
         """
         Process the records to generate a summary of metrics.
 
