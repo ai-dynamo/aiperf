@@ -21,7 +21,7 @@ class UserConfig(BaseConfig):
     """
 
     model_names: Annotated[
-        str | list[str],
+        list[str],
         Field(
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
         ),

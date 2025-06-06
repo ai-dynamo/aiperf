@@ -10,7 +10,7 @@ from aiperf.common.enums import AudioFormat, ModelSelectionStrategy, OutputForma
 # Config Defaults
 @dataclass(frozen=True)
 class UserDefaults:
-    MODEL_NAMES = ""
+    MODEL_NAMES = []
     VERBOSE = False
     TEMPLATE_FILENAME = "aiperf_config.yaml"
 
