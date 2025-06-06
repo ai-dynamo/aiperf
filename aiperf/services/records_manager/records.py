@@ -15,8 +15,8 @@ class Message:
     Represents a request/response with a timestamp and associated payload.
 
     Attributes:
-        timestamp: The time at which the response was recorded.
-        payload: The data or content of the response.
+        timestamp: The time at which the message was recorded.
+        payload: The data or content of the message.
     """
 
     timestamp: Timestamp
@@ -26,11 +26,10 @@ class Message:
 @dataclass
 class Record:
     """
-    Data class representing a record of a request and its associated responses.
-
+    Represents a record containing a request message and its associated response messages.
     Attributes:
-        request: The timestamp when the request was made.
-        responses: A list of Response objects associated with the request.
+        request: The input message for the record.
+        responses A list of response messages corresponding to the request.
     """
 
     request: Message
@@ -39,14 +38,14 @@ class Record:
 
 class Records(BaseModel):
     """
-    A collection of records, each containing a request timestamp and a list of responses.
+    A collection of records, each containing a request and a list of responses.
     """
 
     records: list[Record] = []
 
     def add_record(self, request: Message, responses: list[Message]) -> None:
         """
-        Add a new record with the given request timestamp and responses.
+        Add a new record with the given request and responses.
         """
         self.records.append(Record(request=request, responses=responses))
 
