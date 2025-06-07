@@ -9,7 +9,7 @@ from zmq import SocketType
 from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.exceptions import CommunicationResponseError
 from aiperf.common.hooks import aiperf_task, on_cleanup
-from aiperf.common.models import BaseMessage, Message
+from aiperf.common.messages import Message, MessageTypeAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class ZMQRepClient(BaseZMQClient):
                     request_json = await future
 
                 # Parse the request
-                request = BaseMessage.model_validate_json(request_json)
+                request = MessageTypeAdapter.validate_json(request_json)
                 return request
 
             except asyncio.TimeoutError as e:
@@ -137,7 +137,7 @@ class ZMQRepClient(BaseZMQClient):
                 request_json = await self.socket.recv_string()
 
                 # Parse JSON to create RequestData object
-                request = BaseMessage.model_validate_json(request_json)
+                request = MessageTypeAdapter.validate_json(request_json)
                 request_id = request.request_id
 
                 # Store request data

@@ -30,12 +30,12 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
-from aiperf.common.models import (
+from aiperf.common.messages import (
     HeartbeatMessage,
     RegistrationMessage,
-    ServiceRunInfo,
     StatusMessage,
 )
+from aiperf.common.models import ServiceRunInfo
 from aiperf.common.service.base_controller_service import BaseControllerService
 from aiperf.services.service_manager.base import BaseServiceManager
 from aiperf.services.service_manager.kubernetes import KubernetesServiceManager
@@ -230,15 +230,15 @@ class SystemController(BaseControllerService):
                     continue
 
     async def _process_registration_message(self, message: RegistrationMessage) -> None:
-        """Process a registration response from a service. It will
+        """Process a registration message from a service. It will
         add the service to the service manager and send a configure command
         to the service.
 
         Args:
-            message: The registration response to process
+            message: The registration message to process
         """
         service_id = message.service_id
-        service_type = message.payload.service_type
+        service_type = message.service_type
 
         self.logger.debug(
             f"Processing registration from {service_type} with ID: {service_id}"
@@ -283,15 +283,15 @@ class SystemController(BaseControllerService):
         )
 
     async def _process_heartbeat_message(self, message: HeartbeatMessage) -> None:
-        """Process a heartbeat response from a service. It will
+        """Process a heartbeat message from a service. It will
         update the last seen timestamp and state of the service.
 
         Args:
-            message: The heartbeat response to process
+            message: The heartbeat message to process
         """
         service_id = message.service_id
-        service_type = message.payload.service_type
-        timestamp = message.timestamp
+        service_type = message.service_type
+        timestamp = message.request_ns
 
         self.logger.debug(f"Received heartbeat from {service_type} (ID: {service_id})")
 
@@ -299,7 +299,7 @@ class SystemController(BaseControllerService):
         try:
             service_info = self.service_manager.service_id_map.get(service_id)
             service_info.last_seen = timestamp
-            service_info.state = message.payload.state
+            service_info.state = message.state
             self.logger.debug(f"Updated heartbeat for {service_id} to {timestamp}")
         except Exception:
             self.logger.warning(
@@ -307,15 +307,15 @@ class SystemController(BaseControllerService):
             )
 
     async def _process_status_message(self, message: StatusMessage) -> None:
-        """Process a status response from a service. It will
+        """Process a status message from a service. It will
         update the state of the service with the service manager.
 
         Args:
-            message: The status response to process
+            message: The status message to process
         """
         service_id = message.service_id
-        service_type = message.payload.service_type
-        state = message.payload.state
+        service_type = message.service_type
+        state = message.state
 
         self.logger.debug(
             f"Received status update from {service_type} (ID: {service_id}): {state}"
@@ -324,7 +324,7 @@ class SystemController(BaseControllerService):
         # Update the component state if the component exists
         try:
             service_info = self.service_manager.service_id_map.get(service_id)
-            service_info.state = message.payload.state
+            service_info.state = message.state
             self.logger.debug(f"Updated state for {service_id} to {state}")
         except Exception:
             self.logger.warning(
@@ -352,14 +352,14 @@ class SystemController(BaseControllerService):
             self.logger.error("Cannot send command: Communication is not initialized")
             raise CommunicationNotInitializedError()
 
-        # Create command response using the helper method
+        # Create command message using the helper method
         command_message = self.create_command_message(
             command=command,
             target_service_id=target_service_id,
             data=data,
         )
 
-        # Publish command response
+        # Publish command message
         try:
             await self.comms.publish(
                 topic=Topic.COMMAND,

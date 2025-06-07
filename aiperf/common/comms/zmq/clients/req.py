@@ -10,7 +10,11 @@ from zmq import SocketType
 from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.exceptions import CommunicationRequestError
 from aiperf.common.hooks import aiperf_task, on_cleanup
-from aiperf.common.models import BaseMessage, ErrorPayload, Message
+from aiperf.common.messages import (
+    ErrorMessage,
+    Message,
+    MessageTypeAdapter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +66,7 @@ class ZMQReqClient(BaseZMQClient):
             response_json: The JSON response string
         """
         try:
-            response = BaseMessage.model_validate_json(response_json)
+            response = MessageTypeAdapter.validate_json(response_json)
             request_id = response.request_id
 
             if request_id in self._response_futures:
@@ -83,11 +87,10 @@ class ZMQReqClient(BaseZMQClient):
         # Resolve any pending futures with errors
         for request_id, future in self._response_futures.items():
             if not future.done():
-                error_response = BaseMessage(
+                error_response = ErrorMessage(
+                    service_id=self.client_id,
                     request_id=request_id,
-                    payload=ErrorPayload(
-                        error_message="Socket was shut down",
-                    ),
+                    error_message="Socket was shut down",
                 )
                 future.set_result(error_response.model_dump_json())
 
@@ -112,14 +115,6 @@ class ZMQReqClient(BaseZMQClient):
         self._ensure_initialized()
 
         try:
-            # Set target if not already set
-            if not request_data.target:
-                request_data.target = target
-
-            # Ensure client_id is set
-            if not request_data.client_id:
-                request_data.client_id = self.client_id
-
             # Generate request ID if not provided
             if not request_data.request_id:
                 request_data.request_id = uuid.uuid4().hex
@@ -137,7 +132,7 @@ class ZMQReqClient(BaseZMQClient):
             # Wait for response with timeout
             try:
                 response_json = await asyncio.wait_for(future, timeout)
-                response = BaseMessage.model_validate_json(response_json)
+                response = MessageTypeAdapter.validate_json(response_json)
                 return response
 
             except asyncio.TimeoutError as e:

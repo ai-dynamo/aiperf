@@ -12,7 +12,7 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
-from aiperf.common.models import BasePayload
+from aiperf.common.messages import Message
 from aiperf.common.service.base_component_service import BaseComponentService
 
 
@@ -58,9 +58,9 @@ class PostProcessorManager(BaseComponentService):
         # TODO: Implement post processor manager cleanup
 
     @on_configure
-    async def _configure(self, payload: BasePayload) -> None:
+    async def _configure(self, message: Message) -> None:
         """Configure the post processor manager."""
-        self.logger.debug(f"Configuring post processor manager with payload: {payload}")
+        self.logger.debug(f"Configuring post processor manager with message: {message}")
         # TODO: Implement post processor manager configuration
 
 

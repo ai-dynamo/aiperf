@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from typing import cast
 
 from aiperf.common.comms.client_enums import ClientType, PubClientType, SubClientType
 from aiperf.common.config.service_config import ServiceConfig
@@ -12,14 +11,11 @@ from aiperf.common.exceptions import (
     ServiceRegistrationError,
 )
 from aiperf.common.hooks import AIPerfHook, aiperf_task, on_run, on_set_state
-from aiperf.common.models import (
+from aiperf.common.messages import (
     CommandMessage,
     HeartbeatMessage,
-    HeartbeatPayload,
     RegistrationMessage,
-    RegistrationPayload,
     StatusMessage,
-    StatusPayload,
 )
 from aiperf.common.service.base_service import BaseService
 
@@ -57,25 +53,6 @@ class BaseComponentService(BaseService):
             PubClientType.COMPONENT,
             SubClientType.CONTROLLER,
         ]
-
-    # TODO: The configure method is turning into a service hook
-    # @abstractmethod
-    # async def _configure(self, payload: Payload) -> None:
-    #     """Configure the service with the given configuration payload.
-
-    #     This method is called when a configure command is received from the controller.
-    #     It should be implemented by the derived class to configure the service.
-
-    #     The service should validate the payload and configure itself accordingly.
-    #     If successful, the service should publish a success message to the controller.
-    #     On failure, the service should publish an error message to the controller.
-
-    #     Args:
-    #         payload: The configuration payload. This is a union type of all the possible
-    #         configuration payloads.
-
-    #     """
-    #     pass
 
     @on_run
     async def _on_run(self) -> None:
@@ -165,10 +142,10 @@ class BaseComponentService(BaseService):
 
         This method will process the command message and execute the appropriate action.
         """
-        if message.payload.target_service_id not in [None, self.service_id]:
+        if message.target_service_id not in [None, self.service_id]:
             return  # Ignore commands meant for other services
 
-        cmd = message.payload.command
+        cmd = message.command
         if cmd == CommandType.START:
             await self.start()
 
@@ -196,34 +173,22 @@ class BaseComponentService(BaseService):
 
     def create_heartbeat_message(self) -> HeartbeatMessage:
         """Create a heartbeat notification message."""
-        return cast(
-            HeartbeatMessage,
-            self.create_message(
-                HeartbeatPayload(
-                    service_type=self.service_type,
-                )
-            ),
+        return HeartbeatMessage(
+            service_id=self.service_id,
+            service_type=self.service_type,
         )
 
     def create_registration_message(self) -> RegistrationMessage:
         """Create a registration request message."""
-        return cast(
-            RegistrationMessage,
-            self.create_message(
-                RegistrationPayload(
-                    service_type=self.service_type,
-                )
-            ),
+        return RegistrationMessage(
+            service_id=self.service_id,
+            service_type=self.service_type,
         )
 
     def create_status_message(self, state: ServiceState) -> StatusMessage:
         """Create a status notification message."""
-        return cast(
-            StatusMessage,
-            self.create_message(
-                StatusPayload(
-                    state=state,
-                    service_type=self.service_type,
-                )
-            ),
+        return StatusMessage(
+            service_id=self.service_id,
+            state=state,
+            service_type=self.service_type,
         )

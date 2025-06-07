@@ -56,7 +56,7 @@ class BaseTestComponentService(BaseTestService):
             Topic.HEARTBEAT
         ][0]
         assert heartbeat_msg.service_id == service.service_id
-        assert heartbeat_msg.payload.service_type == service.service_type
+        assert heartbeat_msg.service_type == service.service_type
 
     async def test_service_registration(
         self, initialized_service: BaseComponentService, mock_communication: MagicMock
@@ -81,7 +81,7 @@ class BaseTestComponentService(BaseTestService):
             Topic.REGISTRATION
         ][0]
         assert registration_msg.service_id == service.service_id
-        assert registration_msg.payload.service_type == service.service_type
+        assert registration_msg.service_type == service.service_type
 
     async def test_service_status_update(
         self, initialized_service: BaseComponentService, mock_communication: MagicMock
@@ -104,5 +104,5 @@ class BaseTestComponentService(BaseTestService):
         # Verify status message contents
         status_msg = mock_communication.mock_data.published_messages[Topic.STATUS][0]
         assert status_msg.service_id == service.service_id
-        assert status_msg.payload.service_type == service.service_type
-        assert status_msg.payload.state == ServiceState.READY
+        assert status_msg.service_type == service.service_type
+        assert status_msg.state == ServiceState.READY

@@ -11,7 +11,7 @@ from zmq import SocketType
 from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.exceptions import CommunicationSubscribeError
 from aiperf.common.hooks import aiperf_task
-from aiperf.common.models import BaseMessage, Message
+from aiperf.common.messages import Message, MessageTypeAdapter
 from aiperf.common.utils import call_all_functions
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class ZMQSubClient(BaseZMQClient):
 
         Args:
             topic: Topic to subscribe to
-            callback: Function to call when a response is received (receives Message object)
+            callback: Function to call when a message is received (receives Message object)
 
         Raises:
             Exception if subscription was not successful, None otherwise
@@ -80,7 +80,7 @@ class ZMQSubClient(BaseZMQClient):
                     await self.initialized_event.wait()
                     logger.debug("Sub client %s initialized", self.client_id)
 
-                # Receive response
+                # Receive message
                 (
                     topic_bytes,
                     message_bytes,
@@ -94,9 +94,9 @@ class ZMQSubClient(BaseZMQClient):
                     message_json,
                 )
 
-                message = BaseMessage.model_validate_json(message_json)
+                message = MessageTypeAdapter.validate_json(message_json)
 
-                # Call callbacks with the parsed response object
+                # Call callbacks with the parsed message object
                 if topic in self._subscribers:
                     await call_all_functions(self._subscribers[topic], message)
 
@@ -111,7 +111,7 @@ class ZMQSubClient(BaseZMQClient):
                 await asyncio.sleep(0.001)
             except Exception as e:
                 logger.error(
-                    "Exception receiving response from subscription: %s, %s",
+                    "Exception receiving message from subscription: %s, %s",
                     e,
                     type(e),
                 )

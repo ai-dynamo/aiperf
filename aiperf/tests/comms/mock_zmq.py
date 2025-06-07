@@ -9,8 +9,8 @@ import pytest
 from pydantic import BaseModel, Field
 
 from aiperf.common.comms.zmq import ZMQCommunication
-from aiperf.common.enums import Topic
-from aiperf.common.models import BaseMessage, DataPayload, Message
+from aiperf.common.enums import ServiceState, ServiceType, Topic
+from aiperf.common.messages import Message, StatusMessage
 
 
 class MockCommunicationData(BaseModel):
@@ -88,8 +88,10 @@ def mock_zmq_communication() -> MagicMock:
         mock_comm.mock_data.requests[target] = request_data
 
         # Return a fake mock response
-        return BaseMessage(
-            payload=DataPayload(),
+        return StatusMessage(
+            service_id="mock_service_id",
+            service_type=ServiceType.TEST,
+            state=ServiceState.READY,
         )
 
     mock_comm.request.side_effect = mock_request

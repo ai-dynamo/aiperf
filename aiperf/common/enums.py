@@ -104,9 +104,8 @@ class AudioFormat(CaseInsensitiveStrEnum):
 class MessageType(CaseInsensitiveStrEnum):
     """The various types of messages that can be sent between services.
 
-    The message type is used to determine what Pydantic model the payload maps to.
-    The mappings between message types and payload types are defined in the
-    payload definitions.
+    The message type is used to determine what Pydantic model the message maps to,
+    based on the message_type field in the message model.
     """
 
     UNKNOWN = "unknown"
@@ -142,9 +141,6 @@ class MessageType(CaseInsensitiveStrEnum):
 
     CREDIT_RETURN = "credit_return"
     """A message sent by the Worker services to return credits to the credit pool."""
-
-    DATA = "data"
-    """A message containing data. This is TBD."""
 
 
 ################################################################################

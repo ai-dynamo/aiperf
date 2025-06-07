@@ -24,9 +24,7 @@ import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from enum import Enum
-from typing import Any
 
-from aiperf.common.enums import ServiceState
 from aiperf.common.exceptions import AIPerfMultiError, UnsupportedHookError
 
 ################################################################################
@@ -261,8 +259,8 @@ def on_run(func: Callable) -> Callable:
 
 
 def on_set_state(
-    func: Callable[[Any, ServiceState], None],
-) -> Callable[[Any, ServiceState], None]:
+    func: Callable,
+) -> Callable:
     """Decorator to specify that the function should be called when the service state is set.
     See :func:`aiperf.common.hooks.hook_decorator`."""
     return hook_decorator(AIPerfHook.ON_SET_STATE, func)
