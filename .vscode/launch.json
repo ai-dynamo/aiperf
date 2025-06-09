@@ -1,10 +1,20 @@
 {
     "configurations": [
         {
+            "name": "aiperf",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "module": "aiperf.cli",
+            "args": [
+                ""
+            ]
+        },
+        {
             "name": "pytest",
             "type": "debugpy",
             "request": "launch",
-            "cwd": "${workspaceFolder}/aiperf/tests",
+            "cwd": "${workspaceFolder}",
             "module": "pytest",
             "args": [
                 ""
