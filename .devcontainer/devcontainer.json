@@ -38,7 +38,8 @@
                 "ms-python.python",
                 "ms-python.pylint",
                 "ms-python.vscode-pylance",
-                "charliermarsh.ruff"
+                "charliermarsh.ruff",
+                "eamodio.gitlens"
             ],
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",
