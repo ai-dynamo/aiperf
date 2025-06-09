@@ -62,10 +62,10 @@ def sample_records():
 
 class TestConsoleExporter:
     def test_export_prints_expected_table(
-        self, endpoint_config, sample_records, mocker, capsys
+        self, endpoint_config, sample_records, capsys
     ):
         exporter = ConsoleExporter(endpoint_config)
-        exporter.export(sample_records)
+        exporter.export(sample_records, width=100)  # fixed width for consistent output
         captured = capsys.readouterr()
         output = captured.out
         assert "NVIDIA AIPerf | LLM Metrics" in output
