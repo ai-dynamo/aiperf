@@ -51,7 +51,7 @@ class TTFTMetric(Metric):
             raise ValueError(
                 "Record must have at least one response to calculate TTFT."
             )
-        if not record.responses[0].timestamp >= record.request.timestamp:
+        if record.responses[0].timestamp < record.request.timestamp:
             raise ValueError(
                 "Response timestamp must be greater than or equal to request timestamp."
             )
