@@ -6,8 +6,11 @@ from rich.table import Table
 
 from aiperf.common.config.endpoint_config import EndPointConfig
 from aiperf.common.data_exporter.record import Record
+from aiperf.common.enums import DataExporterType
+from aiperf.common.factories import DataExporterFactory
 
 
+@DataExporterFactory.register(DataExporterType.CONSOLE)
 class ConsoleExporter:
     """A class that exports data to the console"""
 

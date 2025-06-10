@@ -2,15 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config.endpoint_config import EndPointConfig
-from aiperf.common.data_exporter.data_exporter_factory import DataExporterFactory
 from aiperf.common.data_exporter.record import Record
+from aiperf.common.factories import DataExporterFactory
 
 
 class ExporterManager:
     def __init__(self, endpoint_config: EndPointConfig):
-        factory = DataExporterFactory()
-        self.exporters = factory.create_data_exporters(endpoint_config)
+        self.endpoint_config = endpoint_config
+        self.exporter_classes = DataExporterFactory.get_all_classes()
 
     def export(self, records: list[Record]) -> None:
-        for exporter in self.exporters:
+        for exporter_class in self.exporter_classes:
+            exporter = exporter_class(self.endpoint_config)
             exporter.export(records)

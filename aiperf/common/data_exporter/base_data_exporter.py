@@ -6,5 +6,5 @@ from typing import Protocol
 from aiperf.common.data_exporter.record import Record
 
 
-class DataExporterInterface(Protocol):
+class BaseDataExporter(Protocol):
     def export(self, records: list[Record]) -> None: ...

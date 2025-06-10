@@ -22,13 +22,15 @@ def sample_records():
 
 class TestExporterManager:
     def test_export(self, endpoint_config, sample_records):
-        with patch(
-            "aiperf.common.data_exporter.data_exporter_factory.DataExporterFactory.create_data_exporters"
-        ) as mock_create:
-            mock_console_exporter = MagicMock()
-            mock_create.return_value = [mock_console_exporter]
+        mock_exporter_instance = MagicMock()
+        mock_exporter_class = MagicMock(return_value=mock_exporter_instance)
 
+        with patch(
+            "aiperf.common.factories.DataExporterFactory.get_all_classes",
+            return_value=[mock_exporter_class],
+        ):
             manager = ExporterManager(endpoint_config)
             manager.export(sample_records)
 
-            mock_console_exporter.export.assert_called_once_with(sample_records)
+        mock_exporter_class.assert_called_once_with(endpoint_config)
+        mock_exporter_instance.export.assert_called_once_with(sample_records)
