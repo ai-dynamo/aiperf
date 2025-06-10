@@ -2,6 +2,7 @@
 #  SPDX-License-Identifier: Apache-2.0
 import pytest
 
+from aiperf.common.enums import MetricTimeType
 from aiperf.services.records_manager.metrics.types.ttft_metric import TTFTMetric
 
 
@@ -91,3 +92,16 @@ def test_metric_initialization_none():
     record = MockRecord(request, [response])
     metric.add_record(record)
     assert metric.get_metrics() == [1]
+
+
+def test_convert_metrics():
+    metric = TTFTMetric()
+    metric.metric = []
+    records = [
+        MockRecord(MockRequest(10_000_000), [MockResponse(15_000_000)]),
+        MockRecord(MockRequest(20_000_000), [MockResponse(25_000_000)]),
+        MockRecord(MockRequest(30_000_000), [MockResponse(40_000_000)]),
+    ]
+    for record in records:
+        metric.add_record(record)
+    assert metric.get_converted_metrics(unit=MetricTimeType.MILLISECONDS) == [5, 5, 10]

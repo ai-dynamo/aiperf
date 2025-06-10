@@ -277,3 +277,16 @@ class DataExporterType(CaseInsensitiveStrEnum):
 
 class PostProcessorType(CaseInsensitiveStrEnum):
     METRIC_SUMMARY = "metric_summary"
+
+
+#################################################################################
+# Metric Enums
+################################################################################
+
+
+class MetricTimeType(Enum):
+    """Defines the time types for metrics."""
+
+    NANOSECONDS = 9
+    MILLISECONDS = 3
+    SECONDS = 0

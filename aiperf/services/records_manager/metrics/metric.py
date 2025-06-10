@@ -3,7 +3,9 @@
 import importlib
 import os
 from abc import ABCMeta, abstractmethod
+from typing import Any
 
+from aiperf.common.enums import MetricTimeType
 from aiperf.common.exceptions import MetricTypeError
 from aiperf.services.records_manager.records import Record
 
@@ -60,6 +62,36 @@ class Metric(metaclass=MetricInterface):
             the name tag of the record type.
         """
 
+    @property
+    @abstractmethod
+    def unit(self) -> MetricTimeType:
+        """
+        Returns
+        -------
+        MetricTimeType
+            the unit of the metric.
+        """
+
+    @property
+    @abstractmethod
+    def larger_is_better(self) -> bool:
+        """
+        Returns
+        -------
+        bool
+            True if larger values are better.
+        """
+
+    @property
+    @abstractmethod
+    def header(self) -> str:
+        """
+        Returns
+        -------
+        str
+            the header for the metric.
+        """
+
     @abstractmethod
     def add_record(self, record: Record) -> None:
         """
@@ -67,7 +99,7 @@ class Metric(metaclass=MetricInterface):
         """
 
     @abstractmethod
-    def get_metrics(self) -> list[int]:
+    def get_metrics(self) -> list[Any]:
         """
         Returns the list of calculated metrics.
         """
@@ -81,3 +113,11 @@ class Metric(metaclass=MetricInterface):
         Raises:
             ValueError: If the record does not meet the required conditions.
         """
+
+    def get_converted_metrics(self, unit: MetricTimeType) -> list[Any]:
+        if not isinstance(unit, MetricTimeType):
+            raise MetricTypeError("Invalid metric time type for conversion.")
+
+        scale_factor = self.unit.value - unit.value
+
+        return [metric / 10**scale_factor for metric in self.get_metrics()]
