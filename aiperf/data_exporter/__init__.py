@@ -2,5 +2,5 @@
 # SPDX-License-Identifier: Apache-2.0
 
 __all__ = ["ConsoleExporter", "ExporterManager"]
-from aiperf.common.data_exporter.exporter_manager import ExporterManager
 from aiperf.data_exporter.console_exporter import ConsoleExporter
+from aiperf.data_exporter.exporter_manager import ExporterManager
