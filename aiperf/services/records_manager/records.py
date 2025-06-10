@@ -2,38 +2,27 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 from pydantic import BaseModel
 
-Timestamp: TypeAlias = int
+from aiperf.services.records_manager.transaction import Transaction
 
-
-@dataclass
-class Message:
-    """
-    Represents a request/response with a timestamp and associated payload.
-
-    Attributes:
-        timestamp: The time at which the message was recorded.
-        payload: The data or content of the message.
-    """
-
-    timestamp: Timestamp
-    payload: Any
+Transactions: TypeAlias = list[Transaction]
+Records: TypeAlias = list["Record"]
 
 
 @dataclass
 class Record:
     """
-    Represents a record containing a request message and its associated response messages.
+    Represents a record containing a request transaction and its associated response transactions.
     Attributes:
-        request: The input message for the record.
-        responses A list of response messages corresponding to the request.
+        request: The input transaction for the record.
+        responses A list of response transactions corresponding to the request.
     """
 
-    request: Message
-    responses: list[Message]
+    request: Transaction
+    responses: Transactions
 
 
 class Records(BaseModel):
@@ -41,16 +30,10 @@ class Records(BaseModel):
     A collection of records, each containing a request and a list of responses.
     """
 
-    records: list[Record] = []
+    records: Records = []
 
-    def add_record(self, request: Message, responses: list[Message]) -> None:
+    def add_record(self, request: Transaction, responses: Transactions) -> None:
         """
         Add a new record with the given request and responses.
         """
         self.records.append(Record(request=request, responses=responses))
-
-    def get_records(self) -> list[Record]:
-        """
-        Retrieve all records.
-        """
-        return self.records
