@@ -12,12 +12,12 @@ if TYPE_CHECKING:
     from aiperf.common.comms.base import (
         BaseCommunication,  # noqa: F401 - for type checking
     )
-    from aiperf.common.data_exporter.base_data_exporter import (
-        BaseDataExporter,  # noqa: F401 - for type checking
-    )
     from aiperf.common.enums import (
         CommunicationBackend,  # noqa: F401 - for type checking
         ServiceType,  # noqa: F401 - for type checking
+    )
+    from aiperf.common.interfaces import (
+        DataExporterProtocol,  # noqa: F401 - for type checking
     )
     from aiperf.common.service.base_service import (
         BaseService,  # noqa: F401 - for type checking
@@ -248,19 +248,14 @@ class ServiceFactory(FactoryMixin["ServiceType", "BaseService"]):
     """
 
 
-class DataExporterFactory(FactoryMixin["DataExporterType", "BaseDataExporter"]):
-    """Factory for registering and creating DataExporterInterface instances based on the specified data exporter type.
+class DataExporterFactory(FactoryMixin["DataExporterType", "DataExporterProtocol"]):
+    """Factory for registering and creating DataExporterInterface instances.
 
     Example:
     ```python
-        # Register a new data exporter type
-        @DataExporterFactory.register(DataExporterType.CONSOLE)
-        class ConsoleExporter(DataExporterInterface):
-            pass
-
-        # Create a new data exporter instance
-        exporter = DataExporterFactory.create_instance(
-            DataExporterType.CONSOLE, endpoint_config=endpoint_config
-        )
+        # Iterate over all registered data exporter types
+        for exporter_class in DataExporterFactory.get_all_classes():
+            exporter = exporter_class(endpoint_config)
+            exporter.export(records)
     ```
     """

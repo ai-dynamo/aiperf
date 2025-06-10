@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.common.config.endpoint_config import EndPointConfig
-from aiperf.common.data_exporter.exporter_manager import ExporterManager
-from aiperf.common.data_exporter.record import Record
+from aiperf.data_exporter.exporter_manager import ExporterManager
+from aiperf.data_exporter.record import Record
 
 
 @pytest.fixture

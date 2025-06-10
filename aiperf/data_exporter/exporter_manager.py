@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config.endpoint_config import EndPointConfig
-from aiperf.common.data_exporter.record import Record
 from aiperf.common.factories import DataExporterFactory
+from aiperf.data_exporter.record import Record
 
 
 class ExporterManager:
