@@ -28,11 +28,6 @@ class MetricInterface(ABCMeta):
         return metric_interface
 
     @classmethod
-    def get(cls, tag: str) -> "MetricInterface":
-        # TODO: Need to update with importlib logic
-        return cls.metric_interfaces[tag]
-
-    @classmethod
     def get_all(
         cls,
     ) -> dict[str, "MetricInterface"]:
