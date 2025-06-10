@@ -6,13 +6,13 @@ from pathlib import Path
 from aiperf.services.dataset import utils
 
 # TODO: temporary
-from aiperf.services.dataset.custom.file_input_retriever import CustomDataConfig
-from aiperf.services.dataset.custom.generic_dataset import (
+from aiperf.services.dataset.config import CustomDataConfig
+from aiperf.services.dataset.generator import PromptGenerator
+from aiperf.services.dataset.generic_dataset import (
     DataRow,
     FileData,
     GenericDataset,
 )
-from aiperf.services.dataset.generator import PromptGenerator
 
 # TODO: Remove/Move to proper place once configurations are implemented
 PAYLOAD_METADATA_FIELDS = ["timestamp", "delay", "session_id"]
@@ -55,7 +55,7 @@ class PayloadInputRetriever:
             The dataset in the required format with the content
             read from the file.
         """
-        self._verify_file(filename)
+        utils.check_file_exists(filename)
         data_dict = self._get_content_from_input_file(filename)
         return self._convert_content_to_data_file(data_dict)
 

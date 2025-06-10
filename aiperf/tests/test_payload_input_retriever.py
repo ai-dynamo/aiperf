@@ -8,15 +8,15 @@ from unittest.mock import patch
 import pytest
 
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.dataset.custom import PayloadInputRetriever
+from aiperf.services.dataset.composer import PayloadInputRetriever
 
 # TODO: temporary
-from aiperf.services.dataset.custom.file_input_retriever import (
+from aiperf.services.dataset.composer.file_input_retriever import (
     CustomDataConfig,
     SyntheticTokensConfig,
     TurnDelayConfig,
 )
-from aiperf.services.dataset.custom.generic_dataset import (
+from aiperf.services.dataset.composer.generic_dataset import (
     DataRow,
     FileData,
     GenericDataset,

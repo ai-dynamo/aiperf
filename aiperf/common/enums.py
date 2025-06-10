@@ -94,11 +94,15 @@ class Topic(CaseInsensitiveStrEnum):
 
 
 class ImageFormat(CaseInsensitiveStrEnum):
+    """Types of image formats supported by AIPerf."""
+
     PNG = "png"
     JPEG = "jpeg"
 
 
 class AudioFormat(CaseInsensitiveStrEnum):
+    """Types of audio formats supported by AIPerf."""
+
     WAV = "wav"
     MP3 = "mp3"
 

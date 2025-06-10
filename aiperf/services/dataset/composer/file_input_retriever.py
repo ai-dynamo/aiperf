@@ -2,85 +2,62 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 import random
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlparse
 
-from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset import utils
-from aiperf.services.dataset.custom.generic_dataset import (
+from aiperf.services.dataset.composer.base import BaseConversationComposer
+from aiperf.services.dataset.config import CustomDataConfig
+from aiperf.services.dataset.conversation import Conversation
+from aiperf.services.dataset.generator import PromptGenerator
+from aiperf.services.dataset.generic_dataset import (
     DataRow,
     FileData,
-    GenericDataset,
 )
-from aiperf.services.dataset.generator import PromptGenerator
 
 # TODO: Remove/Move to proper place once configurations are implemented
 DEFAULT_BATCH_SIZE = 1
 
 
-# TODO: temporary
-@dataclass
-class PrefixPromptConfig:
-    num: int = 0
-    length: int = 0
-
-
-# TODO: temporary
-@dataclass
-class ImageConfig:
-    batch_size: int = 1
-
-
-# TODO: temporary
-@dataclass
-class TurnDelayConfig:
-    ratio: float = 1.0
-
-
-# TODO: temporary
-@dataclass
-class SyntheticTokensConfig:
-    mean: int = 10
-    stddev: int = 2
-
-
-# XXX: Temporary class to hold the configuration for the custom data
-@dataclass
-class CustomDataConfig:
-    filename: Path | None = None  # TODO: Add support for multiple files?
-    tokenizer: Tokenizer | None = None
-    prefix_prompt: PrefixPromptConfig | None = None
-
-    # CLI related
-    batch_size: int = 1
-    num_dataset_entries: int = 100
-    image: ImageConfig | None = None
-    turn_delay: TurnDelayConfig | None = None
-    synthetic_tokens: SyntheticTokensConfig | None = None
-
-
-class FileInputRetriever:
+class TraceGenerator:
     def __init__(self, config: CustomDataConfig):
-        self.config = config
-        self.tokenizer = config.tokenizer
+        pass
 
-    def retrieve_data(self) -> GenericDataset:
-        """Retrieves the dataset from a file or directory.
+
+class CustomConversationComposer(BaseConversationComposer):
+    def __init__(self, config: CustomDataConfig):
+        super().__init__(config)
+
+    def create_conversation(self) -> Conversation:
+        """Create a conversation from a file or directory.
 
         Returns:
-            The dataset object containing file data.
+            The conversation object.
         """
+        # 1. decide if the input is trace, static, or hybrid
+        # 2. if trace:
+        #     - read the trace file
+        #     - generate trace data (using data generators)
+        # 3. if static:
+        #     - read the static file
+        # 4. if hybrid:
+        #     - read the hybrid file
+        #     - generate trace part of the data (using data generators)
+        # 5. create the dataset
 
-        files_data: dict[str, FileData] = {}
-        if self.config.filename.is_dir():
-            files_data = self._get_input_datasets_from_dir()
-        else:
-            file_data = self._get_input_dataset_from_file(self.config.filename)
-            files_data = {str(self.config.filename): file_data}
+        # files_data: dict[str, FileData] = {}
+        # if self.config.filename.is_dir():
+        #    files_data = self._get_input_datasets_from_dir()
+        # else:
+        #    file_data = self._get_input_dataset_from_file(self.config.filename)
+        #    files_data = {str(self.config.filename): file_data}
+        # return GenericDataset(files_data)
 
-        return GenericDataset(files_data)
+        # TODO: (future) for K8s, we need to transfer file data from SC (across node)
+        conversation = Conversation()
+        _ = self._get_input_dataset_from_file()
+        return conversation
 
     def _get_input_datasets_from_dir(self) -> dict[str, FileData]:
         """Retrieves the dataset from a directory containing multiple JSONL files.
@@ -105,26 +82,18 @@ class FileInputRetriever:
             files_data[file.stem] = file_data
         return files_data
 
-    def _get_input_dataset_from_file(self, filename: Path) -> FileData:
+    def _get_input_dataset_from_file(self) -> FileData:
         """Retrieves the dataset from a specific JSONL file.
-
-        Args:
-            filename: The path of the file to process.
 
         Returns:
             The dataset in the required format with the content read from the file.
         """
-        utils.check_file_exists(filename)
-        prompts, images = self._get_content_from_input_file(filename)
+        utils.check_file_exists(self.config.filename)
+        prompts, images = self._get_content_from_input_file()
         return self._convert_content_to_data_file(prompts, images)
 
-    def _get_content_from_input_file(
-        self, filename: Path
-    ) -> tuple[list[str], list[str]]:
+    def _get_content_from_input_file(self) -> tuple[list[str], list[str]]:
         """Reads the content from a JSONL file and returns lists of each content type.
-
-        Args:
-            filename: The file path from which to read the content.
 
         Returns:
             A list of prompts and images read from the file.
@@ -132,22 +101,15 @@ class FileInputRetriever:
         prompts = []
         images = []
 
-        use_prefix_prompts = self.config.prefix_prompt.num > 0
-        if use_prefix_prompts:
-            PromptGenerator.create_prefix_prompts_pool(
-                self.tokenizer,
-                self.config.prefix_prompt.num,
-                self.config.prefix_prompt.length,
-            )
-
-        with open(filename, newline=None) as file:
+        with open(self.config.filename, newline=None) as file:
             for line in file:
                 if line.strip():
                     data = utils.load_json_str(line)
                     prompt = data.get("text")
-                    if use_prefix_prompts:
+                    if self.add_prefix_prompt:
                         prefix_prompt = PromptGenerator.get_random_prefix_prompt()
                         prompt = f"{prefix_prompt} {prompt}"
+
                     if prompt is not None:
                         prompts.append(prompt.strip())
 

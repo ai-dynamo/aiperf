@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.dataset.custom.file_input_retriever import (
+from aiperf.services.dataset.composer.file_input_retriever import (
     CustomDataConfig,
     FileInputRetriever,
     ImageConfig,
@@ -314,7 +314,7 @@ class TestFileInputRetriever:
             _ = file_retriever._get_input_datasets_from_dir()
 
     @patch("builtins.open", side_effect=open_side_effect)
-    @patch(f"{PROMPT_GENERATOR_PREFIX}.create_prefix_prompts_pool")
+    @patch(f"{PROMPT_GENERATOR_PREFIX}.create_prefix_prompt_pool")
     @patch(
         f"{PROMPT_GENERATOR_PREFIX}.get_random_prefix_prompt",
         return_value="prefix prompt",
@@ -324,7 +324,7 @@ class TestFileInputRetriever:
         self,
         mock_exists,
         mock_random_prefix_prompt,
-        mock_create_prefix_prompts_pool,
+        mock_create_prefix_prompt_pool,
         mock_file,
         config,
     ):
@@ -339,7 +339,7 @@ class TestFileInputRetriever:
 
         assert file_data is not None
         assert len(file_data.rows) == 3
-        mock_create_prefix_prompts_pool.assert_called_once()
+        mock_create_prefix_prompt_pool.assert_called_once()
         for row in file_data.rows:
             assert row.texts[0].startswith("prefix prompt ")
 
