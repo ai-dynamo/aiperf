@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from aiperf.common.comms.base import (
         BaseCommunication,  # noqa: F401 - for type checking
     )
+    from aiperf.common.data_exporter.base_data_exporter import (
+        BaseDataExporter,  # noqa: F401 - for type checking
+    )
     from aiperf.common.enums import (
         CommunicationBackend,  # noqa: F401 - for type checking
         ServiceType,  # noqa: F401 - for type checking
