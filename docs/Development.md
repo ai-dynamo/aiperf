@@ -474,7 +474,7 @@ Quality tools are configured in `pyproject.toml`:
 ### Code Style
 - Follow PEP 8 guidelines
 - Use Pydantic models for data structures
-- Prefer enums for string choices (using our custom `StrEnum`)
+- Prefer enums for string choices (using our custom `CaseInsensitiveStrEnum`)
 - Implement DRY principles
 - Use type hints throughout
 
