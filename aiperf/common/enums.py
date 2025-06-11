@@ -259,3 +259,10 @@ class OutputFormat(CaseInsensitiveStrEnum):
 class ModelSelectionStrategy(CaseInsensitiveStrEnum):
     ROUND_ROBIN = "round_robin"
     RANDOM = "random"
+
+
+####################################################################################
+# Data Exporter Enums
+####################################################################################
+class DataExporterType(CaseInsensitiveStrEnum):
+    CONSOLE = "console"

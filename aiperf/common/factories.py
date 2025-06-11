@@ -16,6 +16,9 @@ if TYPE_CHECKING:
         CommunicationBackend,  # noqa: F401 - for type checking
         ServiceType,  # noqa: F401 - for type checking
     )
+    from aiperf.common.interfaces import (
+        DataExporterProtocol,  # noqa: F401 - for type checking
+    )
     from aiperf.common.service.base_service import (
         BaseService,  # noqa: F401 - for type checking
     )
@@ -188,6 +191,15 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
             )
         return cls._registry[class_type]
 
+    @classmethod
+    def get_all_classes(cls) -> list[type[ClassProtocolT]]:
+        """Get all registered classes.
+
+        Returns:
+            A list of all registered class types implementing the expected protocol
+        """
+        return list(cls._registry.values())
+
 
 ################################################################################
 # Built-in Factories
@@ -232,5 +244,18 @@ class ServiceFactory(FactoryMixin["ServiceType", "BaseService"]):
             args=(service_class, self.config),
             daemon=False,
         )
+    ```
+    """
+
+
+class DataExporterFactory(FactoryMixin["DataExporterType", "DataExporterProtocol"]):
+    """Factory for registering and creating DataExporterInterface instances.
+
+    Example:
+    ```python
+        # Iterate over all registered data exporter types
+        for exporter_class in DataExporterFactory.get_all_classes():
+            exporter = exporter_class(endpoint_config)
+            exporter.export(records)
     ```
     """
