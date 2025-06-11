@@ -22,10 +22,11 @@ def test_record_dataclass():
     This test creates two transaction objects and a Record object containing them.
     It asserts that the Record's 'request' attribute and 'transactions' list are set correctly.
     """
+    req = Transaction(timestamp=100, payload=None)
     resp1 = Transaction(timestamp=1, payload="foo")
     resp2 = Transaction(timestamp=2, payload="bar")
-    record = Record(request=100, responses=[resp1, resp2])
-    assert record.request == 100
+    record = Record(request=req, responses=[resp1, resp2])
+    assert record.request == req
     assert record.responses == [resp1, resp2]
 
 
@@ -38,12 +39,15 @@ def test_records_add_and_get_records():
     - The added record contains the correct request value and associated transactions.
     """
     records = Records()
+    req = Transaction(timestamp=5, payload=None)
     resp1 = Transaction(timestamp=10, payload="payload1")
     resp2 = Transaction(timestamp=20, payload="payload2")
-    records.add_record(request=5, responses=[resp1, resp2])
+
+    records.add_record(request=req, responses=[resp1, resp2])
     all_records = records.records
     assert len(all_records) == 1
-    assert all_records[0].request == 5
+    assert all_records[0].request == req
+    assert all_records[0].responses == [resp1, resp2]
     assert all_records[0].responses == [resp1, resp2]
 
 
@@ -58,14 +62,16 @@ def test_records_multiple_adds():
     - The request and transaction payloads are correctly associated with each record.
     """
     records = Records()
-    resp1 = Transaction(timestamp=1, payload="a")
-    resp2 = Transaction(timestamp=2, payload="b")
-    records.add_record(request=100, responses=[resp1])
-    records.add_record(request=200, responses=[resp2])
+    req1 = Transaction(timestamp=100, payload=None)
+    req2 = Transaction(timestamp=200, payload=None)
+    resp1 = Transaction(timestamp=150, payload="a")
+    resp2 = Transaction(timestamp=250, payload="b")
+    records.add_record(request=req1, responses=[resp1])
+    records.add_record(request=req2, responses=[resp2])
     all_records = records.records
     assert len(all_records) == 2
-    assert all_records[0].request == 100
-    assert all_records[1].request == 200
+    assert all_records[0].request == req1
+    assert all_records[1].request == req2
     assert all_records[0].responses[0].payload == "a"
     assert all_records[1].responses[0].payload == "b"
 
