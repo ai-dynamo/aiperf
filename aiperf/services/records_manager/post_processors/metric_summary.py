@@ -5,7 +5,7 @@ import logging
 
 from aiperf.common.enums import PostProcessorType
 from aiperf.common.factories import PostProcessorFactory
-from aiperf.services.records_manager.metrics.metric import MetricInterface
+from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class MetricSummary:
         self.logger.debug("Initializing MetricSummary post-processor")
 
         self._metrics = []
-        for metric_cls in MetricInterface.get_all().values():
+        for metric_cls in BaseMetric.get_all().values():
             self._metrics.append(metric_cls())
 
     def process(self, records: list) -> None:
