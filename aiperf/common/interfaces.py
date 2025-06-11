@@ -11,4 +11,10 @@ from aiperf.data_exporter.record import Record
 
 
 class DataExporterProtocol(Protocol):
+    """
+    Protocol for data exporters.
+    Any class implementing this protocol must provide an `export` method
+    that takes a list of Record objects and handles exporting them appropriately.
+    """
+
     def export(self, records: list[Record]) -> None: ...

@@ -7,6 +7,11 @@ from aiperf.data_exporter.record import Record
 
 
 class ExporterManager:
+    """
+    ExporterManager is responsible for exporting records using all
+    registered data exporters.
+    """
+
     def __init__(self, endpoint_config: EndPointConfig):
         self.endpoint_config = endpoint_config
         self.exporter_classes = DataExporterFactory.get_all_classes()
