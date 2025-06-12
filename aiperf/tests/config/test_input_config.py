@@ -6,9 +6,9 @@ from pathlib import PosixPath
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config.audio_config import AudioConfig
+from aiperf.common.config.audio.audio_config import AudioConfig
 from aiperf.common.config.config_defaults import InputDefaults
-from aiperf.common.config.input_config import InputConfig
+from aiperf.common.config.input.input_config import InputConfig
 
 
 def test_input_config_defaults():

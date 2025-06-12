@@ -10,8 +10,11 @@ from aiperf.common.config.config_defaults import UserDefaults
 from aiperf.common.config.config_validators import (
     parse_str_or_list,
 )
-from aiperf.common.config.endpoint_config import EndPointConfig
-from aiperf.common.config.input_config import InputConfig
+from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
+from aiperf.common.config.input.input_config import InputConfig
+
+# from aiperf.common.config.output.output_config import OutputConfig
+# from aiperf.common.config.tokenizer.tokenizer_config import TokenizerConfig
 
 
 class UserConfig(BaseConfig):
@@ -45,3 +48,5 @@ class UserConfig(BaseConfig):
 
     endpoint: EndPointConfig = EndPointConfig()
     input: InputConfig = InputConfig()
+    # output: OutputConfig = ConfigOutput()
+    # tokenizer: TokenizerConfig = ConfigTokenizer()

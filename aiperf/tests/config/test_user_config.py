@@ -3,8 +3,8 @@
 from unittest.mock import mock_open, patch
 
 from aiperf.common.config.config_defaults import UserDefaults
-from aiperf.common.config.endpoint_config import EndPointConfig
-from aiperf.common.config.input_config import InputConfig
+from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
+from aiperf.common.config.input.input_config import InputConfig
 from aiperf.common.config.user_config import UserConfig
 
 

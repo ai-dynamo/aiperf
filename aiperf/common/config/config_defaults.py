@@ -3,7 +3,12 @@
 
 from dataclasses import dataclass
 
-from aiperf.common.enums import AudioFormat, ModelSelectionStrategy, OutputFormat
+from aiperf.common.enums import (
+    AudioFormat,
+    ImageFormat,
+    ModelSelectionStrategy,
+    OutputFormat,
+)
 
 
 #
@@ -41,9 +46,19 @@ class InputDefaults:
 @dataclass(frozen=True)
 class AudioDefaults:
     BATCH_SIZE = 1
-    LENGTH_MEAN = 0
-    LENGTH_STDDEV = 0
+    LENGTH_MEAN = 0.0
+    LENGTH_STDDEV = 0.0
     FORMAT = AudioFormat.WAV
     DEPTHS = [16]
     SAMPLE_RATES = [16.0]
     NUM_CHANNELS = 1
+
+
+@dataclass(frozen=True)
+class ImageDefaults:
+    BATCH_SIZE = 1
+    WIDTH_MEAN = 0.0
+    WIDTH_STDDEV = 0.0
+    HEIGHT_MEAN = 0.0
+    HEIGHT_STDDEV = 0.0
+    FORMAT = ImageFormat.PNG

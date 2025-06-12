@@ -12,6 +12,8 @@ from aiperf.common.config.config_validators import (
 )
 from aiperf.common.enums import AudioFormat
 
+from aiperf.common.config.audio.audio_length_config import AudioLengthConfig
+
 
 class AudioConfig(BaseConfig):
     """
@@ -27,7 +29,7 @@ class AudioConfig(BaseConfig):
         ),
     ] = AudioDefaults.BATCH_SIZE
 
-    # length = ConfigAudioLength()
+    length: AudioLengthConfig = AudioLengthConfig()
 
     format: Annotated[
         AudioFormat,

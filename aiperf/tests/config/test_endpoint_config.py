@@ -4,7 +4,7 @@
 from enum import Enum
 
 from aiperf.common.config.config_defaults import EndPointDefaults
-from aiperf.common.config.endpoint_config import EndPointConfig
+from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
 
 
 def test_endpoint_config_defaults():
