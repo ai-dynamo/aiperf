@@ -6,5 +6,5 @@ __all__ = [
     "AudioLengthConfig",
 ]
 
-from aiperf.common.config.audio.audio_config import AudioConfig
-from aiperf.common.config.audio.audio_length_config import AudioLengthConfig
+from aiperf.common.config.input.audio.audio_config import AudioConfig
+from aiperf.common.config.input.audio.audio_length_config import AudioLengthConfig

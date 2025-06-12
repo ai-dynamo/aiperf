@@ -5,7 +5,7 @@ from typing import Annotated
 
 from pydantic import BeforeValidator, Field
 
-from aiperf.common.config.audio.audio_length_config import AudioLengthConfig
+from aiperf.common.config.input.audio.audio_length_config import AudioLengthConfig
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import AudioDefaults
 from aiperf.common.config.config_validators import (
