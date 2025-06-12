@@ -105,3 +105,10 @@ class SessionTurnDelayDefaults:
 @dataclass(frozen=True)
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
+
+
+@dataclass(frozen=True)
+class TokenizerDefaults:
+    NAME = ""
+    REVISION = "main"
+    TRUST_REMOTE_CODE = False

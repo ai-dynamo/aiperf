@@ -12,7 +12,7 @@ def test_output_config_defaults():
     Test the default values of the OutputConfig class.
 
     This test verifies that the OutputConfig object is initialized with the correct
-    default values as defined in the SessionsDefaults class.
+    default values as defined in the OutputDefaults class.
     """
     config = OutputConfig()
     assert config.artifact_directory == OutputDefaults.ARTIFACT_DIRECTORY
