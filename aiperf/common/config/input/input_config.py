@@ -13,6 +13,9 @@ from aiperf.common.config.input.image.image_config import ImageConfig
 from aiperf.common.config.input.output_tokens.output_tokens_config import (
     OutputTokensConfig,
 )
+from aiperf.common.config.input.synthetic_tokens.synthetic_tokens_config import (
+    SyntheticTokensConfig,
+)
 
 
 class InputConfig(BaseConfig):
@@ -92,6 +95,6 @@ class InputConfig(BaseConfig):
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
     output_tokens: OutputTokensConfig = OutputTokensConfig()
-    # synthetic_tokens = ConfigSyntheticTokens()
+    synthetic_tokens: SyntheticTokensConfig = SyntheticTokensConfig()
     # prefix_prompt = ConfigPrefixPrompt()
     # sessions = ConfigSessions()

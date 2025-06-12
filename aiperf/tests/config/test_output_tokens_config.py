@@ -1,10 +1,10 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 
+from aiperf.common.config.config_defaults import OutputTokensDefaults
 from aiperf.common.config.input.output_tokens.output_tokens_config import (
     OutputTokensConfig,
 )
-from aiperf.common.config.config_defaults import OutputTokensDefaults
 
 
 def test_output_tokens_config_defaults():
@@ -12,7 +12,7 @@ def test_output_tokens_config_defaults():
     Test the default values of the OutputTokensConfig class.
 
     This test verifies that the OutputTokensConfig object is initialized with the correct
-    default values as defined in the ImageDefaults class.
+    default values as defined in the OutputTokensDefaults class.
     """
     config = OutputTokensConfig()
     assert config.mean == OutputTokensDefaults.MEAN
@@ -28,7 +28,7 @@ def test_output_tokens_config_custom_values():
     when provided with a dictionary of custom values.
     """
     custom_values = {
-        "mean": 100.0,
+        "mean": 100,
         "deterministic": True,
         "stddev": 10.0,
     }

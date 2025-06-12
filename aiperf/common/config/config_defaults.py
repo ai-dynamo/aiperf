@@ -66,6 +66,12 @@ class ImageDefaults:
 
 @dataclass(frozen=True)
 class OutputTokensDefaults:
-    MEAN = 0.0
+    MEAN = 0
     DETERMINISTIC = False
+    STDDEV = 0
+
+
+@dataclass(frozen=True)
+class SyntheticTokensDefaults:
+    MEAN = 550
     STDDEV = 0

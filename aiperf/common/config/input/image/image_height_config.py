@@ -3,7 +3,7 @@
 
 from typing import Annotated
 
-from pydantic import BeforeValidator, Field
+from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import ImageDefaults

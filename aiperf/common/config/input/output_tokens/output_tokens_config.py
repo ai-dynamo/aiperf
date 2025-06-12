@@ -15,7 +15,7 @@ class OutputTokensConfig(BaseConfig):
     """
 
     mean: Annotated[
-        float,
+        int,
         Field(
             default=OutputTokensDefaults.MEAN,
             ge=0,
