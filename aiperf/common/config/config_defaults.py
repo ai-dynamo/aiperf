@@ -2,6 +2,7 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from aiperf.common.enums import (
     AudioFormat,
@@ -99,3 +100,8 @@ class SessionTurnDelayDefaults:
     MEAN = 0.0
     STDDEV = 0.0
     RATIO = 1.0
+
+
+@dataclass(frozen=True)
+class OutputDefaults:
+    ARTIFACT_DIRECTORY = Path("./artifacts")

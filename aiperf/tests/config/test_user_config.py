@@ -5,6 +5,7 @@ from unittest.mock import mock_open, patch
 from aiperf.common.config.config_defaults import UserDefaults
 from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
 from aiperf.common.config.input.input_config import InputConfig
+from aiperf.common.config.output.output_config import OutputConfig
 from aiperf.common.config.user_config import UserConfig
 
 
@@ -58,6 +59,7 @@ def test_user_config_defaults():
     - `template_filename` matches `UserDefaults.TEMPLATE_FILENAME`.
     - `endpoint` is an instance of `EndPointConfig`.
     - `input` is an instance of `InputConfig`.
+    - `output` is an instance of `OutputConfig`
     """
 
     config = UserConfig()
@@ -66,6 +68,7 @@ def test_user_config_defaults():
     assert config.template_filename == UserDefaults.TEMPLATE_FILENAME
     assert isinstance(config.endpoint, EndPointConfig)
     assert isinstance(config.input, InputConfig)
+    assert isinstance(config.output, OutputConfig)
 
 
 def test_user_config_custom_values():
