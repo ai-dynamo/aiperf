@@ -16,6 +16,7 @@ from aiperf.common.config.input.output_tokens.output_tokens_config import (
 from aiperf.common.config.input.prefix_prompt.prefix_prompt_config import (
     PrefixPromptConfig,
 )
+from aiperf.common.config.input.sessions.sessions_config import SessionsConfig
 from aiperf.common.config.input.synthetic_tokens.synthetic_tokens_config import (
     SyntheticTokensConfig,
 )
@@ -100,4 +101,4 @@ class InputConfig(BaseConfig):
     output_tokens: OutputTokensConfig = OutputTokensConfig()
     synthetic_tokens: SyntheticTokensConfig = SyntheticTokensConfig()
     prefix_prompt: PrefixPromptConfig = PrefixPromptConfig()
-    # sessions = ConfigSessions()
+    sessions: SessionsConfig = SessionsConfig()

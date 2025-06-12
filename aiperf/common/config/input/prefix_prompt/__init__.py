@@ -6,7 +6,7 @@ __all__ = [
     "PrefixPromptDefaults",
 ]
 
+from aiperf.common.config.config_defaults import PrefixPromptDefaults
 from aiperf.common.config.input.prefix_prompt.prefix_prompt_config import (
     PrefixPromptConfig,
 )
-from aiperf.common.config.config_defaults import PrefixPromptDefaults

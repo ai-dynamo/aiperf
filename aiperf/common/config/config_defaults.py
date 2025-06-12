@@ -74,10 +74,28 @@ class OutputTokensDefaults:
 @dataclass(frozen=True)
 class SyntheticTokensDefaults:
     MEAN = 550
-    STDDEV = 0
+    STDDEV = 0.0
 
 
 @dataclass(frozen=True)
 class PrefixPromptDefaults:
     NUM = 0
     LENGTH = 100
+
+
+@dataclass(frozen=True)
+class SessionsDefaults:
+    NUM = 0
+
+
+@dataclass(frozen=True)
+class SessionTurnsDefaults:
+    MEAN = 1.0
+    STDDEV = 0.0
+
+
+@dataclass(frozen=True)
+class SessionTurnDelayDefaults:
+    MEAN = 0.0
+    STDDEV = 0.0
+    RATIO = 1.0
