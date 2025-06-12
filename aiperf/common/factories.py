@@ -14,10 +14,12 @@ if TYPE_CHECKING:
     )
     from aiperf.common.enums import (
         CommunicationBackend,  # noqa: F401 - for type checking
+        PostProcessorType,  # noqa: F401 - for type checking
         ServiceType,  # noqa: F401 - for type checking
     )
     from aiperf.common.interfaces import (
         DataExporterProtocol,  # noqa: F401 - for type checking
+        PostProcessorProtocol,  # noqa: F401 - for type checking
     )
     from aiperf.common.service.base_service import (
         BaseService,  # noqa: F401 - for type checking
@@ -256,6 +258,24 @@ class DataExporterFactory(FactoryMixin["DataExporterType", "DataExporterProtocol
         # Iterate over all registered data exporter types
         for exporter_class in DataExporterFactory.get_all_classes():
             exporter = exporter_class(endpoint_config)
+
             exporter.export(records)
     ```
+    """
+
+
+class PostProcessorFactory(FactoryMixin["PostProcessorType", "PostProcessorProtocol"]):
+    """Factory for registering and creating PostProcessor instances based on the specified post-processor type.
+
+    Example:
+    ```python
+        # Register a new post-processor type
+        @PostProcessorFactory.register(PostProcessorType.METRIC_SUMMARY)
+        class MetricSummary:
+            pass
+
+        # Create a new post-processor instance
+        post_processor = PostProcessorFactory.create_instance(
+            PostProcessorType.METRIC_SUMMARY,
+        )
     """

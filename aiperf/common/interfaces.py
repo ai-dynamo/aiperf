@@ -18,3 +18,22 @@ class DataExporterProtocol(Protocol):
     """
 
     def export(self, records: list[Record]) -> None: ...
+
+
+################################################################################
+# Post Processor Protocol
+################################################################################
+class PostProcessorProtocol(Protocol):
+    """
+    PostProcessorProtocol is a protocol that defines the API for post-processors.
+    It requires an `process` method that takes a list of records and returns a result.
+    """
+
+    def process(self, records: dict) -> dict:
+        """
+        Execute the post-processing logic on the given payload.
+
+        :param payload: The input data to be processed.
+        :return: The processed data as a dictionary.
+        """
+        pass

@@ -199,3 +199,12 @@ class UnsupportedHookError(AIPerfError):
 
 class FactoryCreationError(AIPerfError):
     """Exception raised when a factory encounters an error while creating a class."""
+
+
+################################################################################
+# Metric Exceptions
+################################################################################
+
+
+class MetricTypeError(AIPerfError):
+    """Exception raised when a metric type encounters an error while creating a class."""
