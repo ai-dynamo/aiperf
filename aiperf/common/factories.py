@@ -19,12 +19,10 @@ if TYPE_CHECKING:
     )
     from aiperf.common.interfaces import (
         DataExporterProtocol,  # noqa: F401 - for type checking
+        PostProcessorProtocol,  # noqa: F401 - for type checking
     )
     from aiperf.common.service.base_service import (
         BaseService,  # noqa: F401 - for type checking
-    )
-    from aiperf.services.records_manager.post_processors.post_processor_interface import (
-        PostProcessorInterface,  # noqa: F401 - for type checking
     )
 
 ClassEnumT = TypeVar("ClassEnumT", bound=CaseInsensitiveStrEnum)
@@ -266,7 +264,7 @@ class DataExporterFactory(FactoryMixin["DataExporterType", "DataExporterProtocol
     """
 
 
-class PostProcessorFactory(FactoryMixin["PostProcessorType", "PostProcessorInterface"]):
+class PostProcessorFactory(FactoryMixin["PostProcessorType", "PostProcessorProtocol"]):
     """Factory for registering and creating PostProcessor instances based on the specified post-processor type.
 
     Example:

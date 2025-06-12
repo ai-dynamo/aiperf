@@ -91,14 +91,13 @@ class BaseMetric(ABC):
         """
 
     @abstractmethod
-    def get_metrics(self) -> list[Any]:
+    def values(self) -> list[Any]:
         """
         Returns the list of calculated metrics.
         """
 
-    @staticmethod
     @abstractmethod
-    def _check_record(record: Record) -> None:
+    def _check_record(self, record: Record) -> None:
         """
         Checks if the record is valid for metric calculation.
 
@@ -112,4 +111,4 @@ class BaseMetric(ABC):
 
         scale_factor = self.unit.value - unit.value
 
-        return [metric / 10**scale_factor for metric in self.get_metrics()]
+        return [metric / 10**scale_factor for metric in self.values()]

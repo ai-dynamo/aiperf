@@ -36,9 +36,9 @@ class MetricSummary:
             for metric in self._metrics:
                 metric.add_record(record)
 
-    def get_metrics(self) -> dict:
+    def get_metrics_summary(self) -> dict:
         metrics_summary = {}
         for metric in self._metrics:
-            metrics_summary[metric.tag] = metric.get_metrics()
+            metrics_summary[metric.tag] = metric.values()
 
         return metrics_summary

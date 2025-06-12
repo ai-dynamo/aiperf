@@ -25,20 +25,19 @@ class TTFTMetric(BaseMetric):
         This method extracts the timestamp from the request and the first response in the given
         Record object, computes the difference (TTFT), and appends the result to the metric list.
         """
-        TTFTMetric._check_record(record)
+        self._check_record(record)
         request_ts = record.request.timestamp
         response_ts = record.responses[0].timestamp
         ttft = response_ts - request_ts
         self.metric.append(ttft)
 
-    def get_metrics(self) -> list[int]:
+    def values(self) -> list[int]:
         """
         Returns the list of Time to First Token (TTFT) metrics.
         """
         return self.metric
 
-    @staticmethod
-    def _check_record(record: Record) -> None:
+    def _check_record(self, record: Record) -> None:
         """
         Checks if the record is valid for TTFT calculation.
 

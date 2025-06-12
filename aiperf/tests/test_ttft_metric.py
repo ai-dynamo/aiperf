@@ -23,7 +23,7 @@ class MockRecord:
         self.responses = responses
 
 
-def test_add_record_and_get_metrics():
+def test_add_record_and_values():
     metric = TTFTMetric()
     metric.metric = []
     request = MockRequest(timestamp=100)
@@ -31,7 +31,7 @@ def test_add_record_and_get_metrics():
     record = MockRecord(request, [response])
 
     metric.add_record(record)
-    assert metric.get_metrics() == [50]
+    assert metric.values() == [50]
 
 
 def test_add_multiple_records():
@@ -44,7 +44,7 @@ def test_add_multiple_records():
     ]
     for record in records:
         metric.add_record(record)
-    assert metric.get_metrics() == [5, 5, 10]
+    assert metric.values() == [5, 5, 10]
 
 
 def test_record_without_responses_raises():
@@ -91,7 +91,7 @@ def test_metric_initialization_none():
     response = MockResponse(2)
     record = MockRecord(request, [response])
     metric.add_record(record)
-    assert metric.get_metrics() == [1]
+    assert metric.values() == [1]
 
 
 def test_convert_metrics():

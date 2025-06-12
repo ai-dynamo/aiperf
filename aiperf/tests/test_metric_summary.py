@@ -16,6 +16,6 @@ def test_metric_summary_process_and_get_metrics():
 
     ms.process(records.records)
 
-    for tag, metric in ms.get_metrics().items():
+    for tag, metric in ms.get_metrics_summary().items():
         assert tag == "ttft"
         assert metric == [9]
