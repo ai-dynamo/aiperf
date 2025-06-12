@@ -2,6 +2,7 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config.audio.audio_config import AudioConfig
+from aiperf.common.config.audio.audio_length_config import AudioLengthConfig
 from aiperf.common.config.config_defaults import AudioDefaults
 from aiperf.common.enums import AudioFormat
 
@@ -15,6 +16,8 @@ def test_audio_config_defaults():
     """
     config = AudioConfig()
     assert config.batch_size == AudioDefaults.BATCH_SIZE
+    assert config.length.mean == AudioDefaults.LENGTH_MEAN
+    assert config.length.stddev == AudioDefaults.LENGTH_STDDEV
     assert config.format == AudioDefaults.FORMAT
     assert config.depths == AudioDefaults.DEPTHS
     assert config.sample_rates == AudioDefaults.SAMPLE_RATES
@@ -34,6 +37,7 @@ def test_audio_config_custom_values():
 
     custom_values = {
         "batch_size": 32,
+        "length": AudioLengthConfig(mean=5.0, stddev=1.0),
         "format": AudioFormat.WAV,
         "depths": [16, 24],
         "sample_rates": [44, 48],

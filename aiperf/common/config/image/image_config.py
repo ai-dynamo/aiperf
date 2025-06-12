@@ -3,13 +3,12 @@
 
 from typing import Annotated
 
-from pydantic import BeforeValidator, Field
+from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import ImageDefaults
-from aiperf.common.config.config_validators import (
-    parse_str_or_list_of_positive_values,
-)
+from aiperf.common.config.image.image_height_config import ImageHeightConfig
+from aiperf.common.config.image.image_width_config import ImageWidthConfig
 from aiperf.common.enums import ImageFormat
 
 
@@ -18,6 +17,8 @@ class ImageConfig(BaseConfig):
     A configuration class for defining image related settings.
     """
 
+    width: ImageWidthConfig = ImageWidthConfig()
+    height: ImageHeightConfig = ImageHeightConfig()
     batch_size: Annotated[
         int,
         Field(
