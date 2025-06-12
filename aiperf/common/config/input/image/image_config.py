@@ -7,8 +7,8 @@ from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import ImageDefaults
-from aiperf.common.config.image.image_height_config import ImageHeightConfig
-from aiperf.common.config.image.image_width_config import ImageWidthConfig
+from aiperf.common.config.input.image.image_height_config import ImageHeightConfig
+from aiperf.common.config.input.image.image_width_config import ImageWidthConfig
 from aiperf.common.enums import ImageFormat
 
 

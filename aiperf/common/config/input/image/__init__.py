@@ -6,4 +6,5 @@ __all__ = [
     "ImageDefaults",
 ]
 
-from aiperf.common.config.image.image_config import ImageConfig
+from aiperf.common.config.input.image.image_config import ImageConfig
+from aiperf.common.config.config_defaults import ImageDefaults

@@ -1,12 +1,12 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.config.image.image_config import (
+from aiperf.common.config.config_defaults import ImageDefaults
+from aiperf.common.config.input.image.image_config import (
     ImageConfig,
     ImageHeightConfig,
     ImageWidthConfig,
 )
-from aiperf.common.config.config_defaults import ImageDefaults
 from aiperf.common.enums import ImageFormat
 
 
@@ -27,6 +27,12 @@ def test_image_config_defaults():
 
 
 def test_image_config_custom_values():
+    """
+    Test the InputConfig class with custom values.
+
+    This test verifies that the InputConfig class correctly initializes its attributes
+    when provided with a dictionary of custom values.
+    """
     custom_values = {
         "width": ImageWidthConfig(mean=640.0, stddev=80.0),
         "height": ImageHeightConfig(mean=480.0, stddev=60.0),

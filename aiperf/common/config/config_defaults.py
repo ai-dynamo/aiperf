@@ -62,3 +62,10 @@ class ImageDefaults:
     HEIGHT_MEAN = 0.0
     HEIGHT_STDDEV = 0.0
     FORMAT = ImageFormat.PNG
+
+
+@dataclass(frozen=True)
+class OutputTokensDefaults:
+    MEAN = 0.0
+    DETERMINISTIC = False
+    STDDEV = 0
