@@ -6,7 +6,7 @@ __all__ = [
     "SyntheticTokensDefaults",
 ]
 
+from aiperf.common.config.config_defaults import SyntheticTokensDefaults
 from aiperf.common.config.input.synthetic_tokens.synthetic_tokens_config import (
     SyntheticTokensConfig,
 )
-from aiperf.common.config.config_defaults import SyntheticTokensDefaults

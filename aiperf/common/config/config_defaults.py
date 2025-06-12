@@ -75,3 +75,9 @@ class OutputTokensDefaults:
 class SyntheticTokensDefaults:
     MEAN = 550
     STDDEV = 0
+
+
+@dataclass(frozen=True)
+class PrefixPromptDefaults:
+    NUM = 0
+    LENGTH = 100
