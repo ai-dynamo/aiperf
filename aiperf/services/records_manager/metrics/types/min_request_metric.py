@@ -1,0 +1,42 @@
+#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  SPDX-License-Identifier: Apache-2.0
+from aiperf.common.enums import MetricTimeType
+from aiperf.services.records_manager.metrics.base_metric import BaseMetric
+from aiperf.services.records_manager.records import Record
+
+
+class MinRequestMetric(BaseMetric):
+    """
+    Post-processor for calculating the minimum request time stamp metric from records.
+    """
+
+    tag = "min_request"
+    unit = MetricTimeType.NANOSECONDS
+    larger_is_better = False
+    header = "Minimum Request Timestamp"
+
+    def __init__(self):
+        self.metric: float = float("inf")
+
+    def add_record(self, record: Record) -> None:
+        """
+        Adds a new record and calculates the minimum request timestamp metric.
+
+        """
+        self._check_record(record)
+        if record.request.timestamp < self.metric:
+            self.metric = record.request.timestamp
+
+    def values(self) -> list[int]:
+        """
+        Returns the list of Time to First Token (TTFT) metrics.
+        """
+        return self.metric
+
+    def _check_record(self, record: Record) -> None:
+        """
+        Checks if the record is valid for calculations.
+
+        """
+        if not record.request or not record.request.timestamp:
+            raise ValueError("Record must have a valid request with a timestamp.")
