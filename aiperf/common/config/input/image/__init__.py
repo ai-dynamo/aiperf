@@ -4,11 +4,7 @@
 __all__ = [
     "ImageConfig",
     "ImageDefaults",
-    "ImageHeightConfig",
-    "ImageWidthConfig",
 ]
 
 from aiperf.common.config.config_defaults import ImageDefaults
 from aiperf.common.config.input.image.image_config import ImageConfig
-from aiperf.common.config.input.image.image_height_config import ImageHeightConfig
-from aiperf.common.config.input.image.image_width_config import ImageWidthConfig

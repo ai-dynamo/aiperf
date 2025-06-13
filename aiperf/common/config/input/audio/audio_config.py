@@ -10,8 +10,31 @@ from aiperf.common.config.config_defaults import AudioDefaults
 from aiperf.common.config.config_validators import (
     parse_str_or_list_of_positive_values,
 )
-from aiperf.common.config.input.audio.audio_length_config import AudioLengthConfig
 from aiperf.common.enums import AudioFormat
+
+
+class AudioLengthConfig(BaseConfig):
+    """
+    A configuration class for defining audio length related settings.
+    """
+
+    mean: Annotated[
+        float,
+        Field(
+            default=AudioDefaults.LENGTH_MEAN,
+            ge=0,
+            description="The mean length of the audio in seconds.",
+        ),
+    ]
+
+    stddev: Annotated[
+        float,
+        Field(
+            default=AudioDefaults.LENGTH_STDDEV,
+            ge=0,
+            description="The standard deviation of the length of the audio in seconds.",
+        ),
+    ]
 
 
 class AudioConfig(BaseConfig):
