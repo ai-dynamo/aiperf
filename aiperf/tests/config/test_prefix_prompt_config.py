@@ -2,7 +2,7 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config.config_defaults import PrefixPromptDefaults
-from aiperf.common.config.input.prefix_prompt.prefix_prompt_config import (
+from aiperf.common.config.input.prefix_prompt_config import (
     PrefixPromptConfig,
 )
 

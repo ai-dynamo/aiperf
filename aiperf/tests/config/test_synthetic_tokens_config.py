@@ -2,7 +2,7 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config.config_defaults import SyntheticTokensDefaults
-from aiperf.common.config.input.synthetic_tokens.synthetic_tokens_config import (
+from aiperf.common.config.input.synthetic_tokens_config import (
     SyntheticTokensConfig,
 )
 

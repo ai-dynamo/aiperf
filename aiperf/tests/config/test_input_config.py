@@ -7,17 +7,17 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.common.config.config_defaults import InputDefaults
-from aiperf.common.config.input.audio.audio_config import AudioConfig
-from aiperf.common.config.input.image.image_config import ImageConfig
+from aiperf.common.config.input.audio_config import AudioConfig
+from aiperf.common.config.input.image_config import ImageConfig
 from aiperf.common.config.input.input_config import InputConfig
-from aiperf.common.config.input.output_tokens.output_tokens_config import (
+from aiperf.common.config.input.output_tokens_config import (
     OutputTokensConfig,
 )
-from aiperf.common.config.input.prefix_prompt.prefix_prompt_config import (
+from aiperf.common.config.input.prefix_prompt_config import (
     PrefixPromptConfig,
 )
-from aiperf.common.config.input.sessions.sessions_config import SessionsConfig
-from aiperf.common.config.input.synthetic_tokens.synthetic_tokens_config import (
+from aiperf.common.config.input.sessions_config import SessionsConfig
+from aiperf.common.config.input.synthetic_tokens_config import (
     SyntheticTokensConfig,
 )
 

@@ -6,7 +6,7 @@ from aiperf.common.config.config_defaults import (
     SessionTurnDelayDefaults,
     SessionTurnsDefaults,
 )
-from aiperf.common.config.input.sessions.sessions_config import (
+from aiperf.common.config.input.sessions_config import (
     SessionsConfig,
     SessionTurnDelayConfig,
     SessionTurnsConfig,

@@ -2,7 +2,7 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config.config_defaults import ImageDefaults
-from aiperf.common.config.input.image.image_config import (
+from aiperf.common.config.input.image_config import (
     ImageConfig,
     ImageHeightConfig,
     ImageWidthConfig,
