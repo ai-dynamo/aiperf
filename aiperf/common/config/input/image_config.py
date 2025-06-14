@@ -68,7 +68,7 @@ class ImageConfig(BaseConfig):
         Field(
             default=ImageDefaults.BATCH_SIZE,
             ge=0,
-            description="The image batch size of the requests GenAI-Perf should send.\
+            description="The image batch size of the requests AI-Perf should send.\
             \nThis is currently supported with the image retrieval endpoint type.",
         ),
     ]

@@ -66,6 +66,12 @@ class ImageDefaults:
 
 
 @dataclass(frozen=True)
+class InputTokensDefaults:
+    MEAN = 550
+    STDDEV = 0.0
+
+
+@dataclass(frozen=True)
 class OutputTokensDefaults:
     MEAN = 0
     DETERMINISTIC = False
@@ -73,14 +79,8 @@ class OutputTokensDefaults:
 
 
 @dataclass(frozen=True)
-class SyntheticTokensDefaults:
-    MEAN = 550
-    STDDEV = 0.0
-
-
-@dataclass(frozen=True)
 class PrefixPromptDefaults:
-    NUM = 0
+    POOL_SIZE = 0
     LENGTH = 100
 
 

@@ -10,16 +10,8 @@ from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import parse_file, parse_goodput
 from aiperf.common.config.input.audio_config import AudioConfig
 from aiperf.common.config.input.image_config import ImageConfig
-from aiperf.common.config.input.output_tokens_config import (
-    OutputTokensConfig,
-)
-from aiperf.common.config.input.prefix_prompt_config import (
-    PrefixPromptConfig,
-)
+from aiperf.common.config.input.prompt_config import PromptConfig
 from aiperf.common.config.input.sessions_config import SessionsConfig
-from aiperf.common.config.input.synthetic_tokens_config import (
-    SyntheticTokensConfig,
-)
 
 
 class InputConfig(BaseConfig):
@@ -98,7 +90,5 @@ class InputConfig(BaseConfig):
 
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
-    output_tokens: OutputTokensConfig = OutputTokensConfig()
-    synthetic_tokens: SyntheticTokensConfig = SyntheticTokensConfig()
-    prefix_prompt: PrefixPromptConfig = PrefixPromptConfig()
+    prompt: PromptConfig = PromptConfig()
     sessions: SessionsConfig = SessionsConfig()

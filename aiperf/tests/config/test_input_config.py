@@ -10,16 +10,8 @@ from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.input.audio_config import AudioConfig
 from aiperf.common.config.input.image_config import ImageConfig
 from aiperf.common.config.input.input_config import InputConfig
-from aiperf.common.config.input.output_tokens_config import (
-    OutputTokensConfig,
-)
-from aiperf.common.config.input.prefix_prompt_config import (
-    PrefixPromptConfig,
-)
+from aiperf.common.config.input.prompt_config import PromptConfig
 from aiperf.common.config.input.sessions_config import SessionsConfig
-from aiperf.common.config.input.synthetic_tokens_config import (
-    SyntheticTokensConfig,
-)
 
 
 def test_input_config_defaults():
@@ -41,9 +33,7 @@ def test_input_config_defaults():
     assert config.random_seed == InputDefaults.RANDOM_SEED
     assert isinstance(config.audio, AudioConfig)
     assert isinstance(config.image, ImageConfig)
-    assert isinstance(config.output_tokens, OutputTokensConfig)
-    assert isinstance(config.synthetic_tokens, SyntheticTokensConfig)
-    assert isinstance(config.prefix_prompt, PrefixPromptConfig)
+    assert isinstance(config.prompt, PromptConfig)
     assert isinstance(config.sessions, SessionsConfig)
 
 
