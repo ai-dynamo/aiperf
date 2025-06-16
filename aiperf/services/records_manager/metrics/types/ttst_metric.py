@@ -29,8 +29,8 @@ class TTSTMetric(BaseMetric):
         self._check_record(record)
         first_reponse_ts = record.responses[0].timestamp
         second_response_ts = record.responses[1].timestamp
-        TTST = second_response_ts - first_reponse_ts
-        self.metric.append(TTST)
+        ttst = second_response_ts - first_reponse_ts
+        self.metric.append(ttst)
 
     def values(self) -> list[int]:
         """
