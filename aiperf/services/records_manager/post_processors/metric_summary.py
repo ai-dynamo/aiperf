@@ -40,6 +40,14 @@ class MetricSummary:
                 if metric.type == MetricType.METRIC_OF_METRICS:
                     metric.update_value(metrics={m.tag: m for m in self._metrics})
 
+        # TODO: Fix this after we add support for dependencies
+        # between metrics of metrics
+        # This is a workaround to ensure that metrics of metrics
+        # are updated after all records are processed
+        for metric in self._metrics:
+            if metric.type == MetricType.METRIC_OF_METRICS:
+                metric.update_value(metrics={m.tag: m for m in self._metrics})
+
     def get_metrics_summary(self) -> dict:
         metrics_summary = {}
         for metric in self._metrics:
