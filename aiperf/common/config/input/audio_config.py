@@ -13,6 +13,30 @@ from aiperf.common.config.config_validators import (
 from aiperf.common.enums import AudioFormat
 
 
+class AudioLengthConfig(BaseConfig):
+    """
+    A configuration class for defining audio length related settings.
+    """
+
+    mean: Annotated[
+        float,
+        Field(
+            default=AudioDefaults.LENGTH_MEAN,
+            ge=0,
+            description="The mean length of the audio in seconds.",
+        ),
+    ]
+
+    stddev: Annotated[
+        float,
+        Field(
+            default=AudioDefaults.LENGTH_STDDEV,
+            ge=0,
+            description="The standard deviation of the length of the audio in seconds.",
+        ),
+    ]
+
+
 class AudioConfig(BaseConfig):
     """
     A configuration class for defining audio related settings.
@@ -27,7 +51,7 @@ class AudioConfig(BaseConfig):
         ),
     ] = AudioDefaults.BATCH_SIZE
 
-    # length = ConfigAudioLength()
+    length: AudioLengthConfig = AudioLengthConfig()
 
     format: Annotated[
         AudioFormat,

@@ -6,9 +6,12 @@ from pathlib import PosixPath
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.config_defaults import InputDefaults
-from aiperf.common.config.input_config import InputConfig
+from aiperf.common.config.input.audio_config import AudioConfig
+from aiperf.common.config.input.image_config import ImageConfig
+from aiperf.common.config.input.input_config import InputConfig
+from aiperf.common.config.input.prompt_config import PromptConfig
+from aiperf.common.config.input.sessions_config import SessionsConfig
 
 
 def test_input_config_defaults():
@@ -29,6 +32,9 @@ def test_input_config_defaults():
     assert config.num_dataset_entries == InputDefaults.NUM_DATASET_ENTRIES
     assert config.random_seed == InputDefaults.RANDOM_SEED
     assert isinstance(config.audio, AudioConfig)
+    assert isinstance(config.image, ImageConfig)
+    assert isinstance(config.prompt, PromptConfig)
+    assert isinstance(config.sessions, SessionsConfig)
 
 
 def test_input_config_custom_values():

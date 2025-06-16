@@ -5,10 +5,13 @@ from typing import Annotated, Any
 
 from pydantic import BeforeValidator, Field
 
-from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import parse_file, parse_goodput
+from aiperf.common.config.input.audio_config import AudioConfig
+from aiperf.common.config.input.image_config import ImageConfig
+from aiperf.common.config.input.prompt_config import PromptConfig
+from aiperf.common.config.input.sessions_config import SessionsConfig
 
 
 class InputConfig(BaseConfig):
@@ -86,8 +89,6 @@ class InputConfig(BaseConfig):
     ] = InputDefaults.RANDOM_SEED
 
     audio: AudioConfig = AudioConfig()
-    # image = ConfigImage()
-    # output_tokens = ConfigOutputTokens()
-    # synthetic_tokens = ConfigSyntheticTokens()
-    # prefix_prompt = ConfigPrefixPrompt()
-    # sessions = ConfigSessions()
+    image: ImageConfig = ImageConfig()
+    prompt: PromptConfig = PromptConfig()
+    sessions: SessionsConfig = SessionsConfig()

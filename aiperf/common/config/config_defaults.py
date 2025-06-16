@@ -2,8 +2,14 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass
+from pathlib import Path
 
-from aiperf.common.enums import AudioFormat, ModelSelectionStrategy, OutputFormat
+from aiperf.common.enums import (
+    AudioFormat,
+    ImageFormat,
+    ModelSelectionStrategy,
+    OutputFormat,
+)
 
 
 #
@@ -41,9 +47,68 @@ class InputDefaults:
 @dataclass(frozen=True)
 class AudioDefaults:
     BATCH_SIZE = 1
-    LENGTH_MEAN = 0
-    LENGTH_STDDEV = 0
+    LENGTH_MEAN = 0.0
+    LENGTH_STDDEV = 0.0
     FORMAT = AudioFormat.WAV
     DEPTHS = [16]
     SAMPLE_RATES = [16.0]
     NUM_CHANNELS = 1
+
+
+@dataclass(frozen=True)
+class ImageDefaults:
+    BATCH_SIZE = 1
+    WIDTH_MEAN = 0.0
+    WIDTH_STDDEV = 0.0
+    HEIGHT_MEAN = 0.0
+    HEIGHT_STDDEV = 0.0
+    FORMAT = ImageFormat.PNG
+
+
+@dataclass(frozen=True)
+class InputTokensDefaults:
+    MEAN = 550
+    STDDEV = 0.0
+
+
+@dataclass(frozen=True)
+class OutputTokensDefaults:
+    MEAN = 0
+    DETERMINISTIC = False
+    STDDEV = 0
+
+
+@dataclass(frozen=True)
+class PrefixPromptDefaults:
+    POOL_SIZE = 0
+    LENGTH = 100
+
+
+@dataclass(frozen=True)
+class SessionsDefaults:
+    NUM = 0
+
+
+@dataclass(frozen=True)
+class SessionTurnsDefaults:
+    MEAN = 1.0
+    STDDEV = 0.0
+
+
+@dataclass(frozen=True)
+class SessionTurnDelayDefaults:
+    MEAN = 0.0
+    STDDEV = 0.0
+    RATIO = 1.0
+
+
+@dataclass(frozen=True)
+class OutputDefaults:
+    ARTIFACT_DIRECTORY = Path("./artifacts")
+
+
+@dataclass(frozen=True)
+class TokenizerDefaults:
+    NAME = ""
+    REVISION = "main"
+    TRUST_REMOTE_CODE = False
