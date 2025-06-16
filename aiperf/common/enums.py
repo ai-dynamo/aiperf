@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from enum import Enum
+from typing import Any
 
 
 ################################################################################
@@ -17,6 +18,14 @@ class CaseInsensitiveStrEnum(str, Enum):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}.{self.name}"
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, str):
+            return self.value.lower() == other.lower()
+        return super().__eq__(other)
+
+    def __hash__(self) -> int:
+        return hash(self.value.lower())
 
     @classmethod
     def _missing_(cls, value):
@@ -49,36 +58,34 @@ class CommunicationBackend(CaseInsensitiveStrEnum):
     ZMQ_TCP = "zmq_tcp"
     """ZeroMQ backend using TCP sockets."""
 
+    ZMQ_IPC = "zmq_ipc"
+    """ZeroMQ backend using IPC sockets."""
+
+    ZMQ_INPROC = "zmq_inproc"
+    """ZeroMQ backend using in-process communication."""
+
 
 class Topic(CaseInsensitiveStrEnum):
     """Communication topics for the main messaging bus.
-    Right now, there is some overlap between Topic and MessageType."""
+    Right now, there is some overlap between Topic and MessageType.
+
+    NOTE: If you add a new topic, you must also add handlers for it in the
+    ClientType enums so the system knows what type of client to use for that topic.
+    """
 
     CREDIT_DROP = "credit_drop"
     CREDIT_RETURN = "credit_return"
+    CREDITS_COMPLETE = "credits_complete"
+    PROFILE_PROGRESS = "profile_progress"
+    PROFILE_STATS = "profile_stats"
+    PROFILE_RESULTS = "profile_results"
     REGISTRATION = "registration"
     COMMAND = "command"
     RESPONSE = "response"
     STATUS = "status"
     HEARTBEAT = "heartbeat"
-
-
-# TODO: Is this separation needed? Or should we just use the Topic enum?
-class DataTopic(CaseInsensitiveStrEnum):
-    """TBD. Specific data topics for use in the future."""
-
-    DATASET = "dataset_data"
-    RECORDS = "records_data"
-    WORKER = "worker_data"
-    POST_PROCESSOR = "post_processor_data"
-    RESULTS = "results"
-    METRICS = "metrics"
-    CONVERSATION = "conversation_data"
-
-
-TopicType = Topic | DataTopic
-"""Union of all the various different topic types supported by the system, for use in
-type hinting."""
+    INFERENCE_RESULTS = "inference_results"
+    CONVERSATION_DATA = "conversation_data"
 
 
 ################################################################################
@@ -132,6 +139,9 @@ class MessageType(CaseInsensitiveStrEnum):
     report its status."""
 
     ERROR = "error"
+    """A generic error message."""
+
+    SERVICE_ERROR = "service_error"
     """A message sent by a component service to the system controller to
     report an error."""
 
@@ -142,6 +152,52 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_RETURN = "credit_return"
     """A message sent by the Worker services to return credits to the credit pool."""
 
+    CREDITS_COMPLETE = "credits_complete"
+    """A message sent by the Timing Manager services to signify all requests have completed."""
+
+    CONVERSATION_REQUEST = "conversation_request"
+    """A message sent by one service to another to request a conversation."""
+
+    CONVERSATION_RESPONSE = "conversation_response"
+    """A message sent by one service to another to respond to a conversation request."""
+
+    INFERENCE_RESULTS = "inference_results"
+    """A message containing inference results from a worker."""
+
+    # Sweep run messages
+
+    SWEEP_CONFIGURE = "sweep_configure"
+    """A message sent to configure a sweep run."""
+
+    SWEEP_BEGIN = "sweep_begin"
+    """A message sent to indicate that a sweep has begun."""
+
+    SWEEP_PROGRESS = "sweep_progress"
+    """A message containing sweep run progress."""
+
+    SWEEP_END = "sweep_end"
+    """A message sent to indicate that a sweep has ended."""
+
+    SWEEP_RESULTS = "sweep_results"
+    """A message containing sweep run results."""
+
+    SWEEP_ERROR = "sweep_error"
+    """A message containing an error from a sweep run."""
+
+    # Profile run messages
+
+    PROFILE_PROGRESS = "profile_progress"
+    """A message containing profile run progress."""
+
+    PROFILE_STATS = "profile_stats"
+    """A message containing profile run stats such as error rates, etc."""
+
+    PROFILE_RESULTS = "profile_results"
+    """A message containing profile run results."""
+
+    PROFILE_ERROR = "profile_error"
+    """A message containing an error from a profile run."""
+
 
 ################################################################################
 # Command Enums
@@ -151,9 +207,29 @@ class MessageType(CaseInsensitiveStrEnum):
 class CommandType(CaseInsensitiveStrEnum):
     """List of commands that the SystemController can send to component services."""
 
-    START = "start"
-    STOP = "stop"
-    CONFIGURE = "configure"
+    PROFILE_CONFIGURE = "profile_configure"
+    """A command sent to configure a service in preparation for a profile run. This will
+    override the current configuration."""
+
+    PROFILE_START = "profile_start"
+    """A command sent to indicate that a service should begin profiling using the
+    current configuration."""
+
+    PROFILE_STOP = "profile_stop"
+    """A command sent to indicate that a service should stop doing profile related
+    work, as the profile run is complete."""
+
+    PROFILE_CANCEL = "profile_cancel"
+    """A command sent to cancel a profile run. This will stop the current profile run and
+    process the partial results."""
+
+    SHUTDOWN = "shutdown"
+    """A command sent to shutdown a service. This will stop the service gracefully
+    no matter what state it is in."""
+
+    PROCESS_RECORDS = "process_records"
+    """A command sent to process records. This will process the records and return
+    the services to their pre-record processing state."""
 
 
 ################################################################################
@@ -215,6 +291,7 @@ class ServiceType(CaseInsensitiveStrEnum):
     RECORDS_MANAGER = "records_manager"
     POST_PROCESSOR_MANAGER = "post_processor_manager"
     WORKER_MANAGER = "worker_manager"
+    MULTI_WORKER_PROCESS = "multi_worker_process"
     WORKER = "worker"
     TEST = "test_service"
 
@@ -242,23 +319,50 @@ class ServiceRegistrationStatus(CaseInsensitiveStrEnum):
 
 
 ################################################################################
-# Output Format Enums
+# Inference Client Enums
 ################################################################################
 
 
-class OutputFormat(CaseInsensitiveStrEnum):
-    TENSORRTLLM = "tensorrtllm"
-    VLLM = "vllm"
+class InferenceClientType(CaseInsensitiveStrEnum):
+    """Backend client types."""
+
+    GRPC = "grpc"
+    HTTP = "http"
+    OPENAI = "openai"
+    DYNAMO = "dynamo"
 
 
-#################################################################################
-# Model Selection Strategy Enums
 ################################################################################
+# Converter Enums
+################################################################################
+
+
+class PromptSource(CaseInsensitiveStrEnum):
+    """Source of prompts for the model."""
+
+    SYNTHETIC = "synthetic"
+    FILE = "file"
+    PAYLOAD = "payload"
 
 
 class ModelSelectionStrategy(CaseInsensitiveStrEnum):
+    """Strategy for selecting the model to use for the request."""
+
     ROUND_ROBIN = "round_robin"
     RANDOM = "random"
+    MODALITY_AWARE = "modality_aware"
+
+
+class OutputFormat(CaseInsensitiveStrEnum):
+    """Output format types."""
+
+    OPENAI_CHAT_COMPLETIONS = "openai_chat_completions"
+    OPENAI_COMPLETIONS = "openai_completions"
+    OPENAI_EMBEDDINGS = "openai_embeddings"
+    OPENAI_MULTIMODAL = "openai_multimodal"
+    OPENAI_RESPONSES = "openai_responses"
+    TENSORRTLLM = "tensorrtllm"
+    VLLM = "vllm"
 
 
 ####################################################################################
@@ -268,6 +372,7 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
 
 class DataExporterType(CaseInsensitiveStrEnum):
     CONSOLE = "console"
+    CONSOLE_ERROR = "console_error"
 
 
 #################################################################################

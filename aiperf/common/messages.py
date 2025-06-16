@@ -1,13 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import time
 import uuid
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, Field, TypeAdapter, model_serializer
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializeAsAny,
+    model_serializer,
+)
 
 from aiperf.common.enums import CommandType, MessageType, ServiceState, ServiceType
+from aiperf.common.record_models import ErrorDetailsCount, Record, RequestRecord
 
 ################################################################################
 # Abstract Base Message Models
@@ -28,8 +35,47 @@ def exclude_if_none(field_names: list[str]):
     return decorator
 
 
+class Message(BaseModel):
+    """Base class for optimized message handling"""
+
+    _message_type_lookup: ClassVar[dict[MessageType, type["Message"]]] = {}
+
+    def __init_subclass__(cls, **kwargs: dict[str, Any]):
+        super().__init_subclass__(**kwargs)
+        if hasattr(cls, "message_type"):
+            cls._message_type_lookup[cls.message_type] = cls
+
+    message_type: MessageType | Any = Field(
+        ...,
+        description="Type of the message",
+    )
+
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.from_json
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "Message":
+        """Fast deserialization without full validation"""
+        data = json.loads(json_str)
+        message_type = data.get("message_type")
+        if not message_type:
+            raise ValueError("Missing message_type")
+
+        # Use cached message type lookup
+        message_class = cls._message_type_lookup[message_type]
+        if not message_class:
+            raise ValueError(f"Unknown message type: {message_type}")
+
+        return message_class(**data)
+
+    def to_json(self) -> str:
+        """Fast serialization without full validation"""
+        return json.dumps(self.__dict__)
+
+
 @exclude_if_none(["request_ns", "request_id"])
-class BaseMessage(BaseModel):
+class BaseMessage(Message):
     """Base message model with common fields for all messages.
 
     Each message model should inherit from this class, set the message_type field,
@@ -140,6 +186,15 @@ class HeartbeatMessage(BaseStatusMessage):
     state: ServiceState = ServiceState.RUNNING
 
 
+class ProcessRecordsCommandData(BaseModel):
+    """Data to send with the process records command."""
+
+    cancelled: bool = Field(
+        default=False,
+        description="Whether the profile run was cancelled",
+    )
+
+
 class CommandMessage(BaseServiceMessage):
     """Message containing command data.
     This message is sent by the system controller to a service to command it to do something.
@@ -152,18 +207,27 @@ class CommandMessage(BaseServiceMessage):
         description="Command to execute",
     )
     command_id: str = Field(
-        default_factory=lambda: uuid.uuid4().hex[:8],
-        description="Unique identifier for this command",
+        default_factory=lambda: str(uuid.uuid4()),
+        description="Unique identifier for this command. If not provided, a random UUID will be generated.",
     )
     require_response: bool = Field(
         default=False,
         description="Whether a response is required for this command",
     )
+    # TODO: should we allow a service_type as well to send to all services of a given type?
+    target_service_type: ServiceType | None = Field(
+        default=None,
+        description="Type of the service to send the command to. "
+        "If both `target_service_type` and `target_service_id` are None, the command is "
+        "sent to all services.",
+    )
     target_service_id: str | None = Field(
         default=None,
-        description="ID of the target service for this command",
+        description="ID of the target service to send the command to. "
+        "If both `target_service_type` and `target_service_id` are None, the command is "
+        "sent to all services.",
     )
-    data: BaseModel | None = Field(
+    data: SerializeAsAny[ProcessRecordsCommandData | BaseModel | None] = Field(
         default=None,
         description="Data to send with the command",
     )
@@ -200,89 +264,136 @@ class CreditReturnMessage(BaseServiceMessage):
     )
 
 
-class ErrorMessage(BaseServiceMessage):
+class ErrorMessage(BaseMessage):
     """Message containing error data."""
 
     message_type: Literal[MessageType.ERROR] = MessageType.ERROR
 
-    error_code: str | None = Field(
+    error: str | None = Field(
         default=None,
-        description="Exception code",
-    )
-    error_message: str | None = Field(
-        default=None,
-        description="Exception message",
-    )
-    error_details: dict[str, Any] | None = Field(
-        default=None,
-        description="Additional details about the error",
+        description="Error information",
     )
 
 
-# Discriminated union type - only include message types that include a message_type field
-Message = Annotated[
-    HeartbeatMessage
-    | RegistrationMessage
-    | StatusMessage
-    | CommandMessage
-    | CreditDropMessage
-    | CreditReturnMessage
-    | ErrorMessage,
-    Field(discriminator="message_type"),
-]
-"""Union of all message types. This is used as a type hint when a function
-accepts a message as an argument.
+class BaseServiceErrorMessage(BaseServiceMessage):
+    """Base message containing error data."""
 
-The message type is determined by the discriminator field `message_type`. This is
-used by the Pydantic `discriminator` argument to determine the type of the
-message automatically when the message is deserialized from a JSON string.
+    message_type: Literal[MessageType.SERVICE_ERROR] = MessageType.SERVICE_ERROR
 
-To serialize a message to a JSON string, use the `model_dump_json` method.
-To deserialize a message from a JSON string, use the `model_validate_json`
-method.
+    error: str | None = Field(
+        default=None,
+        description="Error information",
+    )
 
-Example:
-```python
->>> message = StatusMessage(
-...     service_id="service_1",
-...     request_id="request_1",
-...     request_ns=1716278400000000000,
-...     state=ServiceState.READY,
-...     service_type=ServiceType.TEST,
-... )
->>> json_string = message.model_dump_json()
->>> print(json_string)
-{"state": "ready", "service_type": "test", "service_id": "service_1", "request_id": "request_1", "request_ns": 1716278400000000000, "message_type": "status"}
->>> deserialized_message = MessageTypeAdapter.validate_json(json_string)
->>> print(deserialized_message)
-StatusMessage(
-    message_type=MessageType.STATUS,
-    state=ServiceState.READY,
-    service_type=ServiceType.TEST,
-    service_id="service_1",
-    request_id="request_1",
-    request_ns=1716278400000000000,
-)
->>> print(deserialized_message.state)
-ready
-```
-"""
 
-# Create a TypeAdapter for JSON validation of messages
-MessageTypeAdapter = TypeAdapter(Message)
-"""TypeAdapter for JSON validation of messages.
-Example:
-```python
->>> json_string = '{"state": "ready", "service_type": "test", "service_id": "service_1", "request_id": "request_1", "request_ns": 1716278400000000000, "message_type": "status"}'
->>> message = MessageTypeAdapter.validate_json(json_string)
->>> print(message)
-StatusMessage(
-    message_type=MessageType.STATUS,
-    state=ServiceState.READY,
-    service_type=ServiceType.TEST,
-    service_id="service_1",
-    request_id="request_1",
-    request_ns=1716278400000000000,
-)
-```
-"""
+class CreditsCompleteMessage(BaseServiceMessage):
+    """Credits complete message sent to System controller to signify all requests have completed."""
+
+    message_type: Literal[MessageType.CREDITS_COMPLETE] = MessageType.CREDITS_COMPLETE
+    cancelled: bool = Field(
+        default=False,
+        description="Whether the profile run was cancelled",
+    )
+
+
+class ConversationRequestMessage(BaseServiceMessage):
+    """Message for a conversation request."""
+
+    message_type: Literal[MessageType.CONVERSATION_REQUEST] = (
+        MessageType.CONVERSATION_REQUEST
+    )
+
+    conversation_id: str = Field(..., description="The ID of the conversation")
+
+
+class ConversationResponseMessage(BaseServiceMessage):
+    """Message for a conversation response."""
+
+    message_type: Literal[MessageType.CONVERSATION_RESPONSE] = (
+        MessageType.CONVERSATION_RESPONSE
+    )
+
+    conversation_id: str = Field(..., description="The ID of the conversation")
+    conversation_data: list[dict[str, Any]] = Field(
+        ..., description="The data of the conversation"
+    )
+
+
+class InferenceResultsMessage(BaseServiceMessage):
+    """Message for a inference results."""
+
+    message_type: Literal[MessageType.INFERENCE_RESULTS] = MessageType.INFERENCE_RESULTS
+
+    record: SerializeAsAny[RequestRecord] = Field(
+        ..., description="The inference results record"
+    )
+
+
+class ProfileResultsMessage(BaseServiceMessage):
+    """Message for profile results."""
+
+    message_type: Literal[MessageType.PROFILE_RESULTS] = MessageType.PROFILE_RESULTS
+
+    records: SerializeAsAny[list[Record]] = Field(
+        ..., description="The records of the profile results"
+    )
+    total: int = Field(
+        ..., description="The total number of inference requests to be made"
+    )
+    completed: int = Field(
+        ..., description="The number of inference requests completed"
+    )
+    # begin_ns: int = Field(
+    #     ..., description="The start time of the profile run in nanoseconds"
+    # )
+    # end_ns: int = Field(
+    #     ...,
+    #     description="The end time of the profile run in nanoseconds"
+    # )
+    was_cancelled: bool = Field(
+        default=False,
+        description="Whether the profile run was cancelled early",
+    )
+    errors_by_type: list[ErrorDetailsCount] = Field(
+        default_factory=list,
+        description="A list of the unique error details and their counts",
+    )
+
+
+class ProfileProgressMessage(BaseServiceMessage):
+    """Message for profile progress."""
+
+    message_type: Literal[MessageType.PROFILE_PROGRESS] = MessageType.PROFILE_PROGRESS
+
+    sweep_id: str | None = Field(
+        default=None, description="The ID of the current sweep"
+    )
+    sweep_start_ns: int = Field(
+        ..., description="The start time of the sweep in nanoseconds"
+    )
+    sweep_end_ns: int | None = Field(
+        default=None, description="The end time of the sweep in nanoseconds"
+    )
+    total: int = Field(
+        ..., description="The total number of inference requests to be made"
+    )
+    completed: int = Field(
+        ..., description="The number of inference requests completed"
+    )
+
+
+class ProfileStatsMessage(BaseServiceMessage):
+    """Message for profile stats."""
+
+    message_type: Literal[MessageType.PROFILE_STATS] = MessageType.PROFILE_STATS
+
+    error_count: int = Field(default=0, description="The number of errors encountered")
+    completed: int = Field(default=0, description="The number of requests completed")
+    worker_completed: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-worker request completion counts, keyed by worker service_id",
+    )
+    worker_errors: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-worker error counts, keyed by worker service_id",
+    )
