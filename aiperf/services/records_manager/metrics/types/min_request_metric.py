@@ -1,6 +1,6 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import MetricTimeType
+from aiperf.common.enums import MetricTimeType, MetricType
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 from aiperf.services.records_manager.records import Record
 
@@ -12,6 +12,7 @@ class MinRequestMetric(BaseMetric):
 
     tag = "min_request"
     unit = MetricTimeType.NANOSECONDS
+    type = MetricType.METRIC_OF_RECORDS
     larger_is_better = False
     header = "Minimum Request Timestamp"
 
@@ -27,7 +28,7 @@ class MinRequestMetric(BaseMetric):
         if record.request.timestamp < self.metric:
             self.metric = record.request.timestamp
 
-    def values(self) -> list[int]:
+    def values(self) -> float:
         """
         Returns the list of Time to First Token (TTFT) metrics.
         """

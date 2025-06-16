@@ -1,6 +1,6 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import MetricTimeType
+from aiperf.common.enums import MetricTimeType, MetricType
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 from aiperf.services.records_manager.records import Record
 
@@ -14,6 +14,7 @@ class TTFTMetric(BaseMetric):
     unit = MetricTimeType.NANOSECONDS
     larger_is_better = False
     header = "Time to First Token (TTFT)"
+    type = MetricType.METRIC_OF_RECORDS
 
     def __init__(self):
         self.metric: list[int] = []

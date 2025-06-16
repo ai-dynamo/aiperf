@@ -3,7 +3,7 @@
 
 import logging
 
-from aiperf.common.enums import PostProcessorType
+from aiperf.common.enums import MetricType, PostProcessorType
 from aiperf.common.factories import PostProcessorFactory
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
@@ -34,7 +34,11 @@ class MetricSummary:
         """
         for record in records:
             for metric in self._metrics:
-                metric.update_value(record)
+                if metric.type == MetricType.METRIC_OF_RECORDS:
+                    metric.update_value(record=record)
+            for metric in self._metrics:
+                if metric.type == MetricType.METRIC_OF_METRICS:
+                    metric.update_value(metrics={m.tag: m for m in self._metrics})
 
     def get_metrics_summary(self) -> dict:
         metrics_summary = {}

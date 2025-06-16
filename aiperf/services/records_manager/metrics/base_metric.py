@@ -97,7 +97,7 @@ class BaseMetric(ABC):
         """
 
     @abstractmethod
-    def values(self) -> list[Any]:
+    def values(self) -> Any:
         """
         Returns the list of calculated metrics.
         """
