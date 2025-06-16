@@ -34,7 +34,7 @@ class MetricSummary:
         """
         for record in records:
             for metric in self._metrics:
-                metric.add_record(record)
+                metric.update_value(record)
 
     def get_metrics_summary(self) -> dict:
         metrics_summary = {}

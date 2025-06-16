@@ -18,7 +18,7 @@ class TTSTMetric(BaseMetric):
     def __init__(self):
         self.metric: list[int] = []
 
-    def add_record(self, record: Record) -> None:
+    def update_value(self, record: Record) -> None:
         """
         Adds a new record and calculates the Time To Second Token (TTST) metric.
 

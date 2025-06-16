@@ -8,13 +8,13 @@ from aiperf.services.records_manager.metrics.types.max_response_metric import (
 from aiperf.tests.utils.metric_test_utils import MockRecord, MockRequest, MockResponse
 
 
-def test_add_record_and_values():
+def test_update_value_and_values():
     metric = MaxResponseMetric()
     request = MockRequest(timestamp=100)
     response = MockResponse(timestamp=150)
     record = MockRecord(request, [response])
 
-    metric.add_record(record)
+    metric.update_value(record)
     assert metric.values() == 150
 
 
@@ -26,7 +26,7 @@ def test_add_multiple_records():
         MockRecord(MockRequest(30), [MockResponse(40)]),
     ]
     for record in records:
-        metric.add_record(record)
+        metric.update_value(record)
     assert metric.values() == 40
 
 
@@ -34,7 +34,7 @@ def test_record_with_no_responses_raises():
     metric = MaxResponseMetric()
     record = MockRecord(MockRequest(10), None)
     with pytest.raises(ValueError, match="valid responses"):
-        metric.add_record(record)
+        metric.update_value(record)
 
 
 def test_record_with_no_respone_timestamps_raises():
@@ -42,4 +42,4 @@ def test_record_with_no_respone_timestamps_raises():
     response = MockResponse(None)
     record = MockRecord(MockRequest(10), [response])
     with pytest.raises(ValueError, match="valid responses"):
-        metric.add_record(record)
+        metric.update_value(record)

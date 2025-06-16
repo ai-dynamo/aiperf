@@ -6,7 +6,7 @@ from aiperf.services.records_manager.metrics.types.ttst_metric import TTSTMetric
 from aiperf.tests.utils.metric_test_utils import MockRecord, MockRequest, MockResponse
 
 
-def test_ttst_metric_add_record_and_values():
+def test_ttst_metric_update_value_and_values():
     metric = TTSTMetric()
     metric.metric = []
     request = MockRequest(timestamp=100)
@@ -14,7 +14,7 @@ def test_ttst_metric_add_record_and_values():
     response2 = MockResponse(timestamp=180)
     record = MockRecord(request, [response1, response2])
 
-    metric.add_record(record)
+    metric.update_value(record)
     assert metric.values() == [30]  # 180 - 150
 
 
@@ -27,7 +27,7 @@ def test_ttst_metric_add_multiple_records():
         MockRecord(MockRequest(30), [MockResponse(40), MockResponse(50)]),
     ]
     for record in records:
-        metric.add_record(record)
+        metric.update_value(record)
     assert metric.values() == [5, 10, 10]
 
 
@@ -36,7 +36,7 @@ def test_ttst_metric_with_one_response_raises():
     metric.metric = []
     record = MockRecord(MockRequest(10), [MockResponse(15)])
     with pytest.raises(ValueError, match="at least two responses"):
-        metric.add_record(record)
+        metric.update_value(record)
 
 
 def test_ttst_metric_with_no_request_raises():
@@ -44,7 +44,7 @@ def test_ttst_metric_with_no_request_raises():
     metric.metric = []
     record = MockRecord(None, [MockResponse(20), MockResponse(30)])
     with pytest.raises(ValueError, match="valid request"):
-        metric.add_record(record)
+        metric.update_value(record)
 
 
 def test_ttst_metric_with_no_request_timestamp_raises():
@@ -53,7 +53,7 @@ def test_ttst_metric_with_no_request_timestamp_raises():
     request = MockRequest(None)
     record = MockRecord(request, [MockResponse(20), MockResponse(30)])
     with pytest.raises(ValueError, match="valid request"):
-        metric.add_record(record)
+        metric.update_value(record)
 
 
 def test_ttst_metric_response_timestamp_order_raises():
@@ -67,4 +67,4 @@ def test_ttst_metric_response_timestamp_order_raises():
         ValueError,
         match="Second response timestamp must be greater than or equal to the first response timestamp.",
     ):
-        metric.add_record(record)
+        metric.update_value(record)

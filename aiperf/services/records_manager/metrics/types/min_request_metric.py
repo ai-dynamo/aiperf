@@ -18,7 +18,7 @@ class MinRequestMetric(BaseMetric):
     def __init__(self):
         self.metric: float = float("inf")
 
-    def add_record(self, record: Record) -> None:
+    def update_value(self, record: Record) -> None:
         """
         Adds a new record and calculates the minimum request timestamp metric.
 

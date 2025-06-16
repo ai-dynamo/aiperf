@@ -7,14 +7,14 @@ from aiperf.services.records_manager.metrics.types.ttft_metric import TTFTMetric
 from aiperf.tests.utils.metric_test_utils import MockRecord, MockRequest, MockResponse
 
 
-def test_add_record_and_values():
+def test_update_value_and_values():
     metric = TTFTMetric()
     metric.metric = []
     request = MockRequest(timestamp=100)
     response = MockResponse(timestamp=150)
     record = MockRecord(request, [response])
 
-    metric.add_record(record)
+    metric.update_value(record)
     assert metric.values() == [50]
 
 
@@ -27,7 +27,7 @@ def test_add_multiple_records():
         MockRecord(MockRequest(30), [MockResponse(40)]),
     ]
     for record in records:
-        metric.add_record(record)
+        metric.update_value(record)
     assert metric.values() == [5, 5, 10]
 
 
@@ -36,7 +36,7 @@ def test_record_without_responses_raises():
     metric.metric = []
     record = MockRecord(MockRequest(10), [])
     with pytest.raises(ValueError, match="at least one response"):
-        metric.add_record(record)
+        metric.update_value(record)
 
 
 def test_record_with_no_request_raises():
@@ -44,7 +44,7 @@ def test_record_with_no_request_raises():
     metric.metric = []
     record = MockRecord(None, [MockResponse(20)])
     with pytest.raises(ValueError, match="valid request"):
-        metric.add_record(record)
+        metric.update_value(record)
 
 
 def test_record_with_no_request_timestamp_raises():
@@ -53,7 +53,7 @@ def test_record_with_no_request_timestamp_raises():
     request = MockRequest(None)
     record = MockRecord(request, [MockResponse(20)])
     with pytest.raises(ValueError, match="valid request"):
-        metric.add_record(record)
+        metric.update_value(record)
 
 
 def test_response_timestamp_less_than_request_raises():
@@ -63,7 +63,7 @@ def test_response_timestamp_less_than_request_raises():
     response = MockResponse(90)
     record = MockRecord(request, [response])
     with pytest.raises(ValueError, match="Response timestamp must be greater"):
-        metric.add_record(record)
+        metric.update_value(record)
 
 
 def test_metric_initialization_none():
@@ -74,7 +74,7 @@ def test_metric_initialization_none():
     request = MockRequest(1)
     response = MockResponse(2)
     record = MockRecord(request, [response])
-    metric.add_record(record)
+    metric.update_value(record)
     assert metric.values() == [1]
 
 
@@ -87,5 +87,5 @@ def test_convert_metrics():
         MockRecord(MockRequest(30_000_000), [MockResponse(40_000_000)]),
     ]
     for record in records:
-        metric.add_record(record)
+        metric.update_value(record)
     assert metric.get_converted_metrics(unit=MetricTimeType.MILLISECONDS) == [5, 5, 10]
