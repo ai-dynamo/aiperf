@@ -52,8 +52,8 @@ class Worker(BaseService):
         """Start the worker."""
         self.logger.debug("Starting worker")
         # Subscribe to the credit drop topic
-        await self.comms.pull(
-            topic=Topic.CREDIT_DROP,
+        await self.comms.register_pull_callback(
+            message_type=Topic.CREDIT_DROP,
             callback=self._process_credit_drop,
         )
 

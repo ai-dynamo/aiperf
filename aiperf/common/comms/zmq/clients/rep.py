@@ -9,7 +9,7 @@ from zmq import SocketType
 from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.exceptions import CommunicationResponseError
 from aiperf.common.hooks import aiperf_task, on_cleanup
-from aiperf.common.messages import Message, MessageTypeAdapter
+from aiperf.common.messages import Message
 
 logger = logging.getLogger(__name__)
 

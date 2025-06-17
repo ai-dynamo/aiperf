@@ -220,7 +220,7 @@ class SystemController(BaseControllerService):
                 try:
                     await self.send_command_to_service(
                         target_service_id=service_info.service_id,
-                        command=CommandType.START,
+                        command=CommandType.PROFILE_START,
                     )
 
                 except Exception as e:
@@ -269,7 +269,7 @@ class SystemController(BaseControllerService):
         try:
             await self.send_command_to_service(
                 target_service_id=service_id,
-                command=CommandType.CONFIGURE,
+                command=CommandType.PROFILE_CONFIGURE,
                 data=None,
             )
         except Exception as e:

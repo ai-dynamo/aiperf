@@ -32,7 +32,7 @@ class BaseTestControllerService(BaseTestService):
 
         # Create a test command message
         test_service_id = "test_service_123"
-        command = CommandType.START
+        command = CommandType.PROFILE_START
 
         # Create a command message
         command_message = service.create_command_message(
