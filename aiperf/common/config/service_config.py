@@ -19,7 +19,7 @@ class ServiceConfig(BaseModel):
         description="Type of service run (MULTIPROCESSING, KUBERNETES)",
     )
     comm_backend: CommunicationBackend = Field(
-        default=CommunicationBackend.ZMQ_IPC,
+        default=CommunicationBackend.ZMQ_TCP,
         description="Communication backend to use",
     )
     comm_config: BaseZMQCommunicationConfig | None = Field(
