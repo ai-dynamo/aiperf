@@ -15348,7 +15348,7 @@ create an instance of the service, and run it.</p>
                 <code>service_config</code>
             </td>
             <td>
-                  <code><a class="autorefs autorefs-internal" title="ServiceConfig (aiperf.common.config.service_config.ServiceConfig)" href="#aiperf.common.config.service_config.ServiceConfig">ServiceConfig</a> | None</code>
+                  <code><a class="autorefs autorefs-internal" title="ServiceConfig (aiperf.common.config.ServiceConfig)" href="#aiperf.common.config.service_config.ServiceConfig">ServiceConfig</a> | None</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -15408,7 +15408,7 @@ configuration will be loaded from the config file</p>
 
     <span class="c1"># Load the service configuration</span>
     <span class="k">if</span> <span class="n">service_config</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.config.loader</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_service_config</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_service_config</span>
 
         <span class="n">service_config</span> <span class="o">=</span> <span class="n">load_service_config</span><span class="p">()</span>
 
@@ -26484,7 +26484,9 @@ Raises:
 
               <details class="quote">
                 <summary>Source code in <code>aiperf/common/config/input/audio_config.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">38</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">36</span>
+<span class="normal">37</span>
+<span class="normal">38</span>
 <span class="normal">39</span>
 <span class="normal">40</span>
 <span class="normal">41</span>
@@ -26530,9 +26532,7 @@ Raises:
 <span class="normal">81</span>
 <span class="normal">82</span>
 <span class="normal">83</span>
-<span class="normal">84</span>
-<span class="normal">85</span>
-<span class="normal">86</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">AudioConfig</span><span class="p">(</span><span class="n">BaseConfig</span><span class="p">):</span>
+<span class="normal">84</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">AudioConfig</span><span class="p">(</span><span class="n">BaseConfig</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A configuration class for defining audio related settings.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -26630,7 +26630,9 @@ Raises:
 
               <details class="quote">
                 <summary>Source code in <code>aiperf/common/config/input/audio_config.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">16</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
 <span class="normal">17</span>
 <span class="normal">18</span>
 <span class="normal">19</span>
@@ -26647,9 +26649,7 @@ Raises:
 <span class="normal">30</span>
 <span class="normal">31</span>
 <span class="normal">32</span>
-<span class="normal">33</span>
-<span class="normal">34</span>
-<span class="normal">35</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">AudioLengthConfig</span><span class="p">(</span><span class="n">BaseConfig</span><span class="p">):</span>
+<span class="normal">33</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">AudioLengthConfig</span><span class="p">(</span><span class="n">BaseConfig</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A configuration class for defining audio length related settings.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -55449,7 +55449,7 @@ the conversation between turns.</p>
 
     <span class="kn">import</span><span class="w"> </span><span class="nn">uvloop</span>
 
-    <span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.config.loader</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_service_config</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_service_config</span>
 
     <span class="c1"># Load the service configuration</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">load_service_config</span><span class="p">()</span>
@@ -57537,7 +57537,7 @@ with the communication layer mocked.</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><a class="autorefs autorefs-internal" title="ServiceConfig (aiperf.common.config.service_config.ServiceConfig)" href="#aiperf.common.config.service_config.ServiceConfig">ServiceConfig</a></code>
+                  <code><a class="autorefs autorefs-internal" title="ServiceConfig (aiperf.common.config.ServiceConfig)" href="#aiperf.common.config.service_config.ServiceConfig">ServiceConfig</a></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -59309,7 +59309,8 @@ of the object match the expected values specified in the test.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_audio_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">26</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">25</span>
+<span class="normal">26</span>
 <span class="normal">27</span>
 <span class="normal">28</span>
 <span class="normal">29</span>
@@ -59330,8 +59331,7 @@ of the object match the expected values specified in the test.</p>
 <span class="normal">44</span>
 <span class="normal">45</span>
 <span class="normal">46</span>
-<span class="normal">47</span>
-<span class="normal">48</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_audio_config_custom_values</span><span class="p">():</span>
+<span class="normal">47</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_audio_config_custom_values</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    This test ensures that the AudioConfig object is properly initialized</span>
 <span class="sd">    when provided with custom input values. It verifies that the attributes</span>
@@ -59378,7 +59378,8 @@ default values as defined in the AudioDefaults class.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_audio_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 9</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 8</span>
+<span class="normal"> 9</span>
 <span class="normal">10</span>
 <span class="normal">11</span>
 <span class="normal">12</span>
@@ -59391,8 +59392,7 @@ default values as defined in the AudioDefaults class.</p>
 <span class="normal">19</span>
 <span class="normal">20</span>
 <span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_audio_config_defaults</span><span class="p">():</span>
+<span class="normal">22</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_audio_config_defaults</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the default values of the AudioConfig class.</span>
 
@@ -59896,7 +59896,8 @@ from the input dictionary.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_endpoint_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">30</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">29</span>
+<span class="normal">30</span>
 <span class="normal">31</span>
 <span class="normal">32</span>
 <span class="normal">33</span>
@@ -59923,8 +59924,7 @@ from the input dictionary.</p>
 <span class="normal">54</span>
 <span class="normal">55</span>
 <span class="normal">56</span>
-<span class="normal">57</span>
-<span class="normal">58</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_endpoint_config_custom_values</span><span class="p">():</span>
+<span class="normal">57</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_endpoint_config_custom_values</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the `EndPointConfig` class with custom values.</span>
 <span class="sd">    This test verifies that the `EndPointConfig` object correctly initializes</span>
@@ -59978,7 +59978,8 @@ the configuration is initialized correctly with expected default values.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_endpoint_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">10</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 9</span>
+<span class="normal">10</span>
 <span class="normal">11</span>
 <span class="normal">12</span>
 <span class="normal">13</span>
@@ -59994,8 +59995,7 @@ the configuration is initialized correctly with expected default values.</p>
 <span class="normal">23</span>
 <span class="normal">24</span>
 <span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_endpoint_config_defaults</span><span class="p">():</span>
+<span class="normal">26</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_endpoint_config_defaults</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the default values of the EndPointConfig class.</span>
 
@@ -60042,7 +60042,8 @@ Assertions:
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_endpoint_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">61</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">60</span>
+<span class="normal">61</span>
 <span class="normal">62</span>
 <span class="normal">63</span>
 <span class="normal">64</span>
@@ -60059,8 +60060,7 @@ Assertions:
 <span class="normal">75</span>
 <span class="normal">76</span>
 <span class="normal">77</span>
-<span class="normal">78</span>
-<span class="normal">79</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_server_metrics_urls_validator</span><span class="p">():</span>
+<span class="normal">78</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_server_metrics_urls_validator</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the validation and assignment of the `server_metrics_urls` attribute</span>
 <span class="sd">    in the `EndPointConfig` class.</span>
@@ -60279,9 +60279,7 @@ when provided with a dictionary of custom values.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_input_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">40</span>
-<span class="normal">41</span>
-<span class="normal">42</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">42</span>
 <span class="normal">43</span>
 <span class="normal">44</span>
 <span class="normal">45</span>
@@ -60302,7 +60300,9 @@ when provided with a dictionary of custom values.</p>
 <span class="normal">60</span>
 <span class="normal">61</span>
 <span class="normal">62</span>
-<span class="normal">63</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_config_custom_values</span><span class="p">():</span>
+<span class="normal">63</span>
+<span class="normal">64</span>
+<span class="normal">65</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_config_custom_values</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the InputConfig class with custom values.</span>
 
@@ -60351,9 +60351,7 @@ it checks that the <code>audio</code> attribute is an instance of the AudioConfi
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_input_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">19</span>
 <span class="normal">20</span>
 <span class="normal">21</span>
 <span class="normal">22</span>
@@ -60371,7 +60369,9 @@ it checks that the <code>audio</code> attribute is an instance of the AudioConfi
 <span class="normal">34</span>
 <span class="normal">35</span>
 <span class="normal">36</span>
-<span class="normal">37</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_config_defaults</span><span class="p">():</span>
+<span class="normal">37</span>
+<span class="normal">38</span>
+<span class="normal">39</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_config_defaults</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the default values of the InputConfig class.</span>
 
@@ -60414,16 +60414,16 @@ it checks that the <code>audio</code> attribute is an instance of the AudioConfi
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_input_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">78</span>
-<span class="normal">79</span>
-<span class="normal">80</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">80</span>
 <span class="normal">81</span>
 <span class="normal">82</span>
 <span class="normal">83</span>
 <span class="normal">84</span>
 <span class="normal">85</span>
 <span class="normal">86</span>
-<span class="normal">87</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_config_file_validation</span><span class="p">():</span>
+<span class="normal">87</span>
+<span class="normal">88</span>
+<span class="normal">89</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_config_file_validation</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test InputConfig file field with valid and invalid values.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -60455,16 +60455,16 @@ it checks that the <code>audio</code> attribute is an instance of the AudioConfi
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_input_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">66</span>
-<span class="normal">67</span>
-<span class="normal">68</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">68</span>
 <span class="normal">69</span>
 <span class="normal">70</span>
 <span class="normal">71</span>
 <span class="normal">72</span>
 <span class="normal">73</span>
 <span class="normal">74</span>
-<span class="normal">75</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_config_goodput_validation</span><span class="p">():</span>
+<span class="normal">75</span>
+<span class="normal">76</span>
+<span class="normal">77</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_config_goodput_validation</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test InputConfig goodput field with valid and invalid values.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -60532,7 +60532,8 @@ when provided with a dictionary of custom values.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_output_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">21</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">20</span>
+<span class="normal">21</span>
 <span class="normal">22</span>
 <span class="normal">23</span>
 <span class="normal">24</span>
@@ -60544,8 +60545,7 @@ when provided with a dictionary of custom values.</p>
 <span class="normal">30</span>
 <span class="normal">31</span>
 <span class="normal">32</span>
-<span class="normal">33</span>
-<span class="normal">34</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_output_config_custom_values</span><span class="p">():</span>
+<span class="normal">33</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_output_config_custom_values</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the OutputConfig class with custom values.</span>
 
@@ -60583,15 +60583,15 @@ default values as defined in the OutputDefaults class.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_output_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">10</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 9</span>
+<span class="normal">10</span>
 <span class="normal">11</span>
 <span class="normal">12</span>
 <span class="normal">13</span>
 <span class="normal">14</span>
 <span class="normal">15</span>
 <span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_output_config_defaults</span><span class="p">():</span>
+<span class="normal">17</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_output_config_defaults</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the default values of the OutputConfig class.</span>
 
@@ -60658,7 +60658,9 @@ when provided with a dictionary of custom values.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_prompt_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">28</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">26</span>
+<span class="normal">27</span>
+<span class="normal">28</span>
 <span class="normal">29</span>
 <span class="normal">30</span>
 <span class="normal">31</span>
@@ -60670,9 +60672,7 @@ when provided with a dictionary of custom values.</p>
 <span class="normal">37</span>
 <span class="normal">38</span>
 <span class="normal">39</span>
-<span class="normal">40</span>
-<span class="normal">41</span>
-<span class="normal">42</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_tokens_config_custom_values</span><span class="p">():</span>
+<span class="normal">40</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_tokens_config_custom_values</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the InputTokensConfig class with custom values.</span>
 
@@ -60711,16 +60711,16 @@ default values as defined in the SyntheticTokensDefaults class.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_prompt_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">16</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
 <span class="normal">17</span>
 <span class="normal">18</span>
 <span class="normal">19</span>
 <span class="normal">20</span>
 <span class="normal">21</span>
 <span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_tokens_config_defaults</span><span class="p">():</span>
+<span class="normal">23</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_input_tokens_config_defaults</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the default values of the InputTokensConfig class.</span>
 
@@ -60754,7 +60754,9 @@ when provided with a dictionary of custom values.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_prompt_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">58</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">56</span>
+<span class="normal">57</span>
+<span class="normal">58</span>
 <span class="normal">59</span>
 <span class="normal">60</span>
 <span class="normal">61</span>
@@ -60767,9 +60769,7 @@ when provided with a dictionary of custom values.</p>
 <span class="normal">68</span>
 <span class="normal">69</span>
 <span class="normal">70</span>
-<span class="normal">71</span>
-<span class="normal">72</span>
-<span class="normal">73</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_output_tokens_config_custom_values</span><span class="p">():</span>
+<span class="normal">71</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_output_tokens_config_custom_values</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the OutputTokensConfig class with custom values.</span>
 
@@ -60809,7 +60809,9 @@ default values as defined in the OutputTokensDefaults class.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_prompt_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">45</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">43</span>
+<span class="normal">44</span>
+<span class="normal">45</span>
 <span class="normal">46</span>
 <span class="normal">47</span>
 <span class="normal">48</span>
@@ -60817,9 +60819,7 @@ default values as defined in the OutputTokensDefaults class.</p>
 <span class="normal">50</span>
 <span class="normal">51</span>
 <span class="normal">52</span>
-<span class="normal">53</span>
-<span class="normal">54</span>
-<span class="normal">55</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_output_tokens_config_defaults</span><span class="p">():</span>
+<span class="normal">53</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_output_tokens_config_defaults</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the default values of the OutputTokensConfig class.</span>
 
@@ -60854,7 +60854,9 @@ when provided with a dictionary of custom values.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_prompt_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 88</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 86</span>
+<span class="normal"> 87</span>
+<span class="normal"> 88</span>
 <span class="normal"> 89</span>
 <span class="normal"> 90</span>
 <span class="normal"> 91</span>
@@ -60866,9 +60868,7 @@ when provided with a dictionary of custom values.</p>
 <span class="normal"> 97</span>
 <span class="normal"> 98</span>
 <span class="normal"> 99</span>
-<span class="normal">100</span>
-<span class="normal">101</span>
-<span class="normal">102</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_prefix_prompt_config_custom_values</span><span class="p">():</span>
+<span class="normal">100</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_prefix_prompt_config_custom_values</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the PrefixPromptConfig class with custom values.</span>
 
@@ -60907,16 +60907,16 @@ default values as defined in the PrefixPromptDefaults class.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_prompt_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">76</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">74</span>
+<span class="normal">75</span>
+<span class="normal">76</span>
 <span class="normal">77</span>
 <span class="normal">78</span>
 <span class="normal">79</span>
 <span class="normal">80</span>
 <span class="normal">81</span>
 <span class="normal">82</span>
-<span class="normal">83</span>
-<span class="normal">84</span>
-<span class="normal">85</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_prefix_prompt_config_defaults</span><span class="p">():</span>
+<span class="normal">83</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_prefix_prompt_config_defaults</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the default values of the PrefixPromptConfig class.</span>
 
@@ -60984,7 +60984,9 @@ when provided with a dictionary of custom values.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_sessions_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">32</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">30</span>
+<span class="normal">31</span>
+<span class="normal">32</span>
 <span class="normal">33</span>
 <span class="normal">34</span>
 <span class="normal">35</span>
@@ -60997,9 +60999,7 @@ when provided with a dictionary of custom values.</p>
 <span class="normal">42</span>
 <span class="normal">43</span>
 <span class="normal">44</span>
-<span class="normal">45</span>
-<span class="normal">46</span>
-<span class="normal">47</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_sessions_config_custom_values</span><span class="p">():</span>
+<span class="normal">45</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_sessions_config_custom_values</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the SessionsConfig class with custom values.</span>
 
@@ -61039,7 +61039,9 @@ default values as defined in the SessionsDefaults class.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_sessions_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">16</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
 <span class="normal">17</span>
 <span class="normal">18</span>
 <span class="normal">19</span>
@@ -61050,9 +61052,7 @@ default values as defined in the SessionsDefaults class.</p>
 <span class="normal">24</span>
 <span class="normal">25</span>
 <span class="normal">26</span>
-<span class="normal">27</span>
-<span class="normal">28</span>
-<span class="normal">29</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_sessions_config_defaults</span><span class="p">():</span>
+<span class="normal">27</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_sessions_config_defaults</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the default values of the SessionsConfig class.</span>
 
@@ -61124,7 +61124,8 @@ when provided with a dictionary of custom values.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_tokenizer_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">22</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">21</span>
+<span class="normal">22</span>
 <span class="normal">23</span>
 <span class="normal">24</span>
 <span class="normal">25</span>
@@ -61138,8 +61139,7 @@ when provided with a dictionary of custom values.</p>
 <span class="normal">33</span>
 <span class="normal">34</span>
 <span class="normal">35</span>
-<span class="normal">36</span>
-<span class="normal">37</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_output_config_custom_values</span><span class="p">():</span>
+<span class="normal">36</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_output_config_custom_values</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the OutputConfig class with custom values.</span>
 
@@ -61179,7 +61179,8 @@ default values as defined in the TokenizerDefaults class.</p>
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_tokenizer_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 9</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 8</span>
+<span class="normal"> 9</span>
 <span class="normal">10</span>
 <span class="normal">11</span>
 <span class="normal">12</span>
@@ -61188,8 +61189,7 @@ default values as defined in the TokenizerDefaults class.</p>
 <span class="normal">15</span>
 <span class="normal">16</span>
 <span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_tokenizer_config_defaults</span><span class="p">():</span>
+<span class="normal">18</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_tokenizer_config_defaults</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the default values of the TokenizerConfig class.</span>
 
@@ -61263,9 +61263,7 @@ Assertions:
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_user_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">77</span>
-<span class="normal">78</span>
-<span class="normal">79</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">79</span>
 <span class="normal">80</span>
 <span class="normal">81</span>
 <span class="normal">82</span>
@@ -61283,7 +61281,9 @@ Assertions:
 <span class="normal">94</span>
 <span class="normal">95</span>
 <span class="normal">96</span>
-<span class="normal">97</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_user_config_custom_values</span><span class="p">():</span>
+<span class="normal">97</span>
+<span class="normal">98</span>
+<span class="normal">99</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_user_config_custom_values</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the UserConfig class with custom values.</span>
 <span class="sd">    This test verifies that the UserConfig instance correctly initializes</span>
@@ -61338,9 +61338,7 @@ Assertions:
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_user_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">50</span>
-<span class="normal">51</span>
-<span class="normal">52</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">52</span>
 <span class="normal">53</span>
 <span class="normal">54</span>
 <span class="normal">55</span>
@@ -61362,7 +61360,9 @@ Assertions:
 <span class="normal">71</span>
 <span class="normal">72</span>
 <span class="normal">73</span>
-<span class="normal">74</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_user_config_defaults</span><span class="p">():</span>
+<span class="normal">74</span>
+<span class="normal">75</span>
+<span class="normal">76</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_user_config_defaults</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the default values of the UserConfig class.</span>
 <span class="sd">    This test verifies that the UserConfig instance is initialized with the expected</span>
@@ -61419,9 +61419,7 @@ It ensures that the original configuration and the loaded configuration are iden
 
             <details class="quote">
               <summary>Source code in <code>aiperf/tests/config/test_user_config.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">15</span>
 <span class="normal">16</span>
 <span class="normal">17</span>
 <span class="normal">18</span>
@@ -61453,7 +61451,9 @@ It ensures that the original configuration and the loaded configuration are iden
 <span class="normal">44</span>
 <span class="normal">45</span>
 <span class="normal">46</span>
-<span class="normal">47</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_user_config_serialization_to_file</span><span class="p">():</span>
+<span class="normal">47</span>
+<span class="normal">48</span>
+<span class="normal">49</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_user_config_serialization_to_file</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Test the serialization and deserialization of a UserConfig object to and from a file.</span>
 
