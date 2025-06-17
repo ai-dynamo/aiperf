@@ -2,6 +2,7 @@
 #  SPDX-License-Identifier: Apache-2.0
 import io
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from pydantic import (
@@ -137,5 +138,7 @@ class BaseConfig(BaseModel):
 
         if isinstance(value, Enum):
             return str(value.value).lower()
+        elif isinstance(value, Path):
+            return str(value)
         else:
             return value

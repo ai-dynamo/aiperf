@@ -21,20 +21,18 @@ class AudioLengthConfig(BaseConfig):
     mean: Annotated[
         float,
         Field(
-            default=AudioDefaults.LENGTH_MEAN,
             ge=0,
             description="The mean length of the audio in seconds.",
         ),
-    ]
+    ] = AudioDefaults.LENGTH_MEAN
 
     stddev: Annotated[
         float,
         Field(
-            default=AudioDefaults.LENGTH_STDDEV,
             ge=0,
             description="The standard deviation of the length of the audio in seconds.",
         ),
-    ]
+    ] = AudioDefaults.LENGTH_STDDEV
 
 
 class AudioConfig(BaseConfig):

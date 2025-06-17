@@ -18,19 +18,18 @@ class ImageHeightConfig(BaseConfig):
     mean: Annotated[
         float,
         Field(
-            default=ImageDefaults.HEIGHT_MEAN,
             ge=0,
             description="The mean height of images when generating synthetic image data.",
         ),
-    ]
+    ] = ImageDefaults.HEIGHT_MEAN
+
     stddev: Annotated[
         float,
         Field(
-            default=ImageDefaults.HEIGHT_STDDEV,
             ge=0,
             description="The standard deviation of height of images when generating synthetic image data.",
         ),
-    ]
+    ] = ImageDefaults.HEIGHT_STDDEV
 
 
 class ImageWidthConfig(BaseConfig):
@@ -41,19 +40,18 @@ class ImageWidthConfig(BaseConfig):
     mean: Annotated[
         float,
         Field(
-            default=ImageDefaults.WIDTH_MEAN,
             ge=0,
             description="The mean width of images when generating synthetic image data.",
         ),
-    ]
+    ] = ImageDefaults.WIDTH_MEAN
+
     stddev: Annotated[
         float,
         Field(
-            default=ImageDefaults.WIDTH_STDDEV,
             ge=0,
             description="The standard deviation of width of images when generating synthetic image data.",
         ),
-    ]
+    ] = ImageDefaults.WIDTH_STDDEV
 
 
 class ImageConfig(BaseConfig):
@@ -66,16 +64,15 @@ class ImageConfig(BaseConfig):
     batch_size: Annotated[
         int,
         Field(
-            default=ImageDefaults.BATCH_SIZE,
             ge=0,
             description="The image batch size of the requests AI-Perf should send.\
             \nThis is currently supported with the image retrieval endpoint type.",
         ),
-    ]
+    ] = ImageDefaults.BATCH_SIZE
+
     format: Annotated[
         ImageFormat,
         Field(
-            default=ImageDefaults.FORMAT,
             description="The compression format of the images.",
         ),
-    ]
+    ] = ImageDefaults.FORMAT
