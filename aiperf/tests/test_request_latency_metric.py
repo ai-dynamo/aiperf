@@ -15,7 +15,7 @@ def test_update_value_and_values():
     response = MockResponse(timestamp=150)
     record = MockRecord(request, [response])
 
-    metric.update_value(record)
+    metric.update_value(record=record, metrics=None)
     assert metric.values() == [50]
 
 
@@ -28,7 +28,7 @@ def test_add_multiple_records():
         MockRecord(MockRequest(30), [MockResponse(40), MockResponse(50)]),
     ]
     for record in records:
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)
     assert metric.values() == [15, 15, 20]
 
 
@@ -37,7 +37,7 @@ def test_record_without_responses_raises():
     metric.metric = []
     record = MockRecord(MockRequest(10), [])
     with pytest.raises(ValueError, match="at least one response"):
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)
 
 
 def test_record_with_no_request_raises():
@@ -45,7 +45,7 @@ def test_record_with_no_request_raises():
     metric.metric = []
     record = MockRecord(None, [MockResponse(20)])
     with pytest.raises(ValueError, match="valid request"):
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)
 
 
 def test_record_with_no_request_timestamp_raises():
@@ -54,7 +54,7 @@ def test_record_with_no_request_timestamp_raises():
     request = MockRequest(None)
     record = MockRecord(request, [MockResponse(20)])
     with pytest.raises(ValueError, match="valid request"):
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)
 
 
 def test_response_timestamp_less_than_request_raises():
@@ -64,7 +64,7 @@ def test_response_timestamp_less_than_request_raises():
     response = MockResponse(90)
     record = MockRecord(request, [response])
     with pytest.raises(ValueError, match="Response timestamp must be greater"):
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)
 
 
 def test_metric_initialization_none():
@@ -75,5 +75,5 @@ def test_metric_initialization_none():
     request = MockRequest(1)
     response = MockResponse(2)
     record = MockRecord(request, [response])
-    metric.update_value(record)
+    metric.update_value(record=record, metrics=None)
     assert metric.values() == [1]

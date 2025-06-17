@@ -25,7 +25,9 @@ class BenchmarkDurationMetric(BaseMetric):
     def __init__(self):
         self.metric: float = 0.0
 
-    def update_value(self, metrics: dict[BaseMetric]) -> None:
+    def update_value(
+        self, record: Record | None = None, metrics: dict["BaseMetric"] | None = None
+    ) -> None:
         min_req_time = metrics[MinRequestMetric.tag].values()
         max_res_time = metrics[MaxResponseMetric.tag].values()
         benchmark_duration = max_res_time - min_req_time

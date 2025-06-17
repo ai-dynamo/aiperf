@@ -14,7 +14,7 @@ def test_update_value_and_values():
     response = MockResponse(timestamp=150)
     record = MockRecord(request, [response])
 
-    metric.update_value(record)
+    metric.update_value(record=record, metrics=None)
     assert metric.values() == 150
 
 
@@ -26,7 +26,7 @@ def test_add_multiple_records():
         MockRecord(MockRequest(30), [MockResponse(40)]),
     ]
     for record in records:
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)
     assert metric.values() == 40
 
 
@@ -34,7 +34,7 @@ def test_record_with_no_responses_raises():
     metric = MaxResponseMetric()
     record = MockRecord(MockRequest(10), None)
     with pytest.raises(ValueError, match="valid responses"):
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)
 
 
 def test_record_with_no_respone_timestamps_raises():
@@ -42,4 +42,4 @@ def test_record_with_no_respone_timestamps_raises():
     response = MockResponse(None)
     record = MockRecord(MockRequest(10), [response])
     with pytest.raises(ValueError, match="valid responses"):
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)

@@ -14,7 +14,7 @@ def test_update_value_and_values():
     response = MockResponse(timestamp=150)
     record = MockRecord(request, [response])
 
-    metric.update_value(record)
+    metric.update_value(record=record, metrics=None)
     assert metric.values() == 100
 
 
@@ -26,7 +26,7 @@ def test_add_multiple_records():
         MockRecord(MockRequest(30), [MockResponse(40)]),
     ]
     for record in records:
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)
     assert metric.values() == 10
 
 
@@ -34,7 +34,7 @@ def test_record_with_no_request_raises():
     metric = MinRequestMetric()
     record = MockRecord(None, [MockResponse(20)])
     with pytest.raises(ValueError, match="valid request"):
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)
 
 
 def test_record_with_no_request_timestamp_raises():
@@ -42,4 +42,4 @@ def test_record_with_no_request_timestamp_raises():
     request = MockRequest(None)
     record = MockRecord(request, [MockResponse(20)])
     with pytest.raises(ValueError, match="valid request"):
-        metric.update_value(record)
+        metric.update_value(record=record, metrics=None)
