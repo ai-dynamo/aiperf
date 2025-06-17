@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import Union
 
-from aiperf.common.enums import CaseInsensitiveStrEnum, DataTopic, Topic, TopicType
+from aiperf.common.enums import CaseInsensitiveStrEnum, MessageType, Topic
 from aiperf.common.exceptions import CommunicationClientNotFoundError
 
 
@@ -16,7 +16,7 @@ class PubClientType(CaseInsensitiveStrEnum):
     COMPONENT = "component_pub"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> "PubClientType":
+    def from_topic(cls, topic: Topic) -> "PubClientType":
         """Determine the appropriate ClientType based on topic.
 
         Args:
@@ -26,7 +26,16 @@ class PubClientType(CaseInsensitiveStrEnum):
             The appropriate ClientType for the given topic
         """
         match topic:
-            case Topic.HEARTBEAT | Topic.REGISTRATION | Topic.STATUS | Topic.RESPONSE:
+            case (
+                Topic.HEARTBEAT
+                | Topic.REGISTRATION
+                | Topic.STATUS
+                | Topic.RESPONSE
+                | Topic.CREDITS_COMPLETE
+                | Topic.PROFILE_PROGRESS
+                | Topic.PROFILE_RESULTS
+                | Topic.PROFILE_STATS
+            ):
                 return cls.COMPONENT
             case Topic.COMMAND:
                 return cls.CONTROLLER
@@ -46,7 +55,7 @@ class SubClientType(CaseInsensitiveStrEnum):
     COMPONENT = "component_sub"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> "SubClientType":
+    def from_topic(cls, topic: Topic) -> "SubClientType":
         """Determine the appropriate ClientType based on topic.
 
         Args:
@@ -56,7 +65,16 @@ class SubClientType(CaseInsensitiveStrEnum):
             The appropriate ClientType for the given topic
         """
         match topic:
-            case Topic.HEARTBEAT | Topic.REGISTRATION | Topic.STATUS | Topic.RESPONSE:
+            case (
+                Topic.HEARTBEAT
+                | Topic.REGISTRATION
+                | Topic.STATUS
+                | Topic.RESPONSE
+                | Topic.CREDITS_COMPLETE
+                | Topic.PROFILE_PROGRESS
+                | Topic.PROFILE_RESULTS
+                | Topic.PROFILE_STATS
+            ):
                 return cls.COMPONENT
             case Topic.COMMAND:
                 return cls.CONTROLLER
@@ -72,13 +90,12 @@ class PushClientType(CaseInsensitiveStrEnum):
     for retrieving the appropriate client type based on the topic.
     """
 
-    RECORDS = "records_push"
     INFERENCE_RESULTS = "inference_results_push"
     CREDIT_DROP = "credit_drop_push"
     CREDIT_RETURN = "credit_return_push"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> "PushClientType":
+    def from_topic(cls, topic: Topic) -> "PushClientType":
         """Determine the appropriate ClientType based on communication type and topic.
 
         Args:
@@ -92,9 +109,7 @@ class PushClientType(CaseInsensitiveStrEnum):
                 return cls.CREDIT_DROP
             case Topic.CREDIT_RETURN:
                 return cls.CREDIT_RETURN
-            case DataTopic.RECORDS:
-                return cls.RECORDS
-            case DataTopic.RESULTS:
+            case Topic.INFERENCE_RESULTS:
                 return cls.INFERENCE_RESULTS
             case _:
                 raise CommunicationClientNotFoundError(
@@ -108,33 +123,30 @@ class PullClientType(CaseInsensitiveStrEnum):
     for retrieving the appropriate client type based on the topic.
     """
 
-    RECORDS = "records_pull"
     INFERENCE_RESULTS = "inference_results_pull"
     CREDIT_DROP = "credit_drop_pull"
     CREDIT_RETURN = "credit_return_pull"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> "PullClientType":
-        """Determine the appropriate ClientType based on topic.
+    def from_message_type(cls, message_type: MessageType) -> "PullClientType":
+        """Determine the appropriate ClientType based on message type.
 
         Args:
-            topic: The topic to communicate on
+            message_type: The message type to communicate on
 
         Returns:
-            The appropriate ClientType for the given topic
+            The appropriate ClientType for the given message type
         """
-        match topic:
-            case Topic.CREDIT_DROP:
+        match message_type:
+            case MessageType.CREDIT_DROP:
                 return cls.CREDIT_DROP
-            case Topic.CREDIT_RETURN:
+            case MessageType.CREDIT_RETURN:
                 return cls.CREDIT_RETURN
-            case DataTopic.RECORDS:
-                return cls.RECORDS
-            case DataTopic.RESULTS:
+            case MessageType.INFERENCE_RESULTS:
                 return cls.INFERENCE_RESULTS
             case _:
                 raise CommunicationClientNotFoundError(
-                    f"No client type found for topic {topic}"
+                    f"No client type found for message type {message_type}"
                 )
 
 
@@ -147,7 +159,7 @@ class ReqClientType(CaseInsensitiveStrEnum):
     CONVERSATION_DATA = "conversation_data_req"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> "ReqClientType":
+    def from_topic(cls, topic: Topic) -> "ReqClientType":
         """Determine the appropriate ClientType based on topic.
 
         Args:
@@ -157,7 +169,7 @@ class ReqClientType(CaseInsensitiveStrEnum):
             The appropriate ClientType for the given topic
         """
         match topic:
-            case DataTopic.CONVERSATION:
+            case Topic.CONVERSATION_DATA:
                 return cls.CONVERSATION_DATA
             case _:
                 raise CommunicationClientNotFoundError(
@@ -174,7 +186,7 @@ class RepClientType(CaseInsensitiveStrEnum):
     CONVERSATION_DATA = "conversation_data_rep"
 
     @classmethod
-    def from_topic(cls, topic: TopicType) -> "RepClientType":
+    def from_topic(cls, topic: Topic) -> "RepClientType":
         """Determine the appropriate ClientType based on topic.
 
         Args:
@@ -184,7 +196,7 @@ class RepClientType(CaseInsensitiveStrEnum):
             The appropriate ClientType for the given topic
         """
         match topic:
-            case DataTopic.CONVERSATION:
+            case Topic.CONVERSATION_DATA:
                 return cls.CONVERSATION_DATA
             case _:
                 raise CommunicationClientNotFoundError(
@@ -192,12 +204,12 @@ class RepClientType(CaseInsensitiveStrEnum):
                 )
 
 
-ClientType = Union[  # noqa: UP007
-    PubClientType,
-    SubClientType,
-    PushClientType,
-    PullClientType,
-    ReqClientType,
-    RepClientType,
-]
+ClientType = (
+    PubClientType
+    | SubClientType
+    | PushClientType
+    | PullClientType
+    | ReqClientType
+    | RepClientType
+)
 """Union of all client types."""

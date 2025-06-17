@@ -7,7 +7,7 @@ import time
 
 from aiperf.common.comms.client_enums import ClientType, PullClientType, PushClientType
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import ServiceState, ServiceType, Topic
+from aiperf.common.enums import ServiceState, ServiceType, Topic, MessageType
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_cleanup, on_configure, on_init, on_start, on_stop
 from aiperf.common.messages import (
@@ -65,8 +65,8 @@ class TimingManager(BaseComponentService):
         """Start the timing manager."""
         self.logger.debug("Starting timing manager")
         # TODO: Implement timing manager start
-        await self.comms.pull(
-            topic=Topic.CREDIT_RETURN,
+        await self.comms.register_pull_callback(
+            message_type=MessageType.CREDIT_RETURN,
             callback=self._on_credit_return,
         )
         await self.set_state(ServiceState.RUNNING)

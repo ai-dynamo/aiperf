@@ -21,20 +21,18 @@ class InputTokensConfig(BaseConfig):
     mean: Annotated[
         int,
         Field(
-            default=InputTokensDefaults.MEAN,
             ge=0,
             description="The mean of number of tokens in the generated prompts when using synthetic data.",
         ),
-    ]
+    ] = InputTokensDefaults.MEAN
 
     stddev: Annotated[
         float,
         Field(
-            default=InputTokensDefaults.STDDEV,
             ge=0,
             description="The standard deviation of number of tokens in the generated prompts when using synthetic data.",
         ),
-    ]
+    ] = InputTokensDefaults.STDDEV
 
 
 class OutputTokensConfig(BaseConfig):
@@ -45,30 +43,29 @@ class OutputTokensConfig(BaseConfig):
     mean: Annotated[
         int,
         Field(
-            default=OutputTokensDefaults.MEAN,
             ge=0,
             description="The mean number of tokens in each output.",
         ),
-    ]
+    ] = OutputTokensDefaults.MEAN
+
     deterministic: Annotated[
         bool,
         Field(
-            default=OutputTokensDefaults.DETERMINISTIC,
             description=(
                 "This can be set to improve the precision of the mean by setting the\n"
                 "minimum number of tokens equal to the requested number of tokens.\n"
                 "This is currently supported with Triton."
             ),
         ),
-    ]
+    ] = OutputTokensDefaults.DETERMINISTIC
+
     stddev: Annotated[
         float,
         Field(
-            default=OutputTokensDefaults.STDDEV,
             ge=0,
             description="The standard deviation of the number of tokens in each output.",
         ),
-    ]
+    ] = OutputTokensDefaults.STDDEV
 
 
 class PrefixPromptConfig(BaseConfig):
@@ -79,7 +76,6 @@ class PrefixPromptConfig(BaseConfig):
     pool_size: Annotated[
         int,
         Field(
-            default=PrefixPromptDefaults.POOL_SIZE,
             ge=0,
             description=(
                 "The total size of the prefix prompt pool to select prefixes from.\n"
@@ -87,11 +83,11 @@ class PrefixPromptConfig(BaseConfig):
                 "This is useful for benchmarking models that use a K-V cache."
             ),
         ),
-    ]
+    ] = PrefixPromptDefaults.POOL_SIZE
+
     length: Annotated[
         int,
         Field(
-            default=PrefixPromptDefaults.LENGTH,
             ge=0,
             description=(
                 "The number of tokens in each prefix prompt.\n"
@@ -100,7 +96,7 @@ class PrefixPromptConfig(BaseConfig):
                 "the number of tokens in the final prompt may be off by one."
             ),
         ),
-    ]
+    ] = PrefixPromptDefaults.LENGTH
 
 
 class PromptConfig(BaseConfig):

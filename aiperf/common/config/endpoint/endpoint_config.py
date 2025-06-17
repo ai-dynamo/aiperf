@@ -8,7 +8,7 @@ from pydantic import BeforeValidator, Field
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import EndPointDefaults
 from aiperf.common.config.config_validators import parse_str_or_list
-from aiperf.common.enums import ModelSelectionStrategy, OutputFormat
+from aiperf.common.enums import ModelSelectionStrategy, RequestPayloadType
 
 
 class EndPointConfig(BaseConfig):
@@ -26,7 +26,7 @@ class EndPointConfig(BaseConfig):
     ] = EndPointDefaults.MODEL_SELECTION_STRATEGY
 
     backend: Annotated[
-        OutputFormat,
+        RequestPayloadType,
         Field(
             description="When benchmarking Triton, this is the backend of the model.",
         ),

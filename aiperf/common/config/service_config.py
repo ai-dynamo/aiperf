@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from pydantic import BaseModel, Field
 
+from aiperf.common.config.zmq_config import BaseZMQCommunicationConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType
-from aiperf.common.models import ZMQCommunicationConfig
 
 
 class ServiceConfig(BaseModel):
@@ -22,8 +22,8 @@ class ServiceConfig(BaseModel):
         default=CommunicationBackend.ZMQ_TCP,
         description="Communication backend to use",
     )
-    comm_config: BaseModel = Field(
-        default=ZMQCommunicationConfig(),
+    comm_config: BaseZMQCommunicationConfig | None = Field(
+        default=None,
         description="Communication configuration",
     )
     heartbeat_timeout: float = Field(
@@ -44,7 +44,7 @@ class ServiceConfig(BaseModel):
         description="Interval in seconds between heartbeat messages",
     )
     min_workers: int = Field(
-        default=5,
+        default=100,
         description="Minimum number of idle workers to maintain",
     )
     max_workers: int = Field(

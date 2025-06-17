@@ -21,19 +21,18 @@ class SessionTurnsConfig(BaseConfig):
     mean: Annotated[
         float,
         Field(
-            default=SessionTurnsDefaults.MEAN,
             ge=0,
             description="The mean number of turns in a session",
         ),
-    ]
+    ] = SessionTurnsDefaults.MEAN
+
     stddev: Annotated[
         float,
         Field(
-            default=SessionTurnsDefaults.STDDEV,
             ge=0,
             description="The standard deviation of the number of turns in a session",
         ),
-    ]
+    ] = SessionTurnsDefaults.STDDEV
 
 
 class SessionTurnDelayConfig(BaseConfig):
@@ -44,27 +43,26 @@ class SessionTurnDelayConfig(BaseConfig):
     mean: Annotated[
         float,
         Field(
-            default=SessionTurnDelayDefaults.MEAN,
             ge=0,
             description="The mean delay (in ms) between turns in a session",
         ),
-    ]
+    ] = SessionTurnDelayDefaults.MEAN
+
     stddev: Annotated[
         float,
         Field(
-            default=SessionTurnDelayDefaults.STDDEV,
             ge=0,
             description="The standard deviation (in ms) of the delay between turns in a session",
         ),
-    ]
+    ] = SessionTurnDelayDefaults.STDDEV
+
     ratio: Annotated[
         float,
         Field(
-            default=SessionTurnDelayDefaults.RATIO,
             ge=0,
             description="A ratio to scale multi-turn delays when using a payload file",
         ),
-    ]
+    ] = SessionTurnDelayDefaults.RATIO
 
 
 class SessionsConfig(BaseConfig):
@@ -75,10 +73,10 @@ class SessionsConfig(BaseConfig):
     num: Annotated[
         int,
         Field(
-            default=SessionsDefaults.NUM,
             ge=0,
             description="The number of sessions to simulate",
         ),
-    ]
+    ] = SessionsDefaults.NUM
+
     turns: SessionTurnsConfig = SessionTurnsConfig()
     turn_delay: SessionTurnDelayConfig = SessionTurnDelayConfig()

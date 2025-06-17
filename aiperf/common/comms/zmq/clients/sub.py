@@ -11,7 +11,7 @@ from zmq import SocketType
 from aiperf.common.comms.zmq.clients.base import BaseZMQClient
 from aiperf.common.exceptions import CommunicationSubscribeError
 from aiperf.common.hooks import aiperf_task
-from aiperf.common.messages import Message, MessageTypeAdapter
+from aiperf.common.messages import Message
 from aiperf.common.utils import call_all_functions
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ class ZMQSubClient(BaseZMQClient):
                     message_json,
                 )
 
-                message = MessageTypeAdapter.validate_json(message_json)
+                message = Message.from_json(message_json)
 
                 # Call callbacks with the parsed message object
                 if topic in self._subscribers:

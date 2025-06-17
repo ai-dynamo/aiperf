@@ -13,7 +13,6 @@ from aiperf.common.hooks import aiperf_task, on_cleanup
 from aiperf.common.messages import (
     ErrorMessage,
     Message,
-    MessageTypeAdapter,
 )
 
 logger = logging.getLogger(__name__)

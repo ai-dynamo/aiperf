@@ -4,7 +4,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, cast
 
 import zmq.asyncio
 
@@ -25,7 +25,7 @@ from aiperf.common.comms.zmq.clients.push import ZMQPushClient
 from aiperf.common.comms.zmq.clients.rep import ZMQRepClient
 from aiperf.common.comms.zmq.clients.req import ZMQReqClient
 from aiperf.common.comms.zmq.clients.sub import ZMQSubClient
-from aiperf.common.enums import CommunicationBackend, TopicType
+from aiperf.common.enums import CommunicationBackend, Topic, MessageType
 from aiperf.common.exceptions import (
     CommunicationClientCreationError,
     CommunicationNotInitializedError,
@@ -419,7 +419,7 @@ class ZMQCommunication(BaseCommunication):
 
             self.clients[client_type] = client
 
-    async def publish(self, topic: TopicType, message: Message) -> None:
+    async def publish(self, topic: Topic, message: Message) -> None:
         """Publish a message to a topic. If the client type is not found, it will
         be created.
 
@@ -455,7 +455,7 @@ class ZMQCommunication(BaseCommunication):
 
     async def subscribe(
         self,
-        topic: TopicType,
+        topic: Topic,
         callback: Callable[[Message], Coroutine[Any, Any, None]],
     ) -> None:
         """Subscribe to a topic. If the proper ZMQ client type is not found, it
@@ -570,7 +570,7 @@ class ZMQCommunication(BaseCommunication):
             logger.error(f"Exception responding to {target}: {e}")
             raise CommunicationResponseError() from e
 
-    async def push(self, topic: TopicType, message: Message) -> None:
+    async def push(self, topic: Topic, message: Message) -> None:
         """Push a message to a topic. If the proper ZMQ client type is not found,
         it will be created.
 
@@ -602,37 +602,35 @@ class ZMQCommunication(BaseCommunication):
             logger.error(f"Exception pushing data: {e}")
             raise CommunicationPushError() from e
 
-    async def pull(
+    async def register_pull_callback(
         self,
-        topic: TopicType,
-        callback: Callable[[Message], None],
+        message_type: MessageType,
+        callback: Callable[[Message], Coroutine[Any, Any, None]],
     ) -> None:
-        """Pull a message from a topic. If the proper ZMQ client type is not found,
-        it will be created.
+        """Register a callback for a pull client.
 
         Args:
-            topic: The topic to pull the message from
-            callback: The callback to call when a message is received
+            message_type: The message type to register the callback for
+            callback: The callback to register
 
         Raises:
-            CommunicationPullError: If there was an error pulling the message
-            CommunicationNotInitializedError: If the communication channels are not
-                initialized
-            CommunicationShutdownError: If the communication channels are shutdown
+            CommunicationClientCreationError: If the client type is invalid
         """
 
-        logger.debug(f"Pulling data from {topic}")
+        logger.debug(f"Pulling data for {message_type}")
 
         self._ensure_initialized()
 
-        client_type = PullClientType.from_topic(topic)
+        client_type = PullClientType.from_message_type(message_type)
 
         if client_type not in self.clients:
-            logger.warning(
-                "Client type %s not found for pull, creating client",
+            logger.debug(
+                "Client type %r not found for pull, creating client",
                 client_type,
             )
             await self.create_clients(client_type)
 
         # Only adds to the callback list, does not block, and does not raise an exception
-        await self.clients[client_type].pull(topic, callback)
+        await cast(ZMQPullClient, self.clients[client_type]).register_pull_callback(
+            message_type, callback
+        )
