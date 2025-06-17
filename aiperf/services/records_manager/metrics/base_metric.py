@@ -85,13 +85,19 @@ class BaseMetric(ABC):
         return cls.metric_interfaces
 
     @abstractmethod
-    def add_record(self, record: Record) -> None:
+    def update_value(
+        self, record: Record | None = None, metrics: dict["BaseMetric"] | None = None
+    ) -> None:
         """
-        Adds a new record and calculates the new metric value.
+        Updates the metric value based on the provided record and dictionary of other metrics.
+
+        Args:
+            record (Optional[Record]): The record to update the metric with.
+            metrics (Optional[dict[BaseMetric]]): A dictionary of other metrics that may be needed for calculation.
         """
 
     @abstractmethod
-    def values(self) -> list[Any]:
+    def values(self) -> Any:
         """
         Returns the list of calculated metrics.
         """
