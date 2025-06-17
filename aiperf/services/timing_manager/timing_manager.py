@@ -6,8 +6,8 @@ import sys
 import time
 
 from aiperf.common.comms.client_enums import ClientType, PullClientType, PushClientType
-from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import ServiceState, ServiceType, Topic, MessageType
+from aiperf.common.config import ServiceConfig
+from aiperf.common.enums import MessageType, ServiceState, ServiceType, Topic
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_cleanup, on_configure, on_init, on_start, on_stop
 from aiperf.common.messages import (

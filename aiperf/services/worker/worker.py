@@ -4,7 +4,7 @@ import asyncio
 import sys
 
 from aiperf.common.comms.client_enums import ClientType, PullClientType, PushClientType
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import ServiceType, Topic
 from aiperf.common.hooks import on_cleanup, on_init, on_run, on_start, on_stop
 from aiperf.common.messages import CreditDropMessage, CreditReturnMessage
@@ -92,7 +92,7 @@ def main() -> None:
 
     import uvloop
 
-    from aiperf.common.config.loader import load_service_config
+    from aiperf.common.config import load_service_config
 
     # Load the service configuration
     cfg = load_service_config()

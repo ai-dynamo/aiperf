@@ -8,7 +8,7 @@ import uuid
 from abc import ABC
 
 from aiperf.common.comms.base import BaseCommunication
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import ServiceState
 from aiperf.common.exceptions import (
     AIPerfMultiError,

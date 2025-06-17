@@ -3,8 +3,6 @@
 
 __all__ = [
     "OutputConfig",
-    "OutputDefaults",
 ]
 
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.config.output.output_config import OutputConfig

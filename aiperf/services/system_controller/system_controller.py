@@ -5,7 +5,7 @@ import sys
 import time
 from typing import Any
 
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import (
     CommandType,
     ServiceRegistrationStatus,

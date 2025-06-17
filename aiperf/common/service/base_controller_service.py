@@ -4,7 +4,7 @@
 from pydantic import BaseModel
 
 from aiperf.common.comms.client_enums import ClientType, PubClientType, SubClientType
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommandType
 from aiperf.common.hooks import on_run
 from aiperf.common.messages import CommandMessage

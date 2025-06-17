@@ -3,8 +3,6 @@
 
 __all__ = [
     "TokenizerConfig",
-    "TokenizerDefaults",
 ]
 
-from aiperf.common.config.config_defaults import TokenizerDefaults
 from aiperf.common.config.tokenizer.tokenizer_config import TokenizerConfig

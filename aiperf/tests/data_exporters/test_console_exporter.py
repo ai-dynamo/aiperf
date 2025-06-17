@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
+from aiperf.common.config import EndPointConfig
 from aiperf.data_exporter import ConsoleExporter
 from aiperf.data_exporter.record import Record
 
