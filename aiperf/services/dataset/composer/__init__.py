@@ -1,14 +1,14 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 
-from aiperf.services.dataset.composer.base import BaseConversationComposer
-from aiperf.services.dataset.composer.custom import (
-    CustomConversationComposer,
-)
-from aiperf.services.dataset.composer.synthetic import SyntheticConversationComposer
+from aiperf.services.dataset.composer.base import BaseDatasetComposer
+from aiperf.services.dataset.composer.custom import CustomDatasetComposer
+from aiperf.services.dataset.composer.factory import ComposerFactory
+from aiperf.services.dataset.composer.synthetic import SyntheticDatasetComposer
 
 __all__ = [
-    "BaseConversationComposer",
-    "CustomConversationComposer",
-    "SyntheticConversationComposer",
+    "BaseDatasetComposer",
+    "CustomDatasetComposer",
+    "SyntheticDatasetComposer",
+    "ComposerFactory",
 ]

@@ -5,15 +5,14 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from aiperf.common.enums import AudioFormat, ImageFormat
+from aiperf.common.enums import AudioFormat, CustomDatasetType, ImageFormat
 from aiperf.common.tokenizer import Tokenizer
 
+
+# TODO: Temporary. Remove after configurations are created.
 ########################################################
 # Generator configurations
 ########################################################
-
-
-# TODO: temporary
 class PrefixPromptConfig(BaseModel):
     pool_size: int = Field(default=0, description="Pool size of the prefix prompt.")
     length: int = Field(default=0, description="Length of the prefix prompt.")
@@ -98,14 +97,14 @@ class TurnConfig(BaseModel):
     )
 
 
-class CustomDataConfig(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    # tokenizer: Tokenizer | None = Field(default=None, description="Tokenizer to use for the prompt generation.")
-
-    # CLI related
+class DatasetConfig(BaseModel):
     filename: Path | None = Field(default=None, description="Filename of the dataset.")
-    num_conversations: int = Field(default=100, description="Number of conversations.")
+    custom_dataset_type: CustomDatasetType = Field(
+        default=CustomDatasetType.SINGLE_TURN, description="Type of the custom dataset."
+    )
+    num_conversations: int = Field(
+        default=100, description="Number of total conversations (or sessions)."
+    )
     prompt: PromptConfig = Field(
         default=PromptConfig(), description="Prompt configuration."
     )

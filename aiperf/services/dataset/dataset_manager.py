@@ -2,8 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 import sys
 
-from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import ServiceType
+from pydantic import BaseModel
+
+from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.dataset_models import Conversation
+from aiperf.common.enums import CustomDatasetType, DataTopic, MessageType, ServiceType
+from aiperf.common.exceptions import ServiceConfigurationError
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
@@ -12,8 +16,29 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
-from aiperf.common.messages import Message
+from aiperf.common.messages import (
+    ConversationRequestMessage,
+    ConversationResponseMessage,
+    Message,
+)
 from aiperf.common.service.base_component_service import BaseComponentService
+from aiperf.common.tokenizer import Tokenizer
+from aiperf.services.dataset.composer import ComposerFactory
+from aiperf.services.dataset.config import PromptConfig
+from aiperf.services.dataset.enums import ComposerType
+
+
+################################################################################
+# TODO: Temporary (remove when command config is ready)
+class MockConfig(BaseModel):
+    filename: str | None = None
+    tokenizer: Tokenizer | None = None
+    custom_dataset_type: CustomDatasetType | None = None
+    public_dataset: str | None = None
+    prompt: PromptConfig | None = None
+
+
+################################################################################
 
 
 @ServiceFactory.register(ServiceType.DATASET_MANAGER)
@@ -30,7 +55,7 @@ class DatasetManager(BaseComponentService):
         service_id: str | None = None,
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
-        self.logger.debug("Initializing dataset manager")
+        self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
 
     @property
     def service_type(self) -> ServiceType:
@@ -41,7 +66,12 @@ class DatasetManager(BaseComponentService):
     async def _initialize(self) -> None:
         """Initialize dataset manager-specific components."""
         self.logger.debug("Initializing dataset manager")
-        # TODO: Implement dataset manager initialization
+        await self.comms.register_request_handler(
+            service_id=self.service_id,
+            topic=DataTopic.CONVERSATION,
+            message_type=MessageType.CONVERSATION_REQUEST,
+            handler=self._handle_conversation_request,
+        )
 
     @on_start
     async def _start(self) -> None:
@@ -65,7 +95,46 @@ class DatasetManager(BaseComponentService):
     async def _configure(self, message: Message) -> None:
         """Configure the dataset manager."""
         self.logger.debug(f"Configuring dataset manager with message: {message}")
-        # TODO: Implement dataset manager configuration
+
+        # TODO: remove this mock config
+        # mocks config inside the message
+        config = MockConfig()
+        config.filename = "trace1.jsonl"
+        config.tokenizer = Tokenizer.from_pretrained("gpt2")
+        config.num_conversations = 3
+
+        if config.filename:
+            composer_type = ComposerType.CUSTOM
+            config.custom_dataset_type = CustomDatasetType.TRACE
+        else:
+            composer_type = ComposerType.SYNTHETIC
+            config.custom_dataset_type = CustomDatasetType.NONE  # default
+
+        composer = ComposerFactory.create_instance(composer_type, config)
+        conversations = composer.create_dataset()
+        self.dataset = {conv.session_id: conv for conv in conversations}
+
+    async def _handle_conversation_request(
+        self, message: ConversationRequestMessage
+    ) -> ConversationResponseMessage:
+        """Handle a conversation request."""
+        if not self.dataset:
+            raise ServiceConfigurationError(
+                "Dataset is empty and must be loaded before handling requests."
+            )
+        if message.conversation_id not in self.dataset:
+            raise ServiceConfigurationError(
+                "Conversation %s not found in dataset.", message.conversation_id
+            )
+
+        self.logger.debug("Handling conversation request: %s", message)
+        conversation = self.dataset[message.conversation_id]
+        return ConversationResponseMessage(
+            service_id=self.service_id,
+            request_id=message.request_id,
+            conversation_id=message.conversation_id,
+            conversation=conversation,
+        )
 
 
 def main() -> None:

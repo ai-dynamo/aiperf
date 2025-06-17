@@ -146,6 +146,10 @@ class ServiceCleanupError(ServiceError):
     """Exception raised for service cleanup errors."""
 
 
+class ServiceConfigurationError(ServiceError):
+    """Exception raised for service configuration errors."""
+
+
 class ServiceMessageProcessingError(ServiceError):
     """Exception raised for service message processing errors."""
 

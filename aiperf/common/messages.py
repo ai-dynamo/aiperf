@@ -13,6 +13,7 @@ from pydantic import (
     model_serializer,
 )
 
+from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import CommandType, MessageType, ServiceState, ServiceType
 from aiperf.common.record_models import ErrorDetailsCount, Record, RequestRecord
 
@@ -303,7 +304,7 @@ class ConversationRequestMessage(BaseServiceMessage):
         MessageType.CONVERSATION_REQUEST
     )
 
-    conversation_id: str = Field(..., description="The ID of the conversation")
+    conversation_id: str = Field(..., description="The session ID of the conversation")
 
 
 class ConversationResponseMessage(BaseServiceMessage):
@@ -313,10 +314,8 @@ class ConversationResponseMessage(BaseServiceMessage):
         MessageType.CONVERSATION_RESPONSE
     )
 
-    conversation_id: str = Field(..., description="The ID of the conversation")
-    conversation_data: list[dict[str, Any]] = Field(
-        ..., description="The data of the conversation"
-    )
+    conversation_id: str = Field(..., description="The session ID of the conversation")
+    conversation: Conversation = Field(..., description="The conversation data")
 
 
 class InferenceResultsMessage(BaseServiceMessage):

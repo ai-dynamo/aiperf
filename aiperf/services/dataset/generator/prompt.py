@@ -93,23 +93,26 @@ class PromptGenerator(BaseGenerator):
             len(self._prefix_prompts),
         )
 
-    def generate(self, hash_ids: list[int] | None = None) -> str:
+    def generate(
+        self,
+        mean: int | None = None,
+        stddev: int | None = None,
+        hash_ids: list[int] | None = None,
+    ) -> str:
         """Generate a synthetic prompt with the configuration parameters.
 
         Args:
+            mean: The mean of the normal distribution.
+            stddev: The standard deviation of the normal distribution.
             hash_ids: A list of hash indices used for token reuse.
 
         Returns:
             A synthetic prompt as a string.
         """
         if hash_ids:
-            return self._generate_cached_prompt(
-                self.config.mean, hash_ids, self.config.block_size
-            )
+            return self._generate_cached_prompt(mean, hash_ids, self.config.block_size)
 
-        num_tokens = utils.sample_positive_normal_integer(
-            self.config.mean, self.config.stddev
-        )
+        num_tokens = utils.sample_positive_normal_integer(mean, stddev)
         return self._generate_prompt(num_tokens)
 
     def _generate_prompt(self, num_tokens: int) -> str:
