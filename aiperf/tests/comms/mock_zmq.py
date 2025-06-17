@@ -9,7 +9,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from aiperf.common.comms.zmq import ZMQCommunication
-from aiperf.common.enums import ServiceState, ServiceType, Topic
+from aiperf.common.enums import MessageType, ServiceState, ServiceType, Topic
 from aiperf.common.messages import Message, StatusMessage
 
 
@@ -71,11 +71,13 @@ def mock_zmq_communication() -> MagicMock:
 
     mock_comm.subscribe.side_effect = mock_subscribe
 
-    async def mock_pull(topic: Topic, callback: Callable[[Message], None]) -> None:
+    async def mock_register_pull_callback(
+        message_type: MessageType, callback: Callable[[Message], None]
+    ) -> None:
         """Mock implementation of pull that stores callbacks by topic."""
-        mock_comm.mock_data.pull_callbacks[topic] = callback
+        mock_comm.mock_data.pull_callbacks[message_type] = callback
 
-    mock_comm.pull.side_effect = mock_pull
+    mock_comm.register_pull_callback.side_effect = mock_register_pull_callback
 
     async def mock_push(topic: Topic, message: Message) -> None:
         """Mock implementation of push that stores messages by topic."""

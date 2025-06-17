@@ -20,31 +20,38 @@ class _TestMessageSubclass(_TestMessage):
 
 
 def test_exclude_if_none():
-    message = _TestMessage(a=1, b=None)
-    assert message.model_dump() == {"a": 1}
-    assert message.model_dump_json() == '{"a":1}'
+    message = _TestMessage(message_type=MessageType.UNKNOWN, a=1, b=None)
+    assert message.model_dump() == {"message_type": MessageType.UNKNOWN, "a": 1}
+    assert message.model_dump_json() == '{"message_type":"unknown","a":1}'
 
-    message = _TestMessage(a=1, b=2)
-    assert message.model_dump() == {"a": 1, "b": 2}
-    assert message.model_dump_json() == '{"a":1,"b":2}'
+    message = _TestMessage(message_type=MessageType.UNKNOWN, a=1, b=2)
+    assert message.model_dump() == {"message_type": MessageType.UNKNOWN, "a": 1, "b": 2}
+    assert message.model_dump_json() == '{"message_type":"unknown","a":1,"b":2}'
 
-    message = _TestMessage(a=1)
-    assert message.model_dump() == {"a": 1}
-    assert message.model_dump_json() == '{"a":1}'
+    message = _TestMessage(message_type=MessageType.UNKNOWN, a=1)
+    assert message.model_dump() == {"message_type": MessageType.UNKNOWN, "a": 1}
+    assert message.model_dump_json() == '{"message_type":"unknown","a":1}'
 
 
 def test_exclude_if_none_subclass():
-    message = _TestMessageSubclass(a=1, b=None, c=None)
-    assert message.model_dump() == {"a": 1}
-    assert message.model_dump_json() == '{"a":1}'
+    message = _TestMessageSubclass(
+        message_type=MessageType.UNKNOWN, a=1, b=None, c=None
+    )
+    assert message.model_dump() == {"message_type": MessageType.UNKNOWN, "a": 1}
+    assert message.model_dump_json() == '{"message_type":"unknown","a":1}'
 
-    message = _TestMessageSubclass(a=1, b=2, c=None)
-    assert message.model_dump() == {"a": 1, "b": 2}
-    assert message.model_dump_json() == '{"a":1,"b":2}'
+    message = _TestMessageSubclass(message_type=MessageType.UNKNOWN, a=1, b=2, c=None)
+    assert message.model_dump() == {"message_type": MessageType.UNKNOWN, "a": 1, "b": 2}
+    assert message.model_dump_json() == '{"message_type":"unknown","a":1,"b":2}'
 
-    message = _TestMessageSubclass(a=1, b=2, c=3)
-    assert message.model_dump() == {"a": 1, "b": 2, "c": 3}
-    assert message.model_dump_json() == '{"a":1,"b":2,"c":3}'
+    message = _TestMessageSubclass(message_type=MessageType.UNKNOWN, a=1, b=2, c=3)
+    assert message.model_dump() == {
+        "message_type": MessageType.UNKNOWN,
+        "a": 1,
+        "b": 2,
+        "c": 3,
+    }
+    assert message.model_dump_json() == '{"message_type":"unknown","a":1,"b":2,"c":3}'
 
 
 def test_exclude_if_none_decorator():
@@ -52,13 +59,16 @@ def test_exclude_if_none_decorator():
     class ExampleMessage(BaseMessage):
         some_field: int | None = Field(default=None)
 
-    message = ExampleMessage(some_field=None)
-    assert message.model_dump() == {}
-    assert message.model_dump_json() == "{}"
+    message = ExampleMessage(message_type=MessageType.UNKNOWN, some_field=None)
+    assert message.model_dump() == {"message_type": MessageType.UNKNOWN}
+    assert message.model_dump_json() == '{"message_type":"unknown"}'
 
-    message = ExampleMessage(some_field=1)
-    assert message.model_dump() == {"some_field": 1}
-    assert message.model_dump_json() == '{"some_field":1}'
+    message = ExampleMessage(message_type=MessageType.UNKNOWN, some_field=1)
+    assert message.model_dump() == {
+        "message_type": MessageType.UNKNOWN,
+        "some_field": 1,
+    }
+    assert message.model_dump_json() == '{"message_type":"unknown","some_field":1}'
 
 
 def test_status_message():
