@@ -1,20 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import logging
 from collections.abc import Callable
 from typing import Any
 
 import zmq.asyncio
-from zmq import SocketType
 
 from aiperf.common.comms.zmq.clients.base import BaseZMQClient
-from aiperf.common.exceptions import CommunicationSubscribeError
+from aiperf.common.exceptions import CommunicationError, CommunicationErrorReason
 from aiperf.common.hooks import aiperf_task
 from aiperf.common.messages import Message
 from aiperf.common.utils import call_all_functions
-
-logger = logging.getLogger(__name__)
 
 
 class ZMQSubClient(BaseZMQClient):
@@ -34,7 +30,7 @@ class ZMQSubClient(BaseZMQClient):
             bind (bool): Whether to bind or connect the socket.
             socket_ops (dict, optional): Additional socket options to set.
         """
-        super().__init__(context, SocketType.SUB, address, bind, socket_ops)
+        super().__init__(context, zmq.SocketType.SUB, address, bind, socket_ops)
         self._subscribers: dict[str, list[Callable[[Message], Any]]] = {}
 
     async def subscribe(self, topic: str, callback: Callable[[Message], Any]) -> None:
@@ -58,11 +54,32 @@ class ZMQSubClient(BaseZMQClient):
                 self._subscribers[topic] = []
             self._subscribers[topic].append(callback)
 
-            logger.debug("Subscribed to topic: %s, %s", topic, self._subscribers[topic])
+            self.logger.debug(
+                "Subscribed to topic: %s, %s", topic, self._subscribers[topic]
+            )
 
         except Exception as e:
-            logger.error("Exception subscribing to topic %s: %s", topic, e)
-            raise CommunicationSubscribeError from e
+            self.logger.error("Exception subscribing to topic %s: %s", topic, e)
+            raise CommunicationError(
+                CommunicationErrorReason.SUBSCRIBE_ERROR,
+                f"Failed to subscribe to topic {topic}: {e}",
+            ) from e
+
+    async def _handle_message(self, topic_bytes: bytes, message_bytes: bytes) -> None:
+        """Handle a message from a subscribed topic."""
+        topic = topic_bytes.decode()
+        message_json = message_bytes.decode()
+        self.logger.debug(
+            "Received message from topic: '%s', message: %s",
+            topic,
+            message_json,
+        )
+
+        message = Message.from_json(message_json)
+
+        # Call callbacks with the parsed message object
+        if topic in self._subscribers:
+            await call_all_functions(self._subscribers[topic], message)
 
     @aiperf_task
     async def _sub_receiver(self) -> None:
@@ -71,46 +88,33 @@ class ZMQSubClient(BaseZMQClient):
         This method is a coroutine that will run indefinitely until the client is
         shutdown. It will wait for messages from the socket and handle them.
         """
+        if not self.is_initialized:
+            self.logger.debug(
+                "Sub client %s waiting for initialization", self.client_id
+            )
+            await self.initialized_event.wait()
+            self.logger.debug("Sub client %s initialized", self.client_id)
+
         while not self.is_shutdown:
             try:
-                if not self.is_initialized:
-                    logger.debug(
-                        "Sub client %s waiting for initialization", self.client_id
-                    )
-                    await self.initialized_event.wait()
-                    logger.debug("Sub client %s initialized", self.client_id)
-
                 # Receive message
                 (
                     topic_bytes,
                     message_bytes,
                 ) = await self.socket.recv_multipart()
-                topic = topic_bytes.decode()
-                message_json = message_bytes.decode()
-                logger.debug(
-                    "Client %s received message from topic: '%s', message: %s",
-                    self.client_id,
-                    topic,
-                    message_json,
-                )
-
-                message = Message.from_json(message_json)
-
-                # Call callbacks with the parsed message object
-                if topic in self._subscribers:
-                    await call_all_functions(self._subscribers[topic], message)
+                asyncio.create_task(self._handle_message(topic_bytes, message_bytes))
 
             except asyncio.CancelledError:
                 break
             except zmq.Again:
                 # Handle ZMQ timeout or interruption
-                logger.debug(
+                self.logger.debug(
                     "ZMQ recv timeout due to no messages. trying again @ %s",
                     self.address,
                 )
                 await asyncio.sleep(0.001)
             except Exception as e:
-                logger.error(
+                self.logger.error(
                     "Exception receiving message from subscription: %s, %s",
                     e,
                     type(e),

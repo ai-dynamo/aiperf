@@ -3,22 +3,17 @@
 import asyncio
 import contextlib
 import logging
-import signal
 import uuid
 from abc import ABC
 
 from aiperf.common.comms.base import BaseCommunication
 from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import ServiceState
+from aiperf.common.enums import ServiceState, ServiceType
 from aiperf.common.exceptions import (
-    AIPerfMultiError,
-    CommunicationClientCreationError,
-    CommunicationCreateError,
-    CommunicationNotInitializedError,
-    ServiceInitializationError,
-    ServiceRunError,
-    ServiceStartError,
-    ServiceStopError,
+    AIPerfError,
+    CommunicationError,
+    CommunicationErrorReason,
+    ServiceError,
 )
 from aiperf.common.factories import CommunicationFactory
 from aiperf.common.hooks import AIPerfHook, AIPerfTaskMixin, supports_hooks
@@ -66,9 +61,6 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
 
         self._comms: BaseCommunication | None = None
 
-        # Set to store signal handler tasks
-        self._signal_tasks = set()
-
         try:
             import setproctitle
 
@@ -85,10 +77,13 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         """
         Get the communication object for the service.
         Raises:
-            CommunicationNotInitializedError: If the communication is not initialized
+            CommunicationError: If the communication is not initialized
         """
         if not self._comms:
-            raise CommunicationNotInitializedError()
+            raise CommunicationError(
+                CommunicationErrorReason.INITIALIZATION_ERROR,
+                "Communication channels are not initialized",
+            )
         return self._comms
 
     @property
@@ -114,6 +109,13 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         """
         return self.stop_event.is_set()
 
+    def _service_error(self, message: str) -> ServiceError:
+        return ServiceError(
+            message=message,
+            service_type=self.service_type,
+            service_id=self.service_id,
+        )
+
     # Note: Not using as a setter so it can be overridden by derived classes and still
     # be async
     async def set_state(self, state: ServiceState) -> None:
@@ -133,7 +135,6 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
 
         This method will:
         - Set the service to `ServiceState.INITIALIZING` state
-        - Set up signal handlers for graceful shutdown
         - Allow time for the event loop to start
         - Initialize communication
         - Call all registered `AIPerfHook.ON_INIT` hooks
@@ -141,34 +142,16 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         - Set the initialized asyncio event
         """
         self._state = ServiceState.INITIALIZING
-        # Set up signal handlers for graceful shutdown
-        self._setup_signal_handlers()
         # Allow time for the event loop to start
         await asyncio.sleep(0.1)
 
         # Initialize communication
-        try:
-            self._comms = CommunicationFactory.create_instance(
-                self.service_config.comm_backend,
-                config=self.service_config.comm_config,
-            )
-        except Exception as e:
-            self.logger.exception(
-                "Failed to create communication for service %s (id: %s)",
-                self.service_type,
-                self.service_id,
-            )
-            raise CommunicationCreateError from e
+        self._comms = CommunicationFactory.create_instance(
+            self.service_config.comm_backend,
+            config=self.service_config.comm_config,
+        )
 
-        try:
-            await self._comms.initialize()
-        except Exception as e:
-            self.logger.exception(
-                "Failed to initialize communication for service %s (id: %s)",
-                self.service_type,
-                self.service_id,
-            )
-            raise ServiceInitializationError from e
+        await self._comms.initialize()
 
         if len(self.required_clients) > 0:
             # Create the communication clients ahead of time
@@ -178,27 +161,10 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
                 self.required_clients,
             )
 
-            try:
-                await self._comms.create_clients(*self.required_clients)
-            except Exception as e:
-                self.logger.exception(
-                    "Failed to create communication clients for service %s (id: %s)",
-                    self.service_type,
-                    self.service_id,
-                )
-                raise CommunicationClientCreationError from e
+            await self._comms.create_clients(*self.required_clients)
 
         # Initialize any derived service components
-        try:
-            await self.run_hooks(AIPerfHook.ON_INIT)
-        except AIPerfMultiError as e:
-            self.logger.exception(
-                "Failed to initialize service %s (id: %s)",
-                self.service_type,
-                self.service_id,
-            )
-            raise ServiceInitializationError from e
-
+        await self.run_hooks(AIPerfHook.ON_INIT)
         await self.set_state(ServiceState.READY)
 
         self.initialized_event.set()
@@ -220,36 +186,20 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
                 "Running %s service (id: %s)", self.service_type, self.service_id
             )
 
-            try:
-                await self.initialize()
-            except Exception as e:
-                self.logger.exception(
-                    "Failed to initialize service %s (id: %s)",
-                    self.service_type,
-                    self.service_id,
-                )
-                raise ServiceRunError from e
-
-            try:
-                await self.run_hooks(AIPerfHook.ON_RUN)
-            except AIPerfMultiError as e:
-                self.logger.exception(
-                    "Failed to run service %s (id: %s)",
-                    self.service_type,
-                    self.service_id,
-                )
-                raise ServiceRunError from e
+            await self.initialize()
+            await self.run_hooks(AIPerfHook.ON_RUN)
 
         except asyncio.CancelledError:
-            self.logger.debug("Service %s execution cancelled", self.service_type)
+            # self.logger.debug("Service %s execution cancelled", self.service_type)
             return
+
+        except AIPerfError:
+            raise  # re-raise it up the stack
 
         except Exception as e:
             self.logger.exception("Service %s execution failed:", self.service_type)
             _ = await self.set_state(ServiceState.ERROR)
-            raise ServiceRunError(
-                "Service %s execution failed", self.service_type
-            ) from e
+            raise self._service_error("Service execution failed") from e
 
         await self._forever_loop()
 
@@ -262,34 +212,26 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         - Wait for the stop event to be set
         - Shuts down the service when the stop event is set
         """
-        while not self.stop_event.is_set():
+        try:
+            self.logger.debug("Service %s waiting for stop event", self.service_type)
+            # Wait forever for the stop event to be set
+            await self.stop_event.wait()
+
+        except (SystemExit, asyncio.CancelledError):
+            pass
+
+        except Exception:
+            self.logger.exception(
+                "Caught unexpected exception in service %s execution",
+                self.service_type,
+            )
+
+        finally:
+            # Shutdown the service
             try:
-                self.logger.debug(
-                    "Service %s waiting for stop event", self.service_type
-                )
-                # Wait forever for the stop event to be set
-                await self.stop_event.wait()
-
-            except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
-                self.logger.debug("Service %s execution cancelled", self.service_type)
-                self.stop_event.set()
-
-            except Exception:
-                self.logger.exception(
-                    "Caught unexpected exception in service %s execution",
-                    self.service_type,
-                )
-            finally:
-                # Shutdown the service
-                try:
-                    await self.stop()
-                except Exception as e:
-                    self.logger.exception(
-                        "Exception stopping service %s", self.service_type
-                    )
-                    raise ServiceStopError(
-                        "Exception stopping service %s", self.service_type
-                    ) from e
+                await self.stop()
+            except Exception as e:
+                raise self._service_error("Exception stopping service") from e
 
     async def start(self) -> None:
         """Start the service and its components. This method implements
@@ -315,21 +257,12 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
             _ = await self.set_state(ServiceState.RUNNING)
 
         except asyncio.CancelledError:
-            self.logger.debug("Service %s execution cancelled", self.service_type)
+            # self.logger.debug("Service %s execution cancelled", self.service_type)
+            pass
 
         except Exception as e:
-            self.logger.exception(
-                "Failed to start service %s (id: %s)",
-                self.service_type,
-                self.service_id,
-            )
             self._state = ServiceState.ERROR
-
-            raise ServiceStartError(
-                "Failed to start service %s (id: %s)",
-                self.service_type,
-                self.service_id,
-            ) from e
+            raise self._service_error("Failed to start service") from e
 
     async def stop(self) -> None:
         """Stop the service and clean up its components. This method implements
@@ -351,8 +284,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
                 )
                 return
 
-            # ignore if we were unable to send the STOPPING state message
-            _ = await self.set_state(ServiceState.STOPPING)
+            self._state = ServiceState.STOPPING
 
             # Signal the run method to exit if it hasn't already
             if not self.stop_event.is_set():
@@ -373,22 +305,17 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
             # Set the state to STOPPED. Communications are shutdown, so we don't need to
             # publish a status message
             self._state = ServiceState.STOPPED
-            self.logger.debug(
-                "Service %s (id: %s) stopped", self.service_type, self.service_id
-            )
+            if self.service_type not in (
+                ServiceType.WORKER,
+                ServiceType.WORKER_MANAGER,
+            ):
+                self.logger.debug(
+                    "Service %s (id: %s) stopped", self.service_type, self.service_id
+                )
 
         except Exception as e:
-            self.logger.exception(
-                "Failed to stop service %s (id: %s)",
-                self.service_type,
-                self.service_id,
-            )
             self._state = ServiceState.ERROR
-            raise ServiceStopError(
-                "Failed to stop service %s (id: %s)",
-                self.service_type,
-                self.service_id,
-            ) from e
+            raise self._service_error("Failed to stop service") from e
 
     async def configure(self, message: Message) -> None:
         """Configure the service with the given configuration. This method implements
@@ -398,36 +325,3 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         - Call all registered AIPerfHook.ON_CONFIGURE hooks
         """
         await self.run_hooks(AIPerfHook.ON_CONFIGURE, message)
-
-    def _setup_signal_handlers(self) -> None:
-        """This method will set up signal handlers for the SIGTERM and SIGINT signals
-        in order to trigger a graceful shutdown of the service.
-        """
-        loop = asyncio.get_running_loop()
-
-        def signal_handler(sig: int) -> None:
-            # Create a task and store it so it doesn't get garbage collected
-            task = asyncio.create_task(self._handle_signal(sig))
-
-            # Store the task somewhere to prevent it from being garbage collected
-            # before it completes
-            self._signal_tasks.add(task)
-            task.add_done_callback(self._signal_tasks.discard)
-
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
-
-    async def _handle_signal(self, sig: int) -> None:
-        """Handle received signals by triggering graceful shutdown.
-
-        Args:
-            sig: The signal number received
-        """
-        signal_name = signal.Signals(sig).name
-        self.logger.debug(
-            "%s: Received signal %s, initiating graceful shutdown",
-            self.service_type,
-            signal_name,
-        )
-
-        self.stop_event.set()

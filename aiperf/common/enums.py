@@ -395,6 +395,7 @@ class RequestPayloadType(CaseInsensitiveStrEnum):
     TENSORRTLLM = "tensorrtllm"
     VLLM = "vllm"
 
+
 class ResponsePayloadType(CaseInsensitiveStrEnum):
     """Response payload types.
 

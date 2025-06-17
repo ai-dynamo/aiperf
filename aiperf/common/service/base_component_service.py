@@ -1,15 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from aiperf.common.comms.client_enums import ClientType, PubClientType, SubClientType
 from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommandType, ServiceState, Topic
-from aiperf.common.exceptions import (
-    CommunicationSubscribeError,
-    ServiceHeartbeatError,
-    ServiceRegistrationError,
-)
 from aiperf.common.hooks import AIPerfHook, aiperf_task, on_run, on_set_state
 from aiperf.common.messages import (
     CommandMessage,
@@ -40,6 +36,9 @@ class BaseComponentService(BaseService):
         self, service_config: ServiceConfig, service_id: str | None = None
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
+        self._command_callbacks: dict[
+            CommandType, Callable[[CommandMessage], Awaitable[None]]
+        ] = {}
 
     @property
     def required_clients(self) -> list[ClientType]:
@@ -71,10 +70,7 @@ class BaseComponentService(BaseService):
                 self.process_command_message,
             )
         except Exception as e:
-            self.logger.error("Exception subscribing to command topic: %s", e)
-            raise CommunicationSubscribeError(
-                "Failed to subscribe to command topic"
-            ) from e
+            self._raise_service_error("Failed to subscribe to command topic", e)
 
         # TODO: Find a way to wait for the communication to be fully initialized
         # FIXME: This is a hack to ensure the communication is fully initialized
@@ -85,7 +81,7 @@ class BaseComponentService(BaseService):
             await self.register()
             await asyncio.sleep(0.5)
         except Exception as e:
-            raise ServiceRegistrationError() from e
+            self._raise_service_error("Failed to register service", e)
 
     @aiperf_task
     async def _heartbeat_task(self) -> None:
@@ -116,7 +112,7 @@ class BaseComponentService(BaseService):
                 message=heartbeat_message,
             )
         except Exception as e:
-            raise ServiceHeartbeatError from e
+            self._raise_service_error("Failed to send heartbeat", e)
 
     async def register(self) -> None:
         """Publish a registration request to the system controller.
@@ -135,28 +131,45 @@ class BaseComponentService(BaseService):
                 message=self.create_registration_message(),
             )
         except Exception as e:
-            raise ServiceRegistrationError() from e
+            self._raise_service_error("Failed to register service", e)
 
     async def process_command_message(self, message: CommandMessage) -> None:
         """Process a command message received from the controller.
 
         This method will process the command message and execute the appropriate action.
         """
-        if message.target_service_id not in [None, self.service_id]:
+        if message.target_service_id and message.target_service_id != self.service_id:
+            return  # Ignore commands meant for other services
+        if (
+            message.target_service_type
+            and message.target_service_type != self.service_type
+        ):
             return  # Ignore commands meant for other services
 
         cmd = message.command
         if cmd == CommandType.PROFILE_START:
             await self.start()
 
-        elif cmd == CommandType.PROFILE_STOP:
+        elif cmd == CommandType.SHUTDOWN:
+            self.logger.debug("%s received stop command", self.service_id)
             self.stop_event.set()
 
         elif cmd == CommandType.PROFILE_CONFIGURE:
             await self.run_hooks(AIPerfHook.ON_CONFIGURE, message)
 
+        elif cmd in self._command_callbacks:
+            await self._command_callbacks[cmd](message)
+
         else:
-            self.logger.warning(f"{self.service_type} received unknown command: {cmd}")
+            self.logger.warning("%s received unknown command: %s", self.service_id, cmd)
+
+    def register_command_callback(
+        self,
+        cmd: CommandType,
+        callback: Callable[[CommandMessage], Awaitable[None]],
+    ) -> None:
+        """Register a single callback for a command."""
+        self._command_callbacks[cmd] = callback
 
     @on_set_state
     async def _on_set_state(self, state: ServiceState) -> None:

@@ -27,7 +27,7 @@ class KubernetesServiceManager(BaseServiceManager):
     ):
         super().__init__(required_service_types, config)
 
-    async def initialize_all_services(self) -> None:
+    async def run_all_services(self) -> None:
         """Initialize all required services as Kubernetes pods."""
         self.logger.debug("Initializing all required services as Kubernetes pods")
         # TODO: Implement Kubernetes
@@ -35,12 +35,20 @@ class KubernetesServiceManager(BaseServiceManager):
             "KubernetesServiceManager.initialize_all_services not implemented"
         )
 
-    async def stop_all_services(self) -> None:
+    async def shutdown_all_services(self) -> None:
         """Stop all required services as Kubernetes pods."""
         self.logger.debug("Stopping all required services as Kubernetes pods")
         # TODO: Implement Kubernetes
         raise NotImplementedError(
             "KubernetesServiceManager.stop_all_services not implemented"
+        )
+
+    async def kill_all_services(self) -> None:
+        """Kill all required services as Kubernetes pods."""
+        self.logger.debug("Killing all required services as Kubernetes pods")
+        # TODO: Implement Kubernetes
+        raise NotImplementedError(
+            "KubernetesServiceManager.kill_all_services not implemented"
         )
 
     async def wait_for_all_services_registration(

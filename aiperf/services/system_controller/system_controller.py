@@ -1,12 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import signal
 import sys
 import time
 from typing import Any
 
 from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import (
+    CaseInsensitiveStrEnum,
     CommandType,
     ServiceRegistrationStatus,
     ServiceRunType,
@@ -15,35 +17,67 @@ from aiperf.common.enums import (
     Topic,
 )
 from aiperf.common.exceptions import (
-    CommunicationNotInitializedError,
-    CommunicationPublishError,
-    CommunicationSubscribeError,
+    CommunicationError,
+    CommunicationErrorReason,
     ConfigError,
-    ServiceConfigureError,
-    ServiceInitializationError,
-    ServiceStopError,
 )
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
     on_init,
-    on_start,
     on_stop,
 )
 from aiperf.common.messages import (
+    CreditsCompleteMessage,
     HeartbeatMessage,
+    ProcessRecordsCommandData,
+    ProfileResultsMessage,
+    ProfileStatsMessage,
     RegistrationMessage,
     StatusMessage,
 )
 from aiperf.common.models import ServiceRunInfo
 from aiperf.common.service.base_controller_service import BaseControllerService
-from aiperf.services.service_manager.base import BaseServiceManager
-from aiperf.services.service_manager.kubernetes import KubernetesServiceManager
-from aiperf.services.service_manager.multiprocess import MultiProcessServiceManager
+from aiperf.services.service_manager import (
+    BaseServiceManager,
+    KubernetesServiceManager,
+    MultiProcessServiceManager,
+)
+from aiperf.services.system_controller.system_mixins import SignalHandlerMixin
+
+
+class SystemState(CaseInsensitiveStrEnum):
+    """State of the system as a whole.
+
+    This is used to track the state of the system as a whole, and is used to
+    determine what actions to take when a signal is received.
+    """
+
+    INITIALIZING = "initializing"
+    """The system is initializing. This is the initial state."""
+
+    CONFIGURING = "configuring"
+    """The system is configuring services."""
+
+    READY = "ready"
+    """The system is ready to start profiling. This is a temporary state that should be
+    followed by PROFILING."""
+
+    PROFILING = "profiling"
+    """The system is running a profiling run."""
+
+    PROCESSING = "processing"
+    """The system is processing results."""
+
+    STOPPING = "stopping"
+    """The system is stopping."""
+
+    SHUTDOWN = "shutdown"
+    """The system is shutting down. This is the final state."""
 
 
 @ServiceFactory.register(ServiceType.SYSTEM_CONTROLLER)
-class SystemController(BaseControllerService):
+class SystemController(SignalHandlerMixin, BaseControllerService):
     """System Controller service.
 
     This service is responsible for managing the lifecycle of all other services.
@@ -56,6 +90,8 @@ class SystemController(BaseControllerService):
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Creating System Controller")
 
+        self._system_state: SystemState = SystemState.INITIALIZING
+
         # List of required service types, in no particular order
         self.required_service_types: list[ServiceType] = [
             ServiceType.DATASET_MANAGER,
@@ -65,13 +101,25 @@ class SystemController(BaseControllerService):
             ServiceType.POST_PROCESSOR_MANAGER,
         ]
 
-        self.service_manager: BaseServiceManager | None = None
+        self.service_manager: BaseServiceManager = None  # type: ignore - is set in _initialize
         self.logger.debug("System Controller created")
 
     @property
     def service_type(self) -> ServiceType:
         """The type of service."""
         return ServiceType.SYSTEM_CONTROLLER
+
+    async def _forever_loop(self) -> None:
+        """Run the system controller in a loop until the stop event is set."""
+        try:
+            await super()._forever_loop()
+        except KeyboardInterrupt:
+            await self.send_command_to_service(
+                target_service_type=ServiceType.RECORDS_MANAGER,
+                target_service_id=None,
+                command=CommandType.PROCESS_RECORDS,
+                data=ProcessRecordsCommandData(cancelled=True),
+            )
 
     @on_init
     async def _initialize(self) -> None:
@@ -82,6 +130,9 @@ class SystemController(BaseControllerService):
         - Subscribe to relevant messages
         """
         self.logger.debug("Initializing System Controller")
+
+        self.setup_signal_handlers(self._handle_signal)
+        self.logger.debug("Setup signal handlers")
 
         if self.service_config.service_run_type == ServiceRunType.MULTIPROCESSING:
             self.service_manager = MultiProcessServiceManager(
@@ -99,44 +150,50 @@ class SystemController(BaseControllerService):
             )
 
         # Subscribe to relevant messages
-        try:
-            await self.comms.subscribe(
-                topic=Topic.REGISTRATION,
-                callback=self._process_registration_message,
-            )
-        except Exception as e:
-            self.logger.error("Failed to subscribe to registration topic: %s", e)
-            raise CommunicationSubscribeError from e
+        subscribe_callbacks = [
+            (Topic.REGISTRATION, self._process_registration_message),
+            (Topic.HEARTBEAT, self._process_heartbeat_message),
+            (Topic.STATUS, self._process_status_message),
+            (Topic.CREDITS_COMPLETE, self._process_credits_complete_message),
+            (Topic.PROFILE_STATS, self._process_profile_stats_message),
+            (Topic.PROFILE_RESULTS, self._process_profile_results_message),
+        ]
+        for topic, callback in subscribe_callbacks:
+            try:
+                await self.comms.subscribe(topic=topic, callback=callback)
+            except Exception as e:
+                self.logger.error("Failed to subscribe to topic %s: %s", topic, e)
+                raise CommunicationError(
+                    CommunicationErrorReason.SUBSCRIBE_ERROR,
+                    f"Failed to subscribe to topic {topic}: {e}",
+                ) from e
 
-        try:
-            await self.comms.subscribe(
-                topic=Topic.HEARTBEAT,
-                callback=self._process_heartbeat_message,
-            )
-        except Exception as e:
-            self.logger.error("Failed to subscribe to heartbeat topic: %s", e)
-            raise CommunicationSubscribeError from e
-
-        try:
-            await self.comms.subscribe(
-                topic=Topic.STATUS,
-                callback=self._process_status_message,
-            )
-        except Exception as e:
-            self.logger.error("Failed to subscribe to status topic: %s", e)
-            raise CommunicationSubscribeError from e
-
-        self.logger.debug(
-            "System controller waiting for 1 second to ensure that the "
-            "communication is initialized"
-        )
-
+        # TODO: HACK:
         # wait 1 second to ensure that the communication is initialized
         await asyncio.sleep(1)
 
-    @on_start
-    async def _start(self) -> None:
-        """Start the system controller and launch required services.
+        self._system_state = SystemState.CONFIGURING
+        await self._bootstrap_system()
+
+    async def _handle_signal(self, sig: int) -> None:
+        """Handle received signals by triggering graceful shutdown.
+
+        Args:
+            sig: The signal number received
+        """
+        self.logger.debug("Received signal %s, initiating graceful shutdown", sig)
+        if sig == signal.SIGINT:
+            await self.send_command_to_service(
+                target_service_id=None,
+                target_service_type=ServiceType.RECORDS_MANAGER,
+                command=CommandType.PROCESS_RECORDS,
+                data=ProcessRecordsCommandData(cancelled=True),
+            )
+        else:
+            self.stop_event.set()
+
+    async def _bootstrap_system(self) -> None:
+        """Bootstrap the system services.
 
         This method will:
         - Initialize all required services
@@ -147,10 +204,9 @@ class SystemController(BaseControllerService):
 
         # Start all required services
         try:
-            await self.service_manager.initialize_all_services()
+            await self.service_manager.run_all_services()
         except Exception as e:
-            self.logger.error("Failed to initialize all services: %s", e)
-            raise ServiceInitializationError from e
+            raise self._service_error("Failed to initialize all services") from e
 
         try:
             # Wait for all required services to be registered
@@ -165,23 +221,16 @@ class SystemController(BaseControllerService):
                 return  # Don't continue with the rest of the initialization
 
         except Exception as e:
-            self.logger.error(
-                "Not all required services registered within the timeout period"
-            )
-            raise ServiceInitializationError(
+            raise self._service_error(
                 "Not all required services registered within the timeout period"
             ) from e
 
         self.logger.debug("All required services registered successfully")
 
         self.logger.info("AIPerf System is READY")
-        # Wait for all required services to be started
-        await self.start_all_services()
-        try:
-            await self.service_manager.wait_for_all_services_start()
-        except Exception as e:
-            self.logger.error("Failed to wait for all services to start: %s", e)
-            raise ServiceInitializationError from e
+        self._system_state = SystemState.READY
+
+        await self.start_profiling_all_services()
 
         if self.stop_event.is_set():
             self.logger.debug("System Controller stopped before all services started")
@@ -200,20 +249,33 @@ class SystemController(BaseControllerService):
         self.logger.debug("Stopping System Controller")
         self.logger.info("AIPerf System is SHUTTING DOWN")
 
+        self._system_state = SystemState.STOPPING
+
+        # Broadcast a stop command to all services
+        await self.send_command_to_service(
+            target_service_id=None,
+            command=CommandType.SHUTDOWN,
+        )
+
         try:
-            await self.service_manager.stop_all_services()
+            await self.service_manager.shutdown_all_services()
         except Exception as e:
-            self.logger.error("Failed to stop all services: %s", e)
-            raise ServiceStopError from e
+            raise self._service_error("Failed to stop all services") from e
+
+        # TODO: This is a hack to give the services time to produce results
+        # await asyncio.sleep(3)
 
     @on_cleanup
     async def _cleanup(self) -> None:
         """Clean up system controller-specific components."""
         self.logger.debug("Cleaning up System Controller")
-        # TODO: Additional cleanup if needed
 
-    async def start_all_services(self) -> None:
-        """Start all required services."""
+        self._system_state = SystemState.SHUTDOWN
+
+    async def start_profiling_all_services(self) -> None:
+        """Tell all services to start profiling."""
+        self._system_state = SystemState.PROFILING
+
         self.logger.debug("Starting services")
         for service_info in self.service_manager.service_id_map.values():
             if service_info.state == ServiceState.READY:
@@ -228,6 +290,19 @@ class SystemController(BaseControllerService):
                     # Continue to the next service
                     # TODO: should we have some sort of retries?
                     continue
+
+    async def _process_profile_stats_message(
+        self, message: ProfileStatsMessage
+    ) -> None:
+        """Process a profile stats message."""
+        self.logger.debug("Received profile stats: %s", message)
+
+    async def _process_profile_results_message(
+        self, message: ProfileResultsMessage
+    ) -> None:
+        """Process a profile results message."""
+        self.logger.debug("Received profile results: %s", message)
+        self.stop_event.set()
 
     async def _process_registration_message(self, message: RegistrationMessage) -> None:
         """Process a registration message from a service. It will
@@ -265,7 +340,6 @@ class SystemController(BaseControllerService):
         )
 
         # Send configure command to the newly registered service
-        # TODO: Retrieve the configuration to send to the service
         try:
             await self.send_command_to_service(
                 target_service_id=service_id,
@@ -273,10 +347,9 @@ class SystemController(BaseControllerService):
                 data=None,
             )
         except Exception as e:
-            self.logger.error(
-                f"Failed to send configure command to {service_type} (ID: {service_id}): {e}"
-            )
-            raise ServiceConfigureError from e
+            raise self._service_error(
+                f"Failed to send configure command to {service_type} (ID: {service_id})"
+            ) from e
 
         self.logger.debug(
             f"Sent configure command to {service_type} (ID: {service_id})"
@@ -297,7 +370,7 @@ class SystemController(BaseControllerService):
 
         # Update the last heartbeat timestamp if the component exists
         try:
-            service_info = self.service_manager.service_id_map.get(service_id)
+            service_info = self.service_manager.service_id_map[service_id]
             service_info.last_seen = timestamp
             service_info.state = message.state
             self.logger.debug(f"Updated heartbeat for {service_id} to {timestamp}")
@@ -305,6 +378,18 @@ class SystemController(BaseControllerService):
             self.logger.warning(
                 f"Received heartbeat from unknown service: {service_id} ({service_type})"
             )
+
+    async def _process_credits_complete_message(
+        self, message: CreditsCompleteMessage
+    ) -> None:
+        """Process a credits complete message from a service. It will
+        update the state of the service with the service manager.
+
+        Args:
+            message: The credits complete message to process
+        """
+        service_id = message.service_id
+        self.logger.info("Received credits complete from %s", service_id)
 
     async def _process_status_message(self, message: StatusMessage) -> None:
         """Process a status message from a service. It will
@@ -322,40 +407,51 @@ class SystemController(BaseControllerService):
         )
 
         # Update the component state if the component exists
-        try:
-            service_info = self.service_manager.service_id_map.get(service_id)
-            service_info.state = message.state
-            self.logger.debug(f"Updated state for {service_id} to {state}")
-        except Exception:
-            self.logger.warning(
+        if service_id not in self.service_manager.service_id_map:
+            self.logger.debug(
                 f"Received status update from un-registered service: {service_id} ({service_type})"
             )
+            return
+
+        service_info = self.service_manager.service_id_map.get(service_id)
+        if service_info is None:
+            return
+
+        service_info.state = message.state
+
+        self.logger.debug(f"Updated state for {service_id} to {state}")
 
     async def send_command_to_service(
         self,
-        target_service_id: str,
+        target_service_id: str | None,
         command: CommandType,
         data: Any | None = None,
+        target_service_type: ServiceType | None = None,
     ) -> None:
         """Send a command to a specific service.
 
         Args:
-            target_service_id: ID of the target service
+            target_service_id: ID of the target service, or None to send to all services
+            target_service_type: Type of the target service, or None to send to all services
             command: The command to send (from CommandType enum).
             data: Optional data to send with the command.
 
         Raises:
-            CommunicationNotInitializedError if the communication is not initialized
-            CommunicationPublishError if the command was not sent successfully
+            CommunicationError: If the communication is not initialized
+                or the command was not sent successfully
         """
         if not self._comms:
             self.logger.error("Cannot send command: Communication is not initialized")
-            raise CommunicationNotInitializedError()
+            raise CommunicationError(
+                CommunicationErrorReason.INITIALIZATION_ERROR,
+                "Communication channels are not initialized",
+            )
 
         # Create command message using the helper method
         command_message = self.create_command_message(
             command=command,
             target_service_id=target_service_id,
+            target_service_type=target_service_type,
             data=data,
         )
 
@@ -367,7 +463,10 @@ class SystemController(BaseControllerService):
             )
         except Exception as e:
             self.logger.error("Exception publishing command: %s", e)
-            raise CommunicationPublishError from e
+            raise CommunicationError(
+                CommunicationErrorReason.PUBLISH_ERROR,
+                f"Failed to publish command: {e}",
+            ) from e
 
 
 def main() -> None:
