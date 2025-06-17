@@ -88,8 +88,12 @@ class InferenceServerResponse(BaseModel):
 
 
 class TextResponse(InferenceServerResponse):
-    """Response from a inference client."""
+    """Raw text response from a inference client including an optional content type."""
 
+    content_type: str | None = Field(
+        default=None,
+        description="The content type of the response. e.g. 'text/plain', 'application/json'.",
+    )
     text: str = Field(
         ...,
         description="The text of the response.",
@@ -113,6 +117,7 @@ class ErrorDetails(BaseModel):
     )
 
     def __eq__(self, other: Any) -> bool:
+        """Check if the error details are equal by comparing the code, type, and message."""
         if not isinstance(other, ErrorDetails):
             return False
         return (
@@ -122,6 +127,7 @@ class ErrorDetails(BaseModel):
         )
 
     def __hash__(self) -> int:
+        """Hash the error details by hashing the code, type, and message."""
         return hash((self.code, self.type, self.message))
 
 
@@ -176,43 +182,6 @@ class SSEMessage(InferenceServerResponse):
 
 
 ################################################################################
-# Inference Data Models
-################################################################################
-
-
-class InferResult(BaseModel):
-    """Result of an inference request."""
-
-    id: str
-    model_name: str
-    model_version: str | None = None
-    outputs: dict[str, Any] = Field(default_factory=dict)
-    client_id: int | None = None
-    request_id: int | None = None
-    raw_response: Any | None = None
-
-
-class InferInput(BaseModel):
-    """Input for an inference request."""
-
-    name: str
-    shape: list[int] | None = None
-    datatype: str | None = None
-    data: Any | None = None
-
-
-class InferRequestOptions(BaseModel):
-    """Options for an inference request."""
-
-    sequence_id: int | None = None
-    sequence_start: bool = False
-    sequence_end: bool = False
-    priority: int | None = None
-    timeout_ms: int | None = None
-    headers: dict[str, str] = Field(default_factory=dict)
-
-
-################################################################################
 # Worker Internal Models
 ################################################################################
 
@@ -232,7 +201,6 @@ class RequestRecord(BaseModel):
         default=None,
         description="The start time of the response in perf_counter_ns.",
     )
-
     status: int | None = Field(
         default=None,
         description="The HTTPstatus code of the request.",
