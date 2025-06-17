@@ -343,6 +343,7 @@ class ProfileResultsMessage(BaseServiceMessage):
     completed: int = Field(
         ..., description="The number of inference requests completed"
     )
+    # TODO: Are these needed?
     # begin_ns: int = Field(
     #     ..., description="The start time of the profile run in nanoseconds"
     # )

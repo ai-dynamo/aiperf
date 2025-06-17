@@ -345,6 +345,18 @@ class PromptSource(CaseInsensitiveStrEnum):
     PAYLOAD = "payload"
 
 
+class Modality(CaseInsensitiveStrEnum):
+    """Modality of the model. Can be used to determine the type of data to send to the model in
+    conjunction with the ModelSelectionStrategy.MODALITY_AWARE."""
+
+    TEXT = "text"
+    IMAGE = "image"
+    AUDIO = "audio"
+    VIDEO = "video"
+    MULTIMODAL = "multimodal"
+    CUSTOM = "custom"
+
+
 class ModelSelectionStrategy(CaseInsensitiveStrEnum):
     """Strategy for selecting the model to use for the request."""
 
@@ -359,7 +371,10 @@ class MeasurementMode(CaseInsensitiveStrEnum):
 
 
 class RequestPayloadType(CaseInsensitiveStrEnum):
-    """Request payload types."""
+    """Request payload types.
+
+    These determine the format of the request payload to send to the model.
+    """
 
     OPENAI_CHAT_COMPLETIONS = "openai_chat_completions"
     OPENAI_COMPLETIONS = "openai_completions"
@@ -379,6 +394,27 @@ class RequestPayloadType(CaseInsensitiveStrEnum):
 
     TENSORRTLLM = "tensorrtllm"
     VLLM = "vllm"
+
+class ResponsePayloadType(CaseInsensitiveStrEnum):
+    """Response payload types.
+
+    These determine the format of the response payload that the model will return.
+    """
+
+    HUGGINGFACE_GENERATE = "huggingface_generate"
+    HUGGINGFACE_RANKINGS = "huggingface_rankings"
+
+    OPENAI_CHAT_COMPLETIONS = "openai_chat_completions"
+    OPENAI_COMPLETIONS = "openai_completions"
+    OPENAI_EMBEDDINGS = "openai_embeddings"
+    OPENAI_MULTIMODAL = "openai_multimodal"
+    OPENAI_RESPONSES = "openai_responses"
+
+    RANKINGS = "rankings"
+    IMAGE_RETRIEVAL = "image_retrieval"
+
+    TRITON = "triton"
+    TRITON_GENERATE = "triton_generate"
 
 
 ####################################################################################
