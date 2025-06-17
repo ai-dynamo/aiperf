@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from enum import Enum
+from enum import auto, Enum
 from typing import Any
 
 
@@ -395,3 +395,9 @@ class MetricTimeType(Enum):
     NANOSECONDS = 9
     MILLISECONDS = 3
     SECONDS = 0
+
+
+class MetricType(Enum):
+    METRIC_OF_RECORDS = auto()
+    METRIC_OF_METRICS = auto()
+    METRIC_OF_BOTH = auto()
