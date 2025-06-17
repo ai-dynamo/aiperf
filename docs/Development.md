@@ -393,7 +393,7 @@ Services are configured using Pydantic models:
 (TBD) Coming SOON
 
 ```python
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import ServiceRunType
 
 config = ServiceConfig(

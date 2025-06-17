@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import ServiceRunType, ServiceType
 from aiperf.common.exceptions import ConfigError
 from aiperf.common.factories import ServiceFactory

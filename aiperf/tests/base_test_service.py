@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType, ServiceState
 from aiperf.common.service.base_service import BaseService
 from aiperf.tests.utils.async_test_utils import async_fixture, async_noop

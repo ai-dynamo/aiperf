@@ -4,7 +4,7 @@ import asyncio
 
 from pydantic import BaseModel
 
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import ServiceType
 from aiperf.services.service_manager.base import BaseServiceManager
 

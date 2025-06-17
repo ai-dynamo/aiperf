@@ -3,8 +3,7 @@
 
 from pathlib import Path
 
-from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.config.output.output_config import OutputConfig
+from aiperf.common.config import OutputConfig, OutputDefaults
 
 
 def test_output_config_defaults():

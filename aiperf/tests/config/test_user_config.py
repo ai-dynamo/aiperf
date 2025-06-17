@@ -2,12 +2,14 @@
 #  SPDX-License-Identifier: Apache-2.0
 from unittest.mock import mock_open, patch
 
-from aiperf.common.config.config_defaults import UserDefaults
-from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
-from aiperf.common.config.input.input_config import InputConfig
-from aiperf.common.config.output.output_config import OutputConfig
-from aiperf.common.config.tokenizer.tokenizer_config import TokenizerConfig
-from aiperf.common.config.user_config import UserConfig
+from aiperf.common.config import (
+    EndPointConfig,
+    InputConfig,
+    OutputConfig,
+    TokenizerConfig,
+    UserConfig,
+    UserDefaults,
+)
 
 
 def test_user_config_serialization_to_file():
