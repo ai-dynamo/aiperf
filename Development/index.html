@@ -1569,9 +1569,9 @@ make<span class="w"> </span>install<span class="w">           </span><span class
         <span class="c1"># TODO: Implement records manager cleanup</span>
 
     <span class="nd">@on_configure</span>
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_configure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="n">BasePayload</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_configure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">Message</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Configure the records manager.&quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Configuring records manager with payload: </span><span class="si">{</span><span class="n">payload</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Configuring records manager with message: </span><span class="si">{</span><span class="n">message</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="c1"># TODO: Implement records manager configuration</span>
 </code></pre></div>
 
@@ -1667,7 +1667,7 @@ ruff<span class="w"> </span>format<span class="w"> </span>.<span class="w"> </sp
 <ul>
 <li>Follow PEP 8 guidelines</li>
 <li>Use Pydantic models for data structures</li>
-<li>Prefer enums for string choices (using our custom <code>StrEnum</code>)</li>
+<li>Prefer enums for string choices (using our custom <code>CaseInsensitiveStrEnum</code>)</li>
 <li>Implement DRY principles</li>
 <li>Use type hints throughout</li>
 </ul>
