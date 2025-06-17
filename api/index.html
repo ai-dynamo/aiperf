@@ -58204,7 +58204,9 @@ push messages, and requests and responses for verification in tests.</p>
 <span class="normal">102</span>
 <span class="normal">103</span>
 <span class="normal">104</span>
-<span class="normal">105</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span>
+<span class="normal">105</span>
+<span class="normal">106</span>
+<span class="normal">107</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">mock_zmq_communication</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">MagicMock</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Create a mock communication object for testing service communication.</span>
@@ -58241,11 +58243,13 @@ push messages, and requests and responses for verification in tests.</p>
 
     <span class="n">mock_comm</span><span class="o">.</span><span class="n">subscribe</span><span class="o">.</span><span class="n">side_effect</span> <span class="o">=</span> <span class="n">mock_subscribe</span>
 
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">mock_pull</span><span class="p">(</span><span class="n">topic</span><span class="p">:</span> <span class="n">Topic</span><span class="p">,</span> <span class="n">callback</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Message</span><span class="p">],</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">mock_register_pull_callback</span><span class="p">(</span>
+        <span class="n">message_type</span><span class="p">:</span> <span class="n">MessageType</span><span class="p">,</span> <span class="n">callback</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Message</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Mock implementation of pull that stores callbacks by topic.&quot;&quot;&quot;</span>
-        <span class="n">mock_comm</span><span class="o">.</span><span class="n">mock_data</span><span class="o">.</span><span class="n">pull_callbacks</span><span class="p">[</span><span class="n">topic</span><span class="p">]</span> <span class="o">=</span> <span class="n">callback</span>
+        <span class="n">mock_comm</span><span class="o">.</span><span class="n">mock_data</span><span class="o">.</span><span class="n">pull_callbacks</span><span class="p">[</span><span class="n">message_type</span><span class="p">]</span> <span class="o">=</span> <span class="n">callback</span>
 
-    <span class="n">mock_comm</span><span class="o">.</span><span class="n">pull</span><span class="o">.</span><span class="n">side_effect</span> <span class="o">=</span> <span class="n">mock_pull</span>
+    <span class="n">mock_comm</span><span class="o">.</span><span class="n">register_pull_callback</span><span class="o">.</span><span class="n">side_effect</span> <span class="o">=</span> <span class="n">mock_register_pull_callback</span>
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">mock_push</span><span class="p">(</span><span class="n">topic</span><span class="p">:</span> <span class="n">Topic</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">Message</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Mock implementation of push that stores messages by topic.&quot;&quot;&quot;</span>
