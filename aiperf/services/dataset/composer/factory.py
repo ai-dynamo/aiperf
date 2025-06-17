@@ -7,7 +7,6 @@ from aiperf.services.dataset.composer.base import BaseDatasetComposer
 from aiperf.services.dataset.composer.custom import CustomDatasetComposer
 from aiperf.services.dataset.composer.synthetic import SyntheticDatasetComposer
 from aiperf.services.dataset.config import DatasetConfig, PromptConfig
-from aiperf.services.dataset.dataset_manager import MockConfig  # TODO: remove
 from aiperf.services.dataset.enums import ComposerType
 
 logger = logging.getLogger(__name__)
@@ -37,7 +36,9 @@ class ComposerFactory:
 
     @classmethod
     def create_instance(
-        cls, composer_type: ComposerType, config: MockConfig
+        cls,
+        composer_type: ComposerType,
+        config: "MockConfig",  # noqa: F821 - TODO: replace with real config
     ) -> BaseDatasetComposer:
         """Create a dataset composer instance based on the specified type.
 

@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 import sys
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.dataset_models import Conversation
-from aiperf.common.enums import CustomDatasetType, DataTopic, MessageType, ServiceType
+from aiperf.common.enums import CustomDatasetType, MessageType, ServiceType, Topic
 from aiperf.common.exceptions import ServiceConfigurationError
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
@@ -31,6 +31,8 @@ from aiperf.services.dataset.enums import ComposerType
 ################################################################################
 # TODO: Temporary (remove when command config is ready)
 class MockConfig(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     filename: str | None = None
     tokenizer: Tokenizer | None = None
     custom_dataset_type: CustomDatasetType | None = None
@@ -68,7 +70,7 @@ class DatasetManager(BaseComponentService):
         self.logger.debug("Initializing dataset manager")
         await self.comms.register_request_handler(
             service_id=self.service_id,
-            topic=DataTopic.CONVERSATION,
+            topic=Topic.CONVERSATION_DATA,
             message_type=MessageType.CONVERSATION_REQUEST,
             handler=self._handle_conversation_request,
         )

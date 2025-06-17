@@ -95,7 +95,7 @@ class TestPromptGeneratorComprehensive:
         with patch.object(
             generator, "_generate_prompt", return_value="test prompt"
         ) as mock_gen:
-            result = generator.generate()
+            result = generator.generate(mean=100, stddev=20)
 
             mock_sample.assert_called_once_with(100, 20)
             mock_gen.assert_called_once_with(50)
@@ -108,7 +108,7 @@ class TestPromptGeneratorComprehensive:
         with patch.object(
             generator, "_generate_cached_prompt", return_value="cached prompt"
         ) as mock_cached:
-            result = generator.generate(hash_ids=[1, 2, 3])
+            result = generator.generate(mean=100, stddev=20, hash_ids=[1, 2, 3])
 
             mock_cached.assert_called_once_with(100, [1, 2, 3], 512)
             assert result == "cached prompt"
@@ -122,7 +122,7 @@ class TestPromptGeneratorComprehensive:
         with patch.object(
             generator, "_generate_prompt", return_value="normal prompt"
         ) as mock_gen:
-            result = generator.generate(hash_ids=[])
+            result = generator.generate(mean=100, stddev=20, hash_ids=[])
 
             # Empty list should be falsy, so should use normal generation
             mock_gen.assert_called_once_with(30)
@@ -486,6 +486,7 @@ class TestPromptGeneratorComprehensive:
         """Test integration with the mock tokenizer fixture."""
         config = PromptConfig(
             tokenizer=mock_tokenizer,
+            # TODO: remove
             mean=50,
             stddev=10,
             block_size=256,
@@ -495,7 +496,7 @@ class TestPromptGeneratorComprehensive:
         generator = PromptGenerator(config)
 
         # Test generate method
-        prompt = generator.generate()
+        prompt = generator.generate(mean=50, stddev=10)
         assert isinstance(prompt, str)
         assert len(prompt) > 0
 
@@ -580,7 +581,7 @@ class TestPromptGeneratorComprehensive:
         # Generate multiple prompts
         prompts = []
         for _ in range(10):
-            prompt = generator.generate()
+            prompt = generator.generate(mean=100, stddev=20)
             prompts.append(prompt)
 
         # All should be strings
