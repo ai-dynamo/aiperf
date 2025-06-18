@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.dataset_models import Conversation
-from aiperf.common.enums import CustomDatasetType, MessageType, ServiceType, Topic
+from aiperf.common.enums import CustomDatasetType, ServiceType
 from aiperf.common.exceptions import ServiceConfigurationError
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
@@ -68,12 +68,13 @@ class DatasetManager(BaseComponentService):
     async def _initialize(self) -> None:
         """Initialize dataset manager-specific components."""
         self.logger.debug("Initializing dataset manager")
-        await self.comms.register_request_handler(
-            service_id=self.service_id,
-            topic=Topic.CONVERSATION_DATA,
-            message_type=MessageType.CONVERSATION_REQUEST,
-            handler=self._handle_conversation_request,
-        )
+        # TODO: wait until Anthony's ZMQRouterRepClient is merged
+        # await self.comms.register_request_handler(
+        #    service_id=self.service_id,
+        #    topic=Topic.CONVERSATION_DATA,
+        #    message_type=MessageType.CONVERSATION_REQUEST,
+        #    handler=self._handle_conversation_request,
+        # )
 
     @on_start
     async def _start(self) -> None:
@@ -103,7 +104,6 @@ class DatasetManager(BaseComponentService):
         config = MockConfig()
         config.filename = "trace1.jsonl"
         config.tokenizer = Tokenizer.from_pretrained("gpt2")
-        config.num_conversations = 3
 
         if config.filename:
             composer_type = ComposerType.CUSTOM

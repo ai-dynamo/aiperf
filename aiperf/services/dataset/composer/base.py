@@ -18,7 +18,7 @@ class BaseDatasetComposer(ABC):
         self.config = config
         self.logger = logging.getLogger(__name__)
 
-        self.prompt_generator = PromptGenerator(config.prompt)
+        self.prompt_generator = PromptGenerator(config.prompt, config.tokenizer)
         self.image_generator = ImageGenerator(config.image)
         self.audio_generator = AudioGenerator(config.audio)
 

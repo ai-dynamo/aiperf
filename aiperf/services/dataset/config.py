@@ -19,12 +19,6 @@ class PrefixPromptConfig(BaseModel):
 
 
 class PromptConfig(BaseModel):
-    # TODO: any better workaround? (needed because pydantic cannot serialize Tokenizer class)
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    tokenizer: Tokenizer | None = Field(
-        default=None, description="Tokenizer to use for the prompt generation."
-    )
     batch_size: int = Field(
         default=1, description="Batch size of the prompt generation."
     )
@@ -98,10 +92,8 @@ class TurnConfig(BaseModel):
 
 
 class DatasetConfig(BaseModel):
-    filename: Path | None = Field(default=None, description="Filename of the dataset.")
-    custom_dataset_type: CustomDatasetType = Field(
-        default=CustomDatasetType.SINGLE_TURN, description="Type of the custom dataset."
-    )
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     num_conversations: int = Field(
         default=100, description="Number of total conversations (or sessions)."
     )
@@ -115,3 +107,10 @@ class DatasetConfig(BaseModel):
         default=AudioConfig(), description="Audio configuration."
     )
     turn: TurnConfig = Field(default=TurnConfig(), description="Turn configuration.")
+    tokenizer: Tokenizer | None = Field(
+        default=None, description="Tokenizer to in prompt generation."
+    )
+    filename: Path | None = Field(default=None, description="Filename of the dataset.")
+    custom_dataset_type: CustomDatasetType = Field(
+        default=CustomDatasetType.SINGLE_TURN, description="Type of the custom dataset."
+    )

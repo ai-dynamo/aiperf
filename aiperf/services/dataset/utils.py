@@ -46,7 +46,7 @@ def open_image(filename: str) -> Image:
     if img.format is None:
         raise RuntimeError(f"Failed to determine image format of '{filename}'.")
 
-    if img.format.upper() not in ImageFormat:
+    if img.format.upper() not in list(ImageFormat):
         raise RuntimeError(
             f"'{img.format}' is not one of the supported image formats: "
             f"{', '.join(ImageFormat)}"

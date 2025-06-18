@@ -11,6 +11,7 @@ from aiperf.common.exceptions import (
     GeneratorConfigurationError,
     GeneratorInitializationError,
 )
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.config import PromptConfig
 from aiperf.services.dataset.generator.base import BaseGenerator
@@ -32,13 +33,15 @@ class PromptGenerator(BaseGenerator):
     prompts that can be randomly selected.
     """
 
-    def __init__(self, config: PromptConfig):
+    def __init__(self, config: PromptConfig, tokenizer: Tokenizer):
         super().__init__()
-        self.config = config  # Type hint for better IDE support
-        self.tokenizer = config.tokenizer
+        self.config = config
+        self.tokenizer = tokenizer
         self._tokenized_corpus = None
         self._corpus_size = 0
         self._prefix_prompts: list[str] = []
+
+        # Cached prompts: block ID -> list of tokens
         self._cache: dict[int, list[int]] = {}
 
         # TODO: move this under initialize() method
@@ -129,19 +132,19 @@ class PromptGenerator(BaseGenerator):
     def _generate_cached_prompt(
         self,
         num_tokens: int,
-        prompt_hash_list: list[int],
+        hash_ids: list[int],
         block_size: int,
     ) -> str:
         """
         Generate a prompt containing exactly `num_tokens` by reusing previously generated prompts
-        stored in `_cache`. Each hash index in `prompt_hash_list` corresponds to a block of
+        stored in `_cache`. Each hash index in `hash_ids` corresponds to a block of
         `block_size` tokens. If a hash index is found in `_cache`, its stored prompt is reused.
         Otherwise, a new prompt is generated using `_generate_prompt()` and stored in `_cache`.
 
         Args:
             num_tokens: The number of tokens required in the prompt.
-            prompt_hash_list: A list of hash indices used for token reuse.
-            block_size: The number of tokens allocated per hash block (default 512).
+            hash_ids: A list of hash IDs to use for token reuse.
+            block_size: The number of tokens allocated per hash block.
 
         Returns:
             str: A synthetic prompt as a string.
@@ -150,29 +153,34 @@ class PromptGenerator(BaseGenerator):
             GeneratorConfigurationError: If the input parameters are not compatible.
         """
         final_prompt: list[int] = []
-        size_to_use = block_size
-        last_hash_length = num_tokens - ((len(prompt_hash_list) - 1) * block_size)
-        if last_hash_length <= 0 or block_size < last_hash_length:
+        current_block_size = block_size
+
+        # Sanity check the final block size
+        final_block_size = num_tokens - ((len(hash_ids) - 1) * block_size)
+        if final_block_size <= 0 or block_size < final_block_size:
             raise GeneratorConfigurationError(
-                f"Input_length: {num_tokens}, Hash_ids: {prompt_hash_list}, Block_size: {block_size} "
-                f"are not compatible. The final hash id length: {last_hash_length} must be greater "
-                f"than 0 and less than or equal to {block_size}."
+                f"Input length: {num_tokens}, Hash IDs: {hash_ids}, Block size: {block_size} "
+                f"are not compatible. The final hash block size: {final_block_size} must be "
+                f"greater than 0 and less than or equal to {block_size}."
             )
-        for index, hash_index in enumerate(prompt_hash_list):
-            if index == len(prompt_hash_list) - 1:
-                size_to_use = num_tokens - (index * block_size)
-            if hash_index not in self._cache:
+
+        for index, hash_id in enumerate(hash_ids):
+            # For the last hash ID, use the remaining tokens as the block size
+            if index == len(hash_ids) - 1:
+                current_block_size = final_block_size
+
+            if hash_id not in self._cache:
                 # To ensure that the prompt doesn't merge chunks, we pop the last token
                 # and insert the bos token at the beginning. Length is maintained and
                 # the prompt generates the expected number of tokens.
-                prompt_tokens = self._sample_tokens(size_to_use)
+                prompt_tokens: list[int] = self._sample_tokens(current_block_size)
                 prompt_tokens.pop(0)
                 prompt_tokens.insert(0, self.tokenizer.bos_token_id)
-                self._cache[hash_index] = prompt_tokens
-            final_prompt.extend(self._cache[hash_index])
-        prompt = self.tokenizer.decode(final_prompt, skip_special_tokens=False)
+                self._cache[hash_id] = prompt_tokens  # store to cache
 
-        return prompt
+            final_prompt.extend(self._cache[hash_id])
+
+        return self.tokenizer.decode(final_prompt, skip_special_tokens=False)
 
     def _sample_tokens(self, num_tokens: int) -> list[int]:
         """Generate a list of token IDs containing exactly `num_tokens` number of tokens

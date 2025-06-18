@@ -15,6 +15,12 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
     def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
         """Initializes the dataset loader based on the custom dataset type."""
+        if dataset_type == CustomDatasetType.NONE:
+            raise ValueError(
+                "Custom dataset type must be set to one of the following: "
+                f"{', '.join(t for t in CustomDatasetType if t != 'none')}"
+            )
+
         kwargs = {}
         if dataset_type == CustomDatasetType.TRACE:
             kwargs["prompt_generator"] = self.prompt_generator
