@@ -70,7 +70,7 @@ class BaseComponentService(BaseService):
                 self.process_command_message,
             )
         except Exception as e:
-            self._raise_service_error("Failed to subscribe to command topic", e)
+            raise self._service_error("Failed to subscribe to command topic") from e
 
         # TODO: Find a way to wait for the communication to be fully initialized
         # FIXME: This is a hack to ensure the communication is fully initialized
@@ -81,7 +81,7 @@ class BaseComponentService(BaseService):
             await self.register()
             await asyncio.sleep(0.5)
         except Exception as e:
-            self._raise_service_error("Failed to register service", e)
+            raise self._service_error("Failed to register service") from e
 
     @aiperf_task
     async def _heartbeat_task(self) -> None:
@@ -112,7 +112,7 @@ class BaseComponentService(BaseService):
                 message=heartbeat_message,
             )
         except Exception as e:
-            self._raise_service_error("Failed to send heartbeat", e)
+            raise self._service_error("Failed to send heartbeat") from e
 
     async def register(self) -> None:
         """Publish a registration request to the system controller.
@@ -131,7 +131,7 @@ class BaseComponentService(BaseService):
                 message=self.create_registration_message(),
             )
         except Exception as e:
-            self._raise_service_error("Failed to register service", e)
+            raise self._service_error("Failed to register service") from e
 
     async def process_command_message(self, message: CommandMessage) -> None:
         """Process a command message received from the controller.
