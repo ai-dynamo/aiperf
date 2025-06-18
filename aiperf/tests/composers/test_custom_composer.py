@@ -17,11 +17,6 @@ from aiperf.services.dataset.loader import (
     TraceDatasetLoader,
 )
 
-MOCK_TRACE_CONTENT = """{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
-{"timestamp": 10535, "input_length": 672, "output_length": 26, "hash_ids": [46, 47]}
-{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
-"""
-
 
 # Shared fixtures for all test classes
 @pytest.fixture
@@ -63,6 +58,17 @@ class TestInitialization:
         assert composer.config.custom_dataset_type == CustomDatasetType.SINGLE_TURN
 
 
+MOCK_TRACE_CONTENT = """{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
+{"timestamp": 10535, "input_length": 672, "output_length": 26, "hash_ids": [46, 47]}
+{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
+"""
+
+MOCK_SESSION_TRACE_CONTENT = """{"session_id": "123", "delay": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
+{"session_id": "456", "delay": 0, "input_length": 655, "output_length": 52, "hash_ids": [10, 11]}
+{"session_id": "123", "delay": 1000, "input_length": 672, "output_length": 26, "hash_ids": [46, 47]}
+"""
+
+
 class TestCoreFunctionality:
     """Test class for CustomDatasetComposer core functionality."""
 
@@ -91,14 +97,13 @@ class TestCoreFunctionality:
         composer = CustomDatasetComposer(trace_config)
         conversations = composer.create_dataset()
 
-        assert len(conversations) == 1
-        assert len(conversations[0].turns) == 3
-        assert isinstance(conversations[0], Conversation)
-        assert all(isinstance(turn, Turn) for turn in conversations[0].turns)
-        assert all(len(turn.text) == 1 for turn in conversations[0].turns)
+        assert len(conversations) == 3
+        assert all(isinstance(c, Conversation) for c in conversations)
+        assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
+        assert all(len(turn.text) == 1 for c in conversations for turn in c.turns)
 
     @patch("aiperf.services.dataset.composer.custom.utils.check_file_exists")
-    @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
+    @patch("builtins.open", mock_open(read_data=MOCK_SESSION_TRACE_CONTENT))
     def test_create_dataset_trace_multiple_sessions(
         self, mock_check_file, trace_config
     ):
@@ -106,11 +111,11 @@ class TestCoreFunctionality:
         composer = CustomDatasetComposer(trace_config)
         conversations = composer.create_dataset()
 
-        assert len(conversations) == 1
-        assert len(conversations[0].turns) == 3
-        assert isinstance(conversations[0], Conversation)
-        assert all(isinstance(turn, Turn) for turn in conversations[0].turns)
-        assert all(len(turn.text) == 1 for turn in conversations[0].turns)
+        assert len(conversations) == 2
+        assert conversations[0].session_id == "123"
+        assert conversations[1].session_id == "456"
+        assert len(conversations[0].turns) == 2
+        assert len(conversations[1].turns) == 1
 
 
 class TestErrorHandling:

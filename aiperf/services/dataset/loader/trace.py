@@ -19,12 +19,12 @@ class TraceDatasetLoader:
     and converts the data into a list of conversations for dataset manager.
 
     Example:
-    1. Fixed schedule version
+    1. Fixed schedule version (Each line is a distinct session. Multi-turn is NOT supported)
     ```json
     {"timestamp": 1000, "input_length": 300, "output_length": 40, "hash_ids": [123, 456]}
     ```
 
-    2. Session-based version
+    2. Session-based version (Doesn't support absolute timestamp, or fixed schedule)
     ```json
     {"session_id": "id-123-456", "delay": 1000, "input_length": 300, "output_length": 40}
     ```
@@ -41,12 +41,11 @@ class TraceDatasetLoader:
             A dictionary of session_id and list of trace data.
         """
         data: dict[str, list[TraceCustomData]] = defaultdict(list)
-        default_session_id = str(uuid.uuid4())
 
         with open(self.filename) as f:
             for line in f:
                 trace_data = TraceCustomData.model_validate_json(line)
-                session_id = trace_data.session_id or default_session_id
+                session_id = trace_data.session_id or str(uuid.uuid4())
                 data[session_id].append(trace_data)
 
         return data
