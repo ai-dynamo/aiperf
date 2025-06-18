@@ -17,3 +17,11 @@ class MockRecord:
     def __init__(self, request, responses):
         self.request = request
         self.responses = responses
+
+
+class MockMetric:
+    def __init__(self, values):
+        self._values = values
+
+    def values(self):
+        return self._values

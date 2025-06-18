@@ -395,6 +395,7 @@ class RequestPayloadType(CaseInsensitiveStrEnum):
     TENSORRTLLM = "tensorrtllm"
     VLLM = "vllm"
 
+
 class ResponsePayloadType(CaseInsensitiveStrEnum):
     """Response payload types.
 
@@ -447,6 +448,7 @@ class MetricTimeType(Enum):
     NANOSECONDS = 9
     MILLISECONDS = 3
     SECONDS = 0
+    NONE = "None"
 
 
 class MetricType(Enum):
