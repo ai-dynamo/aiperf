@@ -70,8 +70,8 @@ class ComposerFactory:
                 num_conversations=config.num_conversations,
                 prompt=PromptConfig(
                     tokenizer=config.tokenizer,
-                    mean=100,  # TODO: remove hardcoded values
-                    stddev=0,  # TODO: remove hardcoded values
+                    mean=config.prompt.mean,
+                    stddev=config.prompt.stddev,
                 ),
             )
             return composer_class(dataset_config)
