@@ -3,7 +3,7 @@
 
 import uuid
 
-from aiperf.common.dataset_models import Conversation, Image, Text, Turn
+from aiperf.common.dataset_models import Audio, Conversation, Image, Text, Turn
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.composer.base import BaseDatasetComposer
 from aiperf.services.dataset.config import DatasetConfig
@@ -77,8 +77,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             turn: The turn object to add the text payloads to.
             is_first: Whether the turn is the first turn in the conversation.
         """
+        text = Text(name="text")
         for _ in range(self.config.prompt.batch_size):
-            text = Text(name="text")
             prompt = self.prompt_generator.generate(
                 mean=self.config.prompt.mean,
                 stddev=self.config.prompt.stddev,
@@ -89,24 +89,28 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 prefix_prompt = self.prompt_generator.get_random_prefix_prompt()
                 prompt = f"{prefix_prompt} {prompt}"
 
-            text.content = prompt
-            turn.text.append(text)
+            text.content.append(prompt)
+        turn.text.append(text)
 
     def _generate_image_payloads(self, turn: Turn) -> None:
         """
         Generate synthetic images if the image width and height are specified.
         """
+        image = Image(name="image_url")
         for _ in range(self.config.image.batch_size):
-            image = Image(name="image_url")
-            image.content = self.image_generator.generate()
-            turn.image.append(image)
+            data = self.image_generator.generate()
+            image.content.append(data)
+        turn.image.append(image)
 
     def _generate_audio_payloads(self, turn: Turn) -> None:
         """
         Generate synthetic audios if the audio length is specified.
         """
+        audio = Audio(name="input_audio")
         for _ in range(self.config.audio.batch_size):
-            turn.audio.append(self.audio_generator.generate())
+            data = self.audio_generator.generate()
+            audio.content.append(data)
+        turn.audio.append(audio)
 
     @property
     def include_image(self) -> bool:

@@ -73,7 +73,7 @@ class TraceDatasetLoader:
                 turn = Turn(
                     timestamp=trace.timestamp,
                     delay=trace.delay,
-                    text=[Text(name="text", content=prompt)],
+                    text=[Text(name="text", content=[prompt])],
                 )
                 conversation.turns.append(turn)
             conversations.append(conversation)

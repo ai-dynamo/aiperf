@@ -5,27 +5,30 @@ from pydantic import BaseModel, Field
 
 
 class Text(BaseModel):
-    name: str = Field(default="text")
-    """Name of the text field."""
+    name: str = Field(default="text", description="Name of the text field.")
 
-    content: str = Field(default="")
-    """Content of the text field."""
+    content: list[str] = Field(
+        default=[],
+        description="List of text content. Supports batched text payload in a single turn.",
+    )
 
 
 class Image(BaseModel):
-    name: str = Field(default="image_url")
-    """Name of the image field."""
+    name: str = Field(default="image_url", description="Name of the image field.")
 
-    content: str = Field(default="")
-    """Content of the image field."""
+    content: list[str] = Field(
+        default=[],
+        description="List of image content. Supports batched image payload in a single turn.",
+    )
 
 
 class Audio(BaseModel):
-    name: str = Field(default="")
-    """Name of the audio field."""
+    name: str = Field(default="input_audio", description="Name of the audio field.")
 
-    content: str = Field(default="")
-    """Content of the audio field."""
+    content: list[str] = Field(
+        default=[],
+        description="List of audio content. Supports batched audio payload in a single turn.",
+    )
 
 
 class Turn(BaseModel):
