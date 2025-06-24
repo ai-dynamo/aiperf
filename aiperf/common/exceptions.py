@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from aiperf.common.enums import CaseInsensitiveStrEnum, ServiceType
 
 ################################################################################
 # Base Exceptions
@@ -26,58 +27,26 @@ class AIPerfMultiError(AIPerfError):
 ################################################################################
 
 
+class CommunicationErrorReason(CaseInsensitiveStrEnum):
+    CLIENT_NOT_FOUND = "client_not_found"
+    PUBLISH_ERROR = "publish_error"
+    SUBSCRIBE_ERROR = "subscribe_error"
+    REQUEST_ERROR = "request_error"
+    RESPONSE_ERROR = "response_error"
+    SHUTDOWN_ERROR = "shutdown_error"
+    INITIALIZATION_ERROR = "initialization_error"
+    NOT_INITIALIZED_ERROR = "not_initialized_error"
+    CLEANUP_ERROR = "cleanup_error"
+    PUSH_ERROR = "push_error"
+    PULL_ERROR = "pull_error"
+
+
 class CommunicationError(AIPerfError):
     """Base class for all communication exceptions."""
 
-
-class CommunicationNotInitializedError(CommunicationError):
-    """Exception raised when communication channels are not initialized."""
-
-
-class CommunicationInitializationError(CommunicationError):
-    """Exception raised when communication channels fail to initialize."""
-
-
-class CommunicationPublishError(CommunicationError):
-    """Exception raised when communication channels fail to publish a message."""
-
-
-class CommunicationShutdownError(CommunicationError):
-    """Exception raised when communication channels fail to shutdown."""
-
-
-class CommunicationSubscribeError(CommunicationError):
-    """Exception raised when communication channels fail to subscribe to a topic."""
-
-
-class CommunicationPullError(CommunicationError):
-    """Exception raised when communication channels fail to pull a message from
-    a topic."""
-
-
-class CommunicationPushError(CommunicationError):
-    """Exception raised when communication channels fail to push a message to
-    a topic."""
-
-
-class CommunicationRequestError(CommunicationError):
-    """Exception raised when communication channels fail to send a request."""
-
-
-class CommunicationResponseError(CommunicationError):
-    """Exception raised when communication channels fail to receive a response."""
-
-
-class CommunicationClientCreationError(CommunicationError):
-    """Exception raised when communication channels fail to create a client."""
-
-
-class CommunicationClientNotFoundError(CommunicationError):
-    """Exception raised when a communication client is not found."""
-
-
-class CommunicationCreateError(CommunicationError):
-    """Exception raised when communication channels fail to create a client."""
+    def __init__(self, reason: CommunicationErrorReason, message: str) -> None:
+        super().__init__(f"Communication Error {reason.name}: {message}")
+        self.reason = reason
 
 
 ################################################################################
@@ -126,48 +95,17 @@ class GeneratorConfigurationError(GeneratorError):
 class ServiceError(AIPerfError):
     """Base class for all exceptions raised by services."""
 
-    # TODO: possibly have the base exception class accept the service information
-    #       and add it to the pre-defined messages for each exception
-
-
-class ServiceInitializationError(ServiceError):
-    """Exception raised for service initialization errors."""
-
-
-class ServiceStartError(ServiceError):
-    """Exception raised for service start errors."""
-
-
-class ServiceStopError(ServiceError):
-    """Exception raised for service stop errors."""
-
-
-class ServiceCleanupError(ServiceError):
-    """Exception raised for service cleanup errors."""
-
-
-class ServiceMessageProcessingError(ServiceError):
-    """Exception raised for service message processing errors."""
-
-
-class ServiceRegistrationError(ServiceError):
-    """Exception raised for service registration errors."""
-
-
-class ServiceStatusError(ServiceError):
-    """Exception raised for service status errors."""
-
-
-class ServiceRunError(ServiceError):
-    """Exception raised for service run errors."""
-
-
-class ServiceConfigureError(ServiceError):
-    """Exception raised for service configure errors."""
-
-
-class ServiceHeartbeatError(ServiceError):
-    """Exception raised for service heartbeat errors."""
+    def __init__(
+        self,
+        message: str,
+        service_type: ServiceType,
+        service_id: str,
+    ) -> None:
+        super().__init__(
+            f"{message} for service of type {service_type} with id {service_id}"
+        )
+        self.service_type = service_type
+        self.service_id = service_id
 
 
 ################################################################################

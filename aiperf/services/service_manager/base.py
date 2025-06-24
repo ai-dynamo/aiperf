@@ -29,13 +29,18 @@ class BaseServiceManager(ABC):
         self.service_id_map: dict[str, ServiceRunInfo] = {}
 
     @abstractmethod
-    async def initialize_all_services(self) -> None:
-        """Initialize all required services."""
+    async def run_all_services(self) -> None:
+        """Run all required services."""
         pass
 
     @abstractmethod
-    async def stop_all_services(self) -> None:
-        """Stop all managed services."""
+    async def shutdown_all_services(self) -> None:
+        """Shutdown all managed services."""
+        pass
+
+    @abstractmethod
+    async def kill_all_services(self) -> None:
+        """Kill all managed services."""
         pass
 
     @abstractmethod
@@ -43,9 +48,4 @@ class BaseServiceManager(ABC):
         self, stop_event: asyncio.Event, timeout_seconds: int = 30
     ) -> None:
         """Wait for all required services to be registered."""
-        pass
-
-    @abstractmethod
-    async def wait_for_all_services_start(self) -> None:
-        """Wait for all required services to be started."""
         pass

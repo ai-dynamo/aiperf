@@ -1,9 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import Union
 
 from aiperf.common.enums import CaseInsensitiveStrEnum, MessageType, Topic
-from aiperf.common.exceptions import CommunicationClientNotFoundError
+from aiperf.common.exceptions import CommunicationError, CommunicationErrorReason
 
 
 class PubClientType(CaseInsensitiveStrEnum):
@@ -40,8 +39,9 @@ class PubClientType(CaseInsensitiveStrEnum):
             case Topic.COMMAND:
                 return cls.CONTROLLER
             case _:
-                raise CommunicationClientNotFoundError(
-                    f"No client type found for topic {topic}"
+                raise CommunicationError(
+                    CommunicationErrorReason.CLIENT_NOT_FOUND,
+                    f"No client type found for topic {topic}",
                 )
 
 
@@ -79,8 +79,9 @@ class SubClientType(CaseInsensitiveStrEnum):
             case Topic.COMMAND:
                 return cls.CONTROLLER
             case _:
-                raise CommunicationClientNotFoundError(
-                    f"No client type found for topic {topic}"
+                raise CommunicationError(
+                    CommunicationErrorReason.CLIENT_NOT_FOUND,
+                    f"No client type found for topic {topic}",
                 )
 
 
@@ -112,8 +113,9 @@ class PushClientType(CaseInsensitiveStrEnum):
             case Topic.INFERENCE_RESULTS:
                 return cls.INFERENCE_RESULTS
             case _:
-                raise CommunicationClientNotFoundError(
-                    f"No client type found for topic {topic}"
+                raise CommunicationError(
+                    CommunicationErrorReason.CLIENT_NOT_FOUND,
+                    f"No client type found for topic {topic}",
                 )
 
 
@@ -145,8 +147,9 @@ class PullClientType(CaseInsensitiveStrEnum):
             case MessageType.INFERENCE_RESULTS:
                 return cls.INFERENCE_RESULTS
             case _:
-                raise CommunicationClientNotFoundError(
-                    f"No client type found for message type {message_type}"
+                raise CommunicationError(
+                    CommunicationErrorReason.CLIENT_NOT_FOUND,
+                    f"No client type found for message type {message_type}",
                 )
 
 
@@ -172,8 +175,9 @@ class ReqClientType(CaseInsensitiveStrEnum):
             case Topic.CONVERSATION_DATA:
                 return cls.CONVERSATION_DATA
             case _:
-                raise CommunicationClientNotFoundError(
-                    f"No client type found for topic {topic}"
+                raise CommunicationError(
+                    CommunicationErrorReason.CLIENT_NOT_FOUND,
+                    f"No client type found for topic {topic}",
                 )
 
 
@@ -199,8 +203,9 @@ class RepClientType(CaseInsensitiveStrEnum):
             case Topic.CONVERSATION_DATA:
                 return cls.CONVERSATION_DATA
             case _:
-                raise CommunicationClientNotFoundError(
-                    f"No client type found for topic {topic}"
+                raise CommunicationError(
+                    CommunicationErrorReason.CLIENT_NOT_FOUND,
+                    f"No client type found for topic {topic}",
                 )
 
 
