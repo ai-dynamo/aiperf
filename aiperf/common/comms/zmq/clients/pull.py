@@ -51,7 +51,7 @@ class ZMQPullClient(BaseZMQClient):
         while not self.is_shutdown:
             try:
                 message_json = await self.socket.recv_string()
-                # logger.debug("Received message from pull socket: %s", message_json)
+                logger.debug("Received message from pull socket: %s", message_json)
                 _ = asyncio.create_task(self._process_message(message_json))
 
             except zmq.Again:

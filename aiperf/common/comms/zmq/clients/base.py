@@ -131,10 +131,11 @@ class BaseZMQClient(AIPerfTaskMixin):
                 )
                 self._socket.connect(self.address)
 
-            # In BaseZMQClient.initialize()
-            # Reduce timeouts to more reasonable values
-            self._socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 seconds
-            self._socket.setsockopt(zmq.SNDTIMEO, 5000)  # 5 seconds
+            # TODO: Make these easier to configure by an end user
+
+            # Use reasonable timeouts
+            self._socket.setsockopt(zmq.RCVTIMEO, 30000)  # 30 seconds
+            self._socket.setsockopt(zmq.SNDTIMEO, 30000)  # 30 seconds
 
             # Add performance-oriented socket options
             self._socket.setsockopt(zmq.TCP_KEEPALIVE, 1)
@@ -186,9 +187,9 @@ class BaseZMQClient(AIPerfTaskMixin):
         try:
             if self._socket:
                 self._socket.close()
-                # self.logger.debug(
-                #     "ZMQ %s socket closed (%s)", self.socket_type_name, self.client_id
-                # )
+                self.logger.debug(
+                    "ZMQ %s socket closed (%s)", self.socket_type_name, self.client_id
+                )
 
         except Exception as e:
             self.logger.error(

@@ -190,7 +190,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
             await self.run_hooks(AIPerfHook.ON_RUN)
 
         except asyncio.CancelledError:
-            # self.logger.debug("Service %s execution cancelled", self.service_type)
+            self.logger.debug("Service %s execution cancelled", self.service_type)
             return
 
         except AIPerfError:
@@ -260,7 +260,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
             _ = await self.set_state(ServiceState.RUNNING)
 
         except asyncio.CancelledError:
-            # self.logger.debug("Service %s execution cancelled", self.service_type)
+            self.logger.debug("Service %s execution cancelled", self.service_type)
             pass
 
         except Exception as e:
