@@ -42,7 +42,8 @@ class Turn(BaseModel):
         default=None, description="Timestamp of the turn in milliseconds."
     )
     delay: int | None = Field(
-        default=None, description="Delay of the turn in milliseconds."
+        default=None,
+        description="Amount of milliseconds to wait before sending the turn.",
     )
 
     text: list[Text] = Field(
