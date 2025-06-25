@@ -6,9 +6,7 @@
             "request": "launch",
             "cwd": "${workspaceFolder}",
             "module": "aiperf.cli",
-            "args": [
-                ""
-            ]
+            "args": []
         },
         {
             "name": "pytest",
@@ -16,9 +14,7 @@
             "request": "launch",
             "cwd": "${workspaceFolder}",
             "module": "pytest",
-            "args": [
-                ""
-            ]
+            "args": []
         }
     ],
     "version": "0.2.0"
