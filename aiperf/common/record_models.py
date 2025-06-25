@@ -7,7 +7,6 @@ import time
 from typing import Any
 
 from pydantic import BaseModel, Field, SerializeAsAny
-from pydantic.dataclasses import dataclass
 
 from aiperf.common.enums import CaseInsensitiveStrEnum
 
@@ -290,6 +289,19 @@ class RequestRecord(BaseModel):
             for i in range(len(self.responses))
         ]
         return f"RequestRecord({', '.join(lt)}, [{', '.join(tt)}])"
+
+
+class ResponseData(BaseModel):
+    """Base class for all response data."""
+
+    perf_ns: int = Field(description="The performance timestamp of the response.")
+    raw_text: list[str] = Field(description="The raw text of the response.")
+    parsed_text: list[str | None] = Field(
+        description="The parsed text of the response."
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="The metadata of the response."
+    )
 
 
 class Transaction(BaseModel):
