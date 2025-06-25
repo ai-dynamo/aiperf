@@ -17,7 +17,7 @@ class OutputPromptMetric(BaseMetric):
     header = "Output Prompt"
 
     def __init__(self):
-        self.metric: str = ""
+        self.metric: list[str] = []
 
     def update_value(
         self, record: Record | None = None, metrics: dict["BaseMetric"] | None = None
@@ -28,11 +28,13 @@ class OutputPromptMetric(BaseMetric):
         """
         # TODO: define the payload output prompt in a constants file once agreed upon
         self._check_record(record)
-        self.metric += [
-            response
-            for response in record.response.payload["output_prompt"]
+        output_prompts = [
+            response.payload["output_prompt"]
+            for response in record.responses
             if response is not None
         ]
+        joined_prompt = "".join(output_prompts)
+        self.metric.append(joined_prompt)
 
     def values(self) -> float:
         """

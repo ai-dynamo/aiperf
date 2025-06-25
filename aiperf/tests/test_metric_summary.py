@@ -13,9 +13,9 @@ def test_metric_summary_process_and_get_metrics():
 
     # Prepare records
     records = Records()
-    req = Transaction(timestamp=1, payload="request1")
-    resp1 = Transaction(timestamp=10, payload="payload1")
-    resp2 = Transaction(timestamp=20, payload="payload2")
+    req = Transaction(timestamp=1, payload={"input_prompt": "request1"})
+    resp1 = Transaction(timestamp=10, payload={"output_prompt": "payload1"})
+    resp2 = Transaction(timestamp=20, payload={"output_prompt": "payload2"})
     records.add_record(request=req, responses=[resp1, resp2])
 
     ms.process(records.records)

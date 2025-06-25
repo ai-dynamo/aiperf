@@ -21,7 +21,8 @@ class OutputTokenMetric(BaseMetric):
     header = "Output Token Count"
 
     def __init__(self):
-        self.metric: int = 0
+        self.metric: list[int] = []
+        self._tokenizer = Tokenizer()
 
     def update_value(
         self, record: Record | None = None, metrics: dict["BaseMetric"] | None = None
@@ -30,9 +31,14 @@ class OutputTokenMetric(BaseMetric):
         Calculate the output token count.
 
         """
-        self._check_record(record)
-        tokenized_output = Tokenizer.encode(metrics[OutputPromptMetric.tag].values())
-        self.metric = len(tokenized_output)
+        output_prompt_metric = metrics[OutputPromptMetric.tag].values()
+        print(f"Output prompts for tokenization: {output_prompt_metric}")
+        for prompt in output_prompt_metric:
+            if prompt is not None:
+                print(f"Tokenizing output prompt: {prompt}")
+                # Tokenize the output prompt and count the tokens
+                tokenized_output = self._tokenizer.encode(prompt)
+                self.metric.append(len(tokenized_output))
 
     def values(self) -> float:
         """
