@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from aiperf.common.comms.client_enums import ClientType, PubClientType, SubClientType
 from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import CommandType
+from aiperf.common.enums import CommandType, ServiceType
 from aiperf.common.hooks import on_run
 from aiperf.common.messages import CommandMessage
 from aiperf.common.service.base_service import BaseService
@@ -50,14 +50,16 @@ class BaseControllerService(BaseService):
     def create_command_message(
         self,
         command: CommandType,
-        target_service_id: str,
+        target_service_id: str | None,
         data: BaseModel | None = None,
+        target_service_type: ServiceType | None = None,
     ) -> CommandMessage:
         """Create a command message to be sent to a specific service.
 
         Args:
             command: The command to send
             target_service_id: The ID of the service to send the command to
+            target_service_type: The type of the service to send the command to
             data: Optional data to send with the command.
 
         Returns:
@@ -67,5 +69,6 @@ class BaseControllerService(BaseService):
             service_id=self.service_id,
             command=command,
             target_service_id=target_service_id,
+            target_service_type=target_service_type,
             data=data,
         )
