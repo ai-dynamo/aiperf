@@ -424,7 +424,7 @@ class ProfileProgressMessage(BaseServiceMessage):
         default=None, description="The end time of the profile run in nanoseconds"
     )
     total: int = Field(
-        ..., description="The total number of inference requests to be mad (if known)"
+        ..., description="The total number of inference requests to be made (if known)"
     )
     completed: int = Field(
         ..., description="The number of inference requests completed"
