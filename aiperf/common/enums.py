@@ -514,3 +514,25 @@ class MetricType(Enum):
     METRIC_OF_RECORDS = auto()
     METRIC_OF_METRICS = auto()
     METRIC_OF_BOTH = auto()
+
+
+################################################################################
+# SSE Enums
+################################################################################
+
+
+class SSEFieldType(CaseInsensitiveStrEnum):
+    """Field types in an SSE message."""
+
+    DATA = "data"
+    EVENT = "event"
+    ID = "id"
+    RETRY = "retry"
+    COMMENT = "comment"
+
+
+class SSEEventType(CaseInsensitiveStrEnum):
+    """Event types in an SSE message. Many of these are custom and not defined by the SSE spec."""
+
+    ERROR = "error"
+    LLM_METRICS = "llm_metrics"
