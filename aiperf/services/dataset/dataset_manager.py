@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.dataset_models import Conversation
-from aiperf.common.enums import CustomDatasetType, ServiceType
+from aiperf.common.enums import ComposerType, CustomDatasetType, ServiceType
 from aiperf.common.exceptions import ServiceConfigurationError
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
@@ -25,7 +25,6 @@ from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset.composer import ComposerFactory
 from aiperf.services.dataset.config import PromptConfig
-from aiperf.services.dataset.enums import ComposerType
 
 
 ################################################################################

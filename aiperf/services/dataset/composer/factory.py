@@ -3,11 +3,11 @@
 
 import logging
 
+from aiperf.common.enums import ComposerType
 from aiperf.services.dataset.composer.base import BaseDatasetComposer
 from aiperf.services.dataset.composer.custom import CustomDatasetComposer
 from aiperf.services.dataset.composer.synthetic import SyntheticDatasetComposer
 from aiperf.services.dataset.config import DatasetConfig, PromptConfig
-from aiperf.services.dataset.enums import ComposerType
 
 logger = logging.getLogger(__name__)
 

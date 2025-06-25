@@ -25,12 +25,18 @@ class TraceCustomData(BaseModel):
 
     type: Literal[CustomDatasetType.TRACE] = CustomDatasetType.TRACE
 
-    input_length: int = Field(..., description="The input length of the trace")
-    output_length: int = Field(..., description="The output length of the trace")
-    hash_ids: list[int] = Field(..., description="The hash ids of the trace")
-    timestamp: int | None = Field(None, description="The timestamp of the trace")
-    session_id: str | None = Field(None, description="The session id of the trace")
-    delay: int | None = Field(None, description="The delay of the trace")
+    input_length: int = Field(..., description="The input length of a request in trace")
+    output_length: int = Field(
+        ..., description="The output length of a request in trace"
+    )
+    hash_ids: list[int] = Field(..., description="The hash ids of a request in trace")
+    timestamp: int | None = Field(
+        None, description="The timestamp of a request in trace"
+    )
+    session_id: str | None = Field(
+        None, description="The session id of a request in trace"
+    )
+    delay: int | None = Field(None, description="The delay of a request in trace")
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "TraceCustomData":

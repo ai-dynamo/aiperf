@@ -33,5 +33,5 @@ class BaseDatasetComposer(ABC):
         ...
 
     @property
-    def add_prefix_prompt(self) -> bool:
+    def prefix_prompt_enabled(self) -> bool:
         return self.config.prompt.prefix_prompt.length > 0

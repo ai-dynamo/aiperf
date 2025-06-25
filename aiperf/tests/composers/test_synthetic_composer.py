@@ -175,6 +175,19 @@ class TestSyntheticDatasetComposer:
         assert composer.config.image.height_mean == 10
         assert composer.config.audio.length_mean == 2
 
+    def test_initialization_with_all_zero_mean(self, mock_tokenizer_cls):
+        """Test initialization with no generators enabled."""
+        config = DatasetConfig(
+            tokenizer=mock_tokenizer_cls.from_pretrained("gpt2"),
+            num_conversations=5,
+            prompt=PromptConfig(mean=0, stddev=0),
+            image=ImageConfig(width_mean=0, height_mean=0),
+            audio=AudioConfig(length_mean=0),
+        )
+
+        with pytest.raises(ValueError):
+            SyntheticDatasetComposer(config)
+
     # ============================================================================
     # Create Dataset Method Tests
     # ============================================================================

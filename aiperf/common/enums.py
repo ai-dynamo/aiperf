@@ -93,6 +93,16 @@ class Topic(CaseInsensitiveStrEnum):
 ################################################################################
 
 
+class ComposerType(CaseInsensitiveStrEnum):
+    """
+    The type of composer to use for the dataset.
+    """
+
+    SYNTHETIC = "synthetic"
+    CUSTOM = "custom"
+    PUBLIC_DATASET = "public_dataset"
+
+
 class CustomDatasetType(CaseInsensitiveStrEnum):
     """Defines the type of JSONL custom dataset from the user."""
 
@@ -408,6 +418,7 @@ class RequestPayloadType(CaseInsensitiveStrEnum):
 
     TENSORRTLLM = "tensorrtllm"
     VLLM = "vllm"
+
 
 class ResponsePayloadType(CaseInsensitiveStrEnum):
     """Response payload types.

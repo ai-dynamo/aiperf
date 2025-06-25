@@ -314,7 +314,6 @@ class ConversationResponseMessage(BaseServiceMessage):
         MessageType.CONVERSATION_RESPONSE
     )
 
-    conversation_id: str = Field(..., description="The session ID of the conversation")
     conversation: Conversation = Field(..., description="The conversation data")
 
 

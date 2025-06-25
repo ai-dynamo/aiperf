@@ -13,6 +13,17 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: DatasetConfig):
         super().__init__(config)
 
+        if (
+            not self.include_prompt
+            and not self.include_image
+            and not self.include_audio
+        ):
+            raise ValueError(
+                "All synthetic data are disabled. "
+                "Please enable at least one of prompt, image, or audio by "
+                "setting the mean to a positive value."
+            )
+
     def create_dataset(self) -> list[Conversation]:
         """Create a synthetic conversation dataset from the given configuration.
 
@@ -51,8 +62,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Turn: A dataset representation of a single turn.
         """
         turn = Turn()
-        self._generate_text_payloads(turn, is_first)
 
+        if self.include_prompt:
+            self._generate_text_payloads(turn, is_first)
         if self.include_image:
             self._generate_image_payloads(turn)
         if self.include_audio:
@@ -64,6 +76,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 self.config.turn.delay.mean,
                 self.config.turn.delay.stddev,
             )
+
+        if not turn.text and not turn.image and not turn.audio:
+            self.logger.warning("There w")
 
         return turn
 
@@ -84,7 +99,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 stddev=self.config.prompt.stddev,
             )
 
-            if self.add_prefix_prompt and is_first:
+            if self.prefix_prompt_enabled and is_first:
                 # TODO: Rename
                 prefix_prompt = self.prompt_generator.get_random_prefix_prompt()
                 prompt = f"{prefix_prompt} {prompt}"
@@ -111,6 +126,10 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             data = self.audio_generator.generate()
             audio.content.append(data)
         turn.audio.append(audio)
+
+    @property
+    def include_prompt(self) -> bool:
+        return self.config.prompt.mean > 0
 
     @property
     def include_image(self) -> bool:

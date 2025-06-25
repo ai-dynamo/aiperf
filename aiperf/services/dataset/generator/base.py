@@ -13,7 +13,7 @@ class BaseGenerator(ABC):
     """
 
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger(self.__class__.__name__)
 
     @abstractmethod
     def generate(self, *args, **kwargs) -> str:
