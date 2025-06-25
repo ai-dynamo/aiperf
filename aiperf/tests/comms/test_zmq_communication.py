@@ -21,9 +21,9 @@ class TestZMQCommunication:
     """Tests for the ZMQ communication class."""
 
     @pytest.fixture
-    def mock_config(self):
+    def mock_config(self, tmp_path):
         """Return a mock configuration for ZMQCommunication."""
-        return ZMQIPCConfig()
+        return ZMQIPCConfig(path=str(tmp_path))
 
     @pytest.fixture
     def zmq_communication(self, mock_config):
