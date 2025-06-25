@@ -61,16 +61,10 @@ class CommunicationBackend(CaseInsensitiveStrEnum):
     ZMQ_IPC = "zmq_ipc"
     """ZeroMQ backend using IPC sockets."""
 
-    ZMQ_INPROC = "zmq_inproc"
-    """ZeroMQ backend using in-process communication."""
-
 
 class Topic(CaseInsensitiveStrEnum):
     """Communication topics for the main messaging bus.
     Right now, there is some overlap between Topic and MessageType.
-
-    NOTE: If you add a new topic, you must also add handlers for it in the
-    ClientType enums so the system knows what type of client to use for that topic.
     """
 
     CREDIT_DROP = "credit_drop"
@@ -81,11 +75,18 @@ class Topic(CaseInsensitiveStrEnum):
     PROFILE_RESULTS = "profile_results"
     REGISTRATION = "registration"
     COMMAND = "command"
-    RESPONSE = "response"
+    COMMAND_RESPONSE = "command_response"
     STATUS = "status"
     HEARTBEAT = "heartbeat"
-    INFERENCE_RESULTS = "inference_results"
-    CONVERSATION_DATA = "conversation_data"
+    NOTIFICATION = "notification"
+    WORKER_HEALTH = "worker_health"
+
+
+class CommandResponseStatus(CaseInsensitiveStrEnum):
+    """Status of a command response."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
 
 
 ################################################################################
@@ -130,7 +131,7 @@ class MessageType(CaseInsensitiveStrEnum):
     """A message sent by the system controller to a component service to command it
     to do something."""
 
-    RESPONSE = "response"
+    COMMAND_RESPONSE = "command_response"
     """A message sent by a component service to the system controller to respond
     to a command."""
 
@@ -198,6 +199,18 @@ class MessageType(CaseInsensitiveStrEnum):
     PROFILE_ERROR = "profile_error"
     """A message containing an error from a profile run."""
 
+    NOTIFICATION = "notification"
+    """A message containing a notification from a service. This is used to notify other services of events."""
+
+    DATASET_TIMING_REQUEST = "dataset_timing_request"
+    """A message sent by a service to request timing information from a dataset."""
+
+    DATASET_TIMING_RESPONSE = "dataset_timing_response"
+    """A message sent by a service to respond to a dataset timing request."""
+
+    WORKER_HEALTH = "worker_health"
+    """A message sent by a worker to the worker manager to report its health."""
+
 
 ################################################################################
 # Command Enums
@@ -230,6 +243,18 @@ class CommandType(CaseInsensitiveStrEnum):
     PROCESS_RECORDS = "process_records"
     """A command sent to process records. This will process the records and return
     the services to their pre-record processing state."""
+
+
+################################################################################
+# Notification Enums
+################################################################################
+
+
+class NotificationType(CaseInsensitiveStrEnum):
+    """Types of notifications that can be sent to other services."""
+
+    DATASET_CONFIGURED = "dataset_configured"
+    """A notification sent to notify other services that the dataset has been configured."""
 
 
 ################################################################################
@@ -294,6 +319,15 @@ class ServiceType(CaseInsensitiveStrEnum):
     MULTI_WORKER_PROCESS = "multi_worker_process"
     WORKER = "worker"
     TEST = "test_service"
+    ZMQ_DEALER_ROUTER_PROXY = "zmq_dealer_router_proxy"
+    ZMQ_XPUB_XSUB_PROXY = "zmq_xpub_xsub_proxy"
+
+
+class ZMQProxyType(CaseInsensitiveStrEnum):
+    """Types of ZMQ proxys."""
+
+    DEALER_ROUTER = "dealer_router"
+    XPUB_XSUB = "xpub_xsub"
 
 
 class ServiceRegistrationStatus(CaseInsensitiveStrEnum):
@@ -489,3 +523,124 @@ class MetricType(Enum):
     METRIC_OF_RECORDS = auto()
     METRIC_OF_METRICS = auto()
     METRIC_OF_BOTH = auto()
+
+
+################################################################################
+# SSE Enums
+################################################################################
+
+
+class SSEFieldType(CaseInsensitiveStrEnum):
+    """Field types in an SSE message."""
+
+    DATA = "data"
+    EVENT = "event"
+    ID = "id"
+    RETRY = "retry"
+    COMMENT = "comment"
+
+
+class SSEEventType(CaseInsensitiveStrEnum):
+    """Event types in an SSE message. Many of these are custom and not defined by the SSE spec."""
+
+    ERROR = "error"
+    LLM_METRICS = "llm_metrics"
+
+
+################################################################################
+# Progress Enums
+################################################################################
+
+
+class ProfileCompletionTrigger(CaseInsensitiveStrEnum):
+    """Determines how the profile completion is determined in order to know how to track the progress."""
+
+    REQUEST_COUNT = "request_count"
+    """The profile will run for a fixed number of requests."""
+
+    TIME_BASED = "time_based"
+    """The profile will run for a fixed amount of time."""
+
+    STABILIZATION_BASED = "stabilization_based"
+    """The profile will run until the metrics stabilize. TDB"""
+
+    GOODPUT_THRESHOLD = "goodput_threshold"
+    """The profile will run until the goodput threshold is met. TDB"""
+
+    CUSTOM = "custom"  # TBD
+    """User defined trigger. TBD"""
+
+
+class SweepCompletionTrigger(CaseInsensitiveStrEnum):
+    """Determines how the sweep completion is determined in order to know how to track the progress."""
+
+    COMPLETED_PROFILES = "completed_profiles"
+    """The sweep will run until all profiles are completed."""
+
+    STABILIZATION_BASED = "stabilization_based"
+    """The sweep will run until the metrics stabilize. TDB"""
+
+    GOODPUT_THRESHOLD = "goodput_threshold"
+    """The sweep will run until the goodput threshold is met. TDB"""
+
+    CUSTOM = "custom"  # TBD
+    """User defined trigger. TBD"""
+
+
+class SweepParamOrder(CaseInsensitiveStrEnum):
+    """Determines the order in which the sweep parameters are tested."""
+
+    ASCENDING = "ascending"
+    """The parameters are tested in ascending order."""
+
+    DESCENDING = "descending"
+    """The parameters are tested in descending order."""
+
+    RANDOM = "random"
+    """The parameters are tested in random order. TBD"""
+
+    CUSTOM = "custom"  # TBD
+    """User defined order. TBD"""
+
+
+class SweepMultiParamOrder(CaseInsensitiveStrEnum):
+    """Determines the order in which the sweep parameters are tested for a multi-parameter sweep.
+    This is only applicable for multi-parameter sweeps."""
+
+    DEPTH_FIRST = "depth_first"
+    """The parameters are tested in depth-first order."""
+
+    BREADTH_FIRST = "breadth_first"
+    """The parameters are tested in breadth-first order."""
+
+    RANDOM = "random"
+    """The parameters are tested in random order. TBD"""
+
+    CUSTOM = "custom"  # TBD
+    """User defined order. TBD"""
+
+
+class BenchmarkSuiteCompletionTrigger(CaseInsensitiveStrEnum):
+    """Determines how the suite completion is determined in order to know how to track the progress."""
+
+    UNKNOWN = "unknown"
+    COMPLETED_SWEEPS = "completed_sweeps"
+    COMPLETED_PROFILES = "completed_profiles"
+    STABILIZATION_BASED = "stabilization_based"
+    CUSTOM = "custom"  # TBD
+
+
+class BenchmarkSuiteType(CaseInsensitiveStrEnum):
+    """Determines the type of suite to know how to track the progress."""
+
+    SINGLE_PROFILE = "single_profile"
+    """An suite with a single profile run."""
+
+    MULTI_PROFILE = "multi_profile"
+    """An suite with multiple profile runs. As opposed to a sweep, more than one parameter can be varied."""
+
+    SINGLE_SWEEP = "single_sweep"
+    """An suite with a single sweep over one or more varying parameters."""
+
+    MULTI_SWEEP = "multi_sweep"
+    """An suite with multiple sweep runs over multiple varying parameters."""
