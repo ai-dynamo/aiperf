@@ -4,11 +4,14 @@
 import uuid
 
 from aiperf.common.dataset_models import Audio, Conversation, Image, Text, Turn
+from aiperf.common.enums import ComposerType
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.composer.base import BaseDatasetComposer
+from aiperf.services.dataset.composer.factory import ComposerFactory
 from aiperf.services.dataset.config import DatasetConfig
 
 
+@ComposerFactory.register(ComposerType.SYNTHETIC)
 class SyntheticDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: DatasetConfig):
         super().__init__(config)
@@ -64,11 +67,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn = Turn()
 
         if self.include_prompt:
-            self._generate_text_payloads(turn, is_first)
+            turn.text.append(self._generate_text_payloads(is_first))
         if self.include_image:
-            self._generate_image_payloads(turn)
+            turn.image.append(self._generate_image_payloads())
         if self.include_audio:
-            self._generate_audio_payloads(turn)
+            turn.audio.append(self._generate_audio_payloads())
 
         # Add randomized delays between each turn. Skip if first turn.
         if not is_first:
@@ -82,15 +85,17 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         return turn
 
-    def _generate_text_payloads(self, turn: Turn, is_first: bool) -> None:
+    def _generate_text_payloads(self, is_first: bool) -> Text:
         """Generate synthetic text payloads.
 
         If the turn is the first turn in the conversation, it could add a prefix prompt
         to the prompt.
 
         Args:
-            turn: The turn object to add the text payloads to.
             is_first: Whether the turn is the first turn in the conversation.
+
+        Returns:
+            Text: A text payload object.
         """
         text = Text(name="text")
         for _ in range(self.config.prompt.batch_size):
@@ -105,27 +110,33 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 prompt = f"{prefix_prompt} {prompt}"
 
             text.content.append(prompt)
-        turn.text.append(text)
+        return text
 
-    def _generate_image_payloads(self, turn: Turn) -> None:
+    def _generate_image_payloads(self) -> Image:
         """
         Generate synthetic images if the image width and height are specified.
+
+        Returns:
+            Image: An image payload object.
         """
         image = Image(name="image_url")
         for _ in range(self.config.image.batch_size):
             data = self.image_generator.generate()
             image.content.append(data)
-        turn.image.append(image)
+        return image
 
-    def _generate_audio_payloads(self, turn: Turn) -> None:
+    def _generate_audio_payloads(self) -> Audio:
         """
         Generate synthetic audios if the audio length is specified.
+
+        Returns:
+            Audio: An audio payload object.
         """
         audio = Audio(name="input_audio")
         for _ in range(self.config.audio.batch_size):
             data = self.audio_generator.generate()
             audio.content.append(data)
-        turn.audio.append(audio)
+        return audio
 
     @property
     def include_prompt(self) -> bool:

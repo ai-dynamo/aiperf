@@ -24,7 +24,7 @@ from aiperf.common.messages import (
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset.composer import ComposerFactory
-from aiperf.services.dataset.config import PromptConfig
+from aiperf.services.dataset.config import DatasetConfig, PromptConfig
 
 
 ################################################################################
@@ -111,7 +111,15 @@ class DatasetManager(BaseComponentService):
             composer_type = ComposerType.SYNTHETIC
             config.custom_dataset_type = CustomDatasetType.NONE  # default
 
-        composer = ComposerFactory.create_instance(composer_type, config)
+        # TODO: update once we integrate with command config
+        dataset_config = DatasetConfig(
+            filename=config.filename,
+            tokenizer=config.tokenizer,
+            custom_dataset_type=config.custom_dataset_type,
+            prompt=PromptConfig(mean=10, stddev=2),
+        )
+
+        composer = ComposerFactory.create_instance(composer_type, config=dataset_config)
         conversations = composer.create_dataset()
         self.dataset = {conv.session_id: conv for conv in conversations}
 

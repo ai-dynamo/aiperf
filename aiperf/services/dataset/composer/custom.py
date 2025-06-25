@@ -2,13 +2,15 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.dataset_models import Conversation
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import ComposerType, CustomDatasetType
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.composer.base import BaseDatasetComposer
+from aiperf.services.dataset.composer.factory import ComposerFactory
 from aiperf.services.dataset.config import DatasetConfig
 from aiperf.services.dataset.loader.factory import CustomDatasetFactory
 
 
+@ComposerFactory.register(ComposerType.CUSTOM)
 class CustomDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: DatasetConfig):
         super().__init__(config)

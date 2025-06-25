@@ -398,10 +398,11 @@ class TestSyntheticDatasetComposer:
         mock_generate.return_value = "Generated text content"
 
         composer = SyntheticDatasetComposer(basic_config)
-        turn = Turn()
 
         # Test text payload generation
-        composer._generate_text_payloads(turn, is_first=True)
+        turn = Turn()
+        text = composer._generate_text_payloads(is_first=True)
+        turn.text.append(text)
 
         # Test correct number of text payloads based on batch_size
         assert len(turn.text) == 1  # batch_size = 1
@@ -424,10 +425,11 @@ class TestSyntheticDatasetComposer:
         mock_prefix.return_value = "Prefix prompt:"
 
         composer = SyntheticDatasetComposer(config_with_prefix_prompts)
-        turn = Turn()
 
         # Test prefix prompt is added to first turn
-        composer._generate_text_payloads(turn, is_first=True)
+        turn = Turn()
+        text = composer._generate_text_payloads(is_first=True)
+        turn.text.append(text)
 
         text_payload = turn.text[0]
         # Test prefix prompt format ("prefix prompt")
@@ -441,10 +443,11 @@ class TestSyntheticDatasetComposer:
         mock_generate.return_value = "User message"
 
         composer = SyntheticDatasetComposer(config_with_prefix_prompts)
-        turn = Turn()
 
         # Test no prefix prompt is added to subsequent turns
-        composer._generate_text_payloads(turn, is_first=False)
+        turn = Turn()
+        text = composer._generate_text_payloads(is_first=False)
+        turn.text.append(text)
 
         text_payload = turn.text[0]
         assert text_payload.content == ["User message"]  # No prefix
@@ -458,10 +461,11 @@ class TestSyntheticDatasetComposer:
         basic_config.prompt.batch_size = 3
 
         composer = SyntheticDatasetComposer(basic_config)
-        turn = Turn()
 
         # Test multiple text payloads are generated per turn
-        composer._generate_text_payloads(turn, is_first=True)
+        turn = Turn()
+        text = composer._generate_text_payloads(is_first=True)
+        turn.text.append(text)
 
         assert len(turn.text) == 1  # single text field per turn
         assert len(turn.text[0].content) == 3  # batch_size = 3
@@ -480,10 +484,11 @@ class TestSyntheticDatasetComposer:
         mock_generate.return_value = "fake_image_data"
 
         composer = SyntheticDatasetComposer(config_with_images)
-        turn = Turn()
 
         # Test image payload generation
-        composer._generate_image_payloads(turn)
+        turn = Turn()
+        image = composer._generate_image_payloads()
+        turn.image.append(image)
 
         # Test correct number of image payloads based on batch_size
         assert len(turn.image) == 1  # batch_size = 1
@@ -500,10 +505,11 @@ class TestSyntheticDatasetComposer:
         mock_generate.return_value = "fake_audio_data"
 
         composer = SyntheticDatasetComposer(config_with_audio)
-        turn = Turn()
 
         # Test audio payload generation
-        composer._generate_audio_payloads(turn)
+        turn = Turn()
+        audio = composer._generate_audio_payloads()
+        turn.audio.append(audio)
 
         # Test correct number of audio payloads based on batch_size
         assert len(turn.audio) == 1  # batch_size = 1
