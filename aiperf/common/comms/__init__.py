@@ -6,13 +6,11 @@ __all__ = [
     "BaseZMQCommunication",
     "ZMQTCPCommunication",
     "ZMQIPCCommunication",
-    "ZMQInprocCommunication",
 ]
 
 from aiperf.common.comms.base import BaseCommunication
 from aiperf.common.comms.zmq.zmq_comms import (
     BaseZMQCommunication,
-    ZMQInprocCommunication,
     ZMQIPCCommunication,
     ZMQTCPCommunication,
 )

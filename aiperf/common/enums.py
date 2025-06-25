@@ -61,9 +61,6 @@ class CommunicationBackend(CaseInsensitiveStrEnum):
     ZMQ_IPC = "zmq_ipc"
     """ZeroMQ backend using IPC sockets."""
 
-    ZMQ_INPROC = "zmq_inproc"
-    """ZeroMQ backend using in-process communication."""
-
 
 class Topic(CaseInsensitiveStrEnum):
     """Communication topics for the main messaging bus.
