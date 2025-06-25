@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import ComposerType, CustomDatasetType, ServiceType
-from aiperf.common.exceptions import ServiceConfigurationError
+from aiperf.common.exceptions import ServiceError
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
@@ -109,7 +109,7 @@ class DatasetManager(BaseComponentService):
             config.custom_dataset_type = CustomDatasetType.TRACE
         else:
             composer_type = ComposerType.SYNTHETIC
-            config.custom_dataset_type = CustomDatasetType.NONE  # default
+            config.custom_dataset_type = CustomDatasetType.SINGLE_TURN  # ignored
 
         # TODO: update once we integrate with command config
         dataset_config = DatasetConfig(
@@ -128,12 +128,16 @@ class DatasetManager(BaseComponentService):
     ) -> ConversationResponseMessage:
         """Handle a conversation request."""
         if not self.dataset:
-            raise ServiceConfigurationError(
-                "Dataset is empty and must be loaded before handling requests."
+            raise ServiceError(
+                "Dataset is empty and must be configured before handling requests.",
+                service_type=self.service_type,
+                service_id=self.service_id,
             )
         if message.conversation_id not in self.dataset:
-            raise ServiceConfigurationError(
-                "Conversation %s not found in dataset.", message.conversation_id
+            raise ServiceError(
+                f"Conversation {message.conversation_id} not found in dataset.",
+                service_type=self.service_type,
+                service_id=self.service_id,
             )
 
         self.logger.debug("Handling conversation request: %s", message)
