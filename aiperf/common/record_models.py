@@ -42,8 +42,6 @@ class ResultsRecord:
 class BaseClientConfig(BaseModel):
     """Base configuration options for all clients."""
 
-    ...
-
 
 class GenericHTTPClientConfig(BaseClientConfig):
     """Configuration options for a generic HTTP inference client."""
@@ -186,22 +184,6 @@ class SSEMessage(InferenceServerResponse):
         ]
 
 
-# TODO: I do not think this is being used currently.
-class SSEMessageStream(InferenceServerResponse):
-    """A stream of SSE messages from a complete inference API call."""
-
-    messages: list[SSEMessage] = Field(
-        default_factory=list,
-        description="All SSE messages received from the streaming response.",
-    )
-
-    def extract_data_content(self) -> list[str]:
-        """Extract the data content from all of the SSE messages."""
-        return [
-            data for message in self.messages for data in message.extract_data_content()
-        ]
-
-
 ################################################################################
 # Worker Internal Models
 ################################################################################
@@ -239,7 +221,7 @@ class RequestRecord(BaseModel):
     )
     status: int | None = Field(
         default=None,
-        description="The HTTPstatus code of the response.",
+        description="The HTTP status code of the response.",
     )
     # Note: we need to use SerializeAsAny to allow for generic subclass support
     responses: SerializeAsAny[

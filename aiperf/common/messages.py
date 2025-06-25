@@ -268,7 +268,7 @@ class CommandResponseMessage(BaseServiceMessage):
 
 class CreditDropMessage(BaseServiceMessage):
     """Message indicating that a credit has been dropped.
-    This message is sent by the timing manager to a workers to indicate that credit(s)
+    This message is sent by the timing manager to workers to indicate that credit(s)
     have been dropped.
     """
 
