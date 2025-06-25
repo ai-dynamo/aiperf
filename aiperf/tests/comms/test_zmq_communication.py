@@ -10,7 +10,7 @@ import pytest
 
 from aiperf.common.comms.client_enums import PubClientType, SubClientType
 from aiperf.common.comms.zmq import BaseZMQCommunication
-from aiperf.common.config import ZMQInprocConfig
+from aiperf.common.config import ZMQIPCConfig
 from aiperf.common.enums import ServiceState, ServiceType, Topic
 from aiperf.common.exceptions import CommunicationError, CommunicationErrorReason
 from aiperf.common.messages import Message, StatusMessage
@@ -23,7 +23,7 @@ class TestZMQCommunication:
     @pytest.fixture
     def mock_config(self):
         """Return a mock configuration for ZMQCommunication."""
-        return ZMQInprocConfig(name="test-client")
+        return ZMQIPCConfig()
 
     @pytest.fixture
     def zmq_communication(self, mock_config):

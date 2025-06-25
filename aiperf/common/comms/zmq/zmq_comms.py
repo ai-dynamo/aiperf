@@ -33,7 +33,6 @@ from aiperf.common.comms.zmq.clients import (
 )
 from aiperf.common.config import (
     BaseZMQCommunicationConfig,
-    ZMQInprocConfig,
     ZMQIPCConfig,
     ZMQTCPTransportConfig,
 )
@@ -723,18 +722,3 @@ class ZMQIPCCommunication(BaseZMQCommunication):
                             ipc_file,
                             e,
                         )
-
-
-@CommunicationFactory.register(CommunicationBackend.ZMQ_INPROC)
-class ZMQInprocCommunication(ZMQIPCCommunication):
-    """ZeroMQ-based implementation of the Communication interface using in-process
-    transport. Note that communications between workers is still done over IPC sockets,
-    which is why this class inherits from ZMQIPCCommunication."""
-
-    def __init__(self, config: ZMQInprocConfig | None = None) -> None:
-        """Initialize ZMQ in-process communication.
-
-        Args:
-            config: ZMQInprocConfig object with configuration parameters
-        """
-        super().__init__(config or ZMQInprocConfig())
