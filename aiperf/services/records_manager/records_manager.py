@@ -84,6 +84,12 @@ class RecordsManager(BaseComponentService):
         self.logger.debug(f"Configuring records manager with message: {message}")
         # TODO: Implement records manager configuration
 
+    def get_tokenizer(self, model: str) -> Tokenizer:
+        """Get the tokenizer for a given model."""
+        if model not in self.tokenizers:
+            self.tokenizers[model] = Tokenizer.from_pretrained(model)
+        return self.tokenizers[model]
+
     async def _on_inference_results_internal(
         self, message: InferenceResultsMessage
     ) -> None:
@@ -119,7 +125,7 @@ class RecordsManager(BaseComponentService):
 
             tokenizer = self.get_tokenizer(record.request["model"])
             total_tokens = 0
-            resp = self.extractor.extract_response_data(record)
+            resp = await self.extractor.extract_response_data(record)
             tokens = []
             for r in resp:
                 if r.parsed_text is not None:
