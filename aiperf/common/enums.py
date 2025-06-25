@@ -110,7 +110,6 @@ class CustomDatasetType(CaseInsensitiveStrEnum):
     MULTI_TURN = "multi_turn"
     RANDOM_POOL = "random_pool"
     TRACE = "trace"
-    NONE = "none"  # no custom dataset (default)
 
 
 class ImageFormat(CaseInsensitiveStrEnum):

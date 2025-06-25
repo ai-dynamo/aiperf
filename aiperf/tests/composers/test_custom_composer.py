@@ -121,20 +121,6 @@ class TestCoreFunctionality:
 class TestErrorHandling:
     """Test class for CustomDatasetComposer error handling scenarios."""
 
-    def test_invalid_dataset_factory_creation(self, basic_config):
-        """Test invalid dataset factory creation."""
-        composer = CustomDatasetComposer(basic_config)
-
-        with pytest.raises(ValueError):
-            composer._create_loader_instance(CustomDatasetType.NONE)
-
-    def test_create_loader_instance_invalid_dataset_type(self, basic_config):
-        """Test _create_loader_instance with unsupported dataset type."""
-        composer = CustomDatasetComposer(basic_config)
-
-        with pytest.raises(ValueError):
-            composer._create_loader_instance(CustomDatasetType.NONE)  # invalid type
-
     @patch("aiperf.services.dataset.composer.custom.utils.check_file_exists")
     @patch(
         "aiperf.services.dataset.composer.custom.CustomDatasetFactory.create_instance"

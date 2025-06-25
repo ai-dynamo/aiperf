@@ -15,22 +15,6 @@ class CustomDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: DatasetConfig):
         super().__init__(config)
 
-    def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
-        """Initializes the dataset loader based on the custom dataset type."""
-        if dataset_type == CustomDatasetType.NONE:
-            raise ValueError(
-                "Custom dataset type must be set to one of the following: "
-                f"{', '.join(t for t in CustomDatasetType if t != 'none')}"
-            )
-
-        kwargs = {}
-        if dataset_type == CustomDatasetType.TRACE:
-            kwargs["prompt_generator"] = self.prompt_generator
-
-        self.loader = CustomDatasetFactory.create_instance(
-            dataset_type, self.config.filename, **kwargs
-        )
-
     def create_dataset(self) -> list[Conversation]:
         """Create conversations from a file or directory.
 
@@ -44,3 +28,17 @@ class CustomDatasetComposer(BaseDatasetComposer):
         dataset = self.loader.load_dataset()
         conversations = self.loader.convert_to_conversations(dataset)
         return conversations
+
+    def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
+        """Initializes the dataset loader based on the custom dataset type.
+
+        Args:
+            dataset_type: The type of custom dataset to create.
+        """
+        kwargs = {}
+        if dataset_type == CustomDatasetType.TRACE:
+            kwargs["prompt_generator"] = self.prompt_generator
+
+        self.loader = CustomDatasetFactory.create_instance(
+            dataset_type, self.config.filename, **kwargs
+        )
