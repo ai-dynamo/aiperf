@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 from aiperf.common.enums import MetricTimeType
 from aiperf.common.exceptions import MetricTypeError
-from aiperf.services.records_manager.records import Record
+from aiperf.common.record_models import RequestRecord
 
 
 class BaseMetric(ABC):
@@ -86,7 +86,9 @@ class BaseMetric(ABC):
 
     @abstractmethod
     def update_value(
-        self, record: Record | None = None, metrics: dict["BaseMetric"] | None = None
+        self,
+        record: RequestRecord | None = None,
+        metrics: dict["BaseMetric"] | None = None,
     ) -> None:
         """
         Updates the metric value based on the provided record and dictionary of other metrics.
@@ -103,7 +105,7 @@ class BaseMetric(ABC):
         """
 
     @abstractmethod
-    def _check_record(self, record: Record) -> None:
+    def _check_record(self, record: RequestRecord) -> None:
         """
         Checks if the record is valid for metric calculation.
 
