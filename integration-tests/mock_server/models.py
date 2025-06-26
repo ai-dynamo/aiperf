@@ -11,11 +11,14 @@ from pydantic import BaseModel, Field
 class ConfigureMessage(BaseModel):
     """Configuration for the server."""
 
-    ttft_ms: int | None = Field(
+    ttft: int | None = Field(
         default=None, description="Time to first token in milliseconds"
     )
-    itl_ms: int | None = Field(
+    itl: int | None = Field(
         default=None, description="Inter-token latency in milliseconds"
+    )
+    tokenizer_models: list[str] | None = Field(
+        default=None, description="List of tokenizer models to load"
     )
 
 

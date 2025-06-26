@@ -12,16 +12,17 @@ dependencies = [
     "fastapi>=0.104.1",
     "uvicorn[standard]>=0.24.0",
     "transformers>=4.35.0",
+    "torch>=2.1.0",
     "pydantic>=2.5.0",
-    "pydantic-settings>=2.10.1",
-    "typer"
+    "python-dotenv>=1.0.0",
+    "cyclopts>=3.0.0"
 ]
 readme = "README.md"
 requires-python = ">=3.10"
-packages = [{ include = "mock_server" }]
+packages = [{ include = "server" }]
 
 [tool.hatch.build.targets.wheel]
-packages = ["mock_server"]
+packages = ["server"]
 
 # CLI Entrypoint
 [project.scripts]
@@ -31,6 +32,7 @@ aiperf-mock-server = "mock_server.main:app"
 dev = [
     "pytest>=7.4.3",
     "pytest-asyncio>=0.21.1",
+    "httpx>=0.25.2",
     "ruff>=0.0.0",
     "pre-commit>=4.2.0",
 ]

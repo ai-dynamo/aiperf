@@ -3,7 +3,9 @@
 """FastAPI server for integration testing with configurable latencies."""
 
 import asyncio
+import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -36,6 +38,8 @@ server_config: MockServerConfig = MockServerConfig()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Initialize tokenizers and other startup tasks."""
+    logger.info("Server configuration: %s", server_config.model_dump())
+
     if server_config.tokenizer_models:
         logger.info(f"Pre-loading tokenizer models: {server_config.tokenizer_models}")
         tokenizer_service.load_tokenizers(server_config.tokenizer_models)
@@ -57,6 +61,17 @@ def set_server_config(config: MockServerConfig) -> None:
     global server_config
     server_config = config
 
+    # TODO: This is a hack to get the config into the environment variables
+    # in order to run multiple worker instances
+    os.environ["MOCK_SERVER_TOKENIZER_MODELS"] = json.dumps(config.tokenizer_models)
+    os.environ["MOCK_SERVER_TTFT"] = str(config.ttft)
+    os.environ["MOCK_SERVER_ITL"] = str(config.itl)
+    os.environ["MOCK_SERVER_LOG_LEVEL"] = config.log_level
+    os.environ["MOCK_SERVER_HOST"] = config.host
+    os.environ["MOCK_SERVER_PORT"] = str(config.port)
+    os.environ["MOCK_SERVER_WORKERS"] = str(config.workers)
+    os.environ["MOCK_SERVER_ACCESS_LOGS"] = str(config.access_logs)
+
 
 def extract_user_prompt(messages: list[ChatMessage]) -> str:
     """Extract the user prompt from chat messages."""
@@ -77,17 +92,18 @@ async def generate_streaming_response(
     previous_time = start_time
     # Send tokens one by one
     for i, token in enumerate(input_tokens):
-        if i == 0 and server_config.ttft_ms > 0:
+        if i == 0:
             # Wait for time to first token with precise timing
-            target_time = start_time + (server_config.ttft_ms / 1000.0)
-            await asyncio.sleep(target_time - perf_counter())
+            target_time = start_time + (server_config.ttft / 1000.0)
+        if i > 0:
+            target_time = previous_time + (server_config.itl / 1000.0)
 
-        if i > 0 and server_config.itl_ms > 0:
-            target_time = previous_time + (server_config.itl_ms / 1000.0)
-            await asyncio.sleep(target_time - perf_counter())
+        to_sleep = target_time - perf_counter()
+        if to_sleep > 0:
+            await asyncio.sleep(to_sleep)
 
         # Update previous time to calculate next inter-token latency
-        previous_time = perf_counter()
+        previous_time = target_time
 
         # Create streaming response chunk
         chunk = ChatCompletionStreamResponse(
@@ -98,38 +114,28 @@ async def generate_streaming_response(
                 ChatCompletionStreamChoice(
                     index=0,
                     delta={"content": token},
-                    finish_reason=None,
+                    finish_reason="stop" if i == len(input_tokens) - 1 else None,
                 )
             ],
         )
 
         yield f"data: {chunk.model_dump_json()}\n\n"
 
-    # Send final chunk with finish_reason
-    final_chunk = ChatCompletionStreamResponse(
-        id=request_id,
-        created=created_timestamp,
-        model=request.model,
-        choices=[
-            ChatCompletionStreamChoice(
-                index=0,
-                delta={},
-                finish_reason="stop",
-            )
-        ],
-    )
-
-    yield f"data: {final_chunk.model_dump_json()}\n\n"
     yield "data: [DONE]\n\n"
 
 
 @app.post("/configure")
 async def configure(request: ConfigureMessage):
     """Configure the server."""
-    if request.itl_ms is not None:
-        server_config.itl_ms = request.itl_ms
-    if request.ttft_ms is not None:
-        server_config.ttft_ms = request.ttft_ms
+    if request.itl is not None:
+        server_config.itl = request.itl
+    if request.ttft is not None:
+        server_config.ttft = request.ttft
+    if request.tokenizer_models is not None:
+        logger.info(f"Loading tokenizer models: {request.tokenizer_models}")
+        tokenizer_service.load_tokenizers(request.tokenizer_models)
+        logger.info("Tokenizer models loaded successfully")
+
     return {"status": "configured", "config": server_config.model_dump()}
 
 
@@ -174,8 +180,8 @@ async def chat_completions(request: ChatCompletionRequest):
         # Return non-streaming response
 
         # Simulate processing time for all tokens with precise timing
-        ttft_time = start_time + (server_config.ttft_ms / 1000.0)
-        token_processing_time = (len(tokens) - 1) * server_config.itl_ms / 1000.0
+        ttft_time = start_time + (server_config.ttft / 1000.0)
+        token_processing_time = (len(tokens) - 1) * server_config.itl / 1000.0
 
         target_time = ttft_time + token_processing_time
 
