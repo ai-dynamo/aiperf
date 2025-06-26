@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.tests.comms.mock_zmq import (
     mock_zmq_communication,  # noqa: F401 : used as a fixture
 )
@@ -52,37 +53,49 @@ def mock_communication(mock_zmq_communication: MagicMock) -> MagicMock:  # noqa:
 
 
 @pytest.fixture
-def mock_hf_tokenizer() -> Generator[MagicMock, None, None]:
-    """Mock Hugging Face tokenizer to avoid HTTP requests during testing.
+def mock_tokenizer_cls() -> type[Tokenizer]:
+    """Mock our Tokenizer class to avoid HTTP requests during testing.
 
     This fixture patches AutoTokenizer.from_pretrained and provides a realistic
     mock tokenizer that can encode, decode, and handle special tokens.
 
     Usage in tests:
-        def test_something(mock_hf_tokenizer):
-            tokenizer = Tokenizer.from_pretrained("any-model-name")
+        def test_something(mock_tokenizer_cls):
+            tokenizer = mock_tokenizer_cls.from_pretrained("any-model-name")
             # tokenizer is now mocked and won't make HTTP requests
     """
-    # Create a mock tokenizer with realistic behavior
-    mock_tokenizer = MagicMock()
-    mock_tokenizer.bos_token_id = 1
 
-    def mock_call(text, **kwargs):
-        base_tokens = list(range(10, 10 + len(text.split())))
-        return {"input_ids": base_tokens}
+    class MockTokenizer(Tokenizer):
+        """A thin mocked wrapper around AIPerf Tokenizer for testing."""
 
-    def mock_encode(text, **kwargs):
-        return mock_call(text, **kwargs)["input_ids"]
+        def __init__(self, mock_tokenizer: MagicMock):
+            super().__init__()
+            self._tokenizer = mock_tokenizer
 
-    def mock_decode(token_ids, **kwargs):
-        return " ".join([str(t) for t in token_ids])
+            # Create MagicMock methods that you can assert on
+            self.encode = MagicMock(side_effect=self._mock_encode)
+            self.decode = MagicMock(side_effect=self._mock_decode)
 
-    mock_tokenizer.side_effect = mock_call
-    mock_tokenizer.encode = mock_encode
-    mock_tokenizer.decode = mock_decode
+        @classmethod
+        def from_pretrained(
+            cls, name: str, trust_remote_code: bool = False, revision: str = "main"
+        ):
+            # Create a mock tokenizer around HF AutoTokenizer
+            mock_tokenizer = MagicMock()
+            mock_tokenizer.bos_token_id = 1
+            return cls(mock_tokenizer)
 
-    with patch(
-        "aiperf.common.tokenizer.AutoTokenizer.from_pretrained",
-        return_value=mock_tokenizer,
-    ):
-        yield mock_tokenizer
+        def __call__(self, text, **kwargs):
+            return self._mock_call(text, **kwargs)
+
+        def _mock_call(self, text, **kwargs):
+            base_tokens = list(range(10, 10 + len(text.split())))
+            return {"input_ids": base_tokens}
+
+        def _mock_encode(self, text, **kwargs):
+            return self._mock_call(text, **kwargs)["input_ids"]
+
+        def _mock_decode(self, token_ids, **kwargs):
+            return " ".join([f"token_{t}" for t in token_ids])
+
+    return MockTokenizer

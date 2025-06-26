@@ -9,6 +9,9 @@ import soundfile as sf
 
 from aiperf.common.enums import AudioFormat
 from aiperf.common.exceptions import GeneratorConfigurationError
+from aiperf.services.dataset import utils
+from aiperf.services.dataset.config import AudioConfig
+from aiperf.services.dataset.generator.base import BaseGenerator
 
 # TODO: Needs ConfigAudio
 # from genai_perf.config.input.config_input import ConfigAudio
@@ -36,7 +39,7 @@ SUPPORTED_BIT_DEPTHS = {
 }
 
 
-class AudioGenerator:
+class AudioGenerator(BaseGenerator):
     """
     A class for generating synthetic audio data.
 
@@ -46,37 +49,13 @@ class AudioGenerator:
     parameters to ensure compatibility with chosen formats.
     """
 
-    @staticmethod
-    def _sample_positive_normal(
-        mean: float, stddev: float, min_value: float = 0.1
-    ) -> float:
-        """
-        Sample from a normal distribution ensuring positive values without distorting the distribution.
-        Uses rejection sampling to maintain the proper shape of the distribution.
+    def __init__(self, config: AudioConfig):
+        super().__init__()
+        self.config = config  # Type hint for better IDE support
 
-        Args:
-            mean: Mean value for the normal distribution
-            stddev: Standard deviation for the normal distribution
-            min_value: Minimum acceptable value
-
-        Returns:
-            A positive sample from the normal distribution
-
-        Raises:
-            GeneratorConfigurationError: If mean is less than min_value
-        """
-        if mean < min_value:
-            raise GeneratorConfigurationError(
-                f"Mean value ({mean}) must be greater than min_value ({min_value})"
-            )
-
-        while True:
-            sample = np.random.normal(mean, stddev)
-            if sample >= min_value:
-                return sample
-
-    @staticmethod
-    def _validate_sampling_rate(sampling_rate: int, audio_format: AudioFormat) -> None:
+    def _validate_sampling_rate(
+        self, sampling_rate: int, audio_format: AudioFormat
+    ) -> None:
         """
         Validate sampling rate for the given output format.
 
@@ -97,8 +76,7 @@ class AudioGenerator:
                 f"Got {sampling_rate} Hz. Please choose a supported rate from the list."
             )
 
-    @staticmethod
-    def _validate_bit_depth(bit_depth: int) -> None:
+    def _validate_bit_depth(self, bit_depth: int) -> None:
         """
         Validate bit depth is supported.
 
@@ -115,16 +93,8 @@ class AudioGenerator:
                 f"Supported bit depths are: {supported_depths}"
             )
 
-    # TODO: uncomment when ConfigAudio is implemented
-    # @staticmethod
-    # def create_synthetic_audio(config: ConfigAudio) -> str:
-    @staticmethod
-    def create_synthetic_audio(config) -> str:
-        """
-        Generate audio data with specified parameters.
-
-        Args:
-            config: ConfigAudio object containing audio generation parameters
+    def generate(self, *args, **kwargs) -> str:
+        """Generate audio data with specified parameters.
 
         Returns:
             Data URI containing base64-encoded audio data with format specification
@@ -137,25 +107,25 @@ class AudioGenerator:
                 - bit depth is not supported (must be 8, 16, 24, or 32)
                 - audio format is not supported (must be 'wav' or 'mp3')
         """
-        if config.num_channels not in (1, 2):
+        if self.config.num_channels not in (1, 2):
             raise GeneratorConfigurationError(
                 "Only mono (1) and stereo (2) channels are supported"
             )
 
         # Sample audio length (in seconds) using rejection sampling
-        audio_length = AudioGenerator._sample_positive_normal(
-            config.length.mean, config.length.stddev
+        audio_length = utils.sample_normal(
+            self.config.length_mean, self.config.length_stddev, lower=0.01
         )
 
         # Randomly select sampling rate and bit depth
         sampling_rate = int(
-            np.random.choice(config.sample_rates) * 1000
+            np.random.choice(self.config.sample_rates) * 1000
         )  # Convert kHz to Hz
-        bit_depth = np.random.choice(config.depths)
+        bit_depth = np.random.choice(self.config.depths)
 
         # Validate sampling rate and bit depth
-        AudioGenerator._validate_sampling_rate(sampling_rate, config.format)
-        AudioGenerator._validate_bit_depth(bit_depth)
+        self._validate_sampling_rate(sampling_rate, self.config.format)
+        self._validate_bit_depth(bit_depth)
 
         # Generate synthetic audio data (gaussian noise)
         num_samples = int(audio_length * sampling_rate)
@@ -163,8 +133,8 @@ class AudioGenerator:
             0,
             0.3,
             (
-                (num_samples, config.num_channels)
-                if config.num_channels > 1
+                (num_samples, self.config.num_channels)
+                if self.config.num_channels > 1
                 else num_samples
             ),
         )
@@ -181,13 +151,13 @@ class AudioGenerator:
         output_buffer = io.BytesIO()
 
         # Select appropriate subtype based on format
-        if config.format == AudioFormat.MP3:
+        if self.config.format == AudioFormat.MP3:
             subtype = "MPEG_LAYER_III"
-        elif config.format == AudioFormat.WAV:
+        elif self.config.format == AudioFormat.WAV:
             _, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
         else:
             raise GeneratorConfigurationError(
-                f"Unsupported audio format: {config.format.name}. "
+                f"Unsupported audio format: {self.config.format}. "
                 f"Supported formats are: {AudioFormat.WAV.name}, {AudioFormat.MP3.name}"
             )
 
@@ -195,11 +165,11 @@ class AudioGenerator:
             output_buffer,
             audio_data,
             sampling_rate,
-            format=config.format.name,
+            format=self.config.format,
             subtype=subtype,
         )
         audio_bytes = output_buffer.getvalue()
 
         # Encode to base64 with data URI scheme: "{format},{data}"
         base64_data = base64.b64encode(audio_bytes).decode("utf-8")
-        return f"{config.format.name.lower()},{base64_data}"
+        return f"{self.config.format.lower()},{base64_data}"

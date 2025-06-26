@@ -9,7 +9,6 @@ import soundfile as sf
 
 # TODO: uncomment when ConfigAudio is implemented
 # from genai_perf.config.input.config_input import ConfigAudio
-from aiperf.services.dataset.generator.audio import AudioGenerator
 
 
 def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
@@ -190,18 +189,3 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
 #    assert "MP3 format only supports" in str(
 #        exc_info.value
 #    ), "error message should mention supported rates"
-
-
-def test_positive_normal_sampling():
-    mean = 1.0
-    stddev = 0.2
-    min_value = 0.1
-    samples = [
-        AudioGenerator._sample_positive_normal(mean, stddev, min_value)
-        for _ in range(1000)
-    ]
-
-    assert all(s >= min_value for s in samples), "samples below minimum value"
-    assert abs(np.mean(samples) - mean) < 0.1, (
-        "mean significantly different from expected"
-    )
