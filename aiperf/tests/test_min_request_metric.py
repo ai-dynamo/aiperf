@@ -2,17 +2,15 @@
 #  SPDX-License-Identifier: Apache-2.0
 import pytest
 
+from aiperf.common.record_models import RequestRecord, SSEMessage
 from aiperf.services.records_manager.metrics.types.min_request_metric import (
     MinRequestMetric,
 )
-from aiperf.tests.utils.metric_test_utils import MockRecord, MockRequest, MockResponse
 
 
 def test_update_value_and_values():
     metric = MinRequestMetric()
-    request = MockRequest(timestamp=100)
-    response = MockResponse(timestamp=150)
-    record = MockRecord(request, [response])
+    record = RequestRecord(recv_start_perf_ns=100, responses=[SSEMessage(perf_ns=150)])
 
     metric.update_value(record=record, metrics=None)
     assert metric.values() == 100
@@ -21,9 +19,9 @@ def test_update_value_and_values():
 def test_add_multiple_records():
     metric = MinRequestMetric()
     records = [
-        MockRecord(MockRequest(20), [MockResponse(25)]),
-        MockRecord(MockRequest(10), [MockResponse(15)]),
-        MockRecord(MockRequest(30), [MockResponse(40)]),
+        RequestRecord(recv_start_perf_ns=20, responses=[SSEMessage(perf_ns=25)]),
+        RequestRecord(recv_start_perf_ns=10, responses=[SSEMessage(perf_ns=15)]),
+        RequestRecord(recv_start_perf_ns=30, responses=[SSEMessage(perf_ns=40)]),
     ]
     for record in records:
         metric.update_value(record=record, metrics=None)
@@ -32,14 +30,13 @@ def test_add_multiple_records():
 
 def test_record_with_no_request_raises():
     metric = MinRequestMetric()
-    record = MockRecord(None, [MockResponse(20)])
+    record = None
     with pytest.raises(ValueError, match="valid request"):
         metric.update_value(record=record, metrics=None)
 
 
 def test_record_with_no_request_timestamp_raises():
     metric = MinRequestMetric()
-    request = MockRequest(None)
-    record = MockRecord(request, [MockResponse(20)])
+    record = RequestRecord(responses=[SSEMessage(perf_ns=20)])
     with pytest.raises(ValueError, match="valid request"):
         metric.update_value(record=record, metrics=None)
