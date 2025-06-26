@@ -340,9 +340,9 @@ class ResponseData(BaseModel):
     parsed_text: list[str | None] = Field(
         description="The parsed text of the response."
     )
-    token_counts: list[int | None] = Field(
-        default=[],
-        description="The number of tokens in the response.",
+    token_count: int | None = Field(
+        default=None,
+        description="The total number of tokens in the response from the parsed text.",
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="The metadata of the response."
