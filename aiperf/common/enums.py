@@ -61,16 +61,10 @@ class CommunicationBackend(CaseInsensitiveStrEnum):
     ZMQ_IPC = "zmq_ipc"
     """ZeroMQ backend using IPC sockets."""
 
-    ZMQ_INPROC = "zmq_inproc"
-    """ZeroMQ backend using in-process communication."""
-
 
 class Topic(CaseInsensitiveStrEnum):
     """Communication topics for the main messaging bus.
     Right now, there is some overlap between Topic and MessageType.
-
-    NOTE: If you add a new topic, you must also add handlers for it in the
-    ClientType enums so the system knows what type of client to use for that topic.
     """
 
     CREDIT_DROP = "credit_drop"
@@ -81,24 +75,54 @@ class Topic(CaseInsensitiveStrEnum):
     PROFILE_RESULTS = "profile_results"
     REGISTRATION = "registration"
     COMMAND = "command"
-    RESPONSE = "response"
+    COMMAND_RESPONSE = "command_response"
     STATUS = "status"
     HEARTBEAT = "heartbeat"
-    INFERENCE_RESULTS = "inference_results"
-    CONVERSATION_DATA = "conversation_data"
+    NOTIFICATION = "notification"
+    WORKER_HEALTH = "worker_health"
+
+
+class CommandResponseStatus(CaseInsensitiveStrEnum):
+    """Status of a command response."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
 
 
 ################################################################################
-# Data Format Enums
+# Dataset Enums
 ################################################################################
+
+
+class ComposerType(CaseInsensitiveStrEnum):
+    """
+    The type of composer to use for the dataset.
+    """
+
+    SYNTHETIC = "synthetic"
+    CUSTOM = "custom"
+    PUBLIC_DATASET = "public_dataset"
+
+
+class CustomDatasetType(CaseInsensitiveStrEnum):
+    """Defines the type of JSONL custom dataset from the user."""
+
+    SINGLE_TURN = "single_turn"
+    MULTI_TURN = "multi_turn"
+    RANDOM_POOL = "random_pool"
+    TRACE = "trace"
 
 
 class ImageFormat(CaseInsensitiveStrEnum):
+    """Types of image formats supported by AIPerf."""
+
     PNG = "png"
     JPEG = "jpeg"
 
 
 class AudioFormat(CaseInsensitiveStrEnum):
+    """Types of audio formats supported by AIPerf."""
+
     WAV = "wav"
     MP3 = "mp3"
 
@@ -130,7 +154,7 @@ class MessageType(CaseInsensitiveStrEnum):
     """A message sent by the system controller to a component service to command it
     to do something."""
 
-    RESPONSE = "response"
+    COMMAND_RESPONSE = "command_response"
     """A message sent by a component service to the system controller to respond
     to a command."""
 
@@ -198,6 +222,18 @@ class MessageType(CaseInsensitiveStrEnum):
     PROFILE_ERROR = "profile_error"
     """A message containing an error from a profile run."""
 
+    NOTIFICATION = "notification"
+    """A message containing a notification from a service. This is used to notify other services of events."""
+
+    DATASET_TIMING_REQUEST = "dataset_timing_request"
+    """A message sent by a service to request timing information from a dataset."""
+
+    DATASET_TIMING_RESPONSE = "dataset_timing_response"
+    """A message sent by a service to respond to a dataset timing request."""
+
+    WORKER_HEALTH = "worker_health"
+    """A message sent by a worker to the worker manager to report its health."""
+
 
 ################################################################################
 # Command Enums
@@ -230,6 +266,18 @@ class CommandType(CaseInsensitiveStrEnum):
     PROCESS_RECORDS = "process_records"
     """A command sent to process records. This will process the records and return
     the services to their pre-record processing state."""
+
+
+################################################################################
+# Notification Enums
+################################################################################
+
+
+class NotificationType(CaseInsensitiveStrEnum):
+    """Types of notifications that can be sent to other services."""
+
+    DATASET_CONFIGURED = "dataset_configured"
+    """A notification sent to notify other services that the dataset has been configured."""
 
 
 ################################################################################
@@ -316,6 +364,41 @@ class ServiceRegistrationStatus(CaseInsensitiveStrEnum):
 
     ERROR = "error"
     """The service registration failed."""
+
+
+################################################################################
+# System State Enums
+################################################################################
+
+
+class SystemState(CaseInsensitiveStrEnum):
+    """State of the system as a whole.
+
+    This is used to track the state of the system as a whole, and is used to
+    determine what actions to take when a signal is received.
+    """
+
+    INITIALIZING = "initializing"
+    """The system is initializing. This is the initial state."""
+
+    CONFIGURING = "configuring"
+    """The system is configuring services."""
+
+    READY = "ready"
+    """The system is ready to start profiling. This is a temporary state that should be
+    followed by PROFILING."""
+
+    PROFILING = "profiling"
+    """The system is running a profiling run."""
+
+    PROCESSING = "processing"
+    """The system is processing results."""
+
+    STOPPING = "stopping"
+    """The system is stopping."""
+
+    SHUTDOWN = "shutdown"
+    """The system is shutting down. This is the final state."""
 
 
 ################################################################################

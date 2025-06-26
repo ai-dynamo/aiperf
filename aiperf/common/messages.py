@@ -13,8 +13,21 @@ from pydantic import (
     model_serializer,
 )
 
-from aiperf.common.enums import CommandType, MessageType, ServiceState, ServiceType
-from aiperf.common.record_models import ErrorDetailsCount, Record, RequestRecord
+from aiperf.common.dataset_models import Conversation
+from aiperf.common.enums import (
+    CommandResponseStatus,
+    CommandType,
+    MessageType,
+    NotificationType,
+    ServiceState,
+    ServiceType,
+)
+from aiperf.common.record_models import (
+    ErrorDetails,
+    ErrorDetailsCount,
+    RequestRecord,
+    ResultsRecord,
+)
 
 ################################################################################
 # Abstract Base Message Models
@@ -28,15 +41,39 @@ def exclude_if_none(field_names: list[str]):
     field names that should be excluded if they are None.
     """
 
-    def decorator(model: type["BaseMessage"]) -> type["BaseMessage"]:
+    def decorator(model: type["Message"]) -> type["Message"]:
         model._exclude_if_none_fields.update(field_names)
         return model
 
     return decorator
 
 
+@exclude_if_none(["request_ns", "request_id"])
 class Message(BaseModel):
-    """Base class for optimized message handling"""
+    """Base message class for optimized message handling.
+
+    This class provides a base for all messages, including common fields like message_type,
+    request_ns, and request_id. It also supports optional field exclusion based on the
+    @exclude_if_none decorator.
+
+    Each message model should inherit from this class, set the message_type field,
+    and define its own additional fields.
+    Optionally, the @exclude_if_none decorator can be used to specify which fields
+    should be excluded from the serialized message if they are None.
+
+    Example:
+    ```python
+    @exclude_if_none(["some_field"])
+    class ExampleMessage(Message):
+        some_field: int | None = Field(default=None)
+        other_field: int = Field(default=1)
+    ```
+    """
+
+    _exclude_if_none_fields: ClassVar[set[str]] = set()
+    """Set of field names that should be excluded from the serialized message if they
+    are None. This is set by the @exclude_if_none decorator.
+    """
 
     _message_type_lookup: ClassVar[dict[MessageType, type["Message"]]] = {}
 
@@ -49,6 +86,29 @@ class Message(BaseModel):
         ...,
         description="Type of the message",
     )
+
+    request_ns: int | None = Field(
+        default=None,
+        description="Timestamp of the request",
+    )
+
+    request_id: str | None = Field(
+        default=None,
+        description="ID of the request",
+    )
+
+    @model_serializer
+    def _serialize_message(self) -> dict[str, Any]:
+        """Serialize the message to a dictionary.
+
+        This method overrides the default serializer to exclude fields that have a
+        value of None and have the EXCLUDE_IF_NONE json_schema_extra key set to True.
+        """
+        return {
+            k: v
+            for k, v in self
+            if not (k in self._exclude_if_none_fields and v is None)
+        }
 
     @classmethod
     def __get_validators__(cls):
@@ -74,55 +134,7 @@ class Message(BaseModel):
         return json.dumps(self.__dict__)
 
 
-@exclude_if_none(["request_ns", "request_id"])
-class BaseMessage(Message):
-    """Base message model with common fields for all messages.
-
-    Each message model should inherit from this class, set the message_type field,
-    and define its own additional fields.
-
-    Optionally, the @exclude_if_none decorator can be used to specify which fields
-    should be excluded from the serialized message if they are None.
-
-    Example:
-    ```python
-    @exclude_if_none(["some_field"])
-    class ExampleMessage(BaseMessage):
-        some_field: int | None = Field(default=None)
-        other_field: int = Field(default=1)
-    ```
-    """
-
-    _exclude_if_none_fields: ClassVar[set[str]] = set()
-    """Set of field names that should be excluded from the serialized message if they
-    are None. This is set by the @exclude_if_none decorator.
-    """
-
-    request_ns: int | None = Field(
-        default=None,
-        description="Timestamp of the request",
-    )
-
-    request_id: str | None = Field(
-        default=None,
-        description="ID of the request",
-    )
-
-    @model_serializer
-    def _serialize_message(self) -> dict[str, Any]:
-        """Serialize the message to a dictionary.
-
-        This method overrides the default serializer to exclude fields that have a
-        value of None and have the EXCLUDE_IF_NONE json_schema_extra key set to True.
-        """
-        return {
-            k: v
-            for k, v in self
-            if not (k in self._exclude_if_none_fields and v is None)
-        }
-
-
-class BaseServiceMessage(BaseMessage):
+class BaseServiceMessage(Message):
     """Base message that is sent from a service. Requires a service_id field to specify
     the service that sent the message."""
 
@@ -183,8 +195,6 @@ class HeartbeatMessage(BaseStatusMessage):
 
     message_type: Literal[MessageType.HEARTBEAT] = MessageType.HEARTBEAT
 
-    state: ServiceState = ServiceState.RUNNING
-
 
 class ProcessRecordsCommandData(BaseModel):
     """Data to send with the process records command."""
@@ -214,7 +224,6 @@ class CommandMessage(BaseServiceMessage):
         default=False,
         description="Whether a response is required for this command",
     )
-    # TODO: should we allow a service_type as well to send to all services of a given type?
     target_service_type: ServiceType | None = Field(
         default=None,
         description="Type of the service to send the command to. "
@@ -233,9 +242,34 @@ class CommandMessage(BaseServiceMessage):
     )
 
 
+class CommandResponseMessage(BaseServiceMessage):
+    """Message containing a command response.
+    This message is sent by a component service to the system controller to respond to a command.
+    """
+
+    message_type: Literal[MessageType.COMMAND_RESPONSE] = MessageType.COMMAND_RESPONSE
+
+    command: CommandType = Field(
+        ...,
+        description="Command type that is being responded to",
+    )
+    command_id: str = Field(
+        ..., description="The ID of the command that is being responded to"
+    )
+    status: CommandResponseStatus = Field(..., description="The status of the command")
+    data: SerializeAsAny[BaseModel | None] = Field(
+        default=None,
+        description="Data to send with the command response if the command succeeded",
+    )
+    error: ErrorDetails | None = Field(
+        default=None,
+        description="Error information if the command failed",
+    )
+
+
 class CreditDropMessage(BaseServiceMessage):
     """Message indicating that a credit has been dropped.
-    This message is sent by the timing manager to a workers to indicate that credit(s)
+    This message is sent by the timing manager to workers to indicate that credit(s)
     have been dropped.
     """
 
@@ -244,6 +278,9 @@ class CreditDropMessage(BaseServiceMessage):
     amount: int = Field(
         ...,
         description="Amount of credits that have been dropped",
+    )
+    conversation_id: str | None = Field(
+        default=None, description="The ID of the conversation, if applicable."
     )
     credit_drop_ns: int = Field(
         default_factory=time.time_ns, description="Timestamp of the credit drop"
@@ -264,14 +301,27 @@ class CreditReturnMessage(BaseServiceMessage):
     )
 
 
-class ErrorMessage(BaseMessage):
+class ErrorMessage(Message):
     """Message containing error data."""
 
     message_type: Literal[MessageType.ERROR] = MessageType.ERROR
 
-    error: str | None = Field(
+    error: ErrorDetails = Field(..., description="Error information")
+
+
+class NotificationMessage(BaseServiceMessage):
+    """Message containing a notification from a service. This is used to notify other services of events."""
+
+    message_type: Literal[MessageType.NOTIFICATION] = MessageType.NOTIFICATION
+
+    notification_type: NotificationType = Field(
+        ...,
+        description="The type of notification",
+    )
+
+    data: SerializeAsAny[BaseModel | None] = Field(
         default=None,
-        description="Error information",
+        description="Data to send with the notification",
     )
 
 
@@ -280,10 +330,7 @@ class BaseServiceErrorMessage(BaseServiceMessage):
 
     message_type: Literal[MessageType.SERVICE_ERROR] = MessageType.SERVICE_ERROR
 
-    error: str | None = Field(
-        default=None,
-        description="Error information",
-    )
+    error: ErrorDetails = Field(..., description="Error information")
 
 
 class CreditsCompleteMessage(BaseServiceMessage):
@@ -303,7 +350,7 @@ class ConversationRequestMessage(BaseServiceMessage):
         MessageType.CONVERSATION_REQUEST
     )
 
-    conversation_id: str = Field(..., description="The ID of the conversation")
+    conversation_id: str = Field(..., description="The session ID of the conversation")
 
 
 class ConversationResponseMessage(BaseServiceMessage):
@@ -313,10 +360,7 @@ class ConversationResponseMessage(BaseServiceMessage):
         MessageType.CONVERSATION_RESPONSE
     )
 
-    conversation_id: str = Field(..., description="The ID of the conversation")
-    conversation_data: list[dict[str, Any]] = Field(
-        ..., description="The data of the conversation"
-    )
+    conversation: Conversation = Field(..., description="The conversation data")
 
 
 class InferenceResultsMessage(BaseServiceMessage):
@@ -334,7 +378,7 @@ class ProfileResultsMessage(BaseServiceMessage):
 
     message_type: Literal[MessageType.PROFILE_RESULTS] = MessageType.PROFILE_RESULTS
 
-    records: SerializeAsAny[list[Record]] = Field(
+    records: SerializeAsAny[list[ResultsRecord]] = Field(
         ..., description="The records of the profile results"
     )
     total: int = Field(
@@ -343,14 +387,12 @@ class ProfileResultsMessage(BaseServiceMessage):
     completed: int = Field(
         ..., description="The number of inference requests completed"
     )
-    # TODO: Are these needed?
-    # begin_ns: int = Field(
-    #     ..., description="The start time of the profile run in nanoseconds"
-    # )
-    # end_ns: int = Field(
-    #     ...,
-    #     description="The end time of the profile run in nanoseconds"
-    # )
+    start_ns: int = Field(
+        ..., description="The start time of the profile run in nanoseconds"
+    )
+    end_ns: int = Field(
+        ..., description="The end time of the profile run in nanoseconds"
+    )
     was_cancelled: bool = Field(
         default=False,
         description="Whether the profile run was cancelled early",
@@ -362,21 +404,21 @@ class ProfileResultsMessage(BaseServiceMessage):
 
 
 class ProfileProgressMessage(BaseServiceMessage):
-    """Message for profile progress."""
+    """Message for profile progress. Sent by the timing manager to the system controller to report the progress of the profile run."""
 
     message_type: Literal[MessageType.PROFILE_PROGRESS] = MessageType.PROFILE_PROGRESS
 
-    sweep_id: str | None = Field(
-        default=None, description="The ID of the current sweep"
+    profile_id: str | None = Field(
+        default=None, description="The ID of the current profile"
     )
-    sweep_start_ns: int = Field(
-        ..., description="The start time of the sweep in nanoseconds"
+    start_ns: int = Field(
+        ..., description="The start time of the profile run in nanoseconds"
     )
-    sweep_end_ns: int | None = Field(
-        default=None, description="The end time of the sweep in nanoseconds"
+    end_ns: int | None = Field(
+        default=None, description="The end time of the profile run in nanoseconds"
     )
     total: int = Field(
-        ..., description="The total number of inference requests to be made"
+        ..., description="The total number of inference requests to be made (if known)"
     )
     completed: int = Field(
         ..., description="The number of inference requests completed"
@@ -384,7 +426,7 @@ class ProfileProgressMessage(BaseServiceMessage):
 
 
 class ProfileStatsMessage(BaseServiceMessage):
-    """Message for profile stats."""
+    """Message for profile stats. Sent by the records manager to the system controller to report the stats of the profile run."""
 
     message_type: Literal[MessageType.PROFILE_STATS] = MessageType.PROFILE_STATS
 
@@ -397,4 +439,25 @@ class ProfileStatsMessage(BaseServiceMessage):
     worker_errors: dict[str, int] = Field(
         default_factory=dict,
         description="Per-worker error counts, keyed by worker service_id",
+    )
+
+
+class DatasetTimingRequest(BaseServiceMessage):
+    """Message for a dataset timing request."""
+
+    message_type: Literal[MessageType.DATASET_TIMING_REQUEST] = (
+        MessageType.DATASET_TIMING_REQUEST
+    )
+
+
+class DatasetTimingResponse(BaseServiceMessage):
+    """Message for a dataset timing response."""
+
+    message_type: Literal[MessageType.DATASET_TIMING_RESPONSE] = (
+        MessageType.DATASET_TIMING_RESPONSE
+    )
+
+    timing_data: list[tuple[int, str]] = Field(
+        ...,
+        description="The timing data of the dataset. Tuple of (timestamp, conversation_id)",
     )

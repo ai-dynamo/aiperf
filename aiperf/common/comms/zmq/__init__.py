@@ -2,7 +2,29 @@
 # SPDX-License-Identifier: Apache-2.0
 
 __all__ = [
-    "ZMQCommunication",
+    "BaseZMQCommunication",
+    "ZMQTCPCommunication",
+    "ZMQIPCCommunication",
+    "ZMQClient",
+    "ZMQPubClient",
+    "ZMQSubClient",
+    "ZMQPullClient",
+    "ZMQPushClient",
+    "ZMQRouterRepClient",
+    "ZMQDealerReqClient",
 ]
 
-from aiperf.common.comms.zmq.zmq_comms import ZMQCommunication
+from aiperf.common.comms.zmq.clients import (
+    ZMQClient,
+    ZMQDealerReqClient,
+    ZMQPubClient,
+    ZMQPullClient,
+    ZMQPushClient,
+    ZMQRouterRepClient,
+    ZMQSubClient,
+)
+from aiperf.common.comms.zmq.zmq_comms import (
+    BaseZMQCommunication,
+    ZMQIPCCommunication,
+    ZMQTCPCommunication,
+)

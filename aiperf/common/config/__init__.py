@@ -54,7 +54,6 @@ from aiperf.common.config.user_config import (
 )
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
-    ZMQInprocConfig,
     ZMQIPCConfig,
     ZMQTCPTransportConfig,
 )
@@ -95,7 +94,6 @@ __all__ = [
     "UserConfig",
     "UserDefaults",
     "ZMQIPCConfig",
-    "ZMQInprocConfig",
     "ZMQTCPTransportConfig",
     "load_service_config",
 ]
