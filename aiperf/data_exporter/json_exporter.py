@@ -21,7 +21,7 @@ class JsonExporter:
 
     def export(self) -> None:
         filename = self._output_directory / "profile_export_aiperf.json"
-        filename.parent.mkdir(parents=True, exist_ok=True)
+        self._output_directory.mkdir(parents=True, exist_ok=True)
         export_data = {record.name: record.to_dict() for record in self._records}
         if self._input_config:
             input_config_dict = self._input_config.model_dump()
