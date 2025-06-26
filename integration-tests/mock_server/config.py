@@ -1,5 +1,5 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Configuration management for the integration test server."""
 
 from pydantic import Field
@@ -15,11 +15,14 @@ class ConfigDefaults:
     WORKERS: int = 1
 
     # Timing settings
-    TTFT_MS: float = 50.0
-    ITL_MS: float = 10.0
+    TTFT_MS: float = 20.0
+    ITL_MS: float = 5.0
 
     # Logging settings
     LOG_LEVEL: str = "INFO"
+
+    # Tokenizer settings
+    TOKENIZER_MODELS: list[str] = []
 
 
 class MockServerConfig(BaseSettings):
@@ -53,4 +56,9 @@ class MockServerConfig(BaseSettings):
     workers: int = Field(
         default=ConfigDefaults.WORKERS,
         description="Number of worker processes",
+    )
+
+    tokenizer_models: list[str] = Field(
+        default=ConfigDefaults.TOKENIZER_MODELS,
+        description="List of tokenizer models to pre-load at startup",
     )

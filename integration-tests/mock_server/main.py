@@ -1,5 +1,5 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Main entry point for the integration test server."""
 
 import logging
@@ -57,6 +57,12 @@ def main(
         "--log-level",
         help="Set the logging level",
     ),
+    tokenizer_models: list[str] = typer.Option(
+        ConfigDefaults.TOKENIZER_MODELS,
+        "--tokenizer-models",
+        "-t",
+        help="List of tokenizer models to pre-load (e.g., --tokenizer-models gpt2 --tokenizer-models bert-base-uncased)",
+    ),
 ):
     """Start the AI Performance Integration Test Server."""
 
@@ -70,6 +76,7 @@ def main(
         ttft_ms=ttft,
         itl_ms=itl,
         workers=workers,
+        tokenizer_models=tokenizer_models,
     )
 
     # Set the global server configuration

@@ -1,11 +1,13 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """FastAPI server for integration testing with configurable latencies."""
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from time import perf_counter
 
 from fastapi import FastAPI
@@ -25,13 +27,28 @@ from .models import (
 )
 from .tokenizer_service import tokenizer_service
 
+logger = logging.getLogger(__name__)
+
 # Global server configuration
 server_config: MockServerConfig = MockServerConfig()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Initialize tokenizers and other startup tasks."""
+    if server_config.tokenizer_models:
+        logger.info(f"Pre-loading tokenizer models: {server_config.tokenizer_models}")
+        tokenizer_service.load_tokenizers(server_config.tokenizer_models)
+        logger.info("Tokenizer models loaded successfully")
+
+    yield
+
 
 app = FastAPI(
     title="AIPerf Integration Test Server",
     description="FastAPI server that echoes prompts token by token with configurable latencies",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 

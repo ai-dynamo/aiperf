@@ -1,5 +1,5 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Tokenizer service for handling different model tokenizers."""
 
 import logging
@@ -15,33 +15,28 @@ class TokenizerService:
 
     def __init__(self):
         self._tokenizers: dict[str, PreTrainedTokenizer] = {}
-        self._default_model = "gpt2"
+
+    def load_tokenizers(self, model_names: list[str]) -> None:
+        """Pre-load tokenizers for one or more models.
+
+        Args:
+            model_names: List of model names to load tokenizers for
+        """
+        for model_name in model_names:
+            try:
+                logger.info(f"Pre-loading tokenizer for model: {model_name}")
+                self._tokenizers[model_name] = AutoTokenizer.from_pretrained(
+                    model_name, trust_remote_code=True
+                )
+            except Exception as e:
+                logger.exception(f"Failed to load tokenizer for {model_name}: {e}")
 
     def get_tokenizer(self, model_name: str) -> PreTrainedTokenizer:
         """Get or create a tokenizer for the specified model."""
         if model_name not in self._tokenizers:
-            try:
-                logger.info(f"Loading tokenizer for model: {model_name}")
-                self._tokenizers[model_name] = AutoTokenizer.from_pretrained(
-                    model_name, trust_remote_code=True
-                )
-                # Set pad token if not present
-                if self._tokenizers[model_name].pad_token is None:
-                    self._tokenizers[model_name].pad_token = self._tokenizers[
-                        model_name
-                    ].eos_token
-            except Exception as e:
-                logger.warning(f"Failed to load tokenizer for {model_name}: {e}")
-                logger.info(f"Falling back to default tokenizer: {self._default_model}")
-                if self._default_model not in self._tokenizers:
-                    self._tokenizers[self._default_model] = (
-                        AutoTokenizer.from_pretrained(self._default_model)
-                    )
-                    if self._tokenizers[self._default_model].pad_token is None:
-                        self._tokenizers[
-                            self._default_model
-                        ].pad_token = self._tokenizers[self._default_model].eos_token
-                self._tokenizers[model_name] = self._tokenizers[self._default_model]
+            self.load_tokenizers([model_name])
+            if model_name not in self._tokenizers:
+                raise ValueError(f"Failed to load tokenizer for {model_name}")
 
         return self._tokenizers[model_name]
 
