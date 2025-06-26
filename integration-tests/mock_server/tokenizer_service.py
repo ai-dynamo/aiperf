@@ -34,9 +34,7 @@ class TokenizerService:
     def get_tokenizer(self, model_name: str) -> PreTrainedTokenizer:
         """Get or create a tokenizer for the specified model."""
         if model_name not in self._tokenizers:
-            self.load_tokenizers([model_name])
-            if model_name not in self._tokenizers:
-                raise ValueError(f"Failed to load tokenizer for {model_name}")
+            raise ValueError(f"No tokenizer loaded for {model_name}")
 
         return self._tokenizers[model_name]
 

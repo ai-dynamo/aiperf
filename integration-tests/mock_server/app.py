@@ -10,7 +10,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from time import perf_counter
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
 from .config import MockServerConfig
@@ -67,23 +67,16 @@ def extract_user_prompt(messages: list[ChatMessage]) -> str:
 
 async def generate_streaming_response(
     request: ChatCompletionRequest,
+    input_tokens: list,
     request_id: str,
     created_timestamp: int,
     start_time: float,
 ) -> AsyncGenerator[str, None]:
     """Generate streaming chat completion response."""
-    user_prompt = extract_user_prompt(request.messages)
-
-    # Tokenize the user prompt using the requested model's tokenizer
-    tokens = tokenizer_service.tokenize(user_prompt, request.model)
-
-    # Apply max_tokens limit if specified
-    if request.max_tokens is not None:
-        tokens = tokens[: request.max_tokens]
 
     previous_time = start_time
     # Send tokens one by one
-    for i, token in enumerate(tokens):
+    for i, token in enumerate(input_tokens):
         if i == 0 and server_config.ttft_ms > 0:
             # Wait for time to first token with precise timing
             target_time = start_time + (server_config.ttft_ms / 1000.0)
@@ -148,12 +141,28 @@ async def chat_completions(request: ChatCompletionRequest):
     created_timestamp = int(time.time())
 
     user_prompt = extract_user_prompt(request.messages)
+    try:
+        # Tokenize the user prompt using the requested model's tokenizer
+        tokens = tokenizer_service.tokenize(user_prompt, request.model)
+    except Exception as e:
+        # If the tokenizer fails, return a 404 error to simulate model not found
+        raise HTTPException(
+            status_code=404,
+            detail="Model Not Found",
+        ) from e
+
+    if request.max_tokens is not None:
+        tokens = tokens[: request.max_tokens]
 
     if request.stream:
         # Return streaming response
         return StreamingResponse(
             generate_streaming_response(
-                request, request_id, created_timestamp, start_time
+                request,
+                tokens,
+                request_id,
+                created_timestamp,
+                start_time,
             ),
             media_type="text/event-stream",
             headers={
@@ -163,12 +172,6 @@ async def chat_completions(request: ChatCompletionRequest):
         )
     else:
         # Return non-streaming response
-        # Tokenize the user prompt using the requested model's tokenizer
-        tokens = tokenizer_service.tokenize(user_prompt, request.model)
-
-        # Apply max_tokens limit if specified
-        if request.max_tokens is not None:
-            tokens = tokens[: request.max_tokens]
 
         # Simulate processing time for all tokens with precise timing
         ttft_time = start_time + (server_config.ttft_ms / 1000.0)
