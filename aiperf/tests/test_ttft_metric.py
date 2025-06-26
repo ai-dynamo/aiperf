@@ -3,16 +3,14 @@
 import pytest
 
 from aiperf.common.enums import MetricTimeType
+from aiperf.common.record_models import RequestRecord, SSEMessage
 from aiperf.services.records_manager.metrics.types.ttft_metric import TTFTMetric
-from aiperf.tests.utils.metric_test_utils import MockRecord, MockRequest, MockResponse
 
 
 def test_update_value_and_values():
     metric = TTFTMetric()
     metric.metric = []
-    request = MockRequest(timestamp=100)
-    response = MockResponse(timestamp=150)
-    record = MockRecord(request, [response])
+    record = RequestRecord(recv_start_perf_ns=100, responses=[SSEMessage(perf_ns=150)])
 
     metric.update_value(record=record, metrics=None)
     assert metric.values() == [50]
@@ -22,9 +20,9 @@ def test_add_multiple_records():
     metric = TTFTMetric()
     metric.metric = []
     records = [
-        MockRecord(MockRequest(10), [MockResponse(15)]),
-        MockRecord(MockRequest(20), [MockResponse(25)]),
-        MockRecord(MockRequest(30), [MockResponse(40)]),
+        RequestRecord(recv_start_perf_ns=10, responses=[SSEMessage(perf_ns=15)]),
+        RequestRecord(recv_start_perf_ns=20, responses=[SSEMessage(perf_ns=25)]),
+        RequestRecord(recv_start_perf_ns=30, responses=[SSEMessage(perf_ns=40)]),
     ]
     for record in records:
         metric.update_value(record=record, metrics=None)
@@ -34,7 +32,7 @@ def test_add_multiple_records():
 def test_record_without_responses_raises():
     metric = TTFTMetric()
     metric.metric = []
-    record = MockRecord(MockRequest(10), [])
+    record = RequestRecord(recv_start_perf_ns=10)
     with pytest.raises(ValueError, match="at least one response"):
         metric.update_value(record=record, metrics=None)
 
@@ -42,7 +40,7 @@ def test_record_without_responses_raises():
 def test_record_with_no_request_raises():
     metric = TTFTMetric()
     metric.metric = []
-    record = MockRecord(None, [MockResponse(20)])
+    record = None
     with pytest.raises(ValueError, match="valid request"):
         metric.update_value(record=record, metrics=None)
 
@@ -50,8 +48,7 @@ def test_record_with_no_request_raises():
 def test_record_with_no_request_timestamp_raises():
     metric = TTFTMetric()
     metric.metric = []
-    request = MockRequest(None)
-    record = MockRecord(request, [MockResponse(20)])
+    record = RequestRecord(responses=[SSEMessage(perf_ns=20)])
     with pytest.raises(ValueError, match="valid request"):
         metric.update_value(record=record, metrics=None)
 
@@ -59,9 +56,7 @@ def test_record_with_no_request_timestamp_raises():
 def test_response_timestamp_less_than_request_raises():
     metric = TTFTMetric()
     metric.metric = []
-    request = MockRequest(100)
-    response = MockResponse(90)
-    record = MockRecord(request, [response])
+    record = RequestRecord(recv_start_perf_ns=100, responses=[SSEMessage(perf_ns=90)])
     with pytest.raises(ValueError, match="Response timestamp must be greater"):
         metric.update_value(record=record, metrics=None)
 
@@ -69,11 +64,7 @@ def test_response_timestamp_less_than_request_raises():
 def test_metric_initialization_none():
     metric = TTFTMetric()
     assert metric.metric == []
-    # After setting to list, works as expected
-    metric.metric = []
-    request = MockRequest(1)
-    response = MockResponse(2)
-    record = MockRecord(request, [response])
+    record = RequestRecord(recv_start_perf_ns=1, responses=[SSEMessage(perf_ns=2)])
     metric.update_value(record=record, metrics=None)
     assert metric.values() == [1]
 
@@ -82,9 +73,15 @@ def test_convert_metrics():
     metric = TTFTMetric()
     metric.metric = []
     records = [
-        MockRecord(MockRequest(10_000_000), [MockResponse(15_000_000)]),
-        MockRecord(MockRequest(20_000_000), [MockResponse(25_000_000)]),
-        MockRecord(MockRequest(30_000_000), [MockResponse(40_000_000)]),
+        RequestRecord(
+            recv_start_perf_ns=10_000_000, responses=[SSEMessage(perf_ns=15_000_000)]
+        ),
+        RequestRecord(
+            recv_start_perf_ns=20_000_000, responses=[SSEMessage(perf_ns=25_000_000)]
+        ),
+        RequestRecord(
+            recv_start_perf_ns=30_000_000, responses=[SSEMessage(perf_ns=40_000_000)]
+        ),
     ]
     for record in records:
         metric.update_value(record=record, metrics=None)
