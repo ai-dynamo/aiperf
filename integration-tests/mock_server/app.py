@@ -81,17 +81,20 @@ async def generate_streaming_response(
     if request.max_tokens is not None:
         tokens = tokens[: request.max_tokens]
 
-        # Wait for time to first token with precise timing
-    if server_config.ttft_ms > 0:
-        target_time = start_time + (server_config.ttft_ms / 1000.0)
-        await asyncio.sleep(target_time - perf_counter())
-
+    previous_time = start_time
     # Send tokens one by one
     for i, token in enumerate(tokens):
-        if i > 0 and server_config.itl_ms > 0:
-            start_time = perf_counter()
-            target_time = start_time + (server_config.itl_ms / 1000.0)
+        if i == 0 and server_config.ttft_ms > 0:
+            # Wait for time to first token with precise timing
+            target_time = start_time + (server_config.ttft_ms / 1000.0)
             await asyncio.sleep(target_time - perf_counter())
+
+        if i > 0 and server_config.itl_ms > 0:
+            target_time = previous_time + (server_config.itl_ms / 1000.0)
+            await asyncio.sleep(target_time - perf_counter())
+
+        # Update previous time to calculate next inter-token latency
+        previous_time = perf_counter()
 
         # Create streaming response chunk
         chunk = ChatCompletionStreamResponse(
@@ -140,6 +143,7 @@ async def configure(request: ConfigureMessage):
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     """Handle chat completion requests."""
+    start_time = perf_counter()
     request_id = f"chatcmpl-{uuid.uuid4()}"
     created_timestamp = int(time.time())
 
@@ -147,7 +151,6 @@ async def chat_completions(request: ChatCompletionRequest):
 
     if request.stream:
         # Return streaming response
-        start_time = perf_counter()
         return StreamingResponse(
             generate_streaming_response(
                 request, request_id, created_timestamp, start_time
@@ -167,17 +170,13 @@ async def chat_completions(request: ChatCompletionRequest):
         if request.max_tokens is not None:
             tokens = tokens[: request.max_tokens]
 
-        start_time = perf_counter()
-        # Wait for time to first token with precise timing
-        if server_config.ttft_ms > 0:
-            target_time = start_time + (server_config.ttft_ms / 1000.0)
-            await asyncio.sleep(target_time - perf_counter())
-
         # Simulate processing time for all tokens with precise timing
-        total_processing_time = (len(tokens) - 1) * server_config.itl_ms / 1000.0
+        ttft_time = start_time + (server_config.ttft_ms / 1000.0)
+        token_processing_time = (len(tokens) - 1) * server_config.itl_ms / 1000.0
 
-        if total_processing_time > 0:
-            target_time = start_time + total_processing_time
+        target_time = ttft_time + token_processing_time
+
+        if target_time > perf_counter():
             await asyncio.sleep(target_time - perf_counter())
 
         # Reconstruct the response text
