@@ -107,7 +107,7 @@ class TestAioHttpClientMixin:
         with patch("aiohttp.ClientSession") as mock_session_class:
             setup_mock_session(mock_session_class, mock_aiohttp_response, ["post"])
 
-            record = await aiohttp_client.request(
+            record = await aiohttp_client.post_request(
                 "http://test.com/api",
                 '{"test": "data"}',
                 {"Content-Type": "application/json"},
@@ -137,7 +137,7 @@ class TestAioHttpClientMixin:
             mock_reader.read_complete_stream = AsyncMock(return_value=mock_messages)
             mock_reader_class.return_value = mock_reader
 
-            record = await aiohttp_client.request(
+            record = await aiohttp_client.post_request(
                 "http://test.com/stream",
                 '{"stream": true}',
                 {"Accept": "text/event-stream"},
@@ -171,7 +171,7 @@ class TestAioHttpClientMixin:
             mock_response = create_mock_error_response(status_code, reason, error_text)
             setup_mock_session(mock_session_class, mock_response, ["post"])
 
-            record = await aiohttp_client.request("http://test.com", "{}", {})
+            record = await aiohttp_client.post_request("http://test.com", "{}", {})
 
             assert_error_request_record(
                 record,
@@ -199,7 +199,7 @@ class TestAioHttpClientMixin:
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_session_class.side_effect = exception_class(exception_message)
 
-            record = await aiohttp_client.request("http://test.com", "{}", {})
+            record = await aiohttp_client.post_request("http://test.com", "{}", {})
 
             assert_error_request_record(
                 record,
@@ -231,7 +231,7 @@ class TestAioHttpClientMixin:
             exception = create_aiohttp_exception(exception_class, message)
             mock_session_class.side_effect = exception
 
-            record = await aiohttp_client.request("http://test.com", "{}", {})
+            record = await aiohttp_client.post_request("http://test.com", "{}", {})
 
             assert_error_request_record(record, expected_error_type=expected_type)
 
@@ -243,7 +243,7 @@ class TestAioHttpClientMixin:
         with patch("aiohttp.ClientSession") as mock_session_class:
             setup_mock_session(mock_session_class, mock_aiohttp_response, ["post"])
 
-            record = await aiohttp_client.request(
+            record = await aiohttp_client.post_request(
                 "http://test.com", "{}", {}, delayed=True
             )
 
@@ -262,7 +262,7 @@ class TestAioHttpClientMixin:
                 mock_session_class, mock_aiohttp_response, ["post"]
             )
 
-            record = await aiohttp_client.request(
+            record = await aiohttp_client.post_request(
                 "http://test.com", "{}", {}, **extra_kwargs
             )
 
@@ -282,7 +282,7 @@ class TestAioHttpClientMixin:
         with patch("aiohttp.ClientSession") as mock_session_class:
             setup_mock_session(mock_session_class, mock_aiohttp_response, ["post"])
 
-            record = await aiohttp_client.request("http://test.com", "{}", headers)
+            record = await aiohttp_client.post_request("http://test.com", "{}", headers)
 
             assert_successful_request_record(record)
             mock_session_class.assert_called_once()
@@ -306,7 +306,7 @@ class TestAioHttpClientMixin:
             mock_response = create_mock_response(text_content=json.dumps(test_response))
             setup_mock_session(mock_session_class, mock_response, ["post"])
 
-            record = await integration_client.request(
+            record = await integration_client.post_request(
                 "http://test.com/api",
                 json.dumps({"query": "test"}),
                 {"Content-Type": "application/json"},
@@ -328,7 +328,7 @@ class TestAioHttpClientMixin:
             setup_mock_session(mock_session_class, mock_sse_response, ["post"])
 
             with patch("time.perf_counter_ns", side_effect=range(123456789, 123456799)):
-                record = await integration_client.request(
+                record = await integration_client.post_request(
                     "http://test.com/stream",
                     json.dumps({"stream": True}),
                     {"Accept": "text/event-stream"},
@@ -352,7 +352,7 @@ class TestAioHttpClientMixin:
 
             tasks = []
             for i in range(num_requests):
-                task = integration_client.request(
+                task = integration_client.post_request(
                     f"http://test.com/api/{i}",
                     f'{{"request": {i}}}',
                     {"Content-Type": "application/json"},
@@ -374,7 +374,7 @@ class TestAioHttpClientMixin:
             mock_response = create_mock_response(text_content="")
             setup_mock_session(mock_session_class, mock_response, ["post"])
 
-            record = await aiohttp_client.request("http://test.com", "{}", {})
+            record = await aiohttp_client.post_request("http://test.com", "{}", {})
 
             assert_successful_request_record(record)
 
@@ -389,7 +389,9 @@ class TestAioHttpClientMixin:
                 mock_session_class, mock_response, ["post"]
             )
 
-            record = await aiohttp_client.request("http://test.com", large_payload, {})
+            record = await aiohttp_client.post_request(
+                "http://test.com", large_payload, {}
+            )
 
             assert_successful_request_record(record)
             mock_session.post.assert_called_once()

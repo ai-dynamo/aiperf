@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from aiperf.clients.http.sse_utils import parse_sse_message
+from aiperf.clients.http import parse_sse_message
 from aiperf.common.enums import SSEFieldType
 from aiperf.common.record_models import SSEField, SSEMessage
 

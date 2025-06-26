@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from aiperf.clients.http import SocketDefaults
 from aiperf.clients.http.aiohttp_client import create_tcp_connector
 
 ################################################################################
@@ -101,8 +102,8 @@ class TestCreateTcpConnector:
             expected_calls = [
                 (socket.SOL_TCP, socket.TCP_NODELAY, 1),
                 (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
-                (socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 85),
-                (socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 64),
+                (socket.SOL_SOCKET, socket.SO_RCVBUF, SocketDefaults.SO_RCVBUF),
+                (socket.SOL_SOCKET, socket.SO_SNDBUF, SocketDefaults.SO_SNDBUF),
             ]
 
             for option_level, option_name, option_value in expected_calls:
