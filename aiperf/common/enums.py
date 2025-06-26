@@ -61,16 +61,10 @@ class CommunicationBackend(CaseInsensitiveStrEnum):
     ZMQ_IPC = "zmq_ipc"
     """ZeroMQ backend using IPC sockets."""
 
-    ZMQ_INPROC = "zmq_inproc"
-    """ZeroMQ backend using in-process communication."""
-
 
 class Topic(CaseInsensitiveStrEnum):
     """Communication topics for the main messaging bus.
     Right now, there is some overlap between Topic and MessageType.
-
-    NOTE: If you add a new topic, you must also add handlers for it in the
-    ClientType enums so the system knows what type of client to use for that topic.
     """
 
     CREDIT_DROP = "credit_drop"
@@ -81,11 +75,18 @@ class Topic(CaseInsensitiveStrEnum):
     PROFILE_RESULTS = "profile_results"
     REGISTRATION = "registration"
     COMMAND = "command"
-    RESPONSE = "response"
+    COMMAND_RESPONSE = "command_response"
     STATUS = "status"
     HEARTBEAT = "heartbeat"
-    INFERENCE_RESULTS = "inference_results"
-    CONVERSATION_DATA = "conversation_data"
+    NOTIFICATION = "notification"
+    WORKER_HEALTH = "worker_health"
+
+
+class CommandResponseStatus(CaseInsensitiveStrEnum):
+    """Status of a command response."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
 
 
 ################################################################################
@@ -153,7 +154,7 @@ class MessageType(CaseInsensitiveStrEnum):
     """A message sent by the system controller to a component service to command it
     to do something."""
 
-    RESPONSE = "response"
+    COMMAND_RESPONSE = "command_response"
     """A message sent by a component service to the system controller to respond
     to a command."""
 
@@ -221,6 +222,18 @@ class MessageType(CaseInsensitiveStrEnum):
     PROFILE_ERROR = "profile_error"
     """A message containing an error from a profile run."""
 
+    NOTIFICATION = "notification"
+    """A message containing a notification from a service. This is used to notify other services of events."""
+
+    DATASET_TIMING_REQUEST = "dataset_timing_request"
+    """A message sent by a service to request timing information from a dataset."""
+
+    DATASET_TIMING_RESPONSE = "dataset_timing_response"
+    """A message sent by a service to respond to a dataset timing request."""
+
+    WORKER_HEALTH = "worker_health"
+    """A message sent by a worker to the worker manager to report its health."""
+
 
 ################################################################################
 # Command Enums
@@ -253,6 +266,18 @@ class CommandType(CaseInsensitiveStrEnum):
     PROCESS_RECORDS = "process_records"
     """A command sent to process records. This will process the records and return
     the services to their pre-record processing state."""
+
+
+################################################################################
+# Notification Enums
+################################################################################
+
+
+class NotificationType(CaseInsensitiveStrEnum):
+    """Types of notifications that can be sent to other services."""
+
+    DATASET_CONFIGURED = "dataset_configured"
+    """A notification sent to notify other services that the dataset has been configured."""
 
 
 ################################################################################
@@ -512,3 +537,25 @@ class MetricType(Enum):
     METRIC_OF_RECORDS = auto()
     METRIC_OF_METRICS = auto()
     METRIC_OF_BOTH = auto()
+
+
+################################################################################
+# SSE Enums
+################################################################################
+
+
+class SSEFieldType(CaseInsensitiveStrEnum):
+    """Field types in an SSE message."""
+
+    DATA = "data"
+    EVENT = "event"
+    ID = "id"
+    RETRY = "retry"
+    COMMENT = "comment"
+
+
+class SSEEventType(CaseInsensitiveStrEnum):
+    """Event types in an SSE message. Many of these are custom and not defined by the SSE spec."""
+
+    ERROR = "error"
+    LLM_METRICS = "llm_metrics"
