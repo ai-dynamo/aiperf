@@ -189,6 +189,7 @@ class BaseComponentService(BaseService):
         return HeartbeatMessage(
             service_id=self.service_id,
             service_type=self.service_type,
+            state=self.state,
         )
 
     def create_registration_message(self) -> RegistrationMessage:
