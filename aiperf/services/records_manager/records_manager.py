@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import sys
 
-from aiperf.common.config import ServiceConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import ServiceType
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
@@ -28,6 +29,8 @@ class RecordsManager(BaseComponentService):
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Initializing records manager")
+        self.user_config: UserConfig | None = None
+        self.configured_event = asyncio.Event()
 
     @property
     def service_type(self) -> ServiceType:
@@ -62,7 +65,10 @@ class RecordsManager(BaseComponentService):
     async def _configure(self, message: Message) -> None:
         """Configure the records manager."""
         self.logger.debug(f"Configuring records manager with message: {message}")
-        # TODO: Implement records manager configuration
+        self.user_config = (
+            message.data if isinstance(message.data, UserConfig) else None
+        )
+        self.configured_event.set()
 
 
 def main() -> None:

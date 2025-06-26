@@ -1,8 +1,9 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated, Any
 
+import cyclopts
 from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import BaseConfig
@@ -25,6 +26,9 @@ class InputConfig(BaseConfig):
             description="The batch size of text requests GenAI-Perf should send.\
             \nThis is currently supported with the embeddings and rankings endpoint types",
         ),
+        cyclopts.Parameter(
+            name=("--batch-size"),
+        ),
     ] = InputDefaults.BATCH_SIZE
 
     extra: Annotated[
@@ -32,6 +36,9 @@ class InputConfig(BaseConfig):
         Field(
             description="Provide additional inputs to include with every request.\
             \nInputs should be in an 'input_name:value' format.",
+        ),
+        cyclopts.Parameter(
+            name=("--extra"),
         ),
     ] = InputDefaults.EXTRA
 
@@ -46,6 +53,9 @@ class InputConfig(BaseConfig):
             \n  request_latency:300\
             \n  output_token_throughput_per_user:600",
         ),
+        cyclopts.Parameter(
+            name=("--goodput"),
+        ),
         BeforeValidator(parse_goodput),
     ] = InputDefaults.GOODPUT
 
@@ -54,6 +64,9 @@ class InputConfig(BaseConfig):
         Field(
             description="Adds a custom header to the requests.\
             \nHeaders must be specified as 'Header:Value' pairs.",
+        ),
+        cyclopts.Parameter(
+            name=("--header"),
         ),
     ] = InputDefaults.HEADER
 
@@ -70,6 +83,9 @@ class InputConfig(BaseConfig):
             \n  synthetic: queries,passages",
         ),
         BeforeValidator(parse_file),
+        cyclopts.Parameter(
+            name=("--file"),
+        ),
     ] = InputDefaults.FILE
 
     num_dataset_entries: Annotated[
@@ -79,12 +95,18 @@ class InputConfig(BaseConfig):
             description="The number of unique payloads to sample from.\
             \nThese will be reused until benchmarking is complete.",
         ),
+        cyclopts.Parameter(
+            name=("--num-dataset-entries"),
+        ),
     ] = InputDefaults.NUM_DATASET_ENTRIES
 
     random_seed: Annotated[
         int,
         Field(
             description="The seed used to generate random values.",
+        ),
+        cyclopts.Parameter(
+            name=("--random-seed"),
         ),
     ] = InputDefaults.RANDOM_SEED
 

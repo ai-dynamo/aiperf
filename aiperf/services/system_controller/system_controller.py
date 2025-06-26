@@ -6,7 +6,7 @@ import sys
 import time
 from typing import Any
 
-from aiperf.common.config import ServiceConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommandType,
     ServiceRegistrationStatus,
@@ -55,10 +55,14 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
     """
 
     def __init__(
-        self, service_config: ServiceConfig, service_id: str | None = None
+        self,
+        service_config: ServiceConfig,
+        user_config: UserConfig,
+        service_id: str | None = None,
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Creating System Controller")
+        self.user_config = user_config
 
         self._system_state: SystemState = SystemState.INITIALIZING
 
@@ -314,7 +318,7 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
             await self.send_command_to_service(
                 target_service_id=service_id,
                 command=CommandType.PROFILE_CONFIGURE,
-                data=None,
+                data=self.user_config,
             )
         except Exception as e:
             raise self._service_error(

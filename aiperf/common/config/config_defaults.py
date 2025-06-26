@@ -1,5 +1,5 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +25,7 @@ class UserDefaults:
 @dataclass(frozen=True)
 class EndPointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
-    BACKEND = RequestPayloadType.OPENAI_CHAT_COMPLETIONS
+    REQUEST_PAYLOAD_TYPE = RequestPayloadType.OPENAI_CHAT_COMPLETIONS
     CUSTOM = ""
     TYPE = InferenceClientType.OPENAI
     STREAMING = True

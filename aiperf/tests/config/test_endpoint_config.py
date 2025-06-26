@@ -17,7 +17,7 @@ def test_endpoint_config_defaults():
 
     config = EndPointConfig()
     assert config.model_selection_strategy == EndPointDefaults.MODEL_SELECTION_STRATEGY
-    assert config.backend == EndPointDefaults.BACKEND
+    assert config.request_payload_type == EndPointDefaults.REQUEST_PAYLOAD_TYPE
     assert config.custom == EndPointDefaults.CUSTOM
     assert config.type == EndPointDefaults.TYPE
     assert config.streaming == EndPointDefaults.STREAMING
@@ -40,7 +40,7 @@ def test_endpoint_config_custom_values():
 
     custom_values = {
         "model_selection_strategy": "round_robin",
-        "backend": "vllm",
+        "request_payload_type": "vllm",
         "custom": "custom_endpoint",
         "type": "custom_type",
         "streaming": True,
