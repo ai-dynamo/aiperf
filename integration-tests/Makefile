@@ -15,21 +15,20 @@
 # the project.
 
 
-.PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
-		test coverage cov clean install docker docker-run first-time-setup \
+.PHONY: test coverage cov clean install docker docker-run first-time-setup \
 		test-verbose \
 		internal-help help
 
 
 # Include user-defined environment variables
--include .env.mk
+-include ../.env.mk
 
 SHELL := /bin/bash
 
-PROJECT_NAME ?= AIPerf
+PROJECT_NAME ?= AIPerf Integration Tests
 
 # The path to the virtual environment
-VENV_PATH ?= .venv
+VENV_PATH ?= ../.venv
 # The python version to use
 PYTHON_VERSION ?= 3.12
 # The command to activate the virtual environment
@@ -90,26 +89,14 @@ internal-help:
 	} | sort
 	@printf "────────────────────────────────────────────────────────────────────────────\n"
 
-ruff lint: #? run the ruff linters
-	$(activate_venv) && ruff check . $(args)
-
-ruff-fix lint-fix: #? auto-fix the linter errors of the project using ruff.
-	$(activate_venv) && ruff check . --fix $(args)
-
-format fmt: #? format the project using ruff.
-	$(activate_venv) && ruff format . $(args)
-
-check-format check-fmt: #? check the formatting of the project using ruff.
-	$(activate_venv) && ruff format . --check $(args)
-
 test: #? run the tests using pytest.
-	$(activate_venv) && pytest aiperf/tests $(args)
+	$(activate_venv) && pytest tests $(args)
 
 test-verbose: #? run the tests using pytest with DEBUG logging
-	$(activate_venv) && pytest aiperf/tests -v -s --log-cli-level DEBUG
+	$(activate_venv) && pytest tests -v -s --log-cli-level DEBUG
 
 coverage cov: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest aiperf/tests --cov=aiperf --cov-report=html $(args)
+	$(activate_venv) && pytest tests --cov=integration_tests --cov-report=html $(args)
 
 install: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]" $(args)
@@ -130,37 +117,3 @@ clean: #? clean up the pytest and ruff caches, coverage reports, and *.pyc files
 	find . -type d -name "__pycache__" -delete
 	find . -type f -name ".coverage" -delete
 	rm -rf htmlcov/
-
-first-time-setup: #? convenience command to setup the environment for the first time
-	@# Install uv if it is not installed
-	@export PATH=$(UV_PATH):$(PATH) && \
-	if ! command -v uv &> /dev/null; then \
-		printf "$(bold)$(green)Installing uv...$(reset)\n"; \
-		curl -LsSf https://astral.sh/uv/install.sh | sh; \
-	else \
-		printf "$(bold)$(green)uv already installed$(reset)\n"; \
-	fi
-
-	@# Create virtual environment if it does not exist
-	@export PATH=$(UV_PATH):$(PATH) && \
-	if [ ! -d "$(VENV_PATH)" ]; then \
-		printf "$(bold)$(green)Creating virtual environment...$(reset)\n"; \
-		uv venv --python $(PYTHON_VERSION); \
-	else \
-		printf "$(bold)$(green)Virtual environment already exists$(reset)\n"; \
-	fi
-
-	@# Install the project
-	@printf "$(bold)$(green)Installing project...$(reset)\n"
-	@PATH=$(UV_PATH):$(PATH) $(MAKE) --no-print-directory install
-
-	@# Install the mock server
-	@printf "$(bold)$(green)Installing mock server...$(reset)\n"
-	@$(MAKE) -C integration-tests --no-print-directory install
-
-	@# Install pre-commit hooks
-	@printf "$(bold)$(green)Installing pre-commit hooks...$(reset)\n"
-	$(activate_venv) && pre-commit install --install-hooks
-
-	@# Print a success message
-	@printf "$(bold)$(green)Done!$(reset)\n"
