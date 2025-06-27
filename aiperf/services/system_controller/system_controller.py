@@ -159,6 +159,7 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
                 command=CommandType.PROCESS_RECORDS,
                 data=ProcessRecordsCommandData(cancelled=True),
             )
+            self.stop_event.set()
         else:
             self.stop_event.set()
 

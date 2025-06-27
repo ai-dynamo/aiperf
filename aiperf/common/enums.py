@@ -80,6 +80,8 @@ class Topic(CaseInsensitiveStrEnum):
     HEARTBEAT = "heartbeat"
     NOTIFICATION = "notification"
     WORKER_HEALTH = "worker_health"
+    DATASET_TIMING = "dataset_timing"
+    CONVERSATION_DATA = "conversation_data"
 
 
 class CommandResponseStatus(CaseInsensitiveStrEnum):

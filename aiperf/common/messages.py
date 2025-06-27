@@ -350,7 +350,9 @@ class ConversationRequestMessage(BaseServiceMessage):
         MessageType.CONVERSATION_REQUEST
     )
 
-    conversation_id: str = Field(..., description="The session ID of the conversation")
+    conversation_id: str | None = Field(
+        default=None, description="The session ID of the conversation"
+    )
 
 
 class ConversationResponseMessage(BaseServiceMessage):
