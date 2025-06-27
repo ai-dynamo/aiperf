@@ -101,7 +101,14 @@ class DatasetManager(BaseComponentService):
         # TODO: remove this mock config
         # mocks config inside the message
         config = MockConfig()
-        config.filename = "trace1.jsonl"
+        config.filename = "/tmp/trace.jsonl"
+        with open(config.filename, "w") as f:  # temporary file (TODO: remove)
+            f.write(
+                '{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}\n'
+                '{"timestamp": 10535, "input_length": 672, "output_length": 26, "hash_ids": [46, 47]}\n'
+                '{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}\n'
+            )
+
         config.tokenizer = Tokenizer.from_pretrained("gpt2")
 
         if config.filename:
