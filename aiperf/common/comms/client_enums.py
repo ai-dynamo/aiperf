@@ -29,7 +29,7 @@ class PubClientType(CaseInsensitiveStrEnum):
                 Topic.HEARTBEAT
                 | Topic.REGISTRATION
                 | Topic.STATUS
-                | Topic.RESPONSE
+                | Topic.COMMAND_RESPONSE
                 | Topic.CREDITS_COMPLETE
                 | Topic.PROFILE_PROGRESS
                 | Topic.PROFILE_RESULTS
@@ -69,7 +69,7 @@ class SubClientType(CaseInsensitiveStrEnum):
                 Topic.HEARTBEAT
                 | Topic.REGISTRATION
                 | Topic.STATUS
-                | Topic.RESPONSE
+                | Topic.COMMAND_RESPONSE
                 | Topic.CREDITS_COMPLETE
                 | Topic.PROFILE_PROGRESS
                 | Topic.PROFILE_RESULTS

@@ -1,0 +1,69 @@
+# Build
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aiperf-mock-server"
+version = "0.1.0"
+description = "AIPerf FastAPI-based OpenAI mock server for AI performance testing"
+authors = []
+dependencies = [
+    "fastapi>=0.104.1",
+    "uvicorn[standard]>=0.24.0",
+    "transformers>=4.35.0",
+    "torch>=2.1.0",
+    "pydantic>=2.5.0",
+    "python-dotenv>=1.0.0",
+    "cyclopts>=3.0.0"
+]
+readme = "README.md"
+requires-python = ">=3.10"
+packages = [{ include = "server" }]
+
+[tool.hatch.build.targets.wheel]
+packages = ["server"]
+
+# CLI Entrypoint
+[project.scripts]
+aiperf-mock-server = "mock_server.main:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.3",
+    "pytest-asyncio>=0.21.1",
+    "httpx>=0.25.2",
+    "ruff>=0.0.0",
+    "pre-commit>=4.2.0",
+]
+
+[tool.ruff]
+# Base settings for ruff
+line-length = 88
+indent-width = 4
+exclude = ["__pycache__", "build", "dist", ".venv", "venv"]
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle (except E501)
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+# Ignore line length errors, ruff format will handle this but
+# can have some lines that are slightly over due to the way formatting works
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+# Basic pytest configuration
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

@@ -3,13 +3,14 @@
 
 import pytest
 
-from aiperf.common.config import EndPointConfig
+from aiperf.common.config import EndPointConfig, UserConfig
 from aiperf.data_exporter import ConsoleExporter
+from aiperf.data_exporter.exporter_config import ExporterConfig
 from aiperf.data_exporter.record import Record
 
 
 @pytest.fixture
-def endpoint_config():
+def mock_endpoint_config():
     return EndPointConfig(type="llm", streaming=True)
 
 
@@ -51,23 +52,21 @@ def sample_records():
             name="Request Throughput",
             unit="per sec",
             avg=95.0,
-            min=None,
-            max=None,
-            p99=None,
-            p90=None,
-            p75=None,
         ),
     ]
 
 
+@pytest.fixture
+def mock_exporter_config(sample_records, mock_endpoint_config):
+    input_config = UserConfig(endpoint=mock_endpoint_config)
+    return ExporterConfig(records=sample_records, input_config=input_config)
+
+
 class TestConsoleExporter:
-    def test_export_prints_expected_table(
-        self, endpoint_config, sample_records, capsys
-    ):
-        exporter = ConsoleExporter(endpoint_config)
-        exporter.export(sample_records, width=100)  # fixed width for consistent output
-        captured = capsys.readouterr()
-        output = captured.out
+    def test_export_prints_expected_table(self, mock_exporter_config, capsys):
+        exporter = ConsoleExporter(mock_exporter_config)
+        exporter.export(width=100)
+        output = capsys.readouterr().out
         assert "NVIDIA AIPerf | LLM Metrics" in output
         assert "Time to First Token (ms)" in output
         assert "Request Latency (ms)" in output
@@ -84,10 +83,16 @@ class TestConsoleExporter:
         ],
     )
     def test_should_skip_logic(
-        self, endpoint_config, enable_streaming, is_streaming_only_metric, should_skip
+        self,
+        mock_endpoint_config,
+        enable_streaming,
+        is_streaming_only_metric,
+        should_skip,
     ):
-        endpoint_config.streaming = enable_streaming
-        exporter = ConsoleExporter(endpoint_config)
+        mock_endpoint_config.streaming = enable_streaming
+        input_config = UserConfig(endpoint=mock_endpoint_config)
+        config = ExporterConfig(records=[], input_config=input_config)
+        exporter = ConsoleExporter(config)
         record = Record(
             name="Test Metric",
             unit="ms",
@@ -96,8 +101,8 @@ class TestConsoleExporter:
         )
         assert exporter._should_skip(record) is should_skip
 
-    def test_format_row_formats_values_correctly(self, endpoint_config):
-        exporter = ConsoleExporter(endpoint_config)
+    def test_format_row_formats_values_correctly(self, mock_exporter_config):
+        exporter = ConsoleExporter(mock_exporter_config)
         record = Record(
             name="Request Latency",
             unit="ms",
@@ -108,7 +113,6 @@ class TestConsoleExporter:
             p90=15.5,
             p75=12.3,
         )
-
         row = exporter._format_row(record)
         assert row[0] == "Request Latency (ms)"
         assert row[1] == "10.12"
@@ -118,6 +122,6 @@ class TestConsoleExporter:
         assert row[5] == "15.50"
         assert row[6] == "12.30"
 
-    def test_get_title_returns_expected_string(self, endpoint_config):
-        exporter = ConsoleExporter(endpoint_config)
+    def test_get_title_returns_expected_string(self, mock_exporter_config):
+        exporter = ConsoleExporter(mock_exporter_config)
         assert exporter._get_title() == "NVIDIA AIPerf | LLM Metrics"

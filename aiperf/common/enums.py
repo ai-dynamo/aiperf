@@ -509,6 +509,7 @@ class ResponsePayloadType(CaseInsensitiveStrEnum):
 class DataExporterType(CaseInsensitiveStrEnum):
     CONSOLE = "console"
     CONSOLE_ERROR = "console_error"
+    JSON = "json"
 
 
 #################################################################################
