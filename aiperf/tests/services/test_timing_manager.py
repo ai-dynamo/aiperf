@@ -8,20 +8,14 @@ import io
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel
 
 from aiperf.common.enums import CommandType, ServiceType, Topic
 from aiperf.common.messages import CommandMessage, CreditReturnMessage
 from aiperf.common.service.base_service import BaseService
+from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
 from aiperf.services.timing_manager.timing_manager import TimingManager
 from aiperf.tests.base_test_component_service import BaseTestComponentService
 from aiperf.tests.utils.async_test_utils import async_fixture
-
-
-class TimingManagerTestConfig(BaseModel):
-    """Configuration model for timing manager tests."""
-
-    input_file_path: str = "test_input_file.jsonl"
 
 
 @pytest.mark.asyncio
@@ -37,13 +31,6 @@ class TestTimingManager(BaseTestComponentService):
     def service_class(self) -> type[BaseService]:
         """Return the service class to be tested."""
         return TimingManager
-
-    @pytest.fixture
-    def timing_config(self) -> TimingManagerTestConfig:
-        """
-        Return a test configuration for the timing manager.
-        """
-        return TimingManagerTestConfig()
 
     async def test_timing_manager_initialization(
         self, initialized_service: TimingManager
@@ -64,23 +51,24 @@ class TestTimingManager(BaseTestComponentService):
         """
 
         # Define the mock file content
-        mock_file_content = """
-        {"timestamp": 0, "request": {"model":"facebook/opt-125m","messages":[{"role":"user","content":"This is my first prompt."}],"max_completion_tokens":1}}
-        {"timestamp": 500000000, "request": {"model":"facebook/opt-125m","messages":[{"role":"user","content":"This is my second prompt."}],"max_completion_tokens":1}}
-        {"timestamp": 1000000000, "request": {"model":"facebook/opt-125m","messages":[{"role":"user","content":"This is my third prompt."}],"max_completion_tokens":1}}
-        {"timestamp": 1500000000, "request": {"model":"facebook/opt-125m","messages":[{"role":"user","content":"This is my fourth prompt."}],"max_completion_tokens":1}}
-        """
+        mock_timing_data = [
+            (0, "0"),
+            (500000000, "1"),
+            (1000000000, "2"),
+            (1500000000, "3"),
+        ]
 
         # Create the configuration model
-        config_data = TimingManagerTestConfig(input_file_path="test_input_file.jsonl")
+        config = TimingManagerConfig()
+        config.timing_mode = TimingMode.FIXED_SCHEDULE
 
         # Create a Message object with the test file path
         config_message = CommandMessage(
             service_id="test-service-id",  # Required - who is sending the command
-            command=CommandType.CONFIGURE,  # Required - what command to execute
+            command=CommandType.PROFILE_CONFIGURE,  # Required - what command to execute
             target_service_id="target-service",  # Optional - who should receive it
             require_response=True,  # Optional - default is False
-            data=config_data,  # Using TimingManagerTestConfig as data
+            data=config,  # Using TimingManagerConfig as data
         )
 
         # Mock the open function when called with that specific path
