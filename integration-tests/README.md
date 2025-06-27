@@ -38,7 +38,7 @@ pip install -e ".[dev]"
 
 ## Usage
 
-> **NOTE**
+> [!IMPORTANT]
 >You must provide a model tokenizer to load either on start or dynamically
 > after running using the /configure endpoint, or all requests will return HTTP 404.
 
