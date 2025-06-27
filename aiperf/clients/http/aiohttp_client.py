@@ -9,7 +9,6 @@ from typing import Any
 import aiohttp
 
 from aiperf.clients.http.defaults import AioHttpDefaults, SocketDefaults
-from aiperf.clients.timers import RequestTimerKind, RequestTimers
 from aiperf.common.enums import SSEFieldType
 from aiperf.common.record_models import (
     ErrorDetails,
@@ -66,8 +65,6 @@ class AioHttpClientMixin:
         Otherwise, the response will be parsed into a TextResponse object.
         """
 
-        # Initialize RequestTimers for precise timing
-        timers = RequestTimers()
         record: RequestRecord = RequestRecord(
             start_perf_ns=time.perf_counter_ns(),
             delayed=delayed,
@@ -86,14 +83,10 @@ class AioHttpClientMixin:
                 ],
                 connector_owner=False,
             ) as session:
-                record.start_perf_ns = timers.capture_timestamp(
-                    RequestTimerKind.REQUEST_START
-                )
-                timers.capture_timestamp(RequestTimerKind.SEND_START)
+                record.start_perf_ns = time.perf_counter_ns()
                 async with session.post(
                     url, data=payload, headers=headers, **kwargs
                 ) as response:
-                    timers.capture_timestamp(RequestTimerKind.SEND_END)
                     record.status = response.status
                     # Check for HTTP errors
                     if response.status != 200:
@@ -104,9 +97,8 @@ class AioHttpClientMixin:
                             message=error_text,
                         )
                         return record
-                    record.recv_start_perf_ns = timers.capture_timestamp(
-                        RequestTimerKind.RECV_START
-                    )
+
+                    record.recv_start_perf_ns = time.perf_counter_ns()
 
                     if response.content_type == "text/event-stream":
                         # Parse SSE stream with optimal performance
@@ -116,9 +108,7 @@ class AioHttpClientMixin:
                         record.responses.extend(messages)
                     else:
                         raw_response = await response.text()
-                        record.end_perf_ns = timers.capture_timestamp(
-                            RequestTimerKind.RECV_END
-                        )
+                        record.end_perf_ns = time.perf_counter_ns()
                         record.responses.append(
                             TextResponse(
                                 perf_ns=record.end_perf_ns,
@@ -126,12 +116,10 @@ class AioHttpClientMixin:
                                 text=raw_response,
                             )
                         )
-                    record.end_perf_ns = timers.capture_timestamp(
-                        RequestTimerKind.REQUEST_END
-                    )
+                    record.end_perf_ns = time.perf_counter_ns()
 
         except Exception as e:
-            record.end_perf_ns = timers.capture_timestamp(RequestTimerKind.REQUEST_END)
+            record.end_perf_ns = time.perf_counter_ns()
             logger.error("Error in aiohttp request: %s", str(e))
             record.error = ErrorDetails(type=e.__class__.__name__, message=str(e))
 
