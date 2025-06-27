@@ -22,7 +22,7 @@ app = cyclopts.App(name="aiperf-mock-server", help="AIPerf Integration Test Serv
 
 @app.default
 def main(
-    config: MockServerConfig,
+    config: MockServerConfig | None = None,
 ) -> None:
     """Start the AIPerf Integration Test Server.
 
@@ -31,6 +31,9 @@ def main(
     2. Environment variables (prefixed with MOCK_SERVER_)
     3. Default values
     """
+
+    if config is None:
+        config = MockServerConfig()
 
     # Set logging level
     logging.root.setLevel(getattr(logging, config.log_level.upper()))
