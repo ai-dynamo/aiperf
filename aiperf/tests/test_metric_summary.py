@@ -14,7 +14,7 @@ def test_metric_summary_process_and_get_metrics():
     # Prepare records
     records = [
         RequestRecord(
-            recv_start_perf_ns=1,
+            start_perf_ns=1,
             responses=[SSEMessage(perf_ns=10), SSEMessage(perf_ns=20)],
         )
     ]

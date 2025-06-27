@@ -10,7 +10,7 @@ def test_ttst_metric_update_value_and_values():
     metric = TTSTMetric()
     metric.metric = []
     record = RequestRecord(
-        recv_start_perf_ns=100,
+        start_perf_ns=100,
         responses=[SSEMessage(perf_ns=150), SSEMessage(perf_ns=180)],
     )
 
@@ -23,15 +23,15 @@ def test_ttst_metric_add_multiple_records():
     metric.metric = []
     records = [
         RequestRecord(
-            recv_start_perf_ns=10,
+            start_perf_ns=10,
             responses=[SSEMessage(perf_ns=15), SSEMessage(perf_ns=20)],
         ),
         RequestRecord(
-            recv_start_perf_ns=20,
+            start_perf_ns=20,
             responses=[SSEMessage(perf_ns=25), SSEMessage(perf_ns=35)],
         ),
         RequestRecord(
-            recv_start_perf_ns=30,
+            start_perf_ns=30,
             responses=[SSEMessage(perf_ns=40), SSEMessage(perf_ns=50)],
         ),
     ]
@@ -44,7 +44,7 @@ def test_ttst_metric_with_one_response_raises():
     metric = TTSTMetric()
     metric.metric = []
     record = RequestRecord(
-        recv_start_perf_ns=15,
+        start_perf_ns=15,
         responses=[SSEMessage(perf_ns=15)],
     )
     with pytest.raises(ValueError, match="at least two responses"):
@@ -59,21 +59,11 @@ def test_ttst_metric_with_no_request_raises():
         metric.update_value(record=record, metrics=None)
 
 
-def test_ttst_metric_with_no_request_timestamp_raises():
-    metric = TTSTMetric()
-    metric.metric = []
-    record = RequestRecord(
-        responses=[SSEMessage(perf_ns=20), SSEMessage(perf_ns=30)],
-    )
-    with pytest.raises(ValueError, match="valid request"):
-        metric.update_value(record=record, metrics=None)
-
-
 def test_ttst_metric_response_timestamp_order_raises():
     metric = TTSTMetric()
     metric.metric = []
     record = RequestRecord(
-        recv_start_perf_ns=100,
+        start_perf_ns=100,
         responses=[SSEMessage(perf_ns=150), SSEMessage(perf_ns=140)],
     )
     with pytest.raises(

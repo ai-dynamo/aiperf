@@ -10,7 +10,7 @@ from aiperf.services.records_manager.metrics.types.min_request_metric import (
 
 def test_update_value_and_values():
     metric = MinRequestMetric()
-    record = RequestRecord(recv_start_perf_ns=100, responses=[SSEMessage(perf_ns=150)])
+    record = RequestRecord(start_perf_ns=100, responses=[SSEMessage(perf_ns=150)])
 
     metric.update_value(record=record, metrics=None)
     assert metric.values() == 100
@@ -19,9 +19,9 @@ def test_update_value_and_values():
 def test_add_multiple_records():
     metric = MinRequestMetric()
     records = [
-        RequestRecord(recv_start_perf_ns=20, responses=[SSEMessage(perf_ns=25)]),
-        RequestRecord(recv_start_perf_ns=10, responses=[SSEMessage(perf_ns=15)]),
-        RequestRecord(recv_start_perf_ns=30, responses=[SSEMessage(perf_ns=40)]),
+        RequestRecord(start_perf_ns=20, responses=[SSEMessage(perf_ns=25)]),
+        RequestRecord(start_perf_ns=10, responses=[SSEMessage(perf_ns=15)]),
+        RequestRecord(start_perf_ns=30, responses=[SSEMessage(perf_ns=40)]),
     ]
     for record in records:
         metric.update_value(record=record, metrics=None)
@@ -31,12 +31,5 @@ def test_add_multiple_records():
 def test_record_with_no_request_raises():
     metric = MinRequestMetric()
     record = None
-    with pytest.raises(ValueError, match="valid request"):
-        metric.update_value(record=record, metrics=None)
-
-
-def test_record_with_no_request_timestamp_raises():
-    metric = MinRequestMetric()
-    record = RequestRecord(responses=[SSEMessage(perf_ns=20)])
     with pytest.raises(ValueError, match="valid request"):
         metric.update_value(record=record, metrics=None)

@@ -49,7 +49,7 @@ class TTSTMetric(BaseMetric):
         Raises:
             ValueError: If the record does not have at least two responses.
         """
-        if not record or not record.recv_start_perf_ns:
+        if not record or not record.start_perf_ns:
             raise ValueError("Record must have a valid request with a timestamp.")
         if not record.responses or len(record.responses) < 2:
             raise ValueError(

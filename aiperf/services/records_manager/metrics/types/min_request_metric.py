@@ -29,8 +29,8 @@ class MinRequestMetric(BaseMetric):
 
         """
         self._check_record(record)
-        if record.recv_start_perf_ns < self.metric:
-            self.metric = record.recv_start_perf_ns
+        if record.start_perf_ns < self.metric:
+            self.metric = record.start_perf_ns
 
     def values(self) -> float:
         """
@@ -43,5 +43,6 @@ class MinRequestMetric(BaseMetric):
         Checks if the record is valid for calculations.
 
         """
-        if not record or not record.recv_start_perf_ns:
+        print(f"Checking record: {record}")
+        if not record or not record.start_perf_ns:
             raise ValueError("Record must have a valid request with a timestamp.")

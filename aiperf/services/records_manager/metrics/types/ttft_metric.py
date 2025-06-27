@@ -31,7 +31,7 @@ class TTFTMetric(BaseMetric):
         RequestRecord object, computes the difference (TTFT), and appends the result to the metric list.
         """
         self._check_record(record)
-        request_ts = record.recv_start_perf_ns
+        request_ts = record.start_perf_ns
         response_ts = record.responses[0].perf_ns
         ttft = response_ts - request_ts
         self.metric.append(ttft)
@@ -49,13 +49,13 @@ class TTFTMetric(BaseMetric):
         Raises:
             ValueError: If the record does not have at least one response.
         """
-        if not record or not record.recv_start_perf_ns:
+        if not record or not record.start_perf_ns:
             raise ValueError("Record must have a valid request with a timestamp.")
         if not record.responses or len(record.responses) < 1:
             raise ValueError(
                 "Record must have at least one response to calculate TTFT."
             )
-        if record.responses[0].perf_ns < record.recv_start_perf_ns:
+        if record.responses[0].perf_ns < record.start_perf_ns:
             raise ValueError(
                 "Response timestamp must be greater than or equal to request timestamp."
             )

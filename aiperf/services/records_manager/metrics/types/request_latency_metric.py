@@ -31,7 +31,7 @@ class RequestLatencyMetric(BaseMetric):
         appends the result to the metric list.
         """
         self._check_record(record)
-        request_ts = record.recv_start_perf_ns
+        request_ts = record.start_perf_ns
         final_response_ts = record.responses[-1].perf_ns
         request_latency = final_response_ts - request_ts
         self.metric.append(request_latency)
@@ -43,12 +43,12 @@ class RequestLatencyMetric(BaseMetric):
         return self.metric
 
     def _check_record(self, record: RequestRecord) -> None:
-        if not record or not record.recv_start_perf_ns:
+        if not record or not record.start_perf_ns:
             raise ValueError("Record must have a valid request with a timestamp.")
         if len(record.responses) < 1:
             raise ValueError("Record must have at least one response.")
 
-        request_ts = record.recv_start_perf_ns
+        request_ts = record.start_perf_ns
         response_ts = record.responses[-1].perf_ns
 
         if request_ts < 0 or response_ts < 0:

@@ -17,9 +17,9 @@ def test_add_multiple_records():
     metrics[MinRequestMetric.tag] = MinRequestMetric()
     metrics[MaxResponseMetric.tag] = MaxResponseMetric()
     records = [
-        RequestRecord(recv_start_perf_ns=10, responses=[SSEMessage(perf_ns=15)]),
-        RequestRecord(recv_start_perf_ns=20, responses=[SSEMessage(perf_ns=25)]),
-        RequestRecord(recv_start_perf_ns=30, responses=[SSEMessage(perf_ns=40)]),
+        RequestRecord(start_perf_ns=10, responses=[SSEMessage(perf_ns=15)]),
+        RequestRecord(start_perf_ns=20, responses=[SSEMessage(perf_ns=25)]),
+        RequestRecord(start_perf_ns=30, responses=[SSEMessage(perf_ns=40)]),
     ]
     # Creating metrics based on records
     for record in records:
