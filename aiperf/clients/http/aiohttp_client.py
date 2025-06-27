@@ -145,14 +145,14 @@ class AioHttpSSEStreamReader:
         """
         messages: list[SSEMessage] = []
 
-        async for raw_message, first_byte_ns, _ in self.__aiter__():
+        async for raw_message, first_byte_ns in self.__aiter__():
             # Parse the raw SSE message into a SSEMessage object
             message = parse_sse_message(raw_message, first_byte_ns)
             messages.append(message)
 
         return messages
 
-    async def __aiter__(self) -> typing.AsyncIterator[tuple[str, int, int]]:
+    async def __aiter__(self) -> typing.AsyncIterator[tuple[str, int]]:
         """Iterate over the SSE stream in a performant manner and return a tuple of the
         raw SSE message, the perf_counter_ns of the first byte, and the perf_counter_ns of the last byte.
         This provides the most accurate timing information possible without any delays due to the nature of
@@ -160,8 +160,7 @@ class AioHttpSSEStreamReader:
         and the last byte is read after the rest of the chunk is read to capture the timestamp of the last byte.
 
         Returns:
-            An async iterator of tuples of the raw SSE message, the perf_counter_ns of the first byte, and
-            the perf_counter_ns of the last byte.
+            An async iterator of tuples of the raw SSE message, and the perf_counter_ns of the first byte
         """
 
         while not self.response.content.at_eof():
@@ -172,7 +171,6 @@ class AioHttpSSEStreamReader:
                 break
 
             chunk = await self.response.content.readuntil(b"\n\n")
-            chunk_ns_last_byte = time.perf_counter_ns()
 
             if not chunk:
                 break
@@ -183,14 +181,12 @@ class AioHttpSSEStreamReader:
                 yield (
                     chunk.decode("utf-8").strip(),
                     chunk_ns_first_byte,
-                    chunk_ns_last_byte,
                 )
             except UnicodeDecodeError:
                 # Handle potential encoding issues gracefully
                 yield (
                     chunk.decode("utf-8", errors="replace").strip(),
                     chunk_ns_first_byte,
-                    chunk_ns_last_byte,
                 )
 
 
@@ -228,8 +224,8 @@ def create_tcp_connector(**kwargs) -> aiohttp.TCPConnector:
 
     def socket_factory(addr_info):
         """Custom socket factory optimized for SSE streaming performance."""
-        family, type_, proto, _, _ = addr_info
-        sock = socket.socket(family=family, type=type_, proto=proto)
+        family, sock_type, proto, _, _ = addr_info
+        sock = socket.socket(family=family, type=sock_type, proto=proto)
         SocketDefaults.apply_to_socket(sock)
         return sock
 

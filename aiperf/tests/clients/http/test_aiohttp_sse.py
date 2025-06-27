@@ -25,7 +25,7 @@ class TestAioHttpSSEStreamReader:
 
     async def _collect_chunks(
         self, reader: AioHttpSSEStreamReader
-    ) -> list[tuple[str, int, int]]:
+    ) -> list[tuple[str, int]]:
         """Helper to collect all chunks from async iteration."""
         chunks = []
         async for chunk in reader:
@@ -46,8 +46,8 @@ class TestAioHttpSSEStreamReader:
         """Test successful reading of complete SSE stream."""
         # Setup mock to simulate stream data
         sse_data = [
-            ("data: Hello\nevent: message", 123456789, 123456790),
-            ("data: World\nid: msg-2", 123456791, 123456792),
+            ("data: Hello\nevent: message", 123456789),
+            ("data: World\nid: msg-2", 123456791),
         ]
 
         async def mock_aiter():
@@ -93,14 +93,13 @@ class TestAioHttpSSEStreamReader:
     async def test_aiter_single_chunk(self, mock_sse_response: Mock) -> None:
         """Test __aiter__ with single chunk."""
         setup_single_sse_chunk(mock_sse_response, remaining=b"ata: Hello\n\n")
-        with patch("time.perf_counter_ns", side_effect=[123456789, 123456790]):
+        with patch("time.perf_counter_ns", side_effect=[123456789]):
             reader = AioHttpSSEStreamReader(mock_sse_response)
             chunks = await self._collect_chunks(reader)
             assert len(chunks) == 1
-            raw_message, first_byte_ns, last_byte_ns = chunks[0]
+            raw_message, first_byte_ns = chunks[0]
             assert raw_message == "data: Hello"
             assert first_byte_ns == 123456789
-            assert last_byte_ns == 123456790
 
     @pytest.mark.asyncio
     async def test_aiter_multiple_chunks(
@@ -120,7 +119,7 @@ class TestAioHttpSSEStreamReader:
             "data: [DONE]",
         ]
 
-        for i, (raw_message, _, _) in enumerate(chunks):
+        for i, (raw_message, _) in enumerate(chunks):
             assert raw_message == expected_messages[i]
 
     @pytest.mark.asyncio
@@ -153,10 +152,9 @@ class TestAioHttpSSEStreamReader:
             assert len(chunks) == expected_count, f"Failed for {description}"
 
             if expected_count > 0:
-                raw_message, first_byte_ns, last_byte_ns = chunks[0]
+                raw_message, first_byte_ns = chunks[0]
                 assert isinstance(raw_message, str)
                 assert first_byte_ns == timestamps[0]
-                assert last_byte_ns == timestamps[1]
 
                 # Special assertions for unicode decode error
                 if "unicode" in description:
@@ -176,10 +174,8 @@ class TestAioHttpSSEStreamReader:
             chunks = await self._collect_chunks(reader)
 
             assert len(chunks) == 1
-            _, first_byte_ns, last_byte_ns = chunks[0]
+            _, first_byte_ns = chunks[0]
             assert first_byte_ns == first_timestamp
-            assert last_byte_ns == second_timestamp
-            assert last_byte_ns > first_byte_ns
 
     @pytest.mark.asyncio
     async def test_sse_stream_performance(self, mock_sse_response: Mock) -> None:
