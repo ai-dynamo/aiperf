@@ -38,14 +38,18 @@ pip install -e ".[dev]"
 
 ## Usage
 
+> [!IMPORTANT]
+>You must provide a model tokenizer to load either on start or dynamically
+> after running using the /configure endpoint, or all requests will return HTTP 404.
+
 ### Command Line
 
 ```bash
 # Basic usage
-aiperf-mock-server
+aiperf-mock-server -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
 # Custom configuration with short flags
-aiperf-mock-server -p 8080 -t 30 -i 10
+aiperf-mock-server -p 8080 -t 30 -i 10 -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
 # Full configuration with long flags
 aiperf-mock-server \
@@ -55,10 +59,6 @@ aiperf-mock-server \
   --host 127.0.0.1 \
   --workers 4 \
   --log-level DEBUG \
-  --access-logs
-
-# Pre-load specific tokenizer models
-aiperf-mock-server \
   --tokenizer-models gpt2 \
   --tokenizer-models deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
