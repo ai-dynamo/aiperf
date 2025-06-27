@@ -1,8 +1,8 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 from aiperf.common.enums import MetricTimeType, MetricType
+from aiperf.common.record_models import RequestRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
-from aiperf.services.records_manager.records import Record
 
 
 class MaxResponseMetric(BaseMetric):
@@ -20,15 +20,17 @@ class MaxResponseMetric(BaseMetric):
         self.metric: float = 0
 
     def update_value(
-        self, record: Record | None = None, metrics: dict["BaseMetric"] | None = None
+        self,
+        record: RequestRecord | None = None,
+        metrics: dict["BaseMetric"] | None = None,
     ) -> None:
         """
         Adds a new record and calculates the maximum response timestamp metric.
 
         """
         self._check_record(record)
-        if record.responses[-1].timestamp > self.metric:
-            self.metric = record.responses[-1].timestamp
+        if record.responses[-1].perf_ns > self.metric:
+            self.metric = record.responses[-1].perf_ns
 
     def values(self) -> float:
         """
@@ -36,10 +38,10 @@ class MaxResponseMetric(BaseMetric):
         """
         return self.metric
 
-    def _check_record(self, record: Record) -> None:
+    def _check_record(self, record: RequestRecord) -> None:
         """
         Checks if the record is valid for calculations.
 
         """
-        if not record.responses or not record.responses[-1].timestamp:
+        if not record.responses or not record.responses[-1].perf_ns:
             raise ValueError("Record must have valid responses with timestamps.")

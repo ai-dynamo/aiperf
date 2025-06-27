@@ -1,6 +1,7 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 from aiperf.common.enums import MetricTimeType, MetricType
+from aiperf.common.record_models import RequestRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 from aiperf.services.records_manager.metrics.types.max_response_metric import (
     MaxResponseMetric,
@@ -8,7 +9,6 @@ from aiperf.services.records_manager.metrics.types.max_response_metric import (
 from aiperf.services.records_manager.metrics.types.min_request_metric import (
     MinRequestMetric,
 )
-from aiperf.services.records_manager.records import Record
 
 
 class BenchmarkDurationMetric(BaseMetric):
@@ -26,7 +26,9 @@ class BenchmarkDurationMetric(BaseMetric):
         self.metric: float = 0.0
 
     def update_value(
-        self, record: Record | None = None, metrics: dict["BaseMetric"] | None = None
+        self,
+        record: RequestRecord | None = None,
+        metrics: dict["BaseMetric"] | None = None,
     ) -> None:
         min_req_time = metrics[MinRequestMetric.tag].values()
         max_res_time = metrics[MaxResponseMetric.tag].values()
@@ -39,5 +41,5 @@ class BenchmarkDurationMetric(BaseMetric):
         """
         return self.metric
 
-    def _check_record(self, record: Record) -> None:
+    def _check_record(self, record: RequestRecord) -> None:
         pass

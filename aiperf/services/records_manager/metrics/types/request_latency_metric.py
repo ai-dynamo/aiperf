@@ -1,8 +1,8 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 from aiperf.common.enums import MetricTimeType, MetricType
+from aiperf.common.record_models import RequestRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
-from aiperf.services.records_manager.records import Record
 
 
 class RequestLatencyMetric(BaseMetric):
@@ -20,7 +20,9 @@ class RequestLatencyMetric(BaseMetric):
         self.metric: list[int] = []
 
     def update_value(
-        self, record: Record | None = None, metrics: dict["BaseMetric"] | None = None
+        self,
+        record: RequestRecord | None = None,
+        metrics: dict["BaseMetric"] | None = None,
     ) -> None:
         """
         Adds a new record and calculates the Request Latencies metric.
@@ -29,8 +31,8 @@ class RequestLatencyMetric(BaseMetric):
         appends the result to the metric list.
         """
         self._check_record(record)
-        request_ts = record.request.timestamp
-        final_response_ts = record.responses[-1].timestamp
+        request_ts = record.start_perf_ns
+        final_response_ts = record.responses[-1].perf_ns
         request_latency = final_response_ts - request_ts
         self.metric.append(request_latency)
 
@@ -40,14 +42,14 @@ class RequestLatencyMetric(BaseMetric):
         """
         return self.metric
 
-    def _check_record(self, record: Record) -> None:
-        if not record.request or not record.request.timestamp:
+    def _check_record(self, record: RequestRecord) -> None:
+        if not record or not record.start_perf_ns:
             raise ValueError("Record must have a valid request with a timestamp.")
         if len(record.responses) < 1:
             raise ValueError("Record must have at least one response.")
 
-        request_ts = record.request.timestamp
-        response_ts = record.responses[-1].timestamp
+        request_ts = record.start_perf_ns
+        response_ts = record.responses[-1].perf_ns
 
         if request_ts < 0 or response_ts < 0:
             raise ValueError("Timestamps must be positive values.")
