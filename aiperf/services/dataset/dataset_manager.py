@@ -148,16 +148,16 @@ class DatasetManager(BaseComponentService):
             )
 
         if message.conversation_id is None:
-            return await self._return_any_conversation(
+            return self._return_any_conversation(
                 request_id=message.request_id,
             )
         else:
-            return await self._return_conversation_by_id(
+            return self._return_conversation_by_id(
                 request_id=message.request_id,
                 conversation_id=message.conversation_id,
             )
 
-    async def _return_any_conversation(
+    def _return_any_conversation(
         self, request_id: str | None
     ) -> ConversationResponseMessage:
         """Return any conversation from the dataset based on the user specified method."""
@@ -171,7 +171,7 @@ class DatasetManager(BaseComponentService):
             conversation=conversation,
         )
 
-    async def _return_conversation_by_id(
+    def _return_conversation_by_id(
         self, request_id: str | None, conversation_id: str
     ) -> ConversationResponseMessage:
         """Return a conversation if it exists, otherwise raise an error."""
@@ -198,7 +198,7 @@ class DatasetManager(BaseComponentService):
             raise self._service_error(
                 "Dataset is empty and must be configured before handling timing requests.",
             )
-            
+
         timing_dataset = []
         for conversation_id, conversation in self.dataset.items():
             for turn in conversation.turns:
