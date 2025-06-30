@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-__all__ = ["PostProcessorManager"]
+__all__ = ["InferenceResultParser"]
 
-from aiperf.services.post_processor_manager.post_processor_manager import (
-    PostProcessorManager,
+from aiperf.services.inference_result_parser.inference_result_parser import (
+    InferenceResultParser,
 )
