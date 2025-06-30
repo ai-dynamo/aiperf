@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import time
 import uuid
 from typing import Any, ClassVar, Literal
 
+import orjson
 from pydantic import (
     BaseModel,
     Field,
@@ -25,9 +25,11 @@ from aiperf.common.enums import (
 from aiperf.common.record_models import (
     ErrorDetails,
     ErrorDetailsCount,
+    MetricResult,
+    ParsedResponseRecord,
     RequestRecord,
-    ResultsRecord,
 )
+from aiperf.common.utils import load_json_str
 
 ################################################################################
 # Abstract Base Message Models
@@ -117,7 +119,7 @@ class Message(BaseModel):
     @classmethod
     def from_json(cls, json_str: str) -> "Message":
         """Fast deserialization without full validation"""
-        data = json.loads(json_str)
+        data = load_json_str(json_str)
         message_type = data.get("message_type")
         if not message_type:
             raise ValueError("Missing message_type")
@@ -131,7 +133,7 @@ class Message(BaseModel):
 
     def to_json(self) -> str:
         """Fast serialization without full validation"""
-        return json.dumps(self.__dict__)
+        return orjson.dumps(self.__dict__).decode("utf-8")
 
 
 class BaseServiceMessage(Message):
@@ -282,8 +284,9 @@ class CreditDropMessage(BaseServiceMessage):
     conversation_id: str | None = Field(
         default=None, description="The ID of the conversation, if applicable."
     )
-    credit_drop_ns: int = Field(
-        default_factory=time.time_ns, description="Timestamp of the credit drop"
+    credit_drop_ns: int | None = Field(
+        default=None,
+        description="Timestamp of the credit drop, if applicable. None means send ASAP.",
     )
 
 
@@ -375,16 +378,29 @@ class InferenceResultsMessage(BaseServiceMessage):
     )
 
 
+class ParsedInferenceResultsMessage(BaseServiceMessage):
+    """Message for a parsed inference results."""
+
+    message_type: Literal[MessageType.PARSED_INFERENCE_RESULTS] = (
+        MessageType.PARSED_INFERENCE_RESULTS
+    )
+
+    record: SerializeAsAny[ParsedResponseRecord] = Field(
+        ..., description="The post process results record"
+    )
+
+
 class ProfileResultsMessage(BaseServiceMessage):
     """Message for profile results."""
 
     message_type: Literal[MessageType.PROFILE_RESULTS] = MessageType.PROFILE_RESULTS
 
-    records: SerializeAsAny[list[ResultsRecord]] = Field(
+    records: SerializeAsAny[list[MetricResult]] = Field(
         ..., description="The records of the profile results"
     )
     total: int = Field(
-        ..., description="The total number of inference requests to be made"
+        ...,
+        description="The total number of inference requests expected to be made (if known)",
     )
     completed: int = Field(
         ..., description="The number of inference requests completed"
