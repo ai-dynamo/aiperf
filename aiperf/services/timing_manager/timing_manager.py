@@ -13,6 +13,7 @@ from aiperf.common.hooks import on_cleanup, on_configure, on_init, on_start, on_
 from aiperf.common.messages import (
     CreditDropMessage,
     CreditReturnMessage,
+    DatasetTimingRequest,
     Message,
 )
 from aiperf.common.service.base_component_service import BaseComponentService
@@ -33,6 +34,7 @@ class TimingManager(BaseComponentService):
         self._credits_available = 100
         self.logger.debug("Initializing timing manager")
         self._credit_drop_task: asyncio.Task | None = None
+        self.dataset_timing_response = None
 
     @property
     def service_type(self) -> ServiceType:
@@ -70,7 +72,19 @@ class TimingManager(BaseComponentService):
             callback=self._on_credit_return,
         )
         await self.set_state(ServiceState.RUNNING)
-        await asyncio.sleep(3)
+        await asyncio.sleep(1.5)
+
+        self.logger.debug("TM: Requesting dataset timing information")
+        self.dataset_timing_response = await self.comms.request(
+            topic=Topic.DATASET_TIMING,
+            message=DatasetTimingRequest(
+                service_id=self.service_id,
+            ),
+        )
+        self.logger.debug(
+            "TM: Received dataset timing response: %s",
+            self.dataset_timing_response,
+        )
 
         self._credit_drop_task = asyncio.create_task(self._issue_credit_drops())
 

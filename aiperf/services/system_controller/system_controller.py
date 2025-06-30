@@ -159,8 +159,8 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
                 command=CommandType.PROCESS_RECORDS,
                 data=ProcessRecordsCommandData(cancelled=True),
             )
-        else:
-            self.stop_event.set()
+        
+        self.stop_event.set()
 
     async def _bootstrap_system(self) -> None:
         """Bootstrap the system services.

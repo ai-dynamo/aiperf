@@ -1,13 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import os
+import random
 import sys
 
 from pydantic import BaseModel, ConfigDict
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.dataset_models import Conversation
-from aiperf.common.enums import ComposerType, CustomDatasetType, ServiceType
-from aiperf.common.exceptions import ServiceError
+from aiperf.common.enums import (
+    ComposerType,
+    CustomDatasetType,
+    MessageType,
+    ServiceType,
+)
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
@@ -19,6 +25,8 @@ from aiperf.common.hooks import (
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
+    DatasetTimingRequest,
+    DatasetTimingResponse,
     Message,
 )
 from aiperf.common.service.base_component_service import BaseComponentService
@@ -67,13 +75,18 @@ class DatasetManager(BaseComponentService):
     async def _initialize(self) -> None:
         """Initialize dataset manager-specific components."""
         self.logger.debug("Initializing dataset manager")
-        # TODO: wait until Anthony's ZMQRouterRepClient is merged
-        # await self.comms.register_request_handler(
-        #    service_id=self.service_id,
-        #    topic=Topic.CONVERSATION_DATA,
-        #    message_type=MessageType.CONVERSATION_REQUEST,
-        #    handler=self._handle_conversation_request,
-        # )
+
+        await self.comms.register_request_handler(
+            service_id=self.service_id,
+            message_type=MessageType.CONVERSATION_REQUEST,
+            handler=self._handle_conversation_request,
+        )
+
+        await self.comms.register_request_handler(
+            service_id=self.service_id,
+            message_type=MessageType.DATASET_TIMING_REQUEST,
+            handler=self._handle_dataset_timing_request,
+        )
 
     @on_start
     async def _start(self) -> None:
@@ -101,8 +114,8 @@ class DatasetManager(BaseComponentService):
         # TODO: remove this mock config
         # mocks config inside the message
         config = MockConfig()
-        config.filename = "trace1.jsonl"
-        config.tokenizer = Tokenizer.from_pretrained("gpt2")
+        config.filename = os.getenv("AIPERF_DATASET_FILENAME", None)  # "trace1.jsonl"
+        config.tokenizer = Tokenizer.from_pretrained(os.getenv("AIPERF_MODEL", "gpt2"))
 
         if config.filename:
             composer_type = ComposerType.CUSTOM
@@ -127,26 +140,74 @@ class DatasetManager(BaseComponentService):
         self, message: ConversationRequestMessage
     ) -> ConversationResponseMessage:
         """Handle a conversation request."""
+        self.logger.debug("Handling conversation request: %s", message)
+
         if not self.dataset:
-            raise ServiceError(
+            raise self._service_error(
                 "Dataset is empty and must be configured before handling requests.",
-                service_type=self.service_type,
-                service_id=self.service_id,
-            )
-        if message.conversation_id not in self.dataset:
-            raise ServiceError(
-                f"Conversation {message.conversation_id} not found in dataset.",
-                service_type=self.service_type,
-                service_id=self.service_id,
             )
 
-        self.logger.debug("Handling conversation request: %s", message)
-        conversation = self.dataset[message.conversation_id]
+        if message.conversation_id is None:
+            return self._return_any_conversation(
+                request_id=message.request_id,
+            )
+        else:
+            return self._return_conversation_by_id(
+                request_id=message.request_id,
+                conversation_id=message.conversation_id,
+            )
+
+    def _return_any_conversation(
+        self, request_id: str | None
+    ) -> ConversationResponseMessage:
+        """Return any conversation from the dataset based on the user specified method."""
+
+        # TODO: Implement the user specified method (random, round robin, etc.)
+        conversation = random.choice(list(self.dataset.values()))
+        self.logger.debug("Sending random conversation response: %s", conversation)
         return ConversationResponseMessage(
             service_id=self.service_id,
-            request_id=message.request_id,
-            conversation_id=message.conversation_id,
+            request_id=request_id,
             conversation=conversation,
+        )
+
+    def _return_conversation_by_id(
+        self, request_id: str | None, conversation_id: str
+    ) -> ConversationResponseMessage:
+        """Return a conversation if it exists, otherwise raise an error."""
+
+        if conversation_id not in self.dataset:
+            raise self._service_error(
+                f"Conversation {conversation_id} not found in dataset.",
+            )
+
+        conversation = self.dataset[conversation_id]
+        self.logger.debug("Sending conversation response: %s", conversation)
+        return ConversationResponseMessage(
+            service_id=self.service_id,
+            request_id=request_id,
+            conversation=conversation,
+        )
+
+    async def _handle_dataset_timing_request(
+        self, message: DatasetTimingRequest
+    ) -> DatasetTimingResponse:
+        """Handle a dataset timing request."""
+        self.logger.debug("Handling dataset timing request: %s", message)
+        if not self.dataset:
+            raise self._service_error(
+                "Dataset is empty and must be configured before handling timing requests.",
+            )
+
+        timing_dataset = []
+        for conversation_id, conversation in self.dataset.items():
+            for turn in conversation.turns:
+                timing_dataset.append((turn.timestamp, conversation_id))
+
+        return DatasetTimingResponse(
+            service_id=self.service_id,
+            request_id=message.request_id,
+            timing_data=timing_dataset,
         )
 
 
