@@ -4,6 +4,7 @@
 import asyncio
 import contextlib
 import sys
+from dataclasses import dataclass
 
 from aiperf.common.comms.client_enums import ClientType, PullClientType, PushClientType
 from aiperf.common.config import ServiceConfig
@@ -23,6 +24,13 @@ from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMod
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
 from aiperf.services.timing_manager.fixed_schedule_strategy import FixedScheduleStrategy
 from aiperf.services.timing_manager.rate_strategy import RateStrategy
+
+
+@dataclass
+class CreditDropInfo:
+    amount: int = 1
+    conversation_id: str | None = None
+    credit_drop_ns: int | None = None
 
 
 @ServiceFactory.register(ServiceType.TIMING_MANAGER)
@@ -71,15 +79,15 @@ class TimingManager(BaseComponentService):
 
         if config.timing_mode == TimingMode.FIXED_SCHEDULE:
             self._credit_issuing_strategy = FixedScheduleStrategy(
-                config, self.logger, self.stop_event, self.comms
+                config, self.logger, self.stop_event, self._issue_credit_drop
             )
         elif config.timing_mode == TimingMode.CONCURRENCY:
             self._credit_issuing_strategy = ConcurrencyStrategy(
-                config, self.logger, self.stop_event, self.comms
+                config, self.logger, self.stop_event, self._issue_credit_drop
             )
         elif config.timing_mode == TimingMode.RATE:
             self._credit_issuing_strategy = RateStrategy(
-                config, self.logger, self.stop_event, self.comms
+                config, self.logger, self.stop_event, self._issue_credit_drop
             )
 
         assert isinstance(self._credit_issuing_strategy, CreditIssuingStrategy)
@@ -134,6 +142,17 @@ class TimingManager(BaseComponentService):
 
         assert isinstance(self._credit_issuing_strategy, CreditIssuingStrategy)
         await self._credit_issuing_strategy.start()
+
+    async def _issue_credit_drop(self, credit_drop_info: CreditDropInfo) -> None:
+        await self.comms.push(
+            topic=Topic.CREDIT_DROP,
+            message=CreditDropMessage(
+                service_id=self.service_id,
+                amount=1,
+                conversation_id=conversation_id,
+                credit_drop_ns=time.time_ns(),
+            ),
+        )
 
     async def _on_credit_return(self, message: CreditReturnMessage) -> None:
         """Process a credit return message.

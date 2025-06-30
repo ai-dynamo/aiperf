@@ -9,8 +9,7 @@ class ConcurrencyStrategy(CreditIssuingStrategy):
     Class for concurrency credit issuing strategy.
     """
 
-    def __init__(self, config, stop_event, comms, service_id):
-        super().__init__(config, stop_event, comms, service_id)
+    def __init__(self, config, credit_drop_function):
         raise NotImplementedError()
 
     async def initialize(self) -> None:

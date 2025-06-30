@@ -10,12 +10,10 @@ class CreditIssuingStrategy(ABC):
     Base class for credit issuing strategies.
     """
 
-    def __init__(self, config, stop_event, comms, service_id):
+    def __init__(self, config, credit_drop_function):
         self.logger = logging.getLogger(__name__)
         self.config = config
-        self.stop_event = stop_event
-        self.comms = comms
-        self.service_id = service_id
+        self.credit_drop_function = credit_drop_function
 
     @abstractmethod
     async def initialize(self) -> None:

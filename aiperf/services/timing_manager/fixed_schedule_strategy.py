@@ -4,6 +4,8 @@
 import asyncio
 import time
 from collections import defaultdict
+from collections.abc import Coroutine
+from typing import Any
 
 from aiperf.common.enums import Topic
 from aiperf.common.messages import (
@@ -11,6 +13,7 @@ from aiperf.common.messages import (
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
+from aiperf.services.timing_manager import CreditDropInfo
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
 
 
@@ -19,13 +22,13 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
     Class for fixed schedule credit issuing strategy.
     """
 
-    def __init__(self, config, stop_event, comms, service_id):
-        super().__init__(config, stop_event, comms, service_id)
+    def __init__(self, config, credit_drop_function):
+        super().__init__(config, credit_drop_function)
 
         self._schedule: list[tuple[int, str]] = []
 
     async def initialize(self) -> None:
-        await self.comms.register_pull_callback(
+        await self.comms.register(
             message_type=DatasetTimingRequest, callback=self._get_dataset_timing
         )
 
@@ -64,8 +67,14 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
                 self.logger.info("Stop event detected, ending credit drops")
                 break
 
+            tasks: set[Coroutine[Any, Any, None]] = set()
+
             for _, conversation_id in timestamp_groups[unique_timestamp]:
-                asyncio.create_task(
+                credit_drop_info = CreditDropInfo()
+                credit_drop_info.conversation_id = conversation_id
+                credit_drop_info.credit_drop_ns = time.time_ns()
+
+                task = asyncio.create_task(
                     self.comms.push(
                         topic=Topic.CREDIT_DROP,
                         message=CreditDropMessage(
@@ -76,5 +85,7 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
                         ),
                     )
                 )
+                tasks.add(task)
+                task.add_done_callback(tasks.discard)
 
         self.logger.info("Completed all scheduled credit drops")
