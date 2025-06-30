@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
+import json
 import time
 import uuid
 from typing import Any, ClassVar, Literal
@@ -29,7 +29,6 @@ from aiperf.common.record_models import (
     ParsedResponseRecord,
     RequestRecord,
 )
-from aiperf.common.utils import load_json_str
 
 ################################################################################
 # Abstract Base Message Models
@@ -119,7 +118,7 @@ class Message(BaseModel):
     @classmethod
     def from_json(cls, json_str: str) -> "Message":
         """Fast deserialization without full validation"""
-        data = load_json_str(json_str)
+        data = json.loads(json_str)
         message_type = data.get("message_type")
         if not message_type:
             raise ValueError("Missing message_type")
