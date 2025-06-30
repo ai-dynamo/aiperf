@@ -194,14 +194,20 @@ class DatasetManager(BaseComponentService):
     ) -> DatasetTimingResponse:
         """Handle a dataset timing request."""
         self.logger.debug("Handling dataset timing request: %s", message)
-        # TODO: Implement dataset timing request handling
+        if not self.dataset:
+            raise self._service_error(
+                "Dataset is empty and must be configured before handling timing requests.",
+            )
+            
+        timing_dataset = []
+        for conversation_id, conversation in self.dataset.items():
+            for turn in conversation.turns:
+                timing_dataset.append((turn.timestamp, conversation_id))
+
         return DatasetTimingResponse(
             service_id=self.service_id,
             request_id=message.request_id,
-            timing_data=[
-                (1719000000000, "123"),
-                (1719000000001, "456"),
-            ],
+            timing_data=timing_dataset,
         )
 
 
