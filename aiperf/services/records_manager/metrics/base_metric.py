@@ -1,5 +1,5 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 import importlib
 import inspect
 from abc import ABC, abstractmethod
@@ -8,17 +8,18 @@ from typing import Any, ClassVar
 
 from aiperf.common.enums import MetricTimeType
 from aiperf.common.exceptions import MetricTypeError
-from aiperf.common.record_models import RequestRecord
+from aiperf.common.record_models import ParsedResponseRecord
 
 
 class BaseMetric(ABC):
-    "Base class for all metricss with automatic subclass registration."
+    """Base class for all metrics with automatic subclass registration."""
 
     # Class attributes that subclasses must override
     tag: ClassVar[str] = ""
     unit: ClassVar[MetricTimeType] = MetricTimeType.NANOSECONDS
     larger_is_better: ClassVar[bool] = True
     header: ClassVar[str] = ""
+    streaming_only: ClassVar[bool] = False
 
     metric_interfaces: dict[str, type["BaseMetric"]] = {}
 
@@ -87,7 +88,7 @@ class BaseMetric(ABC):
     @abstractmethod
     def update_value(
         self,
-        record: RequestRecord | None = None,
+        record: ParsedResponseRecord | None = None,
         metrics: dict["BaseMetric"] | None = None,
     ) -> None:
         """
@@ -105,7 +106,7 @@ class BaseMetric(ABC):
         """
 
     @abstractmethod
-    def _check_record(self, record: RequestRecord) -> None:
+    def _check_record(self, record: ParsedResponseRecord) -> None:
         """
         Checks if the record is valid for metric calculation.
 
