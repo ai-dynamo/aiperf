@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from aiperf.common.enums import ServiceType
 from aiperf.common.service.base_service import BaseService
-from aiperf.services.post_processor_manager.post_processor_manager import (
+from aiperf.services.inference_result_parser.inference_result_parser import (
     PostProcessorManager,
 )
 from aiperf.tests.base_test_component_service import BaseTestComponentService
@@ -51,4 +51,4 @@ class TestPostProcessorManager(BaseTestComponentService):
         Test that the post processor manager initializes with the correct service type.
         """
         service = await async_fixture(initialized_service)
-        assert service.service_type == ServiceType.POST_PROCESSOR_MANAGER
+        assert service.service_type == ServiceType.INFERENCE_RESULT_PARSER

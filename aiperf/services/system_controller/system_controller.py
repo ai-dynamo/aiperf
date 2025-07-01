@@ -68,7 +68,7 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
             ServiceType.TIMING_MANAGER,
             ServiceType.WORKER_MANAGER,
             ServiceType.RECORDS_MANAGER,
-            ServiceType.POST_PROCESSOR_MANAGER,
+            ServiceType.INFERENCE_RESULT_PARSER,
         ]
 
         self.service_manager: BaseServiceManager = None  # type: ignore - is set in _initialize
@@ -159,7 +159,7 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
                 command=CommandType.PROCESS_RECORDS,
                 data=ProcessRecordsCommandData(cancelled=True),
             )
-        
+
         self.stop_event.set()
 
     async def _bootstrap_system(self) -> None:

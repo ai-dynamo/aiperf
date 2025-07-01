@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from aiperf.data_exporter.record import Record
+if TYPE_CHECKING:
+    from aiperf.common.record_models import ParsedResponseRecord, ResponseData
+    from aiperf.data_exporter.record import Record
 
 ################################################################################
 # Data Exporter Protocol
@@ -17,7 +19,7 @@ class DataExporterProtocol(Protocol):
     that takes a list of Record objects and handles exporting them appropriately.
     """
 
-    def export(self, records: list[Record]) -> None: ...
+    def export(self, records: list["Record"]) -> None: ...
 
 
 ################################################################################
@@ -37,3 +39,18 @@ class PostProcessorProtocol(Protocol):
         :return: The processed data as a dictionary.
         """
         pass
+
+
+################################################################################
+# Response Extractor Protocol
+################################################################################
+
+
+class ResponseExtractor(Protocol):
+    """Base class for all response extractors."""
+
+    async def extract_response_data(
+        self, record: "ParsedResponseRecord"
+    ) -> list["ResponseData"]:
+        """Extract the text from a server response message."""
+        ...
