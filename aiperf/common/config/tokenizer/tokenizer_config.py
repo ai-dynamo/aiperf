@@ -1,8 +1,9 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
 
+import cyclopts
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
@@ -24,6 +25,9 @@ class TokenizerConfig(BaseConfig):
                 "The default value is the model name."
             ),
         ),
+        cyclopts.Parameter(
+            name=("--tokenizer-name"),
+        ),
     ] = TokenizerDefaults.NAME
 
     revision: Annotated[
@@ -33,6 +37,9 @@ class TokenizerConfig(BaseConfig):
                 "The specific model version to use. "
                 "It can be a branch name, tag name, or commit ID."
             ),
+        ),
+        cyclopts.Parameter(
+            name=("--tokenizer-revision"),
         ),
     ] = TokenizerDefaults.REVISION
 
@@ -44,5 +51,8 @@ class TokenizerConfig(BaseConfig):
                 "This carries security risks and should only be used for repositories you trust. "
                 "This is only necessary for custom tokenizers stored in HuggingFace Hub."
             ),
+        ),
+        cyclopts.Parameter(
+            name=("--tokenizer-trust-remote-code"),
         ),
     ] = TokenizerDefaults.TRUST_REMOTE_CODE

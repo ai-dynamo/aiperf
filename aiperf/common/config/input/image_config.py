@@ -1,8 +1,9 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
 
+import cyclopts
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
@@ -21,6 +22,9 @@ class ImageHeightConfig(BaseConfig):
             ge=0,
             description="The mean height of images when generating synthetic image data.",
         ),
+        cyclopts.Parameter(
+            name=("--image-height-mean"),
+        ),
     ] = ImageDefaults.HEIGHT_MEAN
 
     stddev: Annotated[
@@ -28,6 +32,9 @@ class ImageHeightConfig(BaseConfig):
         Field(
             ge=0,
             description="The standard deviation of height of images when generating synthetic image data.",
+        ),
+        cyclopts.Parameter(
+            name=("--image-height-stddev"),
         ),
     ] = ImageDefaults.HEIGHT_STDDEV
 
@@ -43,6 +50,9 @@ class ImageWidthConfig(BaseConfig):
             ge=0,
             description="The mean width of images when generating synthetic image data.",
         ),
+        cyclopts.Parameter(
+            name=("--image-width-mean"),
+        ),
     ] = ImageDefaults.WIDTH_MEAN
 
     stddev: Annotated[
@@ -50,6 +60,9 @@ class ImageWidthConfig(BaseConfig):
         Field(
             ge=0,
             description="The standard deviation of width of images when generating synthetic image data.",
+        ),
+        cyclopts.Parameter(
+            name=("--image-width-stddev"),
         ),
     ] = ImageDefaults.WIDTH_STDDEV
 
@@ -68,11 +81,17 @@ class ImageConfig(BaseConfig):
             description="The image batch size of the requests AI-Perf should send.\
             \nThis is currently supported with the image retrieval endpoint type.",
         ),
+        cyclopts.Parameter(
+            name=("--image-batch-size"),
+        ),
     ] = ImageDefaults.BATCH_SIZE
 
     format: Annotated[
         ImageFormat,
         Field(
             description="The compression format of the images.",
+        ),
+        cyclopts.Parameter(
+            name=("--image-format"),
         ),
     ] = ImageDefaults.FORMAT

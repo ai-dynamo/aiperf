@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from aiperf.common.comms.client_enums import ClientType, PullClientType, PushClientType
 from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import ServiceState, ServiceType, Topic
+from aiperf.common.enums import MessageType, ServiceState, ServiceType, Topic
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_cleanup, on_configure, on_init, on_start, on_stop
 from aiperf.common.messages import (
@@ -16,7 +16,6 @@ from aiperf.common.messages import (
     CreditReturnMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
-    Message,
 )
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.services.timing_manager.concurrency_strategy import ConcurrencyStrategy
@@ -79,15 +78,15 @@ class TimingManager(BaseComponentService):
 
         if config.timing_mode == TimingMode.FIXED_SCHEDULE:
             self._credit_issuing_strategy = FixedScheduleStrategy(
-                config, self.logger, self.stop_event, self._issue_credit_drop
+                config, self._issue_credit_drop
             )
         elif config.timing_mode == TimingMode.CONCURRENCY:
             self._credit_issuing_strategy = ConcurrencyStrategy(
-                config, self.logger, self.stop_event, self._issue_credit_drop
+                config, self._issue_credit_drop
             )
         elif config.timing_mode == TimingMode.RATE:
             self._credit_issuing_strategy = RateStrategy(
-                config, self.logger, self.stop_event, self._issue_credit_drop
+                config, self._issue_credit_drop
             )
 
         assert isinstance(self._credit_issuing_strategy, CreditIssuingStrategy)
@@ -100,7 +99,7 @@ class TimingManager(BaseComponentService):
 
         # Setup credit return handling
         await self.comms.register_pull_callback(
-            topic=Topic.CREDIT_RETURN,
+            message_type=MessageType.CREDIT_RETURN,
             callback=self._on_credit_return,
         )
         await self.set_state(ServiceState.RUNNING)
@@ -144,15 +143,16 @@ class TimingManager(BaseComponentService):
         await self._credit_issuing_strategy.start()
 
     async def _issue_credit_drop(self, credit_drop_info: CreditDropInfo) -> None:
-        await self.comms.push(
-            topic=Topic.CREDIT_DROP,
-            message=CreditDropMessage(
-                service_id=self.service_id,
-                amount=1,
-                conversation_id=conversation_id,
-                credit_drop_ns=time.time_ns(),
-            ),
-        )
+        # await self.comms.push(
+        #     topic=Topic.CREDIT_DROP,
+        #     message=CreditDropMessage(
+        #         service_id=self.service_id,
+        #         amount=1,
+        #         conversation_id=conversation_id,
+        #         credit_drop_ns=time.time_ns(),
+        #     ),
+        # )
+        pass
 
     async def _on_credit_return(self, message: CreditReturnMessage) -> None:
         """Process a credit return message.

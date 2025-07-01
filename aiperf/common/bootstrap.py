@@ -5,7 +5,9 @@ from aiperf.common.service.base_service import BaseService
 
 
 def bootstrap_and_run_service(
-    service_class: type[BaseService], service_config: ServiceConfig | None = None
+    service_class: type[BaseService],
+    service_config: ServiceConfig | None = None,
+    **kwargs,
 ):
     """Bootstrap the service and run it.
 
@@ -27,5 +29,5 @@ def bootstrap_and_run_service(
         service_config = load_service_config()
 
     # Create the service instance and run it
-    service = service_class(service_config=service_config)
+    service = service_class(service_config=service_config, **kwargs)
     uvloop.run(service.run_forever())

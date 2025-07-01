@@ -13,7 +13,8 @@ from aiperf.common.messages import (
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
-from aiperf.services.timing_manager import CreditDropInfo
+
+# from aiperf.services.timing_manager import CreditDropInfo
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
 
 
@@ -70,9 +71,9 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
             tasks: set[Coroutine[Any, Any, None]] = set()
 
             for _, conversation_id in timestamp_groups[unique_timestamp]:
-                credit_drop_info = CreditDropInfo()
-                credit_drop_info.conversation_id = conversation_id
-                credit_drop_info.credit_drop_ns = time.time_ns()
+                # credit_drop_info = CreditDropInfo()
+                # credit_drop_info.conversation_id = conversation_id
+                # credit_drop_info.credit_drop_ns = time.time_ns()
 
                 task = asyncio.create_task(
                     self.comms.push(

@@ -27,6 +27,7 @@ dependencies = [
   "tqdm>=4.67.1",
   "transformers>=4.52.0",
   "uvloop==0.21.0",
+  "cyclopts>=3.0.0",
 ]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,7 +35,7 @@ packages = [{ include = "aiperf" }]
 
 # CLI Entrypoint
 [project.scripts]
-aiperf = "aiperf.cli:main"
+aiperf = "aiperf.cli:app"
 
 [project.optional-dependencies]
 dev = [

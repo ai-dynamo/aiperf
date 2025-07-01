@@ -1,8 +1,9 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
 
+import cyclopts
 from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import ADD_TO_TEMPLATE, BaseConfig
@@ -27,6 +28,9 @@ class UserConfig(BaseConfig):
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
         ),
         BeforeValidator(parse_str_or_list),
+        cyclopts.Parameter(
+            name=("--model-names", "-m"),
+        ),
     ] = UserDefaults.MODEL_NAMES
 
     verbose: Annotated[
@@ -35,6 +39,9 @@ class UserConfig(BaseConfig):
             description="Enable verbose output.",
             json_schema_extra={ADD_TO_TEMPLATE: False},
         ),
+        cyclopts.Parameter(
+            name=("--verbose", "-v"),
+        ),
     ] = UserDefaults.VERBOSE
 
     template_filename: Annotated[
@@ -42,6 +49,9 @@ class UserConfig(BaseConfig):
         Field(
             description="Path to the template file.",
             json_schema_extra={ADD_TO_TEMPLATE: False},
+        ),
+        cyclopts.Parameter(
+            name=("--template-filename", "-t"),
         ),
     ] = UserDefaults.TEMPLATE_FILENAME
 

@@ -1,8 +1,9 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
 
+import cyclopts
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
@@ -24,6 +25,9 @@ class InputTokensConfig(BaseConfig):
             ge=0,
             description="The mean of number of tokens in the generated prompts when using synthetic data.",
         ),
+        cyclopts.Parameter(
+            name=("--input-tokens-mean"),
+        ),
     ] = InputTokensDefaults.MEAN
 
     stddev: Annotated[
@@ -31,6 +35,9 @@ class InputTokensConfig(BaseConfig):
         Field(
             ge=0,
             description="The standard deviation of number of tokens in the generated prompts when using synthetic data.",
+        ),
+        cyclopts.Parameter(
+            name=("--input-tokens-stddev"),
         ),
     ] = InputTokensDefaults.STDDEV
 
@@ -46,6 +53,9 @@ class OutputTokensConfig(BaseConfig):
             ge=0,
             description="The mean number of tokens in each output.",
         ),
+        cyclopts.Parameter(
+            name=("--output-tokens-mean"),
+        ),
     ] = OutputTokensDefaults.MEAN
 
     deterministic: Annotated[
@@ -57,6 +67,9 @@ class OutputTokensConfig(BaseConfig):
                 "This is currently supported with Triton."
             ),
         ),
+        cyclopts.Parameter(
+            name=("--output-tokens-deterministic"),
+        ),
     ] = OutputTokensDefaults.DETERMINISTIC
 
     stddev: Annotated[
@@ -64,6 +77,9 @@ class OutputTokensConfig(BaseConfig):
         Field(
             ge=0,
             description="The standard deviation of the number of tokens in each output.",
+        ),
+        cyclopts.Parameter(
+            name=("--output-tokens-stddev"),
         ),
     ] = OutputTokensDefaults.STDDEV
 
@@ -83,6 +99,9 @@ class PrefixPromptConfig(BaseConfig):
                 "This is useful for benchmarking models that use a K-V cache."
             ),
         ),
+        cyclopts.Parameter(
+            name=("--prefix-prompt-pool-size"),
+        ),
     ] = PrefixPromptDefaults.POOL_SIZE
 
     length: Annotated[
@@ -95,6 +114,9 @@ class PrefixPromptConfig(BaseConfig):
                 "Note that due to the prefix and user prompts being concatenated,\n"
                 "the number of tokens in the final prompt may be off by one."
             ),
+        ),
+        cyclopts.Parameter(
+            name=("--prefix-prompt-length"),
         ),
     ] = PrefixPromptDefaults.LENGTH
 
