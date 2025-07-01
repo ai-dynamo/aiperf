@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import logging
 from typing import Any
 
-import orjson
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion import Completion
@@ -44,7 +44,7 @@ class OpenAIObject(CaseInsensitiveStrEnum):
         """
         try:
             obj = load_json_str(text)
-        except orjson.JSONDecodeError as e:
+        except json.JSONDecodeError as e:
             raise ValueError(f"Invalid OpenAI object: {text}") from e
 
         # Mapping of OpenAI object types to their corresponding Pydantic models.
@@ -73,7 +73,7 @@ class OpenAIObject(CaseInsensitiveStrEnum):
 class OpenAIResponseExtractor:
     """Extractor for OpenAI responses."""
 
-    async def _parse_text_response(self, response: TextResponse) -> ResponseData | None:
+    def _parse_text_response(self, response: TextResponse) -> ResponseData | None:
         """Parse a TextResponse into a ResponseData object."""
         raw = response.text
         parsed = self._parse_text(raw)
@@ -87,7 +87,7 @@ class OpenAIResponseExtractor:
             metadata={},
         )
 
-    async def _parse_sse_response(self, response: SSEMessage) -> ResponseData | None:
+    def _parse_sse_response(self, response: SSEMessage) -> ResponseData | None:
         """Parse a SSEMessage into a ResponseData object."""
         raw = response.extract_data_content()
         parsed = self._parse_sse(raw)
@@ -101,14 +101,12 @@ class OpenAIResponseExtractor:
             metadata={},
         )
 
-    async def _parse_response(
-        self, response: InferenceServerResponse
-    ) -> ResponseData | None:
+    def _parse_response(self, response: InferenceServerResponse) -> ResponseData | None:
         """Parse a response into a ResponseData object."""
         if isinstance(response, TextResponse):
-            return await self._parse_text_response(response)
+            return self._parse_text_response(response)
         elif isinstance(response, SSEMessage):
-            return await self._parse_sse_response(response)
+            return self._parse_sse_response(response)
 
     async def extract_response_data(
         self, record: RequestRecord, tokenizer: Tokenizer | None
@@ -116,7 +114,7 @@ class OpenAIResponseExtractor:
         """Extract the text from a server response message."""
         results = []
         for response in record.responses:
-            response_data = await self._parse_response(response)
+            response_data = self._parse_response(response)
             if response_data is None:
                 continue
 
