@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import logging
 from typing import Any
 
+import orjson
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion import Completion
@@ -44,7 +44,7 @@ class OpenAIObject(CaseInsensitiveStrEnum):
         """
         try:
             obj = load_json_str(text)
-        except json.JSONDecodeError as e:
+        except orjson.JSONDecodeError as e:
             raise ValueError(f"Invalid OpenAI object: {text}") from e
 
         # Mapping of OpenAI object types to their corresponding Pydantic models.
