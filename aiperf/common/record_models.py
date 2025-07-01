@@ -4,20 +4,24 @@
 import os
 import sys
 import time
+from functools import cached_property
 from typing import Any
 
 from pydantic import BaseModel, Field, SerializeAsAny
-from pydantic.dataclasses import dataclass
 
 from aiperf.common.enums import SSEFieldType
 
 
 # Temporary Record class to be used by the ConsoleExporter.
 # TODO: Remove once the actual Records classes are fully implemented.
-@dataclass
-class ResultsRecord:
-    name: str
-    unit: str
+class MetricResult(BaseModel):
+    """The result values of a single metric."""
+
+    tag: str = Field(description="The unique identifier of the metric")
+    unit: str = Field(description="The unit of the metric, e.g. 'ms'")
+    header: str = Field(
+        description="The user friendly name of the metric (e.g. 'Inter Token Latency')"
+    )
     avg: float | None = None
     min: float | None = None
     max: float | None = None
@@ -30,8 +34,14 @@ class ResultsRecord:
     p95: float | None = None
     p99: float | None = None
     std: float | None = None
-    count: int | None = None
-    streaming_only: bool = False
+    count: int | None = Field(
+        default=None,
+        description="The total number of records used to calculate the metric",
+    )
+    streaming_only: bool = Field(
+        default=False,
+        description="Whether the metric only applies when streaming is enabled",
+    )
 
 
 ################################################################################
@@ -194,9 +204,10 @@ class RequestRecord(BaseModel):
 
     Attributes:
         request: The request payload.
-        start_perf_ns: The start time of the request in nanoseconds (perf_counter_ns).
-        end_perf_ns: The end time of the request in nanoseconds (perf_counter_ns).
-        recv_start_perf_ns: The start time of the response in nanoseconds (perf_counter_ns).
+        timestamp_ns: The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).
+        start_perf_ns: The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).
+        end_perf_ns: The end reference time of the request in nanoseconds (perf_counter_ns).
+        recv_start_perf_ns: The start reference time of the response in nanoseconds used for latency calculations (perf_counter_ns).
         status: The HTTP status code of the request.
         responses: The raw responses received from the request.
         error: The error details if the request failed.
@@ -205,11 +216,15 @@ class RequestRecord(BaseModel):
 
     request: Any = Field(
         default=None,
-        description="The request payload.",
+        description="The raw request payload.",
+    )
+    timestamp_ns: int = Field(
+        default_factory=time.time_ns,
+        description="The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).",
     )
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,
-        description="The start time of the request in nanoseconds (perf_counter_ns).",
+        description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
     )
     end_perf_ns: int | None = Field(
         default=None,
@@ -239,7 +254,7 @@ class RequestRecord(BaseModel):
         description="Whether the request was delayed from when it was expected to be sent.",
     )
 
-    # TODO: Most of these properties will be removed once we have proper record handling.
+    # TODO: Most of these properties will be removed once we have proper record handling and metrics.
 
     @property
     def has_error(self) -> bool:
@@ -347,6 +362,78 @@ class ResponseData(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="The metadata of the response."
     )
+
+
+class ParsedResponseRecord(BaseModel):
+    """Record of a request and its associated responses, already parsed and ready for metrics."""
+
+    worker_id: str = Field(
+        description="The ID of the worker that processed the request."
+    )
+    request: RequestRecord = Field(description="The original request record")
+    responses: list[ResponseData] = Field(description="The parsed response data.")
+
+    @cached_property
+    def token_count(self) -> int | None:
+        """Get the total number of tokens across all responses, if applicable."""
+        if not self.valid:
+            return None
+        return sum(
+            response.token_count
+            for response in self.responses
+            if response.token_count is not None
+        )
+
+    @cached_property
+    def start_perf_ns(self) -> int:
+        """Get the start time of the request in nanoseconds (perf_counter_ns)."""
+        return self.request.start_perf_ns
+
+    @cached_property
+    def timestamp_ns(self) -> int:
+        """Get the wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns)."""
+        return self.request.timestamp_ns
+
+    # TODO: How do we differentiate the end of the request vs the time of the last response?
+    #       Which one should we use for the latency metrics?
+    @cached_property
+    def end_perf_ns(self) -> int:
+        """Get the end time of the request in nanoseconds (perf_counter_ns).
+        If request.end_perf_ns is not set, use the time of the last response.
+        If there are no responses, use sys.maxsize.
+        """
+        return (
+            self.request.end_perf_ns
+            if self.request.end_perf_ns
+            else self.responses[-1].perf_ns
+            if self.responses
+            else sys.maxsize
+        )
+
+    @cached_property
+    def has_error(self) -> bool:
+        """Check if the response record has an error."""
+        return self.request.has_error
+
+    @cached_property
+    def valid(self) -> bool:
+        """Check if the response record is valid.
+
+        Checks:
+        - Request has no errors
+        - Has at least one response
+        - Start time is before the end time
+        - Response timestamps are within valid ranges
+
+        Returns:
+            bool: True if the record is valid, False otherwise.
+        """
+        return (
+            not self.has_error
+            and len(self.responses) > 0
+            and 0 <= self.start_perf_ns < self.end_perf_ns < sys.maxsize
+            and all(0 < response.perf_ns < sys.maxsize for response in self.responses)
+        )
 
 
 class Transaction(BaseModel):

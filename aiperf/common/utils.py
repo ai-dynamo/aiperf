@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import inspect
+import logging
 import traceback
 from collections.abc import Callable
 
 from aiperf.common.exceptions import AIPerfMultiError
+
+logger = logging.getLogger(__name__)
 
 
 async def call_all_functions_self(
