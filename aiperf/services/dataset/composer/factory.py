@@ -24,10 +24,9 @@ class ComposerFactory(FactoryMixin[ComposerType, BaseDatasetComposer]):
         # Create a new composer instance
         composer = ComposerFactory.create_instance(
             ComposerType.SYNTHETIC,
-            config=DatasetConfig(
-                tokenizer=Tokenizer.from_pretrained("gpt2"),
-                num_conversations=10,
-                prompt=PromptConfig(mean=10, stddev=2),
+            config=InputConfig(
+                conversation=ConversationConfig(num=10),
+                prompt=PromptConfig(batch_size=10),
             )
         )
     ```

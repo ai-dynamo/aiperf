@@ -4,9 +4,7 @@ import os
 import random
 import sys
 
-from pydantic import BaseModel, ConfigDict
-
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import (
     ComposerType,
@@ -32,22 +30,6 @@ from aiperf.common.messages import (
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset.composer import ComposerFactory
-from aiperf.services.dataset.config import DatasetConfig, PromptConfig
-
-
-################################################################################
-# TODO: Temporary (remove when command config is ready)
-class MockConfig(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    filename: str | None = None
-    tokenizer: Tokenizer | None = None
-    custom_dataset_type: CustomDatasetType | None = None
-    public_dataset: str | None = None
-    prompt: PromptConfig | None = None
-
-
-################################################################################
 
 
 @ServiceFactory.register(ServiceType.DATASET_MANAGER)
@@ -110,29 +92,40 @@ class DatasetManager(BaseComponentService):
     async def _configure(self, message: Message) -> None:
         """Configure the dataset manager."""
         self.logger.debug(f"Configuring dataset manager with message: {message}")
-
-        # TODO: remove this mock config
-        # mocks config inside the message
-        config = MockConfig()
-        config.filename = os.getenv("AIPERF_DATASET_FILENAME", None)  # "trace1.jsonl"
-        config.tokenizer = Tokenizer.from_pretrained(os.getenv("AIPERF_MODEL", "gpt2"))
-
-        if config.filename:
-            composer_type = ComposerType.CUSTOM
-            config.custom_dataset_type = CustomDatasetType.TRACE
-        else:
-            composer_type = ComposerType.SYNTHETIC
-            config.custom_dataset_type = CustomDatasetType.SINGLE_TURN  # ignored
-
-        # TODO: update once we integrate with command config
-        dataset_config = DatasetConfig(
-            filename=config.filename,
-            tokenizer=config.tokenizer,
-            custom_dataset_type=config.custom_dataset_type,
-            prompt=PromptConfig(mean=10, stddev=2),
+        self.user_config = (
+            message.data if isinstance(message.data, UserConfig) else None
         )
+        if self.user_config is None:
+            raise self._service_error("User config is required for dataset manager")
 
-        composer = ComposerFactory.create_instance(composer_type, config=dataset_config)
+        # TODO: remove once the CLI is ready
+        self.user_config.input.file = os.getenv(
+            "AIPERF_DATASET_FILENAME", "trace.jsonl"
+        )
+        self.user_config.input.custom_dataset_type = CustomDatasetType.TRACE
+        tokenizer_name = os.getenv("AIPERF_MODEL", "gpt2")
+
+        tokenizer = Tokenizer.from_pretrained(tokenizer_name)
+
+        if self.user_config.input.file:
+            self.logger.debug(
+                "Detected input file '%s'. Setting the composer type to %s.",
+                self.user_config.input.file,
+                ComposerType.CUSTOM,
+            )
+            composer_type = ComposerType.CUSTOM
+        else:
+            self.logger.debug(
+                "No input file detected. Setting the composer type to %s.",
+                ComposerType.SYNTHETIC,
+            )
+            composer_type = ComposerType.SYNTHETIC
+
+        composer = ComposerFactory.create_instance(
+            composer_type,
+            config=self.user_config.input,
+            tokenizer=tokenizer,
+        )
         conversations = composer.create_dataset()
         self.dataset = {conv.session_id: conv for conv in conversations}
 

@@ -7,9 +7,9 @@ from pathlib import Path
 
 from PIL import Image
 
+from aiperf.common.config import ImageConfig
 from aiperf.common.enums import ImageFormat
 from aiperf.services.dataset import utils
-from aiperf.services.dataset.config import ImageConfig
 from aiperf.services.dataset.generator.base import BaseGenerator
 
 
@@ -24,7 +24,7 @@ class ImageGenerator(BaseGenerator):
 
     def __init__(self, config: ImageConfig):
         super().__init__()
-        self.config = config  # Type hint for better IDE support
+        self.config = config
 
     def generate(self, *args, **kwargs) -> str:
         """Generate an image with the configured parameters.
@@ -33,14 +33,16 @@ class ImageGenerator(BaseGenerator):
             A base64 encoded string of the generated image.
         """
         image_format = self.config.format
-        if image_format is None:
-            image_format = random.choice(list(ImageFormat))
+        if image_format == ImageFormat.RANDOM:
+            image_format = random.choice(
+                [f for f in ImageFormat if f != ImageFormat.RANDOM]
+            )
 
         width = utils.sample_positive_normal_integer(
-            self.config.width_mean, self.config.width_stddev
+            self.config.width.mean, self.config.width.stddev
         )
         height = utils.sample_positive_normal_integer(
-            self.config.height_mean, self.config.height_stddev
+            self.config.height.mean, self.config.height.stddev
         )
 
         self.logger.debug(
@@ -51,7 +53,7 @@ class ImageGenerator(BaseGenerator):
 
         image = self._sample_source_image()
         image = image.resize(size=(width, height))
-        base64_image = utils.encode_image(image, image_format.name)
+        base64_image = utils.encode_image(image, image_format)
         return f"data:image/{image_format.name.lower()};base64,{base64_image}"
 
     def _sample_source_image(self):

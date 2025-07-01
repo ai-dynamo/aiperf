@@ -26,7 +26,6 @@ def test_input_config_defaults():
     """
 
     config = InputConfig()
-    assert config.batch_size == InputDefaults.BATCH_SIZE
     assert config.extra == InputDefaults.EXTRA
     assert config.goodput == InputDefaults.GOODPUT
     assert config.header == InputDefaults.HEADER

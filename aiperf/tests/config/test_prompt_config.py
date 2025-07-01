@@ -8,7 +8,17 @@ from aiperf.common.config import (
     OutputTokensDefaults,
     PrefixPromptConfig,
     PrefixPromptDefaults,
+    PromptConfig,
+    PromptDefaults,
 )
+
+
+def test_prompt_config_defaults():
+    """
+    Test the default values of the PromptConfig class.
+    """
+    config = PromptConfig()
+    assert config.batch_size == PromptDefaults.BATCH_SIZE
 
 
 def test_input_tokens_config_defaults():
@@ -21,6 +31,7 @@ def test_input_tokens_config_defaults():
     config = InputTokensConfig()
     assert config.mean == InputTokensDefaults.MEAN
     assert config.stddev == InputTokensDefaults.STDDEV
+    assert config.block_size == InputTokensDefaults.BLOCK_SIZE
 
 
 def test_input_tokens_config_custom_values():
