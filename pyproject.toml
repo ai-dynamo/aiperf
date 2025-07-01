@@ -12,17 +12,20 @@ version = "0.1.0"
 description = "AIPerf is a package for performance testing of AI models"
 authors = []
 dependencies = [
-  "aiohttp==3.11.18",
+  "aiohttp==3.12.13",
   "numpy==2.2.6",
+  "openai[aiohttp]~=1.92.2",
+  "orjson==3.10.18",
+  "pandas==2.3.0",
+  "pillow==11.1.0",
   "pydantic==2.11.4",
   "pyzmq==26.4.0",
-  "pillow==11.1.0",
   "rich==14.0.0",
   "ruamel.yaml==0.18.12",
   "setproctitle==1.3.6",
   "soundfile==0.13.1",
-  "transformers>=4.52.0",
   "tqdm>=4.67.1",
+  "transformers>=4.52.0",
   "uvloop==0.21.0",
   "cyclopts>=3.0.0",
 ]

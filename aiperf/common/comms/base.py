@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, TypeVar
 
 from aiperf.common.comms.client_enums import ClientType
 from aiperf.common.enums import MessageType, Topic
@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 ################################################################################
 # Base Communication Class
 ################################################################################
+
+MessageT = TypeVar("MessageT", bound=Message)
+MessageOutputT = TypeVar("MessageOutputT", bound=Message)
 
 
 class BaseCommunication(ABC):
@@ -121,5 +124,21 @@ class BaseCommunication(ABC):
         Args:
             message_type: The message type to register the callback for
             callback: The callback to register
+        """
+        pass
+
+    @abstractmethod
+    async def register_request_handler(
+        self,
+        service_id: str,
+        message_type: MessageType,
+        handler: Callable[[MessageT], Coroutine[Any, Any, MessageOutputT | None]],
+    ) -> None:
+        """Register a request handler for a message type.
+
+        Args:
+            service_id: The service ID to register the handler for
+            message_type: The message type to register the handler for
+            handler: The handler to register
         """
         pass

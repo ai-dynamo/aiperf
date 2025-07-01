@@ -172,7 +172,7 @@ class ReqClientType(CaseInsensitiveStrEnum):
             The appropriate ClientType for the given topic
         """
         match topic:
-            case Topic.CONVERSATION_DATA:
+            case Topic.CONVERSATION_DATA | Topic.DATASET_TIMING:
                 return cls.CONVERSATION_DATA
             case _:
                 raise CommunicationError(
@@ -190,22 +190,22 @@ class RepClientType(CaseInsensitiveStrEnum):
     CONVERSATION_DATA = "conversation_data_rep"
 
     @classmethod
-    def from_topic(cls, topic: Topic) -> "RepClientType":
+    def from_message_type(cls, message_type: MessageType) -> "RepClientType":
         """Determine the appropriate ClientType based on topic.
 
         Args:
-            topic: The topic to communicate on
+            message_type: The message type based on which the client type is determined
 
         Returns:
-            The appropriate ClientType for the given topic
+            The appropriate ClientType for the given message type
         """
-        match topic:
-            case Topic.CONVERSATION_DATA:
+        match message_type:
+            case MessageType.CONVERSATION_REQUEST | MessageType.DATASET_TIMING_REQUEST:
                 return cls.CONVERSATION_DATA
             case _:
                 raise CommunicationError(
                     CommunicationErrorReason.CLIENT_NOT_FOUND,
-                    f"No client type found for topic {topic}",
+                    f"No client type found for message type {message_type}",
                 )
 
 

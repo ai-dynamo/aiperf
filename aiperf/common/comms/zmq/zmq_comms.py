@@ -545,7 +545,6 @@ class BaseZMQCommunication(BaseCommunication, ABC):
     async def register_request_handler(
         self,
         service_id: str,
-        topic: Topic,
         message_type: MessageType,
         handler: Callable[[Message], Coroutine[Any, Any, Message | None]],
     ) -> None:
@@ -553,20 +552,19 @@ class BaseZMQCommunication(BaseCommunication, ABC):
 
         Args:
             service_id: The service ID to register the handler for
-            topic: The topic to register the handler for
             message_type: The message type to register the handler for
             handler: The handler to register
         """
 
         self._ensure_initialized()
 
-        client_type = RepClientType.from_topic(topic)
+        client_type = RepClientType.from_message_type(message_type)
 
         if client_type not in self.clients:
             logger.debug(
-                "Client type %r not found for req topic %r, creating client",
+                "Client type %r not found for req message type %r, creating client",
                 client_type,
-                topic,
+                message_type,
             )
             await self.create_clients(client_type)
 
@@ -575,10 +573,12 @@ class BaseZMQCommunication(BaseCommunication, ABC):
                 ZMQRouterRepClient, self.clients[client_type]
             ).register_request_handler(service_id, message_type, handler)
         except Exception as e:
-            logger.error(f"Exception registering request handler for {topic}: {e}")
+            logger.error(
+                f"Exception registering request handler for {message_type}: {e}"
+            )
             raise CommunicationError(
                 CommunicationErrorReason.REQUEST_ERROR,
-                f"Failed to register request handler for topic: {topic}, error: {e}",
+                f"Failed to register request handler for message type: {message_type}, error: {e}",
             ) from e
 
     async def push(self, topic: Topic, message: Message) -> None:

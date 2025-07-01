@@ -3,7 +3,7 @@
 
 __all__ = [
     "DatasetManager",
-    "PostProcessorManager",
+    "InferenceResultParser",
     "RecordsManager",
     "SystemController",
     "TimingManager",
@@ -13,7 +13,7 @@ __all__ = [
 
 # This will ensure that the services are registered with the ServiceFactory
 from aiperf.services.dataset import DatasetManager
-from aiperf.services.post_processor_manager import PostProcessorManager
+from aiperf.services.inference_result_parser import InferenceResultParser
 from aiperf.services.records_manager import RecordsManager
 from aiperf.services.system_controller import SystemController
 from aiperf.services.timing_manager import TimingManager
