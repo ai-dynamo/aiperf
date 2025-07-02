@@ -15,7 +15,7 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType, ServiceState
 from aiperf.common.service.base_service import BaseService
 from aiperf.services import SystemController
-from aiperf.tests.utils.async_test_utils import async_fixture, async_noop
+from aiperf.tests.utils.async_test_utils import async_fixture
 
 real_sleep = (
     asyncio.sleep
