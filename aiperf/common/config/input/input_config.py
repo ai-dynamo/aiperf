@@ -86,18 +86,6 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.CUSTOM_DATASET_TYPE
 
-    num_dataset_entries: Annotated[
-        int,
-        Field(
-            ge=1,
-            description="The number of unique payloads to sample from.\
-            \nThese will be reused until benchmarking is complete.",
-        ),
-        cyclopts.Parameter(
-            name=("--num-dataset-entries"),
-        ),
-    ] = InputDefaults.NUM_DATASET_ENTRIES
-
     random_seed: Annotated[
         int | None,
         Field(

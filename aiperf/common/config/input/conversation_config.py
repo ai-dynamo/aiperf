@@ -77,7 +77,9 @@ class ConversationConfig(BaseConfig):
         int,
         Field(
             ge=1,
-            description="The total number of independent conversations.",
+            description="The total number of unique conversations to generate.\
+            \nEach conversation represents a single request session between client and server.\
+            \nSupported on synthetic mode only and conversations will be reused until benchmarking is complete.",
         ),
     ] = ConversationDefaults.NUM
 

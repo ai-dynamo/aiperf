@@ -25,20 +25,20 @@ def mock_tokenizer(mock_tokenizer_cls):
 
 # Shared fixtures for all test classes
 @pytest.fixture
-@patch("builtins.open", mock_open(read_data=""))
 def basic_config() -> InputConfig:
     """Basic configuration for testing."""
-    return InputConfig(
+    # Use model_construct to bypass validation for testing
+    return InputConfig.model_construct(
         file="test_data.jsonl",
         custom_dataset_type=CustomDatasetType.SINGLE_TURN,
     )
 
 
 @pytest.fixture
-@patch("builtins.open", mock_open(read_data=""))
 def trace_config() -> InputConfig:
     """Configuration for TRACE dataset type."""
-    return InputConfig(
+    # Use model_construct to bypass validation for testing
+    return InputConfig.model_construct(
         file="trace_data.jsonl",
         custom_dataset_type=CustomDatasetType.TRACE,
     )

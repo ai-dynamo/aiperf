@@ -42,7 +42,6 @@ class InputDefaults:
     HEADER = ""
     FILE = None
     CUSTOM_DATASET_TYPE = CustomDatasetType.TRACE
-    NUM_DATASET_ENTRIES = 100
     RANDOM_SEED = None
 
 
