@@ -39,9 +39,7 @@ class InputConfig(BaseConfig):
             \nSpecify goodput constraints as 'key:value' pairs,\
             \nwhere the key is a valid metric name, and the value is a number representing\
             \neither milliseconds or a throughput value per second.\
-            \nFor example:\
-            \n  request_latency:300\
-            \n  output_token_throughput_per_user:600",
+            \nFor example: request_latency:300,output_token_throughput_per_user:600",
         ),
         cyclopts.Parameter(
             name=("--goodput"),
@@ -69,7 +67,7 @@ class InputConfig(BaseConfig):
         ),
         BeforeValidator(parse_file),
         cyclopts.Parameter(
-            name=("--file"),
+            name=("--file", "-f"),
         ),
     ] = InputDefaults.FILE
 
@@ -77,12 +75,7 @@ class InputConfig(BaseConfig):
         CustomDatasetType,
         Field(
             description="The type of custom dataset to use.\
-            \nThis parameter is used in conjunction with the `file` parameter.\
-            \nThe supported dataset types are:\
-            \n  - `SINGLE_TURN`\
-            \n  - `MULTI_TURN`\
-            \n  - `RANDOM_POOL`\
-            \n  - `TRACE`",
+            \nThis parameter is used in conjunction with the --file parameter.",
         ),
         cyclopts.Parameter(
             name=("--custom-dataset-type"),
