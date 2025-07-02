@@ -17,6 +17,10 @@ from aiperf.common.service.base_service import BaseService
 from aiperf.services import SystemController
 from aiperf.tests.utils.async_test_utils import async_fixture, async_noop
 
+real_sleep = (
+    asyncio.sleep
+)  # save the real sleep so we can use it in the no_sleep fixture
+
 
 class BaseTestService(ABC):
     """
@@ -34,7 +38,13 @@ class BaseTestService(ABC):
 
         This ensures tests don't need to wait for real sleep calls.
         """
-        monkeypatch.setattr(asyncio, "sleep", async_noop)
+
+        async def fast_sleep(*args, **kwargs):
+            await real_sleep(
+                0
+            )  # relinquish time slice to other tasks to avoid blocking the event loop
+
+        monkeypatch.setattr(asyncio, "sleep", fast_sleep)
 
     @pytest.fixture(autouse=True)
     def patch_communication_factory(
