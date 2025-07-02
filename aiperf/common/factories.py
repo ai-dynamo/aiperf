@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from aiperf.common.enums import CaseInsensitiveStrEnum
+from aiperf.common.enums import CaseInsensitiveStrEnum, ZMQProxyType
 from aiperf.common.exceptions import FactoryCreationError
 
 if TYPE_CHECKING:
@@ -279,4 +279,25 @@ class PostProcessorFactory(FactoryMixin["PostProcessorType", "PostProcessorProto
         post_processor = PostProcessorFactory.create_instance(
             PostProcessorType.METRIC_SUMMARY,
         )
+    """
+
+
+class ZMQProxyFactory(FactoryMixin[ZMQProxyType, "BaseZMQProxy"]):
+    """
+    A factory for creating ZMQ proxies.
+
+    Example:
+    ```python
+        # Register a new ZMQ proxy type
+        @ZMQProxyFactory.register(ZMQProxyType.DEALER_ROUTER)
+        class DealerRouterProxy(BaseZMQProxy):
+            pass
+
+        # Create a new ZMQ proxy instance
+        proxy = ZMQProxyFactory.create_instance(
+            ZMQProxyType.DEALER_ROUTER,
+            config=ZMQTCPProxyConfig(host="localhost", frontend_port=5555, backend_port=5556),
+        )
+        proxy.run()
+    ```
     """
