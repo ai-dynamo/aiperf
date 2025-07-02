@@ -48,7 +48,7 @@ class ZMQPullClient(BaseZMQClient):
         if not self.is_initialized:
             await self.initialized_event.wait()
 
-        while not self.is_shutdown:
+        while not self.stop_event.is_set():
             try:
                 message_json = await self.socket.recv_string()
                 logger.debug("Received message from pull socket: %s", message_json)

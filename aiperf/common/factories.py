@@ -10,7 +10,7 @@ from aiperf.common.exceptions import FactoryCreationError
 
 if TYPE_CHECKING:
     from aiperf.common.comms.base import (
-        BaseCommunication,  # noqa: F401 - for type checking
+        CommunicationProtocol,  # noqa: F401 - for type checking
     )
     from aiperf.common.enums import (
         CommunicationBackend,  # noqa: F401 - for type checking

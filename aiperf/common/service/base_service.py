@@ -6,7 +6,7 @@ import logging
 import uuid
 from abc import ABC
 
-from aiperf.common.comms.base import BaseCommunication
+from aiperf.common.comms.base import CommunicationProtocol
 from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import ServiceState, ServiceType
 from aiperf.common.exceptions import (
@@ -59,7 +59,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         self.stop_event = asyncio.Event()
         self.initialized_event = asyncio.Event()
 
-        self._comms: BaseCommunication | None = None
+        self._comms: CommunicationProtocol | None = None
 
         try:
             import setproctitle
@@ -73,7 +73,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         self.logger.debug("__init__ finished for %s", self.__class__.__name__)
 
     @property
-    def comms(self) -> BaseCommunication:
+    def comms(self) -> CommunicationProtocol:
         """
         Get the communication object for the service.
         Raises:
@@ -99,15 +99,6 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
             True if service is initialized, False otherwise
         """
         return self.initialized_event.is_set()
-
-    @property
-    def is_shutdown(self) -> bool:
-        """Check if service is shutdown.
-
-        Returns:
-            True if service is shutdown, False otherwise
-        """
-        return self.stop_event.is_set()
 
     def _service_error(self, message: str) -> ServiceError:
         return ServiceError(
@@ -212,7 +203,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         - Wait for the stop event to be set
         - Shuts down the service when the stop event is set
         """
-        while not self.is_shutdown:
+        while not self.stop_event.is_set():
             try:
                 self.logger.debug(
                     "Service %s waiting for stop event", self.service_type
@@ -298,7 +289,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
                 await self.run_hooks(AIPerfHook.ON_STOP)
 
             # Shutdown communication component
-            if self._comms and not self._comms.is_shutdown:
+            if self._comms and not self._comms.stop_event.is_set():
                 await self._comms.shutdown()
 
             # Custom cleanup logic implemented by derived classes

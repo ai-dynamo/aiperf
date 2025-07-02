@@ -95,7 +95,7 @@ class ZMQSubClient(BaseZMQClient):
             await self.initialized_event.wait()
             self.logger.debug("Sub client %s initialized", self.client_id)
 
-        while not self.is_shutdown:
+        while not self.stop_event.is_set():
             try:
                 # Receive message
                 (
