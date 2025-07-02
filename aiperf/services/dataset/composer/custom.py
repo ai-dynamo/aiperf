@@ -4,11 +4,10 @@
 from aiperf.common.config import InputConfig
 from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import ComposerType, CustomDatasetType
+from aiperf.common.factories import ComposerFactory, CustomDatasetFactory
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.composer.base import BaseDatasetComposer
-from aiperf.services.dataset.composer.factory import ComposerFactory
-from aiperf.services.dataset.loader.factory import CustomDatasetFactory
 
 
 @ComposerFactory.register(ComposerType.CUSTOM)

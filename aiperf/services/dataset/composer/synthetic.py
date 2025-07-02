@@ -6,10 +6,10 @@ import uuid
 from aiperf.common.config import InputConfig
 from aiperf.common.dataset_models import Audio, Conversation, Image, Text, Turn
 from aiperf.common.enums import ComposerType
+from aiperf.common.factories import ComposerFactory
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.composer.base import BaseDatasetComposer
-from aiperf.services.dataset.composer.factory import ComposerFactory
 
 
 @ComposerFactory.register(ComposerType.SYNTHETIC)

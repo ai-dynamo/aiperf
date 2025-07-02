@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     )
     from aiperf.common.enums import (
         CommunicationBackend,  # noqa: F401 - for type checking
+        ComposerType,  # noqa: F401 - for type checking
+        CustomDatasetType,  # noqa: F401 - for type checking
         PostProcessorType,  # noqa: F401 - for type checking
         ServiceType,  # noqa: F401 - for type checking
     )
@@ -23,6 +25,12 @@ if TYPE_CHECKING:
     )
     from aiperf.common.service.base_service import (
         BaseService,  # noqa: F401 - for type checking
+    )
+    from aiperf.services.dataset.composer.base import (
+        BaseDatasetComposer,  # noqa: F401 - for type checking
+    )
+    from aiperf.services.dataset.loader.protocol import (
+        CustomDatasetLoaderProtocol,  # noqa: F401 - for type checking
     )
 
 ClassEnumT = TypeVar("ClassEnumT", bound=CaseInsensitiveStrEnum)
@@ -279,4 +287,49 @@ class PostProcessorFactory(FactoryMixin["PostProcessorType", "PostProcessorProto
         post_processor = PostProcessorFactory.create_instance(
             PostProcessorType.METRIC_SUMMARY,
         )
+    """
+
+
+class ComposerFactory(FactoryMixin["ComposerType", "BaseDatasetComposer"]):
+    """Factory for registering and creating BaseDatasetComposer instances
+    based on the specified composer type.
+
+    Example:
+    ```python
+        # Register a new composer type
+        @ComposerFactory.register(ComposerType.SYNTHETIC)
+        class SyntheticDatasetComposer(BaseDatasetComposer):
+            pass
+
+        # Create a new composer instance
+        composer = ComposerFactory.create_instance(
+            ComposerType.SYNTHETIC,
+            config=InputConfig(
+                conversation=ConversationConfig(num=10),
+                prompt=PromptConfig(batch_size=10),
+            )
+        )
+    ```
+    """
+
+
+class CustomDatasetFactory(
+    FactoryMixin["CustomDatasetType", "CustomDatasetLoaderProtocol"]
+):
+    """
+    Factory for registering and creating CustomDatasetLoader instances
+    based on the specified custom dataset type.
+
+    Example:
+    ```python
+        # Register a new custom dataset type
+        @CustomDatasetFactory.register(CustomDatasetType.TRACE)
+        class TraceDatasetLoader(CustomDatasetLoader):
+            pass
+
+        # Create a new custom dataset loader instance
+        custom_dataset_loader = CustomDatasetFactory.create_instance(
+            CustomDatasetType.TRACE, **kwargs
+        )
+    ```
     """

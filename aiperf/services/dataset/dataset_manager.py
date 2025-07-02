@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import os
+
 import random
 import sys
 
@@ -8,11 +8,10 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import (
     ComposerType,
-    CustomDatasetType,
     MessageType,
     ServiceType,
 )
-from aiperf.common.factories import ServiceFactory
+from aiperf.common.factories import ComposerFactory, ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
     on_configure,
@@ -29,7 +28,6 @@ from aiperf.common.messages import (
 )
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.dataset.composer import ComposerFactory
 
 
 @ServiceFactory.register(ServiceType.DATASET_MANAGER)
@@ -98,15 +96,6 @@ class DatasetManager(BaseComponentService):
         if self.user_config is None:
             raise self._service_error("User config is required for dataset manager")
 
-        # TODO: remove once the CLI is ready
-        self.user_config.input.file = os.getenv(
-            "AIPERF_DATASET_FILENAME", "trace.jsonl"
-        )
-        self.user_config.input.custom_dataset_type = CustomDatasetType.TRACE
-        tokenizer_name = os.getenv("AIPERF_MODEL", "gpt2")
-
-        tokenizer = Tokenizer.from_pretrained(tokenizer_name)
-
         if self.user_config.input.file:
             self.logger.debug(
                 "Detected input file '%s'. Setting the composer type to %s.",
@@ -121,6 +110,7 @@ class DatasetManager(BaseComponentService):
             )
             composer_type = ComposerType.SYNTHETIC
 
+        tokenizer = Tokenizer.from_pretrained(self.user_config.tokenizer.name)
         composer = ComposerFactory.create_instance(
             composer_type,
             config=self.user_config.input,
