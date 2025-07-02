@@ -85,8 +85,6 @@ class ParsedResponseRecordBuilder:
 
     def new_record(self):
         """Finish the current record and start a new one. Returns self for chaining."""
-        # if self._current_record["responses"] or self._current_record["request_kwargs"]:
-        #     # Only add the record if it has some content
         self._records.append(self._current_record.copy())
         self._current_record = self._new_record_config()
         return self
@@ -109,23 +107,13 @@ class ParsedResponseRecordBuilder:
     def build(self) -> ParsedResponseRecord:
         """Build and return a single ParsedResponseRecord (for backward compatibility)."""
         records = self.build_all()
-        # if not records:
-        #     raise ValueError(
-        #         "No records configured. Use add_response() or add_request() first."
-        #     )
         return records[0]
 
     def build_all(self) -> list[ParsedResponseRecord]:
         """Build and return all configured ParsedResponseRecord instances."""
         # Add the current record if it has content
         all_records = self._records.copy()
-        # if self._current_record["responses"] or self._current_record["request_kwargs"]:
         all_records.append(self._current_record)
-
-        # if not all_records:
-        #     raise ValueError(
-        #         "No records configured. Use add_response() or add_request() first."
-        #     )
 
         parsed_records = []
         for record_config in all_records:
@@ -148,47 +136,3 @@ class ParsedResponseRecordBuilder:
 def parsed_response_record_builder():
     """Fixture that provides a builder for creating ParsedResponseRecord instances."""
     return ParsedResponseRecordBuilder()
-
-
-# @pytest.fixture
-# def sample_parsed_response_record(parsed_response_record_builder):
-#     """Fixture that provides a basic ParsedResponseRecord for simple tests."""
-#     return parsed_response_record_builder.add_response(
-#         perf_ns=150, raw_text=["hello"], parsed_text=["hello"]
-#     ).build()
-
-
-# @pytest.fixture
-# def multiple_parsed_response_records(parsed_response_record_builder):
-#     """Fixture that provides multiple ParsedResponseRecord instances for batch testing."""
-#     return (
-#         parsed_response_record_builder.with_worker_id("worker_1")
-#         .with_request_start_time(100)
-#         .add_response(perf_ns=150, raw_text=["first"], parsed_text=["first"])
-#         .new_record()
-#         .with_worker_id("worker_2")
-#         .with_request_start_time(200)
-#         .add_response(perf_ns=250, raw_text=["second"], parsed_text=["second"])
-#         .new_record()
-#         .with_worker_id("worker_3")
-#         .with_request_start_time(300)
-#         .add_response(perf_ns=350, raw_text=["third"], parsed_text=["third"])
-#         .build_all()
-#     )
-
-
-# @pytest.fixture
-# def batch_request_builder(parsed_response_record_builder):
-#     """Fixture that demonstrates building multiple requests with the add_request method."""
-#     return (
-#         parsed_response_record_builder.add_request(
-#             worker_id="worker_1", start_perf_ns=1000
-#         )
-#         .add_response(perf_ns=1050, raw_text=["token1"], parsed_text=["token1"])
-#         .add_response(perf_ns=1100, raw_text=["token2"], parsed_text=["token2"])
-#         .add_request(worker_id="worker_2", start_perf_ns=2000)
-#         .add_response(perf_ns=2030, raw_text=["token3"], parsed_text=["token3"])
-#         .add_request(worker_id="worker_3", start_perf_ns=3000)
-#         .add_response(perf_ns=3020, raw_text=["token4"], parsed_text=["token4"])
-#         .add_response(perf_ns=3040, raw_text=["token5"], parsed_text=["token5"])
-#     )
