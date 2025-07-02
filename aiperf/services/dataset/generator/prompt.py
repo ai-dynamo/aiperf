@@ -114,7 +114,7 @@ class PromptGenerator(BaseGenerator):
         """
         if hash_ids:
             return self._generate_cached_prompt(
-                mean, hash_ids, self.config.input_token.block_size
+                mean, hash_ids, self.config.input_tokens.block_size
             )
 
         num_tokens = utils.sample_positive_normal_integer(mean, stddev)

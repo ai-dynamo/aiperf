@@ -84,6 +84,9 @@ class InputConfig(BaseConfig):
             \n  - `RANDOM_POOL`\
             \n  - `TRACE`",
         ),
+        cyclopts.Parameter(
+            name=("--custom-dataset-type"),
+        ),
     ] = InputDefaults.CUSTOM_DATASET_TYPE
 
     random_seed: Annotated[

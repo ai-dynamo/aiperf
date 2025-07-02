@@ -3,6 +3,7 @@
 
 from typing import Annotated
 
+import cyclopts
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
@@ -24,6 +25,9 @@ class TurnDelayConfig(BaseConfig):
             ge=0,
             description="The mean delay between turns within a conversation in milliseconds.",
         ),
+        cyclopts.Parameter(
+            name=("--conversation-turn-delay-mean"),
+        ),
     ] = TurnDelayDefaults.MEAN
 
     stddev: Annotated[
@@ -33,6 +37,9 @@ class TurnDelayConfig(BaseConfig):
             description="The standard deviation of the delay between turns \
             \nwithin a conversation in milliseconds.",
         ),
+        cyclopts.Parameter(
+            name=("--conversation-turn-delay-stddev"),
+        ),
     ] = TurnDelayDefaults.STDDEV
 
     ratio: Annotated[
@@ -40,6 +47,9 @@ class TurnDelayConfig(BaseConfig):
         Field(
             ge=0,
             description="A ratio to scale multi-turn delays.",
+        ),
+        cyclopts.Parameter(
+            name=("--conversation-turn-delay-ratio"),
         ),
     ] = TurnDelayDefaults.RATIO
 
@@ -55,6 +65,9 @@ class TurnConfig(BaseConfig):
             ge=0,
             description="The mean number of turns within a conversation.",
         ),
+        cyclopts.Parameter(
+            name=("--conversation-turn-mean"),
+        ),
     ] = TurnDefaults.MEAN
 
     stddev: Annotated[
@@ -62,6 +75,9 @@ class TurnConfig(BaseConfig):
         Field(
             ge=0,
             description="The standard deviation of the number of turns within a conversation.",
+        ),
+        cyclopts.Parameter(
+            name=("--conversation-turn-stddev"),
         ),
     ] = TurnDefaults.STDDEV
 
@@ -80,6 +96,9 @@ class ConversationConfig(BaseConfig):
             description="The total number of unique conversations to generate.\
             \nEach conversation represents a single request session between client and server.\
             \nSupported on synthetic mode only and conversations will be reused until benchmarking is complete.",
+        ),
+        cyclopts.Parameter(
+            name=("--conversation-num"),
         ),
     ] = ConversationDefaults.NUM
 

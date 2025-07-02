@@ -48,6 +48,9 @@ class InputTokensConfig(BaseConfig):
             default=512,
             description="The block size of the prompt.",
         ),
+        cyclopts.Parameter(
+            name=("--input-tokens-block-size"),
+        ),
     ] = InputTokensDefaults.BLOCK_SIZE
 
 
@@ -141,8 +144,11 @@ class PromptConfig(BaseConfig):
             description="The batch size of text requests GenAI-Perf should send.\
             \nThis is currently supported with the embeddings and rankings endpoint types",
         ),
+        cyclopts.Parameter(
+            name=("--prompt-batch-size"),
+        ),
     ] = PromptDefaults.BATCH_SIZE
 
-    input_token: InputTokensConfig = InputTokensConfig()
-    output_token: OutputTokensConfig = OutputTokensConfig()
+    input_tokens: InputTokensConfig = InputTokensConfig()
+    output_tokens: OutputTokensConfig = OutputTokensConfig()
     prefix_prompt: PrefixPromptConfig = PrefixPromptConfig()

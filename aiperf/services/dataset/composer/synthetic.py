@@ -102,8 +102,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         text = Text(name="text")
         for _ in range(self.config.prompt.batch_size):
             prompt = self.prompt_generator.generate(
-                mean=self.config.prompt.input_token.mean,
-                stddev=self.config.prompt.input_token.stddev,
+                mean=self.config.prompt.input_tokens.mean,
+                stddev=self.config.prompt.input_tokens.stddev,
             )
 
             if self.prefix_prompt_enabled and is_first:
@@ -142,7 +142,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
     @property
     def include_prompt(self) -> bool:
-        return self.config.prompt.input_token.mean > 0
+        return self.config.prompt.input_tokens.mean > 0
 
     @property
     def include_image(self) -> bool:

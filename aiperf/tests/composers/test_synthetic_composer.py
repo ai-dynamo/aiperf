@@ -37,7 +37,7 @@ def basic_config():
     config = InputConfig(
         conversation=ConversationConfig(num=5),
         prompt=PromptConfig(
-            input_token=InputTokensConfig(mean=10, stddev=2),
+            input_tokens=InputTokensConfig(mean=10, stddev=2),
         ),
     )
     return config
@@ -49,7 +49,7 @@ def config_with_images():
     config = InputConfig(
         conversation=ConversationConfig(num=3),
         prompt=PromptConfig(
-            input_token=InputTokensConfig(mean=10, stddev=2),
+            input_tokens=InputTokensConfig(mean=10, stddev=2),
         ),
         image=ImageConfig(
             batch_size=1,
@@ -66,7 +66,7 @@ def config_with_audio():
     config = InputConfig(
         conversation=ConversationConfig(num=3),
         prompt=PromptConfig(
-            input_token=InputTokensConfig(mean=10, stddev=2),
+            input_tokens=InputTokensConfig(mean=10, stddev=2),
         ),
         audio=AudioConfig(
             batch_size=1,
@@ -82,7 +82,7 @@ def config_with_sessions():
     config = InputConfig(
         conversation=ConversationConfig(num=10),
         prompt=PromptConfig(
-            input_token=InputTokensConfig(mean=10, stddev=2),
+            input_tokens=InputTokensConfig(mean=10, stddev=2),
         ),
     )
     return config
@@ -94,7 +94,7 @@ def config_with_prefix_prompts():
     config = InputConfig(
         conversation=ConversationConfig(num=5),
         prompt=PromptConfig(
-            input_token=InputTokensConfig(mean=10, stddev=2),
+            input_tokens=InputTokensConfig(mean=10, stddev=2),
             prefix_prompt=PrefixPromptConfig(pool_size=3, length=20),
         ),
     )
@@ -108,7 +108,7 @@ def config_with_multimodal():
         conversation=ConversationConfig(num=2),
         prompt=PromptConfig(
             batch_size=2,
-            input_token=InputTokensConfig(mean=10, stddev=2),
+            input_tokens=InputTokensConfig(mean=10, stddev=2),
             prefix_prompt=PrefixPromptConfig(pool_size=2, length=15),
         ),
         image=ImageConfig(
@@ -137,7 +137,7 @@ def config_with_turns_and_delays():
             ),
         ),
         prompt=PromptConfig(
-            input_token=InputTokensConfig(mean=10, stddev=2),
+            input_tokens=InputTokensConfig(mean=10, stddev=2),
             prefix_prompt=PrefixPromptConfig(pool_size=0),
         ),
     )
@@ -194,7 +194,7 @@ class TestSyntheticDatasetComposer:
         """Test initialization with no generators enabled."""
         config = InputConfig(
             conversation=ConversationConfig(num=5),
-            prompt=PromptConfig(input_token=InputTokensConfig(mean=0)),
+            prompt=PromptConfig(input_tokens=InputTokensConfig(mean=0)),
             image=ImageConfig(
                 width=ImageWidthConfig(mean=0), height=ImageHeightConfig(mean=0)
             ),
@@ -650,7 +650,7 @@ class TestSyntheticDatasetComposer:
         self, config_with_multimodal, mock_tokenizer
     ):
         """Test that dataset generation is reproducible with fixed random seed."""
-        config_with_multimodal.prompt.input_token.stddev = 2
+        config_with_multimodal.prompt.input_tokens.stddev = 2
         config_with_multimodal.image.width.stddev = 2
         config_with_multimodal.image.height.stddev = 2
         config_with_multimodal.audio.length.stddev = 2
