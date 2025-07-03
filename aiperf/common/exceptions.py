@@ -26,6 +26,10 @@ class CommunicationError(AIPerfError):
     """Generic communication error."""
 
 
+class ProxyError(AIPerfError):
+    """Exception raised when a proxy encounters an error."""
+
+
 ################################################################################
 # Configuration Exceptions
 ################################################################################
