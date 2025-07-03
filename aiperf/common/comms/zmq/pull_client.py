@@ -8,7 +8,7 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.comms.base import CommunicationClientFactory, PullClient
+from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.enums import CommunicationClientType, MessageType
 from aiperf.common.hooks import aiperf_task, on_stop
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 @CommunicationClientFactory.register(CommunicationClientType.PULL)
-class ZMQPullClient(PullClient, BaseZMQClient, AsyncTaskManagerMixin):
+class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
     """
     ZMQ PULL socket client for receiving work from PUSH sockets.
 
@@ -162,9 +162,6 @@ class ZMQPullClient(PullClient, BaseZMQClient, AsyncTaskManagerMixin):
         """
         await self._ensure_initialized()
 
-        if max_concurrency is not None:
-            self.semaphore = asyncio.Semaphore(value=max_concurrency)
-
         # Register callback
         if message_type not in self._pull_callbacks:
             self._pull_callbacks[message_type] = callback
@@ -172,3 +169,6 @@ class ZMQPullClient(PullClient, BaseZMQClient, AsyncTaskManagerMixin):
             raise ValueError(
                 f"Callback already registered for message type {message_type}"
             )
+
+        if max_concurrency is not None:
+            self.semaphore = asyncio.Semaphore(value=max_concurrency)

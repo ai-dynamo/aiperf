@@ -19,7 +19,7 @@ from aiperf.common.enums import (
     CommunicationClientAddressType,
     CommunicationClientType,
 )
-from aiperf.common.exceptions import CommunicationError, CommunicationErrorReason
+from aiperf.common.exceptions import ShutdownError
 from aiperf.common.factories import CommunicationFactory
 
 logger = logging.getLogger(__name__)
@@ -97,8 +97,7 @@ class BaseZMQCommunication(CommunicationProtocol, ABC):
             pass
 
         except Exception as e:
-            raise CommunicationError(
-                CommunicationErrorReason.SHUTDOWN_ERROR,
+            raise ShutdownError(
                 "Failed to shutdown ZMQ communication",
             ) from e
 
@@ -123,7 +122,7 @@ class BaseZMQCommunication(CommunicationProtocol, ABC):
         return CommunicationClientFactory.create_instance(
             client_type,
             context=self.context,
-            address=address,
+            address=self.get_address(address),
             bind=bind,
             socket_ops=socket_ops,
         )
@@ -152,17 +151,14 @@ class ZMQIPCCommunication(BaseZMQCommunication):
         Args:
             config: ZMQIPCConfig object with configuration parameters
         """
-        self._setup_ipc_directory()
         super().__init__(config or ZMQIPCConfig())
+        # call after super init so that way self.config is set
+        self._setup_ipc_directory()
 
     async def initialize(self) -> None:
         """Initialize communication channels.
 
         This method will create the IPC socket directory if needed.
-
-        Raises:
-            CommunicationError: If the communication channels are not initialized
-                or shutdown
         """
         await super().initialize()
 
@@ -171,10 +167,6 @@ class ZMQIPCCommunication(BaseZMQCommunication):
 
         This method will wait for all clients to shutdown before shutting down
         the context.
-
-        Raises:
-            CommunicationError: If there was an error shutting down the communication
-                channels
         """
         await super().shutdown()
         self._cleanup_ipc_sockets()

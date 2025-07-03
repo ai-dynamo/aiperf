@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import CaseInsensitiveStrEnum, ServiceType
+from aiperf.common.enums import ServiceType
 
 ################################################################################
 # Base Exceptions
@@ -22,31 +22,8 @@ class AIPerfMultiError(AIPerfError):
         self.exceptions = exceptions
 
 
-################################################################################
-# Communication Exceptions
-################################################################################
-
-
-class CommunicationErrorReason(CaseInsensitiveStrEnum):
-    CLIENT_NOT_FOUND = "client_not_found"
-    PUBLISH_ERROR = "publish_error"
-    SUBSCRIBE_ERROR = "subscribe_error"
-    REQUEST_ERROR = "request_error"
-    RESPONSE_ERROR = "response_error"
-    SHUTDOWN_ERROR = "shutdown_error"
-    INITIALIZATION_ERROR = "initialization_error"
-    NOT_INITIALIZED_ERROR = "not_initialized_error"
-    CLEANUP_ERROR = "cleanup_error"
-    PUSH_ERROR = "push_error"
-    PULL_ERROR = "pull_error"
-
-
 class CommunicationError(AIPerfError):
-    """Base class for all communication exceptions."""
-
-    def __init__(self, reason: CommunicationErrorReason, message: str) -> None:
-        super().__init__(f"Communication Error {reason.name}: {message}")
-        self.reason = reason
+    """Generic communication error."""
 
 
 ################################################################################

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 from collections.abc import Callable, Coroutine
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar, cast
 
 from aiperf.common.constants import DEFAULT_COMMS_REQUEST_TIMEOUT
 from aiperf.common.enums import (
@@ -14,6 +14,9 @@ from aiperf.common.factories import FactoryMixin
 from aiperf.common.messages import Message
 
 logger = logging.getLogger(__name__)
+
+MessageT = TypeVar("MessageT", bound=Message)
+MessageOutputT = TypeVar("MessageOutputT", bound=Message)
 
 
 ################################################################################
@@ -33,6 +36,13 @@ class CommunicationClientProtocol(Protocol):
         ...
 
 
+class CommunicationClientProtocolFactory(
+    FactoryMixin[CommunicationClientType, CommunicationClientProtocol]
+):
+    """Factory for registering CommunicationClientProtocol interfaces for dynamic client creation."""
+
+
+@CommunicationClientProtocolFactory.register(CommunicationClientType.PUSH)
 class PushClientProtocol(CommunicationClientProtocol):
     """Interface for push clients."""
 
@@ -47,13 +57,14 @@ class PushClientProtocol(CommunicationClientProtocol):
         ...
 
 
+@CommunicationClientProtocolFactory.register(CommunicationClientType.PULL)
 class PullClientProtocol(CommunicationClientProtocol):
     """Interface for pull clients."""
 
     async def register_pull_callback(
         self,
         message_type: MessageType,
-        callback: Callable[[Message], Coroutine[Any, Any, None]],
+        callback: Callable[[MessageT], Coroutine[Any, Any, None]],
         max_concurrency: int | None = None,
     ) -> None:
         """Register a callback for a pull client. The callback will be called when
@@ -67,14 +78,15 @@ class PullClientProtocol(CommunicationClientProtocol):
         ...
 
 
+@CommunicationClientProtocolFactory.register(CommunicationClientType.REQUEST)
 class RequestClientProtocol(CommunicationClientProtocol):
     """Interface for request clients."""
 
     async def request(
         self,
-        message: Message,
+        message: MessageT,  # type: ignore[type-arg]
         timeout: float = DEFAULT_COMMS_REQUEST_TIMEOUT,
-    ) -> Message:
+    ) -> MessageOutputT:  # type: ignore[type-arg]
         """Send a request and wait for a response. The message will be routed automatically
         based on the message type.
 
@@ -89,8 +101,8 @@ class RequestClientProtocol(CommunicationClientProtocol):
 
     async def request_async(
         self,
-        message: Message,
-        callback: Callable[[Message], Coroutine[Any, Any, None]],
+        message: MessageT,
+        callback: Callable[[MessageOutputT], Coroutine[Any, Any, None]],
     ) -> None:
         """Send a request and be notified when the response is received. The message will be routed automatically
         based on the message type.
@@ -102,6 +114,7 @@ class RequestClientProtocol(CommunicationClientProtocol):
         ...
 
 
+@CommunicationClientProtocolFactory.register(CommunicationClientType.REPLY)
 class ReplyClientProtocol(CommunicationClientProtocol):
     """Interface for reply clients."""
 
@@ -109,7 +122,7 @@ class ReplyClientProtocol(CommunicationClientProtocol):
         self,
         service_id: str,
         message_type: MessageType,
-        handler: Callable[[Message], Coroutine[Any, Any, Message | None]],
+        handler: Callable[[MessageT], Coroutine[Any, Any, MessageOutputT | None]],
     ) -> None:
         """Register a request handler for a message type. The handler will be called when
         a request is received for the given message type.
@@ -122,23 +135,25 @@ class ReplyClientProtocol(CommunicationClientProtocol):
         ...
 
 
+@CommunicationClientProtocolFactory.register(CommunicationClientType.SUB)
 class SubClientProtocol(CommunicationClientProtocol):
     """Interface for subscribe clients."""
 
     async def subscribe(
         self,
         message_type: MessageType,
-        callback: Callable[[Message], Coroutine[Any, Any, None]],
+        callback: Callable[[MessageT], Coroutine[Any, Any, None]],
     ) -> None:
         """Subscribe to a specific message type. The callback will be called when
         a message is received for the given message type."""
         ...
 
 
+@CommunicationClientProtocolFactory.register(CommunicationClientType.PUB)
 class PubClientProtocol(CommunicationClientProtocol):
     """Interface for publish clients."""
 
-    async def publish(self, message: Message) -> None:
+    async def publish(self, message: MessageT) -> None:
         """Publish a message. The message will be routed automatically based on the message type."""
         ...
 
@@ -190,6 +205,15 @@ class CommunicationProtocol(Protocol):
         """
         ...
 
+    @property
+    def stop_requested(self) -> bool:
+        """Check if the communication channels are being shutdown.
+
+        Returns:
+            True if the communication channels are being shutdown, False otherwise
+        """
+        ...
+
     async def shutdown(self) -> None:
         """Gracefully shutdown communication channels."""
         ...
@@ -221,3 +245,46 @@ class CommunicationProtocol(Protocol):
             socket_ops: Additional socket options to set.
         """
         ...
+
+
+ClientProtocolT = TypeVar("ClientProtocolT", bound=CommunicationClientProtocol)
+
+
+def _create_specific_client(
+    client_type: CommunicationClientType,
+    client_class: type[ClientProtocolT],
+) -> Callable[
+    [
+        CommunicationProtocol,
+        CommunicationClientAddressType | str,
+        bool,
+        dict | None,
+    ],
+    ClientProtocolT,
+]:
+    def _create_client(
+        self: CommunicationProtocol,
+        address: CommunicationClientAddressType | str,
+        bind: bool = False,
+        socket_ops: dict | None = None,
+    ) -> ClientProtocolT:
+        return cast(
+            ClientProtocolT, self.create_client(client_type, address, bind, socket_ops)
+        )
+
+    _create_client.__name__ = f"create_{client_type.lower()}_client"
+    _create_client.__doc__ = f"Create a {client_type.upper()} client"
+    return _create_client
+
+
+# Create a method for creating each client type on the CommunicationProtocol class,
+# such as create_push_client, create_pull_client, etc.
+for (
+    protocol_class,
+    client_type,
+) in CommunicationClientProtocolFactory.get_all_classes_and_types():
+    setattr(
+        CommunicationProtocol,
+        f"create_{client_type.lower()}_client",
+        _create_specific_client(client_type, protocol_class),
+    )

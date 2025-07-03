@@ -6,10 +6,10 @@ import logging
 
 import zmq.asyncio
 
-from aiperf.common.comms.base import CommunicationClientFactory, PushClientProtocol
+from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.enums import CommunicationClientType
-from aiperf.common.exceptions import CommunicationError, CommunicationErrorReason
+from aiperf.common.exceptions import CommunicationError
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
 
@@ -20,7 +20,7 @@ MAX_PUSH_RETRIES = 2
 
 
 @CommunicationClientFactory.register(CommunicationClientType.PUSH)
-class ZMQPushClient(BaseZMQClient, PushClientProtocol, AsyncTaskManagerMixin):
+class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
     """
     ZMQ PUSH socket client for sending work to PULL sockets.
 
@@ -87,7 +87,6 @@ class ZMQPushClient(BaseZMQClient, PushClientProtocol, AsyncTaskManagerMixin):
         except zmq.Again as e:
             if retry_count >= max_retries:
                 raise CommunicationError(
-                    CommunicationErrorReason.PUSH_ERROR,
                     f"Failed to push data after {retry_count} retries: {e}",
                 ) from e
 

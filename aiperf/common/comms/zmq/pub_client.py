@@ -8,7 +8,7 @@ import zmq.asyncio
 from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.enums import CommunicationClientType
-from aiperf.common.exceptions import CommunicationError, CommunicationErrorReason
+from aiperf.common.exceptions import CommunicationError
 from aiperf.common.messages import Message
 
 
@@ -85,6 +85,5 @@ class ZMQPubClient(BaseZMQClient):
 
         except Exception as e:
             raise CommunicationError(
-                CommunicationErrorReason.PUBLISH_ERROR,
                 f"Failed to publish message {message.message_type}: {e}",
             ) from e

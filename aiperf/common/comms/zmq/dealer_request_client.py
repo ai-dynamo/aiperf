@@ -11,7 +11,7 @@ from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.constants import DEFAULT_COMMS_REQUEST_TIMEOUT
 from aiperf.common.enums import CommunicationClientType
-from aiperf.common.exceptions import CommunicationError, CommunicationErrorReason
+from aiperf.common.exceptions import CommunicationError
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
@@ -78,7 +78,6 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
 
             except Exception as e:
                 raise CommunicationError(
-                    CommunicationErrorReason.RESPONSE_ERROR,
                     f"Exception receiving responses: {e.__class__.__name__} {e}",
                 ) from e
 
@@ -114,7 +113,6 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
 
         except Exception as e:
             raise CommunicationError(
-                CommunicationErrorReason.REQUEST_ERROR,
                 f"Exception sending request: {e.__class__.__name__} {e}",
             ) from e
 

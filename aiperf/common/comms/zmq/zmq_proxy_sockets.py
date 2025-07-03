@@ -5,11 +5,7 @@ import zmq.asyncio
 from zmq import SocketType
 
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-<<<<<<< HEAD
-from aiperf.common.comms.zmq.zmq_proxy_base import BaseZMQProxy
-=======
 from aiperf.common.comms.zmq.zmq_proxy_base import BaseZMQProxy, ZMQProxyFactory
->>>>>>> ajc/zmq-proxy
 from aiperf.common.config.zmq_config import BaseZMQProxyConfig
 from aiperf.common.enums import ZMQProxyType
 

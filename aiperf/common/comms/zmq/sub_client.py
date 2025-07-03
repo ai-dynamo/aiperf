@@ -9,7 +9,7 @@ import zmq.asyncio
 from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.enums import CommunicationClientType, MessageType
-from aiperf.common.exceptions import CommunicationError, CommunicationErrorReason
+from aiperf.common.exceptions import CommunicationError
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
@@ -68,6 +68,7 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
             socket_ops (dict, optional): Additional socket options to set.
         """
         super().__init__(context, zmq.SocketType.SUB, address, bind, socket_ops)
+        AsyncTaskManagerMixin.__init__(self)
         self._subscribers: dict[MessageType | str, list[Callable[[Message], Any]]] = {}
 
     @on_stop
@@ -108,7 +109,6 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
                 "Exception subscribing to message_type %s: %s", message_type, e
             )
             raise CommunicationError(
-                CommunicationErrorReason.SUBSCRIBE_ERROR,
                 f"Failed to subscribe to message_type {message_type}: {e}",
             ) from e
 

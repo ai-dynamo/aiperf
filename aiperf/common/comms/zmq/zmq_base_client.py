@@ -1,5 +1,5 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 import asyncio
 import contextlib
 import logging
@@ -7,15 +7,19 @@ import uuid
 
 import zmq.asyncio
 
-from aiperf.common.comms.base import CommunicationClientProtocol
 from aiperf.common.comms.zmq.zmq_defaults import ZMQSocketDefaults
 from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
 from aiperf.common.exceptions import (
     AIPerfError,
     CommunicationError,
-    CommunicationErrorReason,
+    InitializationError,
 )
-from aiperf.common.hooks import AIPerfHook, AIPerfTaskMixin, supports_hooks
+from aiperf.common.hooks import (
+    AIPerfHook,
+    AIPerfTaskHook,
+    AIPerfTaskMixin,
+    supports_hooks,
+)
 
 ################################################################################
 # Base ZMQ Client Class
@@ -26,9 +30,9 @@ from aiperf.common.hooks import AIPerfHook, AIPerfTaskMixin, supports_hooks
     AIPerfHook.ON_INIT,
     AIPerfHook.ON_STOP,
     AIPerfHook.ON_CLEANUP,
-    AIPerfHook.AIPERF_TASK,
+    AIPerfTaskHook.AIPERF_TASK,
 )
-class BaseZMQClient(AIPerfTaskMixin, CommunicationClientProtocol):
+class BaseZMQClient(AIPerfTaskMixin):
     """Base class for all ZMQ clients. It can be used as-is to create a new ZMQ client,
     or it can be subclassed to create specific ZMQ client functionality.
 
@@ -72,6 +76,11 @@ class BaseZMQClient(AIPerfTaskMixin, CommunicationClientProtocol):
         return self.initialized_event.is_set()
 
     @property
+    def stop_requested(self) -> bool:
+        """Check if the client has been requested to stop."""
+        return self.stop_event.is_set()
+
+    @property
     def socket_type_name(self) -> str:
         """Get the name of the socket type."""
         return self.socket_type.name
@@ -85,7 +94,6 @@ class BaseZMQClient(AIPerfTaskMixin, CommunicationClientProtocol):
         """
         if not self._socket:
             raise CommunicationError(
-                CommunicationErrorReason.NOT_INITIALIZED_ERROR,
                 "Communication channels are not initialized",
             )
         return self._socket
@@ -99,7 +107,7 @@ class BaseZMQClient(AIPerfTaskMixin, CommunicationClientProtocol):
         """
         if not self.is_initialized:
             await self.initialize()
-        if self.stop_event.is_set():
+        if self.stop_requested:
             raise asyncio.CancelledError()
 
     async def initialize(self) -> None:
@@ -165,8 +173,7 @@ class BaseZMQClient(AIPerfTaskMixin, CommunicationClientProtocol):
         except AIPerfError:
             raise  # re-raise it up the stack
         except Exception as e:
-            raise CommunicationError(
-                CommunicationErrorReason.INITIALIZATION_ERROR,
+            raise InitializationError(
                 f"Failed to initialize ZMQ socket: {e}",
             ) from e
 
@@ -177,11 +184,10 @@ class BaseZMQClient(AIPerfTaskMixin, CommunicationClientProtocol):
         - Close the zmq socket
         - Run the AIPerfHook.ON_CLEANUP hooks
         """
-        if self.stop_event.is_set():
+        if self.stop_requested:
             return
 
-        if not self.stop_event.is_set():
-            self.stop_event.set()
+        self.stop_event.set()
 
         try:
             await self.run_hooks(AIPerfHook.ON_STOP)
