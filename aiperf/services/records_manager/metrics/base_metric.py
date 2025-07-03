@@ -16,7 +16,7 @@ class BaseMetric(ABC):
 
     # Class attributes that subclasses must override
     tag: ClassVar[str] = ""
-    unit: ClassVar[MetricTimeType] = MetricTimeType.NANOSECONDS
+    unit: ClassVar[MetricTimeType | None] = None
     larger_is_better: ClassVar[bool] = True
     header: ClassVar[str] = ""
     streaming_only: ClassVar[bool] = False

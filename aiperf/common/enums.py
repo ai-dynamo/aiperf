@@ -593,7 +593,6 @@ class MetricTimeType(Enum):
 class MetricType(Enum):
     METRIC_OF_RECORDS = auto()
     METRIC_OF_METRICS = auto()
-    METRIC_OF_BOTH = auto()
 
 
 ################################################################################
