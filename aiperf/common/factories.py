@@ -1,33 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
-from aiperf.common.enums import CaseInsensitiveStrEnum, ZMQProxyType
+from aiperf.common.enums import (
+    CaseInsensitiveStrEnum,
+    CommunicationBackend,
+    ServiceType,
+    ZMQProxyType,
+)
 from aiperf.common.exceptions import FactoryCreationError
-
-if TYPE_CHECKING:
-    from aiperf.common.comms.base import (
-        CommunicationProtocol,  # noqa: F401 - for type checking
-    )
-    from aiperf.common.enums import (
-        CommunicationBackend,  # noqa: F401 - for type checking
-        PostProcessorType,  # noqa: F401 - for type checking
-        ServiceType,  # noqa: F401 - for type checking
-    )
-    from aiperf.common.interfaces import (
-        DataExporterProtocol,  # noqa: F401 - for type checking
-        PostProcessorProtocol,  # noqa: F401 - for type checking
-    )
-    from aiperf.common.service.base_service import (
-        BaseService,  # noqa: F401 - for type checking
-    )
 
 ClassEnumT = TypeVar("ClassEnumT", bound=CaseInsensitiveStrEnum)
 ClassProtocolT = TypeVar("ClassProtocolT", bound=Any)
-
 
 ################################################################################
 # Generic Base Factory Mixin
@@ -88,6 +74,7 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
     def __init_subclass__(cls) -> None:
         cls._registry = {}
         cls._override_priorities = {}
+        cls.logger = logging.getLogger(cls.__name__)
         super().__init_subclass__()
 
     @classmethod
@@ -109,7 +96,6 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
         def decorator(class_cls: type[ClassProtocolT]) -> type[ClassProtocolT]:
             existing_priority = cls._override_priorities.get(class_type, -1)
             if class_type in cls._registry and existing_priority >= override_priority:
-                # TODO: Will logging be initialized before this method is called?
                 cls.logger.warning(
                     "%r class %s already registered with same or higher priority "
                     "(%s). The new registration of class %s with priority "
@@ -130,7 +116,7 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
                     override_priority,
                 )
             else:
-                cls.logger.debug(
+                cls.logger.warning(
                     "%r class %s with priority %s overrides "
                     "already registered class %s with lower priority (%s).",
                     class_type,
@@ -149,15 +135,13 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
     def create_instance(
         cls,
         class_type: ClassEnumT | str,
-        *args: Any,
         **kwargs: Any,
     ) -> ClassProtocolT:
         """Create a new class instance.
 
         Args:
             class_type: The type of class to create
-            *args: Positional arguments for the class
-            **kwargs: Keyword arguments for the class
+            **kwargs: Additional arguments for the class
 
         Returns:
             The created class instance
@@ -168,7 +152,7 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
         if class_type not in cls._registry:
             raise FactoryCreationError(f"No implementation found for {class_type!r}.")
         try:
-            return cls._registry[class_type](*args, **kwargs)
+            return cls._registry[class_type](**kwargs)
         except Exception as e:
             raise FactoryCreationError(
                 f"Error creating {class_type!r} instance: {e}"
@@ -202,13 +186,25 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
         """
         return list(cls._registry.values())
 
+    @classmethod
+    def get_all_class_types(cls) -> list[ClassEnumT | str]:
+        """Get all registered class types."""
+        return list(cls._registry.keys())
+
+    @classmethod
+    def get_all_classes_and_types(
+        cls,
+    ) -> list[tuple[type[ClassProtocolT], ClassEnumT | str]]:
+        """Get all registered classes and their corresponding class types."""
+        return [(cls, class_type) for class_type, cls in cls._registry.items()]
+
 
 ################################################################################
 # Built-in Factories
 ################################################################################
 
 
-class CommunicationFactory(FactoryMixin["CommunicationBackend", "BaseCommunication"]):
+class CommunicationFactory(FactoryMixin[CommunicationBackend, "BaseCommunication"]):
     """Factory for registering and creating BaseCommunication instances based on the specified communication backend.
 
     Example:
@@ -228,7 +224,7 @@ class CommunicationFactory(FactoryMixin["CommunicationBackend", "BaseCommunicati
     """
 
 
-class ServiceFactory(FactoryMixin["ServiceType", "BaseService"]):
+class ServiceFactory(FactoryMixin[ServiceType, "BaseService"]):
     """Factory for registering and creating BaseService instances based on the specified service type.
 
     Example:
@@ -260,7 +256,7 @@ class DataExporterFactory(FactoryMixin["DataExporterType", "DataExporterProtocol
         for exporter_class in DataExporterFactory.get_all_classes():
             exporter = exporter_class(endpoint_config)
 
-            exporter.export(records)
+            exporter.export()
     ```
     """
 
