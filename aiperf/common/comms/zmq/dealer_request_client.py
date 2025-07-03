@@ -27,9 +27,9 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
 
     ASCII Diagram:
     ┌──────────────┐                    ┌──────────────┐
-    │    DEALER    │<──── Request ─────>│    ROUTER    │
+    │    DEALER    │───── Request ─────>│    ROUTER    │
     │   (Client)   │                    │  (Service)   │
-    │              │<─── Response ─────>│              │
+    │              │<─── Response ──────│              │
     └──────────────┘                    └──────────────┘
 
     Usage Pattern:
