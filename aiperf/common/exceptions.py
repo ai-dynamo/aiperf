@@ -49,6 +49,10 @@ class CommunicationError(AIPerfError):
         self.reason = reason
 
 
+class ProxyError(AIPerfError):
+    """Exception raised when a proxy encounters an error."""
+
+
 ################################################################################
 # Configuration Exceptions
 ################################################################################

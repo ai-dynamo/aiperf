@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import uuid
 from abc import ABC, abstractmethod
 from contextlib import suppress
 
@@ -13,9 +14,50 @@ from zmq import SocketType
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.config.zmq_config import BaseZMQProxyConfig
 from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
-from aiperf.common.enums import ZMQProxyType
+from aiperf.common.enums import CaseInsensitiveStrEnum, ZMQProxyType
 from aiperf.common.exceptions import ProxyError
 from aiperf.common.factories import FactoryMixin
+
+
+class ProxyEndType(CaseInsensitiveStrEnum):
+    Frontend = "frontend"
+    Backend = "backend"
+    Capture = "capture"
+    Control = "control"
+
+
+class ProxySocketClient(BaseZMQClient):
+    """A ZMQ Proxy socket client class that extends BaseZMQClient.
+
+    This class is used to create proxy sockets for the frontend, backend, capture, and control
+    endpoint types of a ZMQ Proxy.
+    """
+
+    def __init__(
+        self,
+        context: zmq.asyncio.Context,
+        socket_type: SocketType,
+        address: str,
+        end_type: ProxyEndType,
+        socket_ops: dict | None = None,
+        proxy_uuid: str | None = None,
+    ) -> None:
+        self.client_id = f"proxy_{end_type}_{socket_type.name.lower()}_{proxy_uuid or uuid.uuid4().hex[:8]}"
+        super().__init__(
+            context,
+            socket_type,
+            address,
+            bind=True,
+            socket_ops=socket_ops,
+            client_id=self.client_id,
+        )
+        self.logger = logging.getLogger(self.client_id)
+        self.logger.debug(
+            "ZMQ Proxy %s %s - Address: %s",
+            end_type.name,
+            socket_type.name,
+            address,
+        )
 
 
 class BaseZMQProxy(ABC):
@@ -38,6 +80,7 @@ class BaseZMQProxy(ABC):
         context: zmq.asyncio.Context,
         zmq_proxy_config: BaseZMQProxyConfig,
         socket_ops: dict | None = None,
+        proxy_uuid: str | None = None,
     ) -> None:
         """Initialize the ZMQ Proxy. This is a base class for all ZMQ Proxies.
 
@@ -47,15 +90,19 @@ class BaseZMQProxy(ABC):
             context (zmq.asyncio.Context): The ZMQ context.
             zmq_proxy_config (BaseZMQProxyConfig): The ZMQ proxy configuration.
             socket_ops (dict, optional): Additional socket options to set.
+            proxy_uuid (str, optional): An optional UUID for the proxy instance. If not provided,
+                a new UUID will be generated. This is useful for tracing and debugging purposes.
         """
 
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.proxy_uuid = proxy_uuid or uuid.uuid4().hex[:8]
+        self.proxy_id = f"{self.__class__.__name__.lower()}_{self.proxy_uuid}"
+        self.logger = logging.getLogger(self.proxy_id)
         self.context = context
         self.socket_ops = socket_ops
 
         self.monitor_task: asyncio.Task | None = None
-        self.control_client: BaseZMQClient | None = None
-        self.capture_client: BaseZMQClient | None = None
+        self.control_client: ProxySocketClient | None = None
+        self.capture_client: ProxySocketClient | None = None
         self.proxy_task: asyncio.Task | None = None
         self.proxy: zmq.asyncio.Socket | None = None
 
@@ -74,32 +121,36 @@ class BaseZMQProxy(ABC):
             context=self.context,
             address=self.backend_address,
             socket_ops=self.socket_ops,
+            proxy_uuid=self.proxy_uuid,  # Pass the proxy UUID for tracing
         )
 
         self.frontend_socket = frontend_socket_class(
             context=self.context,
             address=self.frontend_address,
             socket_ops=self.socket_ops,
+            proxy_uuid=self.proxy_uuid,  # Pass the proxy UUID for tracing
         )
 
         if self.control_address:
             self.logger.debug("Proxy Control - Address: %s", self.control_address)
-            self.control_client = BaseZMQClient(
+            self.control_client = ProxySocketClient(
                 context=self.context,
                 socket_type=SocketType.REP,
                 address=self.control_address,
-                bind=True,
                 socket_ops=self.socket_ops,
+                end_type=ProxyEndType.Control,
+                proxy_uuid=self.proxy_uuid,
             )
 
         if self.capture_address:
             self.logger.debug("Proxy Capture - Address: %s", self.capture_address)
-            self.capture_client = BaseZMQClient(
+            self.capture_client = ProxySocketClient(
                 context=self.context,
                 socket_type=SocketType.PUB,
                 address=self.capture_address,
-                bind=True,
                 socket_ops=self.socket_ops,
+                end_type=ProxyEndType.Capture,
+                proxy_uuid=self.proxy_uuid,
             )
 
     @classmethod

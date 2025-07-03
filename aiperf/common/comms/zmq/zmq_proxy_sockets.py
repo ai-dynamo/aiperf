@@ -5,7 +5,12 @@ import zmq.asyncio
 from zmq import SocketType
 
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.comms.zmq.zmq_proxy_base import BaseZMQProxy, ZMQProxyFactory
+from aiperf.common.comms.zmq.zmq_proxy_base import (
+    BaseZMQProxy,
+    ProxyEndType,
+    ProxySocketClient,
+    ZMQProxyFactory,
+)
 from aiperf.common.config.zmq_config import BaseZMQProxyConfig
 from aiperf.common.enums import ZMQProxyType
 
@@ -15,17 +20,15 @@ from aiperf.common.enums import ZMQProxyType
 
 
 def create_proxy_socket_class(
-    socket_type: SocketType, is_backend: bool = False
+    socket_type: SocketType, end_type: ProxyEndType
 ) -> type[BaseZMQClient]:
     """Create a proxy socket class using the specified socket type. This is used to
     reduce the boilerplate code required to create a ZMQ Proxy class.
     """
 
-    class_name = (
-        f"ZMQProxy{'Backend' if is_backend else 'Frontend'}Socket{socket_type.name}"
-    )
+    class_name = f"ZMQProxy{end_type.name}Socket{socket_type.name}"
 
-    class ProxySocket(BaseZMQClient):
+    class ProxySocket(ProxySocketClient):
         """A ZMQ Proxy socket class with a specific socket type."""
 
         def __init__(
@@ -33,19 +36,23 @@ def create_proxy_socket_class(
             context: zmq.asyncio.Context,
             address: str,
             socket_ops: dict | None = None,
+            proxy_uuid: str | None = None,
         ):
+            """Initialize the ZMQ Proxy socket class."""
+
             super().__init__(
-                context, socket_type, address, bind=True, socket_ops=socket_ops
-            )
-            self.logger.debug(
-                "ZMQ Proxy %s %s - Address: %s",
-                "backend" if is_backend else "frontend",
-                socket_type.name,
+                context,
+                socket_type,
                 address,
+                end_type=end_type,
+                socket_ops=socket_ops,
+                proxy_uuid=proxy_uuid,
             )
 
+    # Dynamically set the class name and qualname based on the socket and end type
     ProxySocket.__name__ = class_name
     ProxySocket.__qualname__ = class_name
+    ProxySocket.__doc__ = f"A ZMQ Proxy {end_type.name} socket implementation."
     return ProxySocket
 
 
@@ -99,8 +106,10 @@ def define_proxy_class(
                 socket_ops=socket_ops,
             )
 
-    ZMQProxy.__name__ = f"ZMQ{proxy_type.name}Proxy"
-    ZMQProxy.__qualname__ = f"ZMQ{proxy_type.name}Proxy"
+    # Dynamically set the class name and qualname based on the proxy type
+    ZMQProxy.__name__ = f"ZMQ_{proxy_type.name}_Proxy"
+    ZMQProxy.__qualname__ = ZMQProxy.__name__
+    ZMQProxy.__doc__ = f"A ZMQ Proxy for {proxy_type.name} communication."
     ZMQProxyFactory.register(proxy_type)(ZMQProxy)
     return ZMQProxy
 
@@ -111,8 +120,8 @@ def define_proxy_class(
 
 ZMQXPubXSubProxy = define_proxy_class(
     ZMQProxyType.XPUB_XSUB,
-    create_proxy_socket_class(SocketType.XSUB, is_backend=False),
-    create_proxy_socket_class(SocketType.XPUB, is_backend=True),
+    create_proxy_socket_class(SocketType.XSUB, ProxyEndType.Frontend),
+    create_proxy_socket_class(SocketType.XPUB, ProxyEndType.Backend),
 )
 """
 An XSUB socket for the proxy's frontend and an XPUB socket for the proxy's backend.
@@ -141,8 +150,8 @@ The ZMQ proxy handles the message routing automatically.
 
 ZMQDealerRouterProxy = define_proxy_class(
     ZMQProxyType.DEALER_ROUTER,
-    create_proxy_socket_class(SocketType.ROUTER, is_backend=False),
-    create_proxy_socket_class(SocketType.DEALER, is_backend=True),
+    create_proxy_socket_class(SocketType.ROUTER, ProxyEndType.Frontend),
+    create_proxy_socket_class(SocketType.DEALER, ProxyEndType.Backend),
 )
 """
 A ROUTER socket for the proxy's frontend and a DEALER socket for the proxy's backend.
@@ -177,8 +186,8 @@ for proper response forwarding back to original DEALER clients.
 
 ZMQPushPullProxy = define_proxy_class(
     ZMQProxyType.PUSH_PULL,
-    create_proxy_socket_class(SocketType.PULL, is_backend=False),
-    create_proxy_socket_class(SocketType.PUSH, is_backend=True),
+    create_proxy_socket_class(SocketType.PULL, ProxyEndType.Frontend),
+    create_proxy_socket_class(SocketType.PUSH, ProxyEndType.Backend),
 )
 """
 A PULL socket for the proxy's frontend and a PUSH socket for the proxy's backend.
