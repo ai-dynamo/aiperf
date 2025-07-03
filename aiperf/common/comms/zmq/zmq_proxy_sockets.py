@@ -1,16 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Self
-
 import zmq.asyncio
 from zmq import SocketType
 
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
+<<<<<<< HEAD
 from aiperf.common.comms.zmq.zmq_proxy_base import BaseZMQProxy
+=======
+from aiperf.common.comms.zmq.zmq_proxy_base import BaseZMQProxy, ZMQProxyFactory
+>>>>>>> ajc/zmq-proxy
 from aiperf.common.config.zmq_config import BaseZMQProxyConfig
 from aiperf.common.enums import ZMQProxyType
-from aiperf.common.factories import ZMQProxyFactory
 
 ################################################################################
 # Proxy Sockets
@@ -56,7 +57,7 @@ def define_proxy_class(
     proxy_type: ZMQProxyType,
     frontend_socket_class: type[BaseZMQClient],
     backend_socket_class: type[BaseZMQClient],
-) -> None:
+) -> type[BaseZMQProxy]:
     """This function reduces the boilerplate code required to create a ZMQ Proxy class.
     It will generate a ZMQ Proxy class and register it with the ZMQProxyFactory.
 
@@ -66,7 +67,6 @@ def define_proxy_class(
         backend_socket_class: The class of the backend socket.
     """
 
-    @ZMQProxyFactory.register(proxy_type)
     class ZMQProxy(BaseZMQProxy):
         """
         A Generated ZMQ Proxy class.
@@ -94,7 +94,7 @@ def define_proxy_class(
             cls,
             config: BaseZMQProxyConfig | None,
             socket_ops: dict | None = None,
-        ) -> Self | None:
+        ) -> "ZMQProxy | None":
             if config is None:
                 return None
             return cls(
@@ -103,12 +103,17 @@ def define_proxy_class(
                 socket_ops=socket_ops,
             )
 
+    ZMQProxy.__name__ = f"ZMQ{proxy_type.name}Proxy"
+    ZMQProxy.__qualname__ = f"ZMQ{proxy_type.name}Proxy"
+    ZMQProxyFactory.register(proxy_type)(ZMQProxy)
+    return ZMQProxy
+
 
 ################################################################################
 # XPUB/XSUB Proxy
 ################################################################################
 
-define_proxy_class(
+ZMQXPubXSubProxy = define_proxy_class(
     ZMQProxyType.XPUB_XSUB,
     create_proxy_socket_class(SocketType.XSUB, is_backend=False),
     create_proxy_socket_class(SocketType.XPUB, is_backend=True),
@@ -138,7 +143,7 @@ The ZMQ proxy handles the message routing automatically.
 # ROUTER/DEALER Proxy
 ################################################################################
 
-define_proxy_class(
+ZMQDealerRouterProxy = define_proxy_class(
     ZMQProxyType.DEALER_ROUTER,
     create_proxy_socket_class(SocketType.ROUTER, is_backend=False),
     create_proxy_socket_class(SocketType.DEALER, is_backend=True),
@@ -174,7 +179,7 @@ for proper response forwarding back to original DEALER clients.
 # PUSH/PULL Proxy
 ################################################################################
 
-define_proxy_class(
+ZMQPushPullProxy = define_proxy_class(
     ZMQProxyType.PUSH_PULL,
     create_proxy_socket_class(SocketType.PULL, is_backend=False),
     create_proxy_socket_class(SocketType.PUSH, is_backend=True),
