@@ -134,6 +134,14 @@ class CommunicationClientAddressType(CaseInsensitiveStrEnum):
     """Backend address for the InferenceParser to receive raw inference messages from Workers."""
 
 
+class ZMQProxyType(CaseInsensitiveStrEnum):
+    """Types of ZMQ proxys."""
+
+    DEALER_ROUTER = "dealer_router"
+    XPUB_XSUB = "xpub_xsub"
+    PUSH_PULL = "push_pull"
+
+
 ################################################################################
 # Dataset Enums
 ################################################################################
