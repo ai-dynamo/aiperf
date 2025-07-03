@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import logging
 
 import zmq.asyncio
 
@@ -12,8 +11,6 @@ from aiperf.common.enums import CommunicationClientType
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
-
-logger = logging.getLogger(__name__)
 
 MAX_PUSH_RETRIES = 2
 """Maximum number of retries for pushing a message."""
@@ -83,7 +80,7 @@ class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
         try:
             data_json = message.model_dump_json()
             await self.socket.send_string(data_json)
-            logger.debug("Pushed json data: %s", data_json)
+            self.logger.debug("Pushed json data: %s", data_json)
         except zmq.Again as e:
             if retry_count >= max_retries:
                 raise CommunicationError(

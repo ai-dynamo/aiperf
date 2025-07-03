@@ -47,6 +47,7 @@ class BaseZMQClient(AIPerfTaskMixin):
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        client_id: str | None = None,
     ) -> None:
         """
         Initialize the ZMQ Base class.
@@ -58,7 +59,6 @@ class BaseZMQClient(AIPerfTaskMixin):
             socket_type (SocketType): The type of ZMQ socket (eg. PUB, SUB, ROUTER, DEALER, etc.).
             socket_ops (dict, optional): Additional socket options to set.
         """
-        self.logger = logging.getLogger(__name__)
         self.stop_event: asyncio.Event = asyncio.Event()
         self.initialized_event: asyncio.Event = asyncio.Event()
         self.context: zmq.asyncio.Context = context
@@ -67,8 +67,12 @@ class BaseZMQClient(AIPerfTaskMixin):
         self.socket_type: zmq.SocketType = socket_type
         self._socket: zmq.asyncio.Socket | None = None
         self.socket_ops: dict = socket_ops or {}
-        self.client_id: str = f"{self.socket_type.name}_client_{uuid.uuid4().hex[:8]}"
+        self.client_id: str = (
+            client_id
+            or f"{self.socket_type.name.lower()}_client_{uuid.uuid4().hex[:8]}"
+        )
         super().__init__()
+        self.logger = logging.getLogger(self.client_id)
 
     @property
     def is_initialized(self) -> bool:
@@ -123,7 +127,7 @@ class BaseZMQClient(AIPerfTaskMixin):
             self._socket = self.context.socket(self.socket_type)
             if self.bind:
                 self.logger.debug(
-                    "ZMQ %s socket initialized and bound to %s (%s)",
+                    "ZMQ %s socket initialized, try BIND to %s (%s)",
                     self.socket_type_name,
                     self.address,
                     self.client_id,
@@ -131,7 +135,7 @@ class BaseZMQClient(AIPerfTaskMixin):
                 self._socket.bind(self.address)
             else:
                 self.logger.debug(
-                    "ZMQ %s socket initialized and connected to %s (%s)",
+                    "ZMQ %s socket initialized, try CONNECT to %s (%s)",
                     self.socket_type_name,
                     self.address,
                     self.client_id,
@@ -164,8 +168,9 @@ class BaseZMQClient(AIPerfTaskMixin):
 
             self.initialized_event.set()
             self.logger.debug(
-                "ZMQ %s socket initialized and connected to %s (%s)",
+                "ZMQ %s socket %s to %s (%s)",
                 self.socket_type_name,
+                "BOUND" if self.bind else "CONNECTED",
                 self.address,
                 self.client_id,
             )

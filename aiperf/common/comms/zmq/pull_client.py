@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import logging
 import os
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -14,8 +13,6 @@ from aiperf.common.enums import CommunicationClientType, MessageType
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
-
-logger = logging.getLogger(__name__)
 
 
 @CommunicationClientFactory.register(CommunicationClientType.PULL)
@@ -96,7 +93,7 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
                 await self.semaphore.acquire()
 
                 message_json = await self.socket.recv_string()
-                logger.debug("Received message from pull socket: %s", message_json)
+                self.logger.debug("Received message from pull socket: %s", message_json)
                 self.execute_async(self._process_message(message_json))
 
             except zmq.Again:
@@ -109,7 +106,7 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
                 break
 
             except Exception as e:
-                logger.error(
+                self.logger.error(
                     "Exception receiving data from pull socket: %s %s",
                     type(e).__name__,
                     e,
@@ -135,7 +132,7 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
             if message.message_type in self._pull_callbacks:
                 await self._pull_callbacks[message.message_type](message)
             else:
-                logger.warning(
+                self.logger.warning(
                     "Pull message received for message type %s without callback",
                     message.message_type,
                 )

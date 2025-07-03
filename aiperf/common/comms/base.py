@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import logging
 from collections.abc import Callable, Coroutine
 from typing import Any, Protocol, TypeVar, cast
 
@@ -12,8 +11,6 @@ from aiperf.common.enums import (
 )
 from aiperf.common.factories import FactoryMixin
 from aiperf.common.messages import Message
-
-logger = logging.getLogger(__name__)
 
 MessageT = TypeVar("MessageT", bound=Message)
 MessageOutputT = TypeVar("MessageOutputT", bound=Message)
