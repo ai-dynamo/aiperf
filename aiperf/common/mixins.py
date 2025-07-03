@@ -14,7 +14,7 @@ class AsyncTaskManagerMixin:
         super().__init__()
         self.tasks: set[asyncio.Task] = set()
 
-    def execute_async(self, coro: Coroutine) -> asyncio.Task:
+    def execute_async(self, coro: Awaitable[Any]) -> asyncio.Task:
         """Create a task from a coroutine and add it to the set of tasks, and return immediately.
         The task will be automatically cleaned up when it completes.
         """
