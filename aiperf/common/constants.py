@@ -5,3 +5,12 @@ NANOS_PER_SECOND = 1_000_000_000
 NANOS_PER_MILLIS = 1_000_000
 
 GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+
+TASK_CANCEL_TIMEOUT_SHORT = 2.0
+"""Maximum time to wait for simple tasks to complete when cancelling them."""
+
+TASK_CANCEL_TIMEOUT_LONG = 5.0
+"""Maximum time to wait for complex tasks to complete when cancelling them (like parent tasks)."""
+
+DEFAULT_COMMS_REQUEST_TIMEOUT = 10.0
+"""Default timeout for requests from req_clients to rep_clients in seconds."""
