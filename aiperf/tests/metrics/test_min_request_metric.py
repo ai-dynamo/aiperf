@@ -2,27 +2,35 @@
 #  SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.record_models import RequestRecord, SSEMessage
 from aiperf.services.records_manager.metrics.types.min_request_metric import (
     MinRequestMetric,
 )
 
 
-def test_update_value_and_values():
+def test_update_value_and_values(parsed_response_record_builder):
     metric = MinRequestMetric()
-    record = RequestRecord(start_perf_ns=100, responses=[SSEMessage(perf_ns=150)])
-
+    record = (
+        parsed_response_record_builder.with_request_start_time(100)
+        .add_response(perf_ns=150)
+        .build()
+    )
     metric.update_value(record=record, metrics=None)
     assert metric.values() == 100
 
 
-def test_add_multiple_records():
+def test_add_multiple_records(parsed_response_record_builder):
     metric = MinRequestMetric()
-    records = [
-        RequestRecord(start_perf_ns=20, responses=[SSEMessage(perf_ns=25)]),
-        RequestRecord(start_perf_ns=10, responses=[SSEMessage(perf_ns=15)]),
-        RequestRecord(start_perf_ns=30, responses=[SSEMessage(perf_ns=40)]),
-    ]
+    records = (
+        parsed_response_record_builder.with_request_start_time(20)
+        .add_response(perf_ns=25)
+        .new_record()
+        .with_request_start_time(10)
+        .add_response(perf_ns=15)
+        .new_record()
+        .with_request_start_time(30)
+        .add_response(perf_ns=40)
+        .build_all()
+    )
     for record in records:
         metric.update_value(record=record, metrics=None)
     assert metric.values() == 10

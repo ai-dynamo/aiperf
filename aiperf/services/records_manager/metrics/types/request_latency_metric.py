@@ -1,7 +1,7 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 from aiperf.common.enums import MetricTimeType, MetricType
-from aiperf.common.record_models import RequestRecord
+from aiperf.common.record_models import ParsedResponseRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 
@@ -21,7 +21,7 @@ class RequestLatencyMetric(BaseMetric):
 
     def update_value(
         self,
-        record: RequestRecord | None = None,
+        record: ParsedResponseRecord | None = None,
         metrics: dict["BaseMetric"] | None = None,
     ) -> None:
         """
@@ -42,7 +42,7 @@ class RequestLatencyMetric(BaseMetric):
         """
         return self.metric
 
-    def _check_record(self, record: RequestRecord) -> None:
+    def _check_record(self, record: ParsedResponseRecord) -> None:
         if not record or not record.start_perf_ns:
             raise ValueError("Record must have a valid request with a timestamp.")
         if len(record.responses) < 1:
