@@ -91,6 +91,14 @@ class CommandResponseStatus(CaseInsensitiveStrEnum):
     FAILURE = "failure"
 
 
+class ZMQProxyType(CaseInsensitiveStrEnum):
+    """Types of ZMQ proxys."""
+
+    DEALER_ROUTER = "dealer_router"
+    XPUB_XSUB = "xpub_xsub"
+    PUSH_PULL = "push_pull"
+
+
 ################################################################################
 # Dataset Enums
 ################################################################################
