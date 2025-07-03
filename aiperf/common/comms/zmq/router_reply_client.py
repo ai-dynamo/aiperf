@@ -42,6 +42,9 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
     - Maintains routing envelopes to send responses back
     - Many-to-one request handling pattern
     - Supports concurrent request processing
+
+    ROUTER/DEALER is a Many-to-One communication pattern. If you need Many-to-Many,
+    use a ZMQ Proxy as well. see :class:`ZMQDealerRouterProxy` for more details.
     """
 
     def __init__(

@@ -49,6 +49,9 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
 
     - Subscribes to specific message topics/types
     - Receives all messages matching subscriptions
+
+    SUB/PUB is a One-to-Many communication pattern. If you need Many-to-Many,
+    use a ZMQ Proxy as well. see :class:`ZMQXPubXSubProxy` for more details.
     """
 
     def __init__(
@@ -68,7 +71,7 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
             socket_ops (dict, optional): Additional socket options to set.
         """
         super().__init__(context, zmq.SocketType.SUB, address, bind, socket_ops)
-        AsyncTaskManagerMixin.__init__(self)
+
         self._subscribers: dict[MessageType | str, list[Callable[[Message], Any]]] = {}
 
     @on_stop

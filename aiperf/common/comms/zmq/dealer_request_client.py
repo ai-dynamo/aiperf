@@ -35,6 +35,9 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
     Usage Pattern:
     - DEALER Clients send requests to ROUTER Services
     - Responses are routed back to the originating DEALER
+
+    DEALER/ROUTER is a Many-to-One communication pattern. If you need Many-to-Many,
+    use a ZMQ Proxy as well. see :class:`ZMQDealerRouterProxy` for more details.
     """
 
     def __init__(

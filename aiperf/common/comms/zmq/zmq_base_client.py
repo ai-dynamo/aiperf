@@ -72,6 +72,7 @@ class BaseZMQClient(AIPerfTaskMixin):
             or f"{self.socket_type.name.lower()}_client_{uuid.uuid4().hex[:8]}"
         )
         super().__init__()
+        # Set the logger after the super init to override the name
         self.logger = logging.getLogger(self.client_id)
 
     @property

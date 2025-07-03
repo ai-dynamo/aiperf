@@ -44,6 +44,9 @@ class ZMQPubClient(BaseZMQClient):
 
     - SUB sockets filter messages by topic/message_type
     - Fire-and-forget messaging (no acknowledgments)
+
+    PUB/SUB is a One-to-Many communication pattern. If you need Many-to-Many,
+    use a ZMQ Proxy as well. see :class:`ZMQXPubXSubProxy` for more details.
     """
 
     def __init__(

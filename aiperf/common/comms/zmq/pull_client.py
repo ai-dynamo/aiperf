@@ -43,6 +43,9 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
     - Work is fairly distributed among PULL workers
     - Pipeline pattern for distributed processing
     - Each message is delivered to exactly one PULL socket
+
+    PULL/PUSH is a One-to-Many communication pattern. If you need Many-to-Many,
+    use a ZMQ Proxy as well. see :class:`ZMQPushPullProxy` for more details.
     """
 
     def __init__(

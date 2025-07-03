@@ -10,8 +10,11 @@ from pathlib import Path
 
 import zmq.asyncio
 
-from aiperf.common.comms import CommunicationClientProtocol
-from aiperf.common.comms.base import CommunicationClientFactory, CommunicationProtocol
+from aiperf.common.comms.base import (
+    CommunicationClientFactory,
+    CommunicationClientProtocol,
+    CommunicationProtocol,
+)
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.config import BaseZMQCommunicationConfig
 from aiperf.common.config.zmq_config import ZMQIPCConfig, ZMQTCPConfig
