@@ -40,6 +40,7 @@ class ProgressTracker:
             BenchmarkSuiteType.MULTI_PROFILE,
         ]:
             self.suite = ProfileSuiteProgress(
+                suite_type=suite_type,
                 profiles=[
                     ProfileProgress(
                         profile_id="0",
