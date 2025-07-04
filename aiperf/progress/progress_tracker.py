@@ -55,6 +55,7 @@ class ProgressTracker:
             BenchmarkSuiteType.MULTI_SWEEP,
         ]:
             self.suite = SweepSuiteProgress(
+                suite_type=suite_type,
                 sweeps=[
                     SweepProgress(
                         sweep_id="0",
