@@ -15,4 +15,4 @@ class TimingMode(str, Enum):
 
 
 class TimingManagerConfig(BaseModel):
-    timing_mode: TimingMode = TimingMode.FIXED_SCHEDULE
+    timing_mode: TimingMode = TimingMode.CONCURRENCY
