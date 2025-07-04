@@ -4,10 +4,10 @@
 from dataclasses import dataclass
 
 from aiperf.common.config import UserConfig
-from aiperf.data_exporter.record import Record
+from aiperf.progress import ProfileResultsMessage
 
 
 @dataclass
 class ExporterConfig:
-    records: list[Record]
+    results: ProfileResultsMessage
     input_config: UserConfig

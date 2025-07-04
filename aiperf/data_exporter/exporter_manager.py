@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+
 from aiperf.common.config import UserConfig
 from aiperf.common.factories import DataExporterFactory
 from aiperf.data_exporter.exporter_config import ExporterConfig
-from aiperf.data_exporter.record import Record
+from aiperf.progress import ProfileResultsMessage
 
 
 class ExporterManager:
@@ -13,23 +15,20 @@ class ExporterManager:
     registered data exporters.
     """
 
-    def __init__(self, records: list[Record], user_config: UserConfig):
-        self._records = records
-        self._user_config = user_config
+    def __init__(self, results: ProfileResultsMessage, input_config: UserConfig):
+        self._results = results
+        self._input_config = input_config
         self._exporter_classes = DataExporterFactory.get_all_classes()
 
-    def export(self) -> None:
-        exporter_config = self._create_exporter_config()
+    async def export_all(self) -> None:
+        tasks: list[asyncio.Task] = []
         for exporter_class in self._exporter_classes:
+            exporter_config = ExporterConfig(
+                results=self._results,
+                input_config=self._input_config,
+            )
             exporter = exporter_class(exporter_config)
-            exporter.export()
+            task = asyncio.create_task(exporter.export())
+            tasks.append(task)
 
-    def _create_exporter_config(self) -> ExporterConfig:
-        """
-        Create ExporterConfig that is used by all exporters.
-        """
-        exporter_config = ExporterConfig(
-            records=self._records,
-            input_config=self._user_config,
-        )
-        return exporter_config
+        await asyncio.gather(*tasks)

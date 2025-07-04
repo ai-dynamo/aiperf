@@ -269,8 +269,8 @@ class MessageType(CaseInsensitiveStrEnum):
     PROFILE_PROGRESS = "profile_progress"
     """A message containing profile run progress."""
 
-    PROFILE_STATS = "profile_stats"
-    """A message containing profile run stats such as error rates, etc."""
+    PROCESSING_STATS = "processing_stats"
+    """A message containing processing stats from the records manager."""
 
     PROFILE_RESULTS = "profile_results"
     """A message containing profile run results."""
