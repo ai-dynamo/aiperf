@@ -3,7 +3,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from aiperf.common.comms.client_enums import ClientType, PubClientType, SubClientType
 from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommandType, ServiceState, Topic
 from aiperf.common.hooks import AIPerfHook, aiperf_task, on_run, on_set_state
@@ -39,19 +38,6 @@ class BaseComponentService(BaseService):
         self._command_callbacks: dict[
             CommandType, Callable[[CommandMessage], Awaitable[None]]
         ] = {}
-
-    @property
-    def required_clients(self) -> list[ClientType]:
-        """The communication clients required by the service.
-
-        The component services subscribe to controller messages and publish
-        component messages.
-        """
-        return [
-            *(super().required_clients or []),
-            PubClientType.COMPONENT,
-            SubClientType.CONTROLLER,
-        ]
 
     @on_run
     async def _on_run(self) -> None:

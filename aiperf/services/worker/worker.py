@@ -3,7 +3,6 @@
 import asyncio
 import sys
 
-from aiperf.common.comms.client_enums import ClientType, PullClientType, PushClientType
 from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import ServiceType, Topic
 from aiperf.common.hooks import on_cleanup, on_init, on_run, on_start, on_stop
@@ -27,15 +26,6 @@ class Worker(BaseService):
     def service_type(self) -> ServiceType:
         """The type of service."""
         return ServiceType.WORKER
-
-    @property
-    def required_clients(self) -> list[ClientType]:
-        """The communication clients required by the service."""
-        return [
-            *(super().required_clients or []),
-            PullClientType.CREDIT_DROP,
-            PushClientType.CREDIT_RETURN,
-        ]
 
     @on_init
     async def _initialize(self) -> None:
@@ -82,7 +72,6 @@ class Worker(BaseService):
             topic=Topic.CREDIT_RETURN,
             message=CreditReturnMessage(
                 service_id=self.service_id,
-                amount=1,
             ),
         )
 

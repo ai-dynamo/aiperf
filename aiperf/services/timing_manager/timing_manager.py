@@ -30,10 +30,10 @@ from aiperf.common.messages import (
     CreditsCompleteMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
+    ProfileProgressMessage,
 )
 from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.service.base_component_service import BaseComponentService
-from aiperf.progress import ProfileProgressMessage
 from aiperf.services.timing_manager.concurrency_strategy import ConcurrencyStrategy
 from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
@@ -108,8 +108,11 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
                 "TM: Received dataset timing response: %s",
                 dataset_timing_response,
             )
-            # TODO: Pass dataset_timing_response to strategy
-            self._credit_issuing_strategy = FixedScheduleStrategy(config, self)
+            self._credit_issuing_strategy = FixedScheduleStrategy(
+                config=config,
+                credit_manager=self,
+                schedule=dataset_timing_response.timing_data,
+            )
         elif config.timing_mode == TimingMode.CONCURRENCY:
             self._credit_issuing_strategy = ConcurrencyStrategy(config, self)
         elif config.timing_mode == TimingMode.RATE:
@@ -117,8 +120,6 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
 
         if not self._credit_issuing_strategy:
             raise InvalidStateError("No credit issuing strategy configured")
-
-        await self._credit_issuing_strategy.initialize()
 
     @on_start
     async def _start(self) -> None:
@@ -169,7 +170,6 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
 
     async def drop_credit(
         self,
-        amount: int = 1,
         conversation_id: str | None = None,
         credit_drop_ns: int | None = None,
     ) -> None:
@@ -178,7 +178,6 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
             self.credit_drop_client.push(
                 message=CreditDropMessage(
                     service_id=self.service_id,
-                    amount=amount,
                     credit_drop_ns=credit_drop_ns,
                     conversation_id=conversation_id,
                 ),

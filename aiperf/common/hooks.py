@@ -23,8 +23,8 @@ import contextlib
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
-from enum import Enum
 
+from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.exceptions import AIPerfError, AIPerfMultiError, UnsupportedHookError
 
 ################################################################################
@@ -32,10 +32,10 @@ from aiperf.common.exceptions import AIPerfError, AIPerfMultiError, UnsupportedH
 ################################################################################
 
 
-class AIPerfHook(Enum):
+class AIPerfHook(CaseInsensitiveStrEnum):
     """Enum for the various AIPerf hooks.
 
-    Note: If you add a new hook, you must also add it to the @supports_hooks
+    NOTE: If you add a new hook, you must also add it to the @supports_hooks
     decorator of the class you wish to use the hook in.
     """
 
@@ -51,8 +51,16 @@ class AIPerfHook(Enum):
     AIPERF_TASK = "__aiperf_task__"
 
 
-HookType = AIPerfHook | str
-"""Type alias for valid hook types. This is a union of the AIPerfHook enum and any user-defined custom strings."""
+class AIPerfTaskHook(CaseInsensitiveStrEnum):
+    """Enum for the various AIPerf task hooks."""
+
+    AIPERF_TASK = "__aiperf_task__"
+    AIPERF_AUTO_TASK = "__aiperf_auto_task__"
+    AIPERF_AUTO_TASK_INTERVAL = "__aiperf_auto_task_interval__"
+
+
+HookType = AIPerfHook | AIPerfTaskHook | str
+"""Type alias for valid hook types. This is a union of the AIPerfHook enum, the AIPerfTaskHook enum, and any user-defined custom strings."""
 
 
 AIPERF_HOOK_TYPE = "__aiperf_hook_type__"

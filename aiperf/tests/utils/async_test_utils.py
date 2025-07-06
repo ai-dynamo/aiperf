@@ -4,6 +4,7 @@
 Utilities for testing asynchronous code.
 """
 
+import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from typing import Any, TypeVar, cast
@@ -43,3 +44,18 @@ async def async_fixture(fixture: T) -> T:
 
     # Otherwise return the fixture as is
     return fixture
+
+
+class MockSemaphore(asyncio.Semaphore):
+    """Simple semaphore mock that allows for testing of concurrency."""
+
+    def __init__(self):
+        self.acquire_count = 0
+        self.release_count = 0
+
+    async def acquire(self):
+        self.acquire_count += 1
+        return True
+
+    def release(self):
+        self.release_count += 1

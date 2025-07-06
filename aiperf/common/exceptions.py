@@ -26,6 +26,18 @@ class CommunicationError(AIPerfError):
     """Generic communication error."""
 
 
+class InitializationError(AIPerfError):
+    """Exception raised when something fails to initialize."""
+
+
+class InvalidStateError(AIPerfError):
+    """Exception raised when something is in an invalid state."""
+
+
+class ShutdownError(AIPerfError):
+    """Exception raised when a service encounters an error while shutting down."""
+
+
 class ProxyError(AIPerfError):
     """Exception raised when a proxy encounters an error."""
 

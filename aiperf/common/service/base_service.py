@@ -12,7 +12,6 @@ from aiperf.common.enums import ServiceState, ServiceType
 from aiperf.common.exceptions import (
     AIPerfError,
     CommunicationError,
-    CommunicationErrorReason,
     ServiceError,
 )
 from aiperf.common.factories import CommunicationFactory
@@ -81,7 +80,6 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         """
         if not self._comms:
             raise CommunicationError(
-                CommunicationErrorReason.INITIALIZATION_ERROR,
                 "Communication channels are not initialized",
             )
         return self._comms

@@ -19,7 +19,6 @@ class CreditManagerProtocol(Protocol):
 
     async def drop_credit(
         self,
-        amount: int = 1,
         conversation_id: str | None = None,
         credit_drop_ns: int | None = None,
     ) -> None:
@@ -49,10 +48,6 @@ class CreditIssuingStrategy(AsyncTaskManagerMixin, ABC):
         self.logger = logging.getLogger(__class__.__name__)
         self.config = config
         self.credit_manager = credit_manager
-
-    @abstractmethod
-    async def initialize(self) -> None:
-        pass
 
     @abstractmethod
     async def start(self) -> None:

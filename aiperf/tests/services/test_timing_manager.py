@@ -72,7 +72,7 @@ class TestTimingManager(BaseTestComponentService):
         )
 
         # Mock the open function when called with that specific path
-        mock_file = io.StringIO(mock_file_content)
+        mock_file = io.StringIO(str(mock_timing_data))
 
         # Use patch to replace the built-in open function
         with patch("builtins.open", return_value=mock_file):
@@ -119,7 +119,7 @@ class TestTimingManager(BaseTestComponentService):
             pushed_messages.append((topic, message))
 
             # Create and process a return message
-            return_message = CreditReturnMessage(service_id="test-consumer", amount=1)
+            return_message = CreditReturnMessage(service_id="test-consumer")
             await service._on_credit_return(return_message)
 
         # 6. Mock necessary functions
@@ -143,6 +143,5 @@ class TestTimingManager(BaseTestComponentService):
             for topic, message in pushed_messages:
                 assert topic == Topic.CREDIT_DROP
                 assert message.service_id == service.service_id
-                assert message.amount == 1
                 # You could also verify the timestamp corresponds to the schedule
                 # if the implementation preserves that information

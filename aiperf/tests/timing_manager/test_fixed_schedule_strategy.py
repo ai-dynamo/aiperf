@@ -8,8 +8,14 @@ from unittest.mock import patch
 
 import pytest
 
-from aiperf.services.timing_manager.timing_manager import FixedScheduleStrategy
-from aiperf.tests.utils.async_test_utils import async_fixture
+from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.enums import MessageType
+from aiperf.common.messages import CreditReturnMessage
+from aiperf.services.timing_manager.config import TimingManagerConfig
+from aiperf.services.timing_manager.timing_manager import (
+    FixedScheduleStrategy,
+    TimingManager,
+)
 
 
 @pytest.mark.asyncio
@@ -21,7 +27,15 @@ class TestFixedScheduleStrategy:
     async def test_start(self):
         """Test that credits are dropped according to schedule with credit returns."""
 
-        fixed_schedule_strategy = FixedScheduleStrategy()
+        service = TimingManager(
+            service_config=ServiceConfig(), service_id="test-service-id"
+        )
+
+        fixed_schedule_strategy = FixedScheduleStrategy(
+            config=TimingManagerConfig(),
+            credit_manager=service.credit_manager,
+            schedule=service.schedule,
+        )
 
         fixed_schedule_strategy._schedule = [
             (0, "0"),
@@ -48,7 +62,7 @@ class TestFixedScheduleStrategy:
             pushed_messages.append((topic, message))
 
             # Create and process a return message
-            return_message = CreditReturnMessage(service_id="test-consumer", amount=1)
+            return_message = CreditReturnMessage(service_id="test-consumer")
             await service._on_credit_return(return_message)
 
         # 6. Mock necessary functions
@@ -69,9 +83,8 @@ class TestFixedScheduleStrategy:
             )
 
             # 10. Check details of the pushed messages
-            for topic, message in pushed_messages:
-                assert topic == Topic.CREDIT_DROP
+            for message in pushed_messages:
                 assert message.service_id == service.service_id
-                assert message.amount == 1
+                assert message.message_type == MessageType.CREDIT_RETURN
                 # You could also verify the timestamp corresponds to the schedule
                 # if the implementation preserves that information

@@ -18,7 +18,6 @@ from aiperf.common.enums import (
 )
 from aiperf.common.exceptions import (
     CommunicationError,
-    CommunicationErrorReason,
     ConfigError,
 )
 from aiperf.common.factories import ServiceFactory
@@ -138,7 +137,6 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
             except Exception as e:
                 self.logger.error("Failed to subscribe to topic %s: %s", topic, e)
                 raise CommunicationError(
-                    CommunicationErrorReason.SUBSCRIBE_ERROR,
                     f"Failed to subscribe to topic {topic}: {e}",
                 ) from e
 
@@ -417,7 +415,6 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
         if not self._comms:
             self.logger.error("Cannot send command: Communication is not initialized")
             raise CommunicationError(
-                CommunicationErrorReason.INITIALIZATION_ERROR,
                 "Communication channels are not initialized",
             )
 
@@ -438,7 +435,6 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
         except Exception as e:
             self.logger.error("Exception publishing command: %s", e)
             raise CommunicationError(
-                CommunicationErrorReason.PUBLISH_ERROR,
                 f"Failed to publish command: {e}",
             ) from e
 
