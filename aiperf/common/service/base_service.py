@@ -6,8 +6,9 @@ import uuid
 from abc import ABC
 
 from aiperf.common.comms.base import (
+    BaseCommunication,
     CommunicationClientAddressType,
-    CommunicationProtocol,
+    CommunicationFactory,
 )
 from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import ServiceState, ServiceType
@@ -15,7 +16,6 @@ from aiperf.common.exceptions import (
     AIPerfError,
     ServiceError,
 )
-from aiperf.common.factories import CommunicationFactory
 from aiperf.common.hooks import (
     AIPerfHook,
     AIPerfTaskHook,
@@ -48,32 +48,32 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
     def __init__(
         self, service_config: ServiceConfig, service_id: str | None = None
     ) -> None:
+        super().__init__()
         self.service_id: str = (
             service_id or f"{self.service_type}_{uuid.uuid4().hex[:8]}"
         )
+        self.logger = logging.getLogger(self.service_id)
         self.service_config = service_config
 
-        self.logger = logging.getLogger(self.service_id)
         self.logger.debug(
             f"Initializing {self.service_type} service (id: {self.service_id})"
         )
 
         self._state: ServiceState = ServiceState.UNKNOWN
-        self._heartbeat_interval = self.service_config.heartbeat_interval
 
         self.stop_event = asyncio.Event()
         self.initialized_event = asyncio.Event()
 
-        self.comms: CommunicationProtocol = CommunicationFactory.create_instance(
+        self.comms: BaseCommunication = CommunicationFactory.create_instance(
             self.service_config.comm_backend,
             config=self.service_config.comm_config,
         )
         self.sub_client = self.comms.create_sub_client(
             CommunicationClientAddressType.EVENT_BUS_PROXY_BACKEND
-        )
+        )  # type: ignore
         self.pub_client = self.comms.create_pub_client(
             CommunicationClientAddressType.EVENT_BUS_PROXY_FRONTEND
-        )
+        )  # type: ignore
 
         try:
             import setproctitle
@@ -83,8 +83,9 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
             # setproctitle is not available on all platforms, so we ignore the error
             self.logger.debug("Failed to set process title, ignoring")
 
-        super().__init__()
-        self.logger.debug("__init__ finished for %s", self.__class__.__name__)
+        self.logger.debug(
+            "BaseService._init__ finished for %s", self.__class__.__name__
+        )
 
     @property
     def state(self) -> ServiceState:
@@ -126,19 +127,14 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
 
         This method will:
         - Set the service to `ServiceState.INITIALIZING` state
-        - Allow time for the event loop to start
         - Initialize communication
         - Call all registered `AIPerfHook.ON_INIT` hooks
         - Set the service to `ServiceState.READY` state
         - Set the initialized asyncio event
         """
         self._state = ServiceState.INITIALIZING
-        # Allow time for the event loop to start
-        await asyncio.sleep(0.1)
 
         await self.comms.initialize()
-
-        await asyncio.sleep(1)
 
         # Initialize any derived service components
         await self.run_hooks(AIPerfHook.ON_INIT)
@@ -189,30 +185,11 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         - Wait for the stop event to be set
         - Shuts down the service when the stop event is set
         """
-        while not self.stop_event.is_set():
-            try:
-                self.logger.debug(
-                    "Service %s waiting for stop event", self.service_type
-                )
-                # Wait forever for the stop event to be set
-                await self.stop_event.wait()
+        # Wait forever for the stop event to be set
+        await self.stop_event.wait()
 
-            except (SystemExit, asyncio.CancelledError):
-                # TODO: We shouldn't be catching this, should we?
-                self.stop_event.set()
-
-            except Exception:
-                self.logger.exception(
-                    "Caught unexpected exception in service %s execution",
-                    self.service_type,
-                )
-
-            finally:
-                # Shutdown the service
-                try:
-                    await self.stop()
-                except Exception as e:
-                    raise self._service_error("Exception stopping service") from e
+        # Shutdown the service
+        await self.stop()
 
     async def start(self) -> None:
         """Start the service and its components. This method implements
@@ -238,7 +215,6 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
             _ = await self.set_state(ServiceState.RUNNING)
 
         except asyncio.CancelledError:
-            self.logger.debug("Service %s execution cancelled", self.service_type)
             pass
 
         except Exception as e:

@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
-from typing import Any, Protocol, TypeVar, cast
+from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from aiperf.common.constants import DEFAULT_COMMS_REQUEST_TIMEOUT
 from aiperf.common.enums import (
+    CommunicationBackend,
     CommunicationClientAddressType,
     CommunicationClientType,
     MessageType,
@@ -21,6 +23,7 @@ MessageOutputT = TypeVar("MessageOutputT", bound=Message)
 ################################################################################
 
 
+@runtime_checkable
 class CommunicationClientProtocol(Protocol):
     """Base interface for specifying the base communication client for AIPerf components."""
 
@@ -187,34 +190,66 @@ class CommunicationClientFactory(
 ################################################################################
 
 
-class CommunicationProtocol(Protocol):
+ClientProtocolT = TypeVar("ClientProtocolT", bound=CommunicationClientProtocol)
+
+
+def _create_specific_client(
+    client_type: CommunicationClientType,
+    client_class: type[ClientProtocolT],
+) -> Callable[
+    [
+        "BaseCommunication",
+        CommunicationClientAddressType | str,
+        bool,
+        dict | None,
+    ],
+    ClientProtocolT,
+]:
+    def _create_client(
+        self: "BaseCommunication",
+        address: CommunicationClientAddressType | str,
+        bind: bool = False,
+        socket_ops: dict | None = None,
+    ) -> ClientProtocolT:
+        return cast(
+            ClientProtocolT, self.create_client(client_type, address, bind, socket_ops)
+        )
+
+    _create_client.__name__ = f"create_{client_type.lower()}_client"
+    _create_client.__doc__ = f"Create a {client_type.upper()} client"
+    return _create_client
+
+
+class BaseCommunication(ABC):
     """Base class for specifying the base communication layer for AIPerf components."""
 
+    @abstractmethod
     async def initialize(self) -> None:
         """Initialize communication channels."""
 
     @property
+    @abstractmethod
     def is_initialized(self) -> bool:
         """Check if communication channels are initialized.
 
         Returns:
             True if communication channels are initialized, False otherwise
         """
-        ...
 
     @property
+    @abstractmethod
     def stop_requested(self) -> bool:
         """Check if the communication channels are being shutdown.
 
         Returns:
             True if the communication channels are being shutdown, False otherwise
         """
-        ...
 
+    @abstractmethod
     async def shutdown(self) -> None:
         """Gracefully shutdown communication channels."""
-        ...
 
+    @abstractmethod
     def get_address(self, address_type: CommunicationClientAddressType | str) -> str:
         """Get the address for a given address type.
 
@@ -224,8 +259,8 @@ class CommunicationProtocol(Protocol):
         Returns:
             The address for the given address type, or the address itself if it is a string.
         """
-        ...
 
+    @abstractmethod
     def create_client(
         self,
         client_type: CommunicationClientType,
@@ -241,47 +276,28 @@ class CommunicationProtocol(Protocol):
             bind: Whether to bind or connect the socket.
             socket_ops: Additional socket options to set.
         """
-        ...
 
-
-ClientProtocolT = TypeVar("ClientProtocolT", bound=CommunicationClientProtocol)
-
-
-def _create_specific_client(
-    client_type: CommunicationClientType,
-    client_class: type[ClientProtocolT],
-) -> Callable[
-    [
-        CommunicationProtocol,
-        CommunicationClientAddressType | str,
-        bool,
-        dict | None,
-    ],
-    ClientProtocolT,
-]:
-    def _create_client(
-        self: CommunicationProtocol,
-        address: CommunicationClientAddressType | str,
-        bind: bool = False,
-        socket_ops: dict | None = None,
-    ) -> ClientProtocolT:
-        return cast(
-            ClientProtocolT, self.create_client(client_type, address, bind, socket_ops)
-        )
-
-    _create_client.__name__ = f"create_{client_type.lower()}_client"
-    _create_client.__doc__ = f"Create a {client_type.upper()} client"
-    return _create_client
-
-
-# Create a method for creating each client type on the CommunicationProtocol class,
-# such as create_push_client, create_pull_client, etc.
-for (
-    protocol_class,
-    client_type,
-) in CommunicationClientProtocolFactory.get_all_classes_and_types():
-    setattr(
-        CommunicationProtocol,
-        f"create_{client_type.lower()}_client",
-        _create_specific_client(client_type, protocol_class),
+    create_pub_client = _create_specific_client(
+        CommunicationClientType.PUB, PubClientProtocol
     )
+    create_sub_client = _create_specific_client(
+        CommunicationClientType.SUB, SubClientProtocol
+    )
+    create_push_client = _create_specific_client(
+        CommunicationClientType.PUSH, PushClientProtocol
+    )
+    create_pull_client = _create_specific_client(
+        CommunicationClientType.PULL, PullClientProtocol
+    )
+    create_request_client = _create_specific_client(
+        CommunicationClientType.REQUEST, RequestClientProtocol
+    )
+    create_reply_client = _create_specific_client(
+        CommunicationClientType.REPLY, ReplyClientProtocol
+    )
+
+
+class CommunicationFactory(FactoryMixin[CommunicationBackend, BaseCommunication]):
+    """Factory for registering and creating BaseCommunication instances based on the specified communication backend.
+    See :class:`FactoryMixin` for more details.
+    """
