@@ -2,29 +2,47 @@
 # SPDX-License-Identifier: Apache-2.0
 
 __all__ = [
-    "BaseZMQCommunication",
-    "ZMQTCPCommunication",
-    "ZMQIPCCommunication",
-    "ZMQClient",
     "ZMQPubClient",
     "ZMQSubClient",
     "ZMQPullClient",
     "ZMQPushClient",
-    "ZMQRouterRepClient",
-    "ZMQDealerReqClient",
+    "ZMQRouterReplyClient",
+    "ZMQDealerRequestClient",
+    "ZMQSocketDefaults",
+    "BaseZMQClient",
+    "BaseZMQProxy",
+    "ZMQProxyFactory",
+    "BaseZMQCommunication",
+    "ZMQTCPCommunication",
+    "ZMQIPCCommunication",
+    "create_proxy_socket_class",
+    "define_proxy_class",
+    "ZMQXPubXSubProxy",
+    "ZMQDealerRouterProxy",
+    "ZMQPushPullProxy",
+    "ZMQDealerRouterProxy",
+    "ZMQXPubXSubProxy",
+    "ZMQPushPullProxy",
 ]
 
-from aiperf.common.comms.zmq.clients import (
-    ZMQClient,
-    ZMQDealerReqClient,
-    ZMQPubClient,
-    ZMQPullClient,
-    ZMQPushClient,
-    ZMQRouterRepClient,
-    ZMQSubClient,
-)
+from aiperf.common.comms.zmq.dealer_request_client import ZMQDealerRequestClient
+from aiperf.common.comms.zmq.pub_client import ZMQPubClient
+from aiperf.common.comms.zmq.pull_client import ZMQPullClient
+from aiperf.common.comms.zmq.push_client import ZMQPushClient
+from aiperf.common.comms.zmq.router_reply_client import ZMQRouterReplyClient
+from aiperf.common.comms.zmq.sub_client import ZMQSubClient
+from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.comms.zmq.zmq_comms import (
     BaseZMQCommunication,
     ZMQIPCCommunication,
     ZMQTCPCommunication,
+)
+from aiperf.common.comms.zmq.zmq_defaults import ZMQSocketDefaults
+from aiperf.common.comms.zmq.zmq_proxy_base import BaseZMQProxy, ZMQProxyFactory
+from aiperf.common.comms.zmq.zmq_proxy_sockets import (
+    ZMQDealerRouterProxy,
+    ZMQPushPullProxy,
+    ZMQXPubXSubProxy,
+    create_proxy_socket_class,
+    define_proxy_class,
 )

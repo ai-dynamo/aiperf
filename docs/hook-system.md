@@ -554,7 +554,7 @@ async def _file_processor(self):
 @aiperf_task
 async def _message_receiver(self):
     """Continuously receive messages from ZMQ socket."""
-    while not self.is_shutdown:
+    while not self.stop_event.is_set():
         try:
             message = await self.socket.recv_string()
             await self.handle_message(message)

@@ -2,15 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 
 __all__ = [
-    "BaseCommunication",
-    "BaseZMQCommunication",
-    "ZMQTCPCommunication",
-    "ZMQIPCCommunication",
+    "CommunicationProtocol",
+    "CommunicationClientFactory",
+    "SubClientProtocol",
+    "PushClientProtocol",
+    "PullClientProtocol",
+    "RequestClientProtocol",
+    "ReplyClientProtocol",
+    "PubClientProtocol",
+    "CommunicationClientProtocol",
 ]
 
-from aiperf.common.comms.base import BaseCommunication
-from aiperf.common.comms.zmq.zmq_comms import (
-    BaseZMQCommunication,
-    ZMQIPCCommunication,
-    ZMQTCPCommunication,
+from aiperf.common.comms.base import (
+    CommunicationClientFactory,
+    CommunicationClientProtocol,
+    CommunicationProtocol,
+    PubClientProtocol,
+    PullClientProtocol,
+    PushClientProtocol,
+    ReplyClientProtocol,
+    RequestClientProtocol,
+    SubClientProtocol,
 )
