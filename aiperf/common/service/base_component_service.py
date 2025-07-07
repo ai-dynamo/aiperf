@@ -3,12 +3,18 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from aiperf.common.comms.client_enums import ClientType, PubClientType, SubClientType
 from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import CommandType, ServiceState, Topic
-from aiperf.common.hooks import AIPerfHook, aiperf_task, on_run, on_set_state
+from aiperf.common.enums import (
+    CommandResponseStatus,
+    CommandType,
+    MessageType,
+    ServiceState,
+)
+from aiperf.common.hooks import AIPerfHook, aiperf_task, on_init, on_set_state
 from aiperf.common.messages import (
     CommandMessage,
+    CommandResponseMessage,
+    ErrorDetails,
     HeartbeatMessage,
     RegistrationMessage,
     StatusMessage,
@@ -23,7 +29,7 @@ class BaseComponentService(BaseService):
     framework such as the Timing Manager, Dataset Manager, etc.
 
     It extends the BaseService by:
-    - Subscribing to the command topic
+    - Subscribing to the command message_type
     - Processing command messages
     - Sending registration requests to the system controller
     - Sending heartbeat notifications to the system controller
@@ -40,48 +46,37 @@ class BaseComponentService(BaseService):
             CommandType, Callable[[CommandMessage], Awaitable[None]]
         ] = {}
 
-    @property
-    def required_clients(self) -> list[ClientType]:
-        """The communication clients required by the service.
-
-        The component services subscribe to controller messages and publish
-        component messages.
-        """
-        return [
-            *(super().required_clients or []),
-            PubClientType.COMPONENT,
-            SubClientType.CONTROLLER,
-        ]
-
-    @on_run
-    async def _on_run(self) -> None:
-        """Automatically subscribe to the command topic and register the service
+    @on_init
+    async def _on_init1(self) -> None:
+        """Automatically subscribe to the command message_type and register the service
         with the system controller when the run hook is called.
 
         This method will:
-        - Subscribe to the command topic
+        - Subscribe to the command message_type
         - Wait for the communication to be fully initialized
         - Register the service with the system controller
         """
-        # Subscribe to the command topic
+        # Subscribe to the command message_type
         try:
-            await self.comms.subscribe(
-                Topic.COMMAND,
+            await self.sub_client.subscribe(
+                MessageType.COMMAND,
                 self.process_command_message,
             )
         except Exception as e:
-            raise self._service_error("Failed to subscribe to command topic") from e
+            raise self._service_error(
+                "Failed to subscribe to command message_type",
+            ) from e
 
-        # TODO: Find a way to wait for the communication to be fully initialized
-        # FIXME: This is a hack to ensure the communication is fully initialized
+        # TODO: HACK: Sleep for 1 second to allow the controller to be ready to register the service
         await asyncio.sleep(1)
 
         # Register the service
         try:
             await self.register()
-            await asyncio.sleep(0.5)
         except Exception as e:
-            raise self._service_error("Failed to register service") from e
+            raise self._service_error(
+                "Failed to register service",
+            ) from e
 
     @aiperf_task
     async def _heartbeat_task(self) -> None:
@@ -97,7 +92,7 @@ class BaseComponentService(BaseService):
             try:
                 await self.send_heartbeat()
             except Exception as e:
-                self.logger.warning("Exception sending heartbeat: %s", e)
+                self.logger.error("Exception sending heartbeat: %s", e)
                 # continue to keep sending heartbeats regardless of the error
 
         self.logger.debug("Heartbeat task stopped")
@@ -107,12 +102,13 @@ class BaseComponentService(BaseService):
         heartbeat_message = self.create_heartbeat_message()
         self.logger.debug("Sending heartbeat: %s", heartbeat_message)
         try:
-            await self.comms.publish(
-                topic=Topic.HEARTBEAT,
+            await self.pub_client.publish(
                 message=heartbeat_message,
             )
         except Exception as e:
-            raise self._service_error("Failed to send heartbeat") from e
+            raise self._service_error(
+                "Failed to send heartbeat",
+            ) from e
 
     async def register(self) -> None:
         """Publish a registration request to the system controller.
@@ -120,18 +116,19 @@ class BaseComponentService(BaseService):
         This method should be called after the service has been initialized and is
         ready to start processing messages.
         """
-        self.logger.debug(
+        self.logger.info(
             "Attempting to register service %s (%s) with system controller",
             self.service_type,
             self.service_id,
         )
         try:
-            await self.comms.publish(
-                topic=Topic.REGISTRATION,
+            await self.pub_client.publish(
                 message=self.create_registration_message(),
             )
         except Exception as e:
-            raise self._service_error("Failed to register service") from e
+            raise self._service_error(
+                "Failed to register service",
+            ) from e
 
     async def process_command_message(self, message: CommandMessage) -> None:
         """Process a command message received from the controller.
@@ -146,22 +143,52 @@ class BaseComponentService(BaseService):
         ):
             return  # Ignore commands meant for other services
 
+        self.logger.debug(
+            "%s: Processing command message: %s", self.service_id, message
+        )
         cmd = message.command
-        if cmd == CommandType.PROFILE_START:
-            await self.start()
+        response_data = None
+        try:
+            if cmd == CommandType.PROFILE_START:
+                response_data = await self.start()
 
-        elif cmd == CommandType.SHUTDOWN:
-            self.logger.debug("%s received stop command", self.service_id)
-            self.stop_event.set()
+            elif cmd == CommandType.SHUTDOWN:
+                self.logger.debug("%s: Received stop command", self.service_id)
+                self.stop_event.set()
 
-        elif cmd == CommandType.PROFILE_CONFIGURE:
-            await self.run_hooks(AIPerfHook.ON_CONFIGURE, message)
+            elif cmd == CommandType.PROFILE_CONFIGURE:
+                await self.run_hooks(AIPerfHook.ON_CONFIGURE, message)
 
-        elif cmd in self._command_callbacks:
-            await self._command_callbacks[cmd](message)
+            elif cmd in self._command_callbacks:
+                response_data = await self._command_callbacks[cmd](message)
 
-        else:
-            self.logger.warning("%s received unknown command: %s", self.service_id, cmd)
+            else:
+                raise self._service_error(
+                    f"Received unknown command: {cmd}",
+                )
+
+            # Publish the success response
+            await self.pub_client.publish(
+                CommandResponseMessage(
+                    service_id=self.service_id,
+                    command=cmd,
+                    command_id=message.command_id,
+                    status=CommandResponseStatus.SUCCESS,
+                    data=response_data,
+                ),
+            )
+
+        except Exception as e:
+            # Publish the failure response
+            await self.pub_client.publish(
+                CommandResponseMessage(
+                    service_id=self.service_id,
+                    command=cmd,
+                    command_id=message.command_id,
+                    status=CommandResponseStatus.FAILURE,
+                    error=ErrorDetails.from_exception(e),
+                ),
+            )
 
     def register_command_callback(
         self,
@@ -175,13 +202,16 @@ class BaseComponentService(BaseService):
     async def _on_set_state(self, state: ServiceState) -> None:
         """Action to take when the service state is set.
 
-        This method will also publish the status message to the status topic if the
+        This method will also publish the status message to the status message_type if the
         communications are initialized.
         """
-        if self._comms and self._comms.is_initialized:
-            await self.comms.publish(
-                topic=Topic.STATUS,
-                message=self.create_status_message(state),
+        if (
+            self.pub_client
+            and self.pub_client.is_initialized
+            and not self.pub_client.stop_event.is_set()
+        ):
+            await self.pub_client.publish(
+                self.create_status_message(state),
             )
 
     def create_heartbeat_message(self) -> HeartbeatMessage:

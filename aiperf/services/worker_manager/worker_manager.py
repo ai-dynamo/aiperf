@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import ServiceRunType, ServiceType
-from aiperf.common.exceptions import ConfigError
+from aiperf.common.exceptions import ConfigurationError
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
@@ -78,7 +78,7 @@ class WorkerManager(BaseComponentService):
             self.logger.warning(
                 f"Unsupported run type: {self.service_config.service_run_type}"
             )
-            raise ConfigError(
+            raise ConfigurationError(
                 f"Unsupported run type: {self.service_config.service_run_type}"
             )
 

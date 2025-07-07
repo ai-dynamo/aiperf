@@ -50,7 +50,6 @@ def mock_zmq_communication() -> MagicMock:
     # Configure basic behavior
     mock_comm.initialize.return_value = None
     mock_comm.shutdown.return_value = None
-    mock_comm.create_clients.return_value = None
 
     mock_comm.mock_data = MockCommunicationData()
 

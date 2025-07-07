@@ -23,7 +23,9 @@ class KubernetesServiceManager(BaseServiceManager):
     """
 
     def __init__(
-        self, required_service_types: list[ServiceType], config: ServiceConfig
+        self,
+        required_service_types: list[tuple[ServiceType, int]],
+        config: ServiceConfig,
     ):
         super().__init__(required_service_types, config)
 

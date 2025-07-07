@@ -4,11 +4,18 @@ import asyncio
 import os
 import sys
 
+from aiperf.common.comms.base import PullClientProtocol, PushClientProtocol
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import ServiceType
+from aiperf.common.enums import CommunicationClientAddressType, MessageType, ServiceType
 from aiperf.common.factories import ServiceFactory
-from aiperf.common.hooks import on_configure, on_init
+from aiperf.common.hooks import (
+    on_cleanup,
+    on_configure,
+    on_init,
+    on_start,
+    on_stop,
+)
 from aiperf.common.messages import (
     CommandMessage,
     InferenceResultsMessage,
@@ -33,21 +40,20 @@ class InferenceResultParser(BaseComponentService):
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Initializing inference result parser")
-
+        self.inference_results_client: PullClientProtocol = (
+            self.comms.create_pull_client(
+                CommunicationClientAddressType.RAW_INFERENCE_PROXY_BACKEND,
+            )
+        )
+        self.response_results_client: PushClientProtocol = (
+            self.comms.create_push_client(
+                CommunicationClientAddressType.RECORDS,
+            )
+        )
         self.tokenizers: dict[str, Tokenizer] = {}
         self.user_config: UserConfig | None = None
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
-
-        # TODO: This should be a factory method that creates the appropriate extractor based on user config.
         self.extractor = OpenAIResponseExtractor()
-
-        # TODO: Enable after ZMQ client refactor
-        # self.inference_results_client: PullClient = self.comms.create_pull_client(
-        #     ClientAddressType.PUSH_PULL_BACKEND,
-        # )
-        # self.response_results_client: PushClient = self.comms.create_push_client(
-        #     ClientAddressType.INFERENCE_RESULTS_PUSH_PULL,
-        # )
 
     @property
     def service_type(self) -> ServiceType:
@@ -59,13 +65,30 @@ class InferenceResultParser(BaseComponentService):
         """Initialize inference result parser-specific components."""
         self.logger.debug("Initializing inference result parser")
 
-        # TODO: Enable after ZMQ client refactor
-        # await self.inference_results_client.register_pull_callback(
-        #     message_type=MessageType.INFERENCE_RESULTS,
-        #     callback=self._on_inference_results,
-        #     # TODO: Support for unbounded concurrency in the future by setting to None or 0?
-        #     max_concurrency=1000000,
-        # )
+        await self.inference_results_client.register_pull_callback(
+            message_type=MessageType.INFERENCE_RESULTS,
+            callback=self._on_inference_results,
+            # TODO: Support for unbounded concurrency in the future by setting to None or 0?
+            max_concurrency=1000000,
+        )
+
+    @on_start
+    async def _start(self) -> None:
+        """Start the inference result parser."""
+        self.logger.debug("Starting inference result parser")
+        # TODO: Implement inference result parser start
+
+    @on_stop
+    async def _stop(self) -> None:
+        """Stop the inference result parser."""
+        self.logger.debug("Stopping inference result parser")
+        # TODO: Implement inference result parser stop
+
+    @on_cleanup
+    async def _cleanup(self) -> None:
+        """Clean up inference result parser-specific components."""
+        self.logger.debug("Cleaning up inference result parser")
+        # TODO: Implement inference result parser cleanup
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model."""
@@ -104,18 +127,16 @@ class InferenceResultParser(BaseComponentService):
         self.logger.debug(f"Received inference results message: {message}")
 
         if message.record.has_error:
-            # TODO: Enable after ZMQ client refactor
-            # await self.response_results_client.push(
-            #     ParsedInferenceResultsMessage(
-            #         service_id=self.service_id,
-            #         record=ParsedResponseRecord(
-            #             worker_id=message.service_id,
-            #             request=message.record,
-            #             responses=[],
-            #         ),
-            #     )
-            # )
-            pass
+            await self.response_results_client.push(
+                ParsedInferenceResultsMessage(
+                    service_id=self.service_id,
+                    record=ParsedResponseRecord(
+                        worker_id=message.service_id,
+                        request=message.record,
+                        responses=[],
+                    ),
+                )
+            )
 
         elif message.record.valid:
             tokenizer = await self.get_tokenizer(message.record.request["model"])
@@ -134,9 +155,7 @@ class InferenceResultParser(BaseComponentService):
                 len(resp),
                 result.record.token_count,
             )
-            # TODO: Enable after ZMQ client refactor
-            # await self.response_results_client.push(result)
-
+            await self.response_results_client.push(result)
         else:
             self.logger.warning(
                 "Received invalid inference results: %s", message.record
@@ -146,17 +165,16 @@ class InferenceResultParser(BaseComponentService):
                 message="Invalid inference results",
                 type="InvalidInferenceResults",
             )
-            # TODO: Enable after ZMQ client refactor
-            # await self.response_results_client.push(
-            #     ParsedInferenceResultsMessage(
-            #         service_id=self.service_id,
-            #         record=ParsedResponseRecord(
-            #             worker_id=message.service_id,
-            #             request=message.record,
-            #             responses=[],
-            #         ),
-            #     )
-            # )
+            await self.response_results_client.push(
+                ParsedInferenceResultsMessage(
+                    service_id=self.service_id,
+                    record=ParsedResponseRecord(
+                        worker_id=message.service_id,
+                        request=message.record,
+                        responses=[],
+                    ),
+                )
+            )
 
 
 def main() -> None:
