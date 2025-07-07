@@ -46,7 +46,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
     """
 
     def __init__(
-        self, service_config: ServiceConfig, service_id: str | None = None, **kwargs
+        self, service_config: ServiceConfig, service_id: str | None = None
     ) -> None:
         self.service_id: str = (
             service_id or f"{self.service_type}_{uuid.uuid4().hex[:8]}"
