@@ -49,8 +49,8 @@ class AudioConfig(BaseConfig):
         int,
         Field(
             ge=0,
-            description="The batch size of audio requests GenAI-Perf should send.\
-            \nThis is currently supported with the OpenAI `multimodal` endpoint type",
+            description="The batch size of audio requests GenAI-Perf should send.\n"
+            "This is currently supported with the OpenAI `multimodal` endpoint type",
         ),
         cyclopts.Parameter(
             name=("--audio-batch-size"),

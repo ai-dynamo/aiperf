@@ -1,6 +1,5 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
-
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 from pathlib import PosixPath
 
 import pytest
@@ -29,7 +28,7 @@ def test_input_config_defaults():
     assert config.batch_size == InputDefaults.BATCH_SIZE
     assert config.extra == InputDefaults.EXTRA
     assert config.goodput == InputDefaults.GOODPUT
-    assert config.header == InputDefaults.HEADER
+    assert config.headers == InputDefaults.HEADER
     assert config.file == InputDefaults.FILE
     assert config.num_dataset_entries == InputDefaults.NUM_DATASET_ENTRIES
     assert config.random_seed == InputDefaults.RANDOM_SEED
@@ -50,7 +49,7 @@ def test_input_config_custom_values():
         batch_size=64,
         extra={"key": "value"},
         goodput={"request_latency": 200},
-        header={"Authorization": "Bearer token"},
+        headers={"Authorization": "Bearer token"},
         file="synthetic:queries,passages",
         num_dataset_entries=10,
         random_seed=42,
@@ -59,7 +58,7 @@ def test_input_config_custom_values():
     assert config.batch_size == 64
     assert config.extra == {"key": "value"}
     assert config.goodput == {"request_latency": 200}
-    assert config.header == {"Authorization": "Bearer token"}
+    assert config.headers == {"Authorization": "Bearer token"}
     assert config.file == PosixPath("synthetic:queries,passages")
     assert config.num_dataset_entries == 10
     assert config.random_seed == 42

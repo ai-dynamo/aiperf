@@ -1,21 +1,41 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 import cyclopts
-from pydantic import BaseModel, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from aiperf.common.config.zmq_config import BaseZMQCommunicationConfig, ZMQIPCConfig
+from aiperf.common.config.config_defaults import ServiceDefaults
+from aiperf.common.config.zmq_config import (
+    BaseZMQCommunicationConfig,
+    ZMQIPCConfig,
+    ZMQTCPConfig,
+)
 from aiperf.common.enums import CommunicationBackend, ServiceRunType
 
 
-class ServiceConfig(BaseModel):
-    """Base configuration for all services.
+class ServiceConfig(BaseSettings):
+    """Base configuration for all services. It will be provided to all services during their __init__ function."""
 
-    This class provides the common configuration parameters needed by all services.
-    """
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="allow",
+    )
 
-    # TODO: this needs to be cleaned up and finalized
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+
+        # Initialize the comm_config if it is not provided, based on the comm_backend.
+        if self.comm_config is None:
+            if self.comm_backend == CommunicationBackend.ZMQ_IPC:
+                self.comm_config = ZMQIPCConfig()
+            elif self.comm_backend == CommunicationBackend.ZMQ_TCP:
+                self.comm_config = ZMQTCPConfig()
+            else:
+                raise ValueError(f"Invalid communication backend: {self.comm_backend}")
 
     service_run_type: Annotated[
         ServiceRunType,
@@ -25,41 +45,116 @@ class ServiceConfig(BaseModel):
         cyclopts.Parameter(
             name=("--run-type"),
         ),
-    ] = ServiceRunType.MULTIPROCESSING
-    comm_backend: CommunicationBackend = Field(
-        default=CommunicationBackend.ZMQ_IPC,
-        description="Communication backend to use",
-    )
-    comm_config: BaseZMQCommunicationConfig = Field(
-        default=ZMQIPCConfig(),
-        description="Communication configuration",
-    )
-    heartbeat_timeout: float = Field(
-        default=60.0,
-        description="Time in seconds after which a service is considered dead if no "
-        "heartbeat received",
-    )
-    registration_timeout: float = Field(
-        default=60.0,
-        description="Time in seconds to wait for all required services to register",
-    )
-    command_timeout: float = Field(
-        default=10.0,
-        description="Default timeout for command responses",
-    )
-    heartbeat_interval: float = Field(
-        default=10.0,
-        description="Interval in seconds between heartbeat messages",
-    )
-    min_workers: int = Field(
-        default=100,
-        description="Minimum number of idle workers to maintain",
-    )
-    max_workers: int = Field(
-        default=100,
-        description="Maximum number of workers to create",
-    )
-    target_idle_workers: int = Field(
-        default=10,
-        description="Target number of idle workers to maintain",
-    )
+    ] = ServiceDefaults.SERVICE_RUN_TYPE
+
+    comm_backend: Annotated[
+        CommunicationBackend,
+        Field(
+            description="Communication backend to use",
+        ),
+        cyclopts.Parameter(
+            name=("--comm-backend"),
+        ),
+    ] = ServiceDefaults.COMM_BACKEND
+
+    comm_config: Annotated[
+        BaseZMQCommunicationConfig | None,
+        Field(
+            description="Communication configuration",
+        ),
+        cyclopts.Parameter(
+            name=("--comm-config"),
+        ),
+    ] = ServiceDefaults.COMM_CONFIG
+
+    heartbeat_timeout: Annotated[
+        float,
+        Field(
+            description="Time in seconds after which a service is considered dead if no "
+            "heartbeat received",
+        ),
+        cyclopts.Parameter(
+            name=("--heartbeat-timeout"),
+        ),
+    ] = ServiceDefaults.HEARTBEAT_TIMEOUT
+
+    registration_timeout: Annotated[
+        float,
+        Field(
+            description="Time in seconds to wait for all required services to register",
+        ),
+        cyclopts.Parameter(
+            name=("--registration-timeout"),
+        ),
+    ] = ServiceDefaults.REGISTRATION_TIMEOUT
+
+    command_timeout: Annotated[
+        float,
+        Field(
+            description="Default timeout for command responses",
+        ),
+        cyclopts.Parameter(
+            name=("--command-timeout"),
+        ),
+    ] = ServiceDefaults.COMMAND_TIMEOUT
+
+    heartbeat_interval: Annotated[
+        float,
+        Field(
+            description="Interval in seconds between heartbeat messages",
+        ),
+        cyclopts.Parameter(
+            name=("--heartbeat-interval"),
+        ),
+    ] = ServiceDefaults.HEARTBEAT_INTERVAL
+
+    min_workers: Annotated[
+        int | None,
+        Field(
+            description="Minimum number of workers to maintain",
+        ),
+        cyclopts.Parameter(
+            name=("--min-workers"),
+        ),
+    ] = ServiceDefaults.MIN_WORKERS
+
+    max_workers: Annotated[
+        int | None,
+        Field(
+            description="Maximum number of workers to create. If not specified, the number of"
+            " workers will be determined by the smaller of (concurrency + 1) and (num CPUs - 1).",
+        ),
+        cyclopts.Parameter(
+            name=("--max-workers"),
+        ),
+    ] = ServiceDefaults.MAX_WORKERS
+
+    log_level: Annotated[
+        Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        Field(
+            description="Logging level",
+        ),
+        cyclopts.Parameter(
+            name=("--log-level"),
+        ),
+    ] = ServiceDefaults.LOG_LEVEL
+
+    disable_ui: Annotated[
+        bool,
+        Field(
+            description="Disable the UI",
+        ),
+        cyclopts.Parameter(
+            name=("--disable-ui"),
+        ),
+    ] = ServiceDefaults.DISABLE_UI
+
+    enable_uvloop: Annotated[
+        bool,
+        Field(
+            description="Enable the use of uvloop instead of the default asyncio event loop",
+        ),
+        cyclopts.Parameter(
+            name=("--enable-uvloop"),
+        ),
+    ] = ServiceDefaults.ENABLE_UVLOOP

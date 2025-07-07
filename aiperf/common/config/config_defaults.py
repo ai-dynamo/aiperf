@@ -6,10 +6,17 @@ from pathlib import Path
 
 from aiperf.common.enums import (
     AudioFormat,
+    CommunicationBackend,
+    EndpointType,
     ImageFormat,
-    InferenceClientType,
     ModelSelectionStrategy,
-    RequestPayloadType,
+    RequestRateMode,
+    ServiceRunType,
+)
+from aiperf.progress.progress_models import (
+    SweepCompletionTrigger,
+    SweepMultiParamOrder,
+    SweepParamOrder,
 )
 
 
@@ -17,7 +24,7 @@ from aiperf.common.enums import (
 # Config Defaults
 @dataclass(frozen=True)
 class UserDefaults:
-    MODEL_NAMES = []
+    MODEL_NAMES = None  # This should be set by the user
     VERBOSE = False
     TEMPLATE_FILENAME = "aiperf_config.yaml"
 
@@ -25,24 +32,25 @@ class UserDefaults:
 @dataclass(frozen=True)
 class EndPointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
-    REQUEST_PAYLOAD_TYPE = RequestPayloadType.OPENAI_CHAT_COMPLETIONS
-    CUSTOM = ""
-    TYPE = InferenceClientType.OPENAI
+    CUSTOM = None
+    TYPE = EndpointType.OPENAI_CHAT_COMPLETIONS
     STREAMING = True
     SERVER_METRICS_URLS = ["http://localhost:8002/metrics"]
     URL = "localhost:8080"
     GRPC_METHOD = ""
+    TIMEOUT = 30.0
+    API_KEY = None
 
 
 @dataclass(frozen=True)
 class InputDefaults:
     BATCH_SIZE = 1
-    EXTRA = ""
+    EXTRA = {}
     GOODPUT = {}
-    HEADER = ""
+    HEADER = {}
     FILE = None
     NUM_DATASET_ENTRIES = 100
-    RANDOM_SEED = 0
+    RANDOM_SEED = None
 
 
 @dataclass(frozen=True)
@@ -120,3 +128,52 @@ class OutputTokenDefaults:
     MEAN = None
     DETERMINISTIC = False
     STDDEV = 0
+
+
+@dataclass(frozen=True)
+class ServiceDefaults:
+    SERVICE_RUN_TYPE = ServiceRunType.MULTIPROCESSING
+    COMM_BACKEND = CommunicationBackend.ZMQ_IPC
+    COMM_CONFIG = None
+    HEARTBEAT_TIMEOUT = 60.0
+    REGISTRATION_TIMEOUT = 60.0
+    COMMAND_TIMEOUT = 10.0
+    HEARTBEAT_INTERVAL = 1.0
+    MIN_WORKERS = None
+    MAX_WORKERS = None
+    LOG_LEVEL = "INFO"
+    DISABLE_UI = False
+    ENABLE_UVLOOP = True
+
+
+@dataclass(frozen=True)
+class LoadGeneratorDefaults:
+    CONCURRENCY = 1
+    REQUEST_RATE = None
+    REQUEST_COUNT = 10
+    WARMUP_REQUEST_COUNT = 0
+    CONCURRENCY_RAMP_UP_TIME = None
+    REQUEST_RATE_MODE = RequestRateMode.FIXED
+
+
+@dataclass(frozen=True)
+class MeasurementDefaults:
+    MEASUREMENT_INTERVAL = 10_000
+    STABILITY_PERCENTAGE = 0.95
+
+
+@dataclass(frozen=True)
+class SweepParamDefaults:
+    VALUES = None
+    ORDER = SweepParamOrder.ASCENDING
+    COMPLETION_TRIGGER = SweepCompletionTrigger.COMPLETED_PROFILES
+    START = None
+    STEP = None
+    END = None
+    MAX_PROFILES = None
+
+
+@dataclass(frozen=True)
+class SweepDefaults:
+    PARAMS = None
+    ORDER = SweepMultiParamOrder.DEPTH_FIRST
