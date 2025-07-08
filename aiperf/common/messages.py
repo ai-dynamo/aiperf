@@ -445,7 +445,7 @@ class ProfileProgressMessage(BaseServiceMessage):
 class ProfileStatsMessage(BaseServiceMessage):
     """Message for profile stats. Sent by the records manager to the system controller to report the stats of the profile run."""
 
-    message_type: Literal[MessageType.PROFILE_STATS] = MessageType.PROFILE_STATS
+    message_type: Literal[MessageType.PROCESSING_STATS] = MessageType.PROCESSING_STATS
 
     error_count: int = Field(default=0, description="The number of errors encountered")
     completed: int = Field(default=0, description="The number of requests completed")

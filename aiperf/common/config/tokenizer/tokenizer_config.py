@@ -20,8 +20,8 @@ class TokenizerConfig(BaseConfig):
         Field(
             description=(
                 "The HuggingFace tokenizer to use to interpret token metrics "
-                "from prompts and responses. The value can be the "
-                "name of a tokenizer or the filepath of the tokenizer. "
+                "from prompts and responses.\nThe value can be the "
+                "name of a tokenizer or the filepath of the tokenizer.\n"
                 "The default value is the model name."
             ),
         ),
@@ -34,7 +34,7 @@ class TokenizerConfig(BaseConfig):
         str,
         Field(
             description=(
-                "The specific model version to use. "
+                "The specific model version to use.\n"
                 "It can be a branch name, tag name, or commit ID."
             ),
         ),
@@ -47,8 +47,8 @@ class TokenizerConfig(BaseConfig):
         bool,
         Field(
             description=(
-                "Allows custom tokenizer to be downloaded and executed. "
-                "This carries security risks and should only be used for repositories you trust. "
+                "Allows custom tokenizer to be downloaded and executed.\n"
+                "This carries security risks and should only be used for repositories you trust.\n"
                 "This is only necessary for custom tokenizers stored in HuggingFace Hub."
             ),
         ),

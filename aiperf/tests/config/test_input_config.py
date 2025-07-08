@@ -1,6 +1,5 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
-
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 import tempfile
 from pathlib import PosixPath
 
@@ -30,7 +29,7 @@ def test_input_config_defaults():
     config = InputConfig()
     assert config.extra == InputDefaults.EXTRA
     assert config.goodput == InputDefaults.GOODPUT
-    assert config.header == InputDefaults.HEADER
+    assert config.headers == InputDefaults.HEADERS
     assert config.file == InputDefaults.FILE
     assert config.random_seed == InputDefaults.RANDOM_SEED
     assert config.custom_dataset_type == InputDefaults.CUSTOM_DATASET_TYPE

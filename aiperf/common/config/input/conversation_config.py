@@ -34,8 +34,8 @@ class TurnDelayConfig(BaseConfig):
         float,
         Field(
             ge=0,
-            description="The standard deviation of the delay between turns \
-            \nwithin a conversation in milliseconds.",
+            description="The standard deviation of the delay between turns \n"
+            "within a conversation in milliseconds.",
         ),
         cyclopts.Parameter(
             name=("--conversation-turn-delay-stddev"),
@@ -93,9 +93,9 @@ class ConversationConfig(BaseConfig):
         int,
         Field(
             ge=1,
-            description="The total number of unique conversations to generate.\
-            \nEach conversation represents a single request session between client and server.\
-            \nSupported on synthetic mode only and conversations will be reused until benchmarking is complete.",
+            description="The total number of unique conversations to generate.\n"
+            "Each conversation represents a single request session between client and server.\n"
+            "Supported on synthetic mode only and conversations will be reused until benchmarking is complete.",
         ),
         cyclopts.Parameter(
             name=("--conversation-num"),

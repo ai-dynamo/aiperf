@@ -9,7 +9,7 @@ from pydantic import BeforeValidator, Field
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import EndPointDefaults
 from aiperf.common.config.config_validators import parse_str_or_list
-from aiperf.common.enums import ModelSelectionStrategy, RequestPayloadType
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 
 
 class EndPointConfig(BaseConfig):
@@ -20,27 +20,17 @@ class EndPointConfig(BaseConfig):
     model_selection_strategy: Annotated[
         ModelSelectionStrategy,
         Field(
-            description="When multiple models are specified, this is how a specific model should be assigned to a prompt. \
-            \nround_robin: nth prompt in the list gets assigned to n-mod len(models). \
-            \nrandom: assignment is uniformly random",
+            description="When multiple models are specified, this is how a specific model should be assigned to a prompt.\n"
+            "round_robin: nth prompt in the list gets assigned to n-mod len(models).\n"
+            "random: assignment is uniformly random",
         ),
         cyclopts.Parameter(
             name=("--model-selection-strategy"),
         ),
     ] = EndPointDefaults.MODEL_SELECTION_STRATEGY
 
-    request_payload_type: Annotated[
-        RequestPayloadType,
-        Field(
-            description="The type of request payload to send to the model.",
-        ),
-        cyclopts.Parameter(
-            name=("--request-payload-type"),
-        ),
-    ] = EndPointDefaults.REQUEST_PAYLOAD_TYPE
-
     custom: Annotated[
-        str,
+        str | None,
         Field(
             description="Set a custom endpoint that differs from the OpenAI defaults.",
         ),
@@ -50,7 +40,7 @@ class EndPointConfig(BaseConfig):
     ] = EndPointDefaults.CUSTOM
 
     type: Annotated[
-        str,
+        EndpointType,
         Field(
             description="The type to send requests to on the server.",
         ),
@@ -72,8 +62,8 @@ class EndPointConfig(BaseConfig):
     server_metrics_urls: Annotated[
         list[str],
         Field(
-            description="The list of Triton server metrics URLs. \
-            \nThese are used for Telemetry metric reporting with Triton.",
+            description="The list of Triton server metrics URLs.\n"
+            "These are used for Telemetry metric reporting with Triton.",
         ),
         BeforeValidator(parse_str_or_list),
         cyclopts.Parameter(
@@ -95,11 +85,32 @@ class EndPointConfig(BaseConfig):
         str,
         Field(
             description="A fully-qualified gRPC method name in "
-            "'<package>.<service>/<method>' format."
-            "\nThe option is only supported by dynamic gRPC service kind and is"
-            "\nrequired to identify the RPC to use when sending requests to the server.",
+            "'<package>.<service>/<method>' format.\n"
+            "The option is only supported by dynamic gRPC service kind and is\n"
+            "required to identify the RPC to use when sending requests to the server.",
         ),
         cyclopts.Parameter(
             name=("--grpc-method"),
         ),
     ] = EndPointDefaults.GRPC_METHOD
+
+    timeout: Annotated[
+        float,
+        Field(
+            description="The timeout in floating points seconds for each request to the endpoint.",
+        ),
+        cyclopts.Parameter(
+            name=("--request-timeout"),
+        ),
+    ] = EndPointDefaults.TIMEOUT
+
+    api_key: Annotated[
+        str | None,
+        Field(
+            description="The API key to use for the endpoint. If provided, it will be sent with every request as"
+            "as a header: `Authorization: Bearer <api_key>`.",
+        ),
+        cyclopts.Parameter(
+            name=("--api-key"),
+        ),
+    ] = EndPointDefaults.API_KEY
