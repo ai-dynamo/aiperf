@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config import (
-    SessionsConfig,
-    SessionsDefaults,
-    SessionTurnDelayConfig,
-    SessionTurnDelayDefaults,
-    SessionTurnsConfig,
-    SessionTurnsDefaults,
+    ConversationConfig,
+    ConversationDefaults,
+    TurnConfig,
+    TurnDefaults,
+    TurnDelayConfig,
+    TurnDelayDefaults,
 )
 
 
@@ -18,13 +18,13 @@ def test_sessions_config_defaults():
     This test verifies that the SessionsConfig object is initialized with the correct
     default values as defined in the SessionsDefaults class.
     """
-    config = SessionsConfig()
-    assert config.num == SessionsDefaults.NUM
-    assert config.turns.mean == SessionTurnsDefaults.MEAN
-    assert config.turns.stddev == SessionTurnsDefaults.STDDEV
-    assert config.turn_delay.mean == SessionTurnDelayDefaults.MEAN
-    assert config.turn_delay.stddev == SessionTurnDelayDefaults.STDDEV
-    assert config.turn_delay.ratio == SessionTurnDelayDefaults.RATIO
+    config = ConversationConfig()
+    assert config.num == ConversationDefaults.NUM
+    assert config.turn.mean == TurnDefaults.MEAN
+    assert config.turn.stddev == TurnDefaults.STDDEV
+    assert config.turn.delay.mean == TurnDelayDefaults.MEAN
+    assert config.turn.delay.stddev == TurnDelayDefaults.STDDEV
+    assert config.turn.delay.ratio == TurnDelayDefaults.RATIO
 
 
 def test_sessions_config_custom_values():
@@ -36,10 +36,13 @@ def test_sessions_config_custom_values():
     """
     custom_values = {
         "num": 100,
-        "turns": SessionTurnsConfig(mean=5.0, stddev=1.0),
-        "turn_delay": SessionTurnDelayConfig(mean=10.0, stddev=2.0, ratio=1.5),
+        "turn": TurnConfig(
+            mean=5.0,
+            stddev=1.0,
+            delay=TurnDelayConfig(mean=10.0, stddev=2.0, ratio=1.5),
+        ),
     }
-    config = SessionsConfig(**custom_values)
+    config = ConversationConfig(**custom_values)
 
     for key, value in custom_values.items():
         assert getattr(config, key) == value

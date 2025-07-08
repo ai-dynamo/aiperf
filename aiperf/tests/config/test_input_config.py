@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import tempfile
 from pathlib import PosixPath
 
 import pytest
@@ -7,12 +8,13 @@ from pydantic import ValidationError
 
 from aiperf.common.config import (
     AudioConfig,
+    ConversationConfig,
     ImageConfig,
     InputConfig,
     InputDefaults,
     PromptConfig,
-    SessionsConfig,
 )
+from aiperf.common.enums import CustomDatasetType
 
 
 def test_input_config_defaults():
@@ -25,17 +27,16 @@ def test_input_config_defaults():
     """
 
     config = InputConfig()
-    assert config.batch_size == InputDefaults.BATCH_SIZE
     assert config.extra == InputDefaults.EXTRA
     assert config.goodput == InputDefaults.GOODPUT
     assert config.headers == InputDefaults.HEADERS
     assert config.file == InputDefaults.FILE
-    assert config.num_dataset_entries == InputDefaults.NUM_DATASET_ENTRIES
     assert config.random_seed == InputDefaults.RANDOM_SEED
+    assert config.custom_dataset_type == InputDefaults.CUSTOM_DATASET_TYPE
     assert isinstance(config.audio, AudioConfig)
     assert isinstance(config.image, ImageConfig)
     assert isinstance(config.prompt, PromptConfig)
-    assert isinstance(config.sessions, SessionsConfig)
+    assert isinstance(config.conversation, ConversationConfig)
 
 
 def test_input_config_custom_values():
@@ -46,22 +47,19 @@ def test_input_config_custom_values():
     when provided with a dictionary of custom values.
     """
     config = InputConfig(
-        batch_size=64,
         extra={"key": "value"},
         goodput={"request_latency": 200},
-        headers={"Authorization": "Bearer token"},
-        file="synthetic:queries,passages",
-        num_dataset_entries=10,
+        header={"Authorization": "Bearer token"},
         random_seed=42,
+        custom_dataset_type=CustomDatasetType.MULTI_TURN,
     )
 
-    assert config.batch_size == 64
     assert config.extra == {"key": "value"}
     assert config.goodput == {"request_latency": 200}
-    assert config.headers == {"Authorization": "Bearer token"}
-    assert config.file == PosixPath("synthetic:queries,passages")
-    assert config.num_dataset_entries == 10
+    assert config.header == {"Authorization": "Bearer token"}
+    assert config.file is None
     assert config.random_seed == 42
+    assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
 
 
 def test_input_config_goodput_validation():
@@ -80,9 +78,9 @@ def test_input_config_file_validation():
     """
     Test InputConfig file field with valid and invalid values.
     """
-    valid_file = "synthetic:queries,passages"
-    config = InputConfig(file=valid_file)
-    assert config.file == PosixPath(valid_file)
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = InputConfig(file=temp_file.name)
+        assert config.file == PosixPath(temp_file.name)
 
     with pytest.raises(ValidationError):
         InputConfig(file=12345)  # Invalid file (non-string value)

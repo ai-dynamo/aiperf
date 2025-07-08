@@ -7,6 +7,7 @@ from pathlib import Path
 from aiperf.common.enums import (
     AudioFormat,
     CommunicationBackend,
+    CustomDatasetType,
     EndpointType,
     ImageFormat,
     ModelSelectionStrategy,
@@ -49,6 +50,8 @@ class InputDefaults:
     GOODPUT = {}
     HEADERS = {}
     FILE = None
+    CUSTOM_DATASET_TYPE = CustomDatasetType.TRACE
+    RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
     RANDOM_SEED = None
 
@@ -75,9 +78,15 @@ class ImageDefaults:
 
 
 @dataclass(frozen=True)
+class PromptDefaults:
+    BATCH_SIZE = 1
+
+
+@dataclass(frozen=True)
 class InputTokensDefaults:
     MEAN = 550
     STDDEV = 0.0
+    BLOCK_SIZE = 512
 
 
 @dataclass(frozen=True)
@@ -90,22 +99,22 @@ class OutputTokensDefaults:
 @dataclass(frozen=True)
 class PrefixPromptDefaults:
     POOL_SIZE = 0
-    LENGTH = 100
+    LENGTH = 0
 
 
 @dataclass(frozen=True)
-class SessionsDefaults:
-    NUM = 0
+class ConversationDefaults:
+    NUM = 100
 
 
 @dataclass(frozen=True)
-class SessionTurnsDefaults:
-    MEAN = 1.0
-    STDDEV = 0.0
+class TurnDefaults:
+    MEAN = 1
+    STDDEV = 0
 
 
 @dataclass(frozen=True)
-class SessionTurnDelayDefaults:
+class TurnDelayDefaults:
     MEAN = 0.0
     STDDEV = 0.0
     RATIO = 1.0

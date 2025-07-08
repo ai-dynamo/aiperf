@@ -154,23 +154,19 @@ def parse_goodput(goodputs: dict[str, Any]) -> dict[str, float]:
 def parse_file(value: str | None) -> Path | None:
     """
     Parses the given string value and returns a Path object if the value represents
-    a valid file, directory, or a specific synthetic/payload format. Returns None if
-    the input value is empty.
+    a valid file or directory. Returns None if the input value is empty.
     Args:
         value (str): The string value to parse.
     Returns:
         Optional[Path]: A Path object if the value is valid, or None if the value is empty.
     Raises:
-        ValueError: If the value is not a valid file or directory and does not match
-                    the synthetic/payload format.
+        ValueError: If the value is not a valid file or directory.
     """
 
     if not value:
         return None
     elif not isinstance(value, str):
         raise ValueError(f"Expected a string, but got {type(value).__name__}")
-    elif value.startswith("synthetic:") or value.startswith("payload"):
-        return Path(value)
     else:
         path = Path(value)
         if path.is_file() or path.is_dir():

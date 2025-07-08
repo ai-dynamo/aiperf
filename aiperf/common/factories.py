@@ -278,6 +278,51 @@ class PostProcessorFactory(FactoryMixin["PostProcessorType", "PostProcessorProto
     """
 
 
+class ComposerFactory(FactoryMixin["ComposerType", "BaseDatasetComposer"]):
+    """Factory for registering and creating BaseDatasetComposer instances
+    based on the specified composer type.
+
+    Example:
+    ```python
+        # Register a new composer type
+        @ComposerFactory.register(ComposerType.SYNTHETIC)
+        class SyntheticDatasetComposer(BaseDatasetComposer):
+            pass
+
+        # Create a new composer instance
+        composer = ComposerFactory.create_instance(
+            ComposerType.SYNTHETIC,
+            config=InputConfig(
+                conversation=ConversationConfig(num=10),
+                prompt=PromptConfig(batch_size=10),
+            )
+        )
+    ```
+    """
+
+
+class CustomDatasetFactory(
+    FactoryMixin["CustomDatasetType", "CustomDatasetLoaderProtocol"]
+):
+    """
+    Factory for registering and creating CustomDatasetLoader instances
+    based on the specified custom dataset type.
+
+    Example:
+    ```python
+        # Register a new custom dataset type
+        @CustomDatasetFactory.register(CustomDatasetType.TRACE)
+        class TraceDatasetLoader(CustomDatasetLoader):
+            pass
+
+        # Create a new custom dataset loader instance
+        custom_dataset_loader = CustomDatasetFactory.create_instance(
+            CustomDatasetType.TRACE, **kwargs
+        )
+    ```
+    """
+
+
 class ZMQProxyFactory(FactoryMixin[ZMQProxyType, "BaseZMQProxy"]):
     """
     A factory for creating ZMQ proxies.

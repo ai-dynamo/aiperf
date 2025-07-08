@@ -149,6 +149,7 @@ class ImageFormat(CaseInsensitiveStrEnum):
 
     PNG = "png"
     JPEG = "jpeg"
+    RANDOM = "random"
 
 
 class AudioFormat(CaseInsensitiveStrEnum):
