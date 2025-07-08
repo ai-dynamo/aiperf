@@ -11,9 +11,9 @@ import soundfile as sf
 
 from aiperf.common.config import AudioConfig, AudioLengthConfig
 from aiperf.common.enums import AudioFormat
+from aiperf.common.exceptions import ConfigurationError
 from aiperf.services.dataset.generator.audio import (
     AudioGenerator,
-    GeneratorConfigurationError,
 )
 
 
@@ -74,7 +74,7 @@ def test_negative_length_raises_error(base_config):
     base_config.length.mean = -1.0
     audio_generator = AudioGenerator(base_config)
 
-    with pytest.raises(GeneratorConfigurationError):
+    with pytest.raises(ConfigurationError):
         audio_generator.generate()
 
 
@@ -128,7 +128,7 @@ def test_audio_format(audio_format, base_config):
 def test_unsupported_bit_depth(base_config):
     base_config.depths = [12]  # Unsupported bit depth
 
-    with pytest.raises(GeneratorConfigurationError) as exc_info:
+    with pytest.raises(ConfigurationError) as exc_info:
         audio_generator = AudioGenerator(base_config)
         audio_generator.generate()
 
@@ -173,7 +173,7 @@ def test_mp3_unsupported_sampling_rate(base_config):
     base_config.sample_rates = [96]  # 96kHz is not supported for MP3
     base_config.format = AudioFormat.MP3
 
-    with pytest.raises(GeneratorConfigurationError) as exc_info:
+    with pytest.raises(ConfigurationError) as exc_info:
         audio_generator = AudioGenerator(base_config)
         audio_generator.generate()
 

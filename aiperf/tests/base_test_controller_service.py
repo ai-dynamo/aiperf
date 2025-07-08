@@ -6,7 +6,7 @@ Base test class for controller services.
 
 from unittest.mock import MagicMock
 
-from aiperf.common.enums import CommandType, Topic
+from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.service.base_controller_service import BaseControllerService
 from aiperf.tests.base_test_service import BaseTestService, async_fixture
 
@@ -41,16 +41,19 @@ class BaseTestControllerService(BaseTestService):
         )
 
         # Publish the command
-        await service.comms.publish(Topic.COMMAND, command_message)
+        await service.comms.publish(MessageType.COMMAND, command_message)
 
         # Check that the command was published
-        assert Topic.COMMAND in mock_communication.mock_data.published_messages
-        assert len(mock_communication.mock_data.published_messages[Topic.COMMAND]) == 1
+        assert MessageType.COMMAND in mock_communication.mock_data.published_messages
+        assert (
+            len(mock_communication.mock_data.published_messages[MessageType.COMMAND])
+            == 1
+        )
 
         # Verify command message
-        published_cmd = mock_communication.mock_data.published_messages[Topic.COMMAND][
-            0
-        ]
+        published_cmd = mock_communication.mock_data.published_messages[
+            MessageType.COMMAND
+        ][0]
         assert published_cmd.service_id == service.service_id
         assert published_cmd.command == command
         assert published_cmd.target_service_id == test_service_id
