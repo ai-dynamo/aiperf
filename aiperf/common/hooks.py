@@ -25,7 +25,12 @@ from collections.abc import Awaitable, Callable
 from typing import ClassVar
 
 from aiperf.common.enums import CaseInsensitiveStrEnum
-from aiperf.common.exceptions import AIPerfError, AIPerfMultiError, UnsupportedHookError
+from aiperf.common.exceptions import (
+    AIPerfError,
+    AIPerfMultiError,
+    InvalidStateError,
+    UnsupportedHookError,
+)
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
 
@@ -392,11 +397,13 @@ class HooksMixin:
     AIPerfHook.ON_STOP,
 )
 class AIPerfTaskMixin(HooksMixin, AsyncTaskManagerMixin):
-    """Mixin to add task support to a class. It abstracts away the details of the
-    :class:`AIPerfTask` and provides a simple interface for registering and running tasks.
+    """Mixin to add aiperf_task support to a class.
+
     It hooks into the :meth:`HooksMixin.on_init` and :meth:`HooksMixin.on_stop` hooks to
     start and stop the tasks.
     """
+
+    # TODO: This is somewhat deprecated in favor of the lifecycle mixin.
 
     # TODO: Once we create a Mixin for `self.stop_event`, we can avoid
     # having the user to call `while not self.stop_event.is_set()`
@@ -416,6 +423,7 @@ class AIPerfTaskMixin(HooksMixin, AsyncTaskManagerMixin):
         """Stop the task."""
         await self.run_hooks(AIPerfHook.ON_STOP)
 
+    # TODO: Should this be on_start?
     @on_init
     async def _start_tasks(self):
         """Start all the registered tasks in the background."""
@@ -496,11 +504,15 @@ class AIPerfLifecycleMixin(HooksMixin, AsyncTaskManagerMixin):
     async def run_async(self) -> None:
         """Start the lifecycle in the background. Will call the :meth:`HooksMixin.on_init` hooks,
         followed by the :meth:`HooksMixin.on_start` hooks. Will return immediately."""
+        if self.lifecycle_task is not None:
+            raise InvalidStateError("Lifecycle is already running")
         self.lifecycle_task = asyncio.create_task(self._run_lifecycle())
 
     async def run_and_wait_for_start(self) -> None:
         """Start the lifecycle in the background and wait until the lifecycle is initialized and started.
         Will call the :meth:`HooksMixin.on_init` hooks, followed by the :meth:`HooksMixin.on_start` hooks."""
+        if self.lifecycle_task is not None:
+            raise InvalidStateError("Lifecycle is already running")
         self.lifecycle_task = asyncio.create_task(self._run_lifecycle())
 
         await self.initialized_event.wait()
@@ -550,6 +562,7 @@ class AIPerfLifecycleMixin(HooksMixin, AsyncTaskManagerMixin):
     @on_stop
     async def _stop_lifecycle(self):
         """Stop the lifecycle."""
+        # TODO: Investigate why this causes a deadlock
         # NOTE: This appears to cause a deadlock
         # if (
         #     self.lifecycle_task
@@ -586,8 +599,7 @@ class AIPerfLifecycleMixin(HooksMixin, AsyncTaskManagerMixin):
     AIPerfHook.ON_PROFILE_STOP,
 )
 class AIPerfProfileMixin(HooksMixin):
-    """Mixin to add profile support to a class. It abstracts away the details of the
-    :class:`AIPerfProfile` and provides a simple interface for registering and running profiles."""
+    """Mixin to add profile-related hook support to a class."""
 
     def __init__(self):
         super().__init__()

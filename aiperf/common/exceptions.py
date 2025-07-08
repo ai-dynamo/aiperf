@@ -111,6 +111,10 @@ class UnsupportedHookError(AIPerfError):
     """Exception raised when a hook is defined on a class that does not support it."""
 
 
+class InvalidStateError(AIPerfError):
+    """Exception raised when an object is in an invalid state."""
+
+
 ################################################################################
 # Factory Exceptions
 ################################################################################
