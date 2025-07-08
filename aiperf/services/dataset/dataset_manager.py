@@ -97,18 +97,18 @@ class DatasetManager(BaseComponentService):
             raise self._service_error("User config is required for dataset manager")
 
         if self.user_config.input.file:
+            composer_type = ComposerType.CUSTOM
             self.logger.debug(
                 "Detected input file '%s'. Setting the composer type to %s.",
                 self.user_config.input.file,
                 ComposerType.CUSTOM,
             )
-            composer_type = ComposerType.CUSTOM
         else:
+            composer_type = ComposerType.SYNTHETIC
             self.logger.debug(
                 "No input file detected. Setting the composer type to %s.",
                 ComposerType.SYNTHETIC,
             )
-            composer_type = ComposerType.SYNTHETIC
 
         tokenizer = Tokenizer.from_pretrained(self.user_config.tokenizer.name)
         composer = ComposerFactory.create_instance(

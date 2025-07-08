@@ -89,6 +89,10 @@ class ServiceError(AIPerfError):
         self.service_id = service_id
 
 
+class InitializationError(AIPerfError):
+    """Exception raised for errors during initialization."""
+
+
 ################################################################################
 # Tokenizer Exceptions
 ################################################################################
