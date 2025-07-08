@@ -33,7 +33,7 @@ class CLIConfig(BaseModel):
         description="Process manager backend to use (multiprocessing: 'process', or kubernetes: 'k8s')",
     )
     user_config: UserConfig = Field(
-        default=UserConfig(),
+        ...,
         description="User configuration",
     )
 
@@ -61,9 +61,9 @@ def _setup_logging() -> None:
 
 @app.default
 def main(
+    user_config: UserConfig,
     config: Path | None = None,
     run_type: ServiceRunType = ServiceRunType.MULTIPROCESSING,
-    user_config: UserConfig | None = None,
 ) -> None:
     """Main entry point for the AIPerf system."""
 
@@ -74,7 +74,7 @@ def main(
     cli_config = CLIConfig(
         config=config,
         run_type=run_type,
-        user_config=user_config or UserConfig(),
+        user_config=user_config,
     )
 
     # Load configuration

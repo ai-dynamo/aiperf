@@ -7,15 +7,11 @@ import io
 import numpy as np
 import soundfile as sf
 
+from aiperf.common.config import AudioConfig
 from aiperf.common.enums import AudioFormat
-from aiperf.common.exceptions import GeneratorConfigurationError
+from aiperf.common.exceptions import ConfigurationError
 from aiperf.services.dataset import utils
-from aiperf.services.dataset.config import AudioConfig
 from aiperf.services.dataset.generator.base import BaseGenerator
-
-# TODO: Needs ConfigAudio
-# from genai_perf.config.input.config_input import ConfigAudio
-
 
 # MP3 supported sample rates in Hz
 MP3_SUPPORTED_SAMPLE_RATES = {
@@ -51,29 +47,29 @@ class AudioGenerator(BaseGenerator):
 
     def __init__(self, config: AudioConfig):
         super().__init__()
-        self.config = config  # Type hint for better IDE support
+        self.config = config
 
     def _validate_sampling_rate(
-        self, sampling_rate: int, audio_format: AudioFormat
+        self, sampling_rate_hz: int, audio_format: AudioFormat
     ) -> None:
         """
         Validate sampling rate for the given output format.
 
         Args:
-            sampling_rate: Sampling rate in Hz
+            sampling_rate_hz: Sampling rate in Hz
             audio_format: Audio format
 
         Raises:
-            GeneratorConfigurationError: If sampling rate is not supported for the given format
+            ConfigurationError: If sampling rate is not supported for the given format
         """
         if (
             audio_format == AudioFormat.MP3
-            and sampling_rate not in MP3_SUPPORTED_SAMPLE_RATES
+            and sampling_rate_hz not in MP3_SUPPORTED_SAMPLE_RATES
         ):
             supported_rates = sorted(MP3_SUPPORTED_SAMPLE_RATES)
-            raise GeneratorConfigurationError(
+            raise ConfigurationError(
                 f"MP3 format only supports the following sample rates (in Hz): {supported_rates}. "
-                f"Got {sampling_rate} Hz. Please choose a supported rate from the list."
+                f"Got {sampling_rate_hz} Hz. Please choose a supported rate from the list."
             )
 
     def _validate_bit_depth(self, bit_depth: int) -> None:
@@ -84,11 +80,11 @@ class AudioGenerator(BaseGenerator):
             bit_depth: Bit depth in bits
 
         Raises:
-            GeneratorConfigurationError: If bit depth is not supported
+            ConfigurationError: If bit depth is not supported
         """
         if bit_depth not in SUPPORTED_BIT_DEPTHS:
             supported_depths = sorted(SUPPORTED_BIT_DEPTHS.keys())
-            raise GeneratorConfigurationError(
+            raise ConfigurationError(
                 f"Unsupported bit depth: {bit_depth}. "
                 f"Supported bit depths are: {supported_depths}"
             )
@@ -100,35 +96,38 @@ class AudioGenerator(BaseGenerator):
             Data URI containing base64-encoded audio data with format specification
 
         Raises:
-            GeneratorConfigurationError: If any of the following conditions are met:
-                - audio_length_mean is less than 0.1 seconds
+            ConfigurationError: If any of the following conditions are met:
+                - audio length is less than 0.01 seconds
                 - channels is not 1 (mono) or 2 (stereo)
                 - sampling rate is not supported for MP3 format
                 - bit depth is not supported (must be 8, 16, 24, or 32)
                 - audio format is not supported (must be 'wav' or 'mp3')
         """
         if self.config.num_channels not in (1, 2):
-            raise GeneratorConfigurationError(
+            raise ConfigurationError(
                 "Only mono (1) and stereo (2) channels are supported"
             )
 
+        if self.config.length.mean < 0.01:
+            raise ConfigurationError("Audio length must be greater than 0.01 seconds")
+
         # Sample audio length (in seconds) using rejection sampling
         audio_length = utils.sample_normal(
-            self.config.length_mean, self.config.length_stddev, lower=0.01
+            self.config.length.mean, self.config.length.stddev, lower=0.01
         )
 
         # Randomly select sampling rate and bit depth
-        sampling_rate = int(
+        sampling_rate_hz = int(
             np.random.choice(self.config.sample_rates) * 1000
         )  # Convert kHz to Hz
         bit_depth = np.random.choice(self.config.depths)
 
         # Validate sampling rate and bit depth
-        self._validate_sampling_rate(sampling_rate, self.config.format)
+        self._validate_sampling_rate(sampling_rate_hz, self.config.format)
         self._validate_bit_depth(bit_depth)
 
         # Generate synthetic audio data (gaussian noise)
-        num_samples = int(audio_length * sampling_rate)
+        num_samples = int(audio_length * sampling_rate_hz)
         audio_data = np.random.normal(
             0,
             0.3,
@@ -156,7 +155,7 @@ class AudioGenerator(BaseGenerator):
         elif self.config.format == AudioFormat.WAV:
             _, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
         else:
-            raise GeneratorConfigurationError(
+            raise ConfigurationError(
                 f"Unsupported audio format: {self.config.format}. "
                 f"Supported formats are: {AudioFormat.WAV.name}, {AudioFormat.MP3.name}"
             )
@@ -164,7 +163,7 @@ class AudioGenerator(BaseGenerator):
         sf.write(
             output_buffer,
             audio_data,
-            sampling_rate,
+            sampling_rate_hz,
             format=self.config.format,
             subtype=subtype,
         )

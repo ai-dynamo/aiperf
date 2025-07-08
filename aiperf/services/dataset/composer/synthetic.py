@@ -3,18 +3,19 @@
 
 import uuid
 
+from aiperf.common.config import InputConfig
 from aiperf.common.dataset_models import Audio, Conversation, Image, Text, Turn
 from aiperf.common.enums import ComposerType
+from aiperf.common.factories import ComposerFactory
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.composer.base import BaseDatasetComposer
-from aiperf.services.dataset.composer.factory import ComposerFactory
-from aiperf.services.dataset.config import DatasetConfig
 
 
 @ComposerFactory.register(ComposerType.SYNTHETIC)
 class SyntheticDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: DatasetConfig):
-        super().__init__(config)
+    def __init__(self, config: InputConfig, tokenizer: Tokenizer):
+        super().__init__(config, tokenizer)
 
         if (
             not self.include_prompt
@@ -37,12 +38,12 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             list[Conversation]: A list of conversation objects.
         """
         conversations = []
-        for _ in range(self.config.num_conversations):
+        for _ in range(self.config.conversation.num):
             conversation = Conversation(session_id=str(uuid.uuid4()))
 
             num_turns = utils.sample_positive_normal_integer(
-                self.config.turn.mean,
-                self.config.turn.stddev,
+                self.config.conversation.turn.mean,
+                self.config.conversation.turn.stddev,
             )
             self.logger.debug("Creating conversation with %d turns", num_turns)
 
@@ -76,10 +77,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         # Add randomized delays between each turn. Skip if first turn.
         if not is_first:
             turn.delay = utils.sample_positive_normal_integer(
-                self.config.turn.delay.mean,
-                self.config.turn.delay.stddev,
+                self.config.conversation.turn.delay.mean,
+                self.config.conversation.turn.delay.stddev,
             )
 
+        # TODO: complete the warning message
         if not turn.text and not turn.image and not turn.audio:
             self.logger.warning("There w")
 
@@ -100,8 +102,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         text = Text(name="text")
         for _ in range(self.config.prompt.batch_size):
             prompt = self.prompt_generator.generate(
-                mean=self.config.prompt.mean,
-                stddev=self.config.prompt.stddev,
+                mean=self.config.prompt.input_tokens.mean,
+                stddev=self.config.prompt.input_tokens.stddev,
             )
 
             if self.prefix_prompt_enabled and is_first:
@@ -140,12 +142,12 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
     @property
     def include_prompt(self) -> bool:
-        return self.config.prompt.mean > 0
+        return self.config.prompt.input_tokens.mean > 0
 
     @property
     def include_image(self) -> bool:
-        return self.config.image.width_mean > 0 and self.config.image.height_mean > 0
+        return self.config.image.width.mean > 0 and self.config.image.height.mean > 0
 
     @property
     def include_audio(self) -> bool:
-        return self.config.audio.length_mean > 0
+        return self.config.audio.length.mean > 0

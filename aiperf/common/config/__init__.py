@@ -5,6 +5,7 @@ from aiperf.common.config.base_config import (
 )
 from aiperf.common.config.config_defaults import (
     AudioDefaults,
+    ConversationDefaults,
     EndPointDefaults,
     ImageDefaults,
     InputDefaults,
@@ -13,10 +14,10 @@ from aiperf.common.config.config_defaults import (
     OutputTokenDefaults,
     OutputTokensDefaults,
     PrefixPromptDefaults,
-    SessionsDefaults,
-    SessionTurnDelayDefaults,
-    SessionTurnsDefaults,
+    PromptDefaults,
     TokenizerDefaults,
+    TurnDefaults,
+    TurnDelayDefaults,
     UserDefaults,
 )
 from aiperf.common.config.endpoint import (
@@ -25,6 +26,7 @@ from aiperf.common.config.endpoint import (
 from aiperf.common.config.input import (
     AudioConfig,
     AudioLengthConfig,
+    ConversationConfig,
     ImageConfig,
     ImageHeightConfig,
     ImageWidthConfig,
@@ -33,13 +35,15 @@ from aiperf.common.config.input import (
     OutputTokensConfig,
     PrefixPromptConfig,
     PromptConfig,
-    SessionsConfig,
-    SessionTurnDelayConfig,
-    SessionTurnsConfig,
+    TurnConfig,
+    TurnDelayConfig,
 )
 from aiperf.common.config.loader import (
     load_service_config,
+    load_user_config,
 )
+from aiperf.common.config.loadgen_config import LoadGeneratorConfig
+from aiperf.common.config.measurement_config import MeasurementConfig
 from aiperf.common.config.output import (
     OutputConfig,
 )
@@ -66,6 +70,8 @@ __all__ = [
     "BaseZMQCommunicationConfig",
     "EndPointConfig",
     "EndPointDefaults",
+    "LoadGeneratorConfig",
+    "MeasurementConfig",
     "ImageConfig",
     "ImageDefaults",
     "ImageHeightConfig",
@@ -82,13 +88,14 @@ __all__ = [
     "PrefixPromptConfig",
     "PrefixPromptDefaults",
     "PromptConfig",
+    "PromptDefaults",
     "ServiceConfig",
-    "SessionTurnDelayConfig",
-    "SessionTurnDelayDefaults",
-    "SessionTurnsConfig",
-    "SessionTurnsDefaults",
-    "SessionsConfig",
-    "SessionsDefaults",
+    "TurnDelayConfig",
+    "TurnDelayDefaults",
+    "TurnConfig",
+    "TurnDefaults",
+    "ConversationConfig",
+    "ConversationDefaults",
     "TokenizerConfig",
     "TokenizerDefaults",
     "UserConfig",
@@ -96,4 +103,5 @@ __all__ = [
     "ZMQIPCConfig",
     "ZMQTCPConfig",
     "load_service_config",
+    "load_user_config",
 ]

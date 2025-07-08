@@ -1,20 +1,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import os
+import asyncio
 import random
 import sys
 
-from pydantic import BaseModel, ConfigDict
-
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.comms import ReplyClientProtocol
+from aiperf.common.comms.base import CommunicationClientAddressType
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import (
     ComposerType,
-    CustomDatasetType,
     MessageType,
+    NotificationType,
     ServiceType,
 )
-from aiperf.common.factories import ServiceFactory
+from aiperf.common.exceptions import InitializationError
+from aiperf.common.factories import ComposerFactory, ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
     on_configure,
@@ -28,26 +29,12 @@ from aiperf.common.messages import (
     DatasetTimingRequest,
     DatasetTimingResponse,
     Message,
+    NotificationMessage,
 )
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.dataset.composer import ComposerFactory
-from aiperf.services.dataset.config import DatasetConfig, PromptConfig
 
-
-################################################################################
-# TODO: Temporary (remove when command config is ready)
-class MockConfig(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    filename: str | None = None
-    tokenizer: Tokenizer | None = None
-    custom_dataset_type: CustomDatasetType | None = None
-    public_dataset: str | None = None
-    prompt: PromptConfig | None = None
-
-
-################################################################################
+DATASET_CONFIGURATION_TIMEOUT = 30.0
 
 
 @ServiceFactory.register(ServiceType.DATASET_MANAGER)
@@ -64,7 +51,13 @@ class DatasetManager(BaseComponentService):
         service_id: str | None = None,
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
+        self.logger.debug("Calling __init__() in dataset manager")
+        self.tokenizer: Tokenizer | None = None
         self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
+        self.dealer_router_client: ReplyClientProtocol = self.comms.create_reply_client(
+            CommunicationClientAddressType.DATASET_MANAGER_PROXY_BACKEND
+        )
+        self.dataset_configured = asyncio.Event()
 
     @property
     def service_type(self) -> ServiceType:
@@ -74,73 +67,96 @@ class DatasetManager(BaseComponentService):
     @on_init
     async def _initialize(self) -> None:
         """Initialize dataset manager-specific components."""
-        self.logger.debug("Initializing dataset manager")
+        self.logger.info("Initializing dataset manager %s", self.service_id)
 
-        await self.comms.register_request_handler(
+        if self.comms is None:
+            raise InitializationError("Communication is not initialized")
+
+        self.dealer_router_client.register_request_handler(
             service_id=self.service_id,
             message_type=MessageType.CONVERSATION_REQUEST,
             handler=self._handle_conversation_request,
         )
-
-        await self.comms.register_request_handler(
+        self.dealer_router_client.register_request_handler(
             service_id=self.service_id,
             message_type=MessageType.DATASET_TIMING_REQUEST,
             handler=self._handle_dataset_timing_request,
         )
 
+        self.logger.info("Dataset manager %s initialized", self.service_id)
+
     @on_start
     async def _start(self) -> None:
         """Start the dataset manager."""
-        self.logger.debug("Starting dataset manager")
+        self.logger.info("Starting dataset manager %s", self.service_id)
         # TODO: Implement dataset manager start
 
     @on_stop
     async def _stop(self) -> None:
         """Stop the dataset manager."""
-        self.logger.debug("Stopping dataset manager")
+        self.logger.debug("Stopping dataset manager %s", self.service_id)
         # TODO: Implement dataset manager stop
 
     @on_cleanup
     async def _cleanup(self) -> None:
         """Clean up dataset manager-specific components."""
-        self.logger.debug("Cleaning up dataset manager")
+        self.logger.debug("Cleaning up dataset manager %s", self.service_id)
         # TODO: Implement dataset manager cleanup
 
     @on_configure
     async def _configure(self, message: Message) -> None:
         """Configure the dataset manager."""
         self.logger.debug(f"Configuring dataset manager with message: {message}")
+        self.user_config = (
+            message.data if isinstance(message.data, UserConfig) else None
+        )
+        if self.user_config is None:
+            raise self._service_error("User config is required for dataset manager")
 
-        # TODO: remove this mock config
-        # mocks config inside the message
-        config = MockConfig()
-        config.filename = os.getenv("AIPERF_DATASET_FILENAME", None)  # "trace1.jsonl"
-        config.tokenizer = Tokenizer.from_pretrained(os.getenv("AIPERF_MODEL", "gpt2"))
-
-        if config.filename:
+        if self.user_config.input.file:
             composer_type = ComposerType.CUSTOM
-            config.custom_dataset_type = CustomDatasetType.TRACE
+            self.logger.debug(
+                "Detected input file '%s'. Setting the composer type to %s.",
+                self.user_config.input.file,
+                ComposerType.CUSTOM,
+            )
         else:
             composer_type = ComposerType.SYNTHETIC
-            config.custom_dataset_type = CustomDatasetType.SINGLE_TURN  # ignored
+            self.logger.debug(
+                "No input file detected. Setting the composer type to %s.",
+                ComposerType.SYNTHETIC,
+            )
 
-        # TODO: update once we integrate with command config
-        dataset_config = DatasetConfig(
-            filename=config.filename,
-            tokenizer=config.tokenizer,
-            custom_dataset_type=config.custom_dataset_type,
-            prompt=PromptConfig(mean=10, stddev=2),
+        tokenizer = Tokenizer.from_pretrained(self.user_config.tokenizer.name)
+        composer = ComposerFactory.create_instance(
+            composer_type,
+            config=self.user_config.input,
+            tokenizer=tokenizer,
         )
-
-        composer = ComposerFactory.create_instance(composer_type, config=dataset_config)
         conversations = composer.create_dataset()
         self.dataset = {conv.session_id: conv for conv in conversations}
+
+        self.dataset_configured.set()
+        await self.pub_client.publish(
+            NotificationMessage(
+                service_id=self.service_id,
+                message_type=MessageType.NOTIFICATION,
+                notification_type=NotificationType.DATASET_CONFIGURED,
+                data=None,
+            ),
+        )
 
     async def _handle_conversation_request(
         self, message: ConversationRequestMessage
     ) -> ConversationResponseMessage:
         """Handle a conversation request."""
         self.logger.debug("Handling conversation request: %s", message)
+
+        # Wait for the dataset to be configured if it is not already
+        if not self.dataset_configured.is_set():
+            await asyncio.wait_for(
+                self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
+            )
 
         if not self.dataset:
             raise self._service_error(

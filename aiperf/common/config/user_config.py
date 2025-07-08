@@ -14,6 +14,7 @@ from aiperf.common.config.config_validators import (
 from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
 from aiperf.common.config.input.input_config import InputConfig
 from aiperf.common.config.output.output_config import OutputConfig
+from aiperf.common.config.profile_config import LoadGeneratorConfig, MeasurementConfig
 from aiperf.common.config.tokenizer.tokenizer_config import TokenizerConfig
 
 
@@ -25,13 +26,16 @@ class UserConfig(BaseConfig):
     model_names: Annotated[
         list[str],
         Field(
+            ...,
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
         ),
         BeforeValidator(parse_str_or_list),
         cyclopts.Parameter(
             name=("--model-names", "-m"),
         ),
-    ] = UserDefaults.MODEL_NAMES
+    ]
+
+    # TODO:: Should we move the verbose and template_filename to their own CLI config class?
 
     verbose: Annotated[
         bool,
@@ -55,7 +59,44 @@ class UserConfig(BaseConfig):
         ),
     ] = UserDefaults.TEMPLATE_FILENAME
 
-    endpoint: EndPointConfig = EndPointConfig()
-    input: InputConfig = InputConfig()
-    output: OutputConfig = OutputConfig()
-    tokenizer: TokenizerConfig = TokenizerConfig()
+    endpoint: Annotated[
+        EndPointConfig,
+        Field(
+            description="Endpoint configuration",
+        ),
+    ] = EndPointConfig()
+
+    input: Annotated[
+        InputConfig,
+        Field(
+            description="Input configuration",
+        ),
+    ] = InputConfig()
+
+    output: Annotated[
+        OutputConfig,
+        Field(
+            description="Output configuration",
+        ),
+    ] = OutputConfig()
+
+    tokenizer: Annotated[
+        TokenizerConfig,
+        Field(
+            description="Tokenizer configuration",
+        ),
+    ] = TokenizerConfig()
+
+    load: Annotated[
+        LoadGeneratorConfig,
+        Field(
+            description="Load Generator configuration",
+        ),
+    ] = LoadGeneratorConfig()
+
+    measurement: Annotated[
+        MeasurementConfig,
+        Field(
+            description="Measurement configuration",
+        ),
+    ] = MeasurementConfig()

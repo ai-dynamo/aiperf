@@ -7,7 +7,7 @@ from collections import defaultdict
 from collections.abc import Coroutine
 from typing import Any
 
-from aiperf.common.enums import Topic
+from aiperf.common.enums import MessageType
 from aiperf.common.messages import (
     CreditDropMessage,
     DatasetTimingRequest,
@@ -77,7 +77,7 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
 
                 task = asyncio.create_task(
                     self.comms.push(
-                        topic=Topic.CREDIT_DROP,
+                        topic=MessageType.CREDIT_DROP,
                         message=CreditDropMessage(
                             service_id=self.service_id,
                             amount=1,

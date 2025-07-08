@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 __all__ = [
-    "CommunicationProtocol",
+    "BaseCommunication",
     "CommunicationClientFactory",
     "SubClientProtocol",
     "PushClientProtocol",
@@ -14,9 +14,9 @@ __all__ = [
 ]
 
 from aiperf.common.comms.base import (
+    BaseCommunication,
     CommunicationClientFactory,
     CommunicationClientProtocol,
-    CommunicationProtocol,
     PubClientProtocol,
     PullClientProtocol,
     PushClientProtocol,

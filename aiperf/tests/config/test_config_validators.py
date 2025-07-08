@@ -1,0 +1,199 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+import pytest
+
+from aiperf.common.config.config_validators import parse_str_or_dict
+
+
+class TestParseStrOrDict:
+    """Test suite for the parse_str_or_dict function."""
+
+    def test_dict_input_returns_unchanged(self):
+        """Test that dict input is returned unchanged."""
+        input_dict = {"key1": "value1", "key2": "value2"}
+        result = parse_str_or_dict(input_dict)
+        assert result == input_dict
+        assert result is input_dict  # Should be the same object
+
+    def test_empty_dict_input(self):
+        """Test that empty dict input is returned unchanged."""
+        input_dict = {}
+        result = parse_str_or_dict(input_dict)
+        assert result == input_dict
+        assert result is input_dict
+
+    @pytest.mark.parametrize(
+        "input_list,expected",
+        [
+            (["key1:value1", "key2:value2"], {"key1": "value1", "key2": "value2"}),
+            (["name:John", "age:30"], {"name": "John", "age": "30"}),
+            (
+                ["  key1  :  value1  ", "key2:value2"],
+                {"key1": "value1", "key2": "value2"},
+            ),
+            (["single:item"], {"single": "item"}),
+        ],
+    )
+    def test_list_input_converts_to_dict(self, input_list, expected):
+        """Test that list input is converted to dict by splitting on colons."""
+        result = parse_str_or_dict(input_list)
+        assert result == expected
+
+    def test_empty_list_input(self):
+        """Test that empty list input returns empty dict."""
+        result = parse_str_or_dict([])
+        assert result == {}
+
+    @pytest.mark.parametrize(
+        "json_string,expected",
+        [
+            (
+                '{"key1": "value1", "key2": "value2"}',
+                {"key1": "value1", "key2": "value2"},
+            ),
+            ('{"name": "John", "age": 30}', {"name": "John", "age": 30}),
+            ('{"nested": {"key": "value"}}', {"nested": {"key": "value"}}),
+            ('{"empty": {}}', {"empty": {}}),
+            ("{}", {}),
+        ],
+    )
+    def test_json_string_input_parses_correctly(self, json_string, expected):
+        """Test that JSON string input is parsed correctly."""
+        result = parse_str_or_dict(json_string)
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        "comma_separated_string,expected",
+        [
+            ("key1:value1,key2:value2", {"key1": "value1", "key2": "value2"}),
+            ("name:John,age:30", {"name": "John", "age": "30"}),
+            (
+                "  key1  :  value1  ,  key2  :  value2  ",
+                {"key1": "value1", "key2": "value2"},
+            ),
+            ("single:item", {"single": "item"}),
+        ],
+    )
+    def test_comma_separated_string_input_converts_to_dict(
+        self, comma_separated_string, expected
+    ):
+        """Test that comma-separated string input is converted to dict."""
+        result = parse_str_or_dict(comma_separated_string)
+        assert result == expected
+
+    def test_empty_string_input(self):
+        """Test that empty string input raises ValueError."""
+        with pytest.raises(ValueError):
+            parse_str_or_dict("")
+
+    @pytest.mark.parametrize(
+        "invalid_json",
+        [
+            '{"key1": "value1", "key2":}',  # Missing value
+            '{"key1": "value1" "key2": "value2"}',  # Missing comma
+            '{"key1": "value1",}',  # Trailing comma
+            '{key1: "value1"}',  # Unquoted key
+            '{"key1": value1}',  # Unquoted value
+            "{invalid json}",  # Invalid JSON
+        ],
+    )
+    def test_invalid_json_string_raises_value_error(self, invalid_json):
+        """Test that invalid JSON string raises ValueError."""
+        with pytest.raises(ValueError, match="must be a valid JSON string"):
+            parse_str_or_dict(invalid_json)
+
+    @pytest.mark.parametrize(
+        "invalid_list",
+        [
+            ["key1_no_colon"],  # Missing colon
+            ["key1:value1", "key2_no_colon"],  # One valid, one invalid
+            ["key1:value1:extra"],  # Too many colons
+        ],
+    )
+    def test_invalid_list_format_raises_value_error(self, invalid_list):
+        """Test that list with invalid format raises ValueError."""
+        with pytest.raises(ValueError):
+            parse_str_or_dict(invalid_list)
+
+    @pytest.mark.parametrize(
+        "invalid_string",
+        [
+            "key1_no_colon",  # Missing colon
+            "key1:value1,key2_no_colon",  # One valid, one invalid
+        ],
+    )
+    def test_invalid_string_format_raises_value_error(self, invalid_string):
+        """Test that string with invalid format raises ValueError."""
+        with pytest.raises(ValueError):
+            parse_str_or_dict(invalid_string)
+
+    @pytest.mark.parametrize(
+        "invalid_input",
+        [
+            123,  # Integer
+            12.34,  # Float
+            True,  # Boolean
+            set(),  # Set
+            tuple(),  # Tuple
+            object(),  # Object
+        ],
+    )
+    def test_invalid_input_type_raises_value_error(self, invalid_input):
+        """Test that invalid input types raise ValueError."""
+        with pytest.raises(ValueError, match="must be a valid string, list, or dict"):
+            parse_str_or_dict(invalid_input)
+
+    def test_string_with_multiple_colons_raises_value_error(self):
+        """Test that strings with multiple colons raise ValueError."""
+        with pytest.raises(ValueError):
+            parse_str_or_dict("key1:value1:extra,key2:value2")
+
+    def test_list_with_multiple_colons_raises_value_error(self):
+        """Test that list items with multiple colons raise ValueError."""
+        with pytest.raises(ValueError):
+            parse_str_or_dict(["key1:value1:extra", "key2:value2"])
+
+    def test_whitespace_handling_in_string_input(self):
+        """Test that whitespace is properly trimmed in string input."""
+        result = parse_str_or_dict("  key1  :  value1  ,  key2  :  value2  ")
+        expected = {"key1": "value1", "key2": "value2"}
+        assert result == expected
+
+    def test_whitespace_handling_in_list_input(self):
+        """Test that whitespace is properly trimmed in list input."""
+        result = parse_str_or_dict(["  key1  :  value1  ", "  key2  :  value2  "])
+        expected = {"key1": "value1", "key2": "value2"}
+        assert result == expected
+
+    def test_json_string_with_complex_data_types(self):
+        """Test JSON string with complex data types."""
+        complex_json = '{"string": "value", "number": 42, "boolean": true, "null": null, "array": [1, 2, 3]}'
+        result = parse_str_or_dict(complex_json)
+        expected = {
+            "string": "value",
+            "number": 42,
+            "boolean": True,
+            "null": None,
+            "array": [1, 2, 3],
+        }
+        assert result == expected
+
+    def test_error_message_contains_input_for_invalid_json(self):
+        """Test that error message contains the input for invalid JSON."""
+        invalid_json = '{"invalid": json}'
+        with pytest.raises(ValueError) as exc_info:
+            parse_str_or_dict(invalid_json)
+        assert invalid_json in str(exc_info.value)
+
+    def test_error_message_contains_input_for_invalid_type(self):
+        """Test that error message contains the input for invalid types."""
+        invalid_input = 123
+        with pytest.raises(ValueError) as exc_info:
+            parse_str_or_dict(invalid_input)
+        assert "123" in str(exc_info.value)
+
+    def test_none_input_returns_none(self):
+        """Test that none input returns none."""
+        result = parse_str_or_dict(None)
+        assert result is None

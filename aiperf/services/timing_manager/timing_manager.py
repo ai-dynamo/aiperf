@@ -6,13 +6,23 @@ import contextlib
 import sys
 from dataclasses import dataclass
 
-from aiperf.common.comms.client_enums import ClientType, PullClientType, PushClientType
+from aiperf.common.comms.base import (
+    CommunicationClientAddressType,
+    PullClientProtocol,
+    PushClientProtocol,
+    RequestClientProtocol,
+)
 from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import MessageType, ServiceState, ServiceType, Topic
+from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
+from aiperf.common.enums import (
+    MessageType,
+    ServiceType,
+)
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_cleanup, on_configure, on_init, on_start, on_stop
 from aiperf.common.messages import (
     CommandMessage,
+    CreditDropMessage,
     CreditReturnMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
@@ -44,28 +54,38 @@ class TimingManager(BaseComponentService):
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Initializing timing manager")
-        self._credit_drop_task: asyncio.Task | None = None
-        self.dataset_timing_response: DatasetTimingResponse | None = None
+
         self._credit_issuing_strategy: CreditIssuingStrategy | None = None
+
+        self.tasks: set[asyncio.Task] = set()
+
+        self.dataset_request_client: RequestClientProtocol = (
+            self.comms.create_request_client(
+                CommunicationClientAddressType.DATASET_MANAGER_PROXY_FRONTEND,
+            )
+        )
+        self.credit_drop_client: PushClientProtocol = self.comms.create_push_client(
+            CommunicationClientAddressType.CREDIT_DROP,
+            bind=True,
+        )
+        self.credit_return_client: PullClientProtocol = self.comms.create_pull_client(
+            CommunicationClientAddressType.CREDIT_RETURN,
+            bind=True,
+        )
 
     @property
     def service_type(self) -> ServiceType:
         """The type of service."""
         return ServiceType.TIMING_MANAGER
 
-    @property
-    def required_clients(self) -> list[ClientType]:
-        """The communication clients required by the service."""
-        return [
-            *(super().required_clients or []),
-            PullClientType.CREDIT_RETURN,
-            PushClientType.CREDIT_DROP,
-        ]
-
     @on_init
     async def _initialize(self) -> None:
         """Initialize timing manager-specific components."""
         self.logger.debug("Initializing timing manager")
+        await self.credit_return_client.register_pull_callback(
+            message_type=MessageType.CREDIT_RETURN,
+            callback=self._on_credit_return,
+        )
 
     @on_configure
     async def _configure(self, message: CommandMessage) -> None:
@@ -77,6 +97,19 @@ class TimingManager(BaseComponentService):
         assert isinstance(config, TimingManagerConfig)
 
         if config.timing_mode == TimingMode.FIXED_SCHEDULE:
+            # This will block until the dataset is ready and the timing response is received
+            dataset_timing_response: DatasetTimingResponse = (
+                await self.dataset_request_client.request(
+                    message=DatasetTimingRequest(
+                        service_id=self.service_id,
+                    ),
+                )
+            )
+            self.logger.debug(
+                "TM: Received dataset timing response: %s",
+                dataset_timing_response,
+            )
+            # TODO: Pass dataset_timing_response to strategy
             self._credit_issuing_strategy = FixedScheduleStrategy(
                 config, self._issue_credit_drop
             )
@@ -94,75 +127,60 @@ class TimingManager(BaseComponentService):
 
     @on_start
     async def _start(self) -> None:
-        """Start the timing manager."""
+        """Start the timing manager and issue credit drops according to the configured strategy."""
         self.logger.debug("Starting timing manager")
+        # TODO: If not configured raise an exception
 
-        # Setup credit return handling
-        await self.comms.register_pull_callback(
-            message_type=MessageType.CREDIT_RETURN,
-            callback=self._on_credit_return,
-        )
-        await self.set_state(ServiceState.RUNNING)
-        await asyncio.sleep(1.5)
+        if not self._credit_issuing_strategy:
+            raise RuntimeError("No credit issuing strategy configured")
 
-        self.logger.debug("TM: Requesting dataset timing information")
-        self.dataset_timing_response = await self.comms.request(
-            topic=Topic.DATASET_TIMING,
-            message=DatasetTimingRequest(
-                service_id=self.service_id,
-            ),
-        )
-        self.logger.debug(
-            "TM: Received dataset timing response: %s",
-            self.dataset_timing_response,
-        )
-
-        # Start the credit dropping task
-        self._credit_drop_task = asyncio.create_task(self._issue_credit_drops())
+        task = asyncio.create_task(self._credit_issuing_strategy.start())
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
 
     @on_stop
     async def _stop(self) -> None:
         """Stop the timing manager."""
         self.logger.debug("Stopping timing manager")
-        if self._credit_drop_task and not self._credit_drop_task.done():
-            self._credit_drop_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._credit_drop_task
-            self._credit_drop_task = None
+        for task in list(self.tasks):
+            task.cancel()
+
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.gather(*self.tasks),
+                timeout=TASK_CANCEL_TIMEOUT_SHORT,
+            )
+        self.tasks.clear()
 
     @on_cleanup
     async def _cleanup(self) -> None:
         """Clean up timing manager-specific components."""
         self.logger.debug("Cleaning up timing manager")
 
-    async def _issue_credit_drops(self) -> None:
-        """Issue credit drops according to the schedule."""
-        self.logger.debug("Starting credit drops")
-
-        assert isinstance(self._credit_issuing_strategy, CreditIssuingStrategy)
-        await self._credit_issuing_strategy.start()
-
     async def _issue_credit_drop(self, credit_drop_info: CreditDropInfo) -> None:
-        # await self.comms.push(
-        #     topic=Topic.CREDIT_DROP,
-        #     message=CreditDropMessage(
-        #         service_id=self.service_id,
-        #         amount=1,
-        #         conversation_id=conversation_id,
-        #         credit_drop_ns=time.time_ns(),
-        #     ),
-        # )
-        pass
+        """Issue a credit drop."""
+        task = asyncio.create_task(
+            self.credit_drop_client.push(
+                message=CreditDropMessage(
+                    service_id=self.service_id,
+                    amount=credit_drop_info.amount,
+                    credit_drop_ns=credit_drop_info.credit_drop_ns,
+                    conversation_id=credit_drop_info.conversation_id,
+                ),
+            )
+        )
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
 
     async def _on_credit_return(self, message: CreditReturnMessage) -> None:
-        """Process a credit return message.
-
-        Args:
-            message: The credit return message received from the pull request
-        """
+        """Process a credit return message."""
         self.logger.debug("Processing credit return: %s", message)
-        async with self._credit_lock:
-            self._credits_available += message.amount
+        if self._credit_issuing_strategy:
+            task = asyncio.create_task(
+                self._credit_issuing_strategy.on_credit_return(message)
+            )
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
 
 
 def main() -> None:
