@@ -3,12 +3,18 @@
 
 import base64
 import io
+import random
 
 import numpy as np
+import pytest
 import soundfile as sf
 
-# TODO: uncomment when ConfigAudio is implemented
-# from genai_perf.config.input.config_input import ConfigAudio
+from aiperf.common.config import AudioConfig, AudioLengthConfig
+from aiperf.common.enums import AudioFormat
+from aiperf.services.dataset.generator.audio import (
+    AudioGenerator,
+    GeneratorConfigurationError,
+)
 
 
 def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
@@ -29,163 +35,148 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
     return audio_data, sample_rate
 
 
-# TODO: uncomment when ConfigAudio is implemented
-# @pytest.mark.parametrize(
-#    "expected_audio_length",
-#    [
-#        1.0,
-#        2.0,
-#    ],
-# )
-# def test_different_audio_length(expected_audio_length):
-#    config_audio = ConfigAudio()
-#    config_audio.length.mean = expected_audio_length
-#    config_audio.length.stddev = 0
-#    config_audio.sample_rates = [44]  # Fixed sampling rate for test
-#    config_audio.depths = [16]  # Fixed bit depth for test
-#    config_audio.format = AudioFormat.WAV
-#
-#    data_uri = AudioGenerator.create_synthetic_audio(config_audio)
-#
-#    audio_data, sample_rate = decode_audio(data_uri)
-#    actual_length = len(audio_data) / sample_rate
-#    assert (
-#        abs(actual_length - expected_audio_length) < 0.1
-#    ), "audio length not as expected"
-#
-#
-# def test_negative_length_raises_error():
-#    with pytest.raises(ValueError):
-#        config_audio = ConfigAudio()
-#        config_audio.length.mean = 0.05  # Below minimum of 0.1
-#        config_audio.length.stddev = 0
-#        config_audio.sample_rates = [44]
-#        config_audio.depths = [16]
-#        config_audio.format = AudioFormat.WAV
-#
-#        AudioGenerator.create_synthetic_audio(config_audio)
-#
-#
-# @pytest.mark.parametrize(
-#    "length_mean, length_stddev, sampling_rate_khz, bit_depth",
-#    [
-#        (1.0, 0.1, 44, 16),
-#        (2.0, 0.2, 48, 24),
-#    ],
-# )
-# def test_generator_deterministic(
-#    length_mean, length_stddev, sampling_rate_khz, bit_depth
-# ):
-#    np.random.seed(123)
-#    random.seed(123)
-#
-#    config_audio = ConfigAudio()
-#    config_audio.length.mean = length_mean
-#    config_audio.length.stddev = length_stddev
-#    config_audio.sample_rates = [sampling_rate_khz]
-#    config_audio.depths = [bit_depth]
-#    config_audio.format = AudioFormat.WAV
-#
-#    data_uri1 = AudioGenerator.create_synthetic_audio(config_audio)
-#
-#    np.random.seed(123)
-#    random.seed(123)
-#    data_uri2 = AudioGenerator.create_synthetic_audio(config_audio)
-#
-#    # Compare the actual audio data
-#    audio_data1, _ = decode_audio(data_uri1)
-#    audio_data2, _ = decode_audio(data_uri2)
-#    assert np.array_equal(audio_data1, audio_data2), "generator is nondeterministic"
-#
-#
-# @pytest.mark.parametrize("audio_format", [AudioFormat.WAV, AudioFormat.MP3])
-# def test_audio_format(audio_format):
-#    # use sample rate supported by all formats (44.1kHz)
-#    config_audio = ConfigAudio()
-#    config_audio.length.mean = 1.0
-#    config_audio.length.stddev = 0
-#    config_audio.sample_rates = [44.1]
-#    config_audio.depths = [16]  # Fixed bit depth for test
-#    config_audio.format = audio_format
-#
-#    data_uri = AudioGenerator.create_synthetic_audio(config_audio)
-#
-#    # Check data URI format
-#    assert data_uri.startswith(
-#        f"{audio_format.name.lower()},"
-#    ), "incorrect data URI format"
-#
-#    # Verify the audio can be decoded
-#    audio_data, _ = decode_audio(data_uri)
-#    assert len(audio_data) > 0, "audio data is empty"
-#
-#
-# def test_unsupported_bit_depth():
-#    with pytest.raises(ValueError) as exc_info:
-#        config_audio = ConfigAudio()
-#        config_audio.length.mean = 1.0
-#        config_audio.length.stddev = 0
-#        config_audio.sample_rates = [44]
-#        config_audio.depths = [12]  # Unsupported bit depth
-#        config_audio.format = AudioFormat.WAV
-#
-#        AudioGenerator.create_synthetic_audio(config_audio)
-#
-#    assert "Supported bit depths are:" in str(exc_info.value)
-#
-#
-# @pytest.mark.parametrize("channels", [1, 2])
-# def test_channels(channels):
-#    config_audio = ConfigAudio()
-#    config_audio.length.mean = 1.0
-#    config_audio.length.stddev = 0
-#    config_audio.sample_rates = [44]
-#    config_audio.depths = [16]
-#    config_audio.format = AudioFormat.WAV
-#    config_audio.num_channels = channels
-#
-#    data_uri = AudioGenerator.create_synthetic_audio(config_audio)
-#
-#    audio_data, _ = decode_audio(data_uri)
-#    if channels == 1:
-#        assert len(audio_data.shape) == 1, "mono audio should be 1D array"
-#    else:
-#        assert len(audio_data.shape) == 2, "stereo audio should be 2D array"
-#        assert audio_data.shape[1] == 2, "stereo audio should have 2 channels"
-#
-#
-# @pytest.mark.parametrize(
-#    "sampling_rate_khz, bit_depth",
-#    [
-#        (44.1, 16),  # Common CD quality
-#        (48, 24),  # Studio quality
-#        (96, 32),  # High-res audio
-#    ],
-# )
-# def test_audio_parameters(sampling_rate_khz, bit_depth):
-#    config_audio = ConfigAudio()
-#    config_audio.length.mean = 1.0
-#    config_audio.length.stddev = 0
-#    config_audio.sample_rates = [sampling_rate_khz]
-#    config_audio.depths = [bit_depth]
-#    config_audio.format = AudioFormat.WAV
-#
-#    data_uri = AudioGenerator.create_synthetic_audio(config_audio)
-#
-#    _, sample_rate = decode_audio(data_uri)
-#    assert sample_rate == sampling_rate_khz * 1000, "unexpected sampling rate"
-#
-#
-# def test_mp3_unsupported_sampling_rate():
-#    with pytest.raises(ValueError) as exc_info:
-#        config_audio = ConfigAudio()
-#        config_audio.length.mean = 1.0
-#        config_audio.length.stddev = 0
-#        config_audio.sample_rates = [96]  # 96kHz is not supported for MP3
-#        config_audio.depths = [16]
-#        config_audio.format = AudioFormat.MP3
-#
-#        AudioGenerator.create_synthetic_audio(config_audio)
-#    assert "MP3 format only supports" in str(
-#        exc_info.value
-#    ), "error message should mention supported rates"
+@pytest.fixture
+def base_config():
+    return AudioConfig(
+        length=AudioLengthConfig(
+            mean=3.0,
+            stddev=0.4,
+        ),
+        sample_rates=[44.1],
+        depths=[16],
+        format=AudioFormat.WAV,
+        num_channels=1,
+    )
+
+
+@pytest.mark.parametrize(
+    "expected_audio_length",
+    [
+        1.0,
+        2.0,
+    ],
+)
+def test_different_audio_length(expected_audio_length, base_config):
+    base_config.length.mean = expected_audio_length
+    base_config.length.stddev = 0.0  # make it deterministic
+
+    audio_generator = AudioGenerator(base_config)
+    data_uri = audio_generator.generate()
+
+    audio_data, sample_rate = decode_audio(data_uri)
+    actual_length = len(audio_data) / sample_rate
+    assert abs(actual_length - expected_audio_length) < 0.1, (
+        "audio length not as expected"
+    )
+
+
+def test_negative_length_raises_error(base_config):
+    base_config.length.mean = -1.0
+    audio_generator = AudioGenerator(base_config)
+
+    with pytest.raises(GeneratorConfigurationError):
+        audio_generator.generate()
+
+
+@pytest.mark.parametrize(
+    "mean, stddev, sampling_rate, bit_depth",
+    [
+        (1.0, 0.1, 44, 16),
+        (2.0, 0.2, 48, 24),
+    ],
+)
+def test_generator_deterministic(mean, stddev, sampling_rate, bit_depth, base_config):
+    np.random.seed(123)
+    random.seed(123)
+
+    base_config.length.mean = mean
+    base_config.length.stddev = stddev
+    base_config.sample_rates = [sampling_rate]
+    base_config.depths = [bit_depth]
+
+    audio_generator = AudioGenerator(base_config)
+    data_uri1 = audio_generator.generate()
+
+    np.random.seed(123)
+    random.seed(123)
+    data_uri2 = audio_generator.generate()
+
+    # Compare the actual audio data
+    audio_data1, _ = decode_audio(data_uri1)
+    audio_data2, _ = decode_audio(data_uri2)
+    assert np.array_equal(audio_data1, audio_data2), "generator is nondeterministic"
+
+
+@pytest.mark.parametrize("audio_format", [AudioFormat.WAV, AudioFormat.MP3])
+def test_audio_format(audio_format, base_config):
+    # use sample rate supported by all formats (44.1kHz)
+    base_config.format = audio_format
+
+    audio_generator = AudioGenerator(base_config)
+    data_uri = audio_generator.generate()
+
+    # Check data URI format
+    assert data_uri.startswith(f"{audio_format.name.lower()},"), (
+        "incorrect data URI format"
+    )
+
+    # Verify the audio can be decoded
+    audio_data, _ = decode_audio(data_uri)
+    assert len(audio_data) > 0, "audio data is empty"
+
+
+def test_unsupported_bit_depth(base_config):
+    base_config.depths = [12]  # Unsupported bit depth
+
+    with pytest.raises(GeneratorConfigurationError) as exc_info:
+        audio_generator = AudioGenerator(base_config)
+        audio_generator.generate()
+
+    assert "Supported bit depths are:" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("channels", [1, 2])
+def test_channels(channels, base_config):
+    base_config.num_channels = channels
+
+    audio_generator = AudioGenerator(base_config)
+    data_uri = audio_generator.generate()
+
+    audio_data, _ = decode_audio(data_uri)
+    if channels == 1:
+        assert len(audio_data.shape) == 1, "mono audio should be 1D array"
+    else:
+        assert len(audio_data.shape) == 2, "stereo audio should be 2D array"
+        assert audio_data.shape[1] == 2, "stereo audio should have 2 channels"
+
+
+@pytest.mark.parametrize(
+    "sampling_rate_khz, bit_depth",
+    [
+        (44.1, 16),  # Common CD quality
+        (48, 24),  # Studio quality
+        (96, 32),  # High-res audio
+    ],
+)
+def test_audio_parameters(sampling_rate_khz, bit_depth, base_config):
+    base_config.sample_rates = [sampling_rate_khz]
+    base_config.depths = [bit_depth]
+
+    audio_generator = AudioGenerator(base_config)
+    data_uri = audio_generator.generate()
+
+    _, sample_rate = decode_audio(data_uri)
+    assert sample_rate == sampling_rate_khz * 1000, "unexpected sampling rate"
+
+
+def test_mp3_unsupported_sampling_rate(base_config):
+    base_config.sample_rates = [96]  # 96kHz is not supported for MP3
+    base_config.format = AudioFormat.MP3
+
+    with pytest.raises(GeneratorConfigurationError) as exc_info:
+        audio_generator = AudioGenerator(base_config)
+        audio_generator.generate()
+
+        assert "MP3 format only supports" in str(exc_info.value), (
+            "error message should mention supported rates"
+        )

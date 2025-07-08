@@ -12,14 +12,19 @@ __all__ = [
     "OutputTokensConfig",
     "PrefixPromptConfig",
     "PromptConfig",
-    "SessionTurnDelayConfig",
-    "SessionTurnsConfig",
-    "SessionsConfig",
+    "TurnDelayConfig",
+    "TurnConfig",
+    "ConversationConfig",
 ]
 
 from aiperf.common.config.input.audio_config import (
     AudioConfig,
     AudioLengthConfig,
+)
+from aiperf.common.config.input.conversation_config import (
+    ConversationConfig,
+    TurnConfig,
+    TurnDelayConfig,
 )
 from aiperf.common.config.input.image_config import (
     ImageConfig,
@@ -32,9 +37,4 @@ from aiperf.common.config.input.prompt_config import (
     OutputTokensConfig,
     PrefixPromptConfig,
     PromptConfig,
-)
-from aiperf.common.config.input.sessions_config import (
-    SessionsConfig,
-    SessionTurnDelayConfig,
-    SessionTurnsConfig,
 )

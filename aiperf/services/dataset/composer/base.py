@@ -4,8 +4,9 @@
 import logging
 from abc import ABC, abstractmethod
 
+from aiperf.common.config import InputConfig
 from aiperf.common.dataset_models import Conversation
-from aiperf.services.dataset.config import DatasetConfig
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset.generator import (
     AudioGenerator,
     ImageGenerator,
@@ -14,11 +15,11 @@ from aiperf.services.dataset.generator import (
 
 
 class BaseDatasetComposer(ABC):
-    def __init__(self, config: DatasetConfig):
+    def __init__(self, config: InputConfig, tokenizer: Tokenizer):
         self.config = config
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger(self.__class__.__name__)
 
-        self.prompt_generator = PromptGenerator(config.prompt, config.tokenizer)
+        self.prompt_generator = PromptGenerator(config.prompt, tokenizer)
         self.image_generator = ImageGenerator(config.image)
         self.audio_generator = AudioGenerator(config.audio)
 

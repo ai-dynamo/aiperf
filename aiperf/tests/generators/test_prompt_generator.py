@@ -12,11 +12,11 @@ from unittest.mock import mock_open, patch
 
 import pytest
 
+from aiperf.common.config import PrefixPromptConfig, PromptConfig
 from aiperf.common.exceptions import (
     GeneratorConfigurationError,
     GeneratorInitializationError,
 )
-from aiperf.services.dataset.config import PrefixPromptConfig, PromptConfig
 from aiperf.services.dataset.generator.prompt import PromptGenerator
 
 MOCK_CORPUS_CONTENT = "To be or not to be, that is the question.\nWhether 'tis nobler in the mind to suffer.\n"

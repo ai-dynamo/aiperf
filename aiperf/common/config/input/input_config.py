@@ -10,26 +10,16 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import parse_file, parse_goodput
 from aiperf.common.config.input.audio_config import AudioConfig
+from aiperf.common.config.input.conversation_config import ConversationConfig
 from aiperf.common.config.input.image_config import ImageConfig
 from aiperf.common.config.input.prompt_config import PromptConfig
-from aiperf.common.config.input.sessions_config import SessionsConfig
+from aiperf.common.enums import CustomDatasetType
 
 
 class InputConfig(BaseConfig):
     """
     A configuration class for defining input related settings.
     """
-
-    batch_size: Annotated[
-        int,
-        Field(
-            description="The batch size of text requests GenAI-Perf should send.\
-            \nThis is currently supported with the embeddings and rankings endpoint types",
-        ),
-        cyclopts.Parameter(
-            name=("--batch-size"),
-        ),
-    ] = InputDefaults.BATCH_SIZE
 
     extra: Annotated[
         Any,
@@ -49,9 +39,7 @@ class InputConfig(BaseConfig):
             \nSpecify goodput constraints as 'key:value' pairs,\
             \nwhere the key is a valid metric name, and the value is a number representing\
             \neither milliseconds or a throughput value per second.\
-            \nFor example:\
-            \n  request_latency:300\
-            \n  output_token_throughput_per_user:600",
+            \nFor example: request_latency:300,output_token_throughput_per_user:600",
         ),
         cyclopts.Parameter(
             name=("--goodput"),
@@ -73,37 +61,34 @@ class InputConfig(BaseConfig):
     file: Annotated[
         Any,
         Field(
-            description="The file or directory containing the content to use for profiling.\
-            \nExample:\
-            \n  text: \"Your prompt here\"\
-            \n\nTo use synthetic files for a converter that needs multiple files,\
-            \nprefix the path with 'synthetic:' followed by a comma-separated list of file names.\
-            \nThe synthetic filenames should not have extensions.\
-            \nExample:\
-            \n  synthetic: queries,passages",
+            description="The file or directory path that contains the dataset to use for profiling.\
+            \nThis parameter is used in conjunction with the `custom_dataset_type` parameter\
+            \nto support different types of user provided datasets.",
         ),
         BeforeValidator(parse_file),
         cyclopts.Parameter(
-            name=("--file"),
+            name=("--file", "-f"),
         ),
     ] = InputDefaults.FILE
 
-    num_dataset_entries: Annotated[
-        int,
+    custom_dataset_type: Annotated[
+        CustomDatasetType,
         Field(
-            ge=1,
-            description="The number of unique payloads to sample from.\
-            \nThese will be reused until benchmarking is complete.",
+            description="The type of custom dataset to use.\
+            \nThis parameter is used in conjunction with the --file parameter.",
         ),
         cyclopts.Parameter(
-            name=("--num-dataset-entries"),
+            name=("--custom-dataset-type"),
         ),
-    ] = InputDefaults.NUM_DATASET_ENTRIES
+    ] = InputDefaults.CUSTOM_DATASET_TYPE
 
     random_seed: Annotated[
-        int,
+        int | None,
         Field(
-            description="The seed used to generate random values.",
+            default=None,
+            description="The seed used to generate random values.\
+            \nSet to some value to make the synthetic data generation deterministic.\
+            \nIt will use system default if not provided.",
         ),
         cyclopts.Parameter(
             name=("--random-seed"),
@@ -113,4 +98,4 @@ class InputConfig(BaseConfig):
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
     prompt: PromptConfig = PromptConfig()
-    sessions: SessionsConfig = SessionsConfig()
+    conversation: ConversationConfig = ConversationConfig()

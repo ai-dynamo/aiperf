@@ -85,7 +85,8 @@ class AudioConfig(BaseConfig):
         list[float],
         Field(
             min_length=1,
-            description="A list of audio sample rates to randomly select from in kHz.",
+            description="A list of audio sample rates to randomly select from in kHz.\
+            \nCommon sample rates are 16, 44.1, 48, 96, etc.",
         ),
         BeforeValidator(parse_str_or_list_of_positive_values),
         cyclopts.Parameter(

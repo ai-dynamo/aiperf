@@ -11,6 +11,7 @@ from aiperf.common.config.config_defaults import (
     InputTokensDefaults,
     OutputTokensDefaults,
     PrefixPromptDefaults,
+    PromptDefaults,
 )
 
 
@@ -40,6 +41,17 @@ class InputTokensConfig(BaseConfig):
             name=("--input-tokens-stddev"),
         ),
     ] = InputTokensDefaults.STDDEV
+
+    block_size: Annotated[
+        int,
+        Field(
+            default=512,
+            description="The block size of the prompt.",
+        ),
+        cyclopts.Parameter(
+            name=("--input-tokens-block-size"),
+        ),
+    ] = InputTokensDefaults.BLOCK_SIZE
 
 
 class OutputTokensConfig(BaseConfig):
@@ -125,6 +137,17 @@ class PromptConfig(BaseConfig):
     """
     A configuration class for defining prompt related settings.
     """
+
+    batch_size: Annotated[
+        int,
+        Field(
+            description="The batch size of text requests GenAI-Perf should send.\
+            \nThis is currently supported with the embeddings and rankings endpoint types",
+        ),
+        cyclopts.Parameter(
+            name=("--prompt-batch-size"),
+        ),
+    ] = PromptDefaults.BATCH_SIZE
 
     input_tokens: InputTokensConfig = InputTokensConfig()
     output_tokens: OutputTokensConfig = OutputTokensConfig()
