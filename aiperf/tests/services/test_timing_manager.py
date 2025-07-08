@@ -4,12 +4,12 @@
 Tests for the timing manager service.
 """
 
-import io
+from io import StringIO
 from unittest.mock import patch
 
 import pytest
 
-from aiperf.common.enums import CommandType, ServiceType, Topic
+from aiperf.common.enums import CommandType, MessageType, ServiceType
 from aiperf.common.messages import CommandMessage, CreditReturnMessage
 from aiperf.common.service.base_service import BaseService
 from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
@@ -72,10 +72,8 @@ class TestTimingManager(BaseTestComponentService):
         )
 
         # Mock the open function when called with that specific path
-        mock_file = io.StringIO(mock_file_content)
-
         # Use patch to replace the built-in open function
-        with patch("builtins.open", return_value=mock_file):
+        with patch("builtins.open", return_value=StringIO(mock_timing_data)):
             service = await async_fixture(initialized_service)
 
             # Configure the service
@@ -141,7 +139,7 @@ class TestTimingManager(BaseTestComponentService):
 
             # 10. Check details of the pushed messages
             for topic, message in pushed_messages:
-                assert topic == Topic.CREDIT_DROP
+                assert topic == MessageType.CREDIT_DROP
                 assert message.service_id == service.service_id
                 assert message.amount == 1
                 # You could also verify the timestamp corresponds to the schedule

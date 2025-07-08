@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.enums import ServiceState, Topic
+from aiperf.common.enums import MessageType, ServiceState
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.common.service.base_service import BaseService
 from aiperf.tests.base_test_service import BaseTestService, async_fixture
@@ -48,12 +48,15 @@ class BaseTestComponentService(BaseTestService):
         await service.send_heartbeat()
 
         # Check that a heartbeat message was published
-        assert Topic.HEARTBEAT in mock_communication.mock_data.published_messages
-        assert len(mock_communication.mock_data.published_messages[Topic.HEARTBEAT]) > 0
+        assert MessageType.HEARTBEAT in mock_communication.mock_data.published_messages
+        assert (
+            len(mock_communication.mock_data.published_messages[MessageType.HEARTBEAT])
+            > 0
+        )
 
         # Verify heartbeat message contents
         heartbeat_msg = mock_communication.mock_data.published_messages[
-            Topic.HEARTBEAT
+            MessageType.HEARTBEAT
         ][0]
         assert heartbeat_msg.service_id == service.service_id
         assert heartbeat_msg.service_type == service.service_type
@@ -74,11 +77,13 @@ class BaseTestComponentService(BaseTestService):
         await service.register()
 
         # Check that a registration message was published
-        assert Topic.REGISTRATION in mock_communication.mock_data.published_messages
+        assert (
+            MessageType.REGISTRATION in mock_communication.mock_data.published_messages
+        )
 
         # Verify registration message contents
         registration_msg = mock_communication.mock_data.published_messages[
-            Topic.REGISTRATION
+            MessageType.REGISTRATION
         ][0]
         assert registration_msg.service_id == service.service_id
         assert registration_msg.service_type == service.service_type
@@ -99,10 +104,12 @@ class BaseTestComponentService(BaseTestService):
         await service.set_state(ServiceState.READY)
 
         # Check that a status message was published
-        assert Topic.STATUS in mock_communication.mock_data.published_messages
+        assert MessageType.STATUS in mock_communication.mock_data.published_messages
 
         # Verify status message contents
-        status_msg = mock_communication.mock_data.published_messages[Topic.STATUS][0]
+        status_msg = mock_communication.mock_data.published_messages[
+            MessageType.STATUS
+        ][0]
         assert status_msg.service_id == service.service_id
         assert status_msg.service_type == service.service_type
         assert status_msg.state == ServiceState.READY
