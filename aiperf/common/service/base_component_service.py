@@ -39,15 +39,22 @@ class BaseComponentService(BaseService):
     """
 
     def __init__(
-        self, service_config: ServiceConfig, service_id: str | None = None
+        self,
+        service_config: ServiceConfig,
+        service_id: str | None = None,
     ) -> None:
-        super().__init__(service_config=service_config, service_id=service_id)
+        super().__init__(
+            service_config=service_config,
+            service_id=service_id,
+        )
+
         self._command_callbacks: dict[
             CommandType, Callable[[CommandMessage], Awaitable[None]]
         ] = {}
+        self._heartbeat_interval = self.service_config.heartbeat_interval
 
     @on_init
-    async def _on_init1(self) -> None:
+    async def _on_init(self) -> None:
         """Automatically subscribe to the command message_type and register the service
         with the system controller when the run hook is called.
 
@@ -63,20 +70,13 @@ class BaseComponentService(BaseService):
                 self.process_command_message,
             )
         except Exception as e:
-            raise self._service_error(
-                "Failed to subscribe to command message_type",
-            ) from e
-
-        # TODO: HACK: Sleep for 1 second to allow the controller to be ready to register the service
-        await asyncio.sleep(1)
+            raise self._service_error("Failed to subscribe to command topic") from e
 
         # Register the service
         try:
             await self.register()
         except Exception as e:
-            raise self._service_error(
-                "Failed to register service",
-            ) from e
+            raise self._service_error("Failed to register service") from e
 
     @aiperf_task
     async def _heartbeat_task(self) -> None:
@@ -106,9 +106,7 @@ class BaseComponentService(BaseService):
                 message=heartbeat_message,
             )
         except Exception as e:
-            raise self._service_error(
-                "Failed to send heartbeat",
-            ) from e
+            raise self._service_error("Failed to send heartbeat") from e
 
     async def register(self) -> None:
         """Publish a registration request to the system controller.
@@ -126,9 +124,7 @@ class BaseComponentService(BaseService):
                 message=self.create_registration_message(),
             )
         except Exception as e:
-            raise self._service_error(
-                "Failed to register service",
-            ) from e
+            raise self._service_error("Failed to register service") from e
 
     async def process_command_message(self, message: CommandMessage) -> None:
         """Process a command message received from the controller.
