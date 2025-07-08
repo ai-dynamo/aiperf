@@ -15,6 +15,10 @@ ADD_TO_TEMPLATE = "add_to_template"
 
 
 class BaseConfig(BaseModel):
+    """
+    Base configuration class for all configurations.
+    """
+
     def serialize_to_yaml(self, verbose: bool = False, indent: int = 4) -> str:
         """
         Serialize a Pydantic model to a YAML string.

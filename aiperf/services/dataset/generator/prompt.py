@@ -7,6 +7,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from aiperf.common.config import PromptConfig
 from aiperf.common.exceptions import (
     ConfigurationError,
     InvalidStateError,
@@ -14,7 +15,6 @@ from aiperf.common.exceptions import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset import utils
-from aiperf.services.dataset.config import PromptConfig
 from aiperf.services.dataset.generator.base import BaseGenerator
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,9 @@ class PromptGenerator(BaseGenerator):
             A synthetic prompt as a string.
         """
         if hash_ids:
-            return self._generate_cached_prompt(mean, hash_ids, self.config.block_size)
+            return self._generate_cached_prompt(
+                mean, hash_ids, self.config.input_tokens.block_size
+            )
 
         num_tokens = utils.sample_positive_normal_integer(mean, stddev)
         return self._generate_prompt(num_tokens)

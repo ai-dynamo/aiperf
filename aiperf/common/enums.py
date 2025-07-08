@@ -62,28 +62,6 @@ class CommunicationBackend(CaseInsensitiveStrEnum):
     """ZeroMQ backend using IPC sockets."""
 
 
-class Topic(CaseInsensitiveStrEnum):
-    """Communication topics for the main messaging bus.
-    Right now, there is some overlap between Topic and MessageType.
-    """
-
-    CREDIT_DROP = "credit_drop"
-    CREDIT_RETURN = "credit_return"
-    CREDITS_COMPLETE = "credits_complete"
-    PROFILE_PROGRESS = "profile_progress"
-    PROFILE_STATS = "profile_stats"
-    PROFILE_RESULTS = "profile_results"
-    REGISTRATION = "registration"
-    COMMAND = "command"
-    COMMAND_RESPONSE = "command_response"
-    STATUS = "status"
-    HEARTBEAT = "heartbeat"
-    NOTIFICATION = "notification"
-    WORKER_HEALTH = "worker_health"
-    DATASET_TIMING = "dataset_timing"
-    CONVERSATION_DATA = "conversation_data"
-
-
 class CommandResponseStatus(CaseInsensitiveStrEnum):
     """Status of a command response."""
 
@@ -171,6 +149,7 @@ class ImageFormat(CaseInsensitiveStrEnum):
 
     PNG = "png"
     JPEG = "jpeg"
+    RANDOM = "random"
 
 
 class AudioFormat(CaseInsensitiveStrEnum):
@@ -269,8 +248,8 @@ class MessageType(CaseInsensitiveStrEnum):
     PROFILE_PROGRESS = "profile_progress"
     """A message containing profile run progress."""
 
-    PROFILE_STATS = "profile_stats"
-    """A message containing profile run stats such as error rates, etc."""
+    PROCESSING_STATS = "processing_stats"
+    """A message containing processing stats from the records manager."""
 
     PROFILE_RESULTS = "profile_results"
     """A message containing profile run results."""
@@ -299,6 +278,14 @@ class MessageType(CaseInsensitiveStrEnum):
 class CommandType(CaseInsensitiveStrEnum):
     """List of commands that the SystemController can send to component services."""
 
+    SHUTDOWN = "shutdown"
+    """A command sent to shutdown a service. This will stop the service gracefully
+    no matter what state it is in."""
+
+    PROCESS_RECORDS = "process_records"
+    """A command sent to process records. This will process the records and return
+    the services to their pre-record processing state."""
+
     PROFILE_CONFIGURE = "profile_configure"
     """A command sent to configure a service in preparation for a profile run. This will
     override the current configuration."""
@@ -314,14 +301,6 @@ class CommandType(CaseInsensitiveStrEnum):
     PROFILE_CANCEL = "profile_cancel"
     """A command sent to cancel a profile run. This will stop the current profile run and
     process the partial results."""
-
-    SHUTDOWN = "shutdown"
-    """A command sent to shutdown a service. This will stop the service gracefully
-    no matter what state it is in."""
-
-    PROCESS_RECORDS = "process_records"
-    """A command sent to process records. This will process the records and return
-    the services to their pre-record processing state."""
 
 
 ################################################################################
@@ -357,25 +336,38 @@ class ServiceState(CaseInsensitiveStrEnum):
     """States a service can be in throughout its lifecycle."""
 
     UNKNOWN = "unknown"
+    """The service is in an unknown state."""
 
     INITIALIZING = "initializing"
     """The service is currently initializing. This is a temporary state that should be
+    followed by PENDING."""
+
+    PENDING = "pending"
+    """The service is pending configuration."""
+
+    CONFIGURING = "configuring"
+    """The service is currently configuring. This is a temporary state that should be
     followed by READY."""
 
     READY = "ready"
-    """The service has initialized and is ready to be configured or started."""
+    """The service has been configured and is ready to be started."""
 
     STARTING = "starting"
     """The service is starting. This is a temporary state that should be followed
     by RUNNING."""
 
     RUNNING = "running"
+    """The service is running."""
 
     STOPPING = "stopping"
     """The service is stopping. This is a temporary state that should be followed
     by STOPPED."""
 
     STOPPED = "stopped"
+    """The service has been stopped."""
+
+    SHUTDOWN = "shutdown"
+    """The service has been shutdown."""
 
     ERROR = "error"
     """The service is currently in an error state."""
@@ -395,7 +387,6 @@ class ServiceType(CaseInsensitiveStrEnum):
     RECORDS_MANAGER = "records_manager"
     INFERENCE_RESULT_PARSER = "inference_result_parser"
     WORKER_MANAGER = "worker_manager"
-    MULTI_WORKER_PROCESS = "multi_worker_process"
     WORKER = "worker"
     TEST = "test_service"
 
@@ -458,20 +449,6 @@ class SystemState(CaseInsensitiveStrEnum):
 
 
 ################################################################################
-# Inference Client Enums
-################################################################################
-
-
-class InferenceClientType(CaseInsensitiveStrEnum):
-    """Inference client types."""
-
-    GRPC = "grpc"
-    HTTP = "http"
-    OPENAI = "openai"
-    DYNAMO = "dynamo"
-
-
-################################################################################
 # Converter Enums
 ################################################################################
 
@@ -507,54 +484,6 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
 class MeasurementMode(CaseInsensitiveStrEnum):
     REQUEST_COUNT = "request_count"
     INTERVAL = "interval"
-
-
-class RequestPayloadType(CaseInsensitiveStrEnum):
-    """Request payload types.
-
-    These determine the format of the request payload to send to the model.
-    """
-
-    OPENAI_CHAT_COMPLETIONS = "openai_chat_completions"
-    OPENAI_COMPLETIONS = "openai_completions"
-    OPENAI_EMBEDDINGS = "openai_embeddings"
-    OPENAI_MULTIMODAL = "openai_multimodal"
-    OPENAI_RESPONSES = "openai_responses"
-
-    HUGGINGFACE_GENERATE = "huggingface_generate"
-    HUGGINGFACE_RANKINGS = "huggingface_rankings"
-
-    IMAGE_RETRIEVAL = "image_retrieval"
-    DYNAMIC_GRPC = "dynamic_grpc"
-    NVCLIP = "nvclip"
-
-    RANKINGS = "rankings"
-    TEMPLATE = "template"
-
-    TENSORRTLLM = "tensorrtllm"
-    VLLM = "vllm"
-
-
-class ResponsePayloadType(CaseInsensitiveStrEnum):
-    """Response payload types.
-
-    These determine the format of the response payload that the model will return.
-    """
-
-    HUGGINGFACE_GENERATE = "huggingface_generate"
-    HUGGINGFACE_RANKINGS = "huggingface_rankings"
-
-    OPENAI_CHAT_COMPLETIONS = "openai_chat_completions"
-    OPENAI_COMPLETIONS = "openai_completions"
-    OPENAI_EMBEDDINGS = "openai_embeddings"
-    OPENAI_MULTIMODAL = "openai_multimodal"
-    OPENAI_RESPONSES = "openai_responses"
-
-    RANKINGS = "rankings"
-    IMAGE_RETRIEVAL = "image_retrieval"
-
-    TRITON = "triton"
-    TRITON_GENERATE = "triton_generate"
 
 
 ####################################################################################
@@ -616,3 +545,118 @@ class SSEEventType(CaseInsensitiveStrEnum):
 
     ERROR = "error"
     LLM_METRICS = "llm_metrics"
+
+
+class ResponsePayloadType(CaseInsensitiveStrEnum):
+    """Response payload types.
+
+    These determine the format of the response payload that the model will return.
+
+    Equivalent to `output_format` from `genai-perf`.
+    """
+
+    OPENAI_CHAT_COMPLETIONS = "openai_chat_completions"
+    OPENAI_COMPLETIONS = "openai_completions"
+    OPENAI_EMBEDDINGS = "openai_embeddings"
+    OPENAI_MULTIMODAL = "openai_multimodal"
+    OPENAI_RESPONSES = "openai_responses"
+
+    HUGGINGFACE_GENERATE = "huggingface_generate"
+
+    RANKINGS = "rankings"
+
+    IMAGE_RETRIEVAL = "image_retrieval"
+
+    @classmethod
+    def from_endpoint_type(cls, endpoint_type: "EndpointType") -> "ResponsePayloadType":
+        """Get the response payload type for the endpoint type."""
+        endpoint_to_payload_map = {
+            EndpointType.OPENAI_CHAT_COMPLETIONS: ResponsePayloadType.OPENAI_CHAT_COMPLETIONS,
+            EndpointType.OPENAI_MULTIMODAL: ResponsePayloadType.OPENAI_CHAT_COMPLETIONS,
+            EndpointType.OPENAI_COMPLETIONS: ResponsePayloadType.OPENAI_COMPLETIONS,
+            EndpointType.OPENAI_EMBEDDINGS: ResponsePayloadType.OPENAI_EMBEDDINGS,
+            EndpointType.OPENAI_RESPONSES: ResponsePayloadType.OPENAI_RESPONSES,
+            EndpointType.HUGGINGFACE_GENERATE: ResponsePayloadType.HUGGINGFACE_GENERATE,
+            EndpointType.RANKINGS: ResponsePayloadType.RANKINGS,
+            EndpointType.IMAGE_RETRIEVAL: ResponsePayloadType.IMAGE_RETRIEVAL,
+        }
+
+        if endpoint_type not in endpoint_to_payload_map:
+            raise NotImplementedError(
+                f"Payload type not implemented for {endpoint_type}"
+            )
+
+        return endpoint_to_payload_map[endpoint_type]
+
+
+class EndpointType(CaseInsensitiveStrEnum):
+    """Endpoint types.
+
+    These determine the format of request payload to send to the model.
+
+    Similar to `endpoint_type_map` and `OutputFormat` from `genai-perf`.
+    """
+
+    OPENAI_CHAT_COMPLETIONS = "chat"
+    OPENAI_COMPLETIONS = "completions"
+    OPENAI_EMBEDDINGS = "embeddings"
+    OPENAI_MULTIMODAL = "multimodal"
+    OPENAI_RESPONSES = "responses"
+
+    HUGGINGFACE_GENERATE = "generate"
+
+    DYNAMIC_GRPC = "dynamic_grpc"
+    NVCLIP = "nvclip"
+    TEMPLATE = "template"
+
+    RANKINGS = "rankings"
+    IMAGE_RETRIEVAL = "image_retrieval"
+
+    TENSORRTLLM = "tensorrtllm"
+    TENSORRTLLM_ENGINE = "tensorrtllm_engine"
+
+    TRITON_GENERATE = "triton_generate"
+
+    DYNAMO_ENGINE = "dynamo_engine"
+
+    def endpoint_path(self) -> str | None:
+        """Get the endpoint path for the endpoint type."""
+        endpoint_path_map = {
+            # OpenAI endpoints
+            EndpointType.OPENAI_CHAT_COMPLETIONS: "/v1/chat/completions",
+            EndpointType.OPENAI_MULTIMODAL: "/v1/chat/completions",
+            EndpointType.OPENAI_COMPLETIONS: "/v1/completions",
+            EndpointType.OPENAI_EMBEDDINGS: "/v1/embeddings",
+            EndpointType.OPENAI_RESPONSES: "/v1/responses",
+            # Other
+            EndpointType.NVCLIP: "/v1/embeddings",
+            EndpointType.HUGGINGFACE_GENERATE: "/",  # HuggingFace TGI only exposes root endpoint
+            EndpointType.RANKINGS: "/v1/ranking",  # TODO: Not implemented yet
+            EndpointType.IMAGE_RETRIEVAL: "/v1/infer",  # TODO: Not implemented yet
+            EndpointType.TRITON_GENERATE: "/v2/models/{MODEL_NAME}/generate",  # TODO: Not implemented yet
+            # These endpoints do not have a specific path
+            EndpointType.DYNAMIC_GRPC: None,  # TODO: Not implemented yet
+            EndpointType.TEMPLATE: None,  # TODO: Not implemented yet
+            EndpointType.TENSORRTLLM: None,  # TODO: Not implemented yet
+            EndpointType.TENSORRTLLM_ENGINE: None,  # TODO: Not implemented yet
+            EndpointType.DYNAMO_ENGINE: None,  # TODO: Not implemented yet
+        }
+
+        if self not in endpoint_path_map:
+            raise NotImplementedError(f"Endpoint not implemented for {self}")
+
+        return endpoint_path_map[self]
+
+    def response_payload_type(self) -> ResponsePayloadType:
+        """Get the response payload type for the request payload type."""
+        return ResponsePayloadType.from_endpoint_type(self)
+
+
+class RequestRateMode(CaseInsensitiveStrEnum):
+    """The different ways the request rate scheduler should generate requests."""
+
+    FIXED = "fixed"
+    """Generate requests at a fixed rate. This is the default mode."""
+
+    # DYNAMIC = "dynamic"
+    # """Generate requests at a dynamic rate based on the average response times of the previous requests. TBD."""

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -24,14 +25,66 @@ def parse_str_or_list(input: Any) -> list[Any]:
         ValueError: If the input is neither a string nor a list.
     """
 
-    if type(input) is str:
+    if isinstance(input, str):
         output = [input.strip() for input in input.split(",")]
-    elif type(input) is list:
+    elif isinstance(input, list):
         output = input
     else:
         raise ValueError(f"User Config: {input} - must be a string or list")
 
     return output
+
+
+def parse_str_or_dict(input: Any | None) -> dict[str, Any] | None:
+    """
+    Parses the input to ensure it is a dictionary.
+
+    - If the input is a string:
+        - If the string starts with a '{', it is parsed as a JSON string.
+        - Otherwise, it splits the string by commas and then for each item, it splits the item by colons
+        into key and value, trims any whitespace.
+    - If the input is already a dictionary, it is returned as-is.
+    - If the input is a list, it is converted to a dictionary by splitting each string by colons
+    into key and value, trims any whitespace.
+    - Otherwise, a ValueError is raised.
+
+    Args:
+        input (Any): The input to be parsed. Expected to be a string, list, or dictionary.
+    Returns:
+        dict[str, Any]: A dictionary derived from the input.
+    Raises:
+        ValueError: If the input is neither a string, list, nor dictionary, or if the parsing fails.
+    """
+
+    if input is None:
+        return None
+
+    if isinstance(input, dict):
+        return input
+
+    if isinstance(input, list):
+        return {
+            key.strip(): value.strip()
+            for item in input
+            for key, value in [item.split(":")]
+        }
+
+    if isinstance(input, str):
+        if input.startswith("{"):
+            try:
+                return json.loads(input)
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"User Config: {input} - must be a valid JSON string"
+                ) from e
+        else:
+            return {
+                key.strip(): value.strip()
+                for item in input.split(",")
+                for key, value in [item.split(":")]
+            }
+
+    raise ValueError(f"User Config: {input} - must be a valid string, list, or dict")
 
 
 def print_str_or_list(input: Any) -> str:
@@ -101,23 +154,19 @@ def parse_goodput(goodputs: dict[str, Any]) -> dict[str, float]:
 def parse_file(value: str | None) -> Path | None:
     """
     Parses the given string value and returns a Path object if the value represents
-    a valid file, directory, or a specific synthetic/payload format. Returns None if
-    the input value is empty.
+    a valid file or directory. Returns None if the input value is empty.
     Args:
         value (str): The string value to parse.
     Returns:
         Optional[Path]: A Path object if the value is valid, or None if the value is empty.
     Raises:
-        ValueError: If the value is not a valid file or directory and does not match
-                    the synthetic/payload format.
+        ValueError: If the value is not a valid file or directory.
     """
 
     if not value:
         return None
     elif not isinstance(value, str):
         raise ValueError(f"Expected a string, but got {type(value).__name__}")
-    elif value.startswith("synthetic:") or value.startswith("payload"):
-        return Path(value)
     else:
         path = Path(value)
         if path.is_file() or path.is_dir():

@@ -1,6 +1,5 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
-
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 from enum import Enum
 
 from aiperf.common.config import EndPointConfig, EndPointDefaults
@@ -40,9 +39,9 @@ def test_endpoint_config_custom_values():
 
     custom_values = {
         "model_selection_strategy": "round_robin",
-        "request_payload_type": "vllm",
+        "request_payload_type": "openai_chat_completions",
         "custom": "custom_endpoint",
-        "type": "custom_type",
+        "type": "llm",
         "streaming": True,
         "server_metrics_urls": ["http://custom-metrics-url"],
         "url": "http://custom-url",
@@ -69,7 +68,7 @@ def test_server_metrics_urls_validator():
     - Ensure that `server_metrics_urls` is correctly set as a list in both cases.
     """
 
-    config = EndPointConfig(server_metrics_urls="http://metrics-url")
+    config = EndPointConfig(server_metrics_urls=["http://metrics-url"])
     assert config.server_metrics_urls == ["http://metrics-url"]
 
     config = EndPointConfig(
