@@ -40,7 +40,7 @@ class ServiceConfig(BaseSettings):
     service_run_type: Annotated[
         ServiceRunType,
         Field(
-            description="Type of service run (MULTIPROCESSING, KUBERNETES)",
+            description="Type of service run (process, k8s)",
         ),
         cyclopts.Parameter(
             name=("--run-type"),
@@ -62,9 +62,10 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Communication configuration",
         ),
-        cyclopts.Parameter(
-            name=("--comm-config"),
-        ),
+        # TODO: Figure out if we need to be able to set this from the command line.
+        # cyclopts.Parameter(
+        #     name=("--comm-config"),
+        # ),
     ] = ServiceDefaults.COMM_CONFIG
 
     heartbeat_timeout: Annotated[
@@ -158,3 +159,14 @@ class ServiceConfig(BaseSettings):
             name=("--enable-uvloop"),
         ),
     ] = ServiceDefaults.ENABLE_UVLOOP
+
+    # TODO: Potentially auto-scale this in the future.
+    result_parser_service_count: Annotated[
+        int,
+        Field(
+            description="Number of services to spawn for parsing inference results. The higher the request rate, the more services should be spawned.",
+        ),
+        cyclopts.Parameter(
+            name=("--result-parser-service-count"),
+        ),
+    ] = ServiceDefaults.RESULT_PARSER_SERVICE_COUNT
