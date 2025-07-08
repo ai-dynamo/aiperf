@@ -185,11 +185,35 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         - Wait for the stop event to be set
         - Shuts down the service when the stop event is set
         """
-        # Wait forever for the stop event to be set
-        await self.stop_event.wait()
+        while not self.stop_event.is_set():
+            try:
+                self.logger.debug(
+                    "Service %s waiting for stop event", self.service_type
+                )
+                # Wait forever for the stop event to be set
+                await self.stop_event.wait()
+
+            except asyncio.CancelledError:
+                self.logger.debug(
+                    "Service %s received CancelledError, exiting",
+                    self.service_type,
+                )
+                break
+
+            except Exception:
+                self.logger.exception(
+                    "Caught unexpected exception in service %s execution",
+                    self.service_type,
+                )
 
         # Shutdown the service
-        await self.stop()
+        try:
+            await self.stop()
+        except Exception:
+            self.logger.exception(
+                "Caught unexpected exception in service %s stop",
+                self.service_type,
+            )
 
     async def start(self) -> None:
         """Start the service and its components. This method implements

@@ -19,7 +19,7 @@ from aiperf.common.enums import (
     NotificationType,
     ServiceType,
 )
-from aiperf.common.exceptions import AIPerfError
+from aiperf.common.exceptions import InitializationError
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_cleanup,
@@ -92,7 +92,7 @@ class DatasetManager(BaseComponentService):
         self.logger.info("Initializing dataset manager %s", self.service_id)
 
         if self.comms is None:
-            raise AIPerfError("Communication is not initialized")
+            raise InitializationError("Communication is not initialized")
 
         self.dealer_router_client.register_request_handler(
             service_id=self.service_id,
