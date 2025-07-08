@@ -47,7 +47,7 @@ class InputDefaults:
     BATCH_SIZE = 1
     EXTRA = {}
     GOODPUT = {}
-    HEADER = {}
+    HEADERS = {}
     FILE = None
     NUM_DATASET_ENTRIES = 100
     RANDOM_SEED = None

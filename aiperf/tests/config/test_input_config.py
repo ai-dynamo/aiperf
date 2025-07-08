@@ -28,7 +28,7 @@ def test_input_config_defaults():
     assert config.batch_size == InputDefaults.BATCH_SIZE
     assert config.extra == InputDefaults.EXTRA
     assert config.goodput == InputDefaults.GOODPUT
-    assert config.headers == InputDefaults.HEADER
+    assert config.headers == InputDefaults.HEADERS
     assert config.file == InputDefaults.FILE
     assert config.num_dataset_entries == InputDefaults.NUM_DATASET_ENTRIES
     assert config.random_seed == InputDefaults.RANDOM_SEED

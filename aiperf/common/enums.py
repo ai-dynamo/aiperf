@@ -661,5 +661,5 @@ class RequestRateMode(CaseInsensitiveStrEnum):
     FIXED = "fixed"
     """Generate requests at a fixed rate. This is the default mode."""
 
-    DYNAMIC = "dynamic"
-    """Generate requests at a dynamic rate based on the average response times of the previous requests. TBD."""
+    # DYNAMIC = "dynamic"
+    # """Generate requests at a dynamic rate based on the average response times of the previous requests. TBD."""

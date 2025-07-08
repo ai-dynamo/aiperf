@@ -74,7 +74,7 @@ class InputConfig(BaseConfig):
         cyclopts.Parameter(
             name=("--header"),
         ),
-    ] = InputDefaults.HEADER
+    ] = InputDefaults.HEADERS
 
     file: Annotated[
         Any,

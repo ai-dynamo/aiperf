@@ -41,6 +41,8 @@ from aiperf.common.config.loader import (
     load_service_config,
     load_user_config,
 )
+from aiperf.common.config.loadgen_config import LoadGeneratorConfig
+from aiperf.common.config.measurement_config import MeasurementConfig
 from aiperf.common.config.output import (
     OutputConfig,
 )
@@ -67,6 +69,8 @@ __all__ = [
     "BaseZMQCommunicationConfig",
     "EndPointConfig",
     "EndPointDefaults",
+    "LoadGeneratorConfig",
+    "MeasurementConfig",
     "ImageConfig",
     "ImageDefaults",
     "ImageHeightConfig",
