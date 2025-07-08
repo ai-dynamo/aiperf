@@ -2,13 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from multiprocessing import Process
+from multiprocessing.context import ForkProcess, SpawnProcess
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig
-from aiperf.common.constants import GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS
+from aiperf.common.constants import (
+    GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS,
+    TASK_CANCEL_TIMEOUT_SHORT,
+)
 from aiperf.common.enums import ServiceRegistrationStatus, ServiceType
+from aiperf.common.exceptions import ServiceError
 from aiperf.common.factories import ServiceFactory
 from aiperf.services.service_manager.base import BaseServiceManager
 
@@ -18,7 +23,7 @@ class MultiProcessRunInfo(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    process: Process | None = Field(default=None)
+    process: Process | SpawnProcess | ForkProcess | None = Field(default=None)
     service_type: ServiceType = Field(
         ...,
         description="Type of service running in the process",
@@ -32,43 +37,56 @@ class MultiProcessServiceManager(BaseServiceManager):
 
     def __init__(
         self,
-        required_service_types: list[ServiceType],
+        required_service_types: list[tuple[ServiceType, int]],
         config: ServiceConfig,
     ):
         super().__init__(required_service_types, config)
         self.multi_process_info: list[MultiProcessRunInfo] = []
 
+    async def _run_services(self, service_types: list[tuple[ServiceType, int]]) -> None:
+        """Run a list of services as multiprocessing processes."""
+        # Create and start all service processes
+        for service_type in service_types:
+            service_class = ServiceFactory.get_class_from_type(service_type[0])
+
+            for _ in range(service_type[1]):
+                process = Process(
+                    target=bootstrap_and_run_service,
+                    name=f"{service_type[0]}_process",
+                    args=(service_class, self.config),
+                    daemon=True,
+                )
+                if service_type[0] in [
+                    ServiceType.WORKER_MANAGER,
+                    ServiceType.RECORDS_MANAGER,
+                ]:
+                    process.daemon = False  # Worker manager cannot be a daemon because it needs to be able to spawn worker processes
+
+                process.start()
+
+                self.logger.debug(
+                    "Service %s started as process (pid: %d)",
+                    service_type[0],
+                    process.pid,
+                )
+
+                self.multi_process_info.append(
+                    MultiProcessRunInfo(process=process, service_type=service_type[0])
+                )
+
+            # TODO: HACK: This is a hack
+            # Sleep to allow the service to register
+            await asyncio.sleep(0.01)
+
     async def run_all_services(self) -> None:
         """Start all required services as multiprocessing processes."""
         self.logger.debug("Starting all required services as multiprocessing processes")
 
-        # Create and start all service processes
-        for service_type in self.required_service_types:
-            service_class = ServiceFactory.get_class_from_type(service_type)
-
-            process = Process(
-                target=bootstrap_and_run_service,
-                name=f"{service_type}_process",
-                args=(service_class, self.config),
-                daemon=True,
-            )
-            if service_type == ServiceType.WORKER_MANAGER:
-                process.daemon = False  # Worker manager cannot be a daemon because it needs to be able to spawn worker processes
-
-            process.start()
-
-            self.logger.debug(
-                "Service %s started as process (pid: %d)",
-                service_type,
-                process.pid,
-            )
-
-            self.multi_process_info.append(
-                MultiProcessRunInfo(process=process, service_type=service_type)
-            )
-
-            # Sleep to allow the service to register
-            await asyncio.sleep(0.01)
+        try:
+            await self._run_services(self.required_service_types)
+        except Exception as e:
+            self.logger.error("Error starting services: %s", e)
+            raise e
 
     async def shutdown_all_services(self) -> None:
         """Stop all required services as multiprocessing processes."""
@@ -113,6 +131,8 @@ class MultiProcessServiceManager(BaseServiceManager):
         # TODO: Can this be done better by using asyncio.Event()?
 
         async def _wait_for_registration():
+            required_types_set = set(typ for typ, _ in required_types)
+
             while not stop_event.is_set():
                 # Get all registered service types from the id map
                 registered_types = {
@@ -123,7 +143,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                 }
 
                 # Check if all required types are registered
-                if required_types.issubset(registered_types):
+                if required_types_set.issubset(registered_types):
                     return
 
                 # Wait a bit before checking again
@@ -131,19 +151,26 @@ class MultiProcessServiceManager(BaseServiceManager):
 
         try:
             await asyncio.wait_for(_wait_for_registration(), timeout=timeout_seconds)
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as e:
             # Log which services didn't register in time
-            registered_types = {
+            registered_types_set = set(
                 service_info.service_type
                 for service_info in self.service_id_map.values()
                 if service_info.registration_status
                 == ServiceRegistrationStatus.REGISTERED
-            }
+            )
 
-            for service_type in required_types - registered_types:
-                self.logger.warning(
-                    f"Service {service_type} failed to register within timeout"
-                )
+            for service_type, _ in required_types:
+                if service_type not in registered_types_set:
+                    self.logger.error(
+                        f"Service {service_type} failed to register within timeout"
+                    )
+
+            raise ServiceError(
+                "Some services failed to register within timeout",
+                ServiceType.SYSTEM_CONTROLLER,
+                "system_controller",  # TODO: Get the service ID from the system controller
+            ) from e
 
     async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:
         """Wait for a process to terminate with timeout handling."""
@@ -154,7 +181,7 @@ class MultiProcessServiceManager(BaseServiceManager):
             info.process.terminate()
             await asyncio.wait_for(
                 asyncio.to_thread(
-                    info.process.join, timeout=1.0
+                    info.process.join, timeout=TASK_CANCEL_TIMEOUT_SHORT
                 ),  # Add timeout to join
                 timeout=GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS,  # Overall timeout
             )

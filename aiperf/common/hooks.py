@@ -23,8 +23,8 @@ import contextlib
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
-from enum import Enum
 
+from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.exceptions import AIPerfError, AIPerfMultiError, UnsupportedHookError
 
 ################################################################################
@@ -32,7 +32,7 @@ from aiperf.common.exceptions import AIPerfError, AIPerfMultiError, UnsupportedH
 ################################################################################
 
 
-class AIPerfHook(Enum):
+class AIPerfHook(CaseInsensitiveStrEnum):
     """Enum for the various AIPerf hooks.
 
     Note: If you add a new hook, you must also add it to the @supports_hooks
@@ -42,17 +42,26 @@ class AIPerfHook(Enum):
     ON_INIT = "__aiperf_on_init__"
     ON_RUN = "__aiperf_on_run__"
     ON_CONFIGURE = "__aiperf_on_configure__"
+    ON_PROFILE_CONFIGURE = "__aiperf_on_profile_configure__"
+    ON_PROFILE_START = "__aiperf_on_profile_start__"
+    ON_PROFILE_STOP = "__aiperf_on_profile_stop__"
     ON_START = "__aiperf_on_start__"
     ON_STOP = "__aiperf_on_stop__"
     ON_CLEANUP = "__aiperf_on_cleanup__"
 
     ON_SET_STATE = "__aiperf_on_set_state__"
 
+
+class AIPerfTaskHook(CaseInsensitiveStrEnum):
+    """Enum for the various AIPerf task hooks."""
+
     AIPERF_TASK = "__aiperf_task__"
+    AIPERF_AUTO_TASK = "__aiperf_auto_task__"
+    AIPERF_AUTO_TASK_INTERVAL = "__aiperf_auto_task_interval__"
 
 
-HookType = AIPerfHook | str
-"""Type alias for valid hook types. This is a union of the AIPerfHook enum and any user-defined custom strings."""
+HookType = AIPerfHook | AIPerfTaskHook | str
+"""Type alias for valid hook types. This is a union of the AIPerfHook enum, the AIPerfTaskHook enum, and any user-defined custom strings."""
 
 
 AIPERF_HOOK_TYPE = "__aiperf_hook_type__"
@@ -274,7 +283,7 @@ def aiperf_task(func: Callable) -> Callable:
     """Decorator to indicate that the function is a task function. It will be started
     and stopped automatically by the base class lifecycle.
     See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.AIPERF_TASK, func)
+    return hook_decorator(AIPerfTaskHook.AIPERF_TASK, func)
 
 
 ################################################################################
@@ -315,6 +324,8 @@ class HooksMixin:
                     # Register the function with the hook type
                     self.register_hook(hook_type, bound_method)
 
+        super().__init__()
+
     def register_hook(self, hook_type: HookType, func: Callable):
         """Register a hook function for a given hook type.
 
@@ -337,7 +348,7 @@ class HooksMixin:
         return self._hook_system.get_hooks(hook_type)
 
 
-@supports_hooks(AIPerfHook.AIPERF_TASK, AIPerfHook.ON_INIT, AIPerfHook.ON_STOP)
+@supports_hooks(AIPerfTaskHook.AIPERF_TASK, AIPerfHook.ON_INIT, AIPerfHook.ON_STOP)
 class AIPerfTaskMixin(HooksMixin):
     """Mixin to add task support to a class. It abstracts away the details of the
     :class:`AIPerfTask` and provides a simple interface for registering and running tasks.
@@ -355,7 +366,7 @@ class AIPerfTaskMixin(HooksMixin):
     @on_init
     async def _start_tasks(self):
         """Start all the registered tasks in the background."""
-        for hook in self.get_hooks(AIPerfHook.AIPERF_TASK):
+        for hook in self.get_hooks(AIPerfTaskHook.AIPERF_TASK):
             if inspect.iscoroutinefunction(hook):
                 task = asyncio.create_task(hook())
             else:

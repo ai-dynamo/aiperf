@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
 
-from aiperf.common.comms.client_enums import ClientType
 from aiperf.common.enums import ServiceState, ServiceType
 from aiperf.common.messages import Message
 
@@ -14,16 +13,6 @@ class BaseServiceInterface(ABC):
     methods are required to be implemented by derived classes, while others are
     meant to be implemented by the base class.
     """
-
-    @property
-    @abstractmethod
-    def required_clients(self) -> list[ClientType]:
-        """The communication clients required by the service. If nothing is returned,
-        the service will be responsible for creating its own clients.
-
-        This property should be implemented by derived classes to specify the
-        communication clients that the service requires."""
-        pass
 
     @property
     @abstractmethod
