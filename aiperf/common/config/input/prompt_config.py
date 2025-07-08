@@ -141,8 +141,8 @@ class PromptConfig(BaseConfig):
     batch_size: Annotated[
         int,
         Field(
-            description="The batch size of text requests GenAI-Perf should send.\
-            \nThis is currently supported with the embeddings and rankings endpoint types",
+            description="The batch size of text requests AIPerf should send.\n"
+            "This is currently supported with the embeddings and rankings endpoint types",
         ),
         cyclopts.Parameter(
             name=("--prompt-batch-size"),

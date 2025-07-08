@@ -78,7 +78,7 @@ class ImageConfig(BaseConfig):
         int,
         Field(
             ge=0,
-            description="The image batch size of the requests AI-Perf should send.\n"
+            description="The image batch size of the requests AIPerf should send.\n"
             "This is currently supported with the image retrieval endpoint type.",
         ),
         cyclopts.Parameter(

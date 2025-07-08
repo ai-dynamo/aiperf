@@ -49,7 +49,7 @@ class AudioConfig(BaseConfig):
         int,
         Field(
             ge=0,
-            description="The batch size of audio requests GenAI-Perf should send.\n"
+            description="The batch size of audio requests AIPerf should send.\n"
             "This is currently supported with the OpenAI `multimodal` endpoint type",
         ),
         cyclopts.Parameter(
@@ -85,8 +85,8 @@ class AudioConfig(BaseConfig):
         list[float],
         Field(
             min_length=1,
-            description="A list of audio sample rates to randomly select from in kHz.\
-            \nCommon sample rates are 16, 44.1, 48, 96, etc.",
+            description="A list of audio sample rates to randomly select from in kHz.\n"
+            "Common sample rates are 16, 44.1, 48, 96, etc.",
         ),
         BeforeValidator(parse_str_or_list_of_positive_values),
         cyclopts.Parameter(

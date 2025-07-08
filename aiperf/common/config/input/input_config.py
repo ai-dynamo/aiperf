@@ -25,16 +25,16 @@ class InputConfig(BaseConfig):
     A configuration class for defining input related settings.
     """
 
-    # batch_size: Annotated[
-    #     int,
-    #     Field(
-    #         description="The batch size of text requests AIPerf should send.\n"
-    #         "This is currently supported with the embeddings and rankings endpoint types",
-    #     ),
-    #     cyclopts.Parameter(
-    #         name=("--batch-size"),
-    #     ),
-    # ] = InputDefaults.BATCH_SIZE
+    batch_size: Annotated[
+        int,
+        Field(
+            description="The batch size of text requests AIPerf should send.\n"
+            "This is currently supported with the embeddings and rankings endpoint types",
+        ),
+        cyclopts.Parameter(
+            name=("--batch-size"),
+        ),
+    ] = InputDefaults.BATCH_SIZE
 
     extra: Annotated[
         dict[str, str] | None,
@@ -51,11 +51,11 @@ class InputConfig(BaseConfig):
     goodput: Annotated[
         dict[str, Any],
         Field(
-            description="An option to provide constraints in order to compute goodput.\
-            \nSpecify goodput constraints as 'key:value' pairs,\
-            \nwhere the key is a valid metric name, and the value is a number representing\
-            \neither milliseconds or a throughput value per second.\
-            \nFor example: request_latency:300,output_token_throughput_per_user:600",
+            description="An option to provide constraints in order to compute goodput.\n"
+            "Specify goodput constraints as 'key:value' pairs,\n"
+            "where the key is a valid metric name, and the value is a number representing\n"
+            "either milliseconds or a throughput value per second.\n"
+            "For example: request_latency:300,output_token_throughput_per_user:600",
         ),
         cyclopts.Parameter(
             name=("--goodput"),
@@ -78,9 +78,9 @@ class InputConfig(BaseConfig):
     file: Annotated[
         Any,
         Field(
-            description="The file or directory path that contains the dataset to use for profiling.\
-            \nThis parameter is used in conjunction with the `custom_dataset_type` parameter\
-            \nto support different types of user provided datasets.",
+            description="The file or directory path that contains the dataset to use for profiling.\n"
+            "This parameter is used in conjunction with the `custom_dataset_type` parameter\n"
+            "to support different types of user provided datasets.",
         ),
         BeforeValidator(parse_file),
         cyclopts.Parameter(
@@ -91,33 +91,21 @@ class InputConfig(BaseConfig):
     custom_dataset_type: Annotated[
         CustomDatasetType,
         Field(
-            description="The type of custom dataset to use.\
-            \nThis parameter is used in conjunction with the --file parameter.",
+            description="The type of custom dataset to use.\n"
+            "This parameter is used in conjunction with the --file parameter.",
         ),
         cyclopts.Parameter(
             name=("--custom-dataset-type"),
         ),
     ] = InputDefaults.CUSTOM_DATASET_TYPE
 
-    num_dataset_entries: Annotated[
-        int,
-        Field(
-            ge=1,
-            description="The number of unique payloads to sample from.\n"
-            "These will be reused until benchmarking is complete.",
-        ),
-        cyclopts.Parameter(
-            name=("--num-dataset-entries"),
-        ),
-    ] = InputDefaults.NUM_DATASET_ENTRIES
-
     random_seed: Annotated[
         int | None,
         Field(
             default=None,
-            description="The seed used to generate random values.\
-            \nSet to some value to make the synthetic data generation deterministic.\
-            \nIt will use system default if not provided.",
+            description="The seed used to generate random values.\n"
+            "Set to some value to make the synthetic data generation deterministic.\n"
+            "It will use system default if not provided.",
         ),
         cyclopts.Parameter(
             name=("--random-seed"),
