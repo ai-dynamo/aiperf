@@ -266,41 +266,6 @@ class CommandResponseMessage(BaseServiceMessage):
     )
 
 
-class CreditDropMessage(BaseServiceMessage):
-    """Message indicating that a credit has been dropped.
-    This message is sent by the timing manager to workers to indicate that credit(s)
-    have been dropped.
-    """
-
-    message_type: Literal[MessageType.CREDIT_DROP] = MessageType.CREDIT_DROP
-
-    amount: int = Field(
-        ...,
-        description="Amount of credits that have been dropped",
-    )
-    conversation_id: str | None = Field(
-        default=None, description="The ID of the conversation, if applicable."
-    )
-    credit_drop_ns: int | None = Field(
-        default=None,
-        description="Timestamp of the credit drop, if applicable. None means send ASAP.",
-    )
-
-
-class CreditReturnMessage(BaseServiceMessage):
-    """Message indicating that a credit has been returned.
-    This message is sent by a worker to the timing manager to indicate that work has
-    been completed.
-    """
-
-    message_type: Literal[MessageType.CREDIT_RETURN] = MessageType.CREDIT_RETURN
-
-    amount: int = Field(
-        ...,
-        description="Amount of credits being returned",
-    )
-
-
 class ErrorMessage(Message):
     """Message containing error data."""
 
@@ -331,16 +296,6 @@ class BaseServiceErrorMessage(BaseServiceMessage):
     message_type: Literal[MessageType.SERVICE_ERROR] = MessageType.SERVICE_ERROR
 
     error: ErrorDetails = Field(..., description="Error information")
-
-
-class CreditsCompleteMessage(BaseServiceMessage):
-    """Credits complete message sent to System controller to signify all requests have completed."""
-
-    message_type: Literal[MessageType.CREDITS_COMPLETE] = MessageType.CREDITS_COMPLETE
-    cancelled: bool = Field(
-        default=False,
-        description="Whether the profile run was cancelled",
-    )
 
 
 class ConversationRequestMessage(BaseServiceMessage):
