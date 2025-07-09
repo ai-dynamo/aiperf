@@ -12,6 +12,7 @@ version = "0.1.0"
 description = "AIPerf is a package for performance testing of AI models"
 authors = []
 dependencies = [
+  "aiofiles~=24.1.0",
   "aiohttp==3.12.13",
   "numpy==2.2.6",
   "openai[aiohttp]~=1.92.2",
