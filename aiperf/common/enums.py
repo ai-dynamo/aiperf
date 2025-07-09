@@ -269,6 +269,18 @@ class MessageType(CaseInsensitiveStrEnum):
     WORKER_HEALTH = "worker_health"
     """A message sent by a worker to the worker manager to report its health."""
 
+    CREDIT_PHASE_START = "credit_phase_start"
+    """A message sent by the TimingManager to report that a phase has started."""
+
+    CREDIT_PHASE_COMPLETE = "credit_phase_complete"
+    """A message sent by the TimingManager to report that a phase has completed."""
+
+    CREDIT_PHASE_PROGRESS = "credit_phase_progress"
+    """A message sent by the TimingManager to report the progress of a credit phase."""
+
+    CREDIT_PHASE_SENDING_COMPLETE = "credit_phase_sending_complete"
+    """A message sent by the TimingManager to report that a phase has completed sending (but not necessarily all credits have been returned)."""
+
 
 ################################################################################
 # Command Enums
