@@ -660,3 +660,11 @@ class RequestRateMode(CaseInsensitiveStrEnum):
 
     # DYNAMIC = "dynamic"
     # """Generate requests at a dynamic rate based on the average response times of the previous requests. TBD."""
+
+
+class CreditPhaseType(CaseInsensitiveStrEnum):
+    """The type of credit phase."""
+
+    UNKNOWN = "unknown"
+    WARMUP = "warmup"
+    PROFILING = "profiling"

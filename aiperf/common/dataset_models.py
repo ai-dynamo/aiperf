@@ -1,11 +1,16 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from aiperf.common.pydantic_utils import AIPerfBaseModel, exclude_if_none
 
 
-class Text(BaseModel):
+@exclude_if_none(["role"])
+class Text(AIPerfBaseModel):
     name: str = Field(default="text", description="Name of the text field.")
+
+    role: str | None = Field(default=None, description="Role of the text field.")
 
     content: list[str] = Field(
         default=[],
@@ -13,7 +18,7 @@ class Text(BaseModel):
     )
 
 
-class Image(BaseModel):
+class Image(AIPerfBaseModel):
     name: str = Field(default="image_url", description="Name of the image field.")
 
     content: list[str] = Field(
@@ -22,7 +27,7 @@ class Image(BaseModel):
     )
 
 
-class Audio(BaseModel):
+class Audio(AIPerfBaseModel):
     name: str = Field(default="input_audio", description="Name of the audio field.")
 
     content: list[str] = Field(
@@ -31,7 +36,7 @@ class Audio(BaseModel):
     )
 
 
-class Turn(BaseModel):
+class Turn(AIPerfBaseModel):
     """A dataset representation of a single turn within a conversation.
 
     A turn is a single interaction between a user and an AI assistant,
@@ -57,7 +62,7 @@ class Turn(BaseModel):
     )
 
 
-class Conversation(BaseModel):
+class Conversation(AIPerfBaseModel):
     """A dataset representation of a full conversation.
 
     A conversation is a sequence of turns between a user and an endpoint,

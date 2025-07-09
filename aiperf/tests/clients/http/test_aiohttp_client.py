@@ -12,8 +12,15 @@ import pytest
 from aiperf.clients.http.aiohttp_client import (
     AioHttpClientMixin,
 )
+from aiperf.clients.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
+from aiperf.common.config import UserConfig
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 from aiperf.common.record_models import (
-    GenericHTTPClientConfig,
     SSEMessage,
 )
 from aiperf.tests.clients.http.conftest import (
@@ -34,9 +41,7 @@ from aiperf.tests.clients.http.conftest import (
 class TestAioHttpClientMixin:
     """Test suite for AioHttpClientMixin class."""
 
-    def test_init_creates_connector_and_timeout(
-        self, http_client_config: GenericHTTPClientConfig
-    ) -> None:
+    def test_init_creates_connector_and_timeout(self, user_config: UserConfig) -> None:
         """Test that initialization creates TCP connector and timeout configurations."""
         with patch(
             "aiperf.clients.http.aiohttp_client.create_tcp_connector"
@@ -44,9 +49,13 @@ class TestAioHttpClientMixin:
             mock_connector = Mock()
             mock_create.return_value = mock_connector
 
-            client = AioHttpClientMixin(http_client_config)
+            client = AioHttpClientMixin(
+                model_endpoint=ModelEndpointInfo.from_user_config(user_config)
+            )
 
-            assert client.client_config == http_client_config
+            assert client.model_endpoint == ModelEndpointInfo.from_user_config(
+                user_config
+            )
             assert client.tcp_connector == mock_connector
             assert isinstance(client.timeout, aiohttp.ClientTimeout)
             assert client.timeout.total == 30.0
@@ -64,10 +73,21 @@ class TestAioHttpClientMixin:
     )
     def test_timeout_conversion(self, timeout_ms: int, expected_seconds: float) -> None:
         """Test that timeout milliseconds are correctly converted to seconds."""
-        config = GenericHTTPClientConfig(url="http://test.com", timeout_ms=timeout_ms)
 
         with patch("aiperf.clients.http.aiohttp_client.create_tcp_connector"):
-            client = AioHttpClientMixin(config)
+            client = AioHttpClientMixin(
+                model_endpoint=ModelEndpointInfo(
+                    endpoint=EndpointInfo(
+                        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+                        base_url="http://test.com",
+                        timeout=timeout_ms / 1000,
+                    ),
+                    models=ModelListInfo(
+                        models=[ModelInfo(name="gpt-4")],
+                        model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+                    ),
+                )
+            )
 
             assert client.timeout.total == expected_seconds
             assert client.timeout.connect == expected_seconds
@@ -83,7 +103,7 @@ class TestAioHttpClientMixin:
         mock_connector.close = AsyncMock()
         aiohttp_client.tcp_connector = mock_connector
 
-        await aiohttp_client.cleanup()
+        await aiohttp_client.close()
 
         mock_connector.close.assert_called_once()
         assert aiohttp_client.tcp_connector is None
@@ -95,7 +115,7 @@ class TestAioHttpClientMixin:
         aiohttp_client.tcp_connector = None
 
         # Should not raise an exception
-        await aiohttp_client.cleanup()
+        await aiohttp_client.close()
 
         assert aiohttp_client.tcp_connector is None
 
@@ -234,21 +254,6 @@ class TestAioHttpClientMixin:
             record = await aiohttp_client.post_request("http://test.com", "{}", {})
 
             assert_error_request_record(record, expected_error_type=expected_type)
-
-    @pytest.mark.asyncio
-    async def test_delayed_request_flag(
-        self, aiohttp_client: AioHttpClientMixin, mock_aiohttp_response: Mock
-    ) -> None:
-        """Test that delayed flag is properly set in request record."""
-        with patch("aiohttp.ClientSession") as mock_session_class:
-            setup_mock_session(mock_session_class, mock_aiohttp_response, ["post"])
-
-            record = await aiohttp_client.post_request(
-                "http://test.com", "{}", {}, delayed=True
-            )
-
-            assert_successful_request_record(record)
-            assert record.delayed is True
 
     @pytest.mark.asyncio
     async def test_kwargs_passed_to_session_post(
