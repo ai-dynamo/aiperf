@@ -11,6 +11,7 @@ from aiperf.common.comms.base import (
     RequestClientProtocol,
 )
 from aiperf.common.config import ServiceConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.credit_models import (
     CreditDropMessage,
     CreditPhaseCompleteMessage,
@@ -42,9 +43,13 @@ from aiperf.common.messages import (
 from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.services.timing_manager.concurrency_strategy import ConcurrencyStrategy
-from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
+from aiperf.services.timing_manager.config import (
+    TimingManagerConfig,
+    TimingMode,
+)
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
 from aiperf.services.timing_manager.fixed_schedule_strategy import FixedScheduleStrategy
+from aiperf.services.timing_manager.request_rate_strategy import RequestRateStrategy
 
 
 @ServiceFactory.register(ServiceType.TIMING_MANAGER)
@@ -55,9 +60,16 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
     """
 
     def __init__(
-        self, service_config: ServiceConfig, service_id: str | None = None
+        self,
+        service_config: ServiceConfig,
+        user_config: UserConfig | None,
+        service_id: str | None = None,
     ) -> None:
-        super().__init__(service_config=service_config, service_id=service_id)
+        super().__init__(
+            service_config=service_config,
+            user_config=user_config,
+            service_id=service_id,
+        )
         self.logger.debug("Initializing timing manager")
 
         self.dataset_request_client: RequestClientProtocol = (
@@ -74,6 +86,10 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
             bind=True,
         )
 
+        self.start_time_ns = time.time_ns()
+        self.config = TimingManagerConfig.from_user_config(self.user_config)
+        self._credit_issuing_strategy: CreditIssuingStrategy | None = None
+
     @property
     def service_type(self) -> ServiceType:
         """The type of service."""
@@ -83,6 +99,7 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
     async def _initialize(self) -> None:
         """Initialize timing manager-specific components."""
         self.logger.debug("Initializing timing manager")
+
         await self.credit_return_client.register_pull_callback(
             message_type=MessageType.CREDIT_RETURN,
             callback=self._on_credit_return,
@@ -93,11 +110,7 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
         """Configure the timing manager."""
         self.logger.debug("Configuring timing manager with message: %s", message)
 
-        # config = TimingManagerConfig(message.data)
-        config = TimingManagerConfig()
-        assert isinstance(config, TimingManagerConfig)
-
-        if config.timing_mode == TimingMode.FIXED_SCHEDULE:
+        if self.config.timing_mode == TimingMode.FIXED_SCHEDULE:
             # This will block until the dataset is ready and the timing response is received
             dataset_timing_response: DatasetTimingResponse = (
                 await self.dataset_request_client.request(
@@ -110,21 +123,27 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
                 "TM: Received dataset timing response: %s",
                 dataset_timing_response,
             )
-            # TODO: Pass dataset_timing_response to strategy
+            self.logger.info("TM: Using fixed schedule strategy")
             self._credit_issuing_strategy = FixedScheduleStrategy(
-                config, self._issue_credit_drop
+                config=self.config,
+                credit_manager=self,
+                schedule=dataset_timing_response.timing_data,
             )
-        elif config.timing_mode == TimingMode.CONCURRENCY:
+        elif self.config.timing_mode == TimingMode.CONCURRENCY:
+            self.logger.info("TM: Using concurrency strategy")
             self._credit_issuing_strategy = ConcurrencyStrategy(
-                config, self._issue_credit_drop
+                config=self.config,
+                credit_manager=self,
             )
-        elif config.timing_mode == TimingMode.RATE:
-            self._credit_issuing_strategy = RateStrategy(
-                config, self._issue_credit_drop
+        elif self.config.timing_mode == TimingMode.REQUEST_RATE:
+            self.logger.info("TM: Using request rate strategy")
+            self._credit_issuing_strategy = RequestRateStrategy(
+                config=self.config,
+                credit_manager=self,
             )
 
-        assert isinstance(self._credit_issuing_strategy, CreditIssuingStrategy)
-        await self._credit_issuing_strategy.initialize()
+        if not self._credit_issuing_strategy:
+            raise InvalidStateError("No credit issuing strategy configured")
 
     @on_start
     async def _start(self) -> None:
