@@ -43,7 +43,8 @@ class MetricSummary:
             for metric in self._metrics:
                 if metric.type == MetricType.METRIC_OF_METRICS:
                     metric.update_value(metrics={m.tag: m for m in self._metrics})
-                elif metric.type == MetricType.METRIC_OF_BOTH:
+            for metric in self._metrics:
+                if metric.type == MetricType.METRIC_OF_BOTH:
                     metric.update_value(
                         record=record, metrics={m.tag: m for m in self._metrics}
                     )
@@ -55,7 +56,8 @@ class MetricSummary:
         for metric in self._metrics:
             if metric.type == MetricType.METRIC_OF_METRICS:
                 metric.update_value(metrics={m.tag: m for m in self._metrics})
-            elif metric.type == MetricType.METRIC_OF_BOTH:
+        for metric in self._metrics:
+            if metric.type == MetricType.METRIC_OF_BOTH:
                 metric.update_value(
                     # TODO: Where does this `record` value come from? Is this wrong?
                     record=record,
