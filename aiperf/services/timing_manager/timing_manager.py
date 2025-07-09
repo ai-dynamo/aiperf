@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import contextlib
 import sys
-import time
+from dataclasses import dataclass
 
 from aiperf.common.comms.base import (
     CommunicationClientAddressType,
@@ -11,29 +13,21 @@ from aiperf.common.comms.base import (
     RequestClientProtocol,
 )
 from aiperf.common.config import ServiceConfig
+from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
 from aiperf.common.enums import (
     MessageType,
     ServiceType,
 )
-from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.factories import ServiceFactory
-from aiperf.common.hooks import (
-    on_configure,
-    on_init,
-    on_start,
-    on_stop,
-)
+from aiperf.common.hooks import on_cleanup, on_configure, on_init, on_start, on_stop
 from aiperf.common.messages import (
     CommandMessage,
     CreditDropMessage,
     CreditReturnMessage,
-    CreditsCompleteMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
-from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.service.base_component_service import BaseComponentService
-from aiperf.progress import ProfileProgressMessage
 from aiperf.services.timing_manager.concurrency_strategy import ConcurrencyStrategy
 from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
@@ -41,8 +35,15 @@ from aiperf.services.timing_manager.fixed_schedule_strategy import FixedSchedule
 from aiperf.services.timing_manager.rate_strategy import RateStrategy
 
 
+@dataclass
+class CreditDropInfo:
+    amount: int = 1
+    conversation_id: str | None = None
+    credit_drop_ns: int | None = None
+
+
 @ServiceFactory.register(ServiceType.TIMING_MANAGER)
-class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
+class TimingManager(BaseComponentService):
     """
     The TimingManager service is responsible to generate the schedule and issuing
     timing credits for requests.
@@ -53,6 +54,10 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Initializing timing manager")
+
+        self._credit_issuing_strategy: CreditIssuingStrategy | None = None
+
+        self.tasks: set[asyncio.Task] = set()
 
         self.dataset_request_client: RequestClientProtocol = (
             self.comms.create_request_client(
@@ -68,9 +73,6 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
             bind=True,
         )
 
-        self.start_time_ns = time.time_ns()
-        self._credit_issuing_strategy: CreditIssuingStrategy | None = None
-
     @property
     def service_type(self) -> ServiceType:
         """The type of service."""
@@ -80,7 +82,6 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
     async def _initialize(self) -> None:
         """Initialize timing manager-specific components."""
         self.logger.debug("Initializing timing manager")
-
         await self.credit_return_client.register_pull_callback(
             message_type=MessageType.CREDIT_RETURN,
             callback=self._on_credit_return,
@@ -109,81 +110,77 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
                 dataset_timing_response,
             )
             # TODO: Pass dataset_timing_response to strategy
-            self._credit_issuing_strategy = FixedScheduleStrategy(config, self)
+            self._credit_issuing_strategy = FixedScheduleStrategy(
+                config, self._issue_credit_drop
+            )
         elif config.timing_mode == TimingMode.CONCURRENCY:
-            self._credit_issuing_strategy = ConcurrencyStrategy(config, self)
+            self._credit_issuing_strategy = ConcurrencyStrategy(
+                config, self._issue_credit_drop
+            )
         elif config.timing_mode == TimingMode.RATE:
-            self._credit_issuing_strategy = RateStrategy(config, self)
+            self._credit_issuing_strategy = RateStrategy(
+                config, self._issue_credit_drop
+            )
 
-        if not self._credit_issuing_strategy:
-            raise InvalidStateError("No credit issuing strategy configured")
-
+        assert isinstance(self._credit_issuing_strategy, CreditIssuingStrategy)
         await self._credit_issuing_strategy.initialize()
 
     @on_start
     async def _start(self) -> None:
         """Start the timing manager and issue credit drops according to the configured strategy."""
         self.logger.debug("Starting timing manager")
+        # TODO: If not configured raise an exception
 
         if not self._credit_issuing_strategy:
-            raise InvalidStateError("No credit issuing strategy configured")
+            raise RuntimeError("No credit issuing strategy configured")
 
-        self.execute_async(self._credit_issuing_strategy.start())
+        task = asyncio.create_task(self._credit_issuing_strategy.start())
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
 
     @on_stop
     async def _stop(self) -> None:
         """Stop the timing manager."""
         self.logger.debug("Stopping timing manager")
-        if self._credit_issuing_strategy:
-            await self._credit_issuing_strategy.stop()
-        await self.cancel_all_tasks()
+        for task in list(self.tasks):
+            task.cancel()
 
-    async def _on_credit_return(self, message: CreditReturnMessage) -> None:
-        """Handle the credit return message."""
-        self.logger.debug("Timing manager received credit return message: %s", message)
-        if self._credit_issuing_strategy:
-            await self._credit_issuing_strategy.on_credit_return(message)
-
-    async def publish_progress(
-        self, start_time_ns: int, total: int, completed: int
-    ) -> None:
-        """Publish the progress message."""
-        self.execute_async(
-            self.pub_client.publish(
-                ProfileProgressMessage(
-                    service_id=self.service_id,
-                    start_ns=start_time_ns,
-                    total=total,
-                    completed=completed,
-                )
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.gather(*self.tasks),
+                timeout=TASK_CANCEL_TIMEOUT_SHORT,
             )
-        )
+        self.tasks.clear()
 
-    async def publish_credits_complete(self, cancelled: bool) -> None:
-        """Publish the credits complete message."""
-        self.execute_async(
-            self.pub_client.publish(
-                CreditsCompleteMessage(service_id=self.service_id, cancelled=cancelled)
-            )
-        )
+    @on_cleanup
+    async def _cleanup(self) -> None:
+        """Clean up timing manager-specific components."""
+        self.logger.debug("Cleaning up timing manager")
 
-    async def drop_credit(
-        self,
-        amount: int = 1,
-        conversation_id: str | None = None,
-        credit_drop_ns: int | None = None,
-    ) -> None:
-        """Drop a credit."""
-        self.execute_async(
+    async def _issue_credit_drop(self, credit_drop_info: CreditDropInfo) -> None:
+        """Issue a credit drop."""
+        task = asyncio.create_task(
             self.credit_drop_client.push(
                 message=CreditDropMessage(
                     service_id=self.service_id,
-                    amount=amount,
-                    credit_drop_ns=credit_drop_ns,
-                    conversation_id=conversation_id,
+                    amount=credit_drop_info.amount,
+                    credit_drop_ns=credit_drop_info.credit_drop_ns,
+                    conversation_id=credit_drop_info.conversation_id,
                 ),
             )
         )
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    async def _on_credit_return(self, message: CreditReturnMessage) -> None:
+        """Process a credit return message."""
+        self.logger.debug("Processing credit return: %s", message)
+        if self._credit_issuing_strategy:
+            task = asyncio.create_task(
+                self._credit_issuing_strategy.on_credit_return(message)
+            )
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
 
 
 def main() -> None:

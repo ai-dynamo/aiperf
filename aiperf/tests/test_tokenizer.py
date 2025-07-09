@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.exceptions import TokenizerInitializationError
+from aiperf.common.exceptions import InitializationError
 from aiperf.common.tokenizer import Tokenizer
 
 
@@ -12,13 +12,13 @@ class TestTokenizer:
         tokenizer = Tokenizer()
         assert tokenizer._tokenizer is None
 
-        with pytest.raises(TokenizerInitializationError):
+        with pytest.raises(InitializationError):
             tokenizer("test")
-        with pytest.raises(TokenizerInitializationError):
+        with pytest.raises(InitializationError):
             tokenizer.encode("test")
-        with pytest.raises(TokenizerInitializationError):
+        with pytest.raises(InitializationError):
             tokenizer.decode([1])
-        with pytest.raises(TokenizerInitializationError):
+        with pytest.raises(InitializationError):
             tokenizer.bos_token_id()
 
     def test_non_empty_tokenizer(self, mock_tokenizer_cls):

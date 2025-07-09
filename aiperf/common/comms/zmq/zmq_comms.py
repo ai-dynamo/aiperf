@@ -11,9 +11,10 @@ from pathlib import Path
 import zmq.asyncio
 
 from aiperf.common.comms.base import (
+    BaseCommunication,
     CommunicationClientFactory,
     CommunicationClientProtocol,
-    CommunicationProtocol,
+    CommunicationFactory,
 )
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.config import BaseZMQCommunicationConfig
@@ -24,10 +25,9 @@ from aiperf.common.enums import (
     CommunicationClientType,
 )
 from aiperf.common.exceptions import ShutdownError
-from aiperf.common.factories import CommunicationFactory
 
 
-class BaseZMQCommunication(CommunicationProtocol, ABC):
+class BaseZMQCommunication(BaseCommunication, ABC):
     """ZeroMQ-based implementation of the Communication interface.
 
     Uses ZeroMQ for publish/subscribe and request/reply patterns to
@@ -56,6 +56,11 @@ class BaseZMQCommunication(CommunicationProtocol, ABC):
         """Check if communication channels are initialized."""
         return self.initialized_event.is_set()
 
+    @property
+    def stop_requested(self) -> bool:
+        """Check if the communication channels are being shutdown."""
+        return self.stop_event.is_set()
+
     def get_address(self, address_type: CommunicationClientAddressType | str) -> str:
         """Get the actual address based on the address type from the config."""
         if isinstance(address_type, CommunicationClientAddressType):
@@ -67,13 +72,12 @@ class BaseZMQCommunication(CommunicationProtocol, ABC):
         if self.is_initialized:
             return
 
-        await asyncio.gather(
-            *(
-                client.initialize()
-                for client in self.clients
-                if not client.is_initialized
-            )
-        )
+        tasks = []
+        for client in self.clients:
+            if not client.is_initialized:
+                tasks.append(asyncio.create_task(client.initialize()))
+
+        await asyncio.gather(*tasks)
         self.initialized_event.set()
 
     async def shutdown(self) -> None:
@@ -93,7 +97,11 @@ class BaseZMQCommunication(CommunicationProtocol, ABC):
                 self.stop_event.set()
 
             await asyncio.gather(
-                *(client.shutdown() for client in self.clients if client.is_initialized)
+                *(
+                    client.shutdown()
+                    for client in self.clients
+                    if client.is_initialized
+                ),
             )
 
         except asyncio.CancelledError:
@@ -122,13 +130,16 @@ class BaseZMQCommunication(CommunicationProtocol, ABC):
             bind: Whether to bind or connect the socket.
             socket_ops: Additional socket options to set.
         """
-        return CommunicationClientFactory.create_instance(
+        client = CommunicationClientFactory.create_instance(
             client_type,
             context=self.context,
             address=self.get_address(address),
             bind=bind,
             socket_ops=socket_ops,
         )
+
+        self.clients.append(client)
+        return client
 
 
 @CommunicationFactory.register(CommunicationBackend.ZMQ_TCP)
