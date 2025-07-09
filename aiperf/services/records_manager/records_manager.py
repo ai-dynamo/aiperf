@@ -22,7 +22,6 @@ from aiperf.common.messages import (
     Message,
     ParsedInferenceResultsMessage,
     ProcessRecordsCommandData,
-    ProfileResultsMessage,
 )
 from aiperf.common.record_models import (
     ErrorDetails,
@@ -30,6 +29,7 @@ from aiperf.common.record_models import (
     ParsedResponseRecord,
 )
 from aiperf.common.service.base_component_service import BaseComponentService
+from aiperf.progress import ProfileResultsMessage
 from aiperf.services.records_manager.post_processors.metric_summary import MetricSummary
 
 
