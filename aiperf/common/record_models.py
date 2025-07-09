@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import os
 import sys
 import time
 from functools import cached_property
@@ -41,43 +40,6 @@ class MetricResult(AIPerfBaseModel):
     streaming_only: bool = Field(
         default=False,
         description="Whether the metric only applies when streaming is enabled",
-    )
-
-
-################################################################################
-# Inference Client Models
-################################################################################
-
-
-class BaseClientConfig(AIPerfBaseModel):
-    """Base configuration options for all clients."""
-
-
-class GenericHTTPClientConfig(BaseClientConfig):
-    """Configuration options for a generic HTTP inference client."""
-
-    api_key: str | None = Field(
-        default=None,
-        description="The API key to use for the inference client.",
-    )
-    base_url: str = Field(
-        default=f"http://{os.getenv('AIPERF_HOST', 'localhost')}:{os.getenv('AIPERF_PORT', 8080)}",
-        description="The URL of the inference client.",
-    )
-    protocol: str = Field(
-        default="http", description="The protocol to use for the inference client."
-    )
-    ssl_options: dict[str, Any] | None = Field(
-        default=None,
-        description="The SSL options to use for the inference client.",
-    )
-    timeout_ms: int = Field(
-        default=300000,
-        description="The timeout in milliseconds for the inference client.",
-    )
-    headers: dict[str, str] = Field(
-        default_factory=dict,
-        description="The headers to use for the inference client.",
     )
 
 

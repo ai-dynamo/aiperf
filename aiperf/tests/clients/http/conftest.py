@@ -13,7 +13,6 @@ from aiperf.common.config import UserConfig
 from aiperf.common.config.user_config import EndPointConfig
 from aiperf.common.enums import EndpointType
 from aiperf.common.record_models import (
-    GenericHTTPClientConfig,
     RequestRecord,
     SSEMessage,
     TextResponse,
@@ -62,17 +61,6 @@ def edge_case_inputs() -> dict[str, str]:
         "special_chars": "data: !@#$%^&*()_+-=[]{}|;':\",./<>?",
         "very_long_value": f"data: {'x' * 1000}",
     }
-
-
-@pytest.fixture
-def http_client_config() -> GenericHTTPClientConfig:
-    """Fixture providing a standard HTTP client configuration."""
-    return GenericHTTPClientConfig(
-        base_url="http://localhost:8080",
-        timeout_ms=30000,
-        headers={"Content-Type": "application/json"},
-        api_key="test-api-key",
-    )
 
 
 def setup_sse_content_mock(
