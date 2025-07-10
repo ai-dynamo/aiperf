@@ -26,6 +26,7 @@ from aiperf.common.enums import (
     CreditPhase,
     MessageType,
     ServiceType,
+    TimingMode,
 )
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.factories import ServiceFactory
@@ -45,7 +46,6 @@ from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.services.timing_manager.concurrency_strategy import ConcurrencyStrategy
 from aiperf.services.timing_manager.config import (
     TimingManagerConfig,
-    TimingMode,
 )
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
 from aiperf.services.timing_manager.fixed_schedule_strategy import FixedScheduleStrategy

@@ -665,13 +665,13 @@ class EndpointType(CaseInsensitiveStrEnum):
 
 
 class RequestRateMode(CaseInsensitiveStrEnum):
-    """The different ways the request rate scheduler should generate requests."""
+    """The different ways the RequestRateStrategy should generate requests."""
 
-    FIXED = "fixed"
-    """Generate requests at a fixed rate. This is the default mode."""
+    CONSTANT = "constant"
+    """Generate requests at a constant rate."""
 
-    # DYNAMIC = "dynamic"
-    # """Generate requests at a dynamic rate based on the average response times of the previous requests. TBD."""
+    POISSON = "poisson"
+    """Generate requests using a poisson distribution."""
 
 
 class CreditPhase(CaseInsensitiveStrEnum):
@@ -693,3 +693,16 @@ class CreditPhase(CaseInsensitiveStrEnum):
     STEADY_STATE = "steady_state"
     """The credit phase is the steady state phase. This is the primary phase of the
     benchmark, and what is used to calculate the final results."""
+
+
+class TimingMode(CaseInsensitiveStrEnum):
+    """The different ways the TimingManager should generate requests."""
+
+    FIXED_SCHEDULE = "fixed_schedule"
+    """A mode where the TimingManager will send requests according to a fixed schedule."""
+
+    CONCURRENCY = "concurrency"
+    """A mode where the TimingManager will maintain a continuous stream of concurrent requests."""
+
+    REQUEST_RATE = "request_rate"
+    """A mode where the TimingManager will send requests at either a constant request rate or based on a poisson distribution."""
