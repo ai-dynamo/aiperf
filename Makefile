@@ -17,7 +17,7 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage cov clean install docker docker-run first-time-setup \
-		test-verbose \
+		test-verbose init-files \
 		internal-help help
 
 
@@ -31,7 +31,7 @@ PROJECT_NAME ?= AIPerf
 # The path to the virtual environment
 VENV_PATH ?= .venv
 # The python version to use
-PYTHON_VERSION ?= 3.12
+PYTHON_VERSION ?= 3.10
 # The command to activate the virtual environment
 activate_venv = . $(VENV_PATH)/bin/activate
 
@@ -89,6 +89,9 @@ internal-help:
 		sed -ne "/@sed/!s/^\([^ :]*\):\s*#?\(.*\)/$(bold)$(green)\1$(reset):$(italic)\2$(reset)/p" $(MAKEFILE_LIST) | grep -v " \["; \
 	} | sort
 	@printf "────────────────────────────────────────────────────────────────────────────\n"
+
+init-files: #? run mkinit to generate the __init__.py files.
+	$(activate_venv) && mkinit --write --black --nomods --norespect_all aiperf/common/enums
 
 ruff lint: #? run the ruff linters
 	$(activate_venv) && ruff check . $(args)
