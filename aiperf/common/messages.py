@@ -22,6 +22,7 @@ from aiperf.common.enums import (
     ServiceState,
     ServiceType,
 )
+from aiperf.common.pydantic_utils import ExcludeIfNoneMixin, exclude_if_none
 from aiperf.common.record_models import (
     ErrorDetails,
     ParsedResponseRecord,
@@ -32,23 +33,9 @@ from aiperf.common.record_models import (
 # Abstract Base Message Models
 ################################################################################
 
-EXCLUDE_IF_NONE = "__exclude_if_none__"
-
-
-def exclude_if_none(field_names: list[str]):
-    """Decorator to set the _exclude_if_none_fields class attribute to the set of
-    field names that should be excluded if they are None.
-    """
-
-    def decorator(model: type["Message"]) -> type["Message"]:
-        model._exclude_if_none_fields.update(field_names)
-        return model
-
-    return decorator
-
 
 @exclude_if_none(["request_ns", "request_id"])
-class Message(BaseModel):
+class Message(ExcludeIfNoneMixin):
     """Base message class for optimized message handling.
 
     This class provides a base for all messages, including common fields like message_type,

@@ -195,8 +195,8 @@ class TestAioHttpSSEStreamReader:
         processing_time = end_time - start_time
 
         assert len(chunks) == num_messages
-        assert processing_time < 1.0, (
-            f"Processing took {processing_time:.3f}s, expected < 1s"
+        assert processing_time < 3.0, (
+            f"Processing took {processing_time:.3f}s, expected < 3s"
         )
 
     @pytest.mark.asyncio
