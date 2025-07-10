@@ -1,10 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""OpenAI client for aiohttp.
-
-It is a small wrapper around the :class:`AioHttpClientMixin` that adds OpenAI specific functionality,
-primarily around the headers and api key.
-"""
 
 import json
 import logging
@@ -27,8 +22,9 @@ from aiperf.common.record_models import (
 @InferenceClientFactory.register_all(
     EndpointType.OPENAI_CHAT_COMPLETIONS,
     EndpointType.OPENAI_COMPLETIONS,
-    EndpointType.OPENAI_EMBEDDINGS,
+    # EndpointType.OPENAI_EMBEDDINGS,
     EndpointType.OPENAI_RESPONSES,
+    # EndpointType.OPENAI_MULTIMODAL,
 )
 class OpenAIClientAioHttp(AioHttpClientMixin, ABC):
     """Inference client for OpenAI based requests using aiohttp."""
@@ -40,12 +36,17 @@ class OpenAIClientAioHttp(AioHttpClientMixin, ABC):
 
     def get_headers(self, model_endpoint: ModelEndpointInfo) -> dict[str, str]:
         """Get the headers for the given endpoint."""
+
+        accept = (
+            "text/event-stream"
+            if model_endpoint.endpoint.streaming
+            else "application/json"
+        )
+
         headers = {
             "User-Agent": "aiperf/1.0",
             "Content-Type": "application/json",
-            "Accept": "text/event-stream"
-            if model_endpoint.endpoint.streaming
-            else "application/json",
+            "Accept": accept,
         }
         if model_endpoint.endpoint.api_key:
             headers["Authorization"] = f"Bearer {model_endpoint.endpoint.api_key}"
@@ -88,7 +89,7 @@ class OpenAIClientAioHttp(AioHttpClientMixin, ABC):
                 end_perf_ns=time.perf_counter_ns(),
                 error=ErrorDetails(type=e.__class__.__name__, message=str(e)),
             )
-            self.logger.error(
+            self.logger.exception(
                 "Error in OpenAI request: %s %s",
                 e.__class__.__name__,
                 str(e),

@@ -5,16 +5,18 @@ __all__ = [
     "OpenAIClientAioHttp",
     "OpenAIChatCompletionRequestConverter",
     "OpenAICompletionRequestConverter",
-    "OpenAIEmbeddingsRequestConverter",
     "OpenAIResponsesRequestConverter",
 ]
 
 from aiperf.clients.openai.openai_aiohttp import (
     OpenAIClientAioHttp,
 )
-from aiperf.clients.openai.openai_convert import (
+from aiperf.clients.openai.openai_chat import (
     OpenAIChatCompletionRequestConverter,
+)
+from aiperf.clients.openai.openai_completions import (
     OpenAICompletionRequestConverter,
-    OpenAIEmbeddingsRequestConverter,
+)
+from aiperf.clients.openai.openai_responses import (
     OpenAIResponsesRequestConverter,
 )
