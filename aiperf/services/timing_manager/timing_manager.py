@@ -14,7 +14,6 @@ from aiperf.common.comms.base import (
 )
 from aiperf.common.config import ServiceConfig
 from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
-from aiperf.common.credit_models import CreditDropMessage, CreditReturnMessage
 from aiperf.common.enums import (
     MessageType,
     ServiceType,
@@ -23,6 +22,8 @@ from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_cleanup, on_configure, on_init, on_start, on_stop
 from aiperf.common.messages import (
     CommandMessage,
+    CreditDropMessage,
+    CreditReturnMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
