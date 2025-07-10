@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import aiohttp
 import pytest
 
-from aiperf.clients import model_endpoint_info
 from aiperf.clients.http.aiohttp_client import AioHttpClientMixin, create_tcp_connector
+from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.config import UserConfig
 from aiperf.common.config.user_config import EndPointConfig
 from aiperf.common.enums import EndpointType
@@ -116,15 +116,9 @@ def user_config() -> UserConfig:
 
 
 @pytest.fixture
-async def aiohttp_client(
-    user_config: UserConfig,
-):
+async def aiohttp_client(user_config: UserConfig):
     """Fixture providing an AioHttpClientMixin instance."""
-    client = AioHttpClientMixin(
-        model_endpoint=model_endpoint_info.ModelEndpointInfo.from_user_config(
-            user_config
-        )
-    )
+    client = AioHttpClientMixin(ModelEndpointInfo.from_user_config(user_config))
     yield client
     await client.close()
 
@@ -177,18 +171,6 @@ def sample_sse_chunks() -> list[tuple[bytes, bytes]]:
         (b"d", b"ata: World\nid: msg-2\n\n"),
         (b"d", b"ata: [DONE]\n\n"),
     ]
-
-
-@pytest.fixture
-async def integration_client(user_config: UserConfig):
-    """Fixture providing a managed AioHttpClientMixin instance for integration tests."""
-    client = AioHttpClientMixin(
-        model_endpoint=model_endpoint_info.ModelEndpointInfo.from_user_config(
-            user_config
-        )
-    )
-    yield client
-    await client.close()
 
 
 @pytest.fixture

@@ -302,7 +302,7 @@ class TestAioHttpClientMixin:
     @pytest.mark.asyncio
     async def test_end_to_end_json_request(
         self,
-        integration_client: AioHttpClientMixin,
+        aiohttp_client: AioHttpClientMixin,
     ) -> None:
         """Test end-to-end JSON request flow."""
         test_response = {"message": "success", "data": [1, 2, 3]}
@@ -311,7 +311,7 @@ class TestAioHttpClientMixin:
             mock_response = create_mock_response(text_content=json.dumps(test_response))
             setup_mock_session(mock_session_class, mock_response, ["post"])
 
-            record = await integration_client.post_request(
+            record = await aiohttp_client.post_request(
                 "http://test.com/api",
                 json.dumps({"query": "test"}),
                 {"Content-Type": "application/json"},
@@ -321,7 +321,7 @@ class TestAioHttpClientMixin:
 
     @pytest.mark.asyncio
     async def test_end_to_end_sse_request(
-        self, integration_client: AioHttpClientMixin, mock_sse_response: Mock
+        self, aiohttp_client: AioHttpClientMixin, mock_sse_response: Mock
     ) -> None:
         """Test end-to-end SSE request flow."""
         with patch("aiohttp.ClientSession") as mock_session_class:
@@ -333,7 +333,7 @@ class TestAioHttpClientMixin:
             setup_mock_session(mock_session_class, mock_sse_response, ["post"])
 
             with patch("time.perf_counter_ns", side_effect=range(123456789, 123456799)):
-                record = await integration_client.post_request(
+                record = await aiohttp_client.post_request(
                     "http://test.com/stream",
                     json.dumps({"stream": True}),
                     {"Accept": "text/event-stream"},
@@ -346,7 +346,7 @@ class TestAioHttpClientMixin:
     @pytest.mark.asyncio
     async def test_concurrent_requests(
         self,
-        integration_client: AioHttpClientMixin,
+        aiohttp_client: AioHttpClientMixin,
     ) -> None:
         """Test handling of concurrent requests."""
         num_requests = 5
@@ -357,7 +357,7 @@ class TestAioHttpClientMixin:
 
             tasks = []
             for i in range(num_requests):
-                task = integration_client.post_request(
+                task = aiohttp_client.post_request(
                     f"http://test.com/api/{i}",
                     f'{{"request": {i}}}',
                     {"Content-Type": "application/json"},
