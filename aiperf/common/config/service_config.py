@@ -3,16 +3,17 @@
 from typing import Annotated, Any, Literal
 
 import cyclopts
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aiperf.common.config.config_defaults import ServiceDefaults
+from aiperf.common.config.config_validators import parse_service_types
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
     ZMQIPCConfig,
     ZMQTCPConfig,
 )
-from aiperf.common.enums import CommunicationBackend, ServiceRunType
+from aiperf.common.enums import CommunicationBackend, ServiceRunType, ServiceType
 
 
 class ServiceConfig(BaseSettings):
@@ -170,3 +171,16 @@ class ServiceConfig(BaseSettings):
             name=("--result-parser-service-count"),
         ),
     ] = ServiceDefaults.RESULT_PARSER_SERVICE_COUNT
+
+    debug_services: Annotated[
+        set[ServiceType] | None,
+        Field(
+            description="List of services to enable debug logging for. Can be a comma-separated list, a single service type, "
+            "or the cli flag can be used multiple times.",
+        ),
+        cyclopts.Parameter(
+            # Note that the name is singular because it can be used multiple times.
+            name=("--debug-service"),
+        ),
+        BeforeValidator(parse_service_types),
+    ] = ServiceDefaults.DEBUG_SERVICES
