@@ -10,6 +10,7 @@ from PIL import Image
 
 from aiperf.common.config import ImageConfig, ImageHeightConfig, ImageWidthConfig
 from aiperf.common.enums import ImageFormat
+from aiperf.common.exceptions import InitializationError
 from aiperf.services.dataset.generator.image import ImageGenerator
 
 
@@ -118,172 +119,109 @@ def dimension_params(request):
     )
 
 
+@pytest.fixture
+def initialized_generator(base_config):
+    """Initialized ImageGenerator for testing."""
+    generator = ImageGenerator(base_config)
+    generator.data_initialized.set()
+    return generator
+
+
+@pytest.mark.asyncio
 class TestImageGenerator:
     """Comprehensive test suite for ImageGenerator class."""
 
-    def test_init_with_config(self, base_config):
+    async def test_init_with_config(self, base_config):
         """Test ImageGenerator initialization with valid config."""
         generator = ImageGenerator(base_config)
         assert generator.config == base_config
         assert hasattr(generator, "logger")
+        assert not generator.data_initialized.is_set()
 
-    def test_init_with_different_configs(self, various_configs):
+    async def test_init_with_different_configs(self, various_configs):
         """Test initialization with various config parameters."""
         generator = ImageGenerator(various_configs)
         assert generator.config == various_configs
+        assert not generator.data_initialized.is_set()
 
-    @patch(
-        "aiperf.services.dataset.generator.image.utils.encode_image",
-        return_value="fake_base64_string",
-    )
-    def test_generate_with_specified_format(self, mock_encode, base_config):
-        """Test generate method with a specified image format."""
-        generator = ImageGenerator(base_config)
-        result = generator.generate()
-
-        expected_result = "data:image/png;base64,fake_base64_string"
-        assert result == expected_result
-
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_generate_with_random_format(
-        self, mock_sample_image, config_random_format, mock_image
-    ):
-        """Test generate method when format is random (random selection)."""
-        mock_sample_image.return_value = mock_image[0]
-
-        generator = ImageGenerator(config_random_format)
-        result = generator.generate()
-        assert result.startswith("data:image/")
-        assert "random" not in result
-
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_generate_multiple_calls_different_results(
-        self, mock_sample_image, base_config, test_image
-    ):
-        """Test that multiple generate calls can produce different results."""
-        mock_sample_image.return_value = test_image
-
-        generator = ImageGenerator(base_config)
-        image1 = generator.generate()
-        image2 = generator.generate()
-
-        assert image1 != image2
-
-    def test_sample_source_image_success(self, base_config, mock_file_system):
-        """Test successful sampling of source image."""
+    async def test_initialize(self, base_config, mock_file_system):
+        """Test that initialize method loads images and sets initialized flag."""
         mocks = mock_file_system
         mocks["mock_glob"].return_value = [
             "/path/image1.jpg",
             "/path/image2.png",
-            "/path/image3.gif",
         ]
-        mocks["mock_choice"].return_value = "/path/image2.png"
 
         generator = ImageGenerator(base_config)
-        result = generator._sample_source_image()
 
-        # Verify the correct path was constructed
-        mocks["mock_glob"].assert_called_once()
-        glob_call_path = mocks["mock_glob"].call_args[0][0]
-        assert "source_images" in glob_call_path and glob_call_path.endswith("*")
+        assert not generator.data_initialized.is_set()
+        assert len(generator.images) == 0
 
-        mocks["mock_choice"].assert_called_once_with(
-            ["/path/image1.jpg", "/path/image2.png", "/path/image3.gif"]
-        )
-        mocks["mock_open"].assert_called_once_with("/path/image2.png")
-        assert result == mocks["mock_image"]
+        await generator.initialize()
 
-    def test_sample_source_image_no_images_found(self, base_config, mock_file_system):
+        assert generator.data_initialized.is_set()
+        assert len(generator.images) == 2
+
+    async def test_initialize_no_source_images(self, base_config, mock_file_system):
         """Test error handling when no source images are found."""
         mock_file_system["mock_glob"].return_value = []  # No files found
 
         generator = ImageGenerator(base_config)
 
-        with pytest.raises(ValueError) as exc_info:
-            generator._sample_source_image()
+        with pytest.raises(InitializationError) as exc_info:
+            await generator.initialize()
 
         assert "No source images found" in str(exc_info.value)
-        mock_file_system["mock_glob"].assert_called_once()
 
-    def test_sample_source_image_single_file(self, base_config, mock_file_system):
-        """Test sampling when only one source image exists."""
-        mocks = mock_file_system
-        mocks["mock_glob"].return_value = ["/path/single_image.jpg"]
-        mocks["mock_choice"].return_value = "/path/single_image.jpg"
+    @pytest.mark.parametrize("format", [ImageFormat.PNG, ImageFormat.JPEG])
+    async def test_generate_with_specified_format(
+        self, initialized_generator, test_image, format
+    ):
+        """Test generate method with a specified image format."""
+        initialized_generator.images = [test_image]
+        initialized_generator.config.format = format
 
-        generator = ImageGenerator(base_config)
-        result = generator._sample_source_image()
+        result = await initialized_generator.generate()
 
-        mocks["mock_choice"].assert_called_once_with(["/path/single_image.jpg"])
-        mocks["mock_open"].assert_called_once_with("/path/single_image.jpg")
-        assert result == mocks["mock_image"]
+        assert result.startswith(f"data:image/{format};base64")
 
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_generate_integration_with_real_image(
-        self, mock_sample_image, base_config, test_image
+    async def test_generate_with_random_format(self, initialized_generator, test_image):
+        """Test generate method when format is random (random selection)."""
+        initialized_generator.images = [test_image]
+        initialized_generator.config.format = ImageFormat.RANDOM
+
+        result = await initialized_generator.generate()
+        assert result.startswith("data:image/")
+        assert "random" not in result
+
+    async def test_generate_different_images(self, initialized_generator, test_image):
+        """Test that multiple generate calls can produce different images."""
+        initialized_generator.images = [test_image]
+
+        image1 = await initialized_generator.generate()
+        image2 = await initialized_generator.generate()
+
+        assert image1 != image2
+
+    @pytest.mark.parametrize("width, height", [(12, 34), (100, 100), (200, 200)])
+    async def test_generate_various_dimensions(
+        self, initialized_generator, test_image, width, height
     ):
         """Integration test using a real image (mocked filesystem)."""
-        mock_sample_image.return_value = test_image
+        initialized_generator.images = [test_image]
+        initialized_generator.config = ImageConfig(
+            width=ImageWidthConfig(mean=width, stddev=0),
+            height=ImageHeightConfig(mean=height, stddev=0),
+            format=ImageFormat.JPEG,
+        )
 
-        generator = ImageGenerator(base_config)
-        result = generator.generate()
-
-        # Verify the result is a valid data URL
-        assert result.startswith("data:image/")
-        assert ";base64," in result
+        result = await initialized_generator.generate()
 
         # Verify we can decode the image
         _, base64_data = result.split(";base64,")
         decoded_data = base64.b64decode(base64_data)
         decoded_image = Image.open(BytesIO(decoded_data))
 
-        # The image should have been resized (not 50x50 anymore due to random sampling)
-        assert decoded_image.size != (50, 50)
-        assert decoded_image.format in ["PNG", "JPEG"]
-
-    @pytest.mark.parametrize(
-        "image_format, expected_prefix",
-        [
-            (ImageFormat.PNG, "data:image/png;base64,"),
-            (ImageFormat.JPEG, "data:image/jpeg;base64,"),
-        ],
-    )
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_generate_different_formats(
-        self, mock_sample_image, image_format, expected_prefix, test_image
-    ):
-        """Test generate method with different image formats."""
-        config = ImageConfig(
-            width=ImageWidthConfig(mean=100, stddev=0),
-            height=ImageHeightConfig(mean=100, stddev=0),
-            format=image_format,
-        )
-
-        mock_sample_image.return_value = test_image
-
-        generator = ImageGenerator(config)
-        result = generator.generate()
-
-        assert result.startswith(expected_prefix)
-
-    @patch.object(ImageGenerator, "_sample_source_image")
-    def test_generate_various_dimensions(
-        self, mock_sample_image, dimension_params, test_image
-    ):
-        """Test generate method with various dimension configurations."""
-        mock_sample_image.return_value = test_image
-
-        generator = ImageGenerator(dimension_params)
-        result = generator.generate()
-
-        # Verify it's a valid data URL
-        assert result.startswith("data:image/png;base64,")
-
-        # Decode and verify the image
-        _, base64_data = result.split(";base64,")
-        decoded_data = base64.b64decode(base64_data)
-        decoded_image = Image.open(BytesIO(decoded_data))
-
-        # We can verify it's a valid image
-        assert decoded_image.size[0] > 0
-        assert decoded_image.size[1] > 0
+        # The image should have been resized to target dimensions
+        assert decoded_image.size == (width, height)
+        assert decoded_image.format == "JPEG"

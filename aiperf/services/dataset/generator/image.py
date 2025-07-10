@@ -11,6 +11,7 @@ from PIL import Image
 
 from aiperf.common.config import ImageConfig
 from aiperf.common.enums import ImageFormat
+from aiperf.common.exceptions import InitializationError
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.generator.base import BaseGenerator
 
@@ -36,22 +37,26 @@ class ImageGenerator(BaseGenerator):
         """Initialize the image generator asynchronously."""
         filenames = glob.glob(f"{self.filepath}/*")
         if not filenames:
-            raise ValueError(f"No source images found in '{self.filepath}'")
+            raise InitializationError(f"No source images found in '{self.filepath}'")
 
         for filename in filenames:
             self.execute_async(asyncio.to_thread(Image.open, filename))
 
         self.images = await self.wait_for_all_tasks()
+
         self.logger.debug(
             "Loaded %d source images from %s", len(self.images), self.filepath
         )
+        self.data_initialized.set()
 
-    def generate(self, *args, **kwargs) -> str:
+    async def generate(self, *args, **kwargs) -> str:
         """Generate an image with the configured parameters.
 
         Returns:
             A base64 encoded string of the generated image.
         """
+        await self.wait_for_data_initialized()
+
         image_format = self.config.format
         if image_format == ImageFormat.RANDOM:
             image_format = random.choice(
@@ -71,15 +76,7 @@ class ImageGenerator(BaseGenerator):
             height,
         )
 
-        image = self._sample_image()
+        image = random.choice(self.images)
         image = image.resize(size=(width, height))
         base64_image = utils.encode_image(image, image_format)
         return f"data:image/{image_format.name.lower()};base64,{base64_image}"
-
-    def _sample_image(self) -> Image.Image:
-        """Sample an image among the loaded images.
-
-        Returns:
-            A PIL Image object randomly selected from the loaded images.
-        """
-        return random.choice(self.images)
