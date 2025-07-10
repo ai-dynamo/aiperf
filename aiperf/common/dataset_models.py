@@ -6,11 +6,8 @@ from pydantic import Field
 from aiperf.common.pydantic_utils import AIPerfBaseModel, exclude_if_none
 
 
-@exclude_if_none(["role"])
 class Text(AIPerfBaseModel):
     name: str = Field(default="text", description="Name of the text field.")
-
-    role: str | None = Field(default=None, description="Role of the text field.")
 
     content: list[str] = Field(
         default=[],
@@ -36,6 +33,7 @@ class Audio(AIPerfBaseModel):
     )
 
 
+@exclude_if_none(["role"])
 class Turn(AIPerfBaseModel):
     """A dataset representation of a single turn within a conversation.
 
@@ -50,7 +48,7 @@ class Turn(AIPerfBaseModel):
         default=None,
         description="Amount of milliseconds to wait before sending the turn.",
     )
-
+    role: str | None = Field(default=None, description="Role of the turn.")
     text: list[Text] = Field(
         default=[], description="Collection of text data in each turn."
     )
