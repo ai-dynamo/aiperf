@@ -89,8 +89,8 @@ class TestCoreFunctionality:
         conversations = composer.create_dataset()
 
         assert len(conversations) == 2
-        assert conversations[0].session_id == "123"
-        assert conversations[1].session_id == "456"
+        assert conversations[0].id == "123"
+        assert conversations[1].id == "456"
         assert len(conversations[0].turns) == 2
         assert len(conversations[1].turns) == 1
 

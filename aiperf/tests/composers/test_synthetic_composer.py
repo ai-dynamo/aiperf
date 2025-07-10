@@ -101,10 +101,10 @@ class TestSyntheticDatasetComposer:
         # Test create_dataset returns correct number of conversations
         assert len(conversations) == 5  # num_conversations
 
-        # Test each conversation has correct structure (session_id, turns)
+        # Test each conversation has correct structure (id, turns)
         for conversation in conversations:
             assert isinstance(conversation, Conversation)
-            assert conversation.session_id is not None
+            assert conversation.id is not None
             assert len(conversation.turns) == 2  # mocked value
 
             for turn in conversation.turns:

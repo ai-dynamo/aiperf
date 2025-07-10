@@ -54,10 +54,10 @@ class DatasetManager(BaseComponentService):
         self.logger.debug("Calling __init__() in dataset manager")
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
-        self.dealer_router_client: ReplyClientProtocol = self.comms.create_reply_client(
+        self.router_client: ReplyClientProtocol = self.comms.create_reply_client(
             CommunicationClientAddressType.DATASET_MANAGER_PROXY_BACKEND
         )
-        self.dataset_configured = asyncio.Event()
+        self.dataset_configured: asyncio.Event = asyncio.Event()
 
     @property
     def service_type(self) -> ServiceType:
@@ -72,12 +72,12 @@ class DatasetManager(BaseComponentService):
         if self.comms is None:
             raise InitializationError("Communication is not initialized")
 
-        self.dealer_router_client.register_request_handler(
+        self.router_client.register_request_handler(
             service_id=self.service_id,
             message_type=MessageType.CONVERSATION_REQUEST,
             handler=self._handle_conversation_request,
         )
-        self.dealer_router_client.register_request_handler(
+        self.router_client.register_request_handler(
             service_id=self.service_id,
             message_type=MessageType.DATASET_TIMING_REQUEST,
             handler=self._handle_dataset_timing_request,
@@ -134,7 +134,7 @@ class DatasetManager(BaseComponentService):
             tokenizer=tokenizer,
         )
         conversations = composer.create_dataset()
-        self.dataset = {conv.session_id: conv for conv in conversations}
+        self.dataset = {conv.id: conv for conv in conversations}
 
         self.dataset_configured.set()
         await self.pub_client.publish(
@@ -155,7 +155,8 @@ class DatasetManager(BaseComponentService):
         # Wait for the dataset to be configured if it is not already
         if not self.dataset_configured.is_set():
             await asyncio.wait_for(
-                self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
+                self.dataset_configured.wait(),
+                timeout=DATASET_CONFIGURATION_TIMEOUT,
             )
 
         if not self.dataset:

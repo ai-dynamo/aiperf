@@ -39,7 +39,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         """
         conversations = []
         for _ in range(self.config.conversation.num):
-            conversation = Conversation(session_id=str(uuid.uuid4()))
+            conversation = Conversation(id=str(uuid.uuid4()))
 
             num_turns = utils.sample_positive_normal_integer(
                 self.config.conversation.turn.mean,
@@ -68,11 +68,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn = Turn()
 
         if self.include_prompt:
-            turn.text.append(self._generate_text_payloads(is_first))
+            turn.texts.append(self._generate_text_payloads(is_first))
         if self.include_image:
-            turn.image.append(self._generate_image_payloads())
+            turn.images.append(self._generate_image_payloads())
         if self.include_audio:
-            turn.audio.append(self._generate_audio_payloads())
+            turn.audios.append(self._generate_audio_payloads())
 
         # Add randomized delays between each turn. Skip if first turn.
         if not is_first:
@@ -81,9 +81,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 self.config.conversation.turn.delay.stddev,
             )
 
-        # TODO: complete the warning message
-        if not turn.text and not turn.image and not turn.audio:
-            self.logger.warning("There w")
+        if not turn.texts and not turn.images and not turn.audios:
+            self.logger.error("There were no payloads generated for the turn.")
 
         return turn
 
@@ -99,7 +98,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         Returns:
             Text: A text payload object.
         """
-        text = Text(name="text")
+        text = Text()
         for _ in range(self.config.prompt.batch_size):
             prompt = self.prompt_generator.generate(
                 mean=self.config.prompt.input_tokens.mean,
@@ -110,7 +109,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 prefix_prompt = self.prompt_generator.sample_prefix_prompt()
                 prompt = f"{prefix_prompt} {prompt}"
 
-            text.content.append(prompt)
+            text.contents.append(prompt)
         return text
 
     def _generate_image_payloads(self) -> Image:
@@ -120,10 +119,10 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         Returns:
             Image: An image payload object.
         """
-        image = Image(name="image_url")
+        image = Image()
         for _ in range(self.config.image.batch_size):
             data = self.image_generator.generate()
-            image.content.append(data)
+            image.contents.append(data)
         return image
 
     def _generate_audio_payloads(self) -> Audio:
@@ -133,10 +132,10 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         Returns:
             Audio: An audio payload object.
         """
-        audio = Audio(name="input_audio")
+        audio = Audio()
         for _ in range(self.config.audio.batch_size):
             data = self.audio_generator.generate()
-            audio.content.append(data)
+            audio.contents.append(data)
         return audio
 
     @property

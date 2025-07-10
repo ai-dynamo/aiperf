@@ -21,7 +21,7 @@ def sample_conversations():
     conversations = []
 
     # Conversation 1: Single turn with timestamp
-    conv1 = Conversation(session_id="session-1")
+    conv1 = Conversation(id="session-1")
     turn1 = Turn(
         timestamp=1000, text=[Text(name="text", content=["Hello, how are you?"])]
     )
@@ -29,7 +29,7 @@ def sample_conversations():
     conversations.append(conv1)
 
     # Conversation 2: Multiple turns with timestamps and delays
-    conv2 = Conversation(session_id="session-2")
+    conv2 = Conversation(id="session-2")
     turn2a = Turn(timestamp=2000, text=[Text(name="text", content=["First message"])])
     turn2b = Turn(
         timestamp=2500, delay=500, text=[Text(name="text", content=["Second message"])]
@@ -60,5 +60,5 @@ def timing_request_message():
 async def populated_dataset_manager(initialized_service, sample_conversations):
     """Pre-configured DatasetManager with sample data for testing."""
     manager = await async_fixture(initialized_service)
-    manager.dataset = {conv.session_id: conv for conv in sample_conversations}
+    manager.dataset = {conv.id: conv for conv in sample_conversations}
     return manager

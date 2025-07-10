@@ -153,7 +153,7 @@ class TestDatasetManager(BaseTestComponentService):
             request1
         )
         assert isinstance(response1, ConversationResponseMessage)
-        assert response1.conversation.session_id == request1.conversation_id
+        assert response1.conversation.id == request1.conversation_id
         assert response1.conversation.turns[0].timestamp == 1000
 
         # second conversation
@@ -165,7 +165,7 @@ class TestDatasetManager(BaseTestComponentService):
             request2
         )
         assert isinstance(response2, ConversationResponseMessage)
-        assert response2.conversation.session_id == request2.conversation_id
+        assert response2.conversation.id == request2.conversation_id
         assert response2.conversation.turns[0].timestamp == 2000
         assert response2.conversation.turns[1].timestamp == 2500
 
