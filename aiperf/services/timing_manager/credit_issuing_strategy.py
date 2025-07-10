@@ -5,8 +5,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Protocol
 
-from aiperf.common.credit_models import CreditPhaseStats, CreditReturnMessage
 from aiperf.common.enums import CreditPhase
+from aiperf.common.messages import CreditPhaseStats, CreditReturnMessage
 from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.services.timing_manager.config import TimingManagerConfig
 
@@ -26,7 +26,7 @@ class CreditManagerProtocol(Protocol):
     ) -> None: ...
 
     async def publish_progress(
-        self, phase_stats: dict[CreditPhase, CreditPhaseStats]
+        self, phase_stats_map: dict[CreditPhase, CreditPhaseStats]
     ) -> None: ...
 
     async def publish_credits_complete(self, cancelled: bool) -> None: ...

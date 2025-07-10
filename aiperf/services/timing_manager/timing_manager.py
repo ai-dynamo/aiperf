@@ -12,16 +12,7 @@ from aiperf.common.comms.base import (
 )
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.credit_models import (
-    CreditDropMessage,
-    CreditPhaseCompleteMessage,
-    CreditPhaseProgressMessage,
-    CreditPhaseSendingCompleteMessage,
-    CreditPhaseStartMessage,
-    CreditPhaseStats,
-    CreditReturnMessage,
-    CreditsCompleteMessage,
-)
+from aiperf.common.credit_models import CreditPhaseStats
 from aiperf.common.enums import (
     CreditPhase,
     MessageType,
@@ -38,6 +29,13 @@ from aiperf.common.hooks import (
 )
 from aiperf.common.messages import (
     CommandMessage,
+    CreditDropMessage,
+    CreditPhaseCompleteMessage,
+    CreditPhaseProgressMessage,
+    CreditPhaseSendingCompleteMessage,
+    CreditPhaseStartMessage,
+    CreditReturnMessage,
+    CreditsCompleteMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
@@ -206,14 +204,14 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
         )
 
     async def publish_progress(
-        self, phase_stats: dict[CreditPhase, CreditPhaseStats]
+        self, phase_stats_map: dict[CreditPhase, CreditPhaseStats]
     ) -> None:
         """Publish the progress message."""
         self.execute_async(
             self.pub_client.publish(
                 CreditPhaseProgressMessage(
                     service_id=self.service_id,
-                    phase_stats=phase_stats,
+                    phase_stats_map=phase_stats_map,
                     request_ns=time.time_ns(),
                 )
             )

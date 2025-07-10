@@ -9,9 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
-from aiperf.common.credit_models import CreditReturnMessage
 from aiperf.common.enums import CommandType, MessageType, ServiceType
-from aiperf.common.messages import CommandMessage
+from aiperf.common.messages import CommandMessage, CreditReturnMessage
 from aiperf.common.service.base_service import BaseService
 from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
 from aiperf.services.timing_manager.timing_manager import TimingManager
