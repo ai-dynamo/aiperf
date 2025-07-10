@@ -4,7 +4,7 @@
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
 
 
-class RateStrategy(CreditIssuingStrategy):
+class RequestRateStrategy(CreditIssuingStrategy):
     """
     Class for rate credit issuing strategy.
     """

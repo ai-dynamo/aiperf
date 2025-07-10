@@ -11,16 +11,7 @@ from aiperf.common.comms.base import (
     RequestClientProtocol,
 )
 from aiperf.common.config import ServiceConfig
-from aiperf.common.credit_models import (
-    CreditDropMessage,
-    CreditPhaseCompleteMessage,
-    CreditPhaseProgressMessage,
-    CreditPhaseSendingCompleteMessage,
-    CreditPhaseStartMessage,
-    CreditPhaseStats,
-    CreditReturnMessage,
-    CreditsCompleteMessage,
-)
+from aiperf.common.credit_models import CreditPhaseStats
 from aiperf.common.enums import (
     CreditPhase,
     MessageType,
@@ -36,6 +27,13 @@ from aiperf.common.hooks import (
 )
 from aiperf.common.messages import (
     CommandMessage,
+    CreditDropMessage,
+    CreditPhaseCompleteMessage,
+    CreditPhaseProgressMessage,
+    CreditPhaseSendingCompleteMessage,
+    CreditPhaseStartMessage,
+    CreditReturnMessage,
+    CreditsCompleteMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
@@ -45,6 +43,7 @@ from aiperf.services.timing_manager.concurrency_strategy import ConcurrencyStrat
 from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
 from aiperf.services.timing_manager.fixed_schedule_strategy import FixedScheduleStrategy
+from aiperf.services.timing_manager.request_rate_strategy import RequestRateStrategy
 
 
 @ServiceFactory.register(ServiceType.TIMING_MANAGER)
@@ -119,7 +118,7 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
                 config, self._issue_credit_drop
             )
         elif config.timing_mode == TimingMode.RATE:
-            self._credit_issuing_strategy = RateStrategy(
+            self._credit_issuing_strategy = RequestRateStrategy(
                 config, self._issue_credit_drop
             )
 
