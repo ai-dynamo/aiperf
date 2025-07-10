@@ -9,7 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, SerializeAsAny
 
-from aiperf.common.enums import SSEFieldType
+from aiperf.common.enums import CreditPhase, SSEFieldType
+from aiperf.common.pydantic_utils import AIPerfBaseModel
 
 
 # Temporary Record class to be used by the ConsoleExporter.
@@ -199,20 +200,8 @@ class SSEMessage(InferenceServerResponse):
 ################################################################################
 
 
-class RequestRecord(BaseModel):
-    """Record of a request with its associated responses.
-
-    Attributes:
-        request: The request payload.
-        timestamp_ns: The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).
-        start_perf_ns: The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).
-        end_perf_ns: The end reference time of the request in nanoseconds (perf_counter_ns).
-        recv_start_perf_ns: The start reference time of the response in nanoseconds used for latency calculations (perf_counter_ns).
-        status: The HTTP status code of the request.
-        responses: The raw responses received from the request.
-        error: The error details if the request failed.
-        delayed: Whether the request was delayed from when it was expected to be sent.
-    """
+class RequestRecord(AIPerfBaseModel):
+    """Record of a request with its associated responses."""
 
     request: Any = Field(
         default=None,
@@ -238,9 +227,10 @@ class RequestRecord(BaseModel):
         default=None,
         description="The HTTP status code of the response.",
     )
-    # Note: we need to use SerializeAsAny to allow for generic subclass support
+    # NOTE: We need to use SerializeAsAny to allow for generic subclass support
+    # NOTE: Order of the types is important, as that is the order they are type checked.
     responses: SerializeAsAny[
-        list[InferenceServerResponse | SSEMessage | TextResponse]
+        list[SSEMessage | TextResponse | InferenceServerResponse | Any]
     ] = Field(
         default_factory=list,
         description="The raw responses received from the request.",
@@ -249,12 +239,21 @@ class RequestRecord(BaseModel):
         default=None,
         description="The error details if the request failed.",
     )
-    delayed: bool = Field(
-        default=False,
-        description="Whether the request was delayed from when it was expected to be sent.",
+    delayed_ns: int | None = Field(
+        default=None,
+        gt=0,
+        description="The number of nanoseconds the request was delayed from when it was expected to be sent, "
+        "or None if the request was sent on time, or did not have a credit_drop_ns timestamp.",
+    )
+    credit_phase: CreditPhase = Field(
+        default=CreditPhase.STEADY_STATE,
+        description="The type of credit phase (either warmup or profiling)",
     )
 
-    # TODO: Most of these properties will be removed once we have proper record handling and metrics.
+    @property
+    def delayed(self) -> bool:
+        """Check if the request was delayed."""
+        return self.delayed_ns is not None and self.delayed_ns > 0
 
     @property
     def has_error(self) -> bool:
@@ -275,6 +274,7 @@ class RequestRecord(BaseModel):
             and all(0 < response.perf_ns < sys.maxsize for response in self.responses)
         )
 
+    # TODO: Most of these properties will be removed once we have proper record handling and metrics.
     @property
     def time_to_first_response_ns(self) -> int | None:
         """Get the time to the first response in nanoseconds."""
