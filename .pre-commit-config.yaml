@@ -46,3 +46,11 @@ repos:
       entry: python tools/add_copyright.py
       language: python
       require_serial: true
+    # Run mkinit to generate the __init__.py files
+    - id: mkinit
+      name: Run mkinit
+      entry: mkinit
+      language: system
+      types: [python]
+      files: ^aiperf/common/enums/__init__.py$
+      args: [--write, --black, --nomods, --norespect_all]
