@@ -435,28 +435,28 @@ class TestPromptGeneratorComprehensive:
             generator._sample_tokens(5)
 
     # ============================================================================
-    # get_random_prefix_prompt Method Tests
+    # sample_prefix_prompt Method Tests
     # ============================================================================
 
-    def test_get_random_prefix_prompt_success(self, prefix_config):
-        """Test get_random_prefix_prompt with populated pool."""
+    def test_sample_prefix_prompt_success(self, prefix_config):
+        """Test sample_prefix_prompt with populated pool."""
         tokenizer, config = prefix_config
         generator = PromptGenerator(config, tokenizer)
 
         # Mock random.choice to control selection
         expected_prompt = "selected_prompt"
         with patch("random.choice", return_value=expected_prompt):
-            result = generator.get_random_prefix_prompt()
+            result = generator.sample_prefix_prompt()
             assert result == expected_prompt
 
-    def test_get_random_prefix_prompt_multiple_calls(self, prefix_config):
-        """Test get_random_prefix_prompt returns different prompts across calls."""
+    def test_sample_prefix_prompt_multiple_calls(self, prefix_config):
+        """Test sample_prefix_prompt returns different prompts across calls."""
         tokenizer, config = prefix_config
         generator = PromptGenerator(config, tokenizer)
 
         # Should be able to call multiple times
-        prompt1 = generator.get_random_prefix_prompt()
-        prompt2 = generator.get_random_prefix_prompt()
+        prompt1 = generator.sample_prefix_prompt()
+        prompt2 = generator.sample_prefix_prompt()
 
         assert isinstance(prompt1, str)
         assert isinstance(prompt2, str)
@@ -464,13 +464,13 @@ class TestPromptGeneratorComprehensive:
         assert prompt1 in generator._prefix_prompts
         assert prompt2 in generator._prefix_prompts
 
-    def test_get_random_prefix_prompt_empty_pool(self, basic_config):
-        """Test get_random_prefix_prompt with empty pool."""
+    def test_sample_prefix_prompt_empty_pool(self, basic_config):
+        """Test sample_prefix_prompt with empty pool."""
         tokenizer, config = basic_config
         generator = PromptGenerator(config, tokenizer)
 
         with pytest.raises(InitializationError):
-            generator.get_random_prefix_prompt()
+            generator.sample_prefix_prompt()
 
     # ============================================================================
     # _initialize_corpus Method Tests

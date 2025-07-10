@@ -107,8 +107,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             )
 
             if self.prefix_prompt_enabled and is_first:
-                # TODO: Rename
-                prefix_prompt = self.prompt_generator.get_random_prefix_prompt()
+                prefix_prompt = self.prompt_generator.sample_prefix_prompt()
                 prompt = f"{prefix_prompt} {prompt}"
 
             text.content.append(prompt)

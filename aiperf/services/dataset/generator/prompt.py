@@ -216,12 +216,11 @@ class PromptGenerator(BaseGenerator):
         self.logger.debug("Sampled %d tokens from corpus", len(prompt_tokens))
         return prompt_tokens
 
-    def get_random_prefix_prompt(self) -> str:
-        """
-        Fetch a random prefix prompt from the pool.
+    def sample_prefix_prompt(self) -> str:
+        """Sample a prompt from the prefix prompts pool.
 
         Returns:
-            A random prefix prompt.
+            A sampled prefix prompt.
 
         Raises:
             InvalidStateError: If the prefix prompts pool is empty.

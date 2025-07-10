@@ -193,7 +193,7 @@ class TestSyntheticDatasetComposer:
         "aiperf.services.dataset.composer.synthetic.utils.sample_positive_normal_integer"
     )
     @patch(
-        "aiperf.services.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt"
+        "aiperf.services.dataset.generator.prompt.PromptGenerator.sample_prefix_prompt"
     )
     def test_create_dataset_with_prefix_prompts(
         self, mock_prefix, mock_sample, prefix_prompt_config, mock_tokenizer
@@ -315,7 +315,7 @@ class TestSyntheticDatasetComposer:
         assert text_payload.content == ["Generated text content"]
 
     @patch(
-        "aiperf.services.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt"
+        "aiperf.services.dataset.generator.prompt.PromptGenerator.sample_prefix_prompt"
     )
     @patch("aiperf.services.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_first_turn_with_prefix(
