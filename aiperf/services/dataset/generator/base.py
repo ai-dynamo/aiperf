@@ -4,8 +4,10 @@
 import logging
 from abc import ABC, abstractmethod
 
+from aiperf.common.mixins import AsyncTaskManagerMixin
 
-class BaseGenerator(ABC):
+
+class BaseGenerator(AsyncTaskManagerMixin, ABC):
     """Abstract base class for all data generators.
 
     Provides a consistent interface for generating synthetic data while allowing
@@ -13,7 +15,12 @@ class BaseGenerator(ABC):
     """
 
     def __init__(self):
+        super().__init__()
         self.logger = logging.getLogger(self.__class__.__name__)
+
+    @abstractmethod
+    async def initialize(self) -> None:
+        """Initialize the generator."""
 
     @abstractmethod
     def generate(self, *args, **kwargs) -> str:
@@ -26,4 +33,3 @@ class BaseGenerator(ABC):
         Returns:
             Generated data as a string (could be text, base64 encoded media, etc.)
         """
-        pass

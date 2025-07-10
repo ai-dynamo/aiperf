@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import glob
+import os
 import random
 from pathlib import Path
 
@@ -11,6 +13,8 @@ from aiperf.common.config import ImageConfig
 from aiperf.common.enums import ImageFormat
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.generator.base import BaseGenerator
+
+SOURCE_IMAGES_DIR = Path(__file__).parent.resolve() / "assets" / "source_images"
 
 
 class ImageGenerator(BaseGenerator):
@@ -25,6 +29,22 @@ class ImageGenerator(BaseGenerator):
     def __init__(self, config: ImageConfig):
         super().__init__()
         self.config = config
+        self.images: list[Image.Image] = []
+        self.filepath: str = os.environ.get("SOURCE_IMAGES_DIR", str(SOURCE_IMAGES_DIR))
+
+    async def initialize(self) -> None:
+        """Initialize the image generator asynchronously."""
+        filenames = glob.glob(f"{self.filepath}/*")
+        if not filenames:
+            raise ValueError(f"No source images found in '{self.filepath}'")
+
+        for filename in filenames:
+            self.execute_async(asyncio.to_thread(Image.open, filename))
+
+        self.images = await self.wait_for_all_tasks()
+        self.logger.debug(
+            "Loaded %d source images from %s", len(self.images), self.filepath
+        )
 
     def generate(self, *args, **kwargs) -> str:
         """Generate an image with the configured parameters.
@@ -51,19 +71,15 @@ class ImageGenerator(BaseGenerator):
             height,
         )
 
-        image = self._sample_source_image()
+        image = self._sample_image()
         image = image.resize(size=(width, height))
         base64_image = utils.encode_image(image, image_format)
         return f"data:image/{image_format.name.lower()};base64,{base64_image}"
 
-    def _sample_source_image(self):
-        """Sample one image among the source images.
+    def _sample_image(self) -> Image.Image:
+        """Sample an image among the loaded images.
 
         Returns:
-            A PIL Image object randomly selected from the source images.
+            A PIL Image object randomly selected from the loaded images.
         """
-        filepath = Path(__file__).parent.resolve() / "assets" / "source_images" / "*"
-        filenames = glob.glob(str(filepath))
-        if not filenames:
-            raise ValueError(f"No source images found in '{filepath}'")
-        return Image.open(random.choice(filenames))
+        return random.choice(self.images)
