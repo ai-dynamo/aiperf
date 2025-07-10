@@ -1,6 +1,7 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 
@@ -17,13 +18,14 @@ class BaseGenerator(AsyncTaskManagerMixin, ABC):
     def __init__(self):
         super().__init__()
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.data_initialized: asyncio.Event = asyncio.Event()
 
     @abstractmethod
     async def initialize(self) -> None:
         """Initialize the generator."""
 
     @abstractmethod
-    def generate(self, *args, **kwargs) -> str:
+    async def generate(self, *args, **kwargs) -> str:
         """Generate synthetic data.
 
         Args:
@@ -33,3 +35,7 @@ class BaseGenerator(AsyncTaskManagerMixin, ABC):
         Returns:
             Generated data as a string (could be text, base64 encoded media, etc.)
         """
+
+    async def wait_for_data_initialized(self) -> None:
+        """Wait for the data to be initialized."""
+        await self.data_initialized.wait()

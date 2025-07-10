@@ -49,33 +49,38 @@ def base_config():
     )
 
 
+@pytest.fixture
+async def initialized_generator(base_config):
+    generator = AudioGenerator(base_config)
+    await generator.initialize()
+    return generator
+
+
 @pytest.mark.parametrize(
-    "expected_audio_length",
+    "audio_length",
     [
         1.0,
         2.0,
     ],
 )
-def test_different_audio_length(expected_audio_length, base_config):
-    base_config.length.mean = expected_audio_length
-    base_config.length.stddev = 0.0  # make it deterministic
+async def test_different_audio_length(audio_length, initialized_generator):
+    """Test that the audio length is as expected."""
+    initialized_generator.config.length.mean = audio_length
+    initialized_generator.config.length.stddev = 0.0  # make it deterministic
 
-    audio_generator = AudioGenerator(base_config)
-    data_uri = audio_generator.generate()
+    data_uri = await initialized_generator.generate()
 
     audio_data, sample_rate = decode_audio(data_uri)
     actual_length = len(audio_data) / sample_rate
-    assert abs(actual_length - expected_audio_length) < 0.1, (
-        "audio length not as expected"
-    )
+    assert abs(actual_length - audio_length) < 0.1, "audio length not as expected"
 
 
-def test_negative_length_raises_error(base_config):
-    base_config.length.mean = -1.0
-    audio_generator = AudioGenerator(base_config)
+async def test_negative_length_raises_error(initialized_generator):
+    """Test that setting a negative audio length raises an error."""
+    initialized_generator.config.length.mean = -1.0
 
     with pytest.raises(ConfigurationError):
-        audio_generator.generate()
+        await initialized_generator.generate()
 
 
 @pytest.mark.parametrize(
@@ -85,21 +90,25 @@ def test_negative_length_raises_error(base_config):
         (2.0, 0.2, 48, 24),
     ],
 )
-def test_generator_deterministic(mean, stddev, sampling_rate, bit_depth, base_config):
+async def test_generator_deterministic(
+    mean, stddev, sampling_rate, bit_depth, initialized_generator
+):
+    """Test that setting random seed makes the generator deterministic."""
+    initialized_generator.config = AudioConfig(
+        length=AudioLengthConfig(mean=mean, stddev=stddev),
+        sample_rates=[sampling_rate],
+        depths=[bit_depth],
+        format=AudioFormat.WAV,
+        num_channels=1,
+    )
+
     np.random.seed(123)
     random.seed(123)
-
-    base_config.length.mean = mean
-    base_config.length.stddev = stddev
-    base_config.sample_rates = [sampling_rate]
-    base_config.depths = [bit_depth]
-
-    audio_generator = AudioGenerator(base_config)
-    data_uri1 = audio_generator.generate()
+    data_uri1 = await initialized_generator.generate()
 
     np.random.seed(123)
     random.seed(123)
-    data_uri2 = audio_generator.generate()
+    data_uri2 = await initialized_generator.generate()
 
     # Compare the actual audio data
     audio_data1, _ = decode_audio(data_uri1)
@@ -108,12 +117,12 @@ def test_generator_deterministic(mean, stddev, sampling_rate, bit_depth, base_co
 
 
 @pytest.mark.parametrize("audio_format", [AudioFormat.WAV, AudioFormat.MP3])
-def test_audio_format(audio_format, base_config):
+async def test_audio_format(audio_format, initialized_generator):
+    """Test setting different audio format works as expected."""
     # use sample rate supported by all formats (44.1kHz)
-    base_config.format = audio_format
+    initialized_generator.config.format = audio_format
 
-    audio_generator = AudioGenerator(base_config)
-    data_uri = audio_generator.generate()
+    data_uri = await initialized_generator.generate()
 
     # Check data URI format
     assert data_uri.startswith(f"{audio_format.name.lower()},"), (
@@ -125,22 +134,22 @@ def test_audio_format(audio_format, base_config):
     assert len(audio_data) > 0, "audio data is empty"
 
 
-def test_unsupported_bit_depth(base_config):
-    base_config.depths = [12]  # Unsupported bit depth
+async def test_unsupported_bit_depth(initialized_generator):
+    """Test that setting an unsupported bit depth raises an error."""
+    initialized_generator.config.depths = [12]  # Unsupported bit depth
 
     with pytest.raises(ConfigurationError) as exc_info:
-        audio_generator = AudioGenerator(base_config)
-        audio_generator.generate()
+        await initialized_generator.generate()
 
     assert "Supported bit depths are:" in str(exc_info.value)
 
 
 @pytest.mark.parametrize("channels", [1, 2])
-def test_channels(channels, base_config):
-    base_config.num_channels = channels
+async def test_channels(channels, initialized_generator):
+    """Test that setting different number of channels works as expected."""
+    initialized_generator.config.num_channels = channels
 
-    audio_generator = AudioGenerator(base_config)
-    data_uri = audio_generator.generate()
+    data_uri = await initialized_generator.generate()
 
     audio_data, _ = decode_audio(data_uri)
     if channels == 1:
@@ -158,24 +167,24 @@ def test_channels(channels, base_config):
         (96, 32),  # High-res audio
     ],
 )
-def test_audio_parameters(sampling_rate_khz, bit_depth, base_config):
-    base_config.sample_rates = [sampling_rate_khz]
-    base_config.depths = [bit_depth]
+async def test_audio_parameters(sampling_rate_khz, bit_depth, initialized_generator):
+    """Test that setting different audio parameters works as expected."""
+    initialized_generator.config.sample_rates = [sampling_rate_khz]
+    initialized_generator.config.depths = [bit_depth]
 
-    audio_generator = AudioGenerator(base_config)
-    data_uri = audio_generator.generate()
+    data_uri = await initialized_generator.generate()
 
     _, sample_rate = decode_audio(data_uri)
     assert sample_rate == sampling_rate_khz * 1000, "unexpected sampling rate"
 
 
-def test_mp3_unsupported_sampling_rate(base_config):
-    base_config.sample_rates = [96]  # 96kHz is not supported for MP3
-    base_config.format = AudioFormat.MP3
+async def test_mp3_unsupported_sampling_rate(initialized_generator):
+    """Test that setting an unsupported sampling rate for MP3 raises an error."""
+    initialized_generator.config.sample_rates = [96]  # 96kHz is not supported for MP3
+    initialized_generator.config.format = AudioFormat.MP3
 
     with pytest.raises(ConfigurationError) as exc_info:
-        audio_generator = AudioGenerator(base_config)
-        audio_generator.generate()
+        await initialized_generator.generate()
 
         assert "MP3 format only supports" in str(exc_info.value), (
             "error message should mention supported rates"

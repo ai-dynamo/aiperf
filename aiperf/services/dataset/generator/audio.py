@@ -49,6 +49,14 @@ class AudioGenerator(BaseGenerator):
         super().__init__()
         self.config = config
 
+    async def initialize(self) -> None:
+        """Initialize the audio generator.
+
+        Note: Audio generator doesn't require initialization,
+        but this method satisfies the abstract base class requirement.
+        """
+        self.data_initialized.set()
+
     def _validate_sampling_rate(
         self, sampling_rate_hz: int, audio_format: AudioFormat
     ) -> None:
@@ -89,7 +97,7 @@ class AudioGenerator(BaseGenerator):
                 f"Supported bit depths are: {supported_depths}"
             )
 
-    def generate(self, *args, **kwargs) -> str:
+    async def generate(self, *args, **kwargs) -> str:
         """Generate audio data with specified parameters.
 
         Returns:
@@ -103,6 +111,8 @@ class AudioGenerator(BaseGenerator):
                 - bit depth is not supported (must be 8, 16, 24, or 32)
                 - audio format is not supported (must be 'wav' or 'mp3')
         """
+        await self.wait_for_data_initialized()
+
         if self.config.num_channels not in (1, 2):
             raise ConfigurationError(
                 "Only mono (1) and stereo (2) channels are supported"
