@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import time
-from functools import cached_property
 from typing import Literal
 
 from pydantic import Field
@@ -30,7 +29,7 @@ class WorkerPhaseTaskStats(AIPerfBaseModel):
         description="The number of tasks that were completed successfully",
     )
 
-    @cached_property
+    @property
     def in_progress(self) -> int:
         """The number of tasks that are currently in progress.
 
