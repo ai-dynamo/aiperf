@@ -58,7 +58,7 @@ class CommunicationClientAddressType(CaseInsensitiveStrEnum):
 
 
 class ZMQProxyType(CaseInsensitiveStrEnum):
-    """Types of ZMQ proxys."""
+    """Types of ZMQ proxies."""
 
     DEALER_ROUTER = "dealer_router"
     XPUB_XSUB = "xpub_xsub"
