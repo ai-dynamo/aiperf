@@ -37,7 +37,7 @@ class InputConfig(BaseConfig):
     ] = InputDefaults.BATCH_SIZE
 
     extra: Annotated[
-        dict[str, str] | None,
+        dict[str, Any] | None,
         Field(
             description="Provide additional inputs to include with every request.\n"
             "Inputs should be in an 'input_name:value' format.",

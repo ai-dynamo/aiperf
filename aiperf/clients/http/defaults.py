@@ -14,9 +14,9 @@ class SocketDefaults:
     TCP_QUICKACK = 1  # Quick ACK mode
 
     SO_KEEPALIVE = 1  # Enable keepalive
-    TCP_KEEPIDLE = 600  # Start keepalive after 10 min idle
-    TCP_KEEPINTVL = 60  # Keepalive interval: 60 seconds
-    TCP_KEEPCNT = 3  # 3 failed keepalive probes = dead
+    TCP_KEEPIDLE = 60  # Start keepalive after 1 min idle
+    TCP_KEEPINTVL = 30  # Keepalive interval: 30 seconds
+    TCP_KEEPCNT = 1  # 1 failed keepalive probes = dead
 
     SO_LINGER = 0  # Disable linger
     SO_REUSEADDR = 1  # Enable reuse address
@@ -25,8 +25,8 @@ class SocketDefaults:
     SO_RCVBUF = 1024 * 1024 * 10  # 10MB receive buffer
     SO_SNDBUF = 1024 * 1024 * 10  # 10MB send buffer
 
-    SO_RCVTIMEO = 10  # 10 second receive timeout
-    SO_SNDTIMEO = 10  # 10 second send timeout
+    SO_RCVTIMEO = 30  # 30 second receive timeout
+    SO_SNDTIMEO = 30  # 30 second send timeout
     TCP_USER_TIMEOUT = 30000  # 30 sec user timeout
 
     @classmethod

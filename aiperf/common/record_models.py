@@ -1,20 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import os
 import sys
 import time
 from functools import cached_property
 from typing import Any
 
-from pydantic import BaseModel, Field, SerializeAsAny
+from pydantic import Field, SerializeAsAny
 
-from aiperf.common.enums import SSEFieldType
+from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.enums import CreditPhaseType, SSEFieldType
+from aiperf.common.pydantic_utils import AIPerfBaseModel
 
 
-# Temporary Record class to be used by the ConsoleExporter.
-# TODO: Remove once the actual Records classes are fully implemented.
-class MetricResult(BaseModel):
+class MetricResult(AIPerfBaseModel):
     """The result values of a single metric."""
 
     tag: str = Field(description="The unique identifier of the metric")
@@ -45,48 +44,11 @@ class MetricResult(BaseModel):
 
 
 ################################################################################
-# Inference Client Models
-################################################################################
-
-
-class BaseClientConfig(BaseModel):
-    """Base configuration options for all clients."""
-
-
-class GenericHTTPClientConfig(BaseClientConfig):
-    """Configuration options for a generic HTTP inference client."""
-
-    url: str = Field(
-        default=f"http://localhost:{os.getenv('AIPERF_PORT', 8080)}",
-        description="The URL of the inference client.",
-    )
-    protocol: str = Field(
-        default="http", description="The protocol to use for the inference client."
-    )
-    ssl_options: dict[str, Any] | None = Field(
-        default=None,
-        description="The SSL options to use for the inference client.",
-    )
-    timeout_ms: int = Field(
-        default=300000,
-        description="The timeout in milliseconds for the inference client.",
-    )
-    headers: dict[str, str] = Field(
-        default_factory=dict,
-        description="The headers to use for the inference client.",
-    )
-    api_key: str | None = Field(
-        default=None,
-        description="The API key to use for the inference client.",
-    )
-
-
-################################################################################
 # Inference Client Response Models
 ################################################################################
 
 
-class InferenceServerResponse(BaseModel):
+class InferenceServerResponse(AIPerfBaseModel):
     """Response from a inference client."""
 
     perf_ns: int = Field(
@@ -108,7 +70,7 @@ class TextResponse(InferenceServerResponse):
     )
 
 
-class ErrorDetails(BaseModel):
+class ErrorDetails(AIPerfBaseModel):
     """Encapsulates details about an error."""
 
     code: int | None = Field(
@@ -147,7 +109,7 @@ class ErrorDetails(BaseModel):
         )
 
 
-class ErrorDetailsCount(BaseModel):
+class ErrorDetailsCount(AIPerfBaseModel):
     """Count of error details."""
 
     error_details: ErrorDetails
@@ -157,7 +119,7 @@ class ErrorDetailsCount(BaseModel):
     )
 
 
-class SSEField(BaseModel):
+class SSEField(AIPerfBaseModel):
     """Base model for a single field in an SSE message."""
 
     name: SSEFieldType | str = Field(
@@ -199,20 +161,8 @@ class SSEMessage(InferenceServerResponse):
 ################################################################################
 
 
-class RequestRecord(BaseModel):
-    """Record of a request with its associated responses.
-
-    Attributes:
-        request: The request payload.
-        timestamp_ns: The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).
-        start_perf_ns: The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).
-        end_perf_ns: The end reference time of the request in nanoseconds (perf_counter_ns).
-        recv_start_perf_ns: The start reference time of the response in nanoseconds used for latency calculations (perf_counter_ns).
-        status: The HTTP status code of the request.
-        responses: The raw responses received from the request.
-        error: The error details if the request failed.
-        delayed: Whether the request was delayed from when it was expected to be sent.
-    """
+class RequestRecord(AIPerfBaseModel):
+    """Record of a request with its associated responses."""
 
     request: Any = Field(
         default=None,
@@ -249,10 +199,21 @@ class RequestRecord(BaseModel):
         default=None,
         description="The error details if the request failed.",
     )
-    delayed: bool = Field(
-        default=False,
-        description="Whether the request was delayed from when it was expected to be sent.",
+    delayed_ns: int | None = Field(
+        default=None,
+        gt=0,
+        description="The number of nanoseconds the request was delayed from when it was expected to be sent, "
+        "or None if the request was sent on time, or did not have a credit_drop_ns timestamp.",
     )
+    credit_phase: CreditPhaseType = Field(
+        default=CreditPhaseType.PROFILING,
+        description="The type of credit phase (either warmup or profiling)",
+    )
+
+    @property
+    def delayed(self) -> bool:
+        """Check if the request was delayed."""
+        return self.delayed_ns is not None and self.delayed_ns > 0
 
     # TODO: Most of these properties will be removed once we have proper record handling and metrics.
 
@@ -347,7 +308,7 @@ class RequestRecord(BaseModel):
         )
 
 
-class ResponseData(BaseModel):
+class ResponseData(AIPerfBaseModel):
     """Base class for all response data."""
 
     perf_ns: int = Field(description="The performance timestamp of the response.")
@@ -364,7 +325,7 @@ class ResponseData(BaseModel):
     )
 
 
-class ParsedResponseRecord(BaseModel):
+class ParsedResponseRecord(AIPerfBaseModel):
     """Record of a request and its associated responses, already parsed and ready for metrics."""
 
     worker_id: str = Field(
@@ -411,6 +372,18 @@ class ParsedResponseRecord(BaseModel):
         )
 
     @cached_property
+    def request_duration_ns(self) -> int:
+        """Get the duration of the request in nanoseconds."""
+        return self.end_perf_ns - self.start_perf_ns
+
+    @cached_property
+    def tokens_per_second(self) -> float | None:
+        """Get the number of tokens per second of the request."""
+        if self.token_count is None or self.request_duration_ns == 0:
+            return None
+        return self.token_count / (self.request_duration_ns / NANOS_PER_SECOND)
+
+    @cached_property
     def has_error(self) -> bool:
         """Check if the response record has an error."""
         return self.request.has_error
@@ -434,30 +407,3 @@ class ParsedResponseRecord(BaseModel):
             and 0 <= self.start_perf_ns < self.end_perf_ns < sys.maxsize
             and all(0 < response.perf_ns < sys.maxsize for response in self.responses)
         )
-
-
-class Transaction(BaseModel):
-    """
-    Represents a request/response with a timestamp and associated payload.
-
-    Attributes:
-        timestamp: The time at which the transaction was recorded.
-        payload: The data or content of the transaction.
-    """
-
-    timestamp: int = Field(description="The timestamp of the transaction")
-    payload: Any = Field(description="The payload of the transaction")
-
-
-class Record(BaseModel):
-    """
-    Represents a record containing a request transaction and its associated response transactions.
-    Attributes:
-        request: The input transaction for the record.
-        responses A list of response transactions corresponding to the request.
-    """
-
-    request: Transaction = Field(description="The request transaction for the record")
-    responses: list[Transaction] = Field(
-        description="A list of response transactions for the record",
-    )

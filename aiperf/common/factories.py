@@ -78,6 +78,21 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
         super().__init_subclass__()
 
     @classmethod
+    def register_all(
+        cls, *class_types: ClassEnumT | str, override_priority: int = 0
+    ) -> Callable:
+        """Register multiple class types mapping to a single corresponding class.
+        This is useful if a single class implements multiple types. Currently only supports
+        registering as a single override priority for all types."""
+
+        def decorator(class_cls: type[ClassProtocolT]) -> type[ClassProtocolT]:
+            for class_type in class_types:
+                cls.register(class_type, override_priority)(class_cls)
+            return class_cls
+
+        return decorator
+
+    @classmethod
     def register(
         cls, class_type: ClassEnumT | str, override_priority: int = 0
     ) -> Callable:

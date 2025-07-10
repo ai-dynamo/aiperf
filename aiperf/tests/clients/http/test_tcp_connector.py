@@ -114,11 +114,16 @@ class TestCreateTcpConnector:
     @pytest.mark.parametrize(
         "has_attribute,attribute_name,tcp_option,expected_value",
         [
-            (True, "TCP_KEEPIDLE", socket.TCP_KEEPIDLE, 600),
-            (True, "TCP_KEEPINTVL", socket.TCP_KEEPINTVL, 60),
-            (True, "TCP_KEEPCNT", socket.TCP_KEEPCNT, 3),
-            (True, "TCP_QUICKACK", socket.TCP_QUICKACK, 1),
-            (True, "TCP_USER_TIMEOUT", socket.TCP_USER_TIMEOUT, 30000),
+            (True, "TCP_KEEPIDLE", socket.TCP_KEEPIDLE, SocketDefaults.TCP_KEEPIDLE),
+            (True, "TCP_KEEPINTVL", socket.TCP_KEEPINTVL, SocketDefaults.TCP_KEEPINTVL),
+            (True, "TCP_KEEPCNT", socket.TCP_KEEPCNT, SocketDefaults.TCP_KEEPCNT),
+            (True, "TCP_QUICKACK", socket.TCP_QUICKACK, SocketDefaults.TCP_QUICKACK),
+            (
+                True,
+                "TCP_USER_TIMEOUT",
+                socket.TCP_USER_TIMEOUT,
+                SocketDefaults.TCP_USER_TIMEOUT,
+            ),
             (False, "TCP_KEEPIDLE", socket.TCP_KEEPIDLE, None),
         ],
     )
