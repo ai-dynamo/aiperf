@@ -68,7 +68,7 @@ def bootstrap_and_run_service(
 
         yappi.stop()
 
-        # Get and print stats
+        # Get profile stats and save to file in the artifact directory
         stats = yappi.get_func_stats()
         yappi_dir = user_config.output.artifact_directory / "yappi"
         yappi_dir.mkdir(parents=True, exist_ok=True)
@@ -103,7 +103,8 @@ def bootstrap_and_run_service(
             # import numpy as np
             # np.random.seed(user_config.input.random_seed)
 
-        await service.run_forever()
+        with contextlib.suppress(asyncio.CancelledError):
+            await service.run_forever()
 
         if service_config.enable_yappi:
             _stop_yappi_profiling(service.service_id)
