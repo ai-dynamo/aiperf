@@ -186,14 +186,14 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
         )
 
     async def publish_progress(
-        self, phase_stats: dict[CreditPhase, CreditPhaseStats]
+        self, phase_stats_map: dict[CreditPhase, CreditPhaseStats]
     ) -> None:
         """Publish the progress message."""
         self.execute_async(
             self.pub_client.publish(
                 CreditPhaseProgressMessage(
                     service_id=self.service_id,
-                    phase_stats=phase_stats,
+                    phase_stats_map=phase_stats_map,
                     request_ns=time.time_ns(),
                 )
             )
