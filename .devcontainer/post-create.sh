@@ -38,13 +38,17 @@ else
     echo "Virtual environment already exists at ${HOME}/.venv"
 fi
 
+# Set the proper venv path for using make commands
+echo "VENV_PATH=${HOME}/.venv" >> ".env.mk"
+
+# Source the venv
 source "${HOME}/.venv/bin/activate"
 # Change the uv cache dir to reside in the same volume as the venv
 # This is to allow uv to hardlink the cache files to the venv for better performance
 mkdir -p "${HOME}/.venv/.cache/uv"
 export UV_CACHE_DIR="${HOME}/.venv/.cache/uv"
 
-# install the python package in editable mode
+# install the python package plus dev dependencies in editable mode
 cd "${HOME}/aiperf" && retry uv pip install -e ".[dev]"
 
 # Pre-commit hooks
