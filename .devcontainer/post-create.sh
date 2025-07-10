@@ -32,7 +32,7 @@ sudo chown -R appuser:appuser "${HOME}"
 # Create the virtual environment if it doesn't exist
 if ! [ -f "${HOME}/.venv/bin/python" ]; then
     echo "Creating virtual environment..."
-    uv venv "${HOME}/.venv" --python 3.10
+    uv venv "${HOME}/.venv" --python 3.12
     echo "Virtual environment created at ${HOME}/.venv"
 else
     echo "Virtual environment already exists at ${HOME}/.venv"

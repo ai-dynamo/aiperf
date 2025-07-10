@@ -31,7 +31,7 @@ PROJECT_NAME ?= AIPerf
 # The path to the virtual environment
 VENV_PATH ?= .venv
 # The python version to use
-PYTHON_VERSION ?= 3.10
+PYTHON_VERSION ?= 3.12
 # The command to activate the virtual environment
 activate_venv = . $(VENV_PATH)/bin/activate
 
