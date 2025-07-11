@@ -68,5 +68,7 @@ class Conversation(AIPerfBaseModel):
     the conversation.
     """
 
-    turns: list[Turn] = Field(..., description="List of turns in the conversation.")
+    turns: list[Turn] = Field(
+        default=[], description="List of turns in the conversation."
+    )
     id: str = Field(..., description="The conversation ID.")

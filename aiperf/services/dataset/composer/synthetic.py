@@ -28,7 +28,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 "setting the mean to a positive value."
             )
 
-    def create_dataset(self) -> list[Conversation]:
+    async def create_dataset(self) -> list[Conversation]:
         """Create a synthetic conversation dataset from the given configuration.
 
         It generates a set of conversations with a varying number of turns,
@@ -37,6 +37,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         Returns:
             list[Conversation]: A list of conversation objects.
         """
+        await self.wait_for_composer_initialized()
+
         conversations = []
         for _ in range(self.config.conversation.num):
             conversation = Conversation(id=str(uuid.uuid4()))
@@ -45,15 +47,19 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 self.config.conversation.turn.mean,
                 self.config.conversation.turn.stddev,
             )
-            self.logger.debug("Creating conversation with %d turns", num_turns)
 
             for turn_idx in range(num_turns):
-                turn = self._create_turn(is_first=(turn_idx == 0))
+                turn = await self._create_turn(is_first=(turn_idx == 0))
                 conversation.turns.append(turn)
+
             conversations.append(conversation)
+
+        self.logger.debug(
+            "Created total %d synthetic conversations", len(conversations)
+        )
         return conversations
 
-    def _create_turn(self, is_first: bool) -> Turn:
+    async def _create_turn(self, is_first: bool) -> Turn:
         """Create a turn object that contains synthetic payloads to send.
 
         It generates multi-modal data (e.g. text, image, audio) using synthetic
@@ -68,11 +74,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn = Turn()
 
         if self.include_prompt:
-            turn.texts.append(self._generate_text_payloads(is_first))
+            turn.texts.append(await self._generate_text_payloads(is_first))
         if self.include_image:
-            turn.images.append(self._generate_image_payloads())
+            turn.images.append(await self._generate_image_payloads())
         if self.include_audio:
-            turn.audios.append(self._generate_audio_payloads())
+            turn.audios.append(await self._generate_audio_payloads())
 
         # Add randomized delays between each turn. Skip if first turn.
         if not is_first:
@@ -86,7 +92,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         return turn
 
-    def _generate_text_payloads(self, is_first: bool) -> Text:
+    async def _generate_text_payloads(self, is_first: bool) -> Text:
         """Generate synthetic text payloads.
 
         If the turn is the first turn in the conversation, it could add a prefix prompt
@@ -100,19 +106,19 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         """
         text = Text()
         for _ in range(self.config.prompt.batch_size):
-            prompt = self.prompt_generator.generate(
+            prompt = await self.prompt_generator.generate(
                 mean=self.config.prompt.input_tokens.mean,
                 stddev=self.config.prompt.input_tokens.stddev,
             )
 
             if self.prefix_prompt_enabled and is_first:
-                prefix_prompt = self.prompt_generator.sample_prefix_prompt()
+                prefix_prompt = await self.prompt_generator.sample_prefix_prompt()
                 prompt = f"{prefix_prompt} {prompt}"
 
             text.contents.append(prompt)
         return text
 
-    def _generate_image_payloads(self) -> Image:
+    async def _generate_image_payloads(self) -> Image:
         """
         Generate synthetic images if the image width and height are specified.
 
@@ -121,11 +127,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         """
         image = Image()
         for _ in range(self.config.image.batch_size):
-            data = self.image_generator.generate()
+            data = await self.image_generator.generate()
             image.contents.append(data)
         return image
 
-    def _generate_audio_payloads(self) -> Audio:
+    async def _generate_audio_payloads(self) -> Audio:
         """
         Generate synthetic audios if the audio length is specified.
 
@@ -134,7 +140,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         """
         audio = Audio()
         for _ in range(self.config.audio.batch_size):
-            data = self.audio_generator.generate()
+            data = await self.audio_generator.generate()
             audio.contents.append(data)
         return audio
 

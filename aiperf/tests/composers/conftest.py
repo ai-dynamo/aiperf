@@ -18,6 +18,7 @@ from aiperf.common.config import (
     TurnDelayConfig,
 )
 from aiperf.common.enums import CustomDatasetType
+from aiperf.services.dataset.composer.synthetic import SyntheticDatasetComposer
 
 
 @pytest.fixture
@@ -132,6 +133,14 @@ def multiturn_config():
         ),
     )
     return config
+
+
+@pytest.fixture
+async def initialized_synthetic_composer(mock_tokenizer, synthetic_config):
+    """Initialized synthetic composer for testing."""
+    composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
+    await composer.initialize()
+    return composer
 
 
 # ============================================================================
