@@ -45,14 +45,17 @@ class PromptGenerator(BaseGenerator):
         # Cached prompts: block ID -> list of tokens
         self._cache: dict[int, list[int]] = {}
 
-        # TODO: move this under initialize() method
+    async def initialize(self) -> None:
+        """Initialize the prompt generator."""
         # Initialize corpus if not already done
         if self._tokenized_corpus is None:
             self._initialize_corpus()
 
         # Initialize prefix prompts pool if the pool size > 0
-        if self.config.prefix_prompt.pool_size > 0:
+        if self.prefix_prompt_enabled:
             self._create_prefix_prompt_pool()
+
+        self.data_initialized.set()
 
     def _initialize_corpus(self) -> None:
         """Load and tokenize the corpus once, storing it for reuse."""
@@ -97,7 +100,7 @@ class PromptGenerator(BaseGenerator):
             len(self._prefix_prompts),
         )
 
-    def generate(
+    async def generate(
         self,
         mean: int | None = None,
         stddev: int | None = None,
@@ -113,6 +116,8 @@ class PromptGenerator(BaseGenerator):
         Returns:
             A synthetic prompt as a string.
         """
+        await self.wait_for_data_initialized()
+
         if hash_ids:
             return self._generate_cached_prompt(
                 mean, hash_ids, self.config.input_tokens.block_size
@@ -213,10 +218,9 @@ class PromptGenerator(BaseGenerator):
         if end_idx > self._corpus_size:
             prompt_tokens += self._tokenized_corpus[: end_idx - self._corpus_size]
 
-        self.logger.debug("Sampled %d tokens from corpus", len(prompt_tokens))
         return prompt_tokens
 
-    def sample_prefix_prompt(self) -> str:
+    async def sample_prefix_prompt(self) -> str:
         """Sample a prompt from the prefix prompts pool.
 
         Returns:
@@ -225,9 +229,19 @@ class PromptGenerator(BaseGenerator):
         Raises:
             InvalidStateError: If the prefix prompts pool is empty.
         """
+        await self.wait_for_data_initialized()
+
         if not self._prefix_prompts:
             raise InvalidStateError(
                 "Attempted to sample a prefix prompt but the prefix prompts pool is empty. "
-                "Please ensure that the prefix prompts pool is initialized."
+                "Please ensure you are setting the prefix prompts pool size and length."
             )
         return random.choice(self._prefix_prompts)
+
+    @property
+    def prefix_prompt_enabled(self) -> bool:
+        """Check if prefix prompts are enabled."""
+        return (
+            self.config.prefix_prompt.pool_size > 0
+            and self.config.prefix_prompt.length > 0
+        )
