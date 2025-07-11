@@ -50,7 +50,7 @@ class TraceDatasetLoader:
 
         return data
 
-    def convert_to_conversations(
+    async def convert_to_conversations(
         self, data: dict[str, list[TraceCustomData]]
     ) -> list[Conversation]:
         """Convert all the trace data to conversations.
@@ -63,9 +63,9 @@ class TraceDatasetLoader:
         """
         conversations = []
         for session_id, traces in data.items():
-            conversation = Conversation(session_id=session_id)
+            conversation = Conversation(id=session_id)
             for trace in traces:
-                prompt = self.prompt_generator.generate(
+                prompt = await self.prompt_generator.generate(
                     mean=trace.input_length,
                     stddev=0,
                     hash_ids=trace.hash_ids,
@@ -73,7 +73,7 @@ class TraceDatasetLoader:
                 turn = Turn(
                     timestamp=trace.timestamp,
                     delay=trace.delay,
-                    text=[Text(name="text", content=[prompt])],
+                    texts=[Text(name="text", contents=[prompt])],
                 )
                 conversation.turns.append(turn)
             conversations.append(conversation)

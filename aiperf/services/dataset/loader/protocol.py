@@ -11,7 +11,7 @@ class CustomDatasetLoaderProtocol(Protocol):
     def load_dataset(self) -> dict[str, list[CustomData]]:
         pass
 
-    def convert_to_conversations(
+    async def convert_to_conversations(
         self, custom_data: dict[str, list[CustomData]]
     ) -> list[Conversation]:
         pass

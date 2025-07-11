@@ -15,18 +15,20 @@ class CustomDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: InputConfig, tokenizer: Tokenizer):
         super().__init__(config, tokenizer)
 
-    def create_dataset(self) -> list[Conversation]:
+    async def create_dataset(self) -> list[Conversation]:
         """Create conversations from a file or directory.
 
         Returns:
             list[Conversation]: A list of conversation objects.
         """
+        await self.wait_for_composer_initialized()
+
         # TODO: (future) for K8s, we need to transfer file data from SC (across node)
         utils.check_file_exists(self.config.file)
 
         self._create_loader_instance(self.config.custom_dataset_type)
         dataset = self.loader.load_dataset()
-        conversations = self.loader.convert_to_conversations(dataset)
+        conversations = await self.loader.convert_to_conversations(dataset)
         return conversations
 
     def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
@@ -35,10 +37,8 @@ class CustomDatasetComposer(BaseDatasetComposer):
         Args:
             dataset_type: The type of custom dataset to create.
         """
-        kwargs = {}
+        kwargs = {"filename": self.config.file}
         if dataset_type == CustomDatasetType.TRACE:
             kwargs["prompt_generator"] = self.prompt_generator
 
-        self.loader = CustomDatasetFactory.create_instance(
-            dataset_type, self.config.file, **kwargs
-        )
+        self.loader = CustomDatasetFactory.create_instance(dataset_type, **kwargs)
