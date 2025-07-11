@@ -133,7 +133,10 @@ class DatasetManager(BaseComponentService):
             config=self.user_config.input,
             tokenizer=tokenizer,
         )
-        conversations = composer.create_dataset()
+
+        await composer.initialize()
+
+        conversations = await composer.create_dataset()
         self.dataset = {conv.id: conv for conv in conversations}
 
         self.dataset_configured.set()
