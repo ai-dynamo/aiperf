@@ -43,21 +43,3 @@ class AsyncTaskManagerMixin:
 
         # Clear the tasks set after cancellation to avoid memory leaks
         self.tasks.clear()
-
-    async def wait_for_all_tasks(self) -> list[Any]:
-        """Wait for all tasks in the set to complete naturally.
-
-        This method waits for all currently running tasks to finish without
-        cancelling them. Tasks that complete successfully or with exceptions
-        will be automatically cleaned up from the set.
-
-        Returns:
-            List of results from all tasks.
-        """
-        if not self.tasks:
-            return []
-
-        # Wait for all tasks to complete, gathering any exceptions
-        results = await asyncio.gather(*self.tasks, return_exceptions=True)
-
-        return results

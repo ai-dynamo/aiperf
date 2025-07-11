@@ -39,10 +39,10 @@ class ImageGenerator(BaseGenerator):
         if not filenames:
             raise InitializationError(f"No source images found in '{self.filepath}'")
 
-        for filename in filenames:
-            self.execute_async(asyncio.to_thread(Image.open, filename))
-
-        self.images = await self.wait_for_all_tasks()
+        self.images = await asyncio.gather(
+            *[asyncio.to_thread(Image.open, f) for f in filenames],
+            return_exceptions=True,
+        )
 
         self.logger.debug(
             "Loaded %d source images from %s", len(self.images), self.filepath

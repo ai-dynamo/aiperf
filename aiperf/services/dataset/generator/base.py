@@ -5,10 +5,8 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 
-from aiperf.common.mixins import AsyncTaskManagerMixin
 
-
-class BaseGenerator(AsyncTaskManagerMixin, ABC):
+class BaseGenerator(ABC):
     """Abstract base class for all data generators.
 
     Provides a consistent interface for generating synthetic data while allowing

@@ -47,14 +47,17 @@ class PromptGenerator(BaseGenerator):
 
     async def initialize(self) -> None:
         """Initialize the prompt generator."""
-        # Initialize corpus if not already done
-        if self._tokenized_corpus is None:
-            self._initialize_corpus()
+        self._initialize_corpus()
 
         # Initialize prefix prompts pool if the pool size > 0
         if self.prefix_prompt_enabled:
             self._create_prefix_prompt_pool()
 
+        self.logger.debug(
+            "Initialized with text corpus size %d and prefix prompts pool size %d",
+            self._corpus_size,
+            len(self._prefix_prompts),
+        )
         self.data_initialized.set()
 
     def _initialize_corpus(self) -> None:
