@@ -10,6 +10,7 @@ from aiperf.common.comms.base import (
     RequestClientProtocol,
 )
 from aiperf.common.config import ServiceConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import (
     CreditPhase,
     MessageType,
@@ -34,6 +35,7 @@ from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.services.timing_manager.concurrency_strategy import ConcurrencyStrategy
 from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
+from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
 from aiperf.services.timing_manager.fixed_schedule_strategy import FixedScheduleStrategy
 from aiperf.services.timing_manager.request_rate_strategy import RequestRateStrategy
 
@@ -46,9 +48,16 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
     """
 
     def __init__(
-        self, service_config: ServiceConfig, service_id: str | None = None
+        self,
+        service_config: ServiceConfig,
+        user_config: UserConfig | None,
+        service_id: str | None = None,
     ) -> None:
-        super().__init__(service_config=service_config, service_id=service_id)
+        super().__init__(
+            service_config=service_config,
+            user_config=user_config,
+            service_id=service_id,
+        )
         self.debug("Initializing timing manager")
 
         self.dataset_request_client: RequestClientProtocol = (
@@ -64,6 +73,9 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
             CommunicationClientAddressType.CREDIT_RETURN,
             bind=True,
         )
+
+        self.user_config = user_config
+        self._credit_issuing_strategy: CreditIssuingStrategy | None = None
 
     @property
     def service_type(self) -> ServiceType:
