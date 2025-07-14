@@ -11,7 +11,7 @@ class TimingMode(str, Enum):
 
     FIXED_SCHEDULE = "fixed_schedule"
     CONCURRENCY = "concurrency"
-    RATE = "rate"
+    REQUEST_RATE = "request_rate"
 
 
 class TimingManagerConfig(BaseModel):
