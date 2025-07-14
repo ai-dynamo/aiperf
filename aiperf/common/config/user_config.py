@@ -13,8 +13,9 @@ from aiperf.common.config.config_validators import (
 )
 from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
 from aiperf.common.config.input.input_config import InputConfig
+from aiperf.common.config.loadgen_config import LoadGeneratorConfig
+from aiperf.common.config.measurement_config import MeasurementConfig
 from aiperf.common.config.output.output_config import OutputConfig
-from aiperf.common.config.profile_config import LoadGeneratorConfig, MeasurementConfig
 from aiperf.common.config.tokenizer.tokenizer_config import TokenizerConfig
 
 
@@ -31,7 +32,7 @@ class UserConfig(BaseConfig):
         ),
         BeforeValidator(parse_str_or_list),
         cyclopts.Parameter(
-            name=("--model-names", "-m"),
+            name=("--model-names", "--model", "-m"),
         ),
     ]
 

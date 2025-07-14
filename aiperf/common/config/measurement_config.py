@@ -39,6 +39,6 @@ class MeasurementConfig(BaseConfig):
     #         "in terms of both infer per second and latency.",
     #     ),
     #     cyclopts.Parameter(
-    #         name=("--stability-percentage"),
+    #         name=("--stability-percentage", "-s"),
     #     ),
     # ] = MeasurementDefaults.STABILITY_PERCENTAGE

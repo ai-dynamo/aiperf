@@ -6,6 +6,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from aiperf.common.enums import ServiceType
+
 """
 This module provides utility functions for validating and parsing configuration inputs.
 """
@@ -24,15 +26,60 @@ def parse_str_or_list(input: Any) -> list[Any]:
     Raises:
         ValueError: If the input is neither a string nor a list.
     """
-
     if isinstance(input, str):
-        output = [input.strip() for input in input.split(",")]
+        output = [item.strip() for item in input.split(",")]
     elif isinstance(input, list):
-        output = input
+        # TODO: When using cyclopts, the values are already lists, so we have to split them by commas.
+        output = []
+        for item in input:
+            if isinstance(item, str):
+                output.extend([token.strip() for token in item.split(",")])
+            else:
+                output.append(item)
     else:
         raise ValueError(f"User Config: {input} - must be a string or list")
 
     return output
+
+
+def parse_str_or_csv_list(input: Any) -> list[Any]:
+    """
+    Parses the input to ensure it is either a string or a list. If the input is a string,
+    it splits the string by commas and trims any whitespace around each element, returning
+    the result as a list. If the input is already a list, it will split each item by commas
+    and trim any whitespace around each element, returning the combined result as a list.
+    If the input is neither a string nor a list, a ValueError is raised.
+
+    [1, 2, 3] -> [1, 2, 3]
+    "1,2,3" -> ["1", "2", "3"]
+    ["1,2,3", "4,5,6"] -> ["1", "2", "3", "4", "5", "6"]
+    ["1,2,3", 4, 5] -> ["1", "2", "3", 4, 5]
+    """
+    if isinstance(input, str):
+        output = [item.strip() for item in input.split(",")]
+    elif isinstance(input, list):
+        output = []
+        for item in input:
+            if isinstance(item, str):
+                output.extend([token.strip() for token in item.split(",")])
+            else:
+                output.append(item)
+    else:
+        raise ValueError(f"User Config: {input} - must be a string or list")
+
+    return output
+
+
+def parse_service_types(input: Any | None) -> set[ServiceType] | None:
+    """Parses the input to ensure it is a set of service types.
+    Will replace hyphens with underscores for user convenience."""
+    if input is None:
+        return None
+
+    return {
+        ServiceType(service_type.replace("-", "_"))
+        for service_type in parse_str_or_csv_list(input)
+    }
 
 
 def parse_str_or_dict(input: Any | None) -> dict[str, Any] | None:

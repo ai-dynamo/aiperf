@@ -13,11 +13,7 @@ from aiperf.common.enums import (
     ModelSelectionStrategy,
     RequestRateMode,
     ServiceRunType,
-)
-from aiperf.progress.progress_models import (
-    SweepCompletionTrigger,
-    SweepMultiParamOrder,
-    SweepParamOrder,
+    TimingMode,
 )
 
 
@@ -33,13 +29,13 @@ class UserDefaults:
 @dataclass(frozen=True)
 class EndPointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
-    CUSTOM = None
+    CUSTOM_ENDPOINT = None
     TYPE = EndpointType.OPENAI_CHAT_COMPLETIONS
     STREAMING = True
     SERVER_METRICS_URLS = ["http://localhost:8002/metrics"]
     URL = "localhost:8080"
     GRPC_METHOD = ""
-    TIMEOUT = 30.0
+    TIMEOUT = 600.0
     API_KEY = None
 
 
@@ -123,11 +119,12 @@ class TurnDelayDefaults:
 @dataclass(frozen=True)
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
+    PROFILE_EXPORT_FILE = Path("profile_export.json")
 
 
 @dataclass(frozen=True)
 class TokenizerDefaults:
-    NAME = ""
+    NAME = None
     REVISION = "main"
     TRUST_REMOTE_CODE = False
 
@@ -151,9 +148,14 @@ class ServiceDefaults:
     MIN_WORKERS = None
     MAX_WORKERS = None
     LOG_LEVEL = "INFO"
+    LOG_PATH = None
     DISABLE_UI = False
     ENABLE_UVLOOP = True
     RESULT_PARSER_SERVICE_COUNT = 2
+    ENABLE_YAPPI = False
+    DEBUG_SERVICES = None
+    WORKER_HEALTH_CHECK_INTERVAL = 1.0
+    PLUGIN_DIRS = []
 
 
 @dataclass(frozen=True)
@@ -163,7 +165,8 @@ class LoadGeneratorDefaults:
     REQUEST_COUNT = 10
     WARMUP_REQUEST_COUNT = 0
     CONCURRENCY_RAMP_UP_TIME = None
-    REQUEST_RATE_MODE = RequestRateMode.FIXED
+    REQUEST_RATE_MODE = RequestRateMode.POISSON
+    TIMING_MODE = TimingMode.CONCURRENCY
 
 
 @dataclass(frozen=True)
@@ -172,18 +175,18 @@ class MeasurementDefaults:
     STABILITY_PERCENTAGE = 0.95
 
 
-@dataclass(frozen=True)
-class SweepParamDefaults:
-    VALUES = None
-    ORDER = SweepParamOrder.ASCENDING
-    COMPLETION_TRIGGER = SweepCompletionTrigger.COMPLETED_PROFILES
-    START = None
-    STEP = None
-    END = None
-    MAX_PROFILES = None
+# @dataclass(frozen=True)
+# class SweepParamDefaults:
+#     VALUES = None
+#     ORDER = SweepParamOrder.ASCENDING
+#     COMPLETION_TRIGGER = SweepCompletionTrigger.COMPLETED_PROFILES
+#     START = None
+#     STEP = None
+#     END = None
+#     MAX_PROFILES = None
 
 
-@dataclass(frozen=True)
-class SweepDefaults:
-    PARAMS = None
-    ORDER = SweepMultiParamOrder.DEPTH_FIRST
+# @dataclass(frozen=True)
+# class SweepDefaults:
+#     PARAMS = None
+#     ORDER = SweepMultiParamOrder.DEPTH_FIRST

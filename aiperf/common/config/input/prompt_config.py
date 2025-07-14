@@ -27,7 +27,7 @@ class InputTokensConfig(BaseConfig):
             description="The mean of number of tokens in the generated prompts when using synthetic data.",
         ),
         cyclopts.Parameter(
-            name=("--input-tokens-mean"),
+            name=("--synthetic-input-tokens-mean", "--input-tokens-mean", "--isl"),
         ),
     ] = InputTokensDefaults.MEAN
 
@@ -38,7 +38,7 @@ class InputTokensConfig(BaseConfig):
             description="The standard deviation of number of tokens in the generated prompts when using synthetic data.",
         ),
         cyclopts.Parameter(
-            name=("--input-tokens-stddev"),
+            name=("--synthetic-input-tokens-stddev", "--input-tokens-stddev"),
         ),
     ] = InputTokensDefaults.STDDEV
 
@@ -49,7 +49,7 @@ class InputTokensConfig(BaseConfig):
             description="The block size of the prompt.",
         ),
         cyclopts.Parameter(
-            name=("--input-tokens-block-size"),
+            name=("--synthetic-input-tokens-block-size", "--input-tokens-block-size"),
         ),
     ] = InputTokensDefaults.BLOCK_SIZE
 
@@ -66,7 +66,7 @@ class OutputTokensConfig(BaseConfig):
             description="The mean number of tokens in each output.",
         ),
         cyclopts.Parameter(
-            name=("--output-tokens-mean"),
+            name=("--output-tokens-mean", "--osl"),
         ),
     ] = OutputTokensDefaults.MEAN
 

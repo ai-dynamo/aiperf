@@ -43,7 +43,7 @@ class InputConfig(BaseConfig):
             "Inputs should be in an 'input_name:value' format.",
         ),
         cyclopts.Parameter(
-            name=("--extra"),
+            name=("--extra-inputs"),
         ),
         BeforeValidator(parse_str_or_dict),
     ] = InputDefaults.EXTRA
@@ -71,7 +71,7 @@ class InputConfig(BaseConfig):
         ),
         BeforeValidator(parse_str_or_dict),
         cyclopts.Parameter(
-            name=("--header"),
+            name=("--header", "-H"),
         ),
     ] = InputDefaults.HEADERS
 

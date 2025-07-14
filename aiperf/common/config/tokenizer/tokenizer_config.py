@@ -16,7 +16,7 @@ class TokenizerConfig(BaseConfig):
     """
 
     name: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "The HuggingFace tokenizer to use to interpret token metrics "
