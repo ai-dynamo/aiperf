@@ -15,7 +15,6 @@ from aiperf.common.enums import (
     CreditPhase,
     MessageType,
     ServiceType,
-    TimingMode,
 )
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.factories import ServiceFactory
@@ -32,19 +31,20 @@ from aiperf.common.messages import (
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
-from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.services.timing_manager.concurrency_strategy import ConcurrencyStrategy
 from aiperf.services.timing_manager.config import (
     TimingManagerConfig,
+    TimingMode,
 )
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
+from aiperf.services.timing_manager.credit_manager import CreditPhaseMessagesMixin
 from aiperf.services.timing_manager.fixed_schedule_strategy import FixedScheduleStrategy
 from aiperf.services.timing_manager.request_rate_strategy import RequestRateStrategy
 
 
 @ServiceFactory.register(ServiceType.TIMING_MANAGER)
-class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
+class TimingManager(BaseComponentService, CreditPhaseMessagesMixin):
     """
     The TimingManager service is responsible to generate the schedule and issuing
     timing credits for requests.
@@ -61,7 +61,7 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
             user_config=user_config,
             service_id=service_id,
         )
-        self.logger.debug("Initializing timing manager")
+        self.debug("Initializing timing manager")
 
         self.dataset_request_client: RequestClientProtocol = (
             self.comms.create_request_client(
@@ -77,7 +77,7 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
             bind=True,
         )
 
-        self.config = TimingManagerConfig.from_user_config(self.user_config)
+        self.user_config = user_config
         self._credit_issuing_strategy: CreditIssuingStrategy | None = None
 
     @property
@@ -89,7 +89,6 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
     async def _timing_manager_initialize(self) -> None:
         """Initialize timing manager-specific components."""
         self.debug("Initializing timing manager")
-
         self.config = TimingManagerConfig.from_user_config(self.user_config)
         await self.credit_return_client.register_pull_callback(
             message_type=MessageType.CREDIT_RETURN,
@@ -113,20 +112,20 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
             self.debug(
                 lambda: f"TM: Received dataset timing response: {dataset_timing_response}"
             )
-            self.logger.info("TM: Using fixed schedule strategy")
+            self.info("TM: Using fixed schedule strategy")
             self._credit_issuing_strategy = FixedScheduleStrategy(
                 config=self.config,
                 credit_manager=self,
                 schedule=dataset_timing_response.timing_data,
             )
         elif self.config.timing_mode == TimingMode.CONCURRENCY:
-            self.logger.info("TM: Using concurrency strategy")
+            self.info("TM: Using concurrency strategy")
             self._credit_issuing_strategy = ConcurrencyStrategy(
                 config=self.config,
                 credit_manager=self,
             )
         elif self.config.timing_mode == TimingMode.REQUEST_RATE:
-            self.logger.info("TM: Using request rate strategy")
+            self.info("TM: Using request rate strategy")
             self._credit_issuing_strategy = RequestRateStrategy(
                 config=self.config,
                 credit_manager=self,
@@ -143,7 +142,6 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
         if not self._credit_issuing_strategy:
             raise InvalidStateError("No credit issuing strategy configured")
 
-        # await asyncio.sleep(1)
         self.execute_async(self._credit_issuing_strategy.start())
 
     @on_stop
@@ -156,9 +154,7 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
 
     async def _on_credit_return(self, message: CreditReturnMessage) -> None:
         """Handle the credit return message."""
-        self.debug(
-            lambda: f"TM: Timing manager received credit return message: {message}"
-        )
+        self.debug(lambda: f"Timing manager received credit return message: {message}")
         if self._credit_issuing_strategy:
             await self._credit_issuing_strategy.on_credit_return(message)
 
