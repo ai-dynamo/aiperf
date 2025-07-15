@@ -30,7 +30,7 @@ class ConcurrencyStrategy(
             # TODO: Add support for alternate completion triggers vs request count (eg. time based)
             raise InvalidStateError("Request count must be at least 1")
 
-        # if the concurrency is larger than the total credits, it does not matter
+        # if the concurrency is larger than the total number of requests, it does not matter
         # as it is simply an upper bound that will never be reached
         self._concurrency = config.concurrency
         self._ramp_up_time = config.concurrency_ramp_up_time
