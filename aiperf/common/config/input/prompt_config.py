@@ -27,7 +27,10 @@ class InputTokensConfig(BaseConfig):
             description="The mean of number of tokens in the generated prompts when using synthetic data.",
         ),
         cyclopts.Parameter(
-            name=("--synthetic-input-tokens-mean", "--input-tokens-mean", "--isl"),
+            name=(
+                "--synthetic-input-tokens-mean",  # GenAI-Perf
+                "--isl",  # GenAI-Perf
+            ),
         ),
     ] = InputTokensDefaults.MEAN
 
@@ -38,10 +41,13 @@ class InputTokensConfig(BaseConfig):
             description="The standard deviation of number of tokens in the generated prompts when using synthetic data.",
         ),
         cyclopts.Parameter(
-            name=("--synthetic-input-tokens-stddev", "--input-tokens-stddev"),
+            name=(
+                "--synthetic-input-tokens-stddev",  # GenAI-Perf
+            ),
         ),
     ] = InputTokensDefaults.STDDEV
 
+    # NEW AIPerf Option
     block_size: Annotated[
         int,
         Field(
@@ -49,7 +55,7 @@ class InputTokensConfig(BaseConfig):
             description="The block size of the prompt.",
         ),
         cyclopts.Parameter(
-            name=("--synthetic-input-tokens-block-size", "--input-tokens-block-size"),
+            name=("--synthetic-input-tokens-block-size",),
         ),
     ] = InputTokensDefaults.BLOCK_SIZE
 
@@ -66,7 +72,10 @@ class OutputTokensConfig(BaseConfig):
             description="The mean number of tokens in each output.",
         ),
         cyclopts.Parameter(
-            name=("--output-tokens-mean", "--osl"),
+            name=(
+                "--output-tokens-mean",  # GenAI-Perf
+                "--osl",  # GenAI-Perf
+            ),
         ),
     ] = OutputTokensDefaults.MEAN
 
@@ -80,7 +89,9 @@ class OutputTokensConfig(BaseConfig):
             ),
         ),
         cyclopts.Parameter(
-            name=("--output-tokens-deterministic"),
+            name=(
+                "--output-tokens-mean-deterministic",  # GenAI-Perf
+            ),
         ),
     ] = OutputTokensDefaults.DETERMINISTIC
 
@@ -91,7 +102,9 @@ class OutputTokensConfig(BaseConfig):
             description="The standard deviation of the number of tokens in each output.",
         ),
         cyclopts.Parameter(
-            name=("--output-tokens-stddev"),
+            name=(
+                "--output-tokens-stddev",  # GenAI-Perf
+            ),
         ),
     ] = OutputTokensDefaults.STDDEV
 
@@ -112,7 +125,10 @@ class PrefixPromptConfig(BaseConfig):
             ),
         ),
         cyclopts.Parameter(
-            name=("--prefix-prompt-pool-size"),
+            name=(
+                "--prefix-prompt-pool-size",
+                "--num-prefix-prompts",  # GenAI-Perf
+            ),
         ),
     ] = PrefixPromptDefaults.POOL_SIZE
 
@@ -128,7 +144,9 @@ class PrefixPromptConfig(BaseConfig):
             ),
         ),
         cyclopts.Parameter(
-            name=("--prefix-prompt-length"),
+            name=(
+                "--prefix-prompt-length",  # GenAI-Perf
+            ),
         ),
     ] = PrefixPromptDefaults.LENGTH
 
@@ -145,7 +163,12 @@ class PromptConfig(BaseConfig):
             "This is currently supported with the embeddings and rankings endpoint types",
         ),
         cyclopts.Parameter(
-            name=("--prompt-batch-size"),
+            name=(
+                "--prompt-batch-size",
+                "--batch-size-text",  # GenAI-Perf
+                "--batch-size",  # GenAI-Perf
+                "-b",  # GenAI-Perf
+            ),
         ),
     ] = PromptDefaults.BATCH_SIZE
 

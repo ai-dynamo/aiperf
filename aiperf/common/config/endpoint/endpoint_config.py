@@ -25,7 +25,9 @@ class EndPointConfig(BaseConfig):
             "random: assignment is uniformly random",
         ),
         cyclopts.Parameter(
-            name=("--model-selection-strategy"),
+            name=(
+                "--model-selection-strategy",  # GenAI-Perf
+            ),
         ),
     ] = EndPointDefaults.MODEL_SELECTION_STRATEGY
 
@@ -35,7 +37,10 @@ class EndPointConfig(BaseConfig):
             description="Set a custom endpoint that differs from the OpenAI defaults.",
         ),
         cyclopts.Parameter(
-            name=("--custom-endpoint", "--endpoint"),
+            name=(
+                "--custom-endpoint",
+                "--endpoint",  # GenAI-Perf
+            ),
         ),
     ] = EndPointDefaults.CUSTOM_ENDPOINT
 
@@ -45,7 +50,9 @@ class EndPointConfig(BaseConfig):
             description="The type to send requests to on the server.",
         ),
         cyclopts.Parameter(
-            name=("--endpoint-type", "--type"),
+            name=(
+                "--endpoint-type",  # GenAI-Perf
+            ),
         ),
     ] = EndPointDefaults.TYPE
 
@@ -55,7 +62,9 @@ class EndPointConfig(BaseConfig):
             description="An option to enable the use of the streaming API.",
         ),
         cyclopts.Parameter(
-            name=("--streaming"),
+            name=(
+                "--streaming",  # GenAI-Perf
+            ),
         ),
     ] = EndPointDefaults.STREAMING
 
@@ -67,7 +76,10 @@ class EndPointConfig(BaseConfig):
         ),
         BeforeValidator(parse_str_or_list),
         cyclopts.Parameter(
-            name=("--server-metrics-urls"),
+            name=(
+                "--server-metrics-urls",  # GenAI-Perf
+                "--server-metrics-url",  # GenAI-Perf
+            ),
         ),
     ] = EndPointDefaults.SERVER_METRICS_URLS
 
@@ -77,7 +89,10 @@ class EndPointConfig(BaseConfig):
             description="URL of the endpoint to target for benchmarking.",
         ),
         cyclopts.Parameter(
-            name=("--url", "-u"),
+            name=(
+                "--url",  # GenAI-Perf
+                "-u",  # GenAI-Perf
+            ),
         ),
     ] = EndPointDefaults.URL
 
@@ -90,20 +105,24 @@ class EndPointConfig(BaseConfig):
             "required to identify the RPC to use when sending requests to the server.",
         ),
         cyclopts.Parameter(
-            name=("--grpc-method"),
+            name=(
+                "--grpc-method",  # GenAI-Perf
+            ),
         ),
     ] = EndPointDefaults.GRPC_METHOD
 
-    timeout: Annotated[
+    # NEW AIPerf Option
+    timeout_seconds: Annotated[
         float,
         Field(
             description="The timeout in floating points seconds for each request to the endpoint.",
         ),
         cyclopts.Parameter(
-            name=("--request-timeout"),
+            name=("--request-timeout-seconds"),
         ),
     ] = EndPointDefaults.TIMEOUT
 
+    # NEW AIPerf Option
     api_key: Annotated[
         str | None,
         Field(

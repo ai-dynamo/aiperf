@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiperf.common.enums import (
+    AIPerfLogLevel,
+    AIPerfUIType,
     AudioFormat,
     CommunicationBackend,
     CustomDatasetType,
@@ -21,8 +23,11 @@ from aiperf.common.enums import (
 # Config Defaults
 @dataclass(frozen=True)
 class UserDefaults:
-    MODEL_NAMES = None  # This should be set by the user
-    VERBOSE = False
+    MODEL_NAMES = None  # This must be set by the user
+
+
+@dataclass(frozen=True)
+class CLIDefaults:
     TEMPLATE_FILENAME = "aiperf_config.yaml"
 
 
@@ -70,7 +75,7 @@ class ImageDefaults:
     WIDTH_STDDEV = 0.0
     HEIGHT_MEAN = 0.0
     HEIGHT_STDDEV = 0.0
-    FORMAT = ImageFormat.PNG
+    FORMAT = ImageFormat.PNG  # TODO: GenAI-Perf was RANDOM default?
 
 
 @dataclass(frozen=True)
@@ -147,15 +152,19 @@ class ServiceDefaults:
     HEARTBEAT_INTERVAL = 1.0
     MIN_WORKERS = None
     MAX_WORKERS = None
-    LOG_LEVEL = "INFO"
+    LOG_LEVEL = AIPerfLogLevel.INFO
+    VERBOSE = False
+    EXTRA_VERBOSE = False
     LOG_PATH = None
     DISABLE_UI = False
+    BASIC_UI = False
     ENABLE_UVLOOP = True
     RESULT_PARSER_SERVICE_COUNT = 2
     ENABLE_YAPPI = False
     DEBUG_SERVICES = None
     WORKER_HEALTH_CHECK_INTERVAL = 1.0
     PLUGIN_DIRS = []
+    UI_TYPE = AIPerfUIType.RICH
 
 
 @dataclass(frozen=True)
@@ -175,6 +184,7 @@ class MeasurementDefaults:
     STABILITY_PERCENTAGE = 0.95
 
 
+# TODO: Enable this when we implement the sweep command
 # @dataclass(frozen=True)
 # class SweepParamDefaults:
 #     VALUES = None
@@ -186,6 +196,7 @@ class MeasurementDefaults:
 #     MAX_PROFILES = None
 
 
+# TODO: Enable this when we implement the sweep command
 # @dataclass(frozen=True)
 # class SweepDefaults:
 #     PARAMS = None

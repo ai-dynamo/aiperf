@@ -26,7 +26,7 @@ class TokenizerConfig(BaseConfig):
             ),
         ),
         cyclopts.Parameter(
-            name=("--tokenizer-name"),
+            name=("--tokenizer"),
         ),
     ] = TokenizerDefaults.NAME
 

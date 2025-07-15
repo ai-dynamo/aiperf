@@ -23,7 +23,9 @@ class ImageHeightConfig(BaseConfig):
             description="The mean height of images when generating synthetic image data.",
         ),
         cyclopts.Parameter(
-            name=("--image-height-mean"),
+            name=(
+                "--image-height-mean",  # GenAI-Perf
+            ),
         ),
     ] = ImageDefaults.HEIGHT_MEAN
 
@@ -34,7 +36,9 @@ class ImageHeightConfig(BaseConfig):
             description="The standard deviation of height of images when generating synthetic image data.",
         ),
         cyclopts.Parameter(
-            name=("--image-height-stddev"),
+            name=(
+                "--image-height-stddev",  # GenAI-Perf
+            ),
         ),
     ] = ImageDefaults.HEIGHT_STDDEV
 
@@ -51,7 +55,9 @@ class ImageWidthConfig(BaseConfig):
             description="The mean width of images when generating synthetic image data.",
         ),
         cyclopts.Parameter(
-            name=("--image-width-mean"),
+            name=(
+                "--image-width-mean",  # GenAI-Perf
+            ),
         ),
     ] = ImageDefaults.WIDTH_MEAN
 
@@ -62,7 +68,9 @@ class ImageWidthConfig(BaseConfig):
             description="The standard deviation of width of images when generating synthetic image data.",
         ),
         cyclopts.Parameter(
-            name=("--image-width-stddev"),
+            name=(
+                "--image-width-stddev",  # GenAI-Perf
+            ),
         ),
     ] = ImageDefaults.WIDTH_STDDEV
 
@@ -82,7 +90,10 @@ class ImageConfig(BaseConfig):
             "This is currently supported with the image retrieval endpoint type.",
         ),
         cyclopts.Parameter(
-            name=("--image-batch-size"),
+            name=(
+                "--image-batch-size",
+                "--batch-size-image",  # GenAI-Perf
+            ),
         ),
     ] = ImageDefaults.BATCH_SIZE
 
@@ -92,6 +103,8 @@ class ImageConfig(BaseConfig):
             description="The compression format of the images.",
         ),
         cyclopts.Parameter(
-            name=("--image-format"),
+            name=(
+                "--image-format",  # GenAI-Perf
+            ),
         ),
     ] = ImageDefaults.FORMAT

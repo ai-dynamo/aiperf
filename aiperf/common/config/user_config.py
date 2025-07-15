@@ -6,8 +6,7 @@ from typing import Annotated
 import cyclopts
 from pydantic import BeforeValidator, Field
 
-from aiperf.common.config.base_config import ADD_TO_TEMPLATE, BaseConfig
-from aiperf.common.config.config_defaults import UserDefaults
+from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_validators import (
     parse_str_or_list,
 )
@@ -32,33 +31,13 @@ class UserConfig(BaseConfig):
         ),
         BeforeValidator(parse_str_or_list),
         cyclopts.Parameter(
-            name=("--model-names", "--model", "-m"),
+            name=(
+                "--model-names",
+                "--model",  # GenAI-Perf
+                "-m",  # GenAI-Perf
+            ),
         ),
     ]
-
-    # TODO:: Should we move the verbose and template_filename to their own CLI config class?
-
-    verbose: Annotated[
-        bool,
-        Field(
-            description="Enable verbose output.",
-            json_schema_extra={ADD_TO_TEMPLATE: False},
-        ),
-        cyclopts.Parameter(
-            name=("--verbose", "-v"),
-        ),
-    ] = UserDefaults.VERBOSE
-
-    template_filename: Annotated[
-        str,
-        Field(
-            description="Path to the template file.",
-            json_schema_extra={ADD_TO_TEMPLATE: False},
-        ),
-        cyclopts.Parameter(
-            name=("--template-filename", "-t"),
-        ),
-    ] = UserDefaults.TEMPLATE_FILENAME
 
     endpoint: Annotated[
         EndPointConfig,
@@ -88,7 +67,7 @@ class UserConfig(BaseConfig):
         ),
     ] = TokenizerConfig()
 
-    load: Annotated[
+    loadgen: Annotated[
         LoadGeneratorConfig,
         Field(
             description="Load Generator configuration",
