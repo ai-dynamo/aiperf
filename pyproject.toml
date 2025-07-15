@@ -19,6 +19,7 @@ dependencies = [
   "orjson==3.10.18",
   "pandas==2.3.0",
   "pillow==11.1.0",
+  "psutil~=7.0.0",
   "pydantic==2.11.4",
   "pyzmq==26.4.0",
   "rich==14.0.0",

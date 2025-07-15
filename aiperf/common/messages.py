@@ -13,7 +13,6 @@ from pydantic import (
     model_serializer,
 )
 
-from aiperf.common.credit_models import PhaseProcessingStats
 from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import (
     CommandResponseStatus,
@@ -24,12 +23,14 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.enums.timing import CreditPhase
+from aiperf.common.health_models import ProcessHealth
 from aiperf.common.pydantic_utils import ExcludeIfNoneMixin, exclude_if_none
 from aiperf.common.record_models import (
     ErrorDetails,
     ParsedResponseRecord,
     RequestRecord,
 )
+from aiperf.common.worker_models import WorkerPhaseTaskStats
 
 ################################################################################
 # Abstract Base Message Models
@@ -491,18 +492,47 @@ class CreditsCompleteMessage(BaseServiceMessage):
     message_type: Literal[MessageType.CREDITS_COMPLETE] = MessageType.CREDITS_COMPLETE
 
 
-class RecordsProcessingStatsMessage(BaseServiceMessage):
-    """Message for processing stats. Sent by the RecordsManager to report the stats of the profile run.
-    This contains the stats for a single credit phase only."""
+################################################################################
+# Worker Messages
+################################################################################
 
-    message_type: Literal[MessageType.PROCESSING_STATS] = MessageType.PROCESSING_STATS
 
-    phase: CreditPhase = Field(..., description="The credit phase")
-    processing_stats: PhaseProcessingStats = Field(
-        ..., description="The stats for the credit phase"
+class WorkerHealthMessage(BaseServiceMessage):
+    """Message for a worker health check."""
+
+    message_type: Literal[MessageType.WORKER_HEALTH] = MessageType.WORKER_HEALTH
+
+    process: ProcessHealth = Field(..., description="The health of the worker process")
+
+    # Worker specific fields
+    task_stats: dict[CreditPhase, WorkerPhaseTaskStats] = Field(
+        ...,
+        description="Stats for the tasks that have been sent to the worker, keyed by the credit phase",
     )
-    worker_stats: dict[str, PhaseProcessingStats] = Field(
-        default_factory=dict,
-        description="The stats for each worker how many requests were processed and how many errors were "
-        "encountered, keyed by worker service_id",
-    )
+
+    @property
+    def total_tasks(self) -> int:
+        """The total number of tasks that have been sent to the worker."""
+        return sum(task_stats.total for task_stats in self.task_stats.values())
+
+    @property
+    def completed_tasks(self) -> int:
+        """The number of tasks that have been completed by the worker."""
+        return sum(task_stats.completed for task_stats in self.task_stats.values())
+
+    @property
+    def failed_tasks(self) -> int:
+        """The number of tasks that have failed by the worker."""
+        return sum(task_stats.failed for task_stats in self.task_stats.values())
+
+    @property
+    def in_progress_tasks(self) -> int:
+        """The number of tasks that are currently in progress by the worker."""
+        return sum(task_stats.in_progress for task_stats in self.task_stats.values())
+
+    @property
+    def error_rate(self) -> float:
+        """The error rate of the worker."""
+        if self.total_tasks == 0:
+            return 0
+        return self.failed_tasks / self.total_tasks
