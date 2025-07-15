@@ -43,8 +43,10 @@ class CreditIssuingStrategy(AsyncTaskManagerMixin, AIPerfLoggerMixin, ABC):
         # Execute the phases in the background
         self.execute_async(self._execute_phases())
 
+        self.debug("TM: Waiting for all phases to complete")
         # Wait for all phases to complete before returning
         await self.all_phases_complete_event.wait()
+        self.debug("TM: All phases completed")
 
     @abstractmethod
     async def _execute_phases(self) -> None:
@@ -85,6 +87,9 @@ class CreditIssuingStrategy(AsyncTaskManagerMixin, AIPerfLoggerMixin, ABC):
         while not self.all_phases_complete_event.is_set():
             await asyncio.sleep(1)  # TODO: Make this configurable
             for phase, stats in self.phase_stats.items():
+                if stats.is_complete or not stats.is_started:
+                    continue
+
                 try:
                     await self.credit_manager.publish_progress(
                         phase, stats.sent, stats.completed
