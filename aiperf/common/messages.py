@@ -13,6 +13,7 @@ from pydantic import (
     model_serializer,
 )
 
+from aiperf.common.credit_models import CreditPhaseStats, PhaseProcessingStats
 from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import (
     CommandResponseStatus,
@@ -22,6 +23,8 @@ from aiperf.common.enums import (
     ServiceState,
     ServiceType,
 )
+from aiperf.common.enums.timing import CreditPhase
+from aiperf.common.pydantic_utils import ExcludeIfNoneMixin, exclude_if_none
 from aiperf.common.record_models import (
     ErrorDetails,
     ParsedResponseRecord,
@@ -32,23 +35,9 @@ from aiperf.common.record_models import (
 # Abstract Base Message Models
 ################################################################################
 
-EXCLUDE_IF_NONE = "__exclude_if_none__"
-
-
-def exclude_if_none(field_names: list[str]):
-    """Decorator to set the _exclude_if_none_fields class attribute to the set of
-    field names that should be excluded if they are None.
-    """
-
-    def decorator(model: type["Message"]) -> type["Message"]:
-        model._exclude_if_none_fields.update(field_names)
-        return model
-
-    return decorator
-
 
 @exclude_if_none(["request_ns", "request_id"])
-class Message(BaseModel):
+class Message(ExcludeIfNoneMixin):
     """Base message class for optimized message handling.
 
     This class provides a base for all messages, including common fields like message_type,
@@ -131,6 +120,15 @@ class Message(BaseModel):
     def to_json(self) -> str:
         """Fast serialization without full validation"""
         return orjson.dumps(self.__dict__).decode("utf-8")
+
+
+class RequiresRequestNSMixin(Message):
+    """Mixin for messages that require a request_ns field."""
+
+    request_ns: int = Field(  # type: ignore[assignment]
+        default_factory=time.time_ns,
+        description="Timestamp of the request in nanoseconds",
+    )
 
 
 class BaseServiceMessage(Message):
@@ -266,41 +264,6 @@ class CommandResponseMessage(BaseServiceMessage):
     )
 
 
-class CreditDropMessage(BaseServiceMessage):
-    """Message indicating that a credit has been dropped.
-    This message is sent by the timing manager to workers to indicate that credit(s)
-    have been dropped.
-    """
-
-    message_type: Literal[MessageType.CREDIT_DROP] = MessageType.CREDIT_DROP
-
-    amount: int = Field(
-        ...,
-        description="Amount of credits that have been dropped",
-    )
-    conversation_id: str | None = Field(
-        default=None, description="The ID of the conversation, if applicable."
-    )
-    credit_drop_ns: int | None = Field(
-        default=None,
-        description="Timestamp of the credit drop, if applicable. None means send ASAP.",
-    )
-
-
-class CreditReturnMessage(BaseServiceMessage):
-    """Message indicating that a credit has been returned.
-    This message is sent by a worker to the timing manager to indicate that work has
-    been completed.
-    """
-
-    message_type: Literal[MessageType.CREDIT_RETURN] = MessageType.CREDIT_RETURN
-
-    amount: int = Field(
-        ...,
-        description="Amount of credits being returned",
-    )
-
-
 class ErrorMessage(Message):
     """Message containing error data."""
 
@@ -331,16 +294,6 @@ class BaseServiceErrorMessage(BaseServiceMessage):
     message_type: Literal[MessageType.SERVICE_ERROR] = MessageType.SERVICE_ERROR
 
     error: ErrorDetails = Field(..., description="Error information")
-
-
-class CreditsCompleteMessage(BaseServiceMessage):
-    """Credits complete message sent to System controller to signify all requests have completed."""
-
-    message_type: Literal[MessageType.CREDITS_COMPLETE] = MessageType.CREDITS_COMPLETE
-    cancelled: bool = Field(
-        default=False,
-        description="Whether the profile run was cancelled",
-    )
 
 
 class ConversationRequestMessage(BaseServiceMessage):
@@ -405,4 +358,132 @@ class DatasetTimingResponse(BaseServiceMessage):
     timing_data: list[tuple[int, str]] = Field(
         ...,
         description="The timing data of the dataset. Tuple of (timestamp, conversation_id)",
+    )
+
+
+################################################################################
+# Credit Messages
+################################################################################
+
+
+class BasePhaseStatsMessage(BaseServiceMessage, RequiresRequestNSMixin):
+    """Base message for phase stats. Sent by the TimingManager to report stats of a credit phase."""
+
+    phase_stats: CreditPhaseStats = Field(
+        ...,
+        description="The credit phase stats for the phase",
+    )
+
+
+class CreditPhaseProgressMessage(BaseServiceMessage, RequiresRequestNSMixin):
+    """Sent by the TimingManager to report the stats of ALL credit phases."""
+
+    message_type: Literal[MessageType.CREDIT_PHASE_PROGRESS] = (
+        MessageType.CREDIT_PHASE_PROGRESS
+    )
+
+    phase_stats_map: dict[CreditPhase, CreditPhaseStats] = Field(
+        ...,
+        description="The credit phase stats for all phases",
+    )
+
+
+class CreditPhaseStartMessage(BasePhaseStatsMessage):
+    """Message for credit phase start. Sent by the TimingManager to report that a credit phase has started."""
+
+    message_type: Literal[MessageType.CREDIT_PHASE_START] = (
+        MessageType.CREDIT_PHASE_START
+    )
+
+
+class CreditPhaseCompleteMessage(BasePhaseStatsMessage):
+    """Message for credit phase complete. Sent by the TimingManager to report that a credit phase has completed."""
+
+    message_type: Literal[MessageType.CREDIT_PHASE_COMPLETE] = (
+        MessageType.CREDIT_PHASE_COMPLETE
+    )
+
+
+class CreditPhaseSendingCompleteMessage(BasePhaseStatsMessage):
+    """Message for credit phase sending complete. Sent by the TimingManager to report that a credit phase has completed sending."""
+
+    message_type: Literal[MessageType.CREDIT_PHASE_SENDING_COMPLETE] = (
+        MessageType.CREDIT_PHASE_SENDING_COMPLETE
+    )
+
+
+class CreditDropMessage(BaseServiceMessage):
+    """Message indicating that a credit has been dropped.
+    This message is sent by the timing manager to workers to indicate that credit(s)
+    have been dropped.
+    """
+
+    message_type: Literal[MessageType.CREDIT_DROP] = MessageType.CREDIT_DROP
+
+    credit_phase: CreditPhase = Field(..., description="The type of credit phase")
+    conversation_id: str | None = Field(
+        default=None, description="The ID of the conversation, if applicable."
+    )
+    credit_drop_ns: int | None = Field(
+        default=None,
+        description="Timestamp of the credit drop, if applicable. None means send ASAP.",
+    )
+
+
+class CreditReturnMessage(BaseServiceMessage):
+    """Message indicating that a credit has been returned.
+    This message is sent by a worker to the timing manager to indicate that work has
+    been completed.
+    """
+
+    message_type: Literal[MessageType.CREDIT_RETURN] = MessageType.CREDIT_RETURN
+
+    credit_phase: CreditPhase = Field(
+        ...,
+        description="The type of credit phase",
+    )
+    conversation_id: str | None = Field(
+        default=None, description="The ID of the conversation, if applicable."
+    )
+    credit_drop_ns: int | None = Field(
+        default=None,
+        description="Timestamp of the original credit drop, if applicable.",
+    )
+    delayed_ns: int | None = Field(
+        default=None,
+        ge=1,
+        description="The number of nanoseconds the credit drop was delayed by, or None if the credit was sent on time.",
+    )
+
+    @property
+    def delayed(self) -> bool:
+        return self.delayed_ns is not None
+
+
+class CreditsCompleteMessage(BaseServiceMessage):
+    """Credits complete message sent by the TimingManager to the System controller to signify all requests have completed."""
+
+    message_type: Literal[MessageType.CREDITS_COMPLETE] = MessageType.CREDITS_COMPLETE
+    cancelled: bool = Field(
+        default=False,
+        description="Whether the profile run was cancelled",
+    )
+
+
+class RecordsProcessingStatsMessage(BaseServiceMessage, RequiresRequestNSMixin):
+    """Message for processing stats. Sent by the RecordsManager to report the stats of the profile run.
+    This contains the stats for a single credit phase only."""
+
+    message_type: Literal[MessageType.PROCESSING_STATS] = MessageType.PROCESSING_STATS
+
+    current_phase: CreditPhase | None = Field(
+        default=None, description="The current credit phase if known."
+    )
+    processing_stats: PhaseProcessingStats = Field(
+        ..., description="The stats for the current credit phase"
+    )
+    worker_stats: dict[str, PhaseProcessingStats] = Field(
+        default_factory=dict,
+        description="The stats for each worker how many requests were processed and how many errors were "
+        "encountered, keyed by worker service_id",
     )
