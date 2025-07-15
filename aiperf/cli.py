@@ -2,101 +2,83 @@
 # SPDX-License-Identifier: Apache-2.0
 """Main CLI entry point for the AIPerf system."""
 
-import logging
-import os
+################################################################################
+# NOTE: Keep the imports here to a minimum. This file is read every time
+# the CLI is run, including to generate the help text. Any imports here
+# will cause a performance penalty during this process.
+################################################################################
+
 import sys
-from pathlib import Path
+from typing import Annotated
 
 import cyclopts
-from pydantic import BaseModel, Field
-from rich.console import Console
-from rich.logging import RichHandler
+from pydantic import Field
 
-from aiperf.common.bootstrap import bootstrap_and_run_service
-from aiperf.common.config import ServiceConfig
-from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import ServiceRunType
-from aiperf.services.system_controller.system_controller import SystemController
+from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config.config_defaults import CLIDefaults
 
-logger = logging.getLogger(__name__)
+app = cyclopts.App(name="aiperf", help="NVIDIA AIPerf")
 
 
-class CLIConfig(BaseModel):
-    """Configuration model for CLI arguments."""
-
-    config: Path | None = Field(
-        default=None,
-        description="Path to configuration file",
-    )
-    run_type: ServiceRunType = Field(
-        default=ServiceRunType.MULTIPROCESSING,
-        description="Process manager backend to use (multiprocessing: 'process', or kubernetes: 'k8s')",
-    )
-    user_config: UserConfig = Field(
-        ...,
-        description="User configuration",
-    )
-
-
-app = cyclopts.App(name="aiperf", help="AIPerf Benchmarking System")
-
-
-def _setup_logging() -> None:
-    """Set up rich logging with appropriate configuration."""
-    # Set logging level for the root logger (affects all loggers)
-    logging.root.setLevel(
-        getattr(logging, os.getenv("AIPERF_LOG_LEVEL", "INFO").upper())
-    )
-
-    rich_handler = RichHandler(
-        rich_tracebacks=True,
-        show_path=True,
-        console=Console(),
-        tracebacks_show_locals=False,
-        log_time_format="%H:%M:%S.%f",
-        omit_repeated_times=False,
-    )
-    logging.root.addHandler(rich_handler)
-
-
-@app.default
-def main(
+@app.command(name="profile")
+def profile(
     user_config: UserConfig,
-    config: Path | None = None,
-    run_type: ServiceRunType = ServiceRunType.MULTIPROCESSING,
+    service_config: ServiceConfig | None = None,
 ) -> None:
-    """Main entry point for the AIPerf system."""
+    """Run the Profile subcommand.
 
-    # Setup logging
-    _setup_logging()
+    Args:
+        user_config: User configuration for the benchmark
+        service_config: Service configuration options
+    """
+    from aiperf.cli_runner import run_system_controller
 
-    # Create CLI config
-    cli_config = CLIConfig(
-        config=config,
-        run_type=run_type,
-        user_config=user_config,
-    )
+    service_config = service_config or ServiceConfig()
 
-    # Load configuration
-    service_config = ServiceConfig(
-        service_run_type=cli_config.run_type,
-    )
+    run_system_controller(user_config, service_config)
 
-    if cli_config.config:
-        # In a real implementation, this would load from the specified file
-        logger.debug("Loading configuration from %s", cli_config.config)
-        # service_config.load_from_file(cli_config.config)
 
-    # Create and start the system controller
-    logger.info("Starting AIPerf System")
+@app.command(name="analyze")
+def analyze(
+    user_config: UserConfig,
+    service_config: ServiceConfig | None = None,
+) -> None:
+    """Sweep through one or more parameters."""
+    # TODO: Implement this
+    from aiperf.cli_runner import warn_command_not_implemented
 
-    bootstrap_and_run_service(
-        SystemController,
-        service_config=service_config,
-        user_config=cli_config.user_config,
-    )
+    warn_command_not_implemented("analyze")
 
-    logger.info("AIPerf System exited")
+
+@app.command(name="create-template", help="Create a template configuration file")
+def create_template(
+    template_filename: Annotated[
+        str,
+        Field(
+            description=f"Path to the template file. Defaults to {CLIDefaults.TEMPLATE_FILENAME}."
+        ),
+        cyclopts.Parameter(
+            name=("--template-filename", "-t"),
+        ),
+    ] = CLIDefaults.TEMPLATE_FILENAME,
+) -> None:
+    """Create a template configuration file."""
+    # TODO: Implement this
+    from aiperf.cli_runner import warn_command_not_implemented
+
+    warn_command_not_implemented("create-template")
+
+
+@app.command(name="validate", help="Validate the configuration file")
+def validate(
+    user_config: UserConfig | None = None,
+    service_config: ServiceConfig | None = None,
+) -> None:
+    """Validate the configuration file."""
+    # TODO: Implement this
+    from aiperf.cli_runner import warn_command_not_implemented
+
+    warn_command_not_implemented("validate")
 
 
 if __name__ == "__main__":
