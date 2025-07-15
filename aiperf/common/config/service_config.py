@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 import cyclopts
 from pydantic import BeforeValidator, Field
@@ -14,6 +14,7 @@ from aiperf.common.config.zmq_config import (
     ZMQTCPConfig,
 )
 from aiperf.common.enums import CommunicationBackend, ServiceRunType, ServiceType
+from aiperf.common.enums.logging import AIPerfLogLevel
 
 
 class ServiceConfig(BaseSettings):
@@ -132,7 +133,7 @@ class ServiceConfig(BaseSettings):
     ] = ServiceDefaults.MAX_WORKERS
 
     log_level: Annotated[
-        Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        AIPerfLogLevel,
         Field(
             description="Logging level",
         ),

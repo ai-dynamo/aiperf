@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiperf.common.enums import (
+    AIPerfLogLevel,
     AudioFormat,
     CommunicationBackend,
     CustomDatasetType,
@@ -151,7 +152,7 @@ class ServiceDefaults:
     HEARTBEAT_INTERVAL = 1.0
     MIN_WORKERS = None
     MAX_WORKERS = None
-    LOG_LEVEL = "INFO"
+    LOG_LEVEL = AIPerfLogLevel.INFO
     DISABLE_UI = False
     ENABLE_UVLOOP = True
     RESULT_PARSER_SERVICE_COUNT = 2
