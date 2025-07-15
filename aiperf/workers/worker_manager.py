@@ -11,7 +11,7 @@ from pydantic import ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import TASK_CANCEL_TIMEOUT_LONG, TASK_CANCEL_TIMEOUT_SHORT
+from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
 from aiperf.common.enums import MessageType, ServiceRunType, ServiceType
 from aiperf.common.exceptions import ConfigurationError
 from aiperf.common.factories import ServiceFactory
@@ -20,9 +20,9 @@ from aiperf.common.hooks import (
     on_init,
     on_stop,
 )
+from aiperf.common.messages import WorkerHealthMessage
 from aiperf.common.pydantic_utils import AIPerfBaseModel
 from aiperf.common.service.base_component_service import BaseComponentService
-from aiperf.common.worker_models import WorkerHealthMessage
 from aiperf.workers.worker import Worker
 
 
@@ -54,12 +54,12 @@ class WorkerManager(BaseComponentService):
             user_config=user_config,
             service_id=service_id,
         )
-        self.logger.debug("Initializing worker manager")
+        self.trace("WorkerManager.__init__")
         self.workers: dict[str, WorkerProcessInfo] = {}
         self.worker_health: dict[str, WorkerHealthMessage] = {}
 
         self.cpu_count = multiprocessing.cpu_count()
-        self.logger.debug("Detected %s CPU cores/threads", self.cpu_count)
+        self.debug("Detected %s CPU cores/threads", self.cpu_count)
 
         self.max_concurrency = self.user_config.load.concurrency
         self.max_workers = self.service_config.max_workers
@@ -67,7 +67,7 @@ class WorkerManager(BaseComponentService):
             # Default to the number of CPU cores - 1
             self.max_workers = self.cpu_count - 1
 
-        # Cap the worker count to the max concurrency + 1, but only if the user in in concurrency mode.
+        # Cap the worker count to the max concurrency + 1, but only if the user is in concurrency mode.
         if self.max_concurrency > 1:
             self.max_workers = min(
                 self.max_concurrency + 1,
@@ -88,7 +88,7 @@ class WorkerManager(BaseComponentService):
     @on_init
     async def _initialize(self) -> None:
         """Initialize worker manager-specific components."""
-        self.logger.debug("Initializing worker manager")
+        self.debug("WorkerManager initializing")
 
         await self.sub_client.subscribe(
             MessageType.WORKER_HEALTH, self._on_worker_health
@@ -108,12 +108,12 @@ class WorkerManager(BaseComponentService):
             )
 
     async def _on_worker_health(self, message: WorkerHealthMessage) -> None:
-        self.logger.debug("Received worker health message: %s", message)
+        self.debug("Received worker health message: %s", message)
         self.worker_health[message.service_id] = message
 
     @on_stop
     async def _stop(self) -> None:
-        self.logger.debug("Stopping worker manager")
+        self.debug("WorkerManager stopping")
 
         # Stop all workers
         # TODO: This logic can be refactored to make use of the ServiceManager class
@@ -128,21 +128,21 @@ class WorkerManager(BaseComponentService):
 
     @on_cleanup
     async def _cleanup(self) -> None:
-        self.logger.debug("Cleaning up worker manager")
+        self.debug("WorkerManager cleaning up")
         self.workers.clear()
 
     async def _spawn_kubernetes_workers(self) -> None:
-        self.logger.debug("Spawning %s worker pods", self.initial_workers)
+        self.debug("Spawning %s worker pods", self.initial_workers)
         # TODO: Implement Kubernetes start
         raise NotImplementedError("Kubernetes start not implemented")
 
     async def _stop_kubernetes_workers(self) -> None:
-        self.logger.debug("Stopping all worker processes")
+        self.debug("Stopping all worker processes")
         # TODO: Implement Kubernetes stop
         raise NotImplementedError("Kubernetes stop not implemented")
 
     async def _spawn_multiprocessing_workers(self) -> None:
-        self.logger.debug("Spawning %s worker processes", self.initial_workers)
+        self.debug("Spawning %s worker processes", self.initial_workers)
 
         # Get the global log queue for child process logging
         from aiperf.common.logging import get_global_log_queue
@@ -170,20 +170,25 @@ class WorkerManager(BaseComponentService):
                 worker_id=worker_id,
                 process=process,
             )
-            self.logger.debug(
-                "Started worker process %s (pid: %s)", worker_id, process.pid
+            self.debug(
+                lambda id=worker_id,
+                pid=process.pid: f"Started worker process {id} (pid: {pid})"
             )
 
     async def _stop_multiprocessing_workers(self) -> None:
-        self.logger.debug("Stopping all worker processes")
+        self.debug("Stopping all worker processes")
 
         # First terminate all processes
         for worker_id, worker_info in self.workers.items():
-            self.logger.debug("Stopping worker process %s %s", worker_id, worker_info)
+            self.debug(
+                lambda id=worker_id,
+                pid=worker_info.process.pid: f"Stopping worker process {id} (pid: {pid})"
+            )
             process = worker_info.process
             if process and process.is_alive():
-                self.logger.debug(
-                    "Terminating worker process %s (pid: %s)", worker_id, process.pid
+                self.debug(
+                    lambda id=worker_id,
+                    pid=process.pid: f"Terminating worker process {id} (pid: {pid})"
                 )
                 process.terminate()
 
@@ -196,25 +201,20 @@ class WorkerManager(BaseComponentService):
             ]
         )
 
-        self.logger.debug("All worker processes stopped")
+        self.debug("All worker processes stopped")
 
     async def _wait_for_process(self, worker_id: str, process: Process) -> None:
         """Wait for a process to terminate with timeout handling."""
         try:
-            await asyncio.wait_for(
-                asyncio.to_thread(
-                    process.join, timeout=TASK_CANCEL_TIMEOUT_SHORT
-                ),  # Add timeout to join
-                timeout=TASK_CANCEL_TIMEOUT_LONG,  # Overall timeout
-            )
-            self.logger.debug(
-                "Worker process %s (pid: %s) stopped", worker_id, process.pid
+            await asyncio.to_thread(process.join, timeout=TASK_CANCEL_TIMEOUT_SHORT)
+            self.debug(
+                lambda id=worker_id,
+                pid=process.pid: f"Worker process {id} (pid: {pid}) stopped"
             )
         except asyncio.TimeoutError:
-            self.logger.warning(
-                "Worker process %s (pid: %s) did not terminate gracefully, killing",
-                worker_id,
-                process.pid,
+            self.warning(
+                lambda id=worker_id,
+                pid=process.pid: f"Worker process {id} (pid: {pid}) did not terminate gracefully, killing"
             )
             process.kill()
 
