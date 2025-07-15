@@ -39,9 +39,9 @@ def run_system_controller(
             user_config=user_config,
             log_queue=log_queue,
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Error starting AIPerf System")
-        raise e
+        raise
     finally:
         logger.info("AIPerf System exited")
 

@@ -152,7 +152,6 @@ class ServiceDefaults:
     LOG_LEVEL = "INFO"
     VERBOSE = False
     EXTRA_VERBOSE = False
-    LOG_PATH = None
     DISABLE_UI = False
     ENABLE_UVLOOP = True
     RESULT_PARSER_SERVICE_COUNT = 2
@@ -175,6 +174,7 @@ class MeasurementDefaults:
     STABILITY_PERCENTAGE = 0.95
 
 
+# TODO: Enable this when we implement the sweep command
 # @dataclass(frozen=True)
 # class SweepParamDefaults:
 #     VALUES = None
@@ -186,6 +186,7 @@ class MeasurementDefaults:
 #     MAX_PROFILES = None
 
 
+# TODO: Enable this when we implement the sweep command
 # @dataclass(frozen=True)
 # class SweepDefaults:
 #     PARAMS = None
