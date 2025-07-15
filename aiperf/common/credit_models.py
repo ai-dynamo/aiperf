@@ -6,6 +6,7 @@ import time
 from pydantic import Field
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.pydantic_utils import AIPerfBaseModel
 
 
@@ -64,6 +65,14 @@ class CreditPhaseStats(AIPerfBaseModel):
     @property
     def is_time_based(self) -> bool:
         return self.expected_duration_ns is not None
+
+    @property
+    def should_send(self) -> bool:
+        if self.expected_duration_ns:
+            return time.time_ns() - self.start_ns <= self.expected_duration_ns
+        elif self.total_requests:
+            return self.sent < self.total_requests
+        raise InvalidStateError("Phase is not time or request count based")
 
     @property
     def progress_percent(self) -> float | None:
