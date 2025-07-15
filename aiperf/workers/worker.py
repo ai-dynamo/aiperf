@@ -136,6 +136,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.trace(lambda: f"Processing credit drop: {message}")
         drop_perf_ns = time.perf_counter_ns()  # The time the credit was received
 
+        if message.phase not in self.task_stats:
+            self.task_stats[message.phase] = WorkerPhaseTaskStats()
+        self.task_stats[message.phase].total += 1
+
         record: RequestRecord = RequestRecord()
         try:
             record = await self._execute_single_credit(message, time.time_ns())
@@ -183,13 +187,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self, message: CreditDropMessage, timestamp_ns: int
     ) -> RequestRecord:
         """Run a credit task for a single credit."""
-        if message.phase not in self.task_stats:
-            self.task_stats[message.phase] = WorkerPhaseTaskStats(
-                total=0,
-                completed=0,
-                failed=0,
-            )
-        self.task_stats[message.phase].total += 1
 
         if not self.inference_client:
             raise NotInitializedError("Inference server client not initialized.")
