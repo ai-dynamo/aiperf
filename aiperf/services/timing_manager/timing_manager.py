@@ -31,17 +31,20 @@ from aiperf.common.messages import (
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
-from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.services.timing_manager.concurrency_strategy import ConcurrencyStrategy
-from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
+from aiperf.services.timing_manager.config import (
+    TimingManagerConfig,
+    TimingMode,
+)
 from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
+from aiperf.services.timing_manager.credit_manager import CreditPhaseMessagesMixin
 from aiperf.services.timing_manager.fixed_schedule_strategy import FixedScheduleStrategy
 from aiperf.services.timing_manager.request_rate_strategy import RequestRateStrategy
 
 
 @ServiceFactory.register(ServiceType.TIMING_MANAGER)
-class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
+class TimingManager(BaseComponentService, CreditPhaseMessagesMixin):
     """
     The TimingManager service is responsible to generate the schedule and issuing
     timing credits for requests.
@@ -139,7 +142,6 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
         if not self._credit_issuing_strategy:
             raise InvalidStateError("No credit issuing strategy configured")
 
-        # await asyncio.sleep(1)
         self.execute_async(self._credit_issuing_strategy.start())
 
     @on_stop
@@ -152,9 +154,7 @@ class TimingManager(BaseComponentService, AsyncTaskManagerMixin):
 
     async def _on_credit_return(self, message: CreditReturnMessage) -> None:
         """Handle the credit return message."""
-        self.debug(
-            lambda: f"TM: Timing manager received credit return message: {message}"
-        )
+        self.debug(lambda: f"Timing manager received credit return message: {message}")
         if self._credit_issuing_strategy:
             await self._credit_issuing_strategy.on_credit_return(message)
 
