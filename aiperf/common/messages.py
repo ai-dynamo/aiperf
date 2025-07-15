@@ -17,12 +17,12 @@ from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
-    CreditPhase,
     MessageType,
     NotificationType,
     ServiceState,
     ServiceType,
 )
+from aiperf.common.enums.timing import CreditPhase
 from aiperf.common.health_models import ProcessHealth
 from aiperf.common.pydantic_utils import ExcludeIfNoneMixin, exclude_if_none
 from aiperf.common.record_models import (
