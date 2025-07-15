@@ -6,6 +6,7 @@ import time
 from pydantic import Field
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.pydantic_utils import AIPerfBaseModel
 
 
@@ -14,10 +15,10 @@ class CreditPhaseStats(AIPerfBaseModel):
     How many credits were dropped and how many were returned, as well as the progress percentage of the phase."""
 
     type: CreditPhase = Field(..., description="The type of credit phase")
-    start_ns: int | None = Field(
-        default=None,
+    start_ns: int = Field(
+        default_factory=time.time_ns,
         ge=1,
-        description="The start time of the credit phase in nanoseconds. If None, the phase has not started.",
+        description="The start time of the credit phase in nanoseconds.",
     )
     sent_end_ns: int | None = Field(
         default=None,
@@ -28,7 +29,7 @@ class CreditPhaseStats(AIPerfBaseModel):
         ge=1,
         description="The time in which the last credit was returned from the workers in nanoseconds. If None, the phase has not completed.",
     )
-    total: int | None = Field(
+    total_requests: int | None = Field(
         default=None,
         ge=1,
         description="The total number of expected credits. If None, the phase is not request count based.",
@@ -66,6 +67,14 @@ class CreditPhaseStats(AIPerfBaseModel):
         return self.expected_duration_ns is not None
 
     @property
+    def should_send(self) -> bool:
+        if self.expected_duration_ns:
+            return time.time_ns() - self.start_ns <= self.expected_duration_ns
+        elif self.total_requests:
+            return self.sent < self.total_requests
+        raise InvalidStateError("Phase is not time or request count based")
+
+    @property
     def progress_percent(self) -> float | None:
         if not self.is_started:
             return None
@@ -79,9 +88,9 @@ class CreditPhaseStats(AIPerfBaseModel):
                 (time.time_ns() - self.start_ns) / self.expected_duration_ns  # type: ignore
             ) * 100
 
-        elif self.total is not None:
+        elif self.total_requests is not None:
             # Credit count based, so progress is the percentage of credits returned
-            return (self.completed / self.total) * 100
+            return (self.completed / self.total_requests) * 100
 
         # We don't know the progress
         return None
@@ -99,6 +108,6 @@ class PhaseProcessingStats(AIPerfBaseModel):
     )
 
     @property
-    def total(self) -> int:
+    def total_records(self) -> int:
         """The total number of records processed successfully or in error."""
         return self.processed + self.errors
