@@ -49,34 +49,6 @@ def bootstrap_and_run_service(
         # TODO: Add support for loading user config from a file/environment variables
         user_config = load_user_config()
 
-    def _start_yappi_profiling():
-        try:
-            import yappi
-
-            yappi.set_clock_type("cpu")
-            yappi.start()
-        except ImportError as e:
-            from aiperf.common.exceptions import AIPerfError
-
-            raise AIPerfError(
-                "yappi is not installed. Please install yappi to enable profiling. "
-                "You can install yappi with `pip install yappi`."
-            ) from e
-
-    def _stop_yappi_profiling(service_id_: str):
-        import yappi
-
-        yappi.stop()
-
-        # Get profile stats and save to file in the artifact directory
-        stats = yappi.get_func_stats()
-        yappi_dir = user_config.output.artifact_directory / "yappi"
-        yappi_dir.mkdir(parents=True, exist_ok=True)
-        stats.save(
-            str(yappi_dir / f"{service_id_}.prof"),
-            type="pstat",
-        )
-
     async def _run_service():
         if service_config.enable_yappi:
             _start_yappi_profiling()
@@ -107,7 +79,7 @@ def bootstrap_and_run_service(
             await service.run_forever()
 
         if service_config.enable_yappi:
-            _stop_yappi_profiling(service.service_id)
+            _stop_yappi_profiling(service.service_id, user_config)
 
     with contextlib.suppress(asyncio.CancelledError):
         if service_config.enable_uvloop:
@@ -116,3 +88,35 @@ def bootstrap_and_run_service(
             uvloop.run(_run_service())
         else:
             asyncio.run(_run_service())
+
+
+def _start_yappi_profiling() -> None:
+    """Start yappi profiling to profile AIPerf's python code.."""
+    try:
+        import yappi
+
+        yappi.set_clock_type("cpu")
+        yappi.start()
+    except ImportError as e:
+        from aiperf.common.exceptions import AIPerfError
+
+        raise AIPerfError(
+            "yappi is not installed. Please install yappi to enable profiling. "
+            "You can install yappi with `pip install yappi`."
+        ) from e
+
+
+def _stop_yappi_profiling(service_id_: str, user_config: UserConfig) -> None:
+    """Stop yappi profiling and save the profile to a file."""
+    import yappi
+
+    yappi.stop()
+
+    # Get profile stats and save to file in the artifact directory
+    stats = yappi.get_func_stats()
+    yappi_dir = user_config.output.artifact_directory / "yappi"
+    yappi_dir.mkdir(parents=True, exist_ok=True)
+    stats.save(
+        str(yappi_dir / f"{service_id_}.prof"),
+        type="pstat",
+    )

@@ -175,10 +175,10 @@ class ServiceConfig(BaseSettings):
     enable_yappi: Annotated[
         bool,
         Field(
-            description="[Developer use only] Enable yappi profiling (Yet Another Python Profiler). This can be used in the "
-            "development of AIPerf in order to find performance bottlenecks across the various services. The output '*.prof' "
-            "files can be viewed with snakeviz. Requires yappi and snakeviz to be installed. "
-            "Run 'pip install yappi snakeviz'.",
+            description="[Developer use only] Enable yappi profiling (Yet Another Python Profiler) to profile AIPerf's internal python code. "
+            "This can be used in the development of AIPerf in order to find performance bottlenecks across the various services. "
+            "The output '*.prof' files can be viewed with snakeviz. Requires yappi and snakeviz to be installed. "
+            "Run 'pip install yappi snakeviz' to install them.",
         ),
         cyclopts.Parameter(
             name=("--enable-yappi-profiling"),
