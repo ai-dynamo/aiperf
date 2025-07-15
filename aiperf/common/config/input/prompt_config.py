@@ -55,7 +55,7 @@ class InputTokensConfig(BaseConfig):
             description="The block size of the prompt.",
         ),
         cyclopts.Parameter(
-            name=("--synthetic-input-tokens-block-size",),
+            name=("--synthetic-input-tokens-block-size"),
         ),
     ] = InputTokensDefaults.BLOCK_SIZE
 

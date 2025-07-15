@@ -7,7 +7,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from aiperf.common.enums import AIPerfUIType, ServiceType
+from aiperf.common.enums import ServiceType
 
 """
 This module provides utility functions for validating and parsing configuration inputs.
@@ -221,16 +221,6 @@ def parse_file(value: str | None) -> Path | None:
             return path
         else:
             raise ValueError(f"'{value}' is not a valid file or directory")
-
-
-def parse_ui_type(input: Any) -> AIPerfUIType:
-    """Applies aliases to the UI type."""
-    if input == "tqdm":
-        return AIPerfUIType.BASIC
-    elif input in ("logging", "log"):
-        return AIPerfUIType.NONE
-
-    return AIPerfUIType(input)
 
 
 def raise_not_implemented_error(argument: str) -> Callable[[Any], Any]:

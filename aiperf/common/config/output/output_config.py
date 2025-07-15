@@ -5,10 +5,11 @@ from pathlib import Path
 from typing import Annotated
 
 import cyclopts
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import OutputDefaults
+from aiperf.common.config.config_validators import raise_not_implemented_error
 
 
 class OutputConfig(BaseConfig):
@@ -45,4 +46,5 @@ class OutputConfig(BaseConfig):
                 "--profile-export-file",  # GenAI-Perf
             ),
         ),
+        BeforeValidator(raise_not_implemented_error("--profile-export-file")),
     ] = OutputDefaults.PROFILE_EXPORT_FILE

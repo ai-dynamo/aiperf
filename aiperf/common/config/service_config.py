@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from pathlib import Path
 from typing import Annotated
 
 import cyclopts
@@ -10,7 +9,7 @@ from typing_extensions import Self
 
 from aiperf.common.config.base_config import ADD_TO_TEMPLATE
 from aiperf.common.config.config_defaults import ServiceDefaults
-from aiperf.common.config.config_validators import parse_service_types, parse_ui_type
+from aiperf.common.config.config_validators import parse_service_types
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
     ZMQIPCConfig,
@@ -18,7 +17,6 @@ from aiperf.common.config.zmq_config import (
 )
 from aiperf.common.enums import (
     AIPerfLogLevel,
-    AIPerfUIType,
     CommunicationBackend,
     ServiceRunType,
     ServiceType,
@@ -54,15 +52,6 @@ class ServiceConfig(BaseSettings):
                 self.comm_config = ZMQTCPConfig()
             else:
                 raise ValueError(f"Invalid communication backend: {self.comm_backend}")
-        return self
-
-    @model_validator(mode="after")
-    def validate_ui_type(self) -> Self:
-        """Validate the UI type."""
-        if self.disable_ui:
-            self.ui_type = AIPerfUIType.NONE
-        elif self.basic_ui:
-            self.ui_type = AIPerfUIType.BASIC
         return self
 
     service_run_type: Annotated[
@@ -190,16 +179,6 @@ class ServiceConfig(BaseSettings):
         ),
     ] = ServiceDefaults.EXTRA_VERBOSE
 
-    basic_ui: Annotated[
-        bool,
-        Field(
-            description="Enable the basic tqdm-based UI. This is equivalent to --ui-type basic.",
-        ),
-        cyclopts.Parameter(
-            name=("--basic-ui"),
-        ),
-    ] = ServiceDefaults.BASIC_UI
-
     disable_ui: Annotated[
         bool,
         Field(
@@ -209,17 +188,6 @@ class ServiceConfig(BaseSettings):
             name=("--disable-ui"),
         ),
     ] = ServiceDefaults.DISABLE_UI
-
-    ui_type: Annotated[
-        AIPerfUIType,
-        Field(
-            description="Type of UI to use",
-        ),
-        cyclopts.Parameter(
-            name=("--ui-type", "--ui"),
-        ),
-        BeforeValidator(parse_ui_type),
-    ] = ServiceDefaults.UI_TYPE
 
     enable_uvloop: Annotated[
         bool,
@@ -267,30 +235,3 @@ class ServiceConfig(BaseSettings):
         ),
         BeforeValidator(parse_service_types),
     ] = ServiceDefaults.DEBUG_SERVICES
-
-    worker_health_check_interval: Annotated[
-        float,
-        Field(
-            description="Interval in seconds between health checks for workers",
-        ),
-        cyclopts.Parameter(
-            name=("--worker-health-check-interval"),
-        ),
-    ] = ServiceDefaults.WORKER_HEALTH_CHECK_INTERVAL
-
-    plugin_dirs: Annotated[
-        list[Path],
-        Field(
-            description="One or more directories to load plugins from. If not specified, the plugins will be loaded from the default plugins directory.",
-        ),
-        cyclopts.Parameter(
-            name=("--plugin-dir"),
-        ),
-    ] = ServiceDefaults.PLUGIN_DIRS
-
-    # plugins: Annotated[
-    #     list[str],
-    #     Field(
-    #         description="One or more plugins to load. If not specified, the plugins will be loaded from the default plugins directory.",
-    #     ),
-    # ] = ServiceDefaults.PLUGINS
