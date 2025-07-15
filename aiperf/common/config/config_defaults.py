@@ -13,6 +13,7 @@ from aiperf.common.enums import (
     ModelSelectionStrategy,
     RequestRateMode,
     ServiceRunType,
+    TimingMode,
 )
 from aiperf.progress.progress_models import (
     SweepCompletionTrigger,
@@ -154,6 +155,8 @@ class ServiceDefaults:
     DISABLE_UI = False
     ENABLE_UVLOOP = True
     RESULT_PARSER_SERVICE_COUNT = 2
+    ENABLE_YAPPI = False
+    DEBUG_SERVICES = None
 
 
 @dataclass(frozen=True)
@@ -163,7 +166,8 @@ class LoadGeneratorDefaults:
     REQUEST_COUNT = 10
     WARMUP_REQUEST_COUNT = 0
     CONCURRENCY_RAMP_UP_TIME = None
-    REQUEST_RATE_MODE = RequestRateMode.FIXED
+    REQUEST_RATE_MODE = RequestRateMode.POISSON
+    TIMING_MODE = TimingMode.CONCURRENCY
 
 
 @dataclass(frozen=True)
