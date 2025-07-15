@@ -40,8 +40,7 @@ class AsyncTaskManagerMixin:
             return
 
         for task in list(self.tasks):
-            if not task.done():
-                task.cancel()
+            task.cancel()
 
         with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError):
             await asyncio.wait_for(
