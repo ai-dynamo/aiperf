@@ -46,6 +46,8 @@ dev = [
   "pytest-cov",
   "ruff>=0.0.0",
   "pre-commit>=4.2.0",
+  "mkinit>=1.1.0",
+  "black>=25.1.0",
 ]
 
 
