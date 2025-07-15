@@ -1,14 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import time
-from typing import Literal
 
 from pydantic import Field
 
-from aiperf.common.enums import CreditPhase, MessageType
-from aiperf.common.health_models import ProcessHealth
-from aiperf.common.messages import BaseServiceMessage
 from aiperf.common.pydantic_utils import AIPerfBaseModel
 
 
@@ -36,23 +31,3 @@ class WorkerPhaseTaskStats(AIPerfBaseModel):
         This is the total number of tasks sent to the worker minus the number of failed and successfully completed tasks.
         """
         return self.total - self.completed - self.failed
-
-
-class WorkerHealthMessage(BaseServiceMessage):
-    """Message for a worker health check."""
-
-    message_type: Literal[MessageType.WORKER_HEALTH] = MessageType.WORKER_HEALTH
-
-    # override request_ns to be auto-filled if not provided
-    request_ns: int = Field(  # type: ignore
-        default_factory=time.time_ns,
-        description="Timestamp of the request",
-    )
-
-    process: ProcessHealth = Field(..., description="The health of the worker process")
-
-    # Worker specific fields
-    task_stats: dict[CreditPhase, WorkerPhaseTaskStats] = Field(
-        ...,
-        description="Stats for the tasks that have been sent to the worker, keyed by the credit phase",
-    )
