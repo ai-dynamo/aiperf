@@ -120,6 +120,58 @@ class InferenceResultParser(BaseComponentService):
     @on_configure
     async def _configure(self, message: CommandMessage) -> None:
         """Configure the inference result parser."""
+        self.logger.debug(
+            f"Configuring inference result parser with message: {message}"
+        )
+        self.user_config = (
+            message.data if isinstance(message.data, UserConfig) else None
+        )
+
+        # TODO: This is a hack to get the tokenizer for the default model.
+        # We should remove this once we have a better way to get the tokenizer from the user config.
+        await self.get_tokenizer(
+            os.getenv("AIPERF_MODEL", "deepseek-ai/DeepSeek-R1-Distill-Llama-8B")
+        )
+
+        if self.user_config:
+            # TODO: Does this code actually work as intended? Maybe refactor this to use a loop.
+            await asyncio.gather(
+                *[self.get_tokenizer(model) for model in self.user_config.model_names]
+            )
+            self.logger.info(
+                "Initialized tokenizers for %d models", len(self.tokenizers)
+            )
+
+    async def _compute_input_token_count(
+        self, request_record: RequestRecord, tokenizer: Tokenizer
+    ) -> int:
+        "Extract the input prompt text from the request record and return token count."
+        input_data = request_record.request
+        prompt = None
+        if "messages" in input_data:
+            prompt = " ".join(
+                m["content"] for m in input_data["messages"] if "content" in m
+            )
+        elif "input" in input_data:
+            if isinstance(input_data["input"], list):
+                prompt = " ".join(input_data["input"])
+            else:
+                prompt = input_data["input"]
+        elif "prompt" in input_data:
+            if isinstance(input_data["prompt"], list):
+                prompt = " ".join(input_data["prompt"])
+            else:
+                prompt = input_data["prompt"]
+        elif "inputs" in input_data:
+            if isinstance(input_data["inputs"], list):
+                prompt = " ".join(input_data["inputs"])
+            else:
+                prompt = input_data["inputs"]
+
+        if prompt is None:
+            raise ValueError("Unable to extract prompt from input.")
+
+        return len(tokenizer.encode(prompt))
 
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
         """Handle an inference results message."""

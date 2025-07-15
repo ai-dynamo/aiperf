@@ -224,6 +224,9 @@ class RequestRecord(AIPerfBaseModel):
         default=CreditPhase.PROFILING,
         description="The type of credit phase (either warmup or profiling)",
     )
+    input_token_count: int | None = Field(
+        default=None, description="The number of tokens in the input prompt."
+    )
 
     @property
     def delayed(self) -> bool:
