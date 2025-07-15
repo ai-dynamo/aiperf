@@ -11,6 +11,7 @@ from aiperf.common.comms.base import (
     CommunicationFactory,
 )
 from aiperf.common.config import ServiceConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ServiceState, ServiceType
 from aiperf.common.exceptions import (
     AIPerfError,
@@ -46,7 +47,10 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
     """
 
     def __init__(
-        self, service_config: ServiceConfig, service_id: str | None = None
+        self,
+        service_config: ServiceConfig,
+        user_config: UserConfig | None = None,
+        service_id: str | None = None,
     ) -> None:
         super().__init__()
         self.service_id: str = (
@@ -54,6 +58,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
         )
         self.logger = logging.getLogger(self.service_id)
         self.service_config = service_config
+        self.user_config = user_config
 
         self.logger.debug(
             f"Initializing {self.service_type} service (id: {self.service_id})"

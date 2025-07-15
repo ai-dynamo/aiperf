@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from aiperf.common.config import ServiceConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
@@ -41,10 +42,12 @@ class BaseComponentService(BaseService):
     def __init__(
         self,
         service_config: ServiceConfig,
+        user_config: UserConfig | None = None,
         service_id: str | None = None,
     ) -> None:
         super().__init__(
             service_config=service_config,
+            user_config=user_config,
             service_id=service_id,
         )
 
