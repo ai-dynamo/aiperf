@@ -7,9 +7,9 @@ from collections import defaultdict
 from collections.abc import Coroutine
 from typing import Any
 
+from aiperf.common.credit_models import CreditDropMessage
 from aiperf.common.enums import MessageType
 from aiperf.common.messages import (
-    CreditDropMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
 )

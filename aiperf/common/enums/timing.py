@@ -35,14 +35,6 @@ class CreditPhase(CaseInsensitiveStrEnum):
     """The credit phase is the warmup phase. This is used to warm up the model
     before the benchmark starts."""
 
-    RAMP_UP = "ramp_up"
-    """The credit phase is the ramp up phase. This is used to ramp up the request
-    rate before the benchmark starts."""
-
-    STABILIZING = "stabilizing"
-    """Used with stabilization based measurement modes to indicate that the
-    benchmark is still stabilizing."""
-
-    STEADY_STATE = "steady_state"
+    PROFILING = "profiling"
     """The credit phase is the steady state phase. This is the primary phase of the
     benchmark, and what is used to calculate the final results."""

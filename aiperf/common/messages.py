@@ -13,7 +13,6 @@ from pydantic import (
     model_serializer,
 )
 
-from aiperf.common.credit_models import CreditPhaseStats, PhaseProcessingStats
 from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import (
     CommandResponseStatus,
@@ -24,12 +23,14 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.enums.timing import CreditPhase
+from aiperf.common.health_models import ProcessHealth
 from aiperf.common.pydantic_utils import ExcludeIfNoneMixin, exclude_if_none
 from aiperf.common.record_models import (
     ErrorDetails,
     ParsedResponseRecord,
     RequestRecord,
 )
+from aiperf.common.worker_models import WorkerPhaseTaskStats
 
 ################################################################################
 # Abstract Base Message Models
@@ -366,52 +367,6 @@ class DatasetTimingResponse(BaseServiceMessage):
 ################################################################################
 
 
-class BasePhaseStatsMessage(BaseServiceMessage, RequiresRequestNSMixin):
-    """Base message for phase stats. Sent by the TimingManager to report stats of a credit phase."""
-
-    phase_stats: CreditPhaseStats = Field(
-        ...,
-        description="The credit phase stats for the phase",
-    )
-
-
-class CreditPhaseProgressMessage(BaseServiceMessage, RequiresRequestNSMixin):
-    """Sent by the TimingManager to report the stats of ALL credit phases."""
-
-    message_type: Literal[MessageType.CREDIT_PHASE_PROGRESS] = (
-        MessageType.CREDIT_PHASE_PROGRESS
-    )
-
-    phase_stats_map: dict[CreditPhase, CreditPhaseStats] = Field(
-        ...,
-        description="The credit phase stats for all phases",
-    )
-
-
-class CreditPhaseStartMessage(BasePhaseStatsMessage):
-    """Message for credit phase start. Sent by the TimingManager to report that a credit phase has started."""
-
-    message_type: Literal[MessageType.CREDIT_PHASE_START] = (
-        MessageType.CREDIT_PHASE_START
-    )
-
-
-class CreditPhaseCompleteMessage(BasePhaseStatsMessage):
-    """Message for credit phase complete. Sent by the TimingManager to report that a credit phase has completed."""
-
-    message_type: Literal[MessageType.CREDIT_PHASE_COMPLETE] = (
-        MessageType.CREDIT_PHASE_COMPLETE
-    )
-
-
-class CreditPhaseSendingCompleteMessage(BasePhaseStatsMessage):
-    """Message for credit phase sending complete. Sent by the TimingManager to report that a credit phase has completed sending."""
-
-    message_type: Literal[MessageType.CREDIT_PHASE_SENDING_COMPLETE] = (
-        MessageType.CREDIT_PHASE_SENDING_COMPLETE
-    )
-
-
 class CreditDropMessage(BaseServiceMessage):
     """Message indicating that a credit has been dropped.
     This message is sent by the timing manager to workers to indicate that credit(s)
@@ -420,7 +375,7 @@ class CreditDropMessage(BaseServiceMessage):
 
     message_type: Literal[MessageType.CREDIT_DROP] = MessageType.CREDIT_DROP
 
-    credit_phase: CreditPhase = Field(..., description="The type of credit phase")
+    phase: CreditPhase = Field(..., description="The type of credit phase")
     conversation_id: str | None = Field(
         default=None, description="The ID of the conversation, if applicable."
     )
@@ -438,7 +393,7 @@ class CreditReturnMessage(BaseServiceMessage):
 
     message_type: Literal[MessageType.CREDIT_RETURN] = MessageType.CREDIT_RETURN
 
-    credit_phase: CreditPhase = Field(
+    phase: CreditPhase = Field(
         ...,
         description="The type of credit phase",
     )
@@ -451,8 +406,14 @@ class CreditReturnMessage(BaseServiceMessage):
     )
     delayed_ns: int | None = Field(
         default=None,
-        ge=1,
-        description="The number of nanoseconds the credit drop was delayed by, or None if the credit was sent on time.",
+        ge=0,
+        description="The number of nanoseconds the credit drop was delayed by, or None if the credit was sent on time. "
+        "NOTE: This is only applicable if credit_drop_ns is not None.",
+    )
+    pre_inference_ns: int | None = Field(
+        default=None,
+        description="The latency of the credit in nanoseconds from when it was first received to when the inference request was sent.",
+        ge=0,
     )
 
     @property
@@ -460,30 +421,118 @@ class CreditReturnMessage(BaseServiceMessage):
         return self.delayed_ns is not None
 
 
+class CreditPhaseStartMessage(BaseServiceMessage):
+    """Message for credit phase start. Sent by the TimingManager to report that a credit phase has started."""
+
+    message_type: Literal[MessageType.CREDIT_PHASE_START] = (
+        MessageType.CREDIT_PHASE_START
+    )
+    phase: CreditPhase = Field(..., description="The type of credit phase")
+    start_ns: int = Field(
+        ge=1,
+        description="The start time of the credit phase in nanoseconds.",
+    )
+    total_requests: int | None = Field(
+        default=None,
+        ge=1,
+        description="The total number of expected credits. If None, the phase is not request count based.",
+    )
+    expected_duration_ns: int | None = Field(
+        default=None,
+        ge=1,
+        description="The expected duration of the credit phase in nanoseconds. If None, the phase is not time based.",
+    )
+
+
+class CreditPhaseProgressMessage(BaseServiceMessage):
+    """Sent by the TimingManager to report the progress of a credit phase."""
+
+    message_type: Literal[MessageType.CREDIT_PHASE_PROGRESS] = (
+        MessageType.CREDIT_PHASE_PROGRESS
+    )
+    phase: CreditPhase = Field(..., description="The type of credit phase")
+    sent: int = Field(default=0, description="The number of sent credits")
+    completed: int = Field(
+        default=0,
+        description="The number of completed credits (returned from the workers)",
+    )
+
+
+class CreditPhaseSendingCompleteMessage(BaseServiceMessage):
+    """Message for credit phase sending complete. Sent by the TimingManager to report that a credit phase has completed sending."""
+
+    message_type: Literal[MessageType.CREDIT_PHASE_SENDING_COMPLETE] = (
+        MessageType.CREDIT_PHASE_SENDING_COMPLETE
+    )
+    phase: CreditPhase = Field(..., description="The type of credit phase")
+    sent_end_ns: int | None = Field(
+        default=None,
+        description="The time of the last sent credit in nanoseconds. If None, the phase has not sent all credits.",
+    )
+
+
+class CreditPhaseCompleteMessage(BaseServiceMessage):
+    """Message for credit phase complete. Sent by the TimingManager to report that a credit phase has completed."""
+
+    message_type: Literal[MessageType.CREDIT_PHASE_COMPLETE] = (
+        MessageType.CREDIT_PHASE_COMPLETE
+    )
+    phase: CreditPhase = Field(..., description="The type of credit phase")
+    end_ns: int | None = Field(
+        default=None,
+        ge=1,
+        description="The time in which the last credit was returned from the workers in nanoseconds. If None, the phase has not completed.",
+    )
+
+
 class CreditsCompleteMessage(BaseServiceMessage):
-    """Credits complete message sent by the TimingManager to the System controller to signify all requests have completed."""
+    """Credits complete message sent by the TimingManager to the System controller to signify all Credit Phases
+    have been completed."""
 
     message_type: Literal[MessageType.CREDITS_COMPLETE] = MessageType.CREDITS_COMPLETE
-    cancelled: bool = Field(
-        default=False,
-        description="Whether the profile run was cancelled",
-    )
 
 
-class RecordsProcessingStatsMessage(BaseServiceMessage, RequiresRequestNSMixin):
-    """Message for processing stats. Sent by the RecordsManager to report the stats of the profile run.
-    This contains the stats for a single credit phase only."""
+################################################################################
+# Worker Messages
+################################################################################
 
-    message_type: Literal[MessageType.PROCESSING_STATS] = MessageType.PROCESSING_STATS
 
-    current_phase: CreditPhase | None = Field(
-        default=None, description="The current credit phase if known."
+class WorkerHealthMessage(BaseServiceMessage):
+    """Message for a worker health check."""
+
+    message_type: Literal[MessageType.WORKER_HEALTH] = MessageType.WORKER_HEALTH
+
+    process: ProcessHealth = Field(..., description="The health of the worker process")
+
+    # Worker specific fields
+    task_stats: dict[CreditPhase, WorkerPhaseTaskStats] = Field(
+        ...,
+        description="Stats for the tasks that have been sent to the worker, keyed by the credit phase",
     )
-    processing_stats: PhaseProcessingStats = Field(
-        ..., description="The stats for the current credit phase"
-    )
-    worker_stats: dict[str, PhaseProcessingStats] = Field(
-        default_factory=dict,
-        description="The stats for each worker how many requests were processed and how many errors were "
-        "encountered, keyed by worker service_id",
-    )
+
+    @property
+    def total_tasks(self) -> int:
+        """The total number of tasks that have been sent to the worker."""
+        return sum(task_stats.total for task_stats in self.task_stats.values())
+
+    @property
+    def completed_tasks(self) -> int:
+        """The number of tasks that have been completed by the worker."""
+        return sum(task_stats.completed for task_stats in self.task_stats.values())
+
+    @property
+    def failed_tasks(self) -> int:
+        """The number of tasks that have failed by the worker."""
+        return sum(task_stats.failed for task_stats in self.task_stats.values())
+
+    @property
+    def in_progress_tasks(self) -> int:
+        """The number of tasks that are currently in progress by the worker."""
+        return sum(task_stats.in_progress for task_stats in self.task_stats.values())
+
+    @property
+    def error_rate(self) -> float:
+        """The error rate of the worker."""
+        if self.total_tasks == 0:
+            return 0
+        return self.failed_tasks / self.total_tasks

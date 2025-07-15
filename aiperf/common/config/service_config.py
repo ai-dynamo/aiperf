@@ -3,16 +3,17 @@
 from typing import Annotated, Any, Literal
 
 import cyclopts
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aiperf.common.config.config_defaults import ServiceDefaults
+from aiperf.common.config.config_validators import parse_service_types
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
     ZMQIPCConfig,
     ZMQTCPConfig,
 )
-from aiperf.common.enums import CommunicationBackend, ServiceRunType
+from aiperf.common.enums import CommunicationBackend, ServiceRunType, ServiceType
 
 
 class ServiceConfig(BaseSettings):
@@ -170,3 +171,29 @@ class ServiceConfig(BaseSettings):
             name=("--result-parser-service-count"),
         ),
     ] = ServiceDefaults.RESULT_PARSER_SERVICE_COUNT
+
+    enable_yappi: Annotated[
+        bool,
+        Field(
+            description="[Developer use only] Enable yappi profiling (Yet Another Python Profiler) to profile AIPerf's internal python code. "
+            "This can be used in the development of AIPerf in order to find performance bottlenecks across the various services. "
+            "The output '*.prof' files can be viewed with snakeviz. Requires yappi and snakeviz to be installed. "
+            "Run 'pip install yappi snakeviz' to install them.",
+        ),
+        cyclopts.Parameter(
+            name=("--enable-yappi-profiling"),
+        ),
+    ] = ServiceDefaults.ENABLE_YAPPI
+
+    debug_services: Annotated[
+        set[ServiceType] | None,
+        Field(
+            description="List of services to enable debug logging for. Can be a comma-separated list, a single service type, "
+            "or the cli flag can be used multiple times.",
+        ),
+        cyclopts.Parameter(
+            # Note that the name is singular because it can be used multiple times.
+            name=("--debug-service"),
+        ),
+        BeforeValidator(parse_service_types),
+    ] = ServiceDefaults.DEBUG_SERVICES
