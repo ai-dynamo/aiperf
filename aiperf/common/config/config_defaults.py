@@ -52,7 +52,6 @@ class InputDefaults:
     CUSTOM_DATASET_TYPE = CustomDatasetType.TRACE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
-    RANDOM_SEED = None
 
 
 @dataclass(frozen=True)
