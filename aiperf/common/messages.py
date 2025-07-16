@@ -13,7 +13,7 @@ from pydantic import (
     model_serializer,
 )
 
-from aiperf.common.dataset_models import Conversation
+from aiperf.common.dataset_models import Conversation, Turn
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
@@ -298,7 +298,7 @@ class BaseServiceErrorMessage(BaseServiceMessage):
 
 
 class ConversationRequestMessage(BaseServiceMessage):
-    """Message for a conversation request."""
+    """Message to request a full conversation by ID."""
 
     message_type: Literal[MessageType.CONVERSATION_REQUEST] = (
         MessageType.CONVERSATION_REQUEST
@@ -310,13 +310,33 @@ class ConversationRequestMessage(BaseServiceMessage):
 
 
 class ConversationResponseMessage(BaseServiceMessage):
-    """Message for a conversation response."""
+    """Message containing a full conversation."""
 
     message_type: Literal[MessageType.CONVERSATION_RESPONSE] = (
         MessageType.CONVERSATION_RESPONSE
     )
-
     conversation: Conversation = Field(..., description="The conversation data")
+
+
+class ConversationTurnRequestMessage(BaseServiceMessage):
+    """Message to request a single turn from a conversation."""
+
+    message_type: Literal[MessageType.CONVERSATION_TURN_REQUEST] = (
+        MessageType.CONVERSATION_TURN_REQUEST
+    )
+
+    conversation_id: str = Field(description="The ID of the conversation.")
+    turn_index: int = Field(description="The index of the turn in the conversation.")
+
+
+class ConversationTurnResponseMessage(BaseServiceMessage):
+    """Message containing a single turn from a conversation."""
+
+    message_type: Literal[MessageType.CONVERSATION_TURN_RESPONSE] = (
+        MessageType.CONVERSATION_TURN_RESPONSE
+    )
+
+    turn: Turn = Field(..., description="The turn data")
 
 
 class InferenceResultsMessage(BaseServiceMessage):
