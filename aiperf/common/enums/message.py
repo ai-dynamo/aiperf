@@ -52,10 +52,16 @@ class MessageType(CaseInsensitiveStrEnum):
     """A message sent by the Timing Manager services to signify all requests have completed."""
 
     CONVERSATION_REQUEST = "conversation_request"
-    """A message sent by one service to another to request a conversation."""
+    """A message sent by one service to the DatasetManager to request a conversation."""
 
     CONVERSATION_RESPONSE = "conversation_response"
-    """A message sent by one service to another to respond to a conversation request."""
+    """A message sent by the DatasetManager to a service, containing the requested conversation data."""
+
+    CONVERSATION_TURN_REQUEST = "conversation_turn_request"
+    """A message sent by one service to the DatasetManager to request a single turn from a conversation."""
+
+    CONVERSATION_TURN_RESPONSE = "conversation_turn_response"
+    """A message sent by the DatasetManager to a service, containing the requested turn data."""
 
     INFERENCE_RESULTS = "inference_results"
     """A message containing inference results from a worker."""
