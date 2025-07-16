@@ -12,7 +12,6 @@ from aiperf.common.comms.zmq.zmq_proxy_base import BaseZMQProxy, ZMQProxyFactory
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
-from aiperf.common.credit_models import CreditsCompleteMessage
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
@@ -29,6 +28,7 @@ from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_cleanup, on_stop
 from aiperf.common.messages import (
     CommandResponseMessage,
+    CreditsCompleteMessage,
     HeartbeatMessage,
     NotificationMessage,
     ProcessRecordsCommandData,
