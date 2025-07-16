@@ -182,7 +182,7 @@ class ServiceConfig(BaseSettings):
     disable_ui: Annotated[
         bool,
         Field(
-            description="Disable the UI (prints progress to the console as log messages). This is equivalent to --ui-type none.",
+            description="Disable the UI",
         ),
         cyclopts.Parameter(
             name=("--disable-ui"),

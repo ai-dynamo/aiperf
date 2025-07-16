@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import Field, SerializeAsAny
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhaseType, SSEFieldType
+from aiperf.common.enums import CreditPhase, SSEFieldType
 from aiperf.common.pydantic_utils import AIPerfBaseModel
 
 
@@ -164,9 +164,22 @@ class SSEMessage(InferenceServerResponse):
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
 
-    request: Any = Field(
+    request: Any | None = Field(
         default=None,
-        description="The raw request payload.",
+        description="The request payload formatted for the inference API.",
+    )
+    conversation_id: str = Field(
+        ...,
+        description="The ID of the conversation.",
+    )
+    turn_index: int = Field(
+        ...,
+        ge=0,
+        description="The index of the turn in the conversation.",
+    )
+    model_name: str = Field(
+        ...,
+        description="The name of the model targeted by the request.",
     )
     timestamp_ns: int = Field(
         default_factory=time.time_ns,
@@ -188,9 +201,11 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The HTTP status code of the response.",
     )
-    # Note: we need to use SerializeAsAny to allow for generic subclass support
+    # NOTE: We need to use SerializeAsAny to allow for generic subclass support
+    # NOTE: The order of the types is important, as that is the order they are type checked.
+    #       Start with the most specific types and work towards the most general types.
     responses: SerializeAsAny[
-        list[InferenceServerResponse | SSEMessage | TextResponse]
+        list[SSEMessage | TextResponse | InferenceServerResponse | Any]
     ] = Field(
         default_factory=list,
         description="The raw responses received from the request.",
@@ -201,12 +216,12 @@ class RequestRecord(AIPerfBaseModel):
     )
     delayed_ns: int | None = Field(
         default=None,
-        gt=0,
+        ge=0,
         description="The number of nanoseconds the request was delayed from when it was expected to be sent, "
         "or None if the request was sent on time, or did not have a credit_drop_ns timestamp.",
     )
-    credit_phase: CreditPhaseType = Field(
-        default=CreditPhaseType.PROFILING,
+    credit_phase: CreditPhase = Field(
+        default=CreditPhase.PROFILING,
         description="The type of credit phase (either warmup or profiling)",
     )
 
@@ -333,6 +348,10 @@ class ParsedResponseRecord(AIPerfBaseModel):
     )
     request: RequestRecord = Field(description="The original request record")
     responses: list[ResponseData] = Field(description="The parsed response data.")
+    isl: int | None = Field(
+        default=None,
+        description="The Input Sequence Length (ISL) of the request. If None, the ISL was not available or able to be computed.",
+    )
 
     @cached_property
     def token_count(self) -> int | None:
