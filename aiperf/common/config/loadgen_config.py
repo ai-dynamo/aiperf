@@ -16,6 +16,8 @@ class LoadGeneratorConfig(BaseConfig):
     A configuration class for defining top-level load generator settings.
     """
 
+    _GROUP_NAME = "Load Generator"
+
     # TODO: Potentially add a validator to ensure that the concurrency is not greater than the request count
     concurrency: Annotated[
         int,
@@ -27,6 +29,7 @@ class LoadGeneratorConfig(BaseConfig):
             name=(
                 "--concurrency",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = LoadGeneratorDefaults.CONCURRENCY
 
@@ -40,6 +43,7 @@ class LoadGeneratorConfig(BaseConfig):
             name=(
                 "--request-rate",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = LoadGeneratorDefaults.REQUEST_RATE
 
@@ -52,7 +56,10 @@ class LoadGeneratorConfig(BaseConfig):
             "poisson: Generate requests using a poisson distribution.\n"
             f"The default is {LoadGeneratorDefaults.REQUEST_RATE_MODE}.",
         ),
-        cyclopts.Parameter(name=("--request-rate-mode")),
+        cyclopts.Parameter(
+            name=("--request-rate-mode"),
+            group=_GROUP_NAME,
+        ),
     ] = LoadGeneratorDefaults.REQUEST_RATE_MODE
 
     request_count: Annotated[
@@ -66,6 +73,7 @@ class LoadGeneratorConfig(BaseConfig):
                 "--request-count",  # GenAI-Perf
                 "--num-requests",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = LoadGeneratorDefaults.REQUEST_COUNT
 
@@ -80,6 +88,7 @@ class LoadGeneratorConfig(BaseConfig):
                 "--warmup-request-count",  # GenAI-Perf
                 "--num-warmup-requests",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = LoadGeneratorDefaults.WARMUP_REQUEST_COUNT
 

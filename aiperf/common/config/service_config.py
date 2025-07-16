@@ -10,6 +10,7 @@ from typing_extensions import Self
 from aiperf.common.config.base_config import ADD_TO_TEMPLATE
 from aiperf.common.config.config_defaults import ServiceDefaults
 from aiperf.common.config.config_validators import parse_service_types
+from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
     ZMQIPCConfig,
@@ -32,6 +33,8 @@ class ServiceConfig(BaseSettings):
         env_file_encoding="utf-8",
         extra="allow",
     )
+
+    _GROUP_NAME = "Service"
 
     @model_validator(mode="after")
     def validate_log_level_from_verbose_flags(self) -> Self:
@@ -60,7 +63,8 @@ class ServiceConfig(BaseSettings):
             description="Type of service run (process, k8s)",
         ),
         cyclopts.Parameter(
-            name=("--run-type"),
+            name=("--service-run-type", "--run-type"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.SERVICE_RUN_TYPE
 
@@ -71,6 +75,7 @@ class ServiceConfig(BaseSettings):
         ),
         cyclopts.Parameter(
             name=("--comm-backend"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.COMM_BACKEND
 
@@ -93,6 +98,7 @@ class ServiceConfig(BaseSettings):
         ),
         cyclopts.Parameter(
             name=("--heartbeat-timeout"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.HEARTBEAT_TIMEOUT
 
@@ -103,6 +109,7 @@ class ServiceConfig(BaseSettings):
         ),
         cyclopts.Parameter(
             name=("--registration-timeout"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.REGISTRATION_TIMEOUT
 
@@ -112,40 +119,28 @@ class ServiceConfig(BaseSettings):
             description="Default timeout for command responses",
         ),
         cyclopts.Parameter(
-            name=("--command-timeout"),
+            name=("--command-timeout", "--command-timeout-seconds"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.COMMAND_TIMEOUT
 
-    heartbeat_interval: Annotated[
+    heartbeat_interval_seconds: Annotated[
         float,
         Field(
             description="Interval in seconds between heartbeat messages",
         ),
         cyclopts.Parameter(
-            name=("--heartbeat-interval"),
+            name=("--heartbeat-interval-seconds", "--heartbeat-interval"),
+            group=_GROUP_NAME,
         ),
-    ] = ServiceDefaults.HEARTBEAT_INTERVAL
+    ] = ServiceDefaults.HEARTBEAT_INTERVAL_SECONDS
 
-    min_workers: Annotated[
-        int | None,
+    workers: Annotated[
+        WorkersConfig,
         Field(
-            description="Minimum number of workers to maintain",
+            description="Worker configuration",
         ),
-        cyclopts.Parameter(
-            name=("--min-workers"),
-        ),
-    ] = ServiceDefaults.MIN_WORKERS
-
-    max_workers: Annotated[
-        int | None,
-        Field(
-            description="Maximum number of workers to create. If not specified, the number of"
-            " workers will be determined by the smaller of (concurrency + 1) and (num CPUs - 1).",
-        ),
-        cyclopts.Parameter(
-            name=("--max-workers"),
-        ),
-    ] = ServiceDefaults.MAX_WORKERS
+    ] = WorkersConfig()
 
     log_level: Annotated[
         AIPerfLogLevel,
@@ -154,6 +149,7 @@ class ServiceConfig(BaseSettings):
         ),
         cyclopts.Parameter(
             name=("--log-level"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.LOG_LEVEL
 
@@ -165,6 +161,7 @@ class ServiceConfig(BaseSettings):
         ),
         cyclopts.Parameter(
             name=("--verbose", "-v"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.VERBOSE
 
@@ -176,16 +173,18 @@ class ServiceConfig(BaseSettings):
         ),
         cyclopts.Parameter(
             name=("--extra-verbose", "-vv"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.EXTRA_VERBOSE
 
     disable_ui: Annotated[
         bool,
         Field(
-            description="Disable the UI",
+            description="Disable the UI (prints progress to the console as log messages). This is equivalent to --ui-type none.",
         ),
         cyclopts.Parameter(
             name=("--disable-ui"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.DISABLE_UI
 
@@ -196,6 +195,7 @@ class ServiceConfig(BaseSettings):
         ),
         cyclopts.Parameter(
             name=("--enable-uvloop"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.ENABLE_UVLOOP
 
@@ -207,6 +207,7 @@ class ServiceConfig(BaseSettings):
         ),
         cyclopts.Parameter(
             name=("--result-parser-service-count"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.RESULT_PARSER_SERVICE_COUNT
 
@@ -220,6 +221,7 @@ class ServiceConfig(BaseSettings):
         ),
         cyclopts.Parameter(
             name=("--enable-yappi-profiling"),
+            group=_GROUP_NAME,
         ),
     ] = ServiceDefaults.ENABLE_YAPPI
 
@@ -230,8 +232,21 @@ class ServiceConfig(BaseSettings):
             "or the cli flag can be used multiple times.",
         ),
         cyclopts.Parameter(
-            # Note that the name is singular because it can be used multiple times.
-            name=("--debug-service"),
+            name=("--debug-service", "--debug-services"),
+            group=_GROUP_NAME,
         ),
         BeforeValidator(parse_service_types),
     ] = ServiceDefaults.DEBUG_SERVICES
+
+    trace_services: Annotated[
+        set[ServiceType] | None,
+        Field(
+            description="List of services to enable trace logging for. Can be a comma-separated list, a single service type, "
+            "or the cli flag can be used multiple times.",
+        ),
+        cyclopts.Parameter(
+            name=("--trace-service", "--trace-services"),
+            group=_GROUP_NAME,
+        ),
+        BeforeValidator(parse_service_types),
+    ] = ServiceDefaults.TRACE_SERVICES

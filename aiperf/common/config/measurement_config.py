@@ -10,6 +10,8 @@ class MeasurementConfig(BaseConfig):
     A configuration class for defining top-level measurement settings.
     """
 
+    _GROUP_NAME = "Measurement"
+
     # # TODO: Not implemented yet
     # measurement_interval: Annotated[
     #     float,
@@ -28,6 +30,7 @@ class MeasurementConfig(BaseConfig):
     #             "--measurement-interval",  # GenAI-Perf
     #             "-p",  # GenAI-Perf
     #         ),
+    #         group=_GROUP_NAME,
     #     ),
     # ] = MeasurementDefaults.MEASUREMENT_INTERVAL
 
@@ -47,5 +50,6 @@ class MeasurementConfig(BaseConfig):
     #             "--stability-percentage",  # GenAI-Perf
     #             "-s",  # GenAI-Perf
     #         ),
+    #         group=_GROUP_NAME,
     #     ),
     # ] = MeasurementDefaults.STABILITY_PERCENTAGE

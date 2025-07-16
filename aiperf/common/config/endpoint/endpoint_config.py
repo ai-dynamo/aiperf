@@ -17,6 +17,8 @@ class EndPointConfig(BaseConfig):
     A configuration class for defining endpoint related settings.
     """
 
+    _GROUP_NAME = "Endpoint"
+
     model_selection_strategy: Annotated[
         ModelSelectionStrategy,
         Field(
@@ -28,6 +30,7 @@ class EndPointConfig(BaseConfig):
             name=(
                 "--model-selection-strategy",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = EndPointDefaults.MODEL_SELECTION_STRATEGY
 
@@ -41,6 +44,7 @@ class EndPointConfig(BaseConfig):
                 "--custom-endpoint",
                 "--endpoint",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = EndPointDefaults.CUSTOM_ENDPOINT
 
@@ -53,6 +57,7 @@ class EndPointConfig(BaseConfig):
             name=(
                 "--endpoint-type",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = EndPointDefaults.TYPE
 
@@ -65,6 +70,7 @@ class EndPointConfig(BaseConfig):
             name=(
                 "--streaming",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = EndPointDefaults.STREAMING
 
@@ -80,6 +86,7 @@ class EndPointConfig(BaseConfig):
                 "--server-metrics-urls",  # GenAI-Perf
                 "--server-metrics-url",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = EndPointDefaults.SERVER_METRICS_URLS
 
@@ -93,6 +100,7 @@ class EndPointConfig(BaseConfig):
                 "--url",  # GenAI-Perf
                 "-u",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = EndPointDefaults.URL
 
@@ -108,6 +116,7 @@ class EndPointConfig(BaseConfig):
             name=(
                 "--grpc-method",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = EndPointDefaults.GRPC_METHOD
 
@@ -118,7 +127,8 @@ class EndPointConfig(BaseConfig):
             description="The timeout in floating points seconds for each request to the endpoint.",
         ),
         cyclopts.Parameter(
-            name=("--request-timeout-seconds", "--request-timeout"),
+            name=("--request-timeout-seconds"),
+            group=_GROUP_NAME,
         ),
     ] = EndPointDefaults.TIMEOUT
 
@@ -131,5 +141,6 @@ class EndPointConfig(BaseConfig):
         ),
         cyclopts.Parameter(
             name=("--api-key"),
+            group=_GROUP_NAME,
         ),
     ] = EndPointDefaults.API_KEY

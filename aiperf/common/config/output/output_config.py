@@ -16,6 +16,8 @@ class OutputConfig(BaseConfig):
     A configuration class for defining output related settings.
     """
 
+    _GROUP_NAME = "Output"
+
     artifact_directory: Annotated[
         Path,
         Field(
@@ -26,6 +28,7 @@ class OutputConfig(BaseConfig):
                 "--output-artifact-dir",
                 "--artifact-dir",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = OutputDefaults.ARTIFACT_DIRECTORY
 
@@ -44,5 +47,6 @@ class OutputConfig(BaseConfig):
     #             "--output-profile-export-file",
     #             "--profile-export-file",  # GenAI-Perf
     #         ),
+    #         group=_GROUP_NAME,
     #     ),
     # ] = OutputDefaults.PROFILE_EXPORT_FILE

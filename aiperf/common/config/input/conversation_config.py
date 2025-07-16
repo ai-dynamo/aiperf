@@ -19,6 +19,8 @@ class TurnDelayConfig(BaseConfig):
     A configuration class for defining turn delay related settings.
     """
 
+    _GROUP_NAME = "Input Conversation"
+
     mean: Annotated[
         float,
         Field(
@@ -30,6 +32,7 @@ class TurnDelayConfig(BaseConfig):
                 "--conversation-turn-delay-mean",
                 "--session-turn-delay-mean",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = TurnDelayDefaults.MEAN
 
@@ -45,6 +48,7 @@ class TurnDelayConfig(BaseConfig):
                 "--conversation-turn-delay-stddev",
                 "--session-turn-delay-stddev",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = TurnDelayDefaults.STDDEV
 
@@ -68,6 +72,8 @@ class TurnConfig(BaseConfig):
     A configuration class for defining turn related settings in a conversation.
     """
 
+    _GROUP_NAME = "Input Conversation"
+
     mean: Annotated[
         int,
         Field(
@@ -79,6 +85,7 @@ class TurnConfig(BaseConfig):
                 "--conversation-turn-mean",
                 "--session-turns-mean",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = TurnDefaults.MEAN
 
@@ -93,6 +100,7 @@ class TurnConfig(BaseConfig):
                 "--conversation-turn-stddev",
                 "--session-turns-stddev",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = TurnDefaults.STDDEV
 
@@ -103,6 +111,8 @@ class ConversationConfig(BaseConfig):
     """
     A configuration class for defining conversations related settings.
     """
+
+    _GROUP_NAME = "Input Conversation"
 
     num: Annotated[
         int,
@@ -118,6 +128,7 @@ class ConversationConfig(BaseConfig):
                 "--num-conversations",
                 "--num-sessions",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = ConversationDefaults.NUM
 

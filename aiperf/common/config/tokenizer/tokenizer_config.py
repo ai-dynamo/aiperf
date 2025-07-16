@@ -15,6 +15,8 @@ class TokenizerConfig(BaseConfig):
     A configuration class for defining tokenizer related settings.
     """
 
+    _GROUP_NAME = "Tokenizer"
+
     name: Annotated[
         str | None,
         Field(
@@ -27,6 +29,7 @@ class TokenizerConfig(BaseConfig):
         ),
         cyclopts.Parameter(
             name=("--tokenizer"),
+            group=_GROUP_NAME,
         ),
     ] = TokenizerDefaults.NAME
 
@@ -40,6 +43,7 @@ class TokenizerConfig(BaseConfig):
         ),
         cyclopts.Parameter(
             name=("--tokenizer-revision"),
+            group=_GROUP_NAME,
         ),
     ] = TokenizerDefaults.REVISION
 
@@ -54,5 +58,6 @@ class TokenizerConfig(BaseConfig):
         ),
         cyclopts.Parameter(
             name=("--tokenizer-trust-remote-code"),
+            group=_GROUP_NAME,
         ),
     ] = TokenizerDefaults.TRUST_REMOTE_CODE

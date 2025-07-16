@@ -50,10 +50,11 @@ class InputDefaults:
     GOODPUT = {}
     HEADERS = {}
     FILE = None
+    FIXED_SCHEDULE = False
     CUSTOM_DATASET_TYPE = CustomDatasetType.TRACE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
-    FIXED_SCHEDULE = False
+    RANDOM_SEED = None
 
 
 @dataclass(frozen=True)
@@ -148,9 +149,7 @@ class ServiceDefaults:
     HEARTBEAT_TIMEOUT = 60.0
     REGISTRATION_TIMEOUT = 60.0
     COMMAND_TIMEOUT = 10.0
-    HEARTBEAT_INTERVAL = 1.0
-    MIN_WORKERS = None
-    MAX_WORKERS = None
+    HEARTBEAT_INTERVAL_SECONDS = 5.0
     LOG_LEVEL = AIPerfLogLevel.INFO
     VERBOSE = False
     EXTRA_VERBOSE = False
@@ -160,6 +159,7 @@ class ServiceDefaults:
     RESULT_PARSER_SERVICE_COUNT = 2
     ENABLE_YAPPI = False
     DEBUG_SERVICES = None
+    TRACE_SERVICES = None
     PROGRESS_REPORT_INTERVAL_SECONDS = 1.0
 
 

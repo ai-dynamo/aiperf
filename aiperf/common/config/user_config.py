@@ -36,6 +36,7 @@ class UserConfig(BaseConfig):
                 "--model",  # GenAI-Perf
                 "-m",  # GenAI-Perf
             ),
+            group="Endpoint",
         ),
     ]
 
