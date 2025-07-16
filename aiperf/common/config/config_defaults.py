@@ -15,19 +15,17 @@ from aiperf.common.enums import (
     ServiceRunType,
     TimingMode,
 )
-from aiperf.progress.progress_models import (
-    SweepCompletionTrigger,
-    SweepMultiParamOrder,
-    SweepParamOrder,
-)
 
 
 #
 # Config Defaults
 @dataclass(frozen=True)
 class UserDefaults:
-    MODEL_NAMES = None  # This should be set by the user
-    VERBOSE = False
+    MODEL_NAMES = None  # This must be set by the user
+
+
+@dataclass(frozen=True)
+class CLIDefaults:
     TEMPLATE_FILENAME = "aiperf_config.yaml"
 
 
@@ -54,7 +52,6 @@ class InputDefaults:
     CUSTOM_DATASET_TYPE = CustomDatasetType.TRACE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
-    RANDOM_SEED = None
     FIXED_SCHEDULE = False
 
 
@@ -153,6 +150,8 @@ class ServiceDefaults:
     MIN_WORKERS = None
     MAX_WORKERS = None
     LOG_LEVEL = "INFO"
+    VERBOSE = False
+    EXTRA_VERBOSE = False
     DISABLE_UI = False
     ENABLE_UVLOOP = True
     RESULT_PARSER_SERVICE_COUNT = 2
@@ -178,18 +177,20 @@ class MeasurementDefaults:
     STABILITY_PERCENTAGE = 0.95
 
 
-@dataclass(frozen=True)
-class SweepParamDefaults:
-    VALUES = None
-    ORDER = SweepParamOrder.ASCENDING
-    COMPLETION_TRIGGER = SweepCompletionTrigger.COMPLETED_PROFILES
-    START = None
-    STEP = None
-    END = None
-    MAX_PROFILES = None
+# TODO: Enable this when we implement the sweep command
+# @dataclass(frozen=True)
+# class SweepParamDefaults:
+#     VALUES = None
+#     ORDER = SweepParamOrder.ASCENDING
+#     COMPLETION_TRIGGER = SweepCompletionTrigger.COMPLETED_PROFILES
+#     START = None
+#     STEP = None
+#     END = None
+#     MAX_PROFILES = None
 
 
-@dataclass(frozen=True)
-class SweepDefaults:
-    PARAMS = None
-    ORDER = SweepMultiParamOrder.DEPTH_FIRST
+# TODO: Enable this when we implement the sweep command
+# @dataclass(frozen=True)
+# class SweepDefaults:
+#     PARAMS = None
+#     ORDER = SweepMultiParamOrder.DEPTH_FIRST
