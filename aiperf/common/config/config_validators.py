@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -221,33 +220,3 @@ def parse_file(value: str | None) -> Path | None:
             return path
         else:
             raise ValueError(f"'{value}' is not a valid file or directory")
-
-
-def raise_not_implemented_error(argument: str) -> Callable[[Any], Any]:
-    """Inform user that the argument is not implemented. This will exit the program."""
-
-    def validator(value: Any) -> Any:
-        # This will exit the program.
-        warn_argument_not_implemented(argument)
-
-    return validator
-
-
-def warn_argument_not_implemented(argument: str) -> None:
-    """Warn the user that the subcommand is not implemented."""
-    import sys
-
-    from rich.console import Console
-    from rich.panel import Panel
-
-    console = Console()
-    console.print(
-        Panel(
-            f"CLI Argument [bold red]{argument}[/bold red] is not yet implemented",
-            title="Error",
-            title_align="left",
-            border_style="red",
-        )
-    )
-
-    sys.exit(1)
