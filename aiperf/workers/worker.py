@@ -70,22 +70,28 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self.debug(lambda: f"Initializing worker process: {self.process.pid}")
 
-        self.health_check_interval = self.service_config.worker_health_check_interval
+        self.health_check_interval = (
+            self.service_config.workers.health_check_interval_seconds
+        )
 
         self.task_stats: dict[CreditPhase, WorkerPhaseTaskStats] = {}
 
-        self.credit_drop_client: PullClientProtocol = self.comms.create_pull_client(
-            CommunicationClientAddressType.CREDIT_DROP,
+        self.credit_drop_pull_client: PullClientProtocol = (
+            self.comms.create_pull_client(
+                CommunicationClientAddressType.CREDIT_DROP,
+            )
         )  # type: ignore
-        self.credit_return_client: PushClientProtocol = self.comms.create_push_client(
-            CommunicationClientAddressType.CREDIT_RETURN,
+        self.credit_return_push_client: PushClientProtocol = (
+            self.comms.create_push_client(
+                CommunicationClientAddressType.CREDIT_RETURN,
+            )
         )  # type: ignore
-        self.inference_results_client: PushClientProtocol = (
+        self.inference_results_push_client: PushClientProtocol = (
             self.comms.create_push_client(
                 CommunicationClientAddressType.RAW_INFERENCE_PROXY_FRONTEND,
             )
         )  # type: ignore
-        self.conversation_data_client: RequestClientProtocol = (
+        self.conversation_request_client: RequestClientProtocol = (
             self.comms.create_request_client(
                 CommunicationClientAddressType.DATASET_MANAGER_PROXY_FRONTEND,
             )
@@ -94,7 +100,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
 
         self.debug(
-            lambda: f"Creating inference client for {self.model_endpoint.endpoint.type}, class: {InferenceClientFactory.get_class_from_type(self.model_endpoint.endpoint.type).__name__}",
+            lambda: f"Creating inference client for {self.model_endpoint.endpoint.type}, "
+            f"class: {InferenceClientFactory.get_class_from_type(self.model_endpoint.endpoint.type).__name__}",
         )
         self.request_converter = RequestConverterFactory.create_instance(
             self.model_endpoint.endpoint.type,
@@ -112,7 +119,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _do_initialize(self) -> None:
         self.debug("Initializing worker")
 
-        await self.credit_drop_client.register_pull_callback(
+        await self.credit_drop_pull_client.register_pull_callback(
             MessageType.CREDIT_DROP, self._process_credit_drop
         )
 
@@ -162,7 +169,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 self.task_stats[message.phase].completed += 1
 
             try:
-                await self.inference_results_client.push(message=msg)
+                await self.inference_results_push_client.push(message=msg)
             except Exception as e:
                 # If we fail to push the record, log the error and continue
                 self.exception(f"Error pushing request record: {e}")
@@ -179,7 +186,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     phase=message.phase,
                 )
                 self.trace(lambda: f"Returning credit {return_message}")
-                await self.credit_return_client.push(
+                await self.credit_return_push_client.push(
                     message=return_message,
                 )
 
@@ -193,7 +200,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         # retrieve the prompt from the dataset
         response: ConversationResponseMessage = (
-            await self.conversation_data_client.request(
+            await self.conversation_request_client.request(
                 ConversationRequestMessage(
                     service_id=self.service_id,
                     conversation_id=message.conversation_id,
@@ -241,11 +248,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 delayed_ns = now_ns - drop_ns
 
             # Send the request to the Inference Server API and wait for the response
-            result = await self.inference_client.send_request(
+            result: RequestRecord = await self.inference_client.send_request(
                 model_endpoint=self.model_endpoint,
                 payload=formatted_payload,
             )
 
+            # Add the original turn to the result for use in metrics
+            result.turn = turn
             result.delayed_ns = delayed_ns
             return result
 
@@ -254,8 +263,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 f"Error calling inference server API at {self.model_endpoint.url}: {e}"
             )
             return RequestRecord(
-                # Use the formatted payload if it is available, otherwise use the turn.
-                request=formatted_payload or turn,
+                request=formatted_payload,
+                turn=turn,
                 timestamp_ns=timestamp_ns,
                 start_perf_ns=time.perf_counter_ns(),
                 end_perf_ns=time.perf_counter_ns(),
