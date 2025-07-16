@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 import inspect
 import logging
+import os
 import traceback
 from collections.abc import Callable
 from typing import Any
 
 import orjson
 
+from aiperf.common import aiperf_logger
 from aiperf.common.exceptions import AIPerfMultiError
 
 logger = logging.getLogger(__name__)
@@ -93,3 +95,10 @@ def load_json_str(json_str: str, func: Callable = lambda x: x) -> dict[str, Any]
         snippet = json_str[:200] + ("..." if len(json_str) > 200 else "")
         logger.error("Failed to parse JSON string: '%s'", snippet)
         raise
+
+
+# This is used to identify the source file of the call_all_functions function
+# in the AIPerfLogger class to skip it when determining the caller.
+# NOTE: Using similar logic to logging._srcfile
+_srcfile = os.path.normcase(call_all_functions.__code__.co_filename)
+aiperf_logger._ignored_files.append(_srcfile)

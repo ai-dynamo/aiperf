@@ -2,12 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import contextlib
+import os
 import time
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Protocol, runtime_checkable
 
 import psutil
 
+from aiperf.common import aiperf_logger
+from aiperf.common.aiperf_logger import (
+    _CRITICAL,
+    _DEBUG,
+    _ERROR,
+    _INFO,
+    _NOTICE,
+    _SUCCESS,
+    _TRACE,
+    _WARNING,
+    AIPerfLogger,
+)
 from aiperf.common.constants import BYTES_PER_MIB, TASK_CANCEL_TIMEOUT_SHORT
 from aiperf.common.health_models import CPUTimes, CtxSwitches, ProcessHealth
 
@@ -112,3 +125,110 @@ class ProcessHealthMixin:
             num_threads=self.process.num_threads(),
         )
         return self.process_health
+
+
+class AIPerfLoggerMixin:
+    """Mixin to provide lazy evaluated logging for f-strings.
+
+    This mixin provides a logger with lazy evaluation support for f-strings,
+    and direct log functions for all standard and custom logging levels.
+
+    see :class:`AIPerfLogger` for more details.
+
+    Usage:
+        class MyClass(AIPerfLoggerMixin):
+            def __init__(self):
+                super().__init__()
+                self.trace(lambda: f"Processing {item} of {count} ({item / count * 100}% complete)")
+                self.info("Simple string message")
+                self.debug(lambda i=i: f"Binding loop variable: {i}")
+                self.warning("Warning message: %s", "legacy support")
+                self.success("Benchmark completed successfully")
+                self.notice("Warmup has completed")
+                self.exception(f"Direct f-string usage: {e}")
+    """
+
+    def __init__(self, logger_name: str | None = None, **kwargs) -> None:
+        super().__init__()
+        self.logger = AIPerfLogger(logger_name or self.__class__.__name__)
+        self._log = self.logger._log
+        self.is_enabled_for = self.logger._logger.isEnabledFor
+
+    def log(
+        self, level: int, message: str | Callable[..., str], *args, **kwargs
+    ) -> None:
+        """Log a message at a specified level with lazy evaluation."""
+        if self.is_enabled_for(level):
+            self._log(level, message, *args, **kwargs)
+
+    def trace(self, message: str | Callable[..., str], *args, **kwargs) -> None:
+        """Log a trace message with lazy evaluation."""
+        if self.is_enabled_for(_TRACE):
+            self._log(_TRACE, message, *args, **kwargs)
+
+    def debug(self, message: str | Callable[..., str], *args, **kwargs) -> None:
+        """Log a debug message with lazy evaluation."""
+        if self.is_enabled_for(_DEBUG):
+            self._log(_DEBUG, message, *args, **kwargs)
+
+    def info(self, message: str | Callable[..., str], *args, **kwargs) -> None:
+        """Log an info message with lazy evaluation."""
+        if self.is_enabled_for(_INFO):
+            self._log(_INFO, message, *args, **kwargs)
+
+    def notice(self, message: str | Callable[..., str], *args, **kwargs) -> None:
+        """Log a notice message with lazy evaluation."""
+        if self.is_enabled_for(_NOTICE):
+            self._log(_NOTICE, message, *args, **kwargs)
+
+    def warning(self, message: str | Callable[..., str], *args, **kwargs) -> None:
+        """Log a warning message with lazy evaluation."""
+        if self.is_enabled_for(_WARNING):
+            self._log(_WARNING, message, *args, **kwargs)
+
+    def success(self, message: str | Callable[..., str], *args, **kwargs) -> None:
+        """Log a success message with lazy evaluation."""
+        if self.is_enabled_for(_SUCCESS):
+            self._log(_SUCCESS, message, *args, **kwargs)
+
+    def error(self, message: str | Callable[..., str], *args, **kwargs) -> None:
+        """Log an error message with lazy evaluation."""
+        if self.is_enabled_for(_ERROR):
+            self._log(_ERROR, message, *args, **kwargs)
+
+    def exception(self, message: str | Callable[..., str], *args, **kwargs) -> None:
+        """Log an exception message with lazy evaluation."""
+        if self.is_enabled_for(_ERROR):
+            self._log(_ERROR, message, *args, exc_info=True, **kwargs)
+
+    def critical(self, message: str | Callable[..., str], *args, **kwargs) -> None:
+        """Log a critical message with lazy evaluation."""
+        if self.is_enabled_for(_CRITICAL):
+            self._log(_CRITICAL, message, *args, **kwargs)
+
+
+# Add this file to the list of ignored files to avoid this file from being the source of the log messages
+# in the AIPerfLogger class to skip it when determining the caller.
+# NOTE: Using similar logic to logging._srcfile
+_srcfile = os.path.normcase(AIPerfLoggerMixin.info.__code__.co_filename)
+aiperf_logger._ignored_files.append(_srcfile)
+
+
+@runtime_checkable
+class AIPerfLoggerProtocol(Protocol):
+    """Protocol to provide lazy evaluated logging for f-strings."""
+
+    def __init__(self, logger_name: str | None = None, **kwargs) -> None: ...
+    def log(
+        self, level: int, message: str | Callable[..., str], *args, **kwargs
+    ) -> None: ...
+    def trace(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
+    def debug(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
+    def info(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
+    def notice(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
+    def warning(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
+    def success(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
+    def error(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
+    def exception(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
+    def critical(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
+    def is_enabled_for(self, level: int) -> bool: ...

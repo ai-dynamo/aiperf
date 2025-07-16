@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import Annotated, Literal
+from typing import Annotated
 
 import cyclopts
 from pydantic import BeforeValidator, Field, model_validator
@@ -16,6 +16,7 @@ from aiperf.common.config.zmq_config import (
     ZMQTCPConfig,
 )
 from aiperf.common.enums import CommunicationBackend, ServiceRunType, ServiceType
+from aiperf.common.enums.logging import AIPerfLogLevel
 
 
 class ServiceConfig(BaseSettings):
@@ -32,9 +33,9 @@ class ServiceConfig(BaseSettings):
     def validate_log_level_from_verbose_flags(self) -> Self:
         """Set log level based on verbose flags."""
         if self.extra_verbose:
-            self.log_level = "TRACE"
+            self.log_level = AIPerfLogLevel.TRACE
         elif self.verbose:
-            self.log_level = "DEBUG"
+            self.log_level = AIPerfLogLevel.DEBUG
         return self
 
     @model_validator(mode="after")
@@ -143,16 +144,7 @@ class ServiceConfig(BaseSettings):
     ] = ServiceDefaults.MAX_WORKERS
 
     log_level: Annotated[
-        Literal[
-            "DEBUG",
-            "INFO",
-            "WARNING",
-            "ERROR",
-            "CRITICAL",
-            "TRACE",
-            "NOTICE",
-            "SUCCESS",
-        ],
+        AIPerfLogLevel,
         Field(
             description="Logging level",
         ),
