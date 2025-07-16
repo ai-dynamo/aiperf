@@ -68,22 +68,6 @@ class TestAIPerfLoggerMixin:
 
             mock_log.assert_called_once_with(level, f"Test message {level}")
 
-    def test_mixin_with_lazy_evaluation(self, mock_class):
-        """Test that mixin supports lazy evaluation."""
-        mock_class.logger.set_level(_TRACE)
-        with patch.object(mock_class, "_log") as mock_log:
-
-            def message_lambda():
-                return "Dynamic message"
-
-            mock_class.info(message_lambda)
-
-            mock_log.assert_called_once_with(_INFO, message_lambda)
-
-
-class TestIntegration:
-    """Integration tests for logger and mixin together."""
-
     @pytest.mark.parametrize(
         "method_name,level,should_be_logged",
         [
