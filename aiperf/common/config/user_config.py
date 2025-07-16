@@ -87,7 +87,7 @@ class UserConfig(BaseConfig):
         ),
     ] = TokenizerConfig()
 
-    load: Annotated[
+    loadgen: Annotated[
         LoadGeneratorConfig,
         Field(
             description="Load Generator configuration",

@@ -4,8 +4,10 @@
 from typing import Annotated, Any
 
 import cyclopts
-from pydantic import BeforeValidator, Field
+from pydantic import BeforeValidator, Field, model_validator
+from typing_extensions import Self
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
@@ -19,11 +21,23 @@ from aiperf.common.config.input.image_config import ImageConfig
 from aiperf.common.config.input.prompt_config import PromptConfig
 from aiperf.common.enums import CustomDatasetType
 
+logger = AIPerfLogger(__name__)
+
 
 class InputConfig(BaseConfig):
     """
     A configuration class for defining input related settings.
     """
+
+    @model_validator(mode="after")
+    def validate_fixed_schedule(self) -> Self:
+        """Validate the fixed schedule configuration."""
+        if self.fixed_schedule and self.file is None:
+            raise ValueError("Fixed schedule requires a file to be provided")
+        if self.file is not None:
+            self.fixed_schedule = True
+            logger.debug("Fixed schedule is enabled because file is provided")
+        return self
 
     batch_size: Annotated[
         int,
@@ -84,9 +98,23 @@ class InputConfig(BaseConfig):
         ),
         BeforeValidator(parse_file),
         cyclopts.Parameter(
-            name=("--file", "-f"),
+            name=(
+                "--input-file",  # GenAI-Perf,
+            ),
         ),
     ] = InputDefaults.FILE
+
+    fixed_schedule: Annotated[
+        bool,
+        Field(
+            description="Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file parameter, but can be set manually here."
+        ),
+        cyclopts.Parameter(
+            name=(
+                "--fixed-schedule",  # GenAI-Perf
+            ),
+        ),
+    ] = InputDefaults.FIXED_SCHEDULE
 
     custom_dataset_type: Annotated[
         CustomDatasetType,

@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import Annotated, Any
+from typing import Annotated
 
 import cyclopts
-from pydantic import BeforeValidator, Field
+from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing_extensions import Self
 
+from aiperf.common.config.base_config import ADD_TO_TEMPLATE
 from aiperf.common.config.config_defaults import ServiceDefaults
 from aiperf.common.config.config_validators import parse_service_types
 from aiperf.common.config.zmq_config import (
@@ -27,10 +29,18 @@ class ServiceConfig(BaseSettings):
         extra="allow",
     )
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    @model_validator(mode="after")
+    def validate_log_level_from_verbose_flags(self) -> Self:
+        """Set log level based on verbose flags."""
+        if self.extra_verbose:
+            self.log_level = AIPerfLogLevel.TRACE
+        elif self.verbose:
+            self.log_level = AIPerfLogLevel.DEBUG
+        return self
 
-        # Initialize the comm_config if it is not provided, based on the comm_backend.
+    @model_validator(mode="after")
+    def validate_comm_config(self) -> Self:
+        """Initialize the comm_config if it is not provided, based on the comm_backend."""
         if self.comm_config is None:
             if self.comm_backend == CommunicationBackend.ZMQ_IPC:
                 self.comm_config = ZMQIPCConfig()
@@ -38,6 +48,7 @@ class ServiceConfig(BaseSettings):
                 self.comm_config = ZMQTCPConfig()
             else:
                 raise ValueError(f"Invalid communication backend: {self.comm_backend}")
+        return self
 
     service_run_type: Annotated[
         ServiceRunType,
@@ -141,6 +152,28 @@ class ServiceConfig(BaseSettings):
             name=("--log-level"),
         ),
     ] = ServiceDefaults.LOG_LEVEL
+
+    verbose: Annotated[
+        bool,
+        Field(
+            description="Equivalent to --log-level DEBUG. Enables more verbose logging output, but lacks some raw message logging.",
+            json_schema_extra={ADD_TO_TEMPLATE: False},
+        ),
+        cyclopts.Parameter(
+            name=("--verbose", "-v"),
+        ),
+    ] = ServiceDefaults.VERBOSE
+
+    extra_verbose: Annotated[
+        bool,
+        Field(
+            description="Equivalent to --log-level TRACE. Enables the most verbose logging output possible.",
+            json_schema_extra={ADD_TO_TEMPLATE: False},
+        ),
+        cyclopts.Parameter(
+            name=("--extra-verbose", "-vv"),
+        ),
+    ] = ServiceDefaults.EXTRA_VERBOSE
 
     disable_ui: Annotated[
         bool,
