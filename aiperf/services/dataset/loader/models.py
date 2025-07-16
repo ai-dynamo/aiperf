@@ -8,6 +8,55 @@ from pydantic import BaseModel, Field, model_validator
 from aiperf.common.enums import CustomDatasetType
 
 
+class SingleTurnCustomData(BaseModel):
+    """Defines the schema of each JSONL line in a single-turn file.
+
+    User can use this format to quickly provide a custom single turn dataset.
+    Each line in the file will be treated as a single turn conversation.
+
+    The single turn type
+      - supports multi-modal data (e.g. text, image, audio)
+      - supports client-side batching for each data (e.g. batch_size > 1)
+      - DOES NOT support multi-turn features (e.g. delay, sessions, etc.)
+
+    Examples:
+    ```python
+    # Single-batch, text only
+    json_string = '{"text": "What is deep learning?"}'
+    custom_data = SingleTurnCustomData.model_validate_json(json_string)
+
+    # Single-batch, multi-modal
+    json_string = '{"text": "What is in the image?", "image": "/path/to/image.png"}'
+    custom_data = SingleTurnCustomData.model_validate_json(json_string)
+
+    # Multi-batch, multi-modal
+    json_string = '{"text": ["What is the weather today?", "What is deep learning?"], "image": ["/path/to/image.png", "/path/to/image2.png"]}'
+    custom_data = SingleTurnCustomData.model_validate_json(json_string)
+    ```
+    """
+
+    type: Literal[CustomDatasetType.SINGLE_TURN] = CustomDatasetType.SINGLE_TURN
+
+    text: str | list[str] | None = Field(
+        None, description="Text content for the single turn conversation"
+    )
+    image: str | list[str] | None = Field(
+        None, description="Image file path(s) for multi-modal input"
+    )
+    audio: str | list[str] | None = Field(
+        None, description="Audio file path(s) for multi-modal input"
+    )
+
+    @model_validator(mode="after")
+    def validate_at_least_one_modality(self) -> "SingleTurnCustomData":
+        """Ensure at least one modality is provided"""
+        if not any([self.text, self.image, self.audio]):
+            raise ValueError(
+                "At least one modality (text, image, or audio) must be provided"
+            )
+        return self
+
+
 class TraceCustomData(BaseModel):
     """Defines the schema of each JSONL line in a trace file.
 
@@ -49,5 +98,7 @@ class TraceCustomData(BaseModel):
         return self
 
 
-CustomData = Annotated[TraceCustomData, Field(discriminator="type")]
+CustomData = Annotated[
+    SingleTurnCustomData | TraceCustomData, Field(discriminator="type")
+]
 """A union type of all custom data types."""
