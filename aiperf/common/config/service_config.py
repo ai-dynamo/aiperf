@@ -85,9 +85,10 @@ class ServiceConfig(BaseSettings):
             description="Communication configuration",
         ),
         # TODO: Figure out if we need to be able to set this from the command line.
-        # cyclopts.Parameter(
-        #     name=("--comm-config"),
-        # ),
+        cyclopts.Parameter(
+            name=("--comm-config"),
+            group="Not Supported via CLI",
+        ),
     ] = ServiceDefaults.COMM_CONFIG
 
     heartbeat_timeout: Annotated[

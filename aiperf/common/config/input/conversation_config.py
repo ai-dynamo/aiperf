@@ -63,6 +63,7 @@ class TurnDelayConfig(BaseConfig):
                 "--conversation-turn-delay-ratio",
                 "--session-delay-ratio",  # GenAI-Perf
             ),
+            group=_GROUP_NAME,
         ),
     ] = TurnDelayDefaults.RATIO
 

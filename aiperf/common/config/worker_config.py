@@ -6,7 +6,7 @@ import cyclopts
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
-from aiperf.common.config.config_defaults import WorkerDefaults
+from aiperf.common.config.config_defaults import WorkersDefaults
 
 
 class WorkersConfig(BaseConfig):
@@ -23,7 +23,7 @@ class WorkersConfig(BaseConfig):
             name=("--workers-min", "--min-workers"),
             group=_GROUP_NAME,
         ),
-    ] = WorkerDefaults.MIN
+    ] = WorkersDefaults.MIN
 
     max: Annotated[
         int | None,
@@ -35,7 +35,7 @@ class WorkersConfig(BaseConfig):
             name=("--workers-max", "--max-workers"),
             group=_GROUP_NAME,
         ),
-    ] = WorkerDefaults.MAX
+    ] = WorkersDefaults.MAX
 
     health_check_interval_seconds: Annotated[
         float,
@@ -46,4 +46,4 @@ class WorkersConfig(BaseConfig):
             name=("--workers-health-check-interval-seconds"),
             group=_GROUP_NAME,
         ),
-    ] = WorkerDefaults.HEALTH_CHECK_INTERVAL_SECONDS
+    ] = WorkersDefaults.HEALTH_CHECK_INTERVAL_SECONDS

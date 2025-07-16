@@ -197,3 +197,10 @@ class MeasurementDefaults:
 # class SweepDefaults:
 #     PARAMS = None
 #     ORDER = SweepMultiParamOrder.DEPTH_FIRST
+
+
+@dataclass(frozen=True)
+class WorkersDefaults:
+    MIN = None
+    MAX = None
+    HEALTH_CHECK_INTERVAL_SECONDS = 1.0

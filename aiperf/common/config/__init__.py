@@ -43,6 +43,8 @@ __all__ = [
     "TurnDelayDefaults",
     "UserConfig",
     "UserDefaults",
+    "WorkersConfig",
+    "WorkersDefaults",
     "ZMQIPCConfig",
     "ZMQTCPConfig",
     "load_service_config",
@@ -72,6 +74,7 @@ from aiperf.common.config.config_defaults import (
     TurnDefaults,
     TurnDelayDefaults,
     UserDefaults,
+    WorkersDefaults,
 )
 from aiperf.common.config.endpoint import (
     EndPointConfig,
@@ -109,6 +112,7 @@ from aiperf.common.config.tokenizer import (
 from aiperf.common.config.user_config import (
     UserConfig,
 )
+from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
     ZMQIPCConfig,
