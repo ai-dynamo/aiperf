@@ -93,7 +93,6 @@ class InferenceResultParser(BaseComponentService):
             model_endpoint=self.model_endpoint,
         )
 
-        self.model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
         async with self.tokenizer_lock:
             self.tokenizers = {
                 model.name: Tokenizer.from_pretrained(
@@ -124,7 +123,7 @@ class InferenceResultParser(BaseComponentService):
 
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
         """Handle an inference results message."""
-        self.logger.debug(f"Received inference results message: {message}")
+        self.logger.debug("Received inference results message: %s", message)
 
         if message.record.has_error:
             await self.response_results_client.push(
