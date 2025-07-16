@@ -325,8 +325,15 @@ class ConversationTurnRequestMessage(BaseServiceMessage):
         MessageType.CONVERSATION_TURN_REQUEST
     )
 
-    conversation_id: str = Field(description="The ID of the conversation.")
-    turn_index: int = Field(description="The index of the turn in the conversation.")
+    conversation_id: str = Field(
+        ...,
+        description="The ID of the conversation.",
+    )
+    turn_index: int = Field(
+        ...,
+        ge=0,
+        description="The index of the turn in the conversation.",
+    )
 
 
 class ConversationTurnResponseMessage(BaseServiceMessage):
