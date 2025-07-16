@@ -5,7 +5,7 @@ from aiperf.common.config import ServiceConfig, UserConfig
 
 def run_system_controller(
     user_config: UserConfig,
-    service_config: ServiceConfig | None = None,
+    service_config: ServiceConfig,
 ) -> None:
     """Run the system controller with the given configuration."""
 
@@ -15,18 +15,11 @@ def run_system_controller(
 
     logger = AIPerfLogger(__name__)
 
-    service_config = service_config or ServiceConfig()
-
     log_queue = None
     if service_config.disable_ui:
         from aiperf.common.logging import setup_rich_logging
 
         setup_rich_logging(user_config, service_config)
-
-    else:
-        from aiperf.common.logging import get_global_log_queue
-
-        log_queue = get_global_log_queue()
 
     # Create and start the system controller
     logger.info("Starting AIPerf System")

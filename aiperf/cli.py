@@ -32,8 +32,9 @@ def profile(
         service_config: Service configuration options
     """
     from aiperf.cli_runner import run_system_controller
+    from aiperf.common.config import load_service_config
 
-    service_config = service_config or ServiceConfig()
+    service_config = service_config or load_service_config()
 
     run_system_controller(user_config, service_config)
 
@@ -50,7 +51,7 @@ def analyze(
     warn_command_not_implemented("analyze")
 
 
-@app.command(name="create-template", help="Create a template configuration file")
+@app.command(name="create-template")
 def create_template(
     template_filename: Annotated[
         str,
@@ -69,8 +70,8 @@ def create_template(
     warn_command_not_implemented("create-template")
 
 
-@app.command(name="validate", help="Validate the configuration file")
-def validate(
+@app.command(name="validate-config")
+def validate_config(
     user_config: UserConfig | None = None,
     service_config: ServiceConfig | None = None,
 ) -> None:
@@ -78,7 +79,7 @@ def validate(
     # TODO: Implement this
     from aiperf.cli_runner import warn_command_not_implemented
 
-    warn_command_not_implemented("validate")
+    warn_command_not_implemented("validate-config")
 
 
 if __name__ == "__main__":
