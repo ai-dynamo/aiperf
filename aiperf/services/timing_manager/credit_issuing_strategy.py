@@ -24,6 +24,7 @@ class CreditIssuingStrategy(AsyncTaskManagerMixin, AIPerfLoggerMixin, ABC):
         super().__init__()
         self.config = config
         self.credit_manager = credit_manager
+        self.all_phases_complete_event = asyncio.Event()
 
         # The stats for each phase, keyed by phase type
         self.phase_stats: dict[CreditPhase, CreditPhaseStats] = {}
@@ -33,12 +34,19 @@ class CreditIssuingStrategy(AsyncTaskManagerMixin, AIPerfLoggerMixin, ABC):
     async def start(self) -> None:
         """Start the credit issuing strategy. This will launch the progress reporting loop, the
         warmup phase (if applicable), and the profiling phase, all in the background."""
+        self.debug("TM: Starting credit issuing strategy")
+        self.all_phases_complete_event.clear()
 
         # Start the progress reporting loop in the background
         self.execute_async(self._progress_report_loop())
 
         # Execute the phases in the background
         self.execute_async(self._execute_phases())
+
+        self.debug("TM: Waiting for all phases to complete")
+        # Wait for all phases to complete before returning
+        await self.all_phases_complete_event.wait()
+        self.debug("TM: All phases completed")
 
     @abstractmethod
     async def _execute_phases(self) -> None:
@@ -70,14 +78,18 @@ class CreditIssuingStrategy(AsyncTaskManagerMixin, AIPerfLoggerMixin, ABC):
             )
 
             if self.all_phases_complete():
+                self.all_phases_complete_event.set()
                 self.execute_async(self.credit_manager.publish_credits_complete())
 
     async def _progress_report_loop(self) -> None:
         """Report the progress at a fixed interval."""
         self.debug("TM: Starting progress reporting loop")
-        while not self.all_phases_complete():
+        while not self.all_phases_complete_event.is_set():
             await asyncio.sleep(1)  # TODO: Make this configurable
             for phase, stats in self.phase_stats.items():
+                if stats.is_complete or not stats.is_started:
+                    continue
+
                 try:
                     await self.credit_manager.publish_progress(
                         phase, stats.sent, stats.completed

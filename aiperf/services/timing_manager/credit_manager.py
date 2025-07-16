@@ -12,7 +12,7 @@ from aiperf.common.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
-from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.mixins import AsyncTaskManagerMixin, AsyncTaskManagerProtocol
 
 
 @runtime_checkable
@@ -40,8 +40,8 @@ class CreditManagerProtocol(Protocol):
         self,
         phase: CreditPhase,
         start_ns: int,
-        total_requests: int | None,
-        expected_duration_ns: int | None,
+        total_expected_requests: int | None,
+        expected_duration_sec: float | None,
     ) -> None: ...
 
     async def publish_phase_sending_complete(
@@ -51,20 +51,37 @@ class CreditManagerProtocol(Protocol):
     async def publish_phase_complete(self, phase: CreditPhase, end_ns: int) -> None: ...
 
 
-class CreditPhaseMessagesMixin(AsyncTaskManagerMixin):
-    """Mixin for services to implement the CreditManagerProtocol."""
+@runtime_checkable
+class CreditPhaseMessagesRequirements(AsyncTaskManagerProtocol, Protocol):
+    """Requirements for the CreditPhaseMessagesMixin. This is the list of attributes that must
+    be provided by the class that uses this mixin."""
 
-    def __init__(self):
-        super().__init__()
-        self.pub_client: PubClientProtocol
-        self.service_id: str
+    pub_client: PubClientProtocol
+    service_id: str
+
+
+class CreditPhaseMessagesMixin(AsyncTaskManagerMixin, CreditPhaseMessagesRequirements):
+    """Mixin for services to implement the CreditManagerProtocol.
+
+    Requirements:
+        This mixin must be used with a class that provides:
+        - pub_client: PubClientProtocol
+        - service_id: str
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not isinstance(self, CreditPhaseMessagesRequirements):
+            raise TypeError(
+                "CreditPhaseMessagesMixin must be used with a class that provides CreditPhaseMessagesRequirements"
+            )
 
     async def publish_phase_start(
         self,
         phase: CreditPhase,
         start_ns: int,
-        total_requests: int | None,
-        expected_duration_ns: int | None,
+        total_expected_requests: int | None,
+        expected_duration_sec: float | None,
     ) -> None:
         """Publish the phase start message."""
         self.execute_async(
@@ -73,8 +90,9 @@ class CreditPhaseMessagesMixin(AsyncTaskManagerMixin):
                     service_id=self.service_id,
                     phase=phase,
                     start_ns=start_ns,
-                    total_requests=total_requests,
-                    expected_duration_ns=expected_duration_ns,
+                    # Only one of the below will be set, this is already validated in the strategy
+                    total_expected_requests=total_expected_requests,
+                    expected_duration_sec=expected_duration_sec,
                 )
             )
         )
