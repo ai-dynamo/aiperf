@@ -4,6 +4,7 @@
 from pydantic import BaseModel
 
 from aiperf.common.config import ServiceConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import CommandType, ServiceType
 from aiperf.common.hooks import on_run
 from aiperf.common.messages import CommandMessage
@@ -24,9 +25,18 @@ class BaseControllerService(BaseService):
     """
 
     def __init__(
-        self, service_config: ServiceConfig, service_id: str | None = None
+        self,
+        service_config: ServiceConfig,
+        user_config: UserConfig | None = None,
+        service_id: str | None = None,
+        **kwargs,
     ) -> None:
-        super().__init__(service_config=service_config, service_id=service_id)
+        super().__init__(
+            service_config=service_config,
+            user_config=user_config,
+            service_id=service_id,
+            **kwargs,
+        )
 
     @on_run
     async def _on_run(self) -> None:

@@ -6,15 +6,14 @@ from typing import Annotated
 import cyclopts
 from pydantic import BeforeValidator, Field
 
-from aiperf.common.config.base_config import ADD_TO_TEMPLATE, BaseConfig
-from aiperf.common.config.config_defaults import UserDefaults
+from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_validators import (
     parse_str_or_list,
 )
 from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
 from aiperf.common.config.input.input_config import InputConfig
+from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output.output_config import OutputConfig
-from aiperf.common.config.profile_config import LoadGeneratorConfig, MeasurementConfig
 from aiperf.common.config.tokenizer.tokenizer_config import TokenizerConfig
 
 
@@ -31,33 +30,14 @@ class UserConfig(BaseConfig):
         ),
         BeforeValidator(parse_str_or_list),
         cyclopts.Parameter(
-            name=("--model-names", "-m"),
+            name=(
+                "--model-names",
+                "--model",  # GenAI-Perf
+                "-m",  # GenAI-Perf
+            ),
+            group="Endpoint",
         ),
     ]
-
-    # TODO:: Should we move the verbose and template_filename to their own CLI config class?
-
-    verbose: Annotated[
-        bool,
-        Field(
-            description="Enable verbose output.",
-            json_schema_extra={ADD_TO_TEMPLATE: False},
-        ),
-        cyclopts.Parameter(
-            name=("--verbose", "-v"),
-        ),
-    ] = UserDefaults.VERBOSE
-
-    template_filename: Annotated[
-        str,
-        Field(
-            description="Path to the template file.",
-            json_schema_extra={ADD_TO_TEMPLATE: False},
-        ),
-        cyclopts.Parameter(
-            name=("--template-filename", "-t"),
-        ),
-    ] = UserDefaults.TEMPLATE_FILENAME
 
     endpoint: Annotated[
         EndPointConfig,
@@ -94,9 +74,9 @@ class UserConfig(BaseConfig):
         ),
     ] = LoadGeneratorConfig()
 
-    measurement: Annotated[
-        MeasurementConfig,
-        Field(
-            description="Measurement configuration",
-        ),
-    ] = MeasurementConfig()
+    # measurement: Annotated[
+    #     MeasurementConfig,
+    #     Field(
+    #         description="Measurement configuration",
+    #     ),
+    # ] = MeasurementConfig()

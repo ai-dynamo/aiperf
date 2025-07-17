@@ -5,16 +5,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import (
-    BaseModel,
-)
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
+
+from aiperf.common.pydantic_utils import AIPerfBaseModel
 
 ADD_TO_TEMPLATE = "add_to_template"
 
 
-class BaseConfig(BaseModel):
+class BaseConfig(AIPerfBaseModel):
     """
     Base configuration class for all configurations.
     """
@@ -53,7 +52,7 @@ class BaseConfig(BaseModel):
     @staticmethod
     def _attach_comments(
         data: Any,
-        model: BaseModel,
+        model: AIPerfBaseModel,
         context: dict,
         indent: int,
         indent_level: int = 0,
@@ -131,7 +130,7 @@ class BaseConfig(BaseModel):
         return (
             isinstance(value, dict)
             and field
-            and issubclass(field.annotation, BaseModel)
+            and issubclass(field.annotation, AIPerfBaseModel)
         )
 
     @staticmethod

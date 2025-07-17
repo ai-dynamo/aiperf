@@ -26,11 +26,16 @@ def parse_str_or_list(input: Any) -> list[Any]:
     Raises:
         ValueError: If the input is neither a string nor a list.
     """
-
     if isinstance(input, str):
-        output = [input.strip() for input in input.split(",")]
+        output = [item.strip() for item in input.split(",")]
     elif isinstance(input, list):
-        output = input
+        # TODO: When using cyclopts, the values are already lists, so we have to split them by commas.
+        output = []
+        for item in input:
+            if isinstance(item, str):
+                output.extend([token.strip() for token in item.split(",")])
+            else:
+                output.append(item)
     else:
         raise ValueError(f"User Config: {input} - must be a string or list")
 

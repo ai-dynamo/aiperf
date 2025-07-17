@@ -9,7 +9,6 @@ from typing import Any
 from pydantic import Field, SerializeAsAny
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.dataset_models import Turn
 from aiperf.common.enums import CreditPhase, SSEFieldType
 from aiperf.common.pydantic_utils import AIPerfBaseModel
 
@@ -167,11 +166,20 @@ class RequestRecord(AIPerfBaseModel):
 
     request: Any | None = Field(
         default=None,
-        description="The raw request payload formatted for the inference API.",
+        description="The request payload formatted for the inference API.",
     )
-    turn: Turn | None = Field(
+    conversation_id: str | None = Field(
         default=None,
-        description="The turn used to generate the request. This will be used for metrics.",
+        description="The ID of the conversation (if applicable).",
+    )
+    turn_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="The index of the turn in the conversation (if applicable).",
+    )
+    model_name: str | None = Field(
+        default=None,
+        description="The name of the model targeted by the request.",
     )
     timestamp_ns: int = Field(
         default_factory=time.time_ns,
@@ -340,6 +348,10 @@ class ParsedResponseRecord(AIPerfBaseModel):
     )
     request: RequestRecord = Field(description="The original request record")
     responses: list[ResponseData] = Field(description="The parsed response data.")
+    input_token_count: int | None = Field(
+        default=None,
+        description="The number of tokens in the input, None if the numbers of tokens cannot be calculated",
+    )
 
     @cached_property
     def token_count(self) -> int | None:

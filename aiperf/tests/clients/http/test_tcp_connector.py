@@ -111,56 +111,74 @@ class TestCreateTcpConnector:
                     option_level, option_name, option_value
                 )
 
-    @pytest.mark.parametrize(
-        "has_attribute,attribute_name,tcp_option,expected_value",
-        [
-            (True, "TCP_KEEPIDLE", socket.TCP_KEEPIDLE, SocketDefaults.TCP_KEEPIDLE),
-            (True, "TCP_KEEPINTVL", socket.TCP_KEEPINTVL, SocketDefaults.TCP_KEEPINTVL),
-            (True, "TCP_KEEPCNT", socket.TCP_KEEPCNT, SocketDefaults.TCP_KEEPCNT),
-            (True, "TCP_QUICKACK", socket.TCP_QUICKACK, SocketDefaults.TCP_QUICKACK),
-            (
-                True,
-                "TCP_USER_TIMEOUT",
-                socket.TCP_USER_TIMEOUT,
-                SocketDefaults.TCP_USER_TIMEOUT,
-            ),
-            (False, "TCP_KEEPIDLE", socket.TCP_KEEPIDLE, None),
-        ],
-    )
-    def test_socket_factory_linux_specific_options(
-        self,
-        has_attribute: bool,
-        attribute_name: str,
-        tcp_option: int,
-        expected_value: int | None,
-    ) -> None:
-        """Test socket factory handles Linux-specific TCP options."""
-        with patch("aiohttp.TCPConnector") as mock_connector_class:
-            create_tcp_connector()
+    # Only run these tests on Linux
+    if hasattr(socket, "TCP_KEEPIDLE"):
 
-            socket_factory = mock_connector_class.call_args[1]["socket_factory"]
+        @pytest.mark.parametrize(
+            "has_attribute,attribute_name,tcp_option,expected_value",
+            [
+                (
+                    True,
+                    "TCP_KEEPIDLE",
+                    socket.TCP_KEEPIDLE,
+                    SocketDefaults.TCP_KEEPIDLE,
+                ),
+                (
+                    True,
+                    "TCP_KEEPINTVL",
+                    socket.TCP_KEEPINTVL,
+                    SocketDefaults.TCP_KEEPINTVL,
+                ),
+                (True, "TCP_KEEPCNT", socket.TCP_KEEPCNT, SocketDefaults.TCP_KEEPCNT),
+                (
+                    True,
+                    "TCP_QUICKACK",
+                    socket.TCP_QUICKACK,
+                    SocketDefaults.TCP_QUICKACK,
+                ),
+                (
+                    True,
+                    "TCP_USER_TIMEOUT",
+                    socket.TCP_USER_TIMEOUT,
+                    SocketDefaults.TCP_USER_TIMEOUT,
+                ),
+                (False, "TCP_KEEPIDLE", socket.TCP_KEEPIDLE, None),
+            ],
+        )
+        def test_socket_factory_linux_specific_options(
+            self,
+            has_attribute: bool,
+            attribute_name: str,
+            tcp_option: int,
+            expected_value: int | None,
+        ) -> None:
+            """Test socket factory handles Linux-specific TCP options."""
+            with patch("aiohttp.TCPConnector") as mock_connector_class:
+                create_tcp_connector()
 
-            with patch("socket.socket") as mock_socket_class:
-                mock_socket = Mock()
-                mock_socket_class.return_value = mock_socket
+                socket_factory = mock_connector_class.call_args[1]["socket_factory"]
 
-                addr_info = (
-                    socket.AF_INET,
-                    socket.SOCK_STREAM,
-                    socket.IPPROTO_TCP,
-                    "",
-                    ("127.0.0.1", 80),
-                )
-                socket_factory(addr_info)
+                with patch("socket.socket") as mock_socket_class:
+                    mock_socket = Mock()
+                    mock_socket_class.return_value = mock_socket
 
-                if has_attribute and expected_value is not None:
-                    # Mock the socket attribute to exist
-                    with patch.object(
-                        socket, attribute_name, expected_value, create=True
-                    ):
-                        mock_socket.setsockopt.assert_any_call(
-                            socket.SOL_TCP, tcp_option, expected_value
-                        )
+                    addr_info = (
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                        socket.IPPROTO_TCP,
+                        "",
+                        ("127.0.0.1", 80),
+                    )
+                    socket_factory(addr_info)
+
+                    if has_attribute and expected_value is not None:
+                        # Mock the socket attribute to exist
+                        with patch.object(
+                            socket, attribute_name, expected_value, create=True
+                        ):
+                            mock_socket.setsockopt.assert_any_call(
+                                socket.SOL_TCP, tcp_option, expected_value
+                            )
 
     @pytest.mark.parametrize(
         "family,sock_type,proto",

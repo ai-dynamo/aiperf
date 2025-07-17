@@ -4,14 +4,15 @@
 Tests for the timing manager service.
 """
 
+import json
 from io import StringIO
 from unittest.mock import patch
 
 import pytest
 
-from aiperf.common.credit_models import CreditReturnMessage
 from aiperf.common.enums import CommandType, MessageType, ServiceType
-from aiperf.common.messages import CommandMessage
+from aiperf.common.enums.timing import CreditPhase
+from aiperf.common.messages import CommandMessage, CreditReturnMessage
 from aiperf.common.service.base_service import BaseService
 from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
 from aiperf.services.timing_manager.timing_manager import TimingManager
@@ -20,7 +21,7 @@ from aiperf.tests.utils.async_test_utils import async_fixture
 
 
 @pytest.mark.asyncio
-class TestTimingManager(BaseTestComponentService):
+class TimingManagerServiceTest(BaseTestComponentService):
     """
     Tests for the timing manager service.
 
@@ -74,7 +75,9 @@ class TestTimingManager(BaseTestComponentService):
 
         # Mock the open function when called with that specific path
         # Use patch to replace the built-in open function
-        with patch("builtins.open", return_value=StringIO(mock_timing_data)):
+        with patch(
+            "builtins.open", return_value=StringIO(json.dumps(mock_timing_data))
+        ):
             service = await async_fixture(initialized_service)
 
             # Configure the service
@@ -118,7 +121,10 @@ class TestTimingManager(BaseTestComponentService):
             pushed_messages.append((topic, message))
 
             # Create and process a return message
-            return_message = CreditReturnMessage(service_id="test-consumer", amount=1)
+            return_message = CreditReturnMessage(
+                service_id="test-consumer",
+                phase=CreditPhase.PROFILING,
+            )
             await service._on_credit_return(return_message)
 
         # 6. Mock necessary functions

@@ -9,5 +9,10 @@ htmlcov/
 .mypy_cache/
 .env
 .env.*
+*.log
+artifacts/
+dist/
 .DS_Store
 uv.lock
+profile.json
+profile.html

@@ -22,9 +22,7 @@ from aiperf.common.record_models import (
 @InferenceClientFactory.register_all(
     EndpointType.OPENAI_CHAT_COMPLETIONS,
     EndpointType.OPENAI_COMPLETIONS,
-    # EndpointType.OPENAI_EMBEDDINGS,
     EndpointType.OPENAI_RESPONSES,
-    # EndpointType.OPENAI_MULTIMODAL,
 )
 class OpenAIClientAioHttp(AioHttpClientMixin, ABC):
     """Inference client for OpenAI based requests using aiohttp."""

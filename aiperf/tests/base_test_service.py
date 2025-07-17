@@ -13,6 +13,7 @@ import pytest
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType, ServiceState
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.service.base_service import BaseService
 from aiperf.services import SystemController
 from aiperf.tests.utils.async_test_utils import async_fixture
@@ -22,7 +23,7 @@ real_sleep = (
 )  # save the real sleep so we can use it in the no_sleep fixture
 
 
-class BaseTestService(ABC):
+class BaseTestService(AIPerfLoggerMixin, ABC):
     """
     Base test class for all service tests.
 
@@ -86,7 +87,7 @@ class BaseTestService(ABC):
 
     @pytest.fixture
     def user_config(self) -> UserConfig:
-        return UserConfig()
+        return UserConfig(model_names=["test-model"])
 
     @pytest.fixture
     async def uninitialized_service(

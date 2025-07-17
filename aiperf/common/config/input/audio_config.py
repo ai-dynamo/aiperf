@@ -17,6 +17,8 @@ class AudioLengthConfig(BaseConfig):
     A configuration class for defining audio length related settings.
     """
 
+    _GROUP_NAME = "Input Audio"
+
     mean: Annotated[
         float,
         Field(
@@ -24,7 +26,10 @@ class AudioLengthConfig(BaseConfig):
             description="The mean length of the audio in seconds.",
         ),
         cyclopts.Parameter(
-            name=("--audio-length-mean"),
+            name=(
+                "--audio-length-mean",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = AudioDefaults.LENGTH_MEAN
 
@@ -35,7 +40,10 @@ class AudioLengthConfig(BaseConfig):
             description="The standard deviation of the length of the audio in seconds.",
         ),
         cyclopts.Parameter(
-            name=("--audio-length-stddev"),
+            name=(
+                "--audio-length-stddev",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = AudioDefaults.LENGTH_STDDEV
 
@@ -45,6 +53,8 @@ class AudioConfig(BaseConfig):
     A configuration class for defining audio related settings.
     """
 
+    _GROUP_NAME = "Input Audio"
+
     batch_size: Annotated[
         int,
         Field(
@@ -53,7 +63,11 @@ class AudioConfig(BaseConfig):
             "This is currently supported with the OpenAI `multimodal` endpoint type",
         ),
         cyclopts.Parameter(
-            name=("--audio-batch-size"),
+            name=(
+                "--audio-batch-size",
+                "--batch-size-audio",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = AudioDefaults.BATCH_SIZE
 
@@ -65,7 +79,10 @@ class AudioConfig(BaseConfig):
             description="The format of the audio files (wav or mp3).",
         ),
         cyclopts.Parameter(
-            name=("--audio-format"),
+            name=(
+                "--audio-format",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = AudioDefaults.FORMAT
 
@@ -77,7 +94,10 @@ class AudioConfig(BaseConfig):
         ),
         BeforeValidator(parse_str_or_list_of_positive_values),
         cyclopts.Parameter(
-            name=("--audio-depths"),
+            name=(
+                "--audio-depths",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = AudioDefaults.DEPTHS
 
@@ -90,7 +110,10 @@ class AudioConfig(BaseConfig):
         ),
         BeforeValidator(parse_str_or_list_of_positive_values),
         cyclopts.Parameter(
-            name=("--audio-sample-rates"),
+            name=(
+                "--audio-sample-rates",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = AudioDefaults.SAMPLE_RATES
 
@@ -102,6 +125,9 @@ class AudioConfig(BaseConfig):
             description="The number of audio channels to use for the audio data generation.",
         ),
         cyclopts.Parameter(
-            name=("--audio-num-channels"),
+            name=(
+                "--audio-num-channels",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = AudioDefaults.NUM_CHANNELS

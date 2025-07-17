@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import multiprocessing
 from multiprocessing import Process
 from multiprocessing.context import ForkProcess, SpawnProcess
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
-from aiperf.common.config import ServiceConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
     GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS,
     TASK_CANCEL_TIMEOUT_SHORT,
@@ -37,53 +38,58 @@ class MultiProcessServiceManager(BaseServiceManager):
 
     def __init__(
         self,
-        required_service_types: list[tuple[ServiceType, int]],
+        required_services: dict[ServiceType, int],
         config: ServiceConfig,
+        user_config: UserConfig | None = None,
+        log_queue: "multiprocessing.Queue | None" = None,
     ):
-        super().__init__(required_service_types, config)
+        super().__init__(required_services, config)
         self.multi_process_info: list[MultiProcessRunInfo] = []
+        self.log_queue = log_queue
+        self.user_config = user_config
 
-    async def _run_services(self, service_types: list[tuple[ServiceType, int]]) -> None:
+    async def _run_services(self, service_types: dict[ServiceType, int]) -> None:
         """Run a list of services as multiprocessing processes."""
-        # Create and start all service processes
-        for service_type in service_types:
-            service_class = ServiceFactory.get_class_from_type(service_type[0])
 
-            for _ in range(service_type[1]):
+        # Create and start all service processes
+        for service_type, count in service_types.items():
+            service_class = ServiceFactory.get_class_from_type(service_type)
+
+            for _ in range(count):
                 process = Process(
                     target=bootstrap_and_run_service,
-                    name=f"{service_type[0]}_process",
-                    args=(service_class, self.config),
+                    name=f"{service_type}_process",
+                    kwargs={
+                        "service_class": service_class,
+                        "service_id": service_type.value if count == 1 else None,
+                        "service_config": self.config,
+                        "user_config": self.user_config,
+                        "log_queue": self.log_queue,
+                    },
                     daemon=True,
                 )
-                if service_type[0] in [
+                if service_type in [
                     ServiceType.WORKER_MANAGER,
-                    ServiceType.RECORDS_MANAGER,
                 ]:
                     process.daemon = False  # Worker manager cannot be a daemon because it needs to be able to spawn worker processes
 
                 process.start()
 
-                self.logger.debug(
-                    "Service %s started as process (pid: %d)",
-                    service_type[0],
-                    process.pid,
+                self.debug(
+                    lambda pid=process.pid,
+                    type=service_type: f"Service {type} started as process (pid: {pid})"
                 )
 
                 self.multi_process_info.append(
-                    MultiProcessRunInfo(process=process, service_type=service_type[0])
+                    MultiProcessRunInfo(process=process, service_type=service_type)
                 )
-
-            # TODO: HACK: This is a hack
-            # Sleep to allow the service to register
-            await asyncio.sleep(0.01)
 
     async def run_all_services(self) -> None:
         """Start all required services as multiprocessing processes."""
         self.logger.debug("Starting all required services as multiprocessing processes")
 
         try:
-            await self._run_services(self.required_service_types)
+            await self._run_services(self.required_services)
         except Exception as e:
             self.logger.error("Error starting services: %s", e)
             raise e
@@ -126,7 +132,7 @@ class MultiProcessServiceManager(BaseServiceManager):
         self.logger.debug("Waiting for all required services to register...")
 
         # Get the set of required service types for checking completion
-        required_types = set(self.required_service_types)
+        required_types = set(self.required_services)
 
         # TODO: Can this be done better by using asyncio.Event()?
 

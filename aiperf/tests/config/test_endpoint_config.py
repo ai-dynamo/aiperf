@@ -3,6 +3,7 @@
 from enum import Enum
 
 from aiperf.common.config import EndPointConfig, EndPointDefaults
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 
 
 def test_endpoint_config_defaults():
@@ -16,9 +17,8 @@ def test_endpoint_config_defaults():
 
     config = EndPointConfig()
     assert config.model_selection_strategy == EndPointDefaults.MODEL_SELECTION_STRATEGY
-    assert config.request_payload_type == EndPointDefaults.REQUEST_PAYLOAD_TYPE
-    assert config.custom == EndPointDefaults.CUSTOM
     assert config.type == EndPointDefaults.TYPE
+    assert config.custom_endpoint == EndPointDefaults.CUSTOM_ENDPOINT
     assert config.streaming == EndPointDefaults.STREAMING
     assert config.server_metrics_urls == EndPointDefaults.SERVER_METRICS_URLS
     assert config.url == EndPointDefaults.URL
@@ -38,14 +38,15 @@ def test_endpoint_config_custom_values():
     """
 
     custom_values = {
-        "model_selection_strategy": "round_robin",
-        "request_payload_type": "openai_chat_completions",
-        "custom": "custom_endpoint",
-        "type": "llm",
+        "model_selection_strategy": ModelSelectionStrategy.ROUND_ROBIN,
+        "type": EndpointType.OPENAI_CHAT_COMPLETIONS,
+        "custom_endpoint": "custom_endpoint",
         "streaming": True,
         "server_metrics_urls": ["http://custom-metrics-url"],
         "url": "http://custom-url",
         "grpc_method": "custom.package.Service/Method",
+        "timeout_seconds": 10,
+        "api_key": "custom_api_key",
     }
     config = EndPointConfig(**custom_values)
     for key, value in custom_values.items():

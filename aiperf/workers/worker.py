@@ -69,7 +69,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
 
         self.debug(lambda: f"Initializing worker process: {self.process.pid}")
-
+        self.user_config = user_config
         self.health_check_interval = (
             self.service_config.workers.health_check_interval_seconds
         )

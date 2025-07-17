@@ -4,21 +4,24 @@
 import pytest
 
 from aiperf.common.config import EndPointConfig, UserConfig
+from aiperf.common.enums.endpoints import EndpointType
+from aiperf.common.record_models import MetricResult
 from aiperf.data_exporter import ConsoleExporter
 from aiperf.data_exporter.exporter_config import ExporterConfig
-from aiperf.data_exporter.record import Record
+from aiperf.progress.progress_models import ProfileResultsMessage
 
 
 @pytest.fixture
 def mock_endpoint_config():
-    return EndPointConfig(type="llm", streaming=True)
+    return EndPointConfig(type=EndpointType.OPENAI_CHAT_COMPLETIONS, streaming=True)
 
 
 @pytest.fixture
 def sample_records():
     return [
-        Record(
-            name="Time to First Token",
+        MetricResult(
+            tag="Time to First Token",
+            header="Time to First Token",
             unit="ms",
             avg=120.5,
             min=110.0,
@@ -27,8 +30,9 @@ def sample_records():
             p90=125.0,
             p75=122.0,
         ),
-        Record(
-            name="Request Latency",
+        MetricResult(
+            tag="Request Latency",
+            header="Request Latency",
             unit="ms",
             avg=15.3,
             min=12.1,
@@ -37,8 +41,9 @@ def sample_records():
             p90=18.7,
             p75=16.2,
         ),
-        Record(
-            name="Inter Token Latency",
+        MetricResult(
+            tag="Inter Token Latency",
+            header="Inter Token Latency",
             unit="ms",
             avg=3.7,
             min=2.9,
@@ -48,8 +53,9 @@ def sample_records():
             p75=4.0,
             streaming_only=True,
         ),
-        Record(
-            name="Request Throughput",
+        MetricResult(
+            tag="Request Throughput",
+            header="Request Throughput",
             unit="per sec",
             avg=95.0,
         ),
@@ -58,14 +64,15 @@ def sample_records():
 
 @pytest.fixture
 def mock_exporter_config(sample_records, mock_endpoint_config):
-    input_config = UserConfig(endpoint=mock_endpoint_config)
-    return ExporterConfig(records=sample_records, input_config=input_config)
+    input_config = UserConfig(endpoint=mock_endpoint_config, model_names=["test-model"])
+    return ExporterConfig(results=sample_records, input_config=input_config)
 
 
 class TestConsoleExporter:
-    def test_export_prints_expected_table(self, mock_exporter_config, capsys):
+    @pytest.mark.asyncio
+    async def test_export_prints_expected_table(self, mock_exporter_config, capsys):
         exporter = ConsoleExporter(mock_exporter_config)
-        exporter.export(width=100)
+        await exporter.export(width=100)
         output = capsys.readouterr().out
         assert "NVIDIA AIPerf | LLM Metrics" in output
         assert "Time to First Token (ms)" in output
@@ -90,11 +97,24 @@ class TestConsoleExporter:
         should_skip,
     ):
         mock_endpoint_config.streaming = enable_streaming
-        input_config = UserConfig(endpoint=mock_endpoint_config)
-        config = ExporterConfig(records=[], input_config=input_config)
+        input_config = UserConfig(
+            endpoint=mock_endpoint_config, model_names=["test-model"]
+        )
+        config = ExporterConfig(
+            results=ProfileResultsMessage(
+                service_id="test-service",
+                records=[],
+                total=0,
+                completed=0,
+                start_ns=0,
+                end_ns=0,
+            ),
+            input_config=input_config,
+        )
         exporter = ConsoleExporter(config)
-        record = Record(
-            name="Test Metric",
+        record = MetricResult(
+            tag="Test Metric",
+            header="Test Metric",
             unit="ms",
             avg=1.0,
             streaming_only=is_streaming_only_metric,
@@ -103,8 +123,9 @@ class TestConsoleExporter:
 
     def test_format_row_formats_values_correctly(self, mock_exporter_config):
         exporter = ConsoleExporter(mock_exporter_config)
-        record = Record(
-            name="Request Latency",
+        record = MetricResult(
+            tag="Request Latency",
+            header="Request Latency",
             unit="ms",
             avg=10.123,
             min=None,
@@ -116,9 +137,9 @@ class TestConsoleExporter:
         row = exporter._format_row(record)
         assert row[0] == "Request Latency (ms)"
         assert row[1] == "10.12"
-        assert row[2] == "N/A"
+        assert row[2] == "[dim]N/A[/dim]"
         assert row[3] == "20.00"
-        assert row[4] == "N/A"
+        assert row[4] == "[dim]N/A[/dim]"
         assert row[5] == "15.50"
         assert row[6] == "12.30"
 

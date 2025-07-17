@@ -26,6 +26,8 @@ from aiperf.common.hooks import (
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
+    ConversationTurnRequestMessage,
+    ConversationTurnResponseMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
     Message,
@@ -48,10 +50,12 @@ class DatasetManager(BaseComponentService):
     def __init__(
         self,
         service_config: ServiceConfig,
+        user_config: UserConfig | None = None,
         service_id: str | None = None,
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Calling __init__() in dataset manager")
+        self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
         self.dealer_router_client: ReplyClientProtocol = self.comms.create_reply_client(
@@ -81,6 +85,11 @@ class DatasetManager(BaseComponentService):
             service_id=self.service_id,
             message_type=MessageType.DATASET_TIMING_REQUEST,
             handler=self._handle_dataset_timing_request,
+        )
+        self.dealer_router_client.register_request_handler(
+            service_id=self.service_id,
+            message_type=MessageType.CONVERSATION_TURN_REQUEST,
+            handler=self._handle_conversation_turn_request,
         )
 
         self.logger.info("Dataset manager %s initialized", self.service_id)
@@ -203,6 +212,32 @@ class DatasetManager(BaseComponentService):
             service_id=self.service_id,
             request_id=request_id,
             conversation=conversation,
+        )
+
+    async def _handle_conversation_turn_request(
+        self, message: ConversationTurnRequestMessage
+    ) -> ConversationTurnResponseMessage:
+        """Handle a turn request."""
+        self.debug(lambda: f"Handling turn request: {message}")
+
+        if message.conversation_id not in self.dataset:
+            raise self._service_error(
+                f"Conversation {message.conversation_id} not found in dataset.",
+            )
+
+        conversation = self.dataset[message.conversation_id]
+        if message.turn_index >= len(conversation.turns):
+            raise self._service_error(
+                f"Turn index {message.turn_index} is out of range for conversation {message.conversation_id}.",
+            )
+
+        turn = conversation.turns[message.turn_index]
+
+        self.debug(lambda: f"Sending turn response: {turn}")
+        return ConversationTurnResponseMessage(
+            service_id=self.service_id,
+            request_id=message.request_id,
+            turn=turn,
         )
 
     async def _handle_dataset_timing_request(

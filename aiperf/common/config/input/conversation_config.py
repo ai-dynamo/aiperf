@@ -1,5 +1,5 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
 
@@ -19,6 +19,8 @@ class TurnDelayConfig(BaseConfig):
     A configuration class for defining turn delay related settings.
     """
 
+    _GROUP_NAME = "Input Conversation"
+
     mean: Annotated[
         float,
         Field(
@@ -26,7 +28,11 @@ class TurnDelayConfig(BaseConfig):
             description="The mean delay between turns within a conversation in milliseconds.",
         ),
         cyclopts.Parameter(
-            name=("--conversation-turn-delay-mean"),
+            name=(
+                "--conversation-turn-delay-mean",
+                "--session-turn-delay-mean",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = TurnDelayDefaults.MEAN
 
@@ -38,7 +44,11 @@ class TurnDelayConfig(BaseConfig):
             "within a conversation in milliseconds.",
         ),
         cyclopts.Parameter(
-            name=("--conversation-turn-delay-stddev"),
+            name=(
+                "--conversation-turn-delay-stddev",
+                "--session-turn-delay-stddev",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = TurnDelayDefaults.STDDEV
 
@@ -49,7 +59,11 @@ class TurnDelayConfig(BaseConfig):
             description="A ratio to scale multi-turn delays.",
         ),
         cyclopts.Parameter(
-            name=("--conversation-turn-delay-ratio"),
+            name=(
+                "--conversation-turn-delay-ratio",
+                "--session-delay-ratio",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = TurnDelayDefaults.RATIO
 
@@ -59,14 +73,20 @@ class TurnConfig(BaseConfig):
     A configuration class for defining turn related settings in a conversation.
     """
 
+    _GROUP_NAME = "Input Conversation"
+
     mean: Annotated[
         int,
         Field(
-            ge=0,
+            ge=1,
             description="The mean number of turns within a conversation.",
         ),
         cyclopts.Parameter(
-            name=("--conversation-turn-mean"),
+            name=(
+                "--conversation-turn-mean",
+                "--session-turns-mean",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = TurnDefaults.MEAN
 
@@ -77,7 +97,11 @@ class TurnConfig(BaseConfig):
             description="The standard deviation of the number of turns within a conversation.",
         ),
         cyclopts.Parameter(
-            name=("--conversation-turn-stddev"),
+            name=(
+                "--conversation-turn-stddev",
+                "--session-turns-stddev",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = TurnDefaults.STDDEV
 
@@ -89,6 +113,8 @@ class ConversationConfig(BaseConfig):
     A configuration class for defining conversations related settings.
     """
 
+    _GROUP_NAME = "Input Conversation"
+
     num: Annotated[
         int,
         Field(
@@ -98,7 +124,12 @@ class ConversationConfig(BaseConfig):
             "Supported on synthetic mode only and conversations will be reused until benchmarking is complete.",
         ),
         cyclopts.Parameter(
-            name=("--conversation-num"),
+            name=(
+                "--conversation-num",
+                "--num-conversations",
+                "--num-sessions",  # GenAI-Perf
+            ),
+            group=_GROUP_NAME,
         ),
     ] = ConversationDefaults.NUM
 

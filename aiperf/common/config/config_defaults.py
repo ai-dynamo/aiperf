@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiperf.common.enums import (
+    AIPerfLogLevel,
     AudioFormat,
     CommunicationBackend,
     CustomDatasetType,
@@ -32,13 +33,13 @@ class CLIDefaults:
 @dataclass(frozen=True)
 class EndPointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
-    CUSTOM = None
+    CUSTOM_ENDPOINT = None
     TYPE = EndpointType.OPENAI_CHAT_COMPLETIONS
     STREAMING = True
     SERVER_METRICS_URLS = ["http://localhost:8002/metrics"]
     URL = "localhost:8080"
     GRPC_METHOD = ""
-    TIMEOUT = 30.0
+    TIMEOUT = 600.0
     API_KEY = None
 
 
@@ -49,10 +50,11 @@ class InputDefaults:
     GOODPUT = {}
     HEADERS = {}
     FILE = None
+    FIXED_SCHEDULE = False
     CUSTOM_DATASET_TYPE = CustomDatasetType.TRACE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
-    FIXED_SCHEDULE = False
+    RANDOM_SEED = None
 
 
 @dataclass(frozen=True)
@@ -122,11 +124,12 @@ class TurnDelayDefaults:
 @dataclass(frozen=True)
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
+    PROFILE_EXPORT_FILE = Path("profile_export.json")
 
 
 @dataclass(frozen=True)
 class TokenizerDefaults:
-    NAME = ""
+    NAME = None
     REVISION = "main"
     TRUST_REMOTE_CODE = False
 
@@ -146,17 +149,17 @@ class ServiceDefaults:
     HEARTBEAT_TIMEOUT = 60.0
     REGISTRATION_TIMEOUT = 60.0
     COMMAND_TIMEOUT = 10.0
-    HEARTBEAT_INTERVAL = 1.0
-    MIN_WORKERS = None
-    MAX_WORKERS = None
-    LOG_LEVEL = "INFO"
+    HEARTBEAT_INTERVAL_SECONDS = 5.0
+    LOG_LEVEL = AIPerfLogLevel.INFO
     VERBOSE = False
     EXTRA_VERBOSE = False
-    DISABLE_UI = False
+    LOG_PATH = None
+    DISABLE_UI = True  # TODO: Make this False by default once we have a UI
     ENABLE_UVLOOP = True
     RESULT_PARSER_SERVICE_COUNT = 2
     ENABLE_YAPPI = False
     DEBUG_SERVICES = None
+    TRACE_SERVICES = None
     PROGRESS_REPORT_INTERVAL_SECONDS = 1.0
 
 
@@ -194,3 +197,10 @@ class MeasurementDefaults:
 # class SweepDefaults:
 #     PARAMS = None
 #     ORDER = SweepMultiParamOrder.DEPTH_FIRST
+
+
+@dataclass(frozen=True)
+class WorkersDefaults:
+    MIN = None
+    MAX = None
+    HEALTH_CHECK_INTERVAL_SECONDS = 1.0

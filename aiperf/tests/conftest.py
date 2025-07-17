@@ -7,6 +7,7 @@ This file contains fixtures that are automatically discovered by pytest
 and made available to test functions in the same directory and subdirectories.
 """
 
+import asyncio
 import logging
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
@@ -19,6 +20,73 @@ from aiperf.tests.comms.mock_zmq import (
 )
 
 logging.basicConfig(level=logging.DEBUG)
+
+real_sleep = (
+    asyncio.sleep
+)  # save the real sleep so we can use it in the no_sleep fixture
+
+
+def pytest_addoption(parser):
+    """Add custom command line options for pytest."""
+    parser.addoption(
+        "--performance",
+        action="store_true",
+        default=False,
+        help="Run performance tests (disabled by default)",
+    )
+    parser.addoption(
+        "--integration",
+        action="store_true",
+        default=False,
+        help="Run integration tests (disabled by default)",
+    )
+
+
+def pytest_configure(config):
+    """Configure custom markers."""
+    config.addinivalue_line(
+        "markers",
+        "performance: marks tests as performance tests (disabled by default, use --performance to enable)",
+    )
+    config.addinivalue_line(
+        "markers",
+        "integration: marks tests as integration tests (disabled by default, use --integration to enable)",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip performance and integration tests unless their respective options are given."""
+    performance_enabled = config.getoption("--performance")
+    integration_enabled = config.getoption("--integration")
+
+    skip_performance = pytest.mark.skip(
+        reason="performance tests disabled (use --performance to enable)"
+    )
+    skip_integration = pytest.mark.skip(
+        reason="integration tests disabled (use --integration to enable)"
+    )
+
+    for item in items:
+        if "performance" in item.keywords and not performance_enabled:
+            item.add_marker(skip_performance)
+        if "integration" in item.keywords and not integration_enabled:
+            item.add_marker(skip_integration)
+
+
+@pytest.fixture(autouse=True)
+def no_sleep(monkeypatch) -> None:
+    """
+    Patch asyncio.sleep with a no-op to prevent test delays.
+
+    This ensures tests don't need to wait for real sleep calls.
+    """
+
+    async def fast_sleep(*args, **kwargs):
+        await real_sleep(
+            0
+        )  # relinquish time slice to other tasks to avoid blocking the event loop
+
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
 
 
 @pytest.fixture
