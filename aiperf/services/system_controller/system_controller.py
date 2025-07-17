@@ -68,13 +68,13 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
 
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
-        self.required_services: list[tuple[ServiceType, int]] = [
-            (ServiceType.DATASET_MANAGER, 1),
-            (ServiceType.TIMING_MANAGER, 1),
-            (ServiceType.WORKER_MANAGER, 1),
-            (ServiceType.RECORDS_MANAGER, 1),
-            (ServiceType.INFERENCE_RESULT_PARSER, 12),
-        ]
+        self.required_services = {
+            ServiceType.DATASET_MANAGER: 1,
+            ServiceType.TIMING_MANAGER: 1,
+            ServiceType.WORKER_MANAGER: 1,
+            ServiceType.RECORDS_MANAGER: 1,
+            ServiceType.INFERENCE_RESULT_PARSER: service_config.result_parser_service_count,
+        }
 
         self.service_manager: BaseServiceManager = None  # type: ignore - is set in _initialize
 

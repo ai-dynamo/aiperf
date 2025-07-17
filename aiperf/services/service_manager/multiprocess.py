@@ -48,11 +48,11 @@ class MultiProcessServiceManager(BaseServiceManager):
         self.log_queue = log_queue
         self.user_config = user_config
 
-    async def _run_services(self, service_types: list[tuple[ServiceType, int]]) -> None:
+    async def _run_services(self, service_types: dict[ServiceType, int]) -> None:
         """Run a list of services as multiprocessing processes."""
 
         # Create and start all service processes
-        for service_type, count in service_types:
+        for service_type, count in service_types.items():
             service_class = ServiceFactory.get_class_from_type(service_type)
 
             for _ in range(count):
