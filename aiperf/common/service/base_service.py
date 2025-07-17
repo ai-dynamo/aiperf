@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import multiprocessing
+import uuid
 from abc import ABC
 
 from aiperf.common.comms.base import (
@@ -54,7 +54,7 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin, AIPerfLoggerMixin)
         **kwargs,
     ) -> None:
         self.service_id: str = (
-            service_id or f"{self.service_type}_{multiprocessing.current_process().pid}"
+            service_id or f"{self.service_type}_{uuid.uuid4().hex[:8]}"
         )
         super().__init__(
             service_id=service_id,

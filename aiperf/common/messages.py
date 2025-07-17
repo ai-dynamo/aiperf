@@ -17,12 +17,12 @@ from aiperf.common.dataset_models import Conversation, Turn
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
+    CreditPhase,
     MessageType,
     NotificationType,
     ServiceState,
     ServiceType,
 )
-from aiperf.common.enums.timing import CreditPhase
 from aiperf.common.health_models import ProcessHealth
 from aiperf.common.pydantic_utils import ExcludeIfNoneMixin, exclude_if_none
 from aiperf.common.record_models import (
@@ -306,6 +306,10 @@ class ConversationRequestMessage(BaseServiceMessage):
 
     conversation_id: str | None = Field(
         default=None, description="The session ID of the conversation"
+    )
+    credit_phase: CreditPhase | None = Field(
+        default=None,
+        description="The type of credit phase (either warmup or profiling). If not provided, the timing manager will use the default credit phase.",
     )
 
 
