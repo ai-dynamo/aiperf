@@ -18,15 +18,13 @@ class TraceDatasetLoader:
     Loads trace data (e.g. Mooncake trace) from a file
     and converts the data into a list of conversations for dataset manager.
 
+    Each line in the file represents a single trace entry and will be
+    converted to a separate conversation with a unique session ID.
+
     Example:
-    1. Fixed schedule version (Each line is a distinct session. Multi-turn is NOT supported)
+    Fixed schedule version (Each line is a distinct session. Multi-turn is NOT supported)
     ```json
     {"timestamp": 1000, "input_length": 300, "output_length": 40, "hash_ids": [123, 456]}
-    ```
-
-    2. Session-based version (Doesn't support absolute timestamp, or fixed schedule)
-    ```json
-    {"session_id": "id-123-456", "delay": 1000, "input_length": 300, "output_length": 40}
     ```
     """
 
@@ -44,8 +42,11 @@ class TraceDatasetLoader:
 
         with open(self.filename) as f:
             for line in f:
+                if (line := line.strip()) == "":
+                    continue  # Skip empty lines
+
                 trace_data = TraceCustomData.model_validate_json(line)
-                session_id = trace_data.session_id or str(uuid.uuid4())
+                session_id = str(uuid.uuid4())
                 data[session_id].append(trace_data)
 
         return data
@@ -72,7 +73,6 @@ class TraceDatasetLoader:
                 )
                 turn = Turn(
                     timestamp=trace.timestamp,
-                    delay=trace.delay,
                     text=[Text(name="text", content=[prompt])],
                 )
                 conversation.turns.append(turn)

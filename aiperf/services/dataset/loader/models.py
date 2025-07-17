@@ -105,28 +105,12 @@ class TraceCustomData(BaseModel):
 
     type: Literal[CustomDatasetType.TRACE] = CustomDatasetType.TRACE
 
-    input_length: int = Field(..., description="The input length of a request in trace")
+    input_length: int = Field(..., description="The input sequence length of a request")
     output_length: int = Field(
-        ..., description="The output length of a request in trace"
+        ..., description="The output sequence length of a request"
     )
-    hash_ids: list[int] = Field(..., description="The hash ids of a request in trace")
-    timestamp: int | None = Field(
-        None, description="The timestamp of a request in trace"
-    )
-    session_id: str | None = Field(
-        None, description="The session id of a request in trace"
-    )
-    delay: int | None = Field(None, description="The delay of a request in trace")
-
-    @model_validator(mode="after")
-    def validate_mutually_exclusive_fields(self) -> "TraceCustomData":
-        """Ensure timestamp cannot be set with session_id or delay"""
-        if self.timestamp is not None:
-            if self.session_id is not None:
-                raise ValueError("timestamp and session_id cannot both be set")
-            if self.delay is not None:
-                raise ValueError("timestamp and delay cannot both be set")
-        return self
+    hash_ids: list[int] = Field(..., description="The hash ids of a request")
+    timestamp: int = Field(..., description="The timestamp of a request")
 
 
 CustomData = Annotated[
