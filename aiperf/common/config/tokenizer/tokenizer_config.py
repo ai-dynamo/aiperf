@@ -15,8 +15,10 @@ class TokenizerConfig(BaseConfig):
     A configuration class for defining tokenizer related settings.
     """
 
+    _GROUP_NAME = "Tokenizer"
+
     name: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "The HuggingFace tokenizer to use to interpret token metrics "
@@ -26,7 +28,8 @@ class TokenizerConfig(BaseConfig):
             ),
         ),
         cyclopts.Parameter(
-            name=("--tokenizer-name"),
+            name=("--tokenizer"),
+            group=_GROUP_NAME,
         ),
     ] = TokenizerDefaults.NAME
 
@@ -40,6 +43,7 @@ class TokenizerConfig(BaseConfig):
         ),
         cyclopts.Parameter(
             name=("--tokenizer-revision"),
+            group=_GROUP_NAME,
         ),
     ] = TokenizerDefaults.REVISION
 
@@ -54,5 +58,6 @@ class TokenizerConfig(BaseConfig):
         ),
         cyclopts.Parameter(
             name=("--tokenizer-trust-remote-code"),
+            group=_GROUP_NAME,
         ),
     ] = TokenizerDefaults.TRUST_REMOTE_CODE
