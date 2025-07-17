@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
-from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import CommunicationBackend, ServiceRunType
+from aiperf.common.dataset_models import Text, Turn
+from aiperf.common.messages import ConversationTurnResponseMessage
 from aiperf.common.record_models import RequestRecord
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.inference_result_parser.inference_result_parser import (
@@ -12,85 +14,56 @@ from aiperf.services.inference_result_parser.inference_result_parser import (
 )
 
 
-def service_config():
-    return ServiceConfig(
-        service_run_type=ServiceRunType.MULTIPROCESSING,
-        comm_backend=CommunicationBackend.ZMQ_TCP,
+@pytest.fixture
+def mock_tokenizer():
+    tokenizer = MagicMock(spec=Tokenizer)
+    tokenizer.encode.side_effect = lambda x: list(range(len(x.split())))
+    return tokenizer
+
+
+@pytest.fixture
+def sample_turn():
+    return Turn(
+        role="user",
+        text=[
+            Text(content=["Hello world", "Test case"]),
+            Text(content=["Another input", "Final message"]),
+        ],
     )
 
 
-@pytest.mark.asyncio
-async def test_input_token_count_chat_completion_api():
-    parser = InferenceResultParser(service_config=service_config())
-    tokenizer = Tokenizer.from_pretrained("gpt2")
-
-    request = RequestRecord(
-        request={
-            "messages": [
-                {"role": "user", "content": "Hello, how are you?"},
-                {"role": "assistant", "content": "I'm good, thank you!"},
-            ]
-        }
+@pytest.fixture
+def mock_turn_response(sample_turn):
+    return ConversationTurnResponseMessage(
+        service_id="test-service",
+        conversation_id="cid",
+        turn_index=0,
+        turn=sample_turn,
     )
 
-    expected = len(tokenizer.encode("Hello, how are you? I'm good, thank you!"))
-    actual = await parser._compute_input_token_count(request, tokenizer)
-    assert actual == expected
+
+@pytest.fixture
+def sample_request_record():
+    return RequestRecord(conversation_id="cid", turn_index=0)
+
+
+@pytest.fixture
+def parser(mock_turn_response):
+    with patch.object(InferenceResultParser, "__init__", lambda self: None):
+        parser = InferenceResultParser()
+        parser.service_id = "test-parser"
+        parser.conversation_request_client = MagicMock()
+        parser.conversation_request_client.request = AsyncMock(
+            return_value=mock_turn_response
+        )
+        return parser
 
 
 @pytest.mark.asyncio
-async def test_input_token_count_completion_api():
-    parser = InferenceResultParser(service_config=service_config())
-    tokenizer = Tokenizer.from_pretrained("gpt2")
+async def test_compute_input_token_count(parser, sample_request_record, mock_tokenizer):
+    result = await parser.compute_input_token_count(
+        sample_request_record, mock_tokenizer
+    )
 
-    prompt = "The universe is vast and mysterious."
-    request = RequestRecord(request={"prompt": prompt})
-    expected = len(tokenizer.encode(prompt))
-    assert await parser._compute_input_token_count(request, tokenizer) == expected
-
-    prompt_list = ["The quick", "brown fox"]
-    request = RequestRecord(request={"prompt": prompt_list})
-    expected = len(tokenizer.encode(" ".join(prompt_list)))
-    assert await parser._compute_input_token_count(request, tokenizer) == expected
-
-
-@pytest.mark.asyncio
-async def test_input_token_count_embedding_api():
-    parser = InferenceResultParser(service_config=service_config())
-    tokenizer = Tokenizer.from_pretrained("gpt2")
-
-    input_text = "Encode this sentence."
-    request = RequestRecord(request={"input": input_text})
-    expected = len(tokenizer.encode(input_text))
-    assert await parser._compute_input_token_count(request, tokenizer) == expected
-
-    input_list = ["Encode", "this", "sentence"]
-    request = RequestRecord(request={"input": input_list})
-    expected = len(tokenizer.encode(" ".join(input_list)))
-    assert await parser._compute_input_token_count(request, tokenizer) == expected
-
-
-@pytest.mark.asyncio
-async def test_input_token_count_response_api():
-    parser = InferenceResultParser(service_config=service_config())
-    tokenizer = Tokenizer.from_pretrained("gpt2")
-
-    inputs_text = "Please respond to this prompt."
-    request = RequestRecord(request={"inputs": inputs_text})
-    expected = len(tokenizer.encode(inputs_text))
-    assert await parser._compute_input_token_count(request, tokenizer) == expected
-
-
-@pytest.mark.asyncio
-async def test_input_token_count_chat_completion_chunk_api():
-    parser = InferenceResultParser(service_config=service_config())
-    tokenizer = Tokenizer.from_pretrained("gpt2")
-
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Tell me a joke."},
-    ]
-    expected = len(tokenizer.encode(" ".join(m["content"] for m in messages)))
-
-    request = RequestRecord(request={"messages": messages})
-    assert await parser._compute_input_token_count(request, tokenizer) == expected
+    assert result == 8  # 4 strings × 2 words each
+    assert mock_tokenizer.encode.call_count == 4

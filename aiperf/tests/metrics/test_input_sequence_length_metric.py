@@ -19,12 +19,14 @@ def make_record(input_token_count: int) -> ParsedResponseRecord:
         timestamp_ns=2,
         end_perf_ns=3,
     )
-    request.input_token_count = input_token_count
     response = ResponseData(
         perf_ns=2, raw_text=["test"], parsed_text=["test"], token_count=1, metadata={}
     )
     return ParsedResponseRecord(
-        worker_id="worker", request=request, responses=[response]
+        worker_id="worker",
+        request=request,
+        responses=[response],
+        input_token_count=input_token_count,
     )
 
 

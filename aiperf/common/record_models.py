@@ -224,9 +224,6 @@ class RequestRecord(AIPerfBaseModel):
         default=CreditPhase.PROFILING,
         description="The type of credit phase (either warmup or profiling)",
     )
-    input_token_count: int | None = Field(
-        default=None, description="The number of tokens in the input prompt."
-    )
 
     @property
     def delayed(self) -> bool:
@@ -351,9 +348,9 @@ class ParsedResponseRecord(AIPerfBaseModel):
     )
     request: RequestRecord = Field(description="The original request record")
     responses: list[ResponseData] = Field(description="The parsed response data.")
-    isl: int | None = Field(
+    input_token_count: int | None = Field(
         default=None,
-        description="The Input Sequence Length (ISL) of the request. If None, the ISL was not available or able to be computed.",
+        description="The number of tokens in the input, None if the numbers of tokens cannot be calculated",
     )
 
     @cached_property

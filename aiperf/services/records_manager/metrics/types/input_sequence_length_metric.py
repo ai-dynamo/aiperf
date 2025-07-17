@@ -27,12 +27,12 @@ class InputSequenceLengthMetric(BaseMetric):
         metrics: dict[str, "BaseMetric"] | None = None,
     ):
         self._check_record(record)
-        input_token_count = record.request.input_token_count
+        input_token_count = record.input_token_count
         self.metric.append(input_token_count)
 
     def values(self):
         """
-        Returns the list of Input Sequence Length (ITL) metrics.
+        Returns the list of Input Sequence Length (ISL) metrics.
         """
         return self.metric
 
@@ -45,5 +45,5 @@ class InputSequenceLengthMetric(BaseMetric):
         """
         if not record or not record.valid:
             raise ValueError("Invalid Record")
-        if not record.request.input_token_count:
+        if record.input_token_count is None:
             raise ValueError("Input Token Count is not available for the record.")
