@@ -7,23 +7,22 @@ import pytest
 
 from aiperf.common.dataset_models import Image, Text
 from aiperf.common.enums import CustomDatasetType
-from aiperf.services.dataset.loader.models import (
-    MultiTurnCustomData,
-    SingleTurnCustomData,
-)
+from aiperf.services.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.services.dataset.loader.multi_turn import MultiTurnDatasetLoader
 
 
-class TestMultiTurnCustomData:
-    """Tests for MultiTurnCustomData model validation and functionality."""
+class TestMultiTurn:
+    """Tests for MultiTurn model validation and functionality."""
 
     def test_create_simple_conversation(self):
         """Test creating a basic multi-turn conversation."""
-        turns = [
-            SingleTurnCustomData(text="Hello"),
-            SingleTurnCustomData(text="Hi there", delay=1000),
-        ]
-        data = MultiTurnCustomData(session_id="test_session", turns=turns)
+        data = MultiTurn(
+            session_id="test_session",
+            turns=[
+                SingleTurn(text="Hello"),
+                SingleTurn(text="Hi there", delay=1000),
+            ],
+        )
 
         assert data.session_id == "test_session"
         assert len(data.turns) == 2
@@ -34,8 +33,7 @@ class TestMultiTurnCustomData:
 
     def test_create_without_session_id(self):
         """Test creating conversation without explicit session_id."""
-        turns = [SingleTurnCustomData(text="What is AI?")]
-        data = MultiTurnCustomData(turns=turns)
+        data = MultiTurn(turns=[SingleTurn(text="What is AI?")])
 
         assert data.session_id is None
         assert len(data.turns) == 1
@@ -43,16 +41,14 @@ class TestMultiTurnCustomData:
 
     def test_create_with_multimodal_turns(self):
         """Test creating conversation with multimodal turns."""
-        turns = [
-            SingleTurnCustomData(
-                text="Describe this image", image="/path/to/image.png"
-            ),
-            SingleTurnCustomData(
-                text="What about this audio?", audio="/path/to/audio.wav"
-            ),
-            SingleTurnCustomData(text="Summary please", delay=2000),
-        ]
-        data = MultiTurnCustomData(session_id="multimodal_session", turns=turns)
+        data = MultiTurn(
+            session_id="multimodal_session",
+            turns=[
+                SingleTurn(text="Describe this image", image="/path/to/image.png"),
+                SingleTurn(text="What about this audio?", audio="/path/to/audio.wav"),
+                SingleTurn(text="Summary please", delay=2000),
+            ],
+        )
 
         assert len(data.turns) == 3
         assert data.turns[0].image == "/path/to/image.png"
@@ -61,12 +57,14 @@ class TestMultiTurnCustomData:
 
     def test_create_with_timestamp_scheduling(self):
         """Test creating conversation with timestamp-based scheduling."""
-        turns = [
-            SingleTurnCustomData(text="First message", timestamp=0),
-            SingleTurnCustomData(text="Second message", timestamp=5000),
-            SingleTurnCustomData(text="Third message", timestamp=10000),
-        ]
-        data = MultiTurnCustomData(session_id="scheduled_session", turns=turns)
+        data = MultiTurn(
+            session_id="scheduled_session",
+            turns=[
+                SingleTurn(text="First message", timestamp=0),
+                SingleTurn(text="Second message", timestamp=5000),
+                SingleTurn(text="Third message", timestamp=10000),
+            ],
+        )
 
         assert all(turn.timestamp is not None for turn in data.turns)
         assert data.turns[0].timestamp == 0
@@ -75,14 +73,16 @@ class TestMultiTurnCustomData:
 
     def test_create_with_batched_turns(self):
         """Test creating conversation with batched content in turns."""
-        turns = [
-            SingleTurnCustomData(
-                text=["Hello there", "How are you?"],
-                image=["/path/1.png", "/path/2.png"],
-            ),
-            SingleTurnCustomData(text=["I'm fine", "Thanks for asking"], delay=1500),
-        ]
-        data = MultiTurnCustomData(session_id="batched_session", turns=turns)
+        data = MultiTurn(
+            session_id="batched_session",
+            turns=[
+                SingleTurn(
+                    text=["Hello there", "How are you?"],
+                    image=["/path/1.png", "/path/2.png"],
+                ),
+                SingleTurn(text=["I'm fine", "Thanks for asking"], delay=1500),
+            ],
+        )
 
         assert len(data.turns[0].text) == 2
         assert len(data.turns[0].image) == 2
@@ -90,19 +90,21 @@ class TestMultiTurnCustomData:
 
     def test_create_with_full_featured_turns(self):
         """Test creating conversation with full-featured turn format."""
-        turns = [
-            SingleTurnCustomData(
-                text=[
-                    Text(name="question", content=["What is this?"]),
-                    Text(name="context", content=["Please be detailed"]),
-                ],
-                image=[
-                    Image(name="main_image", content=["/path/main.png"]),
-                    Image(name="reference", content=["/path/ref.png"]),
-                ],
-            )
-        ]
-        data = MultiTurnCustomData(session_id="featured_session", turns=turns)
+        data = MultiTurn(
+            session_id="featured_session",
+            turns=[
+                SingleTurn(
+                    text=[
+                        Text(name="question", content=["What is this?"]),
+                        Text(name="context", content=["Please be detailed"]),
+                    ],
+                    image=[
+                        Image(name="main_image", content=["/path/main.png"]),
+                        Image(name="reference", content=["/path/ref.png"]),
+                    ],
+                )
+            ],
+        )
 
         assert len(data.turns[0].text) == 2
         assert len(data.turns[0].image) == 2
@@ -112,21 +114,21 @@ class TestMultiTurnCustomData:
     def test_validation_empty_turns_raises_error(self):
         """Test that empty turns list raises validation error."""
         with pytest.raises(ValueError, match="At least one turn must be provided"):
-            MultiTurnCustomData(session_id="empty_session", turns=[])
+            MultiTurn(session_id="empty_session", turns=[])
 
     def test_validation_turn_constraints_preserved(self):
         """Test that individual turn validation constraints are preserved."""
         # Test that turns still require at least one modality
         with pytest.raises(ValueError, match="At least one modality"):
-            invalid_turn = SingleTurnCustomData()
-            MultiTurnCustomData(session_id="invalid_session", turns=[invalid_turn])
+            invalid_turn = SingleTurn()
+            MultiTurn(session_id="invalid_session", turns=[invalid_turn])
 
         # Test that timestamp/delay mutual exclusion is preserved
         with pytest.raises(
             ValueError, match="timestamp and delay cannot be set together"
         ):
-            invalid_turn = SingleTurnCustomData(text="Test", timestamp=1000, delay=500)
-            MultiTurnCustomData(session_id="invalid_session", turns=[invalid_turn])
+            invalid_turn = SingleTurn(text="Test", timestamp=1000, delay=500)
+            MultiTurn(session_id="invalid_session", turns=[invalid_turn])
 
 
 class TestMultiTurnDatasetLoader:
@@ -154,7 +156,7 @@ class TestMultiTurnDatasetLoader:
         assert "conv_001" in result
 
         conversation = result["conv_001"][0]
-        assert isinstance(conversation, MultiTurnCustomData)
+        assert isinstance(conversation, MultiTurn)
         assert len(conversation.turns) == 2
         assert conversation.turns[0].text == "Hello, how are you?"
         assert conversation.turns[1].text == "I'm doing well, thanks!"

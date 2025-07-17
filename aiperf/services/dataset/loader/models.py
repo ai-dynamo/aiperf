@@ -9,14 +9,14 @@ from aiperf.common.dataset_models import Audio, Image, Text
 from aiperf.common.enums import CustomDatasetType
 
 
-class SingleTurnCustomData(BaseModel):
-    """Defines the schema of each JSONL line in a single-turn file.
+class SingleTurn(BaseModel):
+    """Defines the schema for single-turn data.
 
     User can use this format to quickly provide a custom single turn dataset.
     Each line in the file will be treated as a single turn conversation.
 
     The single turn type
-      - supports multi-modal data (e.g. text, image, audio)
+      - supports multi-modal (e.g. text, image, audio)
       - supports client-side batching for each data (e.g. batch_size > 1)
       - DOES NOT support multi-turn features (e.g. delay, sessions, etc.)
     """
@@ -46,7 +46,7 @@ class SingleTurnCustomData(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_at_least_one_modality(self) -> "SingleTurnCustomData":
+    def validate_at_least_one_modality(self) -> "SingleTurn":
         """Ensure at least one modality is provided"""
         if not any([self.text, self.image, self.audio]):
             raise ValueError(
@@ -55,14 +55,14 @@ class SingleTurnCustomData(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_mutually_exclusive_fields(self) -> "SingleTurnCustomData":
+    def validate_mutually_exclusive_fields(self) -> "SingleTurn":
         """Ensure timestamp and delay cannot be set together"""
         if self.timestamp and self.delay:
             raise ValueError("timestamp and delay cannot be set together")
         return self
 
 
-class MultiTurnCustomData(BaseModel):
+class MultiTurn(BaseModel):
     """Defines the schema for multi-turn conversations.
 
     The multi-turn custom dataset
@@ -76,12 +76,12 @@ class MultiTurnCustomData(BaseModel):
     session_id: str | None = Field(
         None, description="Unique identifier for the conversation session"
     )
-    turns: list[SingleTurnCustomData] = Field(
+    turns: list[SingleTurn] = Field(
         ..., description="List of turns in the conversation"
     )
 
     @model_validator(mode="after")
-    def validate_turns_not_empty(self) -> "MultiTurnCustomData":
+    def validate_turns_not_empty(self) -> "MultiTurn":
         """Ensure at least one turn is provided"""
         if not self.turns:
             raise ValueError("At least one turn must be provided")
@@ -110,7 +110,7 @@ class MooncakeTrace(BaseModel):
 
 
 CustomData = Annotated[
-    SingleTurnCustomData | MooncakeTrace | MultiTurnCustomData,
+    SingleTurn | MooncakeTrace | MultiTurn,
     Field(discriminator="type"),
 ]
 """A union type of all custom data types."""

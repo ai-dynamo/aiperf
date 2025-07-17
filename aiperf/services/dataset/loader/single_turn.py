@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-from aiperf.services.dataset.loader.models import CustomData, SingleTurnCustomData
+from aiperf.services.dataset.loader.models import SingleTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.SINGLE_TURN)
@@ -65,7 +65,7 @@ class SingleTurnDatasetLoader:
     def __init__(self, filename: str):
         self.filename = filename
 
-    def load_dataset(self) -> dict[str, list[CustomData]]:
+    def load_dataset(self) -> dict[str, list[SingleTurn]]:
         """Load single-turn data from a JSONL file.
 
         Each line represents a single turn conversation. Multiple turns with
@@ -74,14 +74,14 @@ class SingleTurnDatasetLoader:
         Returns:
             A dictionary mapping session_id to list of CustomData.
         """
-        data: dict[str, list[CustomData]] = defaultdict(list)
+        data: dict[str, list[SingleTurn]] = defaultdict(list)
 
         with open(self.filename) as f:
             for line in f:
                 if (line := line.strip()) == "":
                     continue  # Skip empty lines
 
-                single_turn_data = SingleTurnCustomData.model_validate_json(line)
+                single_turn_data = SingleTurn.model_validate_json(line)
                 session_id = str(uuid.uuid4())
                 data[session_id].append(single_turn_data)
 

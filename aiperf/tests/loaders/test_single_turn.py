@@ -7,16 +7,16 @@ import pytest
 
 from aiperf.common.dataset_models import Image, Text
 from aiperf.common.enums import CustomDatasetType
-from aiperf.services.dataset.loader.models import SingleTurnCustomData
+from aiperf.services.dataset.loader.models import SingleTurn
 from aiperf.services.dataset.loader.single_turn import SingleTurnDatasetLoader
 
 
-class TestSingleTurnCustomData:
-    """Basic functionality tests for SingleTurnCustomData model."""
+class TestSingleTurn:
+    """Basic functionality tests for SingleTurn model."""
 
     def test_create_with_text_only(self):
-        """Test creating SingleTurnCustomData with text."""
-        data = SingleTurnCustomData(text="What is deep learning?")
+        """Test creating SingleTurn with text."""
+        data = SingleTurn(text="What is deep learning?")
 
         assert data.text == "What is deep learning?"
         assert data.image is None
@@ -24,8 +24,8 @@ class TestSingleTurnCustomData:
         assert data.type == CustomDatasetType.SINGLE_TURN
 
     def test_create_with_multimodal_data(self):
-        """Test creating SingleTurnCustomData with text and image."""
-        data = SingleTurnCustomData(
+        """Test creating SingleTurn with text and image."""
+        data = SingleTurn(
             text="What is in the image?",
             image="/path/to/image.png",
             audio="/path/to/audio.wav",
@@ -36,8 +36,8 @@ class TestSingleTurnCustomData:
         assert data.audio == "/path/to/audio.wav"
 
     def test_create_with_batched_inputs(self):
-        """Test creating SingleTurnCustomData with batched inputs."""
-        data = SingleTurnCustomData(
+        """Test creating SingleTurn with batched inputs."""
+        data = SingleTurn(
             text=["What is the weather today?", "What is deep learning?"],
             image=["/path/to/image1.png", "/path/to/image2.png"],
         )
@@ -47,24 +47,24 @@ class TestSingleTurnCustomData:
         assert data.audio is None
 
     def test_create_with_fixed_schedule(self):
-        """Test creating SingleTurnCustomData with fixed schedule (timestamp)."""
-        data = SingleTurnCustomData(text="What is deep learning?", timestamp=1000)
+        """Test creating SingleTurn with fixed schedule (timestamp)."""
+        data = SingleTurn(text="What is deep learning?", timestamp=1000)
 
         assert data.text == "What is deep learning?"
         assert data.timestamp == 1000
         assert data.delay is None
 
     def test_create_with_delay(self):
-        """Test creating SingleTurnCustomData with delay."""
-        data = SingleTurnCustomData(text="Who are you?", delay=1234)
+        """Test creating SingleTurn with delay."""
+        data = SingleTurn(text="Who are you?", delay=1234)
 
         assert data.text == "Who are you?"
         assert data.delay == 1234
         assert data.timestamp is None
 
     def test_create_with_full_featured_version(self):
-        """Test creating SingleTurnCustomData with full-featured version."""
-        data = SingleTurnCustomData(
+        """Test creating SingleTurn with full-featured version."""
+        data = SingleTurn(
             text=[
                 Text(name="text_field_A", content=["Hello", "World"]),
                 Text(name="text_field_B", content=["Hi there"]),
@@ -93,13 +93,11 @@ class TestSingleTurnCustomData:
         """Test that at least one modality must be provided."""
         # No modality provided
         with pytest.raises(ValueError):
-            SingleTurnCustomData()
+            SingleTurn()
 
         # Timestamp and delay cannot be set together
         with pytest.raises(ValueError):
-            SingleTurnCustomData(
-                text="What is deep learning?", timestamp=1000, delay=1234
-            )
+            SingleTurn(text="What is deep learning?", timestamp=1000, delay=1234)
 
 
 class TestSingleTurnDatasetLoader:

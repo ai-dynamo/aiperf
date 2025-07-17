@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-from aiperf.services.dataset.loader.models import CustomData, MultiTurnCustomData
+from aiperf.services.dataset.loader.models import MultiTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.MULTI_TURN)
@@ -87,23 +87,23 @@ class MultiTurnDatasetLoader:
     def __init__(self, filename: str):
         self.filename = filename
 
-    def load_dataset(self) -> dict[str, list[CustomData]]:
+    def load_dataset(self) -> dict[str, list[MultiTurn]]:
         """Load multi-turn data from a JSONL file.
 
         Each line represents a complete multi-turn conversation with its own
         session_id and multiple turns.
 
         Returns:
-            A dictionary mapping session_id to list of CustomData (containing the MultiTurnCustomData).
+            A dictionary mapping session_id to list of CustomData (containing the MultiTurn).
         """
-        data: dict[str, list[CustomData]] = defaultdict(list)
+        data: dict[str, list[MultiTurn]] = defaultdict(list)
 
         with open(self.filename) as f:
             for line in f:
                 if (line := line.strip()) == "":
                     continue  # Skip empty lines
 
-                multi_turn_data = MultiTurnCustomData.model_validate_json(line)
+                multi_turn_data = MultiTurn.model_validate_json(line)
                 session_id = multi_turn_data.session_id or str(uuid.uuid4())
                 data[session_id].append(multi_turn_data)
 
