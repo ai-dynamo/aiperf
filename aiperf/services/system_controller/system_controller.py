@@ -68,7 +68,7 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
 
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
-        self.required_service_types: list[tuple[ServiceType, int]] = [
+        self.required_services: list[tuple[ServiceType, int]] = [
             (ServiceType.DATASET_MANAGER, 1),
             (ServiceType.TIMING_MANAGER, 1),
             (ServiceType.WORKER_MANAGER, 1),
@@ -147,13 +147,15 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
 
         if self.service_config.service_run_type == ServiceRunType.MULTIPROCESSING:
             self.service_manager = MultiProcessServiceManager(
-                required_service_types=self.required_service_types,
+                required_services=self.required_services,
+                user_config=self.user_config,
                 config=self.service_config,
             )
 
         elif self.service_config.service_run_type == ServiceRunType.KUBERNETES:
             self.service_manager = KubernetesServiceManager(
-                required_service_types=self.required_service_types,
+                required_services=self.required_services,
+                user_config=self.user_config,
                 config=self.service_config,
             )
 
@@ -361,7 +363,7 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
             self.service_manager.service_map[service_type] = []
         self.service_manager.service_map[service_type].append(service_info)
 
-        is_required = service_type in self.required_service_types
+        is_required = service_type in self.required_services
         self.logger.info(
             "Registered %s service: %s with ID: %s",
             "required" if is_required else "non-required",

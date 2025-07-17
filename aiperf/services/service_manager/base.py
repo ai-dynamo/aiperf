@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import logging
 from abc import ABC, abstractmethod
 
 from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import ServiceType
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ServiceRunInfo
 
 
-class BaseServiceManager(ABC):
+class BaseServiceManager(AIPerfLoggerMixin, ABC):
     """
     Base class for service managers. It provides a common interface for
     managing services and a way to look up service information by service ID.
@@ -17,11 +17,11 @@ class BaseServiceManager(ABC):
 
     def __init__(
         self,
-        required_service_types: list[tuple[ServiceType, int]],
+        required_services: dict[ServiceType, int],
         config: ServiceConfig,
     ):
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.required_service_types = required_service_types
+        super().__init__(logger_name="service_manager")
+        self.required_services = required_services
         self.config = config
 
         # Maps to track service information

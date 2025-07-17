@@ -9,9 +9,9 @@ from pydantic import BaseModel
 
 from aiperf.common.enums import ServiceState, ServiceType
 from aiperf.common.service.base_service import BaseService
-from aiperf.services.worker.worker import Worker
 from aiperf.tests.base_test_service import BaseTestService
 from aiperf.tests.utils.async_test_utils import async_fixture
+from aiperf.workers.worker import Worker
 
 
 class WorkerTestConfig(BaseModel):
@@ -24,7 +24,7 @@ class WorkerTestConfig(BaseModel):
 
 
 @pytest.mark.asyncio
-class TestWorker(BaseTestService):
+class _TestWorker(BaseTestService):
     """
     Tests for the worker service.
 

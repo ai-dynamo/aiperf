@@ -12,7 +12,9 @@ from openai.types.embedding import Embedding
 from openai.types.responses.response import Response as ResponsesModel
 from pydantic import BaseModel
 
-from aiperf.common.enums import CaseInsensitiveStrEnum
+from aiperf.clients.client_interfaces import ResponseExtractorFactory
+from aiperf.clients.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.enums import CaseInsensitiveStrEnum, EndpointType
 from aiperf.common.record_models import (
     InferenceServerResponse,
     RequestRecord,
@@ -70,8 +72,17 @@ class OpenAIObject(CaseInsensitiveStrEnum):
 
 
 # TODO: Factory support for different supported parsers/extractors
+@ResponseExtractorFactory.register_all(
+    EndpointType.OPENAI_CHAT_COMPLETIONS,
+    EndpointType.OPENAI_COMPLETIONS,
+    EndpointType.OPENAI_RESPONSES,
+)
 class OpenAIResponseExtractor:
     """Extractor for OpenAI responses."""
+
+    def __init__(self, model_endpoint: ModelEndpointInfo) -> None:
+        """Create a new response extractor based on the provided configuration."""
+        self.model_endpoint = model_endpoint
 
     def _parse_text_response(self, response: TextResponse) -> ResponseData | None:
         """Parse a TextResponse into a ResponseData object."""
@@ -134,28 +145,23 @@ class OpenAIResponseExtractor:
 
         obj = OpenAIObject.parse(raw_text)
 
-        val = None
-        if isinstance(obj, ChatCompletion):
+        # Dictionary mapping object types to their value extraction functions
+        type_to_extractor = {
             # TODO: how to support multiple choices?
-            val = obj.choices[0].message.content
-
-        elif isinstance(obj, ChatCompletionChunk):
+            ChatCompletion: lambda obj: obj.choices[0].message.content,
             # TODO: how to support multiple choices?
-            val = obj.choices[0].delta.content
-
-        elif isinstance(obj, Completion):
+            ChatCompletionChunk: lambda obj: obj.choices[0].delta.content,
             # TODO: how to support multiple choices?
-            val = obj.choices[0].text
+            Completion: lambda obj: obj.choices[0].text,
+            Embedding: lambda obj: obj.embedding,
+            ResponsesModel: lambda obj: obj.output_text,
+        }
 
-        elif isinstance(obj, Embedding):
-            val = obj.embedding
+        for obj_type, extractor in type_to_extractor.items():
+            if isinstance(obj, obj_type):
+                return extractor(obj)
 
-        elif isinstance(obj, ResponsesModel):
-            val = obj.output_text
-        else:
-            raise ValueError(f"Invalid OpenAI object: {raw_text}")
-
-        return val
+        raise ValueError(f"Invalid OpenAI object: {raw_text}")
 
     def _parse_sse(self, raw_sse: list[str]) -> list[Any]:
         """Parse the SSE of the response."""

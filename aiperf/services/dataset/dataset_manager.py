@@ -50,10 +50,12 @@ class DatasetManager(BaseComponentService):
     def __init__(
         self,
         service_config: ServiceConfig,
+        user_config: UserConfig | None = None,
         service_id: str | None = None,
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id)
         self.logger.debug("Calling __init__() in dataset manager")
+        self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
         self.dealer_router_client: ReplyClientProtocol = self.comms.create_reply_client(

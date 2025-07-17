@@ -28,7 +28,13 @@ def sample_records():
     return [
         ParsedResponseRecord(
             worker_id="worker-1",
-            request=RequestRecord(start_perf_ns=0, timestamp_ns=0, has_error=False),
+            request=RequestRecord(
+                conversation_id="test-conversation",
+                turn_index=0,
+                model_name="test-model",
+                start_perf_ns=0,
+                timestamp_ns=0,
+            ),
             responses=[
                 ResponseData(
                     perf_ns=10,
@@ -40,7 +46,13 @@ def sample_records():
         ),
         ParsedResponseRecord(
             worker_id="worker-1",
-            request=RequestRecord(start_perf_ns=10, timestamp_ns=10, has_error=False),
+            request=RequestRecord(
+                conversation_id="test-conversation",
+                turn_index=0,
+                model_name="test-model",
+                start_perf_ns=10,
+                timestamp_ns=10,
+            ),
             responses=[
                 ResponseData(
                     perf_ns=20,
@@ -52,7 +64,13 @@ def sample_records():
         ),
         ParsedResponseRecord(
             worker_id="worker-1",
-            request=RequestRecord(start_perf_ns=20, timestamp_ns=20, has_error=False),
+            request=RequestRecord(
+                conversation_id="test-conversation",
+                turn_index=0,
+                model_name="test-model",
+                start_perf_ns=20,
+                timestamp_ns=20,
+            ),
             responses=[
                 ResponseData(
                     perf_ns=30, token_count=10, raw_text=["done"], parsed_text=["done"]

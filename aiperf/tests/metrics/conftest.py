@@ -118,6 +118,9 @@ class ParsedResponseRecordBuilder:
         parsed_records = []
         for record_config in all_records:
             request = RequestRecord(
+                conversation_id="test-conversation",
+                turn_index=0,
+                model_name="test-model",
                 start_perf_ns=record_config["request_start_perf_ns"],
                 **record_config["request_kwargs"],
             )

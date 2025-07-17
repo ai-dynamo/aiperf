@@ -3,6 +3,9 @@
 
 __all__ = [
     "OpenAIClientAioHttp",
+    "OpenAIResponsesRequestConverter",
+    "OpenAIChatCompletionRequestConverter",
+    "OpenAICompletionRequestConverter",
     "InferenceClientFactory",
     "InferenceClientProtocol",
     "ResponseExtractorFactory",
@@ -31,4 +34,13 @@ from aiperf.clients.model_endpoint_info import (
 )
 from aiperf.clients.openai.openai_aiohttp import (
     OpenAIClientAioHttp,
+)
+from aiperf.clients.openai.openai_chat import (
+    OpenAIChatCompletionRequestConverter,
+)
+from aiperf.clients.openai.openai_completions import (
+    OpenAICompletionRequestConverter,
+)
+from aiperf.clients.openai.openai_responses import (
+    OpenAIResponsesRequestConverter,
 )
