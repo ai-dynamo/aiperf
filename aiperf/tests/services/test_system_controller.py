@@ -25,7 +25,7 @@ class SystemControllerTestConfig(BaseModel):
 
 
 @pytest.mark.asyncio
-class _TestSystemController(BaseTestControllerService):
+class SystemControllerServiceTest(BaseTestControllerService):
     """
     Tests for the system controller service.
 

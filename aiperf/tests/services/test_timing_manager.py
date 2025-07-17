@@ -21,7 +21,7 @@ from aiperf.tests.utils.async_test_utils import async_fixture
 
 
 @pytest.mark.asyncio
-class _TestTimingManager(BaseTestComponentService):
+class TimingManagerServiceTest(BaseTestComponentService):
     """
     Tests for the timing manager service.
 

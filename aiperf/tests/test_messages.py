@@ -9,42 +9,40 @@ from aiperf.common.messages import Message, StatusMessage, exclude_if_none
 
 
 @exclude_if_none(["b"])
-class _TestMessage(Message):
+class MockMessage(Message):
     a: int
     b: int | None = Field(default=None)
 
 
 @exclude_if_none(["c"])
-class _TestMessageSubclass(_TestMessage):
+class MockMessageSubclass(MockMessage):
     c: int | None = Field(default=None)
 
 
 def test_exclude_if_none():
-    message = _TestMessage(message_type=MessageType.UNKNOWN, a=1, b=None)
+    message = MockMessage(message_type=MessageType.UNKNOWN, a=1, b=None)
     assert message.model_dump() == {"message_type": MessageType.UNKNOWN, "a": 1}
     assert message.model_dump_json() == '{"message_type":"unknown","a":1}'
 
-    message = _TestMessage(message_type=MessageType.UNKNOWN, a=1, b=2)
+    message = MockMessage(message_type=MessageType.UNKNOWN, a=1, b=2)
     assert message.model_dump() == {"message_type": MessageType.UNKNOWN, "a": 1, "b": 2}
     assert message.model_dump_json() == '{"message_type":"unknown","a":1,"b":2}'
 
-    message = _TestMessage(message_type=MessageType.UNKNOWN, a=1)
+    message = MockMessage(message_type=MessageType.UNKNOWN, a=1)
     assert message.model_dump() == {"message_type": MessageType.UNKNOWN, "a": 1}
     assert message.model_dump_json() == '{"message_type":"unknown","a":1}'
 
 
 def test_exclude_if_none_subclass():
-    message = _TestMessageSubclass(
-        message_type=MessageType.UNKNOWN, a=1, b=None, c=None
-    )
+    message = MockMessageSubclass(message_type=MessageType.UNKNOWN, a=1, b=None, c=None)
     assert message.model_dump() == {"message_type": MessageType.UNKNOWN, "a": 1}
     assert message.model_dump_json() == '{"message_type":"unknown","a":1}'
 
-    message = _TestMessageSubclass(message_type=MessageType.UNKNOWN, a=1, b=2, c=None)
+    message = MockMessageSubclass(message_type=MessageType.UNKNOWN, a=1, b=2, c=None)
     assert message.model_dump() == {"message_type": MessageType.UNKNOWN, "a": 1, "b": 2}
     assert message.model_dump_json() == '{"message_type":"unknown","a":1,"b":2}'
 
-    message = _TestMessageSubclass(message_type=MessageType.UNKNOWN, a=1, b=2, c=3)
+    message = MockMessageSubclass(message_type=MessageType.UNKNOWN, a=1, b=2, c=3)
     assert message.model_dump() == {
         "message_type": MessageType.UNKNOWN,
         "a": 1,
