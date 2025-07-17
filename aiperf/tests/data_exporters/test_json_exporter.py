@@ -19,7 +19,7 @@ class TestJsonExporter:
         return [
             MetricResult(
                 tag="Test Metric",
-                header="Tes t Metric",
+                header="Test Metric",
                 unit="ms",
                 avg=123.0,
                 min=100.0,
