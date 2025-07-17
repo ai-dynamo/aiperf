@@ -58,8 +58,8 @@ class TestAioHttpClientMixin:
             )
             assert client.tcp_connector == mock_connector
             assert isinstance(client.timeout, aiohttp.ClientTimeout)
-            assert client.timeout.total == 30.0
-            assert client.timeout.connect == 30.0
+            assert client.timeout.total == 600.0
+            assert client.timeout.connect == 600.0
             mock_create.assert_called_once()
 
     @pytest.mark.parametrize(

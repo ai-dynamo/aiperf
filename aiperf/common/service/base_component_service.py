@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from aiperf.common.config import ServiceConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
@@ -41,17 +41,23 @@ class BaseComponentService(BaseService):
     def __init__(
         self,
         service_config: ServiceConfig,
+        user_config: UserConfig | None = None,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config,
+            user_config=user_config,
             service_id=service_id,
+            **kwargs,
         )
 
         self._command_callbacks: dict[
             CommandType, Callable[[CommandMessage], Awaitable[None]]
         ] = {}
-        self._heartbeat_interval = self.service_config.heartbeat_interval
+        self._heartbeat_interval_seconds = (
+            self.service_config.heartbeat_interval_seconds
+        )
 
     @on_init
     async def _on_init(self) -> None:
@@ -87,7 +93,7 @@ class BaseComponentService(BaseService):
         while not self.stop_event.is_set():
             # Sleep first to avoid sending a heartbeat before the registration
             # message has been published
-            await asyncio.sleep(self._heartbeat_interval)
+            await asyncio.sleep(self._heartbeat_interval_seconds)
 
             try:
                 await self.send_heartbeat()

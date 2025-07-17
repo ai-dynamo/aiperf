@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import logging
-import uuid
+import multiprocessing
 from abc import ABC
 
 from aiperf.common.comms.base import (
@@ -11,6 +10,7 @@ from aiperf.common.comms.base import (
     CommunicationFactory,
 )
 from aiperf.common.config import ServiceConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ServiceState, ServiceType
 from aiperf.common.exceptions import (
     AIPerfError,
@@ -23,6 +23,7 @@ from aiperf.common.hooks import (
     supports_hooks,
 )
 from aiperf.common.messages import Message
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.service.base_service_interface import BaseServiceInterface
 
 
@@ -36,7 +37,7 @@ from aiperf.common.service.base_service_interface import BaseServiceInterface
     AIPerfHook.ON_SET_STATE,
     AIPerfTaskHook.AIPERF_TASK,
 )
-class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
+class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin, AIPerfLoggerMixin):
     """Base class for all AIPerf services, providing common functionality for
     communication, state management, and lifecycle operations.
 
@@ -46,17 +47,27 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin):
     """
 
     def __init__(
-        self, service_config: ServiceConfig, service_id: str | None = None
+        self,
+        service_config: ServiceConfig,
+        user_config: UserConfig | None = None,
+        service_id: str | None = None,
+        **kwargs,
     ) -> None:
-        super().__init__()
         self.service_id: str = (
-            service_id or f"{self.service_type}_{uuid.uuid4().hex[:8]}"
+            service_id or f"{self.service_type}_{multiprocessing.current_process().pid}"
         )
-        self.logger = logging.getLogger(self.service_id)
+        super().__init__(
+            service_id=service_id,
+            service_config=service_config,
+            user_config=user_config,
+            logger_name=self.service_id,
+            **kwargs,
+        )
         self.service_config = service_config
+        self.user_config = user_config
 
-        self.logger.debug(
-            f"Initializing {self.service_type} service (id: {self.service_id})"
+        self.debug(
+            lambda: f"Initializing {self.service_type} service (id: {self.service_id})"
         )
 
         self._state: ServiceState = ServiceState.UNKNOWN

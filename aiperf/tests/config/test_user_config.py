@@ -8,8 +8,9 @@ from aiperf.common.config import (
     OutputConfig,
     TokenizerConfig,
     UserConfig,
-    UserDefaults,
 )
+from aiperf.common.config.config_defaults import EndPointDefaults
+from aiperf.common.enums.endpoints import EndpointType
 
 
 def test_user_config_serialization_to_file():
@@ -31,8 +32,13 @@ def test_user_config_serialization_to_file():
     """
     config = UserConfig(
         model_names=["model1", "model2"],
-        verbose=True,
-        template_filename="custom_template.yaml",
+        endpoint=EndPointConfig(
+            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            custom_endpoint="custom_endpoint",
+            streaming=True,
+            url="http://custom-url",
+            grpc_method="custom.package.Service/Method",
+        ),
     )
 
     # Serialize to JSON and write to a mocked file
@@ -66,10 +72,11 @@ def test_user_config_defaults():
     - `tokenizer` is an instance of `TokenizerConfig`.
     """
 
-    config = UserConfig()
-    assert config.model_names == UserDefaults.MODEL_NAMES
-    assert config.verbose == UserDefaults.VERBOSE
-    assert config.template_filename == UserDefaults.TEMPLATE_FILENAME
+    config = UserConfig(model_names=["model1", "model2"])
+    assert config.model_names == ["model1", "model2"]
+    assert config.endpoint.streaming == EndPointDefaults.STREAMING
+    assert config.endpoint.url == EndPointDefaults.URL
+    assert config.endpoint.grpc_method == EndPointDefaults.GRPC_METHOD
     assert isinstance(config.endpoint, EndPointConfig)
     assert isinstance(config.input, InputConfig)
     assert isinstance(config.output, OutputConfig)
@@ -90,10 +97,20 @@ def test_user_config_custom_values():
 
     custom_values = {
         "model_names": ["model1", "model2"],
-        "verbose": True,
-        "template_filename": "custom_template.yaml",
+        "endpoint": EndPointConfig(
+            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            custom_endpoint="custom_endpoint",
+            streaming=True,
+            url="http://custom-url",
+            grpc_method="custom.package.Service/Method",
+        ),
     }
     config = UserConfig(**custom_values)
     assert config.model_names == ["model1", "model2"]
-    assert config.verbose is True
-    assert config.template_filename == "custom_template.yaml"
+    assert config.endpoint.streaming is True
+    assert config.endpoint.url == "http://custom-url"
+    assert config.endpoint.grpc_method == "custom.package.Service/Method"
+    assert isinstance(config.endpoint, EndPointConfig)
+    assert isinstance(config.input, InputConfig)
+    assert isinstance(config.output, OutputConfig)
+    assert isinstance(config.tokenizer, TokenizerConfig)

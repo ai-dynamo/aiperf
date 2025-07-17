@@ -29,12 +29,13 @@ class Worker(BaseComponentService):
     def __init__(
         self,
         service_config: ServiceConfig,
+        user_config: UserConfig | None = None,
         service_id: str | None = None,
     ):
         super().__init__(service_config=service_config, service_id=service_id)
 
         self.logger.debug("Initializing worker process")
-        self.user_config: UserConfig | None = None
+        self.user_config = user_config
         # self.worker: UniversalWorker | None = None
 
     @property

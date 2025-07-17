@@ -6,7 +6,15 @@
             "request": "launch",
             "cwd": "${workspaceFolder}",
             "module": "aiperf.cli",
-            "args": []
+            "args": [
+                "profile",
+                "-m",
+                "gpt2",
+                "--log-level",
+                "DEBUG",
+                "--max-workers",
+                "1"
+            ]
         },
         {
             "name": "pytest",

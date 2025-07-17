@@ -342,7 +342,7 @@ class HooksMixin:
     # Class attributes that are set by the :func:`supports_hooks` decorator
     supported_hooks: ClassVar[set[HookType]] = set()
 
-    def __init__(self):
+    def __init__(self, **kwargs):
         """
         Initialize the hook system and register all functions that are decorated with a hook decorator.
         """
@@ -408,8 +408,8 @@ class AIPerfTaskMixin(HooksMixin, AsyncTaskManagerMixin):
     # TODO: Once we create a Mixin for `self.stop_event`, we can avoid
     # having the user to call `while not self.stop_event.is_set()`
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     async def initialize(self) -> None:
         """Initialize the task."""

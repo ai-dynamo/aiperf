@@ -8,17 +8,18 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.config.user_config import UserConfig
+from aiperf.common.record_models import MetricResult
 from aiperf.data_exporter.exporter_config import ExporterConfig
 from aiperf.data_exporter.json_exporter import JsonExporter
-from aiperf.data_exporter.record import Record
 
 
 class TestJsonExporter:
     @pytest.fixture
     def sample_records(self):
         return [
-            Record(
-                name="Test Metric",
+            MetricResult(
+                tag="Test Metric",
+                header="Test Metric",
                 unit="ms",
                 avg=123.0,
                 min=100.0,
@@ -38,9 +39,10 @@ class TestJsonExporter:
 
     @pytest.fixture
     def mock_user_config(self):
-        return UserConfig()
+        return UserConfig(model_names=["test-model"])
 
-    def test_json_exporter_creates_expected_json(
+    @pytest.mark.asyncio
+    async def test_json_exporter_creates_expected_json(
         self, sample_records, mock_user_config
     ):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -48,12 +50,12 @@ class TestJsonExporter:
             mock_user_config.output.artifact_directory = output_dir
 
             exporter_config = ExporterConfig(
-                records=sample_records,
+                results=sample_records,
                 input_config=mock_user_config,
             )
 
             exporter = JsonExporter(exporter_config)
-            exporter.export()
+            await exporter.export()
 
             expected_file = output_dir / "profile_export_aiperf.json"
             assert expected_file.exists()

@@ -6,13 +6,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.common.config import EndPointConfig, OutputConfig, UserConfig
+from aiperf.common.enums.endpoints import EndpointType
+from aiperf.common.record_models import MetricResult
 from aiperf.data_exporter.exporter_manager import ExporterManager
-from aiperf.data_exporter.record import Record
 
 
 @pytest.fixture
 def endpoint_config():
-    return EndPointConfig(type="llm", streaming=True)
+    return EndPointConfig(type=EndpointType.OPENAI_CHAT_COMPLETIONS, streaming=True)
 
 
 @pytest.fixture
@@ -22,19 +23,27 @@ def output_config(tmp_path):
 
 @pytest.fixture
 def sample_records():
-    return [Record(name="Latency", unit="ms", avg=10.0)]
+    return [
+        MetricResult(
+            tag="Latency",
+            unit="ms",
+            avg=10.0,
+            header="test-header",
+        )
+    ]
 
 
 @pytest.fixture
 def mock_user_config(endpoint_config, output_config):
-    config = UserConfig()
+    config = UserConfig(model_names=["test-model"])
     config.endpoint = endpoint_config
     config.output = output_config
     return config
 
 
 class TestExporterManager:
-    def test_export(
+    @pytest.mark.asyncio
+    async def test_export(
         self, endpoint_config, output_config, sample_records, mock_user_config
     ):
         mock_exporter_instance = MagicMock()
@@ -45,9 +54,9 @@ class TestExporterManager:
             return_value=[mock_exporter_class],
         ):
             manager = ExporterManager(
-                records=sample_records,
-                user_config=mock_user_config,
+                results=sample_records,
+                input_config=mock_user_config,
             )
-            manager.export()
+            await manager.export_all()
         mock_exporter_class.assert_called_once()
         mock_exporter_instance.export.assert_called_once()

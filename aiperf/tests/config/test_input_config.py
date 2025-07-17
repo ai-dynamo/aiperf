@@ -49,14 +49,14 @@ def test_input_config_custom_values():
     config = InputConfig(
         extra={"key": "value"},
         goodput={"request_latency": 200},
-        header={"Authorization": "Bearer token"},
+        headers={"Authorization": "Bearer token"},
         random_seed=42,
         custom_dataset_type=CustomDatasetType.MULTI_TURN,
     )
 
     assert config.extra == {"key": "value"}
     assert config.goodput == {"request_latency": 200}
-    assert config.header == {"Authorization": "Bearer token"}
+    assert config.headers == {"Authorization": "Bearer token"}
     assert config.file is None
     assert config.random_seed == 42
     assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
