@@ -35,10 +35,8 @@ class CustomDatasetComposer(BaseDatasetComposer):
         Args:
             dataset_type: The type of custom dataset to create.
         """
-        kwargs = {}
+        kwargs = {"filename": self.config.file}
         if dataset_type == CustomDatasetType.MOONCAKE_TRACE:
             kwargs["prompt_generator"] = self.prompt_generator
 
-        self.loader = CustomDatasetFactory.create_instance(
-            dataset_type, self.config.file, **kwargs
-        )
+        self.loader = CustomDatasetFactory.create_instance(dataset_type, **kwargs)
