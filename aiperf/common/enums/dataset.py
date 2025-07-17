@@ -20,7 +20,7 @@ class CustomDatasetType(CaseInsensitiveStrEnum):
     SINGLE_TURN = "single_turn"
     MULTI_TURN = "multi_turn"
     RANDOM_POOL = "random_pool"
-    TRACE = "trace"
+    MOONCAKE_TRACE = "mooncake_trace"
 
 
 class ImageFormat(CaseInsensitiveStrEnum):

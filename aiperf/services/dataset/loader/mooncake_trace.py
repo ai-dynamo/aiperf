@@ -8,15 +8,15 @@ from aiperf.common.dataset_models import Conversation, Text, Turn
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.services.dataset.generator import PromptGenerator
-from aiperf.services.dataset.loader.models import CustomData, TraceCustomData
+from aiperf.services.dataset.loader.models import MooncakeTrace
 
 
-@CustomDatasetFactory.register(CustomDatasetType.TRACE)
-class TraceDatasetLoader:
-    """A dataset loader that loads trace data from a file.
+@CustomDatasetFactory.register(CustomDatasetType.MOONCAKE_TRACE)
+class MooncakeTraceDatasetLoader:
+    """A dataset loader that loads Mooncake trace data from a file.
 
-    Loads trace data (e.g. Mooncake trace) from a file
-    and converts the data into a list of conversations for dataset manager.
+    Loads Mooncake trace data from a file and converts the data into
+    a list of conversations for dataset manager.
 
     Each line in the file represents a single trace entry and will be
     converted to a separate conversation with a unique session ID.
@@ -32,32 +32,32 @@ class TraceDatasetLoader:
         self.filename = filename
         self.prompt_generator = prompt_generator
 
-    def load_dataset(self) -> dict[str, list[CustomData]]:
-        """Load trace data from a file.
+    def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
+        """Load Mooncake trace data from a file.
 
         Returns:
-            A dictionary of session_id and list of trace data.
+            A dictionary of session_id and list of Mooncake trace data.
         """
-        data: dict[str, list[TraceCustomData]] = defaultdict(list)
+        data: dict[str, list[MooncakeTrace]] = defaultdict(list)
 
         with open(self.filename) as f:
             for line in f:
                 if (line := line.strip()) == "":
                     continue  # Skip empty lines
 
-                trace_data = TraceCustomData.model_validate_json(line)
+                trace_data = MooncakeTrace.model_validate_json(line)
                 session_id = str(uuid.uuid4())
                 data[session_id].append(trace_data)
 
         return data
 
     def convert_to_conversations(
-        self, data: dict[str, list[TraceCustomData]]
+        self, data: dict[str, list[MooncakeTrace]]
     ) -> list[Conversation]:
-        """Convert all the trace data to conversations.
+        """Convert all the Mooncake trace data to conversation objects.
 
         Args:
-            data: A dictionary of session_id and list of trace data.
+            data: A dictionary of session_id and list of Mooncake trace data.
 
         Returns:
             A list of conversations.

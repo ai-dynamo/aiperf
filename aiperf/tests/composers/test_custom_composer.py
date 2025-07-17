@@ -9,10 +9,10 @@ from aiperf.common.dataset_models import Conversation, Turn
 from aiperf.common.enums import CustomDatasetType
 from aiperf.services.dataset.composer.custom import CustomDatasetComposer
 from aiperf.services.dataset.loader import (
+    MooncakeTraceDatasetLoader,
     MultiTurnDatasetLoader,
     RandomPoolDatasetLoader,
     SingleTurnDatasetLoader,
-    TraceDatasetLoader,
 )
 
 
@@ -55,7 +55,7 @@ class TestCoreFunctionality:
             (CustomDatasetType.SINGLE_TURN, SingleTurnDatasetLoader),
             (CustomDatasetType.MULTI_TURN, MultiTurnDatasetLoader),
             (CustomDatasetType.RANDOM_POOL, RandomPoolDatasetLoader),
-            (CustomDatasetType.TRACE, TraceDatasetLoader),
+            (CustomDatasetType.MOONCAKE_TRACE, MooncakeTraceDatasetLoader),
         ],
     )
     def test_create_loader_instance_dataset_types(

@@ -326,13 +326,13 @@ class CustomDatasetFactory(
     Example:
     ```python
         # Register a new custom dataset type
-        @CustomDatasetFactory.register(CustomDatasetType.TRACE)
-        class TraceDatasetLoader(CustomDatasetLoader):
+        @CustomDatasetFactory.register(CustomDatasetType.MOONCAKE_TRACE)
+        class MooncakeTraceDatasetLoader(CustomDatasetLoader):
             pass
 
         # Create a new custom dataset loader instance
         custom_dataset_loader = CustomDatasetFactory.create_instance(
-            CustomDatasetType.TRACE, **kwargs
+            CustomDatasetType.MOONCAKE_TRACE, **kwargs
         )
     ```
     """

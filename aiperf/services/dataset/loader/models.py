@@ -88,22 +88,18 @@ class MultiTurnCustomData(BaseModel):
         return self
 
 
-class TraceCustomData(BaseModel):
-    """Defines the schema of each JSONL line in a trace file.
+class MooncakeTrace(BaseModel):
+    """Defines the schema for Mooncake trace data.
+
+    See https://github.com/kvcache-ai/Mooncake for more details.
 
     Example:
-    ```python
-    # SUCCESS
-    json_string = '{"timestamp": 1000, "input_length": 10, "output_length": 4, "hash_ids": [123, 456]}'
-    custom_data = TraceCustomData.model_validate_json(json_string)
-
-    # ERROR: timestamp and session_id (or delay)cannot be set together
-    json_string = '{"timestamp": 1000, "session_id": "12345", "delay": 1000, "input_length": 300, "output_length": 40, "hash_ids": [123, 456]}'
-    custom_data = TraceCustomData.model_validate_json(json_string)  # ERROR
+    ```json
+    {"timestamp": 1000, "input_length": 10, "output_length": 4, "hash_ids": [123, 456]}
     ```
     """
 
-    type: Literal[CustomDatasetType.TRACE] = CustomDatasetType.TRACE
+    type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
 
     input_length: int = Field(..., description="The input sequence length of a request")
     output_length: int = Field(
@@ -114,7 +110,7 @@ class TraceCustomData(BaseModel):
 
 
 CustomData = Annotated[
-    SingleTurnCustomData | TraceCustomData | MultiTurnCustomData,
+    SingleTurnCustomData | MooncakeTrace | MultiTurnCustomData,
     Field(discriminator="type"),
 ]
 """A union type of all custom data types."""

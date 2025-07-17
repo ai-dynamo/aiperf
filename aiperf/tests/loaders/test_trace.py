@@ -6,16 +6,16 @@ from unittest.mock import Mock
 import pytest
 
 from aiperf.common.enums import CustomDatasetType
-from aiperf.services.dataset.loader.models import TraceCustomData
-from aiperf.services.dataset.loader.trace import TraceDatasetLoader
+from aiperf.services.dataset.loader import MooncakeTraceDatasetLoader
+from aiperf.services.dataset.loader.models import MooncakeTrace
 
 
-class TestTraceCustomData:
-    """Basic functionality tests for TraceCustomData model."""
+class TestMooncakeTrace:
+    """Basic functionality tests for MooncakeTrace model."""
 
     def test_create_with_required_fields_only(self):
-        """Test creating TraceCustomData with only required fields."""
-        data = TraceCustomData(
+        """Test creating MooncakeTrace with only required fields."""
+        data = MooncakeTrace(
             input_length=100, output_length=50, hash_ids=[123, 456, 789], timestamp=1000
         )
 
@@ -23,17 +23,17 @@ class TestTraceCustomData:
         assert data.output_length == 50
         assert data.hash_ids == [123, 456, 789]
         assert data.timestamp == 1000
-        assert data.type == CustomDatasetType.TRACE
+        assert data.type == CustomDatasetType.MOONCAKE_TRACE
 
     def test_validation_missing_fields_errors(self):
-        """Test validation errors for TraceCustomData."""
+        """Test validation errors for MooncakeTrace."""
         # Missing required fields
         with pytest.raises(ValueError):
-            TraceCustomData()
+            MooncakeTrace()
 
 
-class TestTraceDatasetLoader:
-    """Basic functionality tests for TraceDatasetLoader."""
+class TestMooncakeTraceDatasetLoader:
+    """Basic functionality tests for MooncakeTraceDatasetLoader."""
 
     @pytest.fixture
     def mock_prompt_generator(self):
@@ -52,7 +52,7 @@ class TestTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = TraceDatasetLoader(filename, mock_prompt_generator)
+        loader = MooncakeTraceDatasetLoader(filename, mock_prompt_generator)
         dataset = loader.load_dataset()
 
         assert isinstance(dataset, dict)
@@ -61,7 +61,7 @@ class TestTraceDatasetLoader:
         # Check that each session has one trace
         for _, traces in dataset.items():
             assert len(traces) == 1
-            assert isinstance(traces[0], TraceCustomData)
+            assert isinstance(traces[0], MooncakeTrace)
 
         traces = list(dataset.values())
         assert traces[0][0].input_length == 100
@@ -85,7 +85,7 @@ class TestTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = TraceDatasetLoader(filename, mock_prompt_generator)
+        loader = MooncakeTraceDatasetLoader(filename, mock_prompt_generator)
         result = loader.load_dataset()
 
         assert len(result) == 2  # Should skip empty line
@@ -100,7 +100,7 @@ class TestTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = TraceDatasetLoader(filename, mock_prompt_generator)
+        loader = MooncakeTraceDatasetLoader(filename, mock_prompt_generator)
         dataset = loader.load_dataset()
 
         traces = list(dataset.values())
@@ -112,7 +112,7 @@ class TestTraceDatasetLoader:
         # Setup trace data
         trace_data = {
             "session-1": [
-                TraceCustomData(
+                MooncakeTrace(
                     input_length=100,
                     output_length=50,
                     hash_ids=[123, 456],
@@ -120,7 +120,7 @@ class TestTraceDatasetLoader:
                 ),
             ],
             "session-2": [
-                TraceCustomData(
+                MooncakeTrace(
                     input_length=200,
                     output_length=100,
                     hash_ids=[111, 222, 333],
@@ -128,7 +128,7 @@ class TestTraceDatasetLoader:
                 )
             ],
             "session-3": [
-                TraceCustomData(
+                MooncakeTrace(
                     input_length=150,
                     output_length=75,
                     hash_ids=[789],
@@ -137,7 +137,7 @@ class TestTraceDatasetLoader:
             ],
         }
 
-        loader = TraceDatasetLoader("dummy.jsonl", mock_prompt_generator)
+        loader = MooncakeTraceDatasetLoader("dummy.jsonl", mock_prompt_generator)
         conversations = loader.convert_to_conversations(trace_data)
 
         assert len(conversations) == 3
@@ -162,7 +162,7 @@ class TestTraceDatasetLoader:
 
     def test_convert_to_conversations_empty_data(self, mock_prompt_generator):
         """Test conversion with empty trace data."""
-        loader = TraceDatasetLoader("dummy.jsonl", mock_prompt_generator)
+        loader = MooncakeTraceDatasetLoader("dummy.jsonl", mock_prompt_generator)
         conversations = loader.convert_to_conversations({})
 
         assert len(conversations) == 0
