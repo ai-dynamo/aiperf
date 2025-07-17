@@ -13,22 +13,53 @@ from aiperf.services.dataset.loader.models import CustomData, SingleTurnCustomDa
 class SingleTurnDatasetLoader:
     """A dataset loader that loads single turn data from a file.
 
-    See `SingleTurnCustomData` for the schema of the data and more details.
+    The single turn type
+      - supports multi-modal data (e.g. text, image, audio)
+      - supports client-side batching for each data (e.g. batch_size > 1)
+      - DOES NOT support multi-turn features (e.g. delay, sessions, etc.)
 
-    Example:
-    1. Single-batch, multi-modal
+    Examples:
+    1. Single-batch, text only
     ```json
-    {"text": "What is in the image?", "image": "/path/to/image.png"}
     {"text": "What is deep learning?"}
     ```
 
-    2. Multi-batch, multi-modal
+    2. Single-batch, multi-modal
+    ```json
+    {"text": "What is in the image?", "image": "/path/to/image.png"}
+    ```
+
+    3. Multi-batch, multi-modal
+    ```json
+    {"text": ["Who are you?", "Hello world"], "image": ["/path/to/image.png", "/path/to/image2.png"]}
+    ```
+
+    4. Fixed schedule version
+    ```json
+    {"timestamp": 0, "text": "What is deep learning?"},
+    {"timestamp": 1000, "text": "Who are you?"},
+    {"timestamp": 2000, "text": "What is AI?"}
+    ```
+
+    5. Time delayed version
+    ```json
+    {"delay": 0, "text": "What is deep learning?"},
+    {"delay": 1234, "text": "Who are you?"}
+    ```
+
+    6. Full-featured version (Multi-batch, multi-modal, multi-fielded)
     ```json
     {
-        "text": ["What is the weather today?", "What is deep learning?"],
-        "image": ["/path/to/image.png", "/path/to/image2.png"],
+        "text": [
+            {"name": "text_field_A", "content": ["Hello", "World"]},
+            {"name": "text_field_B", "content": ["Hi there"]}
+        ],
+        "image": [
+            {"name": "image_field_A", "content": ["/path/1.png", "/path/2.png"]},
+            {"name": "image_field_B", "content": ["/path/3.png"]}
+        ]
     }
-    ```
+    ``
     """
 
     def __init__(self, filename: str):

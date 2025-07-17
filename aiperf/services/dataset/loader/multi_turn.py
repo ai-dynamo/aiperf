@@ -1,42 +1,84 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import uuid
+from collections import defaultdict
+
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-from aiperf.services.dataset.loader.models import CustomData
+from aiperf.services.dataset.loader.models import CustomData, MultiTurnCustomData
 
 
 @CustomDatasetFactory.register(CustomDatasetType.MULTI_TURN)
 class MultiTurnDatasetLoader:
-    """Multi-turn custom dataset.
-
-    User can use this format to provide a custom multi-turn dataset.
-    Each line in the file will be treated as a single turn conversation.
+    """A dataset loader that loads multi-turn data from a file.
 
     The multi-turn type
       - supports multi-modal data (e.g. text, image, audio)
       - supports multi-turn features (e.g. delay, sessions, etc.)
       - supports client-side batching for each data (e.g. batch_size > 1)
 
-    Example:
+    Examples:
     1. Simple version
     ```json
     {
         "session_id": "session_123",
         "turns": [
             {"text": "Hello", "image": "url", "delay": 0},
-            {"text": "Hi there", "delay": 1000},
-        ],
+            {"text": "Hi there", "delay": 1000}
+        ]
     }
     ```
 
-    2. Advanced version
+    2. Batched version
     ```json
     {
         "session_id": "session_123",
         "turns": [
-            {"text": [{"name": "nameA", "content": "..."}, ...], "image": [...], "delay": 0},
-            {"text": [{"name": "nameA", "content": "..."}, ...], "delay": 1000},
+            {"text": ["Who are you?", "Hello world"], "image": ["/path/1.png", "/path/2.png"]},
+            {"text": ["What is in the image?", "What is AI?"], "image": ["/path/3.png", "/path/4.png"]}
+        ]
+    }
+    ```
+
+    3. Fixed schedule version
+    ```json
+    {
+        "session_id": "session_123",
+        "turns": [
+            {"timestamp": 0, "text": "What is deep learning?"},
+            {"timestamp": 1000, "text": "Who are you?"}
+        ]
+    }
+    ```
+
+    4. Time delayed version
+    ```json
+    {
+        "session_id": "session_123",
+        "turns": [
+            {"delay": 0, "text": "What is deep learning?"},
+            {"delay": 1000, "text": "Who are you?"}
+        ]
+    }
+    ```
+
+    5. full-featured version (multi-batch, multi-modal, multi-fielded, session-based, etc.)
+    ```json
+    {
+        "session_id": "session_123",
+        "turns": [
+            {
+                "timestamp": 1234,
+                "text": [
+                    {"name": "text_field_a", "content": ["hello", "world"]},
+                    {"name": "text_field_b", "content": ["hi there"]}
+                ],
+                "image": [
+                    {"name": "image_field_a", "content": ["/path/1.png", "/path/2.png"]},
+                    {"name": "image_field_b", "content": ["/path/3.png"]}
+                ]
+            }
         ]
     }
     ```
@@ -46,4 +88,23 @@ class MultiTurnDatasetLoader:
         self.filename = filename
 
     def load_dataset(self) -> dict[str, list[CustomData]]:
-        raise NotImplementedError
+        """Load multi-turn data from a JSONL file.
+
+        Each line represents a complete multi-turn conversation with its own
+        session_id and multiple turns.
+
+        Returns:
+            A dictionary mapping session_id to list of CustomData (containing the MultiTurnCustomData).
+        """
+        data: dict[str, list[CustomData]] = defaultdict(list)
+
+        with open(self.filename) as f:
+            for line in f:
+                if (line := line.strip()) == "":
+                    continue  # Skip empty lines
+
+                multi_turn_data = MultiTurnCustomData.model_validate_json(line)
+                session_id = multi_turn_data.session_id or str(uuid.uuid4())
+                data[session_id].append(multi_turn_data)
+
+        return data
