@@ -4,6 +4,7 @@
 Tests for the timing manager service.
 """
 
+import json
 from io import StringIO
 from unittest.mock import patch
 
@@ -74,7 +75,9 @@ class _TestTimingManager(BaseTestComponentService):
 
         # Mock the open function when called with that specific path
         # Use patch to replace the built-in open function
-        with patch("builtins.open", return_value=StringIO(str(mock_timing_data))):
+        with patch(
+            "builtins.open", return_value=StringIO(json.dumps(mock_timing_data))
+        ):
             service = await async_fixture(initialized_service)
 
             # Configure the service
