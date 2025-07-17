@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import json
+
 import pytest
 
 from aiperf.common.dataset_models import Image, Text
@@ -133,13 +135,15 @@ class TestMultiTurnDatasetLoader:
     def test_load_simple_conversation(self, create_jsonl_file):
         """Test loading a simple multi-turn conversation."""
         content = [
-            """{
-                "session_id": "conv_001",
-                "turns": [
-                    {"text": "Hello, how are you?"},
-                    {"text": "I'm doing well, thanks!", "delay": 1000}
-                ]
-            }"""
+            json.dumps(
+                {
+                    "session_id": "conv_001",
+                    "turns": [
+                        {"text": "Hello, how are you?"},
+                        {"text": "I'm doing well, thanks!", "delay": 1000},
+                    ],
+                }
+            )
         ]
         filename = create_jsonl_file(content)
 
@@ -159,19 +163,23 @@ class TestMultiTurnDatasetLoader:
     def test_load_multiple_conversations(self, create_jsonl_file):
         """Test loading multiple conversations from file."""
         content = [
-            """{
-                "session_id": "session_A",
-                "turns": [
-                    {"text": "First conversation start"}
-                ]
-            }""",
-            """{
-                "session_id": "session_B",
-                "turns": [
-                    {"text": "Second conversation start"},
-                    {"text": "Second conversation continues", "delay": 2000}
-                ]
-            }""",
+            json.dumps(
+                {
+                    "session_id": "session_A",
+                    "turns": [
+                        {"text": "First conversation start"},
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "session_id": "session_B",
+                    "turns": [
+                        {"text": "Second conversation start"},
+                        {"text": "Second conversation continues", "delay": 2000},
+                    ],
+                }
+            ),
         ]
         filename = create_jsonl_file(content)
 
@@ -187,12 +195,14 @@ class TestMultiTurnDatasetLoader:
     def test_load_conversation_without_session_id(self, create_jsonl_file):
         """Test loading conversation without explicit session_id generates UUID."""
         content = [
-            """{
-                "turns": [
-                    {"text": "Anonymous conversation"},
-                    {"text": "Should get auto-generated session_id"}
-                ]
-            }"""
+            json.dumps(
+                {
+                    "turns": [
+                        {"text": "Anonymous conversation"},
+                        {"text": "Should get auto-generated session_id"},
+                    ]
+                }
+            )
         ]
         filename = create_jsonl_file(content)
 
@@ -211,20 +221,22 @@ class TestMultiTurnDatasetLoader:
     def test_load_multimodal_conversation(self, create_jsonl_file):
         """Test loading conversation with multimodal content."""
         content = [
-            """{
-                "session_id": "multimodal_chat",
-                "turns": [
-                    {
-                        "text": "What do you see?",
-                        "image": "/path/to/image.jpg"
-                    },
-                    {
-                        "text": "Can you hear this?",
-                        "audio": "/path/to/sound.wav",
-                        "delay": 3000
-                    }
-                ]
-            }"""
+            json.dumps(
+                {
+                    "session_id": "multimodal_chat",
+                    "turns": [
+                        {
+                            "text": "What do you see?",
+                            "image": "/path/to/image.jpg",
+                        },
+                        {
+                            "text": "Can you hear this?",
+                            "audio": "/path/to/sound.wav",
+                            "delay": 3000,
+                        },
+                    ],
+                }
+            )
         ]
         filename = create_jsonl_file(content)
 
@@ -241,14 +253,16 @@ class TestMultiTurnDatasetLoader:
     def test_load_scheduled_conversation(self, create_jsonl_file):
         """Test loading conversation with timestamp scheduling."""
         content = [
-            """{
-                "session_id": "scheduled_chat",
-                "turns": [
-                    {"text": "Message at start", "timestamp": 0},
-                    {"text": "Message after 5 seconds", "timestamp": 5000},
-                    {"text": "Final message", "timestamp": 10000}
-                ]
-            }"""
+            json.dumps(
+                {
+                    "session_id": "scheduled_chat",
+                    "turns": [
+                        {"text": "Message at start", "timestamp": 0},
+                        {"text": "Message after 5 seconds", "timestamp": 5000},
+                        {"text": "Final message", "timestamp": 10000},
+                    ],
+                }
+            )
         ]
         filename = create_jsonl_file(content)
 
@@ -262,19 +276,21 @@ class TestMultiTurnDatasetLoader:
     def test_load_batched_conversation(self, create_jsonl_file):
         """Test loading conversation with batched content."""
         content = [
-            """{
-                "session_id": "batched_chat",
-                "turns": [
-                    {
-                        "text": ["Hello", "How are you?"],
-                        "image": ["/img1.png", "/img2.png"]
-                    },
-                    {
-                        "text": ["Fine", "Thanks"],
-                        "delay": 1500
-                    }
-                ]
-            }"""
+            json.dumps(
+                {
+                    "session_id": "batched_chat",
+                    "turns": [
+                        {
+                            "text": ["Hello", "How are you?"],
+                            "image": ["/img1.png", "/img2.png"],
+                        },
+                        {
+                            "text": ["Fine", "Thanks"],
+                            "delay": 1500,
+                        },
+                    ],
+                }
+            )
         ]
         filename = create_jsonl_file(content)
 
@@ -289,22 +305,27 @@ class TestMultiTurnDatasetLoader:
     def test_load_full_featured_conversation(self, create_jsonl_file):
         """Test loading conversation with full-featured format."""
         content = [
-            """{
-                "session_id": "full_featured_chat",
-                "turns": [
-                    {
-                        "text": [
-                            {"name": "user_query", "content": ["Analyze this data"]},
-                            {"name": "user_context", "content": ["Be thorough"]}
-                        ],
-                        "image": [
-                            {"name": "dataset_viz", "content": ["/chart.png"]},
-                            {"name": "raw_data", "content": ["/data.png"]}
-                        ],
-                        "timestamp": 1000
-                    }
-                ]
-            }"""
+            json.dumps(
+                {
+                    "session_id": "full_featured_chat",
+                    "turns": [
+                        {
+                            "text": [
+                                {
+                                    "name": "user_query",
+                                    "content": ["Analyze this data"],
+                                },
+                                {"name": "user_context", "content": ["Be thorough"]},
+                            ],
+                            "image": [
+                                {"name": "dataset_viz", "content": ["/chart.png"]},
+                                {"name": "raw_data", "content": ["/data.png"]},
+                            ],
+                            "timestamp": 1000,
+                        },
+                    ],
+                }
+            )
         ]
         filename = create_jsonl_file(content)
 
@@ -324,15 +345,19 @@ class TestMultiTurnDatasetLoader:
     def test_load_dataset_skips_empty_lines(self, create_jsonl_file):
         """Test that empty lines are skipped during loading."""
         content = [
-            """{
-                "session_id": "test_empty_lines",
-                "turns": [{"text": "First"}]
-            }""",
+            json.dumps(
+                {
+                    "session_id": "test_empty_lines",
+                    "turns": [{"text": "First"}],
+                }
+            ),
             "",  # Empty line
-            """{
-                "session_id": "test_empty_lines_2",
-                "turns": [{"text": "Second"}]
-            }""",
+            json.dumps(
+                {
+                    "session_id": "test_empty_lines_2",
+                    "turns": [{"text": "Second"}],
+                }
+            ),
         ]
         filename = create_jsonl_file(content)
 
@@ -346,14 +371,18 @@ class TestMultiTurnDatasetLoader:
     def test_load_duplicate_session_ids_are_grouped(self, create_jsonl_file):
         """Test that multiple conversations with same session_id are grouped together."""
         content = [
-            """{
-                "session_id": "shared_session",
-                "turns": [{"text": "First conversation"}]
-            }""",
-            """{
-                "session_id": "shared_session",
-                "turns": [{"text": "Second conversation"}]
-            }""",
+            json.dumps(
+                {
+                    "session_id": "shared_session",
+                    "turns": [{"text": "First conversation"}],
+                }
+            ),
+            json.dumps(
+                {
+                    "session_id": "shared_session",
+                    "turns": [{"text": "Second conversation"}],
+                }
+            ),
         ]
         filename = create_jsonl_file(content)
 

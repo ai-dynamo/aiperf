@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import json
+
 import pytest
 
 from aiperf.common.dataset_models import Image, Text
@@ -112,23 +114,23 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        assert isinstance(result, dict)
-        assert len(result) == 2
+        assert isinstance(dataset, dict)
+        assert len(dataset) == 2
 
-        # Check that each session has one turn
-        for _, turns in result.items():
+        # Check that each session has single turn
+        for _, turns in dataset.items():
             assert len(turns) == 1
 
-        data1, data2 = list(result.values())
-        assert data1.text == "What is deep learning?"
-        assert data1.image is None
-        assert data1.audio is None
+        turn1, turn2 = list(dataset.values())
+        assert turn1[0].text == "What is deep learning?"
+        assert turn1[0].image is None
+        assert turn1[0].audio is None
 
-        assert data2.text == "What is in the image?"
-        assert data2.image == "/path/to/image.png"
-        assert data2.audio is None
+        assert turn2[0].text == "What is in the image?"
+        assert turn2[0].image == "/path/to/image.png"
+        assert turn2[0].audio is None
 
     def test_load_dataset_skips_empty_lines(self, create_jsonl_file):
         """Test that empty lines are skipped."""
@@ -147,25 +149,25 @@ class TestSingleTurnDatasetLoader:
     def test_load_dataset_with_batched_inputs(self, create_jsonl_file):
         """Test loading dataset with batched inputs."""
         content = [
-            '{"text": ["What is the weather?", "What is AI?"], "image": ["/path/1.png", "/path/2.png"]}'
-            '{"text": ["Summarize the podcast", "What is audio about?"], "audio": ["/path/3.wav", "/path/4.wav"]}'
+            '{"text": ["What is the weather?", "What is AI?"], "image": ["/path/1.png", "/path/2.png"]}',
+            '{"text": ["Summarize the podcast", "What is audio about?"], "audio": ["/path/3.wav", "/path/4.wav"]}',
         ]
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
         # Check that there are two sessions
-        assert len(result) == 2
+        assert len(dataset) == 2
 
-        data1, data2 = list(result.values())
-        assert data1.text == ["What is the weather?", "What is AI?"]
-        assert data1.image == ["/path/1.png", "/path/2.png"]
-        assert data1.audio is None
+        turn1, turn2 = list(dataset.values())
+        assert turn1[0].text == ["What is the weather?", "What is AI?"]
+        assert turn1[0].image == ["/path/1.png", "/path/2.png"]
+        assert turn1[0].audio is None
 
-        assert data2.text == ["Summarize the podcast", "What is audio about?"]
-        assert data2.image is None
-        assert data2.audio == ["/path/3.wav", "/path/4.wav"]
+        assert turn2[0].text == ["Summarize the podcast", "What is audio about?"]
+        assert turn2[0].image is None
+        assert turn2[0].audio == ["/path/3.wav", "/path/4.wav"]
 
     def test_load_dataset_with_timestamp(self, create_jsonl_file):
         """Test loading dataset with timestamp field."""
@@ -176,18 +178,18 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        assert len(result) == 2
+        assert len(dataset) == 2
 
-        data1, data2 = list(result.values())
-        assert data1.text == "What is deep learning?"
-        assert data1.timestamp == 1000
-        assert data1.delay is None
+        turn1, turn2 = list(dataset.values())
+        assert turn1[0].text == "What is deep learning?"
+        assert turn1[0].timestamp == 1000
+        assert turn1[0].delay is None
 
-        assert data2.text == "Who are you?"
-        assert data2.timestamp == 2000
-        assert data2.delay is None
+        assert turn2[0].text == "Who are you?"
+        assert turn2[0].timestamp == 2000
+        assert turn2[0].delay is None
 
     def test_load_dataset_with_delay(self, create_jsonl_file):
         """Test loading dataset with delay field."""
@@ -198,52 +200,57 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        assert len(result) == 2
+        assert len(dataset) == 2
 
-        data1, data2 = list(result.values())
-        assert data1.text == "What is deep learning?"
-        assert data1.delay == 0
-        assert data1.timestamp is None
+        turn1, turn2 = list(dataset.values())
+        assert turn1[0].text == "What is deep learning?"
+        assert turn1[0].delay == 0
+        assert turn1[0].timestamp is None
 
-        assert data2.text == "Who are you?"
-        assert data2.delay == 1234
-        assert data2.timestamp is None
+        assert turn2[0].text == "Who are you?"
+        assert turn2[0].delay == 1234
+        assert turn2[0].timestamp is None
 
     def test_load_dataset_with_full_featured_version(self, create_jsonl_file):
         """Test loading dataset with full-featured version."""
 
         content = [
-            """{
-                "text": [
-                    {"name": "text_field_A", "content": ["Hello", "World"]},
-                    {"name": "text_field_B", "content": ["Hi there"]}
-                ],
-                "image": [
-                    {"name": "image_field_A", "content": ["/path/1.png", "/path/2.png"]},
-                    {"name": "image_field_B", "content": ["/path/3.png"]}
-                ]
-            }"""
+            json.dumps(
+                {
+                    "text": [
+                        {"name": "text_field_A", "content": ["Hello", "World"]},
+                        {"name": "text_field_B", "content": ["Hi there"]},
+                    ],
+                    "image": [
+                        {
+                            "name": "image_field_A",
+                            "content": ["/path/1.png", "/path/2.png"],
+                        },
+                        {"name": "image_field_B", "content": ["/path/3.png"]},
+                    ],
+                }
+            )
         ]
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        assert len(result) == 1
+        assert len(dataset) == 1
 
-        data = list(result.values())[0]
-        assert len(data.text) == 2
-        assert len(data.image) == 2
-        assert data.audio is None
+        turn = list(dataset.values())[0]
+        assert len(turn[0].text) == 2
+        assert len(turn[0].image) == 2
+        assert turn[0].audio is None
 
-        assert data.text[0].name == "text_field_A"
-        assert data.text[0].content == ["Hello", "World"]
-        assert data.text[1].name == "text_field_B"
-        assert data.text[1].content == ["Hi there"]
+        assert turn[0].text[0].name == "text_field_A"
+        assert turn[0].text[0].content == ["Hello", "World"]
+        assert turn[0].text[1].name == "text_field_B"
+        assert turn[0].text[1].content == ["Hi there"]
 
-        assert data.image[0].name == "image_field_A"
-        assert data.image[0].content == ["/path/1.png", "/path/2.png"]
-        assert data.image[1].name == "image_field_B"
-        assert data.image[1].content == ["/path/3.png"]
+        assert turn[0].image[0].name == "image_field_A"
+        assert turn[0].image[0].content == ["/path/1.png", "/path/2.png"]
+        assert turn[0].image[1].name == "image_field_B"
+        assert turn[0].image[1].content == ["/path/3.png"]
