@@ -154,7 +154,7 @@ class ServiceDefaults:
     VERBOSE = False
     EXTRA_VERBOSE = False
     LOG_PATH = None
-    DISABLE_UI = False
+    DISABLE_UI = True  # TODO: Make this False by default once we have a UI
     ENABLE_UVLOOP = True
     RESULT_PARSER_SERVICE_COUNT = 2
     ENABLE_YAPPI = False

@@ -69,9 +69,6 @@ class AioHttpClientMixin:
         self.logger.debug("Sending POST request to %s", url)
 
         record: RequestRecord = RequestRecord(
-            conversation_id="test-conversation",
-            turn_index=0,
-            model_name=self.model_endpoint.primary_model_name,
             start_perf_ns=time.perf_counter_ns(),
         )
 
