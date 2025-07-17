@@ -15,7 +15,7 @@ class MeasurementConfig(BaseConfig):
     A configuration class for defining top-level measurement settings.
     """
 
-    _GROUP_NAME = "Not Implemented"  # "Measurement"
+    _GROUP_NAME = "Measurement"
 
     # TODO: Not implemented yet
     measurement_interval: Annotated[

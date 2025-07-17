@@ -75,7 +75,7 @@ class ImageDefaults:
     WIDTH_STDDEV = 0.0
     HEIGHT_MEAN = 0.0
     HEIGHT_STDDEV = 0.0
-    FORMAT = ImageFormat.PNG  # TODO: GenAI-Perf was RANDOM default?
+    FORMAT = ImageFormat.PNG
 
 
 @dataclass(frozen=True)

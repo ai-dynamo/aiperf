@@ -13,7 +13,6 @@ from aiperf.common.config.config_validators import (
 from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
 from aiperf.common.config.input.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-from aiperf.common.config.measurement_config import MeasurementConfig
 from aiperf.common.config.output.output_config import OutputConfig
 from aiperf.common.config.tokenizer.tokenizer_config import TokenizerConfig
 
@@ -75,9 +74,9 @@ class UserConfig(BaseConfig):
         ),
     ] = LoadGeneratorConfig()
 
-    measurement: Annotated[
-        MeasurementConfig,
-        Field(
-            description="Measurement configuration",
-        ),
-    ] = MeasurementConfig()
+    # measurement: Annotated[
+    #     MeasurementConfig,
+    #     Field(
+    #         description="Measurement configuration",
+    #     ),
+    # ] = MeasurementConfig()
