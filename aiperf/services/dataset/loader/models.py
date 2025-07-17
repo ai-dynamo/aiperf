@@ -3,13 +3,14 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, model_validator
 
-from aiperf.common.dataset_models import Audio, Image, Text
+from aiperf.common.dataset_models import Audio, Image, Text, Turn
 from aiperf.common.enums import CustomDatasetType
+from aiperf.common.pydantic_utils import AIPerfBaseModel
 
 
-class SingleTurn(BaseModel):
+class SingleTurn(Turn):
     """Defines the schema for single-turn data.
 
     User can use this format to quickly provide a custom single turn dataset.
@@ -35,15 +36,6 @@ class SingleTurn(BaseModel):
         None,
         description="Audio content - supports simple strings, lists of strings, or named modality format",
     )
-    role: str | None = Field(
-        None, description="Role of the turn (e.g., 'user', 'assistant')"
-    )
-    delay: int | None = Field(
-        None, description="Delay in milliseconds before sending this turn"
-    )
-    timestamp: int | None = Field(
-        None, description="Timestamp of the turn in milliseconds"
-    )
 
     @model_validator(mode="after")
     def validate_at_least_one_modality(self) -> "SingleTurn":
@@ -62,7 +54,7 @@ class SingleTurn(BaseModel):
         return self
 
 
-class MultiTurn(BaseModel):
+class MultiTurn(AIPerfBaseModel):
     """Defines the schema for multi-turn conversations.
 
     The multi-turn custom dataset
@@ -88,7 +80,7 @@ class MultiTurn(BaseModel):
         return self
 
 
-class MooncakeTrace(BaseModel):
+class MooncakeTrace(AIPerfBaseModel):
     """Defines the schema for Mooncake trace data.
 
     See https://github.com/kvcache-ai/Mooncake for more details.
