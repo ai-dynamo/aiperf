@@ -59,7 +59,7 @@ class SingleTurnDatasetLoader:
             {"name": "image_field_B", "content": ["/path/3.png"]}
         ]
     }
-    ``
+    ```
     """
 
     def __init__(self, filename: str):
