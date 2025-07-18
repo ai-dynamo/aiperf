@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import Field
 
-from aiperf.common.models import AIPerfBaseModel
+from aiperf.common.models.base_models import AIPerfBaseModel
 
 
 class ErrorDetails(AIPerfBaseModel):
