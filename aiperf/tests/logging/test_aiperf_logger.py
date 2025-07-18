@@ -19,7 +19,7 @@ from aiperf.common.aiperf_logger import (
     AIPerfLogger,
 )
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums.timing import CreditPhase
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import RequestRecord, TextResponse
 
 
