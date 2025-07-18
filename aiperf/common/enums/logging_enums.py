@@ -11,7 +11,7 @@ from aiperf.common.aiperf_logger import (
     _TRACE,
     _WARNING,
 )
-from aiperf.common.enums.base import CaseInsensitiveStrEnum
+from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
 class AIPerfLogLevel(CaseInsensitiveStrEnum):

@@ -10,7 +10,7 @@ from aiperf.common.config import (
     UserConfig,
 )
 from aiperf.common.config.config_defaults import EndPointDefaults
-from aiperf.common.enums.endpoints import EndpointType
+from aiperf.common.enums import EndpointType
 
 
 def test_user_config_serialization_to_file():

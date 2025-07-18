@@ -3,7 +3,7 @@
 
 from enum import Enum, auto
 
-from aiperf.common.enums.base import CaseInsensitiveStrEnum
+from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
 class MetricTimeType(CaseInsensitiveStrEnum):
