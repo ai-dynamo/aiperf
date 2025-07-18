@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from aiperf.common.hooks import AIPerfHook, aiperf_task
-from aiperf.common.mixins.aiperf_task_mixin import AIPerfTaskMixin
+from aiperf.common.mixins import AIPerfTaskMixin
 
 
 class ExampleTaskClass(AIPerfTaskMixin):

@@ -12,7 +12,7 @@ from aiperf.common.hooks import (
     on_start,
     supports_hooks,
 )
-from aiperf.common.mixins.hooks_mixin import HooksMixin
+from aiperf.common.mixins import HooksMixin
 
 
 @supports_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_CLEANUP)

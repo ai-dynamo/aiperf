@@ -58,7 +58,7 @@ Hooks can be defined and used by the same class
 ```python
 import asyncio
 from aiperf.common.hooks import supports_hooks, on_init, on_cleanup, AIPerfHook
-from aiperf.common.mixins.hooks_mixin import HooksMixin
+from aiperf.common.mixins import HooksMixin
 
 
 @supports_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_CLEANUP)
@@ -103,7 +103,7 @@ Hooks can also be used to call additional functionality defined in subclasses. B
 
 ```python
 from aiperf.common.hooks import supports_hooks, on_init, on_cleanup, AIPerfHook
-from aiperf.common.mixins.hooks_mixin import HooksMixin
+from aiperf.common.mixins import HooksMixin
 
 
 @supports_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_CLEANUP)
@@ -403,7 +403,7 @@ To use `@aiperf_task` decorated methods, your class must inherit from `AIPerfTas
 
 ```python
 from aiperf.common.hooks import aiperf_task
-from aiperf.common.mixins.aiperf_task_mixin import AIPerfTaskMixin
+from aiperf.common.mixins import AIPerfTaskMixin
 import asyncio
 
 
