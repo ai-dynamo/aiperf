@@ -5,12 +5,12 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
-from aiperf.common.dataset_models import Audio, Image, Text, Turn
+from aiperf.common.dataset_models import Audio, Image, Text
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.pydantic_utils import AIPerfBaseModel
 
 
-class SingleTurn(Turn):
+class SingleTurn(AIPerfBaseModel):
     """Defines the schema for single-turn data.
 
     User can use this format to quickly provide a custom single turn dataset.
@@ -24,33 +24,50 @@ class SingleTurn(Turn):
 
     type: Literal[CustomDatasetType.SINGLE_TURN] = CustomDatasetType.SINGLE_TURN
 
-    text: str | list[str] | list[Text] | None = Field(
+    text: str | None = Field(None, description="Simple text string content")
+    texts: list[str] | list[Text] | None = Field(
         None,
-        description="Text content - supports simple strings, lists of strings, or named modality format",
+        description="List of text strings or Text objects format",
     )
-    image: str | list[str] | list[Image] | None = Field(
+    image: str | None = Field(None, description="Simple image string content")
+    images: list[str] | list[Image] | None = Field(
         None,
-        description="Image content - supports simple strings, lists of strings, or named modality format",
+        description="List of image strings or Image objects format",
     )
-    audio: str | list[str] | list[Audio] | None = Field(
+    audio: str | None = Field(None, description="Simple audio string content")
+    audios: list[str] | list[Audio] | None = Field(
         None,
-        description="Audio content - supports simple strings, lists of strings, or named modality format",
+        description="List of audio strings or Audio objects format",
     )
+    timestamp: int | None = Field(
+        default=None, description="Timestamp of the turn in milliseconds."
+    )
+    delay: int | None = Field(
+        default=None,
+        description="Amount of milliseconds to wait before sending the turn.",
+    )
+    role: str | None = Field(default=None, description="Role of the turn.")
+
+    @model_validator(mode="after")
+    def validate_mutually_exclusive_fields(self) -> "SingleTurn":
+        """Ensure mutually exclusive fields are not set together"""
+        if self.text and self.texts:
+            raise ValueError("text and texts cannot be set together")
+        if self.image and self.images:
+            raise ValueError("image and images cannot be set together")
+        if self.audio and self.audios:
+            raise ValueError("audio and audios cannot be set together")
+        if self.timestamp and self.delay:
+            raise ValueError("timestamp and delay cannot be set together")
+        return self
 
     @model_validator(mode="after")
     def validate_at_least_one_modality(self) -> "SingleTurn":
         """Ensure at least one modality is provided"""
-        if not any([self.text, self.image, self.audio]):
-            raise ValueError(
-                "At least one modality (text, image, or audio) must be provided"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def validate_mutually_exclusive_fields(self) -> "SingleTurn":
-        """Ensure timestamp and delay cannot be set together"""
-        if self.timestamp and self.delay:
-            raise ValueError("timestamp and delay cannot be set together")
+        if not any(
+            [self.text, self.texts, self.image, self.images, self.audio, self.audios]
+        ):
+            raise ValueError("At least one modality must be provided")
         return self
 
 

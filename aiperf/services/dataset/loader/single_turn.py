@@ -31,7 +31,7 @@ class SingleTurnDatasetLoader:
 
     3. Multi-batch, multi-modal
     ```json
-    {"text": ["Who are you?", "Hello world"], "image": ["/path/to/image.png", "/path/to/image2.png"]}
+    {"texts": ["Who are you?", "Hello world"], "images": ["/path/to/image.png", "/path/to/image2.png"]}
     ```
 
     4. Fixed schedule version
@@ -50,11 +50,11 @@ class SingleTurnDatasetLoader:
     6. Full-featured version (Multi-batch, multi-modal, multi-fielded)
     ```json
     {
-        "text": [
+        "texts": [
             {"name": "text_field_A", "content": ["Hello", "World"]},
             {"name": "text_field_B", "content": ["Hi there"]}
         ],
-        "image": [
+        "images": [
             {"name": "image_field_A", "content": ["/path/1.png", "/path/2.png"]},
             {"name": "image_field_B", "content": ["/path/3.png"]}
         ]

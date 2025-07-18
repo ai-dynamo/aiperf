@@ -18,6 +18,10 @@ class MultiTurnDatasetLoader:
       - supports multi-turn features (e.g. delay, sessions, etc.)
       - supports client-side batching for each data (e.g. batch_size > 1)
 
+    NOTE: If the user specifies multiple multi-turn entries with same session ID,
+    the loader will group them together. If the timestamps are specified, they will
+    be sorted in ascending order later in the timing manager.
+
     Examples:
     1. Simple version
     ```json
@@ -35,8 +39,8 @@ class MultiTurnDatasetLoader:
     {
         "session_id": "session_123",
         "turns": [
-            {"text": ["Who are you?", "Hello world"], "image": ["/path/1.png", "/path/2.png"]},
-            {"text": ["What is in the image?", "What is AI?"], "image": ["/path/3.png", "/path/4.png"]}
+            {"texts": ["Who are you?", "Hello world"], "images": ["/path/1.png", "/path/2.png"]},
+            {"texts": ["What is in the image?", "What is AI?"], "images": ["/path/3.png", "/path/4.png"]}
         ]
     }
     ```
@@ -70,11 +74,11 @@ class MultiTurnDatasetLoader:
         "turns": [
             {
                 "timestamp": 1234,
-                "text": [
+                "texts": [
                     {"name": "text_field_a", "content": ["hello", "world"]},
                     {"name": "text_field_b", "content": ["hi there"]}
                 ],
-                "image": [
+                "images": [
                     {"name": "image_field_a", "content": ["/path/1.png", "/path/2.png"]},
                     {"name": "image_field_b", "content": ["/path/3.png"]}
                 ]

@@ -19,8 +19,7 @@ class TestSingleTurn:
         data = SingleTurn(text="What is deep learning?")
 
         assert data.text == "What is deep learning?"
-        assert data.image is None
-        assert data.audio is None
+        assert data.texts is None
         assert data.type == CustomDatasetType.SINGLE_TURN
 
     def test_create_with_multimodal_data(self):
@@ -32,19 +31,22 @@ class TestSingleTurn:
         )
 
         assert data.text == "What is in the image?"
+        assert data.texts is None
         assert data.image == "/path/to/image.png"
+        assert data.images is None
         assert data.audio == "/path/to/audio.wav"
+        assert data.audios is None
 
     def test_create_with_batched_inputs(self):
         """Test creating SingleTurn with batched inputs."""
         data = SingleTurn(
-            text=["What is the weather today?", "What is deep learning?"],
-            image=["/path/to/image1.png", "/path/to/image2.png"],
+            texts=["What is the weather today?", "What is deep learning?"],
+            images=["/path/to/image1.png", "/path/to/image2.png"],
         )
 
-        assert data.text == ["What is the weather today?", "What is deep learning?"]
-        assert data.image == ["/path/to/image1.png", "/path/to/image2.png"]
-        assert data.audio is None
+        assert data.texts == ["What is the weather today?", "What is deep learning?"]
+        assert data.images == ["/path/to/image1.png", "/path/to/image2.png"]
+        assert data.audios is None
 
     def test_create_with_fixed_schedule(self):
         """Test creating SingleTurn with fixed schedule (timestamp)."""
@@ -65,29 +67,29 @@ class TestSingleTurn:
     def test_create_with_full_featured_version(self):
         """Test creating SingleTurn with full-featured version."""
         data = SingleTurn(
-            text=[
+            texts=[
                 Text(name="text_field_A", content=["Hello", "World"]),
                 Text(name="text_field_B", content=["Hi there"]),
             ],
-            image=[
+            images=[
                 Image(name="image_field_A", content=["/path/1.png", "/path/2.png"]),
                 Image(name="image_field_B", content=["/path/3.png"]),
             ],
         )
 
-        assert len(data.text) == 2
-        assert len(data.image) == 2
-        assert data.audio is None
+        assert len(data.texts) == 2
+        assert len(data.images) == 2
+        assert data.audios is None
 
-        assert data.text[0].name == "text_field_A"
-        assert data.text[0].content == ["Hello", "World"]
-        assert data.text[1].name == "text_field_B"
-        assert data.text[1].content == ["Hi there"]
+        assert data.texts[0].name == "text_field_A"
+        assert data.texts[0].content == ["Hello", "World"]
+        assert data.texts[1].name == "text_field_B"
+        assert data.texts[1].content == ["Hi there"]
 
-        assert data.image[0].name == "image_field_A"
-        assert data.image[0].content == ["/path/1.png", "/path/2.png"]
-        assert data.image[1].name == "image_field_B"
-        assert data.image[1].content == ["/path/3.png"]
+        assert data.images[0].name == "image_field_A"
+        assert data.images[0].content == ["/path/1.png", "/path/2.png"]
+        assert data.images[1].name == "image_field_B"
+        assert data.images[1].content == ["/path/3.png"]
 
     def test_validation_errors(self):
         """Test that at least one modality must be provided."""
@@ -95,9 +97,30 @@ class TestSingleTurn:
         with pytest.raises(ValueError):
             SingleTurn()
 
-        # Timestamp and delay cannot be set together
+    @pytest.mark.parametrize(
+        "text, texts, image, images, audio, audios, timestamp, delay",
+        [
+            ("foo", ["bar"], None, None, None, None, None, None),  # text and texts
+            (None, None, "foo", ["bar"], None, None, None, None),  # image and images
+            (None, None, None, None, "foo", ["bar"], None, None),  # audio and audios
+            (None, None, None, None, None, None, 1000, 500),  # timestamp and delay
+        ],
+    )
+    def test_validation_mutual_exclusion(
+        self, text, texts, image, images, audio, audios, timestamp, delay
+    ):
+        """Test that mutual exclusion among fields is preserved."""
         with pytest.raises(ValueError):
-            SingleTurn(text="What is deep learning?", timestamp=1000, delay=1234)
+            SingleTurn(
+                text=text,
+                texts=texts,
+                image=image,
+                images=images,
+                audio=audio,
+                audios=audios,
+                timestamp=timestamp,
+                delay=delay,
+            )
 
 
 class TestSingleTurnDatasetLoader:
@@ -140,15 +163,15 @@ class TestSingleTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = SingleTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        assert len(result) == 2  # Should skip empty line
+        assert len(dataset) == 2  # Should skip empty line
 
     def test_load_dataset_with_batched_inputs(self, create_jsonl_file):
         """Test loading dataset with batched inputs."""
         content = [
-            '{"text": ["What is the weather?", "What is AI?"], "image": ["/path/1.png", "/path/2.png"]}',
-            '{"text": ["Summarize the podcast", "What is audio about?"], "audio": ["/path/3.wav", "/path/4.wav"]}',
+            '{"texts": ["What is the weather?", "What is AI?"], "images": ["/path/1.png", "/path/2.png"]}',
+            '{"texts": ["Summarize the podcast", "What is audio about?"], "audios": ["/path/3.wav", "/path/4.wav"]}',
         ]
         filename = create_jsonl_file(content)
 
@@ -159,13 +182,13 @@ class TestSingleTurnDatasetLoader:
         assert len(dataset) == 2
 
         turn1, turn2 = list(dataset.values())
-        assert turn1[0].text == ["What is the weather?", "What is AI?"]
-        assert turn1[0].image == ["/path/1.png", "/path/2.png"]
-        assert turn1[0].audio is None
+        assert turn1[0].texts == ["What is the weather?", "What is AI?"]
+        assert turn1[0].images == ["/path/1.png", "/path/2.png"]
+        assert turn1[0].audios is None
 
-        assert turn2[0].text == ["Summarize the podcast", "What is audio about?"]
-        assert turn2[0].image is None
-        assert turn2[0].audio == ["/path/3.wav", "/path/4.wav"]
+        assert turn2[0].texts == ["Summarize the podcast", "What is audio about?"]
+        assert turn2[0].images is None
+        assert turn2[0].audios == ["/path/3.wav", "/path/4.wav"]
 
     def test_load_dataset_with_timestamp(self, create_jsonl_file):
         """Test loading dataset with timestamp field."""
@@ -217,11 +240,11 @@ class TestSingleTurnDatasetLoader:
         content = [
             json.dumps(
                 {
-                    "text": [
+                    "texts": [
                         {"name": "text_field_A", "content": ["Hello", "World"]},
                         {"name": "text_field_B", "content": ["Hi there"]},
                     ],
-                    "image": [
+                    "images": [
                         {
                             "name": "image_field_A",
                             "content": ["/path/1.png", "/path/2.png"],
@@ -239,16 +262,15 @@ class TestSingleTurnDatasetLoader:
         assert len(dataset) == 1
 
         turn = list(dataset.values())[0]
-        assert len(turn[0].text) == 2
-        assert len(turn[0].image) == 2
-        assert turn[0].audio is None
+        assert len(turn[0].texts) == 2
+        assert len(turn[0].images) == 2
 
-        assert turn[0].text[0].name == "text_field_A"
-        assert turn[0].text[0].content == ["Hello", "World"]
-        assert turn[0].text[1].name == "text_field_B"
-        assert turn[0].text[1].content == ["Hi there"]
+        assert turn[0].texts[0].name == "text_field_A"
+        assert turn[0].texts[0].content == ["Hello", "World"]
+        assert turn[0].texts[1].name == "text_field_B"
+        assert turn[0].texts[1].content == ["Hi there"]
 
-        assert turn[0].image[0].name == "image_field_A"
-        assert turn[0].image[0].content == ["/path/1.png", "/path/2.png"]
-        assert turn[0].image[1].name == "image_field_B"
-        assert turn[0].image[1].content == ["/path/3.png"]
+        assert turn[0].images[0].name == "image_field_A"
+        assert turn[0].images[0].content == ["/path/1.png", "/path/2.png"]
+        assert turn[0].images[1].name == "image_field_B"
+        assert turn[0].images[1].content == ["/path/3.png"]

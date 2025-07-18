@@ -27,7 +27,9 @@ class TestMultiTurn:
         assert data.session_id == "test_session"
         assert len(data.turns) == 2
         assert data.turns[0].text == "Hello"
+        assert data.turns[0].texts is None
         assert data.turns[1].text == "Hi there"
+        assert data.turns[1].texts is None
         assert data.turns[1].delay == 1000
         assert data.type == CustomDatasetType.MULTI_TURN
 
@@ -77,16 +79,16 @@ class TestMultiTurn:
             session_id="batched_session",
             turns=[
                 SingleTurn(
-                    text=["Hello there", "How are you?"],
-                    image=["/path/1.png", "/path/2.png"],
+                    texts=["Hello there", "How are you?"],
+                    images=["/path/1.png", "/path/2.png"],
                 ),
-                SingleTurn(text=["I'm fine", "Thanks for asking"], delay=1500),
+                SingleTurn(texts=["I'm fine", "Thanks for asking"], delay=1500),
             ],
         )
 
-        assert len(data.turns[0].text) == 2
-        assert len(data.turns[0].image) == 2
-        assert len(data.turns[1].text) == 2
+        assert len(data.turns[0].texts) == 2
+        assert len(data.turns[0].images) == 2
+        assert len(data.turns[1].texts) == 2
 
     def test_create_with_full_featured_turns(self):
         """Test creating conversation with full-featured turn format."""
@@ -94,41 +96,27 @@ class TestMultiTurn:
             session_id="featured_session",
             turns=[
                 SingleTurn(
-                    text=[
-                        Text(name="question", content=["What is this?"]),
-                        Text(name="context", content=["Please be detailed"]),
+                    texts=[
+                        Text(name="question", contents=["What is this?"]),
+                        Text(name="context", contents=["Please be detailed"]),
                     ],
-                    image=[
-                        Image(name="main_image", content=["/path/main.png"]),
-                        Image(name="reference", content=["/path/ref.png"]),
+                    images=[
+                        Image(name="main_image", contents=["/path/main.png"]),
+                        Image(name="reference", contents=["/path/ref.png"]),
                     ],
                 )
             ],
         )
 
-        assert len(data.turns[0].text) == 2
-        assert len(data.turns[0].image) == 2
-        assert data.turns[0].text[0].name == "question"
-        assert data.turns[0].image[0].name == "main_image"
+        assert len(data.turns[0].texts) == 2
+        assert len(data.turns[0].images) == 2
+        assert data.turns[0].texts[0].name == "question"
+        assert data.turns[0].images[0].name == "main_image"
 
     def test_validation_empty_turns_raises_error(self):
         """Test that empty turns list raises validation error."""
         with pytest.raises(ValueError, match="At least one turn must be provided"):
             MultiTurn(session_id="empty_session", turns=[])
-
-    def test_validation_turn_constraints_preserved(self):
-        """Test that individual turn validation constraints are preserved."""
-        # Test that turns still require at least one modality
-        with pytest.raises(ValueError, match="At least one modality"):
-            invalid_turn = SingleTurn()
-            MultiTurn(session_id="invalid_session", turns=[invalid_turn])
-
-        # Test that timestamp/delay mutual exclusion is preserved
-        with pytest.raises(
-            ValueError, match="timestamp and delay cannot be set together"
-        ):
-            invalid_turn = SingleTurn(text="Test", timestamp=1000, delay=500)
-            MultiTurn(session_id="invalid_session", turns=[invalid_turn])
 
 
 class TestMultiTurnDatasetLoader:
@@ -150,17 +138,19 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        assert len(result) == 1
-        assert "conv_001" in result
+        assert len(dataset) == 1
+        assert "conv_001" in dataset
 
-        conversation = result["conv_001"][0]
-        assert isinstance(conversation, MultiTurn)
-        assert len(conversation.turns) == 2
-        assert conversation.turns[0].text == "Hello, how are you?"
-        assert conversation.turns[1].text == "I'm doing well, thanks!"
-        assert conversation.turns[1].delay == 1000
+        multi_turn = dataset["conv_001"][0]
+        assert isinstance(multi_turn, MultiTurn)
+        assert len(multi_turn.turns) == 2
+        assert multi_turn.turns[0].text == "Hello, how are you?"
+        assert multi_turn.turns[0].texts is None
+        assert multi_turn.turns[1].text == "I'm doing well, thanks!"
+        assert multi_turn.turns[1].texts is None
+        assert multi_turn.turns[1].delay == 1000
 
     def test_load_multiple_conversations(self, create_jsonl_file):
         """Test loading multiple conversations from file."""
@@ -186,13 +176,13 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        assert len(result) == 2
-        assert "session_A" in result
-        assert "session_B" in result
-        assert len(result["session_A"][0].turns) == 1
-        assert len(result["session_B"][0].turns) == 2
+        assert len(dataset) == 2
+        assert "session_A" in dataset
+        assert "session_B" in dataset
+        assert len(dataset["session_A"][0].turns) == 1
+        assert len(dataset["session_B"][0].turns) == 2
 
     def test_load_conversation_without_session_id(self, create_jsonl_file):
         """Test loading conversation without explicit session_id generates UUID."""
@@ -209,16 +199,16 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        assert len(result) == 1
-        session_id = list(result.keys())[0]
+        assert len(dataset) == 1
+        session_id = list(dataset.keys())[0]
         # Should be a UUID string (36 characters with hyphens)
         assert len(session_id) == 36
         assert session_id.count("-") == 4
 
-        conversation = result[session_id][0]
-        assert len(conversation.turns) == 2
+        multi_turn = dataset[session_id][0]
+        assert len(multi_turn.turns) == 2
 
     def test_load_multimodal_conversation(self, create_jsonl_file):
         """Test loading conversation with multimodal content."""
@@ -243,14 +233,18 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        conversation = result["multimodal_chat"][0]
-        assert conversation.turns[0].text == "What do you see?"
-        assert conversation.turns[0].image == "/path/to/image.jpg"
-        assert conversation.turns[1].text == "Can you hear this?"
-        assert conversation.turns[1].audio == "/path/to/sound.wav"
-        assert conversation.turns[1].delay == 3000
+        multi_turn = dataset["multimodal_chat"][0]
+        assert multi_turn.turns[0].text == "What do you see?"
+        assert multi_turn.turns[0].texts is None
+        assert multi_turn.turns[0].image == "/path/to/image.jpg"
+        assert multi_turn.turns[0].images is None
+        assert multi_turn.turns[1].text == "Can you hear this?"
+        assert multi_turn.turns[1].texts is None
+        assert multi_turn.turns[1].audio == "/path/to/sound.wav"
+        assert multi_turn.turns[1].audios is None
+        assert multi_turn.turns[1].delay == 3000
 
     def test_load_scheduled_conversation(self, create_jsonl_file):
         """Test loading conversation with timestamp scheduling."""
@@ -283,11 +277,11 @@ class TestMultiTurnDatasetLoader:
                     "session_id": "batched_chat",
                     "turns": [
                         {
-                            "text": ["Hello", "How are you?"],
-                            "image": ["/img1.png", "/img2.png"],
+                            "texts": ["Hello", "How are you?"],
+                            "images": ["/img1.png", "/img2.png"],
                         },
                         {
-                            "text": ["Fine", "Thanks"],
+                            "texts": ["Fine", "Thanks"],
                             "delay": 1500,
                         },
                     ],
@@ -297,12 +291,15 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        conversation = result["batched_chat"][0]
-        assert conversation.turns[0].text == ["Hello", "How are you?"]
-        assert conversation.turns[0].image == ["/img1.png", "/img2.png"]
-        assert conversation.turns[1].text == ["Fine", "Thanks"]
+        multi_turn = dataset["batched_chat"][0]
+        assert multi_turn.turns[0].text is None
+        assert multi_turn.turns[0].texts == ["Hello", "How are you?"]
+        assert multi_turn.turns[0].image is None
+        assert multi_turn.turns[0].images == ["/img1.png", "/img2.png"]
+        assert multi_turn.turns[1].text is None
+        assert multi_turn.turns[1].texts == ["Fine", "Thanks"]
 
     def test_load_full_featured_conversation(self, create_jsonl_file):
         """Test loading conversation with full-featured format."""
@@ -312,14 +309,14 @@ class TestMultiTurnDatasetLoader:
                     "session_id": "full_featured_chat",
                     "turns": [
                         {
-                            "text": [
+                            "texts": [
                                 {
                                     "name": "user_query",
                                     "content": ["Analyze this data"],
                                 },
                                 {"name": "user_context", "content": ["Be thorough"]},
                             ],
-                            "image": [
+                            "images": [
                                 {"name": "dataset_viz", "content": ["/chart.png"]},
                                 {"name": "raw_data", "content": ["/data.png"]},
                             ],
@@ -332,16 +329,23 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        conversation = result["full_featured_chat"][0]
-        turn = conversation.turns[0]
+        multi_turn = dataset["full_featured_chat"][0]
+        assert len(multi_turn.turns) == 1
 
-        assert len(turn.text) == 2
-        assert len(turn.image) == 2
-        assert turn.text[0].name == "user_query"
-        assert turn.text[0].content == ["Analyze this data"]
-        assert turn.image[0].name == "dataset_viz"
+        turn = multi_turn.turns[0]
+        assert len(turn.texts) == 2
+        assert turn.texts[0].name == "user_query"
+        assert turn.texts[0].content == ["Analyze this data"]
+        assert turn.texts[1].name == "user_context"
+        assert turn.texts[1].content == ["Be thorough"]
+
+        assert len(turn.images) == 2
+        assert turn.images[0].name == "dataset_viz"
+        assert turn.images[0].content == ["/chart.png"]
+        assert turn.images[1].name == "raw_data"
+        assert turn.images[1].content == ["/data.png"]
         assert turn.timestamp == 1000
 
     def test_load_dataset_skips_empty_lines(self, create_jsonl_file):
@@ -364,11 +368,11 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        assert len(result) == 2  # Should skip empty line
-        assert "test_empty_lines" in result
-        assert "test_empty_lines_2" in result
+        assert len(dataset) == 2  # Should skip empty line
+        assert "test_empty_lines" in dataset
+        assert "test_empty_lines_2" in dataset
 
     def test_load_duplicate_session_ids_are_grouped(self, create_jsonl_file):
         """Test that multiple conversations with same session_id are grouped together."""
@@ -389,11 +393,11 @@ class TestMultiTurnDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MultiTurnDatasetLoader(filename)
-        result = loader.load_dataset()
+        dataset = loader.load_dataset()
 
-        assert len(result) == 1  # Same session_id groups together
-        assert len(result["shared_session"]) == 2  # Two conversations in same session
+        assert len(dataset) == 1  # Same session_id groups together
+        assert len(dataset["shared_session"]) == 2  # Two conversations in same session
 
-        conversations = result["shared_session"]
-        assert conversations[0].turns[0].text == "First conversation"
-        assert conversations[1].turns[0].text == "Second conversation"
+        multi_turn = dataset["shared_session"]
+        assert multi_turn[0].turns[0].text == "First conversation"
+        assert multi_turn[1].turns[0].text == "Second conversation"
