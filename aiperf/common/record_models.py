@@ -350,19 +350,12 @@ class ParsedResponseRecord(AIPerfBaseModel):
     responses: list[ResponseData] = Field(description="The parsed response data.")
     input_token_count: int | None = Field(
         default=None,
-        description="The number of tokens in the input, None if the numbers of tokens cannot be calculated",
+        description="The number of tokens in the input. If None, the number of tokens could not be calculated.",
     )
-
-    @cached_property
-    def token_count(self) -> int | None:
-        """Get the total number of tokens across all responses, if applicable."""
-        if not self.valid:
-            return None
-        return sum(
-            response.token_count
-            for response in self.responses
-            if response.token_count is not None
-        )
+    output_token_count: int | None = Field(
+        default=None,
+        description="The number of tokens across all responses. If None, the number of tokens could not be calculated.",
+    )
 
     @cached_property
     def start_perf_ns(self) -> int:
@@ -398,9 +391,9 @@ class ParsedResponseRecord(AIPerfBaseModel):
     @cached_property
     def tokens_per_second(self) -> float | None:
         """Get the number of tokens per second of the request."""
-        if self.token_count is None or self.request_duration_ns == 0:
+        if self.output_token_count is None or self.request_duration_ns == 0:
             return None
-        return self.token_count / (self.request_duration_ns / NANOS_PER_SECOND)
+        return self.output_token_count / (self.request_duration_ns / NANOS_PER_SECOND)
 
     @cached_property
     def has_error(self) -> bool:
