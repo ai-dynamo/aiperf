@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricType
-from aiperf.common.record_models import ParsedResponseRecord
+from aiperf.common.models import ParsedResponseRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 

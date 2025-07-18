@@ -11,7 +11,7 @@ from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import DataExporterType
 from aiperf.common.factories import DataExporterFactory
-from aiperf.common.record_models import ErrorDetailsCount, MetricResult
+from aiperf.common.models import ErrorDetailsCount, MetricResult
 from aiperf.data_exporter.exporter_config import ExporterConfig
 
 

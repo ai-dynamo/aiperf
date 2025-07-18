@@ -11,7 +11,7 @@ from aiperf.common.enums import (
     MessageType,
 )
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
 )

@@ -6,7 +6,7 @@ from pydantic import Field
 
 from aiperf.common.enums import MessageType, ServiceState, ServiceType
 from aiperf.common.messages import Message, StatusMessage
-from aiperf.common.pydantic_utils import exclude_if_none
+from aiperf.common.models import exclude_if_none
 
 
 @exclude_if_none(["b"])

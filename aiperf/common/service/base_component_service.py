@@ -18,7 +18,7 @@ from aiperf.common.messages import (
     RegistrationMessage,
     StatusMessage,
 )
-from aiperf.common.record_models import ErrorDetails
+from aiperf.common.models import ErrorDetails
 from aiperf.common.service.base_service import BaseService
 
 

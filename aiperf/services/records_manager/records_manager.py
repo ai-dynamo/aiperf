@@ -23,7 +23,7 @@ from aiperf.common.messages import (
     ParsedInferenceResultsMessage,
     ProcessRecordsCommandData,
 )
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     ErrorDetails,
     ErrorDetailsCount,
     ParsedResponseRecord,

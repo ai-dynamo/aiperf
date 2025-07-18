@@ -5,8 +5,8 @@ from unittest.mock import Mock, mock_open, patch
 
 import pytest
 
-from aiperf.common.dataset_models import Conversation, Turn
 from aiperf.common.enums import CustomDatasetType
+from aiperf.common.models import Conversation, Turn
 from aiperf.services.dataset.composer.custom import CustomDatasetComposer
 from aiperf.services.dataset.loader import (
     MultiTurnDatasetLoader,

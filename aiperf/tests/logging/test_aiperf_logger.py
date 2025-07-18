@@ -20,7 +20,7 @@ from aiperf.common.aiperf_logger import (
 )
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums.timing import CreditPhase
-from aiperf.common.record_models import RequestRecord, TextResponse
+from aiperf.common.models import RequestRecord, TextResponse
 
 
 @pytest.fixture

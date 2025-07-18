@@ -10,7 +10,8 @@ from pydantic import Field, SerializeAsAny
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, SSEFieldType
-from aiperf.common.pydantic_utils import AIPerfBaseModel
+from aiperf.common.models import ErrorDetails
+from aiperf.common.models.base_models import AIPerfBaseModel
 
 
 class MetricResult(AIPerfBaseModel):
@@ -70,55 +71,6 @@ class TextResponse(InferenceServerResponse):
     )
 
 
-class ErrorDetails(AIPerfBaseModel):
-    """Encapsulates details about an error."""
-
-    code: int | None = Field(
-        default=None,
-        description="The error code.",
-    )
-    type: str | None = Field(
-        default=None,
-        description="The error type.",
-    )
-    message: str = Field(
-        ...,
-        description="The error message.",
-    )
-
-    def __eq__(self, other: Any) -> bool:
-        """Check if the error details are equal by comparing the code, type, and message."""
-        if not isinstance(other, ErrorDetails):
-            return False
-        return (
-            self.code == other.code
-            and self.type == other.type
-            and self.message == other.message
-        )
-
-    def __hash__(self) -> int:
-        """Hash the error details by hashing the code, type, and message."""
-        return hash((self.code, self.type, self.message))
-
-    @classmethod
-    def from_exception(cls, e: Exception) -> "ErrorDetails":
-        """Create an error details object from an exception."""
-        return cls(
-            type=e.__class__.__name__,
-            message=str(e),
-        )
-
-
-class ErrorDetailsCount(AIPerfBaseModel):
-    """Count of error details."""
-
-    error_details: ErrorDetails
-    count: int = Field(
-        ...,
-        description="The count of the error details.",
-    )
-
-
 class SSEField(AIPerfBaseModel):
     """Base model for a single field in an SSE message."""
 
@@ -154,11 +106,6 @@ class SSEMessage(InferenceServerResponse):
             for packet in self.packets
             if packet.name == SSEFieldType.DATA and packet.value is not None
         ]
-
-
-################################################################################
-# Worker Internal Models
-################################################################################
 
 
 class RequestRecord(AIPerfBaseModel):

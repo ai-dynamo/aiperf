@@ -4,7 +4,7 @@ from collections import namedtuple
 
 from pydantic import Field
 
-from aiperf.common.pydantic_utils import AIPerfBaseModel
+from aiperf.common.models.base_models import AIPerfBaseModel
 
 # TODO: These can be potentially different for each platform. (below is linux)
 IOCounters = namedtuple(

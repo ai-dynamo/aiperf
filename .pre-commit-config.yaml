@@ -68,3 +68,10 @@ repos:
       types: [python]
       files: ^aiperf/common/config/__init__.py$
       args: [--write, --black, --nomods]
+    - id: mkinit models
+      name: Run mkinit on model files
+      entry: mkinit
+      language: system
+      types: [python]
+      files: ^aiperf/common/models/__init__.py$
+      args: [--write, --black, --nomods]

@@ -21,7 +21,7 @@ from aiperf.common.config import (
     TurnConfig,
     TurnDelayConfig,
 )
-from aiperf.common.dataset_models import Audio, Conversation, Image, Text, Turn
+from aiperf.common.models import Audio, Conversation, Image, Text, Turn
 from aiperf.services.dataset.composer.synthetic import SyntheticDatasetComposer
 
 

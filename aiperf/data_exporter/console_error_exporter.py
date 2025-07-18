@@ -6,7 +6,7 @@ from rich.table import Table
 
 from aiperf.common.enums import DataExporterType
 from aiperf.common.factories import DataExporterFactory
-from aiperf.common.record_models import ErrorDetailsCount
+from aiperf.common.models import ErrorDetailsCount
 from aiperf.data_exporter.exporter_config import ExporterConfig
 
 
