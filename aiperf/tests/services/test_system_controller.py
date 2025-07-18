@@ -25,7 +25,7 @@ class SystemControllerTestConfig(BaseModel):
 
 
 @pytest.mark.asyncio
-class SystemControllerServiceTest(BaseTestControllerService):
+class TestSystemControllerService(BaseTestControllerService):
     """
     Tests for the system controller service.
 
@@ -85,7 +85,7 @@ class SystemControllerServiceTest(BaseTestControllerService):
         )
 
         multiprocess_manager = MultiProcessServiceManager(
-            required_service_types=[ServiceType.TEST],
+            required_services={ServiceType.TEST: 1},
             config=service_config,
         )
 

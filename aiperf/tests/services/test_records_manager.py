@@ -22,7 +22,7 @@ class RecordsManagerTestConfig(BaseModel):
 
 
 @pytest.mark.asyncio
-class RecordsManagerServiceTest(BaseTestComponentService):
+class TestRecordsManagerService(BaseTestComponentService):
     """
     Tests for the records manager service.
 

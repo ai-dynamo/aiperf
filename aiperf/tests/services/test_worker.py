@@ -24,7 +24,7 @@ class WorkerTestConfig(BaseModel):
 
 
 @pytest.mark.asyncio
-class WorkerServiceTest(BaseTestService):
+class TestWorkerService(BaseTestService):
     """
     Tests for the worker service.
 

@@ -35,8 +35,6 @@ def sample_turn():
 def mock_turn_response(sample_turn):
     return ConversationTurnResponseMessage(
         service_id="test-service",
-        conversation_id="cid",
-        turn_index=0,
         turn=sample_turn,
     )
 
@@ -47,9 +45,12 @@ def sample_request_record():
 
 
 @pytest.fixture
-def parser(mock_turn_response):
+def parser(mock_turn_response, service_config, user_config):
     with patch.object(InferenceResultParser, "__init__", lambda self: None):
-        parser = InferenceResultParser()
+        parser = InferenceResultParser(
+            service_config=service_config,
+            user_config=user_config,
+        )
         parser.service_id = "test-parser"
         parser.conversation_request_client = MagicMock()
         parser.conversation_request_client.request = AsyncMock(

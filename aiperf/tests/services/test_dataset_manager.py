@@ -30,7 +30,7 @@ class DatasetManagerTestConfig(BaseModel):
 
 
 @pytest.mark.asyncio
-class DatasetManagerServiceTest(BaseTestComponentService):
+class TestDatasetManagerService(BaseTestComponentService):
     """
     Tests for dataset manager service functionalities and basic properties.
 

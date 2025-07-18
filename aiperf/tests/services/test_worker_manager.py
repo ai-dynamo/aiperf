@@ -24,7 +24,7 @@ class WorkerManagerTestConfig(BaseModel):
 
 
 @pytest.mark.asyncio
-class WorkerManagerServiceTest(BaseTestComponentService):
+class TestWorkerManagerService(BaseTestComponentService):
     """
     Tests for the worker manager service.
 
