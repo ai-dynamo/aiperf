@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from aiperf.clients.http.aiohttp_client import AioHttpSSEStreamReader
-from aiperf.common.record_models import SSEMessage
+from aiperf.common.models import SSEMessage
 from aiperf.tests.clients.http.conftest import (
     create_sse_chunk_list,
     setup_single_sse_chunk,

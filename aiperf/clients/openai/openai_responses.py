@@ -9,8 +9,8 @@ from aiperf.clients.client_interfaces import (
     RequestConverterProtocol,
 )
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.dataset_models import Turn
 from aiperf.common.enums import EndpointType
+from aiperf.common.models import Turn
 
 
 # TODO: Not fully implemented yet.

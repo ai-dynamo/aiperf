@@ -5,9 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.dataset_models import Text, Turn
 from aiperf.common.messages import ConversationTurnResponseMessage
-from aiperf.common.record_models import RequestRecord
+from aiperf.common.models import RequestRecord, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.inference_result_parser.inference_result_parser import (
     InferenceResultParser,

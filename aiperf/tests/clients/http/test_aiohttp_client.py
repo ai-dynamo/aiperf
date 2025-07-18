@@ -20,7 +20,7 @@ from aiperf.clients.model_endpoint_info import (
 )
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import EndpointType, ModelSelectionStrategy
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     SSEMessage,
 )
 from aiperf.tests.clients.http.conftest import (

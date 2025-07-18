@@ -3,7 +3,7 @@
 
 from typing import Protocol
 
-from aiperf.common.dataset_models import Conversation
+from aiperf.common.models import Conversation
 from aiperf.services.dataset.loader.models import CustomData
 
 

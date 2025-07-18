@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
     ResponseData,

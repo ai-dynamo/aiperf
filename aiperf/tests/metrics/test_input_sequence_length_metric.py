@@ -2,7 +2,7 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
     ResponseData,

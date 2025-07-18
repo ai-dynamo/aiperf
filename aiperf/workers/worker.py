@@ -32,8 +32,8 @@ from aiperf.common.messages import (
     WorkerHealthMessage,
 )
 from aiperf.common.mixins import ProcessHealthMixin
+from aiperf.common.models import WorkerPhaseTaskStats
 from aiperf.common.service.base_component_service import BaseComponentService
-from aiperf.common.worker_models import WorkerPhaseTaskStats
 from aiperf.workers.credit_processor_mixin import CreditProcessorMixin
 
 

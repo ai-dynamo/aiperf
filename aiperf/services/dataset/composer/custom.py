@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config import InputConfig
-from aiperf.common.dataset_models import Conversation
 from aiperf.common.enums import ComposerType, CustomDatasetType
 from aiperf.common.factories import ComposerFactory, CustomDatasetFactory
+from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.composer.base import BaseDatasetComposer

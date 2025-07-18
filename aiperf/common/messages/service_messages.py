@@ -16,7 +16,7 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.messages.base_messages import Message
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     ErrorDetails,
 )
 

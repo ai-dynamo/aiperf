@@ -10,9 +10,8 @@ from aiperf.common.enums import (
     CreditPhase,
     MessageType,
 )
-from aiperf.common.health_models import ProcessHealth
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.worker_models import WorkerPhaseTaskStats
+from aiperf.common.models import ProcessHealth, WorkerPhaseTaskStats
 
 
 class WorkerHealthMessage(BaseServiceMessage):

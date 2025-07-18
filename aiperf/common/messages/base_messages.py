@@ -13,9 +13,10 @@ from pydantic import (
 from aiperf.common.enums import (
     MessageType,
 )
-from aiperf.common.pydantic_utils import ExcludeIfNoneMixin, exclude_if_none
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     ErrorDetails,
+    ExcludeIfNoneMixin,
+    exclude_if_none,
 )
 
 

@@ -3,11 +3,11 @@
 
 import pytest
 
-from aiperf.common.dataset_models import Conversation, Text, Turn
 from aiperf.common.messages import (
     ConversationRequestMessage,
     DatasetTimingRequest,
 )
+from aiperf.common.models import Conversation, Text, Turn
 from aiperf.tests.utils.async_test_utils import async_fixture
 
 # ============================================================================

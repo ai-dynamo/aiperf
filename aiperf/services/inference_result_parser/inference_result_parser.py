@@ -26,7 +26,7 @@ from aiperf.common.messages import (
     InferenceResultsMessage,
     ParsedInferenceResultsMessage,
 )
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     ErrorDetails,
     ParsedResponseRecord,
     RequestRecord,
