@@ -75,3 +75,10 @@ repos:
       types: [python]
       files: ^aiperf/common/models/__init__.py$
       args: [--write, --black, --nomods]
+    - id: mkinit mixins
+      name: Run mkinit on mixin files
+      entry: mkinit
+      language: system
+      types: [python]
+      files: ^aiperf/common/mixins/__init__.py$
+      args: [--write, --black, --nomods]

@@ -17,9 +17,9 @@ from aiperf.common.exceptions import (
 from aiperf.common.hooks import (
     AIPerfHook,
     AIPerfTaskHook,
-    AIPerfTaskMixin,
     supports_hooks,
 )
+from aiperf.common.mixins import AIPerfTaskMixin
 
 ################################################################################
 # Base ZMQ Client Class
