@@ -8,6 +8,7 @@ from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
@@ -15,10 +16,9 @@ from aiperf.common.config.config_validators import (
     parse_goodput,
     parse_str_or_dict,
 )
-from aiperf.common.config.input.audio_config import AudioConfig
-from aiperf.common.config.input.conversation_config import ConversationConfig
-from aiperf.common.config.input.image_config import ImageConfig
-from aiperf.common.config.input.prompt_config import PromptConfig
+from aiperf.common.config.conversation_config import ConversationConfig
+from aiperf.common.config.image_config import ImageConfig
+from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.enums import CustomDatasetType
 
 logger = AIPerfLogger(__name__)
