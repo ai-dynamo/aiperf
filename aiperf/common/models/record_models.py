@@ -10,7 +10,7 @@ from pydantic import Field, SerializeAsAny
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, SSEFieldType
-from aiperf.common.models import ErrorDetails
+from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.base_models import AIPerfBaseModel
 
 
