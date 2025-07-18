@@ -14,11 +14,11 @@ from aiperf.common.hooks import AIPerfHook, aiperf_task, on_init, on_set_state
 from aiperf.common.messages import (
     CommandMessage,
     CommandResponseMessage,
-    ErrorDetails,
     HeartbeatMessage,
     RegistrationMessage,
     StatusMessage,
 )
+from aiperf.common.models import ErrorDetails
 from aiperf.common.service.base_service import BaseService
 
 

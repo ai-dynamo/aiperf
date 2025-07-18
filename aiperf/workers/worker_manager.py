@@ -21,7 +21,7 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.messages import WorkerHealthMessage
-from aiperf.common.pydantic_utils import AIPerfBaseModel
+from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.workers.worker import Worker
 

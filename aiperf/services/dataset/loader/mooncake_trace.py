@@ -4,9 +4,9 @@
 import uuid
 from collections import defaultdict
 
-from aiperf.common.dataset_models import Conversation, Text, Turn
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
+from aiperf.common.models import Conversation, Text, Turn
 from aiperf.services.dataset.generator import PromptGenerator
 from aiperf.services.dataset.loader.models import MooncakeTrace
 

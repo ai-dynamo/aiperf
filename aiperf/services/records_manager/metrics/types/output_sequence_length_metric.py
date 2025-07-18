@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricType
-from aiperf.common.record_models import ParsedResponseRecord
+from aiperf.common.models import ParsedResponseRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 
@@ -27,8 +27,8 @@ class OutputSequenceLengthMetric(BaseMetric):
         metrics: dict[str, "BaseMetric"] | None = None,
     ):
         self._check_record(record)
-        if record.token_count is not None:
-            self.metric.append(record.token_count)
+        if record.output_token_count is not None:
+            self.metric.append(record.output_token_count)
 
     def values(self):
         """

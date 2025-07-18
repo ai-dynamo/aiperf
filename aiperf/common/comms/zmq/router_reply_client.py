@@ -12,7 +12,7 @@ from aiperf.common.enums import CommunicationClientType, MessageType
 from aiperf.common.hooks import aiperf_task, on_cleanup, on_stop
 from aiperf.common.messages import ErrorMessage, Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
-from aiperf.common.record_models import ErrorDetails
+from aiperf.common.models import ErrorDetails
 
 
 @CommunicationClientFactory.register(CommunicationClientType.REPLY)

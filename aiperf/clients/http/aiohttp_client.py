@@ -11,7 +11,7 @@ import aiohttp
 from aiperf.clients.http.defaults import AioHttpDefaults, SocketDefaults
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import SSEFieldType
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     ErrorDetails,
     RequestRecord,
     SSEField,

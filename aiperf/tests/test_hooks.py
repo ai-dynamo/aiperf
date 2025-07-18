@@ -7,12 +7,12 @@ import pytest
 from aiperf.common.exceptions import UnsupportedHookError
 from aiperf.common.hooks import (
     AIPerfHook,
-    HooksMixin,
     on_cleanup,
     on_init,
     on_start,
     supports_hooks,
 )
+from aiperf.common.mixins import HooksMixin
 
 
 @supports_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_CLEANUP)

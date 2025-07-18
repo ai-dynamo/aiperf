@@ -1,17 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from aiperf.common.record_models import ParsedResponseRecord, ResponseData
-    from aiperf.data_exporter.record import Record
+    from aiperf.common.models import ParsedResponseRecord, ResponseData
 
 ################################################################################
 # Data Exporter Protocol
 ################################################################################
 
 
+@runtime_checkable
 class DataExporterProtocol(Protocol):
     """
     Protocol for data exporters.
@@ -19,7 +19,9 @@ class DataExporterProtocol(Protocol):
     that takes a list of Record objects and handles exporting them appropriately.
     """
 
-    def export(self, records: list["Record"]) -> None: ...
+    async def export(self) -> None:
+        """Export the data."""
+        ...
 
 
 ################################################################################

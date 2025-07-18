@@ -23,7 +23,7 @@ from aiperf.common.messages import (
     ParsedInferenceResultsMessage,
     ProcessRecordsCommandData,
 )
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     ErrorDetails,
     ErrorDetailsCount,
     ParsedResponseRecord,
@@ -246,7 +246,9 @@ class RecordsManager(BaseComponentService):
                 was_cancelled=self.was_cancelled,
             )
 
-        self.logger.info("Token counts: %s", [r.token_count for r in self.records])
+        self.debug(
+            lambda: f"Token counts: {[r.output_token_count for r in self.records]}"
+        )
         metric_summary = MetricSummary()
         metric_summary.process(list(self.records))
         metrics_summary = metric_summary.get_metrics_summary()

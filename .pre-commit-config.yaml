@@ -47,10 +47,38 @@ repos:
       language: python
       require_serial: true
     # Run mkinit to generate the __init__.py files
-    - id: mkinit
-      name: Run mkinit
+    - id: mkinit enums
+      name: Run mkinit enums
       entry: mkinit
       language: system
       types: [python]
       files: ^aiperf/common/enums/__init__.py$
-      args: [--write, --black, --nomods, --norespect_all]
+      args: [--write, --black, --nomods]
+    - id: mkinit messages
+      name: Run mkinit messages
+      entry: mkinit
+      language: system
+      types: [python]
+      files: ^aiperf/common/messages/__init__.py$
+      args: [--write, --black, --nomods]
+    - id: mkinit config
+      name: Run mkinit on config files
+      entry: mkinit
+      language: system
+      types: [python]
+      files: ^aiperf/common/config/__init__.py$
+      args: [--write, --black, --nomods]
+    - id: mkinit models
+      name: Run mkinit on model files
+      entry: mkinit
+      language: system
+      types: [python]
+      files: ^aiperf/common/models/__init__.py$
+      args: [--write, --black, --nomods]
+    - id: mkinit mixins
+      name: Run mkinit on mixin files
+      entry: mkinit
+      language: system
+      types: [python]
+      files: ^aiperf/common/mixins/__init__.py$
+      args: [--write, --black, --nomods]

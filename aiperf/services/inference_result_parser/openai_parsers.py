@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from aiperf.clients.client_interfaces import ResponseExtractorFactory
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import CaseInsensitiveStrEnum, EndpointType
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     InferenceServerResponse,
     RequestRecord,
     ResponseData,

@@ -12,7 +12,7 @@ from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.config import UserConfig
 from aiperf.common.config.user_config import EndPointConfig
 from aiperf.common.enums import EndpointType
-from aiperf.common.record_models import (
+from aiperf.common.models import (
     RequestRecord,
     SSEMessage,
     TextResponse,

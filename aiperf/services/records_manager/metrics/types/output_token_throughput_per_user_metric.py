@@ -3,7 +3,7 @@
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import MetricTimeType, MetricType
-from aiperf.common.record_models import ParsedResponseRecord
+from aiperf.common.models import ParsedResponseRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 

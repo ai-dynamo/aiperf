@@ -8,9 +8,10 @@ from pydantic import BaseModel, Field, SerializeAsAny
 
 from aiperf.common.enums import (
     CaseInsensitiveStrEnum,
+    MessageType,
 )
-from aiperf.common.messages import BaseServiceMessage, MessageType
-from aiperf.common.record_models import ErrorDetailsCount, MetricResult
+from aiperf.common.messages import BaseServiceMessage
+from aiperf.common.models import ErrorDetailsCount, MetricResult
 
 
 class ProfileCompletionTrigger(CaseInsensitiveStrEnum):

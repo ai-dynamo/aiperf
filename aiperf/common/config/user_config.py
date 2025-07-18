@@ -10,11 +10,11 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_validators import (
     parse_str_or_list,
 )
-from aiperf.common.config.endpoint.endpoint_config import EndPointConfig
-from aiperf.common.config.input.input_config import InputConfig
+from aiperf.common.config.endpoint_config import EndPointConfig
+from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-from aiperf.common.config.output.output_config import OutputConfig
-from aiperf.common.config.tokenizer.tokenizer_config import TokenizerConfig
+from aiperf.common.config.output_config import OutputConfig
+from aiperf.common.config.tokenizer_config import TokenizerConfig
 
 
 class UserConfig(BaseConfig):
