@@ -57,7 +57,9 @@ Hooks can be defined and used by the same class
 
 ```python
 import asyncio
-from aiperf.common.hooks import HooksMixin, supports_hooks, on_init, on_cleanup, AIPerfHook
+from aiperf.common.hooks import supports_hooks, on_init, on_cleanup, AIPerfHook
+from aiperf.common.mixins.hooks_mixin import HooksMixin
+
 
 @supports_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_CLEANUP)
 class MyService(HooksMixin):
@@ -100,11 +102,14 @@ class MyService(HooksMixin):
 Hooks can also be used to call additional functionality defined in subclasses. By calling `await self.run_hooks_async(AIPerfHook.ON_INIT)`, the base class is able to call all registered init functions no matter the subclass that defined it.
 
 ```python
-from aiperf.common.hooks import HooksMixin, supports_hooks, on_init, on_cleanup, AIPerfHook
+from aiperf.common.hooks import supports_hooks, on_init, on_cleanup, AIPerfHook
+from aiperf.common.mixins.hooks_mixin import HooksMixin
+
 
 @supports_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_CLEANUP)
 class MyHookService(HooksMixin):
     """Defines the top-level functionality that will call the registered hooks."""
+
     def __init__(self):
         # Make sure to call __init__ on the HooksMixin
         super().__init__()
@@ -121,6 +126,7 @@ class MyHookService(HooksMixin):
 
 class CustomService(MyHookService):
     """Defines functions that will be called by the lifecycle hooks"""
+
     @on_init
     async def _setup_database(self):
         """Initialize database connection."""
@@ -396,8 +402,10 @@ The `@aiperf_task` decorator works through the `AIPerfTaskMixin` class, which pr
 To use `@aiperf_task` decorated methods, your class must inherit from `AIPerfTaskMixin`:
 
 ```python
-from aiperf.common.hooks import AIPerfTaskMixin, aiperf_task
+from aiperf.common.hooks import aiperf_task
+from aiperf.common.mixins.aiperf_task_mixin import AIPerfTaskMixin
 import asyncio
+
 
 class BackgroundService(AIPerfTaskMixin):
     def __init__(self):
@@ -441,7 +449,7 @@ class BackgroundService(AIPerfTaskMixin):
     async def stop_service(self):
         """Stop the service and all background tasks."""
         self.stop_event.set()  # Signal tasks to stop
-        await self.run_hooks(AIPerfHook.ON_STOP)   # This cancels and waits for all tasks
+        await self.run_hooks(AIPerfHook.ON_STOP)  # This cancels and waits for all tasks
 ```
 
 ### Key Differences from Other Hooks

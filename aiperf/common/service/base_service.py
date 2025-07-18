@@ -19,11 +19,11 @@ from aiperf.common.exceptions import (
 from aiperf.common.hooks import (
     AIPerfHook,
     AIPerfTaskHook,
-    AIPerfTaskMixin,
     supports_hooks,
 )
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.mixins.aiperf_task_mixin import AIPerfTaskMixin
 from aiperf.common.service.base_service_interface import BaseServiceInterface
 
 
