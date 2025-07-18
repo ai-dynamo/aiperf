@@ -11,8 +11,7 @@ from aiperf.common.enums import (
     MessageType,
 )
 from aiperf.common.messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetailsCount
-from aiperf.common.models.record_models import MetricResult
+from aiperf.common.models import ErrorDetailsCount, MetricResult
 
 
 class ProfileCompletionTrigger(CaseInsensitiveStrEnum):
