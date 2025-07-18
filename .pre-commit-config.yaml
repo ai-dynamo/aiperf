@@ -48,7 +48,7 @@ repos:
       require_serial: true
     # Run mkinit to generate the __init__.py files
     - id: mkinit enums
-      name: Run mkinit on enum files
+      name: Run mkinit enums
       entry: mkinit
       language: system
       types: [python]
@@ -61,3 +61,11 @@ repos:
       types: [python]
       files: ^aiperf/common/config/__init__.py$
       args: [--write, --black, --nomods]
+    - id: mkinit messages
+      name: Run mkinit messages
+      entry: mkinit
+      language: system
+      types: [python]
+      files: ^aiperf/common/messages/__init__.py$
+      args: [--write, --black, --nomods]
+
