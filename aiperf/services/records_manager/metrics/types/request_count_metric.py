@@ -6,42 +6,36 @@ from aiperf.common.models import ParsedResponseRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 
-class OutputSequenceLengthMetric(BaseMetric):
+class RequestCountMetric(BaseMetric):
     """
-    Post-processor for calculating Output Sequence Length (OSL) metrics from records.
+    Post-processor for counting the number of valid requests.
     """
 
-    tag = "osl"
+    tag = "request_count"
     unit = None
-    larger_is_better = False
-    header = "Output Sequence Length"
+    larger_is_better = True
+    header = "Request Count"
     type = MetricType.METRIC_OF_RECORDS
     streaming_only = False
     required_metrics: set[str] = set()
 
     def __init__(self):
-        self.metric: list[int] = []
+        self.metric: int = 0
 
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
         metrics: dict[str, "BaseMetric"] | None = None,
-    ):
+    ) -> None:
         self._check_record(record)
-        self.metric.append(record.output_token_count)
+        self.metric += 1
 
-    def values(self):
+    def values(self) -> int:
         """
-        Returns the list of Output Sequence Length (OSL) metrics.
+        Returns the Request Count metric.
         """
         return self.metric
 
-    def _check_record(self, record: ParsedResponseRecord):
-        """
-        Checks if the record is valid for OSL calculation.
-
-        Raises:
-            ValueError: If the record is not valid
-        """
+    def _check_record(self, record: ParsedResponseRecord) -> None:
         if not record or not record.valid:
             raise ValueError("Invalid Record")

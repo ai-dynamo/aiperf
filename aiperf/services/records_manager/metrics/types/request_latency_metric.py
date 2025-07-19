@@ -15,6 +15,7 @@ class RequestLatencyMetric(BaseMetric):
     type = MetricType.METRIC_OF_RECORDS
     larger_is_better = False
     header = "Request Latency"
+    required_metrics: set[str] = set()
 
     def __init__(self):
         self.metric: list[int] = []
@@ -25,7 +26,7 @@ class RequestLatencyMetric(BaseMetric):
         metrics: dict["BaseMetric"] | None = None,
     ) -> None:
         """
-        Adds a new record and calculates the Request Latencies metric.
+        Adds a new record and calculates the Request Latency metric.
 
         This method extracts the request and last response timestamps, calculates the differences in time, and
         appends the result to the metric list.
@@ -38,23 +39,10 @@ class RequestLatencyMetric(BaseMetric):
 
     def values(self) -> list[int]:
         """
-        Returns the list of Time to First Token (Request Latencies) metrics.
+        Returns the list of Request Latency metrics.
         """
         return self.metric
 
     def _check_record(self, record: ParsedResponseRecord) -> None:
-        if not record or not record.start_perf_ns:
-            raise ValueError("Record must have a valid request with a timestamp.")
-        if len(record.responses) < 1:
-            raise ValueError("Record must have at least one response.")
-
-        request_ts = record.start_perf_ns
-        response_ts = record.responses[-1].perf_ns
-
-        if request_ts < 0 or response_ts < 0:
-            raise ValueError("Timestamps must be positive values.")
-
-        if response_ts < request_ts:
-            raise ValueError(
-                "Response timestamp must be greater than or equal to request timestamp."
-            )
+        if not record or not record.valid:
+            raise ValueError("Invalid Record")

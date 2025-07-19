@@ -39,5 +39,5 @@ def test_add_multiple_records(parsed_response_record_builder):
 def test_record_with_no_request_raises():
     metric = MinRequestMetric()
     record = None
-    with pytest.raises(ValueError, match="valid request"):
+    with pytest.raises(ValueError, match="Invalid Record"):
         metric.update_value(record=record, metrics=None)

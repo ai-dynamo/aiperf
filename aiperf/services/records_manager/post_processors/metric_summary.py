@@ -35,33 +35,32 @@ class MetricSummary:
         :param records: The input records to be processed.
         :return: A dictionary containing the summarized metrics.
         """
-        for record in records:
-            for metric in self._metrics:
-                if metric.type == MetricType.METRIC_OF_RECORDS:
-                    metric.update_value(record=record)
-            for metric in self._metrics:
-                if metric.type == MetricType.METRIC_OF_METRICS:
-                    metric.update_value(metrics={m.tag: m for m in self._metrics})
-            for metric in self._metrics:
-                if metric.type == MetricType.METRIC_OF_BOTH:
-                    metric.update_value(
-                        record=record, metrics={m.tag: m for m in self._metrics}
-                    )
+        metrics_by_type = {
+            MetricType.METRIC_OF_RECORDS: [],
+            MetricType.METRIC_OF_METRICS: [],
+            MetricType.METRIC_OF_BOTH: [],
+        }
 
-        # TODO: Fix this after we add support for dependencies
-        # between metrics of metrics
-        # This is a workaround to ensure that metrics of metrics
-        # are updated after all records are processed
         for metric in self._metrics:
-            if metric.type == MetricType.METRIC_OF_METRICS:
-                metric.update_value(metrics={m.tag: m for m in self._metrics})
-        for metric in self._metrics:
-            if metric.type == MetricType.METRIC_OF_BOTH:
-                metric.update_value(
-                    # TODO: Where does this `record` value come from? Is this wrong?
-                    record=record,
-                    metrics={m.tag: m for m in self._metrics},
-                )
+            metrics_by_type[metric.type].append(metric)
+
+        metrics_map = {m.tag: m for m in self._metrics}
+        computed_tags: set[str] = set()
+
+        for record in records:
+            for metric in metrics_by_type[MetricType.METRIC_OF_RECORDS]:
+                metric.update_value(record=record)
+                computed_tags.add(metric.tag)
+
+        for metric in metrics_by_type[MetricType.METRIC_OF_BOTH]:
+            if metric.required_metrics.issubset(computed_tags):
+                metric.update_value(record=record, metrics=metrics_map)
+                computed_tags.add(metric.tag)
+
+        for metric in metrics_by_type[MetricType.METRIC_OF_METRICS]:
+            if metric.required_metrics.issubset(computed_tags):
+                metric.update_value(metrics=metrics_map)
+                computed_tags.add(metric.tag)
 
     def get_metrics_summary(self) -> list[MetricResult]:
         metrics_summary = []

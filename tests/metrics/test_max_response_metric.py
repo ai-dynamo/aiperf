@@ -40,5 +40,5 @@ def test_add_multiple_records(parsed_response_record_builder):
 def test_record_with_no_responses_raises(parsed_response_record_builder):
     metric = MaxResponseMetric()
     record = parsed_response_record_builder.with_request_start_time(10).build()
-    with pytest.raises(ValueError, match="valid responses"):
+    with pytest.raises(ValueError, match="Invalid Record"):
         metric.update_value(record=record, metrics=None)

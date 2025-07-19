@@ -15,6 +15,8 @@ class TTFTMetric(BaseMetric):
     larger_is_better = False
     header = "Time to First Token (TTFT)"
     type = MetricType.METRIC_OF_RECORDS
+    streaming_only = True
+    required_metrics: set[str] = set()
 
     def __init__(self):
         self.metric: list[int] = []
@@ -47,15 +49,7 @@ class TTFTMetric(BaseMetric):
         Checks if the record is valid for TTFT calculation.
 
         Raises:
-            ValueError: If the record does not have at least one response.
+            ValueError: If record is None or record is not valid
         """
-        if not record or not record.request or not record.request.start_perf_ns:
-            raise ValueError("Record must have a valid request with a timestamp.")
-        if not record.responses or len(record.responses) < 1:
-            raise ValueError(
-                "Record must have at least one response to calculate TTFT."
-            )
-        if record.responses[0].perf_ns < record.start_perf_ns:
-            raise ValueError(
-                "Response timestamp must be greater than or equal to request timestamp."
-            )
+        if not record or not record.valid:
+            raise ValueError("Invalid Record")
