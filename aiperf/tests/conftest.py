@@ -18,6 +18,9 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.tests.comms.mock_zmq import (
     mock_zmq_communication,  # noqa: F401 : used as a fixture
 )
+from aiperf.tests.utils.time_traveler import (
+    time_traveler,  # noqa: F401 : used as a fixture
+)
 
 logging.basicConfig(level=logging.DEBUG)
 

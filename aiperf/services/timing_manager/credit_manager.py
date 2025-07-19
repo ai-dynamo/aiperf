@@ -12,7 +12,11 @@ from aiperf.common.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
-from aiperf.common.mixins import AsyncTaskManagerMixin, AsyncTaskManagerProtocol
+from aiperf.common.mixins import (
+    AIPerfLoggerProtocol,
+    AsyncTaskManagerMixin,
+    AsyncTaskManagerProtocol,
+)
 
 
 @runtime_checkable
@@ -48,11 +52,15 @@ class CreditManagerProtocol(Protocol):
         self, phase: CreditPhase, sent_end_ns: int
     ) -> None: ...
 
-    async def publish_phase_complete(self, phase: CreditPhase, end_ns: int) -> None: ...
+    async def publish_phase_complete(
+        self, phase: CreditPhase, completed: int, end_ns: int
+    ) -> None: ...
 
 
 @runtime_checkable
-class CreditPhaseMessagesRequirements(AsyncTaskManagerProtocol, Protocol):
+class CreditPhaseMessagesRequirements(
+    AsyncTaskManagerProtocol, AIPerfLoggerProtocol, Protocol
+):
     """Requirements for the CreditPhaseMessagesMixin. This is the list of attributes that must
     be provided by the class that uses this mixin."""
 
@@ -111,13 +119,16 @@ class CreditPhaseMessagesMixin(AsyncTaskManagerMixin, CreditPhaseMessagesRequire
             )
         )
 
-    async def publish_phase_complete(self, phase: CreditPhase, end_ns: int) -> None:
+    async def publish_phase_complete(
+        self, phase: CreditPhase, completed: int, end_ns: int
+    ) -> None:
         """Publish the phase complete message."""
         self.execute_async(
             self.pub_client.publish(
                 CreditPhaseCompleteMessage(
                     service_id=self.service_id,
                     phase=phase,
+                    completed=completed,
                     end_ns=end_ns,
                 )
             )
@@ -140,6 +151,7 @@ class CreditPhaseMessagesMixin(AsyncTaskManagerMixin, CreditPhaseMessagesRequire
 
     async def publish_credits_complete(self) -> None:
         """Publish the credits complete message."""
+        self.debug("Publishing credits complete message")
         self.execute_async(
             self.pub_client.publish(CreditsCompleteMessage(service_id=self.service_id))
         )

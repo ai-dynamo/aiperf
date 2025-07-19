@@ -4,44 +4,40 @@
 import asyncio
 import time
 from collections import defaultdict
-from collections.abc import Coroutine
-from typing import Any
 
-from aiperf.common.enums import MessageType
-from aiperf.common.messages import (
-    CreditDropMessage,
-    DatasetTimingRequest,
-    DatasetTimingResponse,
+from aiperf.common.enums import TimingMode
+from aiperf.common.enums.timing_enums import CreditPhase
+from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.models.credit_models import CreditPhaseStats
+from aiperf.services.timing_manager.config import TimingManagerConfig
+from aiperf.services.timing_manager.credit_issuing_strategy import (
+    CreditIssuingStrategy,
+    CreditIssuingStrategyFactory,
 )
-
-# from aiperf.services.timing_manager import CreditDropInfo
-from aiperf.services.timing_manager.credit_issuing_strategy import CreditIssuingStrategy
+from aiperf.services.timing_manager.credit_manager import CreditManagerProtocol
 
 
-class FixedScheduleStrategy(CreditIssuingStrategy):
+@CreditIssuingStrategyFactory.register(TimingMode.FIXED_SCHEDULE)
+class FixedScheduleStrategy(CreditIssuingStrategy, AsyncTaskManagerMixin):
     """
     Class for fixed schedule credit issuing strategy.
     """
 
-    def __init__(self, config, credit_drop_function):
-        super().__init__(config, credit_drop_function)
+    def __init__(
+        self,
+        config: TimingManagerConfig,
+        credit_manager: CreditManagerProtocol,
+        schedule: list[tuple[int, str]],
+    ):
+        super().__init__(config=config, credit_manager=credit_manager)
 
-        self._schedule: list[tuple[int, str]] = []
+        self._schedule: list[tuple[int, str]] = schedule
 
-    async def initialize(self) -> None:
-        await self.comms.register(
-            message_type=DatasetTimingRequest, callback=self._get_dataset_timing
-        )
+    async def _execute_single_phase(self, phase_stats: CreditPhaseStats) -> None:
+        # TODO: Convert this code to work with the new CreditPhase logic and base classes
 
-    async def _get_dataset_timing(self, message: DatasetTimingResponse) -> None:
-        self._schedule = message.timing_data
-
-    async def start(self) -> None:
         if not self._schedule:
-            self.logger.warning("No schedule loaded, no credits will be dropped")
-            return
-        if self.stop_event.is_set():
-            self.logger.info("Stop event already set, not starting")
+            self.warning("No schedule loaded, no credits will be dropped")
             return
 
         start_time_ns = time.time_ns()
@@ -54,39 +50,20 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
         schedule_unique_sorted = sorted(timestamp_groups.keys())
 
         for unique_timestamp in schedule_unique_sorted:
-            if self.stop_event.is_set():
-                self.logger.info("Stop event detected, ending credit drops")
-                break
-
             wait_duration_ns = max(0, start_time_ns + unique_timestamp - time.time_ns())
             wait_duration_sec = wait_duration_ns / 1_000_000_000
 
             if wait_duration_sec > 0:
                 await asyncio.sleep(wait_duration_sec)
 
-            if self.stop_event.is_set():
-                self.logger.info("Stop event detected, ending credit drops")
-                break
-
-            tasks: set[Coroutine[Any, Any, None]] = set()
-
             for _, conversation_id in timestamp_groups[unique_timestamp]:
-                # credit_drop_info = CreditDropInfo()
-                # credit_drop_info.conversation_id = conversation_id
-                # credit_drop_info.credit_drop_ns = time.time_ns()
-
-                task = asyncio.create_task(
-                    self.comms.push(
-                        topic=MessageType.CREDIT_DROP,
-                        message=CreditDropMessage(
-                            service_id=self.service_id,
-                            amount=1,
-                            conversation_id=conversation_id,
-                            credit_drop_ns=time.time_ns(),
-                        ),
+                self.execute_async(
+                    self.credit_manager.drop_credit(
+                        credit_phase=CreditPhase.PROFILING,
+                        conversation_id=conversation_id,
+                        # We already waited, so it can be sent ASAP
+                        credit_drop_ns=None,
                     )
                 )
-                tasks.add(task)
-                task.add_done_callback(tasks.discard)
 
-        self.logger.info("Completed all scheduled credit drops")
+        self.info("Completed all scheduled credit drops")

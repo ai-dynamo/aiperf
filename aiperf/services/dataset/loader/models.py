@@ -5,9 +5,8 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
-from aiperf.common.dataset_models import Audio, Image, Text
 from aiperf.common.enums import CustomDatasetType
-from aiperf.common.pydantic_utils import AIPerfBaseModel
+from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text
 
 
 class SingleTurn(AIPerfBaseModel):

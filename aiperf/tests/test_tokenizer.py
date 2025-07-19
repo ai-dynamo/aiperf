@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.exceptions import InitializationError
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.tokenizer import Tokenizer
 
 
@@ -12,14 +12,14 @@ class TestTokenizer:
         tokenizer = Tokenizer()
         assert tokenizer._tokenizer is None
 
-        with pytest.raises(InitializationError):
+        with pytest.raises(NotInitializedError):
             tokenizer("test")
-        with pytest.raises(InitializationError):
+        with pytest.raises(NotInitializedError):
             tokenizer.encode("test")
-        with pytest.raises(InitializationError):
+        with pytest.raises(NotInitializedError):
             tokenizer.decode([1])
-        with pytest.raises(InitializationError):
-            tokenizer.bos_token_id()
+        with pytest.raises(NotInitializedError):
+            _ = tokenizer.bos_token_id
 
     def test_non_empty_tokenizer(self, mock_tokenizer_cls):
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")

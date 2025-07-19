@@ -5,17 +5,19 @@ import asyncio
 import random
 import time
 
-from aiperf.common.credit_models import CreditPhaseStats
-from aiperf.common.enums import RequestRateMode
+from aiperf.common.enums import RequestRateMode, TimingMode
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.models import CreditPhaseStats
 from aiperf.services.timing_manager.config import TimingManagerConfig
 from aiperf.services.timing_manager.credit_issuing_strategy import (
     CreditIssuingStrategy,
+    CreditIssuingStrategyFactory,
     CreditManagerProtocol,
 )
 
 
+@CreditIssuingStrategyFactory.register(TimingMode.REQUEST_RATE)
 class RequestRateStrategy(CreditIssuingStrategy, AsyncTaskManagerMixin):
     """
     Strategy for issuing credits based on a specified request rate.
@@ -44,7 +46,7 @@ class RequestRateStrategy(CreditIssuingStrategy, AsyncTaskManagerMixin):
         )
 
     async def _execute_single_phase(self, phase_stats: CreditPhaseStats) -> None:
-        """Execute a single phase."""
+        """Execute a single phase. This will not return until the phase sending is complete."""
         # Issue credit drops at the specified rate
         if self._request_rate_mode == RequestRateMode.CONSTANT:
             await self._execute_constant_rate(phase_stats)

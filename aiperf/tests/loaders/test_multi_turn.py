@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from aiperf.common.dataset_models import Image, Text
 from aiperf.common.enums import CustomDatasetType
+from aiperf.common.models import Image, Text
 from aiperf.services.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.services.dataset.loader.multi_turn import MultiTurnDatasetLoader
 
