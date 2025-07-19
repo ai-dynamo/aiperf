@@ -51,7 +51,7 @@ class InputDefaults:
     HEADERS = {}
     FILE = None
     FIXED_SCHEDULE = False
-    CUSTOM_DATASET_TYPE = CustomDatasetType.TRACE
+    CUSTOM_DATASET_TYPE = CustomDatasetType.MOONCAKE_TRACE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
     RANDOM_SEED = None

@@ -155,5 +155,5 @@ def trace_config() -> InputConfig:
     # Use model_construct to bypass validation for testing
     return InputConfig.model_construct(
         file="trace_data.jsonl",
-        custom_dataset_type=CustomDatasetType.TRACE,
+        custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
     )
