@@ -87,7 +87,7 @@ class Message(ExcludeIfNoneMixin):
         yield cls.from_json
 
     @classmethod
-    def from_json(cls, json_str: str) -> "Message":
+    def from_json(cls, json_str: str | bytes | bytearray) -> "Message":
         """Fast deserialization without full validation"""
         data = json.loads(json_str)
         message_type = data.get("message_type")

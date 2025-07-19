@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import contextlib
 from collections.abc import Callable
 from typing import Any
 
@@ -78,6 +79,15 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
     async def _on_stop(self) -> None:
         await self.cancel_all_tasks()
 
+    async def subscribe_all(
+        self, message_callback_map: dict[MessageType, Callable[[Message], Any]]
+    ) -> None:
+        """Subscribe to all message_types in the map."""
+        await self._ensure_initialized()
+        for message_type, callback in message_callback_map.items():
+            await self._subscribe_internal(message_type, callback)
+        await asyncio.sleep(0.1)
+
     async def subscribe(
         self, message_type: MessageType, callback: Callable[[Message], Any]
     ) -> None:
@@ -91,26 +101,33 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
             Exception if subscription was not successful, None otherwise
         """
         await self._ensure_initialized()
+        await self._subscribe_internal(message_type, callback)
+        await asyncio.sleep(0.1)
 
+    async def _subscribe_internal(
+        self, message_type: MessageType, callback: Callable[[Message], Any]
+    ) -> None:
+        """Subscribe to a message_type.
+
+        Args:
+            message_type: MessageType to subscribe to
+            callback: Function to call when a message is received (receives Message object)
+        """
         try:
-            # Subscribe to message_type
-            self.socket.subscribe(message_type.encode())
+            # Only subscribe to message_type if this is the first callback for this type
+            if message_type not in self._subscribers:
+                self.socket.subscribe(message_type.encode())
+                self._subscribers[message_type] = []
 
             # Register callback
-            if message_type not in self._subscribers:
-                self._subscribers[message_type] = []
             self._subscribers[message_type].append(callback)
 
-            self.logger.debug(
-                "Subscribed to message_type: %s, %s",
-                message_type,
-                self._subscribers[message_type],
+            self.trace(
+                lambda: f"Subscribed to message_type: {message_type}, {self._subscribers[message_type]}"
             )
 
         except Exception as e:
-            self.logger.error(
-                "Exception subscribing to message_type %s: %s", message_type, e
-            )
+            self.exception(f"Exception subscribing to message_type {message_type}: {e}")
             raise CommunicationError(
                 f"Failed to subscribe to message_type {message_type}: {e}",
             ) from e
@@ -119,17 +136,16 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
         """Handle a message from a subscribed message_type."""
         message_type = topic_bytes.decode()
         message_json = message_bytes.decode()
-        self.logger.debug(
-            "Received message from message_type: '%s', message: %s",
-            message_type,
-            message_json,
+        self.trace(
+            lambda: f"Received message from message_type: '{message_type}', message: {message_json}"
         )
 
         message = Message.from_json(message_json)
 
         # Call callbacks with the parsed message object
         if message_type in self._subscribers:
-            await call_all_functions(self._subscribers[message_type], message)
+            with contextlib.suppress(Exception):  # Ignore errors, they will get logged
+                await call_all_functions(self._subscribers[message_type], message)
 
     @aiperf_task
     async def _sub_receiver(self) -> None:
@@ -139,11 +155,9 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
         shutdown. It will wait for messages from the socket and handle them.
         """
         if not self.is_initialized:
-            self.logger.debug(
-                "Sub client %s waiting for initialization", self.client_id
-            )
+            self.trace("Sub client %s waiting for initialization", self.client_id)
             await self.initialized_event.wait()
-            self.logger.debug("Sub client %s initialized", self.client_id)
+            self.trace(lambda: f"Sub client {self.client_id} initialized")
 
         while not self.stop_event.is_set():
             try:
@@ -155,15 +169,17 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
                 self.execute_async(self._handle_message(topic_bytes, message_bytes))
 
             except (asyncio.CancelledError, zmq.ContextTerminated):
+                self.trace(
+                    lambda: f"Sub client {self.client_id} receiver task cancelled"
+                )
                 break
 
             except zmq.Again:
-                pass
+                await asyncio.sleep(0)  # yield to the event loop
+                continue
 
             except Exception as e:
-                self.logger.error(
-                    "Exception receiving message from subscription: %s, %s",
-                    e,
-                    type(e),
+                self.exception(
+                    f"Exception receiving message from subscription: {e}, {type(e)}"
                 )
                 await asyncio.sleep(0.1)

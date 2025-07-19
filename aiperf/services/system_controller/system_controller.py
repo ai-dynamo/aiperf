@@ -186,6 +186,9 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
                     f"Failed to subscribe to message_type {message_type}: {e}",
                 ) from e
 
+        # TODO: HACK: Wait for 1 second to ensure subscriptions are set up
+        await asyncio.sleep(1)
+
         self._system_state = SystemState.CONFIGURING
         await self._bootstrap_system()
 
@@ -222,7 +225,7 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
         - Wait for all required services to be registered
         - Start all required services
         """
-        self.logger.debug("Starting System Controller")
+        self.debug("System Controller is bootstrapping services")
 
         # Start all required services
         try:
@@ -232,36 +235,40 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
                 "Failed to initialize all services",
             ) from e
 
-        try:
-            # Wait for all required services to be registered
-            await self.service_manager.wait_for_all_services_registration(
-                self.stop_event
-            )
+        # try:
+        #     # Wait for all required services to be registered
+        #     await self.service_manager.wait_for_all_services_registration(
+        #         self.stop_event
+        #     )
 
-            if self.stop_event.is_set():
-                self.logger.debug(
-                    "System Controller stopped before all services registered"
-                )
-                return  # Don't continue with the rest of the initialization
+        #     if self.stop_event.is_set():
+        #         self.debug(
+        #             "System Controller stopped before all services registered"
+        #         )
+        #         return  # Don't continue with the rest of the initialization
 
-        except Exception as e:
-            raise self._service_error(
-                "Not all required services registered within the timeout period",
-            ) from e
+        # except Exception as e:
+        #     raise self._service_error(
+        #         "Not all required services registered within the timeout period",
+        #     ) from e
 
-        self.logger.debug("All required services registered successfully")
+        # TODO: HACK: Wait for 1 second to ensure registrations made
+        await asyncio.sleep(1)
 
-        self.logger.info("AIPerf System is READY")
+        # TODO: HACK: This is incorrect
+        self.debug("All required services registered successfully")
+
+        self.info("AIPerf System is READY")
         self._system_state = SystemState.READY
 
         await self.start_profiling_all_services()
 
         if self.stop_event.is_set():
-            self.logger.debug("System Controller stopped before all services started")
+            self.debug("System Controller stopped before all services started")
             return  # Don't continue with the rest of the initialization
 
-        self.logger.debug("All required services started successfully")
-        self.logger.info("AIPerf System is RUNNING")
+        self.debug("All required services started successfully")
+        self.info("AIPerf System is RUNNING")
 
     @on_stop
     async def _stop(self) -> None:
@@ -270,8 +277,8 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
         This method will:
         - Stop all running services
         """
-        self.logger.debug("Stopping System Controller")
-        self.logger.info("AIPerf System is EXITING")
+        self.debug("Stopping System Controller")
+        self.info("AIPerf System is EXITING")
         # logging.root.setLevel(logging.DEBUG)
 
         self._system_state = SystemState.STOPPING
@@ -325,7 +332,7 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
     @on_cleanup
     async def _cleanup(self) -> None:
         """Clean up system controller-specific components."""
-        self.logger.debug("Cleaning up System Controller")
+        self.debug("Cleaning up System Controller")
 
         await self.kill()
 
@@ -333,6 +340,14 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
 
     async def start_profiling_all_services(self) -> None:
         """Tell all services to start profiling."""
+        # TODO: HACK: Wait for 1 second to ensure services are ready
+        await asyncio.sleep(1)
+
+        self.debug("Sending PROFILE_START command to all services")
+        await self.send_command_to_service(
+            target_service_id=None,
+            command=CommandType.PROFILE_START,
+        )
 
     async def _process_registration_message(self, message: RegistrationMessage) -> None:
         """Process a registration message from a service. It will

@@ -2,35 +2,31 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import random
-import sys
 
 from aiperf.common.comms import ReplyClientProtocol
-from aiperf.common.comms.base import CommunicationClientAddressType
+from aiperf.common.comms.base import (
+    CommunicationClientAddressType,
+)
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     ComposerType,
     MessageType,
-    NotificationType,
     ServiceType,
 )
-from aiperf.common.exceptions import InitializationError
 from aiperf.common.factories import ComposerFactory, ServiceFactory
 from aiperf.common.hooks import (
-    on_cleanup,
     on_configure,
     on_init,
-    on_start,
-    on_stop,
 )
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
+    DatasetConfiguredNotification,
     DatasetTimingRequest,
     DatasetTimingResponse,
     Message,
-    NotificationMessage,
 )
 from aiperf.common.models import Conversation
 from aiperf.common.service.base_component_service import BaseComponentService
@@ -53,12 +49,16 @@ class DatasetManager(BaseComponentService):
         user_config: UserConfig | None = None,
         service_id: str | None = None,
     ) -> None:
-        super().__init__(service_config=service_config, service_id=service_id)
-        self.logger.debug("Calling __init__() in dataset manager")
+        super().__init__(
+            service_config=service_config,
+            user_config=user_config,
+            service_id=service_id,
+        )
+        self.debug("Dataset manager __init__")
         self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
-        self.dealer_router_client: ReplyClientProtocol = self.comms.create_reply_client(
+        self.router_reply_client: ReplyClientProtocol = self.comms.create_reply_client(
             CommunicationClientAddressType.DATASET_MANAGER_PROXY_BACKEND
         )
         self.dataset_configured = asyncio.Event()
@@ -71,72 +71,51 @@ class DatasetManager(BaseComponentService):
     @on_init
     async def _initialize(self) -> None:
         """Initialize dataset manager-specific components."""
-        self.logger.info("Initializing dataset manager %s", self.service_id)
+        self.debug(lambda: f"Initializing dataset manager {self.service_id}")
 
-        if self.comms is None:
-            raise InitializationError("Communication is not initialized")
-
-        self.dealer_router_client.register_request_handler(
+        self.router_reply_client.register_request_handler(
             service_id=self.service_id,
             message_type=MessageType.CONVERSATION_REQUEST,
             handler=self._handle_conversation_request,
         )
-        self.dealer_router_client.register_request_handler(
+        self.router_reply_client.register_request_handler(
             service_id=self.service_id,
             message_type=MessageType.DATASET_TIMING_REQUEST,
             handler=self._handle_dataset_timing_request,
         )
-        self.dealer_router_client.register_request_handler(
+        self.router_reply_client.register_request_handler(
             service_id=self.service_id,
             message_type=MessageType.CONVERSATION_TURN_REQUEST,
             handler=self._handle_conversation_turn_request,
         )
 
-        self.logger.info("Dataset manager %s initialized", self.service_id)
+        self.debug(lambda: f"Dataset manager {self.service_id} initialized")
 
-    @on_start
-    async def _start(self) -> None:
-        """Start the dataset manager."""
-        self.logger.info("Starting dataset manager %s", self.service_id)
-        # TODO: Implement dataset manager start
-
-    @on_stop
-    async def _stop(self) -> None:
-        """Stop the dataset manager."""
-        self.logger.debug("Stopping dataset manager %s", self.service_id)
-        # TODO: Implement dataset manager stop
-
-    @on_cleanup
-    async def _cleanup(self) -> None:
-        """Clean up dataset manager-specific components."""
-        self.logger.debug("Cleaning up dataset manager %s", self.service_id)
-        # TODO: Implement dataset manager cleanup
-
-    @on_configure
-    async def _configure(self, message: Message) -> None:
-        """Configure the dataset manager."""
-        self.logger.debug(f"Configuring dataset manager with message: {message}")
-        self.user_config = (
-            message.data if isinstance(message.data, UserConfig) else None
-        )
+    async def _configure_dataset(self) -> None:
         if self.user_config is None:
             raise self._service_error("User config is required for dataset manager")
 
         if self.user_config.input.file:
             composer_type = ComposerType.CUSTOM
-            self.logger.debug(
-                "Detected input file '%s'. Setting the composer type to %s.",
-                self.user_config.input.file,
-                ComposerType.CUSTOM,
+            self.debug(
+                lambda: f"Detected input file '{self.user_config.input.file}'. Setting the composer type to {ComposerType.CUSTOM}."
             )
         else:
             composer_type = ComposerType.SYNTHETIC
-            self.logger.debug(
-                "No input file detected. Setting the composer type to %s.",
-                ComposerType.SYNTHETIC,
+            self.debug(
+                lambda: f"No input file detected. Setting the composer type to {ComposerType.SYNTHETIC}."
             )
 
-        tokenizer = Tokenizer.from_pretrained(self.user_config.tokenizer.name)
+        tokenizer_name = self.user_config.tokenizer.name
+        if tokenizer_name is None:
+            # TODO: How do we support multiple?
+            tokenizer_name = self.user_config.model_names[0]
+
+        tokenizer = Tokenizer.from_pretrained(
+            tokenizer_name,
+            trust_remote_code=self.user_config.tokenizer.trust_remote_code,
+            revision=self.user_config.tokenizer.revision,
+        )
         composer = ComposerFactory.create_instance(
             composer_type,
             config=self.user_config.input,
@@ -147,22 +126,29 @@ class DatasetManager(BaseComponentService):
 
         self.dataset_configured.set()
         await self.pub_client.publish(
-            NotificationMessage(
+            DatasetConfiguredNotification(
                 service_id=self.service_id,
-                message_type=MessageType.NOTIFICATION,
-                notification_type=NotificationType.DATASET_CONFIGURED,
-                data=None,
             ),
         )
+
+    @on_configure
+    async def _configure(self, message: Message) -> None:
+        """Configure the dataset manager."""
+        # TODO: This is a temporary hack with the changes to user config loading
+        self.dataset_configured.clear()
+        await self._configure_dataset()
 
     async def _handle_conversation_request(
         self, message: ConversationRequestMessage
     ) -> ConversationResponseMessage:
         """Handle a conversation request."""
-        self.logger.debug("Handling conversation request: %s", message)
+        self.debug(lambda: f"Handling conversation request: {message}")
 
         # Wait for the dataset to be configured if it is not already
         if not self.dataset_configured.is_set():
+            self.debug(
+                "Dataset not configured. Waiting for dataset to be configured..."
+            )
             await asyncio.wait_for(
                 self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
             )
@@ -189,7 +175,7 @@ class DatasetManager(BaseComponentService):
 
         # TODO: Implement the user specified method (random, round robin, etc.)
         conversation = random.choice(list(self.dataset.values()))
-        self.logger.debug("Sending random conversation response: %s", conversation)
+        self.debug(lambda: f"Sending random conversation response: {conversation}")
         return ConversationResponseMessage(
             service_id=self.service_id,
             request_id=request_id,
@@ -207,7 +193,7 @@ class DatasetManager(BaseComponentService):
             )
 
         conversation = self.dataset[conversation_id]
-        self.logger.debug("Sending conversation response: %s", conversation)
+        self.debug(lambda: f"Sending conversation response: {conversation}")
         return ConversationResponseMessage(
             service_id=self.service_id,
             request_id=request_id,
@@ -244,7 +230,7 @@ class DatasetManager(BaseComponentService):
         self, message: DatasetTimingRequest
     ) -> DatasetTimingResponse:
         """Handle a dataset timing request."""
-        self.logger.debug("Handling dataset timing request: %s", message)
+        self.debug(lambda: f"Handling dataset timing request: {message}")
         if not self.dataset:
             raise self._service_error(
                 "Dataset is empty and must be configured before handling timing requests.",
@@ -271,4 +257,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

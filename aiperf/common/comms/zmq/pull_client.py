@@ -96,7 +96,9 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
                 await self.semaphore.acquire()
 
                 message_json = await self.socket.recv_string()
-                self.logger.debug("Received message from pull socket: %s", message_json)
+                self.trace(
+                    lambda msg=message_json: f"Received message from pull socket: {msg}"
+                )
                 self.execute_async(self._process_message(message_json))
 
             except zmq.Again:
@@ -109,11 +111,7 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
                 break
 
             except Exception as e:
-                self.logger.error(
-                    "Exception receiving data from pull socket: %s %s",
-                    type(e).__name__,
-                    e,
-                )
+                self.exception(f"Exception receiving data from pull socket: {e}")
                 await asyncio.sleep(0.1)
 
     @on_stop
@@ -135,9 +133,8 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
             if message.message_type in self._pull_callbacks:
                 await self._pull_callbacks[message.message_type](message)
             else:
-                self.logger.warning(
-                    "Pull message received for message type %s without callback",
-                    message.message_type,
+                self.warning(
+                    lambda typ=message.message_type: f"Pull message received for message type {typ} without callback"
                 )
         finally:
             # always release the semaphore to allow receiving more messages

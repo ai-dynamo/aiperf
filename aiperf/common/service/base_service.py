@@ -55,6 +55,11 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin, AIPerfLoggerMixin)
         self.service_id: str = (
             service_id or f"{self.service_type}_{uuid.uuid4().hex[:8]}"
         )
+        self.service_config = service_config
+        self.user_config = user_config
+
+        self._state: ServiceState = ServiceState.UNKNOWN
+
         super().__init__(
             service_id=service_id,
             service_config=service_config,
@@ -62,11 +67,9 @@ class BaseService(BaseServiceInterface, ABC, AIPerfTaskMixin, AIPerfLoggerMixin)
             logger_name=self.service_id,
             **kwargs,
         )
-        self.service_config = service_config
-        self.user_config = user_config
 
         self.debug(
-            lambda: f"Initializing {self.service_type} service (id: {self.service_id})"
+            lambda: f"__init__ {self.service_type} service (id: {self.service_id})"
         )
 
         self._state: ServiceState = ServiceState.UNKNOWN

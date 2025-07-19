@@ -5,8 +5,8 @@ import asyncio
 
 from aiperf.common.config import UserConfig
 from aiperf.common.factories import DataExporterFactory
+from aiperf.common.messages import ProfileResultsMessage
 from aiperf.data_exporter.exporter_config import ExporterConfig
-from aiperf.progress import ProfileResultsMessage
 
 
 class ExporterManager:

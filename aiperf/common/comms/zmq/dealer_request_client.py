@@ -68,7 +68,7 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
         while not self.stop_event.is_set():
             try:
                 message = await self._socket.recv_string()
-                self.logger.debug("Received response: %s", message)
+                self.trace(lambda msg=message: f"Received response: {msg}")
                 response_message = Message.from_json(message)
 
                 # Call the callback if it exists
@@ -76,13 +76,18 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
                     callback = self.request_callbacks.pop(response_message.request_id)
                     self.execute_async(callback(response_message))
 
+            except zmq.Again:
+                self.trace(lambda: "No data received, yielding to event loop")
+                await asyncio.sleep(0)  # yield to the event loop
+                continue
+
             except (asyncio.CancelledError, zmq.ContextTerminated):
                 raise  # re-raise the cancelled error
 
             except Exception as e:
-                raise CommunicationError(
-                    f"Exception receiving responses: {e.__class__.__name__} {e}",
-                ) from e
+                self.exception(f"Exception receiving responses: {e}")
+                await asyncio.sleep(0)  # yield to the event loop
+                continue
 
     @on_stop
     async def _stop_remaining_tasks(self) -> None:
@@ -109,14 +114,14 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
         self.request_callbacks[message.request_id] = callback
 
         request_json = message.model_dump_json()
-        self.logger.debug("Sending request: %s", request_json)
+        self.trace(lambda msg=request_json: f"Sending request: {msg}")
 
         try:
             await self._socket.send_string(request_json)
 
         except Exception as e:
             raise CommunicationError(
-                f"Exception sending request: {e.__class__.__name__} {e}",
+                f"Exception sending request: {e.__class__.__qualname__} {e}",
             ) from e
 
     async def request(

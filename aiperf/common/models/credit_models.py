@@ -142,6 +142,10 @@ class PhaseProcessingStats(AIPerfBaseModel):
     errors: int = Field(
         default=0, description="The number of record errors encountered"
     )
+    total_expected_requests: int | None = Field(
+        default=None,
+        description="The total number of expected requests to process. If None, the phase is not request count based.",
+    )
 
     @property
     def total_records(self) -> int:

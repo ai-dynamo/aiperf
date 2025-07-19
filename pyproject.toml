@@ -6,6 +6,12 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 path = "aiperf/__init__.py"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["aiperf"]
+
 [project]
 name = "aiperf"
 version = "0.1.0"

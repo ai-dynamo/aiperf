@@ -32,6 +32,7 @@ from aiperf.common.messages.dataset_messages import (
     ConversationResponseMessage,
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
+    DatasetConfiguredNotification,
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
@@ -41,6 +42,13 @@ from aiperf.common.messages.health_messages import (
 from aiperf.common.messages.inference_messages import (
     InferenceResultsMessage,
     ParsedInferenceResultsMessage,
+)
+from aiperf.common.messages.progress_messages import (
+    ProcessingStatsMessage,
+    ProfileProgressMessage,
+    ProfileResultsMessage,
+    RecordsProcessingStatsMessage,
+    SweepProgressMessage,
 )
 from aiperf.common.messages.service_messages import (
     BaseServiceErrorMessage,
@@ -69,6 +77,7 @@ __all__ = [
     "CreditPhaseStartMessage",
     "CreditReturnMessage",
     "CreditsCompleteMessage",
+    "DatasetConfiguredNotification",
     "DatasetTimingRequest",
     "DatasetTimingResponse",
     "ErrorMessage",
@@ -78,8 +87,13 @@ __all__ = [
     "NotificationMessage",
     "ParsedInferenceResultsMessage",
     "ProcessRecordsCommandData",
+    "ProcessingStatsMessage",
+    "ProfileProgressMessage",
+    "ProfileResultsMessage",
+    "RecordsProcessingStatsMessage",
     "RegistrationMessage",
     "RequiresRequestNSMixin",
     "StatusMessage",
+    "SweepProgressMessage",
     "WorkerHealthMessage",
 ]

@@ -60,20 +60,20 @@ def bootstrap_and_run_service(
             **kwargs,
         )
 
-        # Set up child process logging if a log queue is provided
-        if log_queue is not None:
-            from aiperf.common.logging import setup_child_process_logging
+        from aiperf.common.logging import setup_child_process_logging
 
-            setup_child_process_logging(
-                log_queue, service.service_id, service_config, user_config
-            )
+        setup_child_process_logging(
+            log_queue, service.service_id, service_config, user_config
+        )
 
         if user_config.input.random_seed is not None:
             random.seed(user_config.input.random_seed)
-            # TODO: Should we add support for numpy random seed?
+            # Try and set the numpy random seed
             # https://numpy.org/doc/stable/reference/random/index.html#random-quick-start
-            # import numpy as np
-            # np.random.seed(user_config.input.random_seed)
+            with contextlib.suppress(ImportError):
+                import numpy as np
+
+                np.random.seed(user_config.input.random_seed)
 
         with contextlib.suppress(asyncio.CancelledError):
             await service.run_forever()
