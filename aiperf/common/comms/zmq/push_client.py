@@ -15,6 +15,9 @@ from aiperf.common.mixins import AsyncTaskManagerMixin
 MAX_PUSH_RETRIES = 2
 """Maximum number of retries for pushing a message."""
 
+RETRY_DELAY_INTERVAL_SEC = 0.1
+"""The interval to wait before retrying to push a message."""
+
 
 @CommunicationClientFactory.register(CommunicationClientType.PUSH)
 class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
@@ -83,15 +86,19 @@ class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
         try:
             data_json = message.model_dump_json()
             await self.socket.send_string(data_json)
-            self.logger.debug("Pushed json data: %s", data_json)
+            self.trace(lambda msg=data_json: f"Pushed json data: {msg}")
+        except (asyncio.CancelledError, zmq.ContextTerminated):
+            return
         except zmq.Again as e:
             if retry_count >= max_retries:
                 raise CommunicationError(
                     f"Failed to push data after {retry_count} retries: {e}",
                 ) from e
 
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(RETRY_DELAY_INTERVAL_SEC)
             return await self._push_message(message, retry_count + 1, max_retries)
+        except Exception as e:
+            raise CommunicationError(f"Failed to push data: {e}") from e
 
     async def push(self, message: Message) -> None:
         """Push data to a target. The message will be routed automatically
@@ -102,4 +109,4 @@ class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
         """
         await self._ensure_initialized()
 
-        self.execute_async(self._push_message(message))
+        await self._push_message(message)

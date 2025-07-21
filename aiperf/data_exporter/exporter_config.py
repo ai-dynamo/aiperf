@@ -4,7 +4,7 @@
 from dataclasses import dataclass
 
 from aiperf.common.config import UserConfig
-from aiperf.progress import ProfileResultsMessage
+from aiperf.common.messages import ProfileResultsMessage
 
 
 @dataclass

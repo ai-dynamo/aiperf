@@ -2,24 +2,27 @@
 # SPDX-License-Identifier: Apache-2.0
 
 __all__ = [
-    "BaseZMQClient",
-    "BaseZMQCommunication",
-    "BaseZMQProxy",
-    "ZMQDealerRequestClient",
-    "ZMQDealerRouterProxy",
-    "ZMQIPCCommunication",
-    "ZMQProxyFactory",
     "ZMQPubClient",
+    "ZMQSubClient",
     "ZMQPullClient",
     "ZMQPushClient",
-    "ZMQPushPullProxy",
     "ZMQRouterReplyClient",
+    "ZMQDealerRequestClient",
     "ZMQSocketDefaults",
-    "ZMQSubClient",
+    "BaseZMQClient",
+    "BaseZMQProxy",
+    "ZMQProxyFactory",
+    "BaseZMQCommunication",
     "ZMQTCPCommunication",
-    "ZMQXPubXSubProxy",
+    "ZMQIPCCommunication",
     "create_proxy_socket_class",
     "define_proxy_class",
+    "ZMQXPubXSubProxy",
+    "ZMQDealerRouterProxy",
+    "ZMQPushPullProxy",
+    "ZMQDealerRouterProxy",
+    "ZMQXPubXSubProxy",
+    "ZMQPushPullProxy",
 ]
 
 from aiperf.common.comms.zmq.dealer_request_client import ZMQDealerRequestClient

@@ -1,15 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
 from typing import Literal
 
-from pydantic import (
-    Field,
-)
+from pydantic import Field
 
-from aiperf.common.enums import (
-    CreditPhase,
-    MessageType,
-)
+from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import Conversation, Turn
 
@@ -85,4 +81,12 @@ class DatasetTimingResponse(BaseServiceMessage):
     timing_data: list[tuple[int, str]] = Field(
         ...,
         description="The timing data of the dataset. Tuple of (timestamp, conversation_id)",
+    )
+
+
+class DatasetConfiguredNotification(BaseServiceMessage):
+    """Notification sent to notify other services that the dataset has been configured."""
+
+    message_type: Literal[MessageType.DATASET_CONFIGURED_NOTIFICATION] = (
+        MessageType.DATASET_CONFIGURED_NOTIFICATION
     )

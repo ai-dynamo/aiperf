@@ -1,25 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import contextlib
-import logging
 import uuid
 
 import zmq.asyncio
 
 from aiperf.common.comms.zmq.zmq_defaults import ZMQSocketDefaults
-from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
 from aiperf.common.exceptions import (
     AIPerfError,
     CommunicationError,
     InitializationError,
 )
-from aiperf.common.hooks import (
-    AIPerfHook,
-    AIPerfTaskHook,
-    supports_hooks,
-)
-from aiperf.common.mixins import AIPerfTaskMixin
+from aiperf.common.hooks import AIPerfHook, AIPerfTaskHook, supports_hooks
+from aiperf.common.mixins import AIPerfLoggerMixin, AIPerfTaskMixin
 
 ################################################################################
 # Base ZMQ Client Class
@@ -32,7 +25,7 @@ from aiperf.common.mixins import AIPerfTaskMixin
     AIPerfHook.ON_CLEANUP,
     AIPerfTaskHook.AIPERF_TASK,
 )
-class BaseZMQClient(AIPerfTaskMixin):
+class BaseZMQClient(AIPerfTaskMixin, AIPerfLoggerMixin):
     """Base class for all ZMQ clients. It can be used as-is to create a new ZMQ client,
     or it can be subclassed to create specific ZMQ client functionality.
 
@@ -71,9 +64,8 @@ class BaseZMQClient(AIPerfTaskMixin):
             client_id
             or f"{self.socket_type.name.lower()}_client_{uuid.uuid4().hex[:8]}"
         )
-        super().__init__()
-        # Set the logger after the super init to override the name
-        self.logger = logging.getLogger(self.client_id)
+        super().__init__(logger_name=self.client_id)
+        self.trace(lambda: f"ZMQ client __init__: {self.client_id}")
 
     @property
     def is_initialized(self) -> bool:
@@ -106,9 +98,10 @@ class BaseZMQClient(AIPerfTaskMixin):
     async def _ensure_initialized(self) -> None:
         """Ensure the communication channels are initialized and not shutdown.
 
+        If not initialized, it will automatically initialize.
+
         Raises:
-            CommunicationError: If the communication channels are not initialized
-                or shutdown
+            CommunicationError: If the communication channels are shutdown
         """
         if not self.is_initialized:
             await self.initialize()
@@ -127,19 +120,13 @@ class BaseZMQClient(AIPerfTaskMixin):
         try:
             self._socket = self.context.socket(self.socket_type)
             if self.bind:
-                self.logger.debug(
-                    "ZMQ %s socket initialized, try BIND to %s (%s)",
-                    self.socket_type_name,
-                    self.address,
-                    self.client_id,
+                self.debug(
+                    lambda: f"ZMQ {self.socket_type_name} socket initialized, try BIND to {self.address} ({self.client_id})"
                 )
                 self._socket.bind(self.address)
             else:
-                self.logger.debug(
-                    "ZMQ %s socket initialized, try CONNECT to %s (%s)",
-                    self.socket_type_name,
-                    self.address,
-                    self.client_id,
+                self.debug(
+                    lambda: f"ZMQ {self.socket_type_name} socket initialized, try CONNECT to {self.address} ({self.client_id})"
                 )
                 self._socket.connect(self.address)
 
@@ -168,20 +155,14 @@ class BaseZMQClient(AIPerfTaskMixin):
             await self.run_hooks(AIPerfHook.ON_INIT)
 
             self.initialized_event.set()
-            self.logger.debug(
-                "ZMQ %s socket %s to %s (%s)",
-                self.socket_type_name,
-                "BOUND" if self.bind else "CONNECTED",
-                self.address,
-                self.client_id,
+            self.debug(
+                lambda: f"ZMQ {self.socket_type_name} socket {'BOUND' if self.bind else 'CONNECTED'} to {self.address} ({self.client_id})"
             )
 
         except AIPerfError:
             raise  # re-raise it up the stack
         except Exception as e:
-            raise InitializationError(
-                f"Failed to initialize ZMQ socket: {e}",
-            ) from e
+            raise InitializationError(f"Failed to initialize ZMQ socket: {e}") from e
 
     async def shutdown(self) -> None:
         """Shutdown the communication.
@@ -197,44 +178,36 @@ class BaseZMQClient(AIPerfTaskMixin):
 
         try:
             await self.run_hooks(AIPerfHook.ON_STOP)
-        except Exception as e:
-            self.logger.error(
-                "Exception running ON_STOP hooks: %s (%s)", e, self.client_id
-            )
-
-        # Cancel all registered tasks
-        for task in self.registered_tasks:
-            task.cancel()
-
-        # Wait for all tasks to complete
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(
-                asyncio.gather(*self.registered_tasks),
-                timeout=TASK_CANCEL_TIMEOUT_SHORT,
-            )
-        self.registered_tasks.clear()
-
-        # Run the ON_STOP and ON_CLEANUP hooks
-        try:
-            await self.run_hooks(AIPerfHook.ON_STOP)
-            await self.run_hooks(AIPerfHook.ON_CLEANUP)
-
         except AIPerfError:
             raise  # re-raise it up the stack
-
         except Exception as e:
-            self.logger.error(
-                "Exception cleaning up ZMQ socket: %s (%s)", e, self.client_id
+            self.exception(
+                f"Uncaught exception running ON_STOP hooks: {e} ({self.client_id})"
+            )
+
+        try:
+            await self.run_hooks(AIPerfHook.ON_CLEANUP)
+        except AIPerfError:
+            raise  # re-raise it up the stack
+        except Exception as e:
+            self.exception(
+                f"Uncaught exception cleaning up ZMQ socket: {e} ({self.client_id})"
             )
 
         finally:
             try:
                 if self._socket:
                     self._socket.close()
-
+            except zmq.ContextTerminated:
+                self.debug(
+                    lambda: f"ZMQ context already terminated, skipping socket close ({self.client_id})"
+                )
+                return
+            except AIPerfError:
+                raise  # re-raise it up the stack
             except Exception as e:
-                self.logger.error(
-                    "Exception shutting down ZMQ socket: %s (%s)", e, self.client_id
+                self.exception(
+                    f"Uncaught exception shutting down ZMQ socket: {e} ({self.client_id})"
                 )
             finally:
                 self._socket = None

@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import inspect
 import logging
 import os
@@ -95,6 +96,15 @@ def load_json_str(json_str: str, func: Callable = lambda x: x) -> dict[str, Any]
         snippet = json_str[:200] + ("..." if len(json_str) > 200 else "")
         logger.error("Failed to parse JSON string: '%s'", snippet)
         raise
+
+
+async def yield_to_event_loop() -> None:
+    """Yield to the event loop. This forces the current coroutine to yield and allow
+    other coroutines to run, preventing starvation. Use this when you do not want to
+    delay your coroutine via sleep, but still want to allow other coroutines to run if
+    there is a potential for an infinite loop.
+    """
+    await asyncio.sleep(0)
 
 
 # This is used to identify the source file of the call_all_functions function

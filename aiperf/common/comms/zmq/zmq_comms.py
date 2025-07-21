@@ -3,7 +3,6 @@
 import asyncio
 import errno
 import glob
-import logging
 import os
 from abc import ABC
 from pathlib import Path
@@ -25,9 +24,10 @@ from aiperf.common.enums import (
     CommunicationClientType,
 )
 from aiperf.common.exceptions import ShutdownError
+from aiperf.common.mixins import AIPerfLoggerMixin
 
 
-class BaseZMQCommunication(BaseCommunication, ABC):
+class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
     """ZeroMQ-based implementation of the Communication interface.
 
     Uses ZeroMQ for publish/subscribe and request/reply patterns to
@@ -38,7 +38,7 @@ class BaseZMQCommunication(BaseCommunication, ABC):
         self,
         config: BaseZMQCommunicationConfig,
     ) -> None:
-        self.logger: logging.Logger = logging.getLogger(self.__class__.__name__)
+        super().__init__()
         self.stop_event: asyncio.Event = asyncio.Event()
         self.initialized_event: asyncio.Event = asyncio.Event()
         self.config = config
@@ -46,10 +46,7 @@ class BaseZMQCommunication(BaseCommunication, ABC):
         self.context = zmq.asyncio.Context.instance()
         self.clients: list[BaseZMQClient] = []
 
-        self.logger.debug(
-            "ZMQ communication using protocol: %s",
-            type(self.config).__name__,
-        )
+        self.debug(f"ZMQ communication using protocol: {type(self.config).__name__}")
 
     @property
     def is_initialized(self) -> bool:
@@ -104,7 +101,18 @@ class BaseZMQCommunication(BaseCommunication, ABC):
                 ),
             )
 
+            self.context.term()
+
         except asyncio.CancelledError:
+            self.debug("ZMQ communication shutdown cancelled")
+            pass
+
+        except asyncio.TimeoutError:
+            self.debug("ZMQ communication shutdown timed out")
+            pass
+
+        except zmq.ContextTerminated:
+            self.debug("ZMQ communication context already terminated")
             pass
 
         except Exception as e:
@@ -189,16 +197,13 @@ class ZMQIPCCommunication(BaseZMQCommunication):
         """Create IPC socket directory if using IPC transport."""
         self._ipc_socket_dir = Path(self.config.path)
         if not self._ipc_socket_dir.exists():
-            self.logger.debug(
-                "IPC socket directory does not exist, creating: %s",
-                self._ipc_socket_dir,
+            self.debug(
+                f"IPC socket directory does not exist, creating: {self._ipc_socket_dir}"
             )
             self._ipc_socket_dir.mkdir(parents=True, exist_ok=True)
-            self.logger.debug("Created IPC socket directory: %s", self._ipc_socket_dir)
+            self.debug(f"Created IPC socket directory: {self._ipc_socket_dir}")
         else:
-            self.logger.debug(
-                "IPC socket directory already exists: %s", self._ipc_socket_dir
-            )
+            self.debug(f"IPC socket directory already exists: {self._ipc_socket_dir}")
 
     def _cleanup_ipc_sockets(self) -> None:
         """Clean up IPC socket files."""
@@ -209,11 +214,10 @@ class ZMQIPCCommunication(BaseZMQCommunication):
                 try:
                     if os.path.exists(ipc_file):
                         os.unlink(ipc_file)
-                        self.logger.debug(f"Removed IPC socket file: {ipc_file}")
+                        self.debug(f"Removed IPC socket file: {ipc_file}")
                 except OSError as e:
                     if e.errno != errno.ENOENT:
-                        self.logger.warning(
-                            "Failed to remove IPC socket file %s: %s",
-                            ipc_file,
-                            e,
+                        self.warning(
+                            lambda ipc_file=ipc_file,
+                            e=e: f"Failed to remove IPC socket file {ipc_file}: {e}"
                         )

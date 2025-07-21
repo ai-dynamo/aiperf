@@ -13,6 +13,7 @@ from aiperf.common.enums import CommunicationClientType, MessageType
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.utils import yield_to_event_loop
 
 
 @CommunicationClientFactory.register(CommunicationClientType.PULL)
@@ -96,12 +97,14 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
                 await self.semaphore.acquire()
 
                 message_json = await self.socket.recv_string()
-                self.logger.debug("Received message from pull socket: %s", message_json)
+                self.trace(
+                    lambda msg=message_json: f"Received message from pull socket: {msg}"
+                )
                 self.execute_async(self._process_message(message_json))
 
             except zmq.Again:
                 self.semaphore.release()  # release the semaphore as it was not used
-                await asyncio.sleep(0)  # allow other tasks to run
+                await yield_to_event_loop()
                 continue
 
             except (asyncio.CancelledError, zmq.ContextTerminated):
@@ -109,11 +112,9 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
                 break
 
             except Exception as e:
-                self.logger.error(
-                    "Exception receiving data from pull socket: %s %s",
-                    type(e).__name__,
-                    e,
-                )
+                self.exception(f"Exception receiving data from pull socket: {e}")
+                # Sleep for a short time to allow the system to potentially recover
+                # if there are temporary issues.
                 await asyncio.sleep(0.1)
 
     @on_stop
@@ -135,9 +136,8 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
             if message.message_type in self._pull_callbacks:
                 await self._pull_callbacks[message.message_type](message)
             else:
-                self.logger.warning(
-                    "Pull message received for message type %s without callback",
-                    message.message_type,
+                self.warning(
+                    lambda message_type=message.message_type: f"Pull message received for message type {message_type} without callback"
                 )
         finally:
             # always release the semaphore to allow receiving more messages
