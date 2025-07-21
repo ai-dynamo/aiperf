@@ -51,5 +51,4 @@ class TTFTMetric(BaseMetric):
         Raises:
             ValueError: If record is None or record is not valid
         """
-        if not record or not record.valid:
-            raise ValueError("Invalid Record")
+        self._require_valid_record(record)

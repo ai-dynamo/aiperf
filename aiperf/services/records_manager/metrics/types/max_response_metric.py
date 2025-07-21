@@ -35,7 +35,7 @@ class MaxResponseMetric(BaseMetric):
 
     def values(self) -> float:
         """
-        Returns the list of Max Response Timestamp metrics.
+        Returns the Max Response Timestamp metric.
         """
         return self.metric
 
@@ -43,5 +43,4 @@ class MaxResponseMetric(BaseMetric):
         """
         Checks if the record is valid for calculations.
         """
-        if not record or not record.valid:
-            raise ValueError("Invalid Record")
+        self._require_valid_record(record)

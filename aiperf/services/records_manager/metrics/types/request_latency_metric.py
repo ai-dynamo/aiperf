@@ -44,5 +44,4 @@ class RequestLatencyMetric(BaseMetric):
         return self.metric
 
     def _check_record(self, record: ParsedResponseRecord) -> None:
-        if not record or not record.valid:
-            raise ValueError("Invalid Record")
+        self._require_valid_record(record)

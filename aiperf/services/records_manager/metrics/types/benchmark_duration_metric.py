@@ -39,7 +39,7 @@ class BenchmarkDurationMetric(BaseMetric):
 
     def values(self) -> float:
         """
-        Returns the list of BenchmarkDuration metrics.
+        Returns the BenchmarkDuration metric.
         """
         return self.metric
 

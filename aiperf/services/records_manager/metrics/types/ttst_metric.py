@@ -51,8 +51,7 @@ class TTSTMetric(BaseMetric):
         Raises:
             ValueError: If the record does not have at least two responses.
         """
-        if not record or not record.valid:
-            raise ValueError("Invalid Record")
+        self._require_valid_record(record)
         if len(record.responses) < 2:
             raise ValueError(
                 "Record must have at least two responses to calculate TTST."

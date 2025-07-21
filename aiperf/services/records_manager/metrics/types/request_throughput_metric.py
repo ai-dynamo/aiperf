@@ -52,7 +52,4 @@ class RequestThroughputMetric(BaseMetric):
         Raises:
             ValueError: If the record is None or is invalid.
         """
-        if not record:
-            raise ValueError("Record must have a valid request.")
-        if not record.valid:
-            raise ValueError("Invalid Record.")
+        self._require_valid_record(record)

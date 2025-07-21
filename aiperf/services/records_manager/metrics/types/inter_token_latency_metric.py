@@ -50,8 +50,7 @@ class InterTokenLatencyMetric(BaseMetric):
         return self.metric
 
     def _check_record(self, record):
-        if not record or not record.valid:
-            raise ValueError("Invalid Record")
+        self._require_valid_record(record)
         if record.output_token_count is None:
             raise ValueError("Output token count is not available for the record.")
         if record.output_token_count <= 1:

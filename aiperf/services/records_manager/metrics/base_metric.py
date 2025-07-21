@@ -115,6 +115,14 @@ class BaseMetric(ABC):
             ValueError: If the record does not meet the required conditions.
         """
 
+    def get_converted_metrics(self, unit: MetricTimeType) -> list[Any]:
+        if not isinstance(unit, MetricTimeType):
+            raise MetricTypeError("Invalid metric time type for conversion.")
+
+        scale_factor = self._get_conversion_factor(self.unit, unit)
+
+        return [metric / 10**scale_factor for metric in self.values()]
+
     def _check_metrics(self, metrics: dict[str, "BaseMetric"]) -> None:
         """
         Validates that the required dependent metrics are available.
@@ -140,10 +148,12 @@ class BaseMetric(ABC):
 
         return unit_scales[from_unit] - unit_scales[to_unit]
 
-    def get_converted_metrics(self, unit: MetricTimeType) -> list[Any]:
-        if not isinstance(unit, MetricTimeType):
-            raise MetricTypeError("Invalid metric time type for conversion.")
+    def _require_valid_record(self, record: ParsedResponseRecord) -> None:
+        """
+        Ensures the given record is not None and is marked as valid.
 
-        scale_factor = self._get_conversion_factor(self.unit, unit)
-
-        return [metric / 10**scale_factor for metric in self.values()]
+        Raises:
+            ValueError: If the record is None or invalid.
+        """
+        if not record or not record.valid:
+            raise ValueError("Invalid Record")
