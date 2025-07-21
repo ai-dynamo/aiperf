@@ -30,27 +30,23 @@ repos:
       exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*shakespeare.txt)
   - repo: local
     hooks:
-    - id: add-license
-      name: Add License
-      entry: python tools/add_copyright.py
-      language: python
-      require_serial: true
-    # Run mkinit to generate the __init__.py files recursively  (pip install mkinit)
-    - id: mkinit
-      name: Run mkinit
-      entry: bash tools/generate_init_files.sh
-      language: system
-      types: [python]
-      pass_filenames: false
-      args: []
+      - id: add-license
+        name: add-license
+        entry: python tools/add_copyright.py
+        language: python
+        require_serial: true
+      - id: mkinit
+        name: mkinit
+        entry: bash tools/generate_init_files.sh
+        language: system
+        types: [python]
+        pass_filenames: false
+        args: []
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
     rev: v0.11.8
     hooks:
-      # Run the linter.
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
         types_or: [python, pyi]
-      # Run the formatter.
       - id: ruff-format
         types_or: [python, pyi]
