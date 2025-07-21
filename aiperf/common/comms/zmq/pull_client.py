@@ -13,6 +13,7 @@ from aiperf.common.enums import CommunicationClientType, MessageType
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.utils import yield_to_event_loop
 
 
 @CommunicationClientFactory.register(CommunicationClientType.PULL)
@@ -103,7 +104,7 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
 
             except zmq.Again:
                 self.semaphore.release()  # release the semaphore as it was not used
-                await asyncio.sleep(0)  # allow other tasks to run
+                await yield_to_event_loop()
                 continue
 
             except (asyncio.CancelledError, zmq.ContextTerminated):
@@ -112,6 +113,8 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
 
             except Exception as e:
                 self.exception(f"Exception receiving data from pull socket: {e}")
+                # Sleep for a short time to allow the system to potentially recover
+                # if there are temporary issues.
                 await asyncio.sleep(0.1)
 
     @on_stop
@@ -134,7 +137,7 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
                 await self._pull_callbacks[message.message_type](message)
             else:
                 self.warning(
-                    lambda typ=message.message_type: f"Pull message received for message type {typ} without callback"
+                    lambda message_type=message.message_type: f"Pull message received for message type {message_type} without callback"
                 )
         finally:
             # always release the semaphore to allow receiving more messages

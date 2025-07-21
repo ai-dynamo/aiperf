@@ -26,6 +26,7 @@ from aiperf.common.comms.base import (
 )
 from aiperf.common.comms.zmq import (
     MAX_PUSH_RETRIES,
+    RETRY_DELAY_INTERVAL_SEC,
     BaseZMQClient,
     BaseZMQCommunication,
     BaseZMQProxy,
@@ -66,6 +67,7 @@ __all__ = [
     "PubClientProtocol",
     "PullClientProtocol",
     "PushClientProtocol",
+    "RETRY_DELAY_INTERVAL_SEC",
     "ReplyClientProtocol",
     "RequestClientProtocol",
     "SubClientProtocol",

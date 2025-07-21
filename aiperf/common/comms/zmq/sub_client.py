@@ -14,7 +14,7 @@ from aiperf.common.exceptions import CommunicationError
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
-from aiperf.common.utils import call_all_functions
+from aiperf.common.utils import call_all_functions, yield_to_event_loop
 
 
 @CommunicationClientFactory.register(CommunicationClientType.SUB)
@@ -86,6 +86,9 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
         await self._ensure_initialized()
         for message_type, callback in message_callback_map.items():
             await self._subscribe_internal(message_type, callback)
+        # TODO: HACK: This is a hack to ensure that the subscriptions are registered
+        # since we do not have any confirmation from the server that the subscriptions
+        # are registered, yet.
         await asyncio.sleep(0.1)
 
     async def subscribe(
@@ -102,6 +105,9 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
         """
         await self._ensure_initialized()
         await self._subscribe_internal(message_type, callback)
+        # TODO: HACK: This is a hack to ensure that the subscriptions are registered
+        # since we do not have any confirmation from the server that the subscriptions
+        # are registered, yet.
         await asyncio.sleep(0.1)
 
     async def _subscribe_internal(
@@ -175,11 +181,13 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
                 break
 
             except zmq.Again:
-                await asyncio.sleep(0)  # yield to the event loop
+                await yield_to_event_loop()
                 continue
 
             except Exception as e:
                 self.exception(
                     f"Exception receiving message from subscription: {e}, {type(e)}"
                 )
+                # Sleep for a short time to allow the system to potentially recover
+                # if there are temporary issues.
                 await asyncio.sleep(0.1)

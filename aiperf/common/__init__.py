@@ -16,6 +16,7 @@ from aiperf.common.bootstrap import (
 )
 from aiperf.common.comms import (
     MAX_PUSH_RETRIES,
+    RETRY_DELAY_INTERVAL_SEC,
     BaseCommunication,
     BaseZMQClient,
     BaseZMQCommunication,
@@ -327,6 +328,7 @@ from aiperf.common.utils import (
     call_all_functions,
     call_all_functions_self,
     load_json_str,
+    yield_to_event_loop,
 )
 
 __all__ = [
@@ -505,6 +507,7 @@ __all__ = [
     "PubClientProtocol",
     "PullClientProtocol",
     "PushClientProtocol",
+    "RETRY_DELAY_INTERVAL_SEC",
     "RawRequestT",
     "RawResponseT",
     "RecordsProcessingStatsMessage",
@@ -614,4 +617,5 @@ __all__ = [
     "setup_child_process_logging",
     "setup_rich_logging",
     "supports_hooks",
+    "yield_to_event_loop",
 ]

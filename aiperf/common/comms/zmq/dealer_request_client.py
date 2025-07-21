@@ -15,6 +15,7 @@ from aiperf.common.exceptions import CommunicationError
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.utils import yield_to_event_loop
 
 
 @CommunicationClientFactory.register(CommunicationClientType.REQUEST)
@@ -78,7 +79,7 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
 
             except zmq.Again:
                 self.trace(lambda: "No data received, yielding to event loop")
-                await asyncio.sleep(0)  # yield to the event loop
+                await yield_to_event_loop()
                 continue
 
             except (asyncio.CancelledError, zmq.ContextTerminated):
@@ -86,7 +87,7 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
 
             except Exception as e:
                 self.exception(f"Exception receiving responses: {e}")
-                await asyncio.sleep(0)  # yield to the event loop
+                await yield_to_event_loop()
                 continue
 
     @on_stop
