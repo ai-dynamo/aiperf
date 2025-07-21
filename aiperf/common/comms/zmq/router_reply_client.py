@@ -13,6 +13,7 @@ from aiperf.common.hooks import aiperf_task, on_cleanup, on_stop
 from aiperf.common.messages import ErrorMessage, Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.models import ErrorDetails
+from aiperf.common.utils import yield_to_event_loop
 
 
 @CommunicationClientFactory.register(CommunicationClientType.REPLY)
@@ -102,8 +103,8 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
             )
 
         self.debug(
-            lambda sid=service_id,
-            typ=message_type: f"Registering request handler for {sid} with message type {typ}"
+            lambda service_id=service_id,
+            type=message_type: f"Registering request handler for {service_id} with message type {type}"
         )
         self._request_handlers[message_type] = (service_id, handler)
 
@@ -204,7 +205,7 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
                 except zmq.Again:
                     # This means we timed out waiting for a request.
                     # We can continue to the next iteration of the loop.
-                    await asyncio.sleep(0)  # yield to the event loop
+                    await yield_to_event_loop()
                     continue
 
                 # Create a new response future for this request that will be resolved
@@ -221,4 +222,6 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
                 break
             except Exception as e:
                 self.exception(f"Exception receiving request: {e}")
+                # Sleep for a short time to allow the system to potentially recover
+                # if there are temporary issues.
                 await asyncio.sleep(0.1)

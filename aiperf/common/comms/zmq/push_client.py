@@ -15,6 +15,9 @@ from aiperf.common.mixins import AsyncTaskManagerMixin
 MAX_PUSH_RETRIES = 2
 """Maximum number of retries for pushing a message."""
 
+RETRY_DELAY_INTERVAL_SEC = 0.1
+"""The interval to wait before retrying to push a message."""
+
 
 @CommunicationClientFactory.register(CommunicationClientType.PUSH)
 class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
@@ -92,7 +95,7 @@ class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
                     f"Failed to push data after {retry_count} retries: {e}",
                 ) from e
 
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(RETRY_DELAY_INTERVAL_SEC)
             return await self._push_message(message, retry_count + 1, max_retries)
         except Exception as e:
             raise CommunicationError(f"Failed to push data: {e}") from e
