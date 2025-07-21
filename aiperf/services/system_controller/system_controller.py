@@ -235,28 +235,10 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
                 "Failed to initialize all services",
             ) from e
 
-        # try:
-        #     # Wait for all required services to be registered
-        #     await self.service_manager.wait_for_all_services_registration(
-        #         self.stop_event
-        #     )
-
-        #     if self.stop_event.is_set():
-        #         self.debug(
-        #             "System Controller stopped before all services registered"
-        #         )
-        #         return  # Don't continue with the rest of the initialization
-
-        # except Exception as e:
-        #     raise self._service_error(
-        #         "Not all required services registered within the timeout period",
-        #     ) from e
+        # TODO: Add logic here to wait for all required services to be registered
 
         # TODO: HACK: Wait for 1 second to ensure registrations made
         await asyncio.sleep(1)
-
-        # TODO: HACK: This is incorrect
-        self.debug("All required services registered successfully")
 
         self.info("AIPerf System is READY")
         self._system_state = SystemState.READY

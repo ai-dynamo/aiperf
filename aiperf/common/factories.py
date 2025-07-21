@@ -6,9 +6,7 @@ from typing import Any, Generic, TypeVar
 
 from aiperf.common.enums import (
     CaseInsensitiveStrEnum,
-    CommunicationBackend,
     ServiceType,
-    ZMQProxyType,
 )
 from aiperf.common.exceptions import FactoryCreationError
 
@@ -219,26 +217,6 @@ class FactoryMixin(Generic[ClassEnumT, ClassProtocolT]):
 ################################################################################
 
 
-class CommunicationFactory(FactoryMixin[CommunicationBackend, "BaseCommunication"]):
-    """Factory for registering and creating BaseCommunication instances based on the specified communication backend.
-
-    Example:
-    ```python
-        # Register a new communication backend
-        @CommunicationFactory.register(CommunicationBackend.ZMQ_TCP)
-        class ZMQCommunication(BaseCommunication):
-            pass
-
-        # Create a new communication instance
-        communication = CommunicationFactory.create_instance(
-            CommunicationBackend.ZMQ_TCP,
-            config=ZMQTCPCommunicationConfig(
-                host="localhost", port=5555, timeout=10.0),
-        )
-    ```
-    """
-
-
 class ServiceFactory(FactoryMixin[ServiceType, "BaseService"]):
     """Factory for registering and creating BaseService instances based on the specified service type.
 
@@ -334,26 +312,5 @@ class CustomDatasetFactory(
         custom_dataset_loader = CustomDatasetFactory.create_instance(
             CustomDatasetType.MOONCAKE_TRACE, **kwargs
         )
-    ```
-    """
-
-
-class ZMQProxyFactory(FactoryMixin[ZMQProxyType, "BaseZMQProxy"]):
-    """
-    A factory for creating ZMQ proxies.
-
-    Example:
-    ```python
-        # Register a new ZMQ proxy type
-        @ZMQProxyFactory.register(ZMQProxyType.DEALER_ROUTER)
-        class DealerRouterProxy(BaseZMQProxy):
-            pass
-
-        # Create a new ZMQ proxy instance
-        proxy = ZMQProxyFactory.create_instance(
-            ZMQProxyType.DEALER_ROUTER,
-            config=ZMQTCPProxyConfig(host="localhost", frontend_port=5555, backend_port=5556),
-        )
-        proxy.run()
     ```
     """

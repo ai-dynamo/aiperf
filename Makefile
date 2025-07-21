@@ -91,11 +91,7 @@ internal-help:
 	@printf "────────────────────────────────────────────────────────────────────────────\n"
 
 init-files: #? run mkinit to generate the __init__.py files.
-	$(activate_venv) && mkinit --write --black --nomods aiperf/common/config
-	$(activate_venv) && mkinit --write --black --nomods aiperf/common/enums
-	$(activate_venv) && mkinit --write --black --nomods aiperf/common/messages
-	$(activate_venv) && mkinit --write --black --nomods aiperf/common/mixins
-	$(activate_venv) && mkinit --write --black --nomods aiperf/common/models
+	$(activate_venv) && mkinit --write --black --nomods --recursive aiperf
 
 ruff lint: #? run the ruff linters
 	$(activate_venv) && ruff check . $(args)
@@ -110,13 +106,13 @@ check-format check-fmt: #? check the formatting of the project using ruff.
 	$(activate_venv) && ruff format . --check $(args)
 
 test: #? run the tests using pytest.
-	$(activate_venv) && pytest aiperf/tests $(args)
+	$(activate_venv) && pytest tests $(args)
 
 test-verbose: #? run the tests using pytest with DEBUG logging
-	$(activate_venv) && pytest aiperf/tests -v -s --log-cli-level DEBUG
+	$(activate_venv) && pytest tests -v -s --log-cli-level DEBUG
 
 coverage cov: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest aiperf/tests --cov=aiperf --cov-report=html $(args)
+	$(activate_venv) && pytest tests --cov=aiperf --cov-report=html $(args)
 
 install: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]" $(args)
