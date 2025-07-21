@@ -235,11 +235,9 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
                 "Failed to initialize all services",
             ) from e
 
-        # TODO: Add logic here to wait for all required services to be registered
-
         # TODO: HACK: Wait for 1 second to ensure registrations made. This needs to be
-        #   removed once we have the ability to track registrations of services and their state before
-        #   starting the profiling.
+        # removed once we have the ability to track registrations of services and their state before
+        # starting the profiling.
         await asyncio.sleep(1)
 
         self.info("AIPerf System is READY")
