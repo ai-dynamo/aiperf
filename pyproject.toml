@@ -20,6 +20,7 @@ authors = []
 dependencies = [
   "aiofiles~=24.1.0",
   "aiohttp==3.12.13",
+  "cyclopts>=3.0.0",
   "numpy==2.2.6",
   "openai[aiohttp]~=1.92.2",
   "orjson==3.10.18",
@@ -35,7 +36,6 @@ dependencies = [
   "tqdm>=4.67.1",
   "transformers>=4.52.0",
   "uvloop==0.21.0",
-  "cyclopts>=3.0.0",
 ]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,13 +47,13 @@ aiperf = "aiperf.cli:app"
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=7.0.0",
+  "black>=25.1.0",
+  "mkinit>=1.1.0",
+  "pre-commit>=4.2.0",
   "pytest-asyncio",
   "pytest-cov",
+  "pytest>=7.0.0",
   "ruff>=0.0.0",
-  "pre-commit>=4.2.0",
-  "mkinit>=1.1.0",
-  "black>=25.1.0",
   "scipy>=1.13.0",
 ]
 
@@ -85,6 +85,6 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 # Basic pytest configuration
-testpaths = ["aiperf/tests"]
+testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
