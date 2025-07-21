@@ -16,7 +16,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.15">
     
     
       
@@ -703,8 +703,8 @@
 
 
 <!--
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 -->
 <h1 id="aiperf-hook-system">AIPerf Hook System<a class="headerlink" href="#aiperf-hook-system" title="Permanent link">&para;</a></h1>
 <blockquote>
@@ -749,7 +749,9 @@
 <h3 id="basic-implementation-self-contained">Basic Implementation - Self Contained<a class="headerlink" href="#basic-implementation-self-contained" title="Permanent link">&para;</a></h3>
 <p>Hooks can be defined and used by the same class</p>
 <div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">HooksMixin</span><span class="p">,</span> <span class="n">supports_hooks</span><span class="p">,</span> <span class="n">on_init</span><span class="p">,</span> <span class="n">on_cleanup</span><span class="p">,</span> <span class="n">AIPerfHook</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">supports_hooks</span><span class="p">,</span> <span class="n">on_init</span><span class="p">,</span> <span class="n">on_cleanup</span><span class="p">,</span> <span class="n">AIPerfHook</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.mixins</span><span class="w"> </span><span class="kn">import</span> <span class="n">HooksMixin</span>
+
 
 <span class="nd">@supports_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">,</span> <span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_CLEANUP</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">MyService</span><span class="p">(</span><span class="n">HooksMixin</span><span class="p">):</span>
@@ -790,11 +792,14 @@
 
 <h3 id="basic-implementation-inheritance">Basic Implementation - Inheritance<a class="headerlink" href="#basic-implementation-inheritance" title="Permanent link">&para;</a></h3>
 <p>Hooks can also be used to call additional functionality defined in subclasses. By calling <code>await self.run_hooks_async(AIPerfHook.ON_INIT)</code>, the base class is able to call all registered init functions no matter the subclass that defined it.</p>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">HooksMixin</span><span class="p">,</span> <span class="n">supports_hooks</span><span class="p">,</span> <span class="n">on_init</span><span class="p">,</span> <span class="n">on_cleanup</span><span class="p">,</span> <span class="n">AIPerfHook</span>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">supports_hooks</span><span class="p">,</span> <span class="n">on_init</span><span class="p">,</span> <span class="n">on_cleanup</span><span class="p">,</span> <span class="n">AIPerfHook</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.mixins</span><span class="w"> </span><span class="kn">import</span> <span class="n">HooksMixin</span>
+
 
 <span class="nd">@supports_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_INIT</span><span class="p">,</span> <span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_CLEANUP</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">MyHookService</span><span class="p">(</span><span class="n">HooksMixin</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Defines the top-level functionality that will call the registered hooks.&quot;&quot;&quot;</span>
+
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="c1"># Make sure to call __init__ on the HooksMixin</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
@@ -811,6 +816,7 @@
 
 <span class="k">class</span><span class="w"> </span><span class="nc">CustomService</span><span class="p">(</span><span class="n">MyHookService</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Defines functions that will be called by the lifecycle hooks&quot;&quot;&quot;</span>
+
     <span class="nd">@on_init</span>
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_setup_database</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize database connection.&quot;&quot;&quot;</span>
@@ -1049,8 +1055,10 @@
 </ol>
 <h3 id="using-aiperftaskmixin">Using <code>AIPerfTaskMixin</code><a class="headerlink" href="#using-aiperftaskmixin" title="Permanent link">&para;</a></h3>
 <p>To use <code>@aiperf_task</code> decorated methods, your class must inherit from <code>AIPerfTaskMixin</code>:</p>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">AIPerfTaskMixin</span><span class="p">,</span> <span class="n">aiperf_task</span>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">aiperf_task</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">aiperf.common.mixins</span><span class="w"> </span><span class="kn">import</span> <span class="n">AIPerfTaskMixin</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+
 
 <span class="k">class</span><span class="w"> </span><span class="nc">BackgroundService</span><span class="p">(</span><span class="n">AIPerfTaskMixin</span><span class="p">):</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
@@ -1094,7 +1102,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop_service</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Stop the service and all background tasks.&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">set</span><span class="p">()</span>  <span class="c1"># Signal tasks to stop</span>
-        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_STOP</span><span class="p">)</span>   <span class="c1"># This cancels and waits for all tasks</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_hooks</span><span class="p">(</span><span class="n">AIPerfHook</span><span class="o">.</span><span class="n">ON_STOP</span><span class="p">)</span>  <span class="c1"># This cancels and waits for all tasks</span>
 </code></pre></div>
 
 <h3 id="key-differences-from-other-hooks">Key Differences from Other Hooks<a class="headerlink" href="#key-differences-from-other-hooks" title="Permanent link">&para;</a></h3>
@@ -1224,7 +1232,7 @@
 <div class="codehilite"><pre><span></span><code><span class="nd">@aiperf_task</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_message_receiver</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Continuously receive messages from ZMQ socket.&quot;&quot;&quot;</span>
-    <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_shutdown</span><span class="p">:</span>
+    <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
         <span class="k">try</span><span class="p">:</span>
             <span class="n">message</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">socket</span><span class="o">.</span><span class="n">recv_string</span><span class="p">()</span>
             <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">handle_message</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
@@ -1339,7 +1347,7 @@
       <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      <script src="../assets/javascripts/bundle.56ea9cef.min.js"></script>
       
     
   </body>
