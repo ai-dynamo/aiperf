@@ -14,7 +14,6 @@ from aiperf.common.enums import CommandType, CreditPhase, MessageType, ServiceTy
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     aiperf_task,
-    on_configure,
     on_init,
 )
 from aiperf.common.messages import (
@@ -75,14 +74,6 @@ class RecordsManager(BaseComponentService):
         self.start_time_ns: int = time.time_ns()
         self.end_time_ns: int | None = None
 
-        self.records: deque[ParsedResponseRecord] = deque()
-        self.error_records: deque[ParsedResponseRecord] = deque()
-        self.error_records_count: int = 0
-        self.records_count: int = 0
-        # Track per-worker statistics
-        self.worker_success_counts: dict[str, int] = {}
-        self.worker_error_counts: dict[str, int] = {}
-
         self.start_time_ns: int = time.time_ns()
         self.end_time_ns: int | None = None
 
@@ -110,12 +101,6 @@ class RecordsManager(BaseComponentService):
             CommandType.PROCESS_RECORDS,
             self.process_records,
         )
-
-        self.register_command_callback(
-            CommandType.PROCESS_RECORDS,
-            self.process_records,
-        )
-
         await self.response_results_client.register_pull_callback(
             message_type=MessageType.PARSED_INFERENCE_RESULTS,
             callback=self._on_parsed_inference_results,
@@ -125,11 +110,6 @@ class RecordsManager(BaseComponentService):
             MessageType.CREDIT_PHASE_START,
             self._on_credit_phase_start,
         )
-
-    @on_configure
-    async def _configure(self, message: CommandMessage) -> None:
-        """Configure the records manager."""
-        pass
 
     @aiperf_task
     async def _report_records_task(self) -> None:
@@ -295,7 +275,7 @@ class RecordsManager(BaseComponentService):
             )
 
         self.trace(
-            lambda: f"Token counts: {', '.join([str(r.token_count) for r in self.records])}"
+            lambda: f"Token counts: {', '.join([str(r.output_token_count) for r in self.records])}"
         )
         metric_summary = MetricSummary()
         metric_summary.process(list(self.records))
