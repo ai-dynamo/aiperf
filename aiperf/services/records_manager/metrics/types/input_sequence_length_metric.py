@@ -17,6 +17,7 @@ class InputSequenceLengthMetric(BaseMetric):
     header = "Input Sequence Length"
     type = MetricType.METRIC_OF_RECORDS
     streaming_only = False
+    required_metrics: set[str] = set()
 
     def __init__(self):
         self.metric: list[int] = []
@@ -30,7 +31,7 @@ class InputSequenceLengthMetric(BaseMetric):
         input_token_count = record.input_token_count
         self.metric.append(input_token_count)
 
-    def values(self):
+    def values(self) -> list[int]:
         """
         Returns the list of Input Sequence Length (ISL) metrics.
         """
@@ -41,9 +42,8 @@ class InputSequenceLengthMetric(BaseMetric):
         Checks if the record is valid for ISL calculation.
 
         Raises:
-            ValueError: If the record does not have at least one response.
+            ValueError: If the record is not valid or doesn't have input_token_count.
         """
-        if not record or not record.valid:
-            raise ValueError("Invalid Record")
+        self._require_valid_record(record)
         if record.input_token_count is None:
             raise ValueError("Input Token Count is not available for the record.")
