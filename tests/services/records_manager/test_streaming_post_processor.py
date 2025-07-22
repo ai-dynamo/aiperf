@@ -4,15 +4,12 @@
 Tests for the streaming post processor base class.
 """
 
-from collections.abc import AsyncGenerator
-
 import pytest
 
 from aiperf.common.enums.timing_enums import CreditPhase
 from aiperf.common.factories import StreamingPostProcessorFactory
 from aiperf.common.messages.inference_messages import ParsedInferenceResultsMessage
-from aiperf.common.models import ParsedResponseRecord, RequestRecord, ResponseData
-from aiperf.common.models.record_models import SSEField, SSEMessage
+from aiperf.common.models import ParsedResponseRecord
 from aiperf.services.records_manager.post_processors.streaming_post_processor import (
     BaseStreamingPostProcessor,
 )
@@ -20,7 +17,7 @@ from aiperf.services.records_manager.records_manager import RecordsManager
 from tests.utils.async_test_utils import async_fixture
 
 
-class StreamingPostProcessorTest(BaseStreamingPostProcessor):
+class MockStreamingPostProcessor(BaseStreamingPostProcessor):
     """Test implementation of StreamingPostProcessor for testing purposes."""
 
     def __init__(self, **kwargs):
@@ -39,51 +36,6 @@ class StreamingPostProcessorTest(BaseStreamingPostProcessor):
         self.total_input_tokens += record.input_token_count or 0
 
 
-@pytest.fixture
-async def records_manager(
-    service_config, user_config
-) -> AsyncGenerator[RecordsManager, None]:
-    records_manager = RecordsManager(
-        service_config=service_config, user_config=user_config
-    )
-    yield records_manager
-    await records_manager.stop()
-
-
-@pytest.fixture
-def sample_record(
-    time_traveler, records_manager: RecordsManager
-) -> ParsedInferenceResultsMessage:
-    return ParsedInferenceResultsMessage(
-        service_id=records_manager.service_id,
-        record=ParsedResponseRecord(
-            worker_id="test_worker",
-            request=RequestRecord(
-                credit_phase=CreditPhase.PROFILING,
-                start_perf_ns=time_traveler.perf_counter_ns(),
-                timestamp_ns=time_traveler.time_ns(),
-                end_perf_ns=time_traveler.perf_counter_ns() + 100,
-                delayed_ns=time_traveler.perf_counter_ns() + 100,
-                responses=[
-                    SSEMessage(
-                        packets=[SSEField(name="data", value='{"test": "test"}')],
-                        perf_ns=time_traveler.perf_counter_ns() + 100,
-                    )
-                ],
-            ),
-            responses=[
-                ResponseData(
-                    perf_ns=time_traveler.perf_counter_ns() + 100,
-                    raw_text=['{"test": "test"}'],
-                    parsed_text=["test"],
-                )
-            ],
-            input_token_count=10,
-            output_token_count=10,
-        ),
-    )
-
-
 @pytest.mark.asyncio
 class TestStreamingPostProcessorBasicFunctionality:
     """Test basic functionality of the StreamingPostProcessor class."""
@@ -95,7 +47,7 @@ class TestStreamingPostProcessorBasicFunctionality:
     ):
         # Clear the registry to avoid conflicts with other tests
         StreamingPostProcessorFactory._registry.clear()
-        StreamingPostProcessorFactory.register("test")(StreamingPostProcessorTest)
+        StreamingPostProcessorFactory.register("test")(MockStreamingPostProcessor)
 
         records_manager = await async_fixture(records_manager)
         await records_manager._initialize_streaming_post_processors()

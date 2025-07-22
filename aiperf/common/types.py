@@ -7,6 +7,7 @@ from aiperf.common.enums.message_enums import MessageType
 
 if TYPE_CHECKING:
     from aiperf.common.messages.base_messages import Message
+    from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 
 ConfigT = TypeVar("ConfigT", bound=Any, covariant=True)
 RequestInputT = TypeVar("RequestInputT", bound=Any, contravariant=True)
@@ -19,6 +20,9 @@ RawRequestT = TypeVar("RawRequestT", bound=Any, contravariant=True)
 
 MessageT = TypeVar("MessageT", bound="Message")
 MessageOutputT = TypeVar("MessageOutputT", bound="Message")
+
+LifecycleMixinT = TypeVar("LifecycleMixinT", bound="AIPerfLifecycleMixin")
+"""Type variable for all lifecycle-based mixins."""
 
 MessageTypeT = MessageType | str
 """Alias for the MessageType being an enum or a custom string for user-defined message types."""
