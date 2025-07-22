@@ -4,6 +4,12 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import MetricTimeType, MetricType
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
+from aiperf.services.records_manager.metrics.types.benchmark_duration_metric import (
+    BenchmarkDurationMetric,
+)
+from aiperf.services.records_manager.metrics.types.request_count_metric import (
+    RequestCountMetric,
+)
 
 
 class RequestThroughputMetric(BaseMetric):
@@ -15,8 +21,9 @@ class RequestThroughputMetric(BaseMetric):
     unit = MetricTimeType.SECONDS
     larger_is_better = True
     header = "Request Throughput"
-    type = MetricType.METRIC_OF_BOTH
+    type = MetricType.METRIC_OF_METRICS
     streaming_only = False
+    required_metrics: set[str] = {RequestCountMetric.tag, BenchmarkDurationMetric.tag}
 
     def __init__(self):
         self.total_requests: int = 0
@@ -27,13 +34,10 @@ class RequestThroughputMetric(BaseMetric):
         record: ParsedResponseRecord | None = None,
         metrics: dict[str, "BaseMetric"] | None = None,
     ) -> None:
-        if record:
-            self._check_record(record)
-            self.total_requests += 1
-
-        if metrics:
-            benchmark_duration = metrics["benchmark_duration"].values()
-            self.metric = self.total_requests / (benchmark_duration / NANOS_PER_SECOND)
+        self._check_metrics(metrics)
+        total_requests = metrics[RequestCountMetric.tag].values()
+        benchmark_duration = metrics[BenchmarkDurationMetric.tag].values()
+        self.metric = total_requests / (benchmark_duration / NANOS_PER_SECOND)
 
     def values(self) -> float:
         """
@@ -48,7 +52,4 @@ class RequestThroughputMetric(BaseMetric):
         Raises:
             ValueError: If the record is None or is invalid.
         """
-        if not record:
-            raise ValueError("Record must have a valid request.")
-        if not record.valid:
-            raise ValueError("Invalid Record.")
+        self._require_valid_record(record)

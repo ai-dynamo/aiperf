@@ -30,37 +30,73 @@ class MetricSummary:
 
     def process(self, records: list[ParsedResponseRecord]) -> None:
         """
-        Process the records to generate a summary of metrics.
+        Classifies and computes metrics in dependency order to ensure correctness.
+        The metrics are categorized based on their dependency types:
 
-        :param records: The input records to be processed.
-        :return: A dictionary containing the summarized metrics.
+        1. METRIC_OF_RECORDS:
+            - Depend solely on each individual record.
+            - Computed first, as they have no dependencies.
+
+        2. METRIC_OF_BOTH:
+            - Depend on both:
+                - the current record, and
+                - previously computed metrics (specifically, METRIC_OF_RECORDS).
+            - Computed after all METRIC_OF_RECORDS have been processed.
+            - Must not depend on other METRIC_OF_BOTH or METRIC_OF_METRICS.
+
+        3. METRIC_OF_METRICS:
+            - Computed based only on other metrics (not records).
+            - May depend on any combination of:
+                - METRIC_OF_RECORDS,
+                - METRIC_OF_BOTH,
+                - other METRIC_OF_METRICS (if dependency order is respected).
+            - Computed using a dependency-resolution loop.
+
+        This process ensures:
+            - All metrics are computed exactly once, after dependencies are satisfied.
+            - Misconfigured or cyclic dependencies will raise an explicit runtime error.
         """
+
+        # METRIC_OF_RECORDS
         for record in records:
             for metric in self._metrics:
                 if metric.type == MetricType.METRIC_OF_RECORDS:
                     metric.update_value(record=record)
-            for metric in self._metrics:
-                if metric.type == MetricType.METRIC_OF_METRICS:
-                    metric.update_value(metrics={m.tag: m for m in self._metrics})
+
+        # METRIC_OF_BOTH
+        for record in records:
             for metric in self._metrics:
                 if metric.type == MetricType.METRIC_OF_BOTH:
                     metric.update_value(
                         record=record, metrics={m.tag: m for m in self._metrics}
                     )
 
-        # TODO: Fix this after we add support for dependencies
-        # between metrics of metrics
-        # This is a workaround to ensure that metrics of metrics
-        # are updated after all records are processed
-        for metric in self._metrics:
-            if metric.type == MetricType.METRIC_OF_METRICS:
-                metric.update_value(metrics={m.tag: m for m in self._metrics})
-        for metric in self._metrics:
-            if metric.type == MetricType.METRIC_OF_BOTH:
-                metric.update_value(
-                    # TODO: Where does this `record` value come from? Is this wrong?
-                    record=record,
-                    metrics={m.tag: m for m in self._metrics},
+        # METRIC_OF_METRICS
+        # Precompute tags of all metrics already processed
+        computed_tags = {
+            m.tag
+            for m in self._metrics
+            if m.type in {MetricType.METRIC_OF_RECORDS, MetricType.METRIC_OF_BOTH}
+        }
+
+        remaining = [m for m in self._metrics if m.type == MetricType.METRIC_OF_METRICS]
+
+        # Resolve dependencies: loop until all metrics are computed or a circular dependency is found
+        while remaining:
+            progress = False
+            for metric in remaining[:]:
+                # If required dependencies are all satisfied, compute this metric
+                if metric.required_metrics.issubset(computed_tags):
+                    metric.update_value(metrics={m.tag: m for m in self._metrics})
+                    computed_tags.add(metric.tag)
+                    remaining.remove(metric)
+                    progress = True
+
+            if not progress:
+                # Circular dependencies
+                missing = {m.tag: m.required_metrics - computed_tags for m in remaining}
+                raise ValueError(
+                    f"Circular or unsatisfiable dependencies detected in METRIC_OF_METRICS: {missing}"
                 )
 
     def get_metrics_summary(self) -> list[MetricResult]:
@@ -83,7 +119,7 @@ def record_from_dataframe(df: pd.DataFrame, metric: BaseMetric) -> MetricResult:
     return MetricResult(
         tag=metric.tag,
         header=metric.header,
-        unit=metric.unit.name,
+        unit=metric.unit.short_name() if metric.unit else "",
         avg=column.mean(),
         min=column.min(),
         max=column.max(),

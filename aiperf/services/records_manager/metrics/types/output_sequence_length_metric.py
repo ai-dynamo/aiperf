@@ -17,6 +17,7 @@ class OutputSequenceLengthMetric(BaseMetric):
     header = "Output Sequence Length"
     type = MetricType.METRIC_OF_RECORDS
     streaming_only = False
+    required_metrics: set[str] = set()
 
     def __init__(self):
         self.metric: list[int] = []
@@ -27,8 +28,7 @@ class OutputSequenceLengthMetric(BaseMetric):
         metrics: dict[str, "BaseMetric"] | None = None,
     ):
         self._check_record(record)
-        if record.output_token_count is not None:
-            self.metric.append(record.output_token_count)
+        self.metric.append(record.output_token_count)
 
     def values(self):
         """
@@ -41,7 +41,8 @@ class OutputSequenceLengthMetric(BaseMetric):
         Checks if the record is valid for OSL calculation.
 
         Raises:
-            ValueError: If the record is not valid
+            ValueError: If record is not valid or output_token_count is missing.
         """
-        if not record or not record.valid:
-            raise ValueError("Invalid Record")
+        self._require_valid_record(record)
+        if record.output_token_count is None:
+            raise ValueError("Output token count is missing in the record.")

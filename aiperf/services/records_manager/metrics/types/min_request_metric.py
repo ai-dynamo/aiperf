@@ -15,6 +15,7 @@ class MinRequestMetric(BaseMetric):
     type = MetricType.METRIC_OF_RECORDS
     larger_is_better = False
     header = "Minimum Request Timestamp"
+    required_metrics: set[str] = set()
 
     def __init__(self):
         self.metric: float = float("inf")
@@ -34,7 +35,7 @@ class MinRequestMetric(BaseMetric):
 
     def values(self) -> float:
         """
-        Returns the list of Time to First Token (TTFT) metrics.
+        Returns the Minimum Request Timestamp metric.
         """
         return self.metric
 
@@ -43,5 +44,4 @@ class MinRequestMetric(BaseMetric):
         Checks if the record is valid for calculations.
 
         """
-        if not record or not record.start_perf_ns:
-            raise ValueError("Record must have a valid request with a timestamp.")
+        self._require_valid_record(record)

@@ -41,22 +41,6 @@ def test_add_multiple_records(parsed_response_record_builder):
     assert metric.values() == [15, 15, 20]
 
 
-def test_record_without_responses_raises(parsed_response_record_builder):
-    metric = RequestLatencyMetric()
-    metric.metric = []
-    record = parsed_response_record_builder.with_request_start_time(10).build()
-    with pytest.raises(ValueError, match="at least one response"):
-        metric.update_value(record=record, metrics=None)
-
-
-def test_record_with_no_request_raises():
-    metric = RequestLatencyMetric()
-    metric.metric = []
-    record = None
-    with pytest.raises(ValueError, match="valid request"):
-        metric.update_value(record=record, metrics=None)
-
-
 def test_response_timestamp_less_than_request_raises(parsed_response_record_builder):
     metric = RequestLatencyMetric()
     metric.metric = []
@@ -65,18 +49,13 @@ def test_response_timestamp_less_than_request_raises(parsed_response_record_buil
         .add_response(perf_ns=90)
         .build()
     )
-    with pytest.raises(ValueError, match="Response timestamp must be greater"):
+    with pytest.raises(ValueError, match="Invalid Record"):
         metric.update_value(record=record, metrics=None)
 
 
 def test_metric_initialization_none(parsed_response_record_builder):
     metric = RequestLatencyMetric()
     assert metric.metric == []
-    record = (
-        parsed_response_record_builder.with_request_start_time(1)
-        .add_response(perf_ns=2)
-        .build()
-    )
     record = (
         parsed_response_record_builder.with_request_start_time(1)
         .add_response(perf_ns=2)

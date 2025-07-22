@@ -5,6 +5,9 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import MetricTimeType, MetricType
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
+from aiperf.services.records_manager.metrics.types.inter_token_latency_metric import (
+    InterTokenLatencyMetric,
+)
 
 
 class OutputTokenThroughputPerUserMetric(BaseMetric):
@@ -18,6 +21,7 @@ class OutputTokenThroughputPerUserMetric(BaseMetric):
     header = "Output Token Throughput Per User"
     type = MetricType.METRIC_OF_METRICS
     streaming_only = True
+    required_metrics: set[str] = {InterTokenLatencyMetric.tag}
 
     def __init__(self):
         self.metric: list[float] = []
@@ -27,9 +31,12 @@ class OutputTokenThroughputPerUserMetric(BaseMetric):
         record: ParsedResponseRecord | None = None,
         metrics: dict[str, "BaseMetric"] | None = None,
     ):
+        self._check_metrics(metrics)
         inter_token_latencies = metrics["inter_token_latency"].values()
         for inter_token_latency in inter_token_latencies:
             inter_token_latency_s = inter_token_latency / NANOS_PER_SECOND
+            if inter_token_latency_s <= 0:
+                raise ValueError("Inter-token latency must be greater than 0.")
             self.metric.append(1 / inter_token_latency_s)
 
     def values(self):
