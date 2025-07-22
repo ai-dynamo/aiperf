@@ -119,7 +119,7 @@ def record_from_dataframe(df: pd.DataFrame, metric: BaseMetric) -> MetricResult:
     return MetricResult(
         tag=metric.tag,
         header=metric.header,
-        unit=metric.unit.name,
+        unit=metric.unit.short_name() if metric.unit else "",
         avg=column.mean(),
         min=column.min(),
         max=column.max(),
