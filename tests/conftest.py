@@ -14,15 +14,21 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aiperf.common.aiperf_logger import _TRACE
+from aiperf.common.config import UserConfig
+from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.enums import ServiceRunType
+from aiperf.common.enums.communication_enums import CommunicationBackend
 from aiperf.common.tokenizer import Tokenizer
-from tests.comms.mock_zmq import (  # noqa: F401 : used as a fixture
-    mock_zmq_communication,
+from tests.comms.mock_zmq import (
+    mock_zmq_communication as mock_zmq_communication,  # import fixture globally
 )
-from tests.utils.time_traveler import (  # noqa: F401 : used as a fixture
-    time_traveler,
+from tests.utils.time_traveler import (
+    time_traveler as time_traveler,  # import fixture globally
 )
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=_TRACE)
+
 
 real_sleep = (
     asyncio.sleep
@@ -170,3 +176,17 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
             return " ".join([f"token_{t}" for t in token_ids])
 
     return MockTokenizer
+
+
+@pytest.fixture
+def user_config() -> UserConfig:
+    config = UserConfig(model_names=["test-model"])
+    return config
+
+
+@pytest.fixture
+def service_config() -> ServiceConfig:
+    return ServiceConfig(
+        service_run_type=ServiceRunType.MULTIPROCESSING,
+        comm_backend=CommunicationBackend.ZMQ_IPC,
+    )

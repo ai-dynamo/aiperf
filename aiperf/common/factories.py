@@ -7,6 +7,7 @@ from typing import Any, Generic, TypeVar
 from aiperf.common.enums import (
     CaseInsensitiveStrEnum,
     ServiceType,
+    StreamingPostProcessorType,
 )
 from aiperf.common.exceptions import FactoryCreationError
 
@@ -313,4 +314,12 @@ class CustomDatasetFactory(
             CustomDatasetType.MOONCAKE_TRACE, **kwargs
         )
     ```
+    """
+
+
+class StreamingPostProcessorFactory(
+    FactoryMixin[StreamingPostProcessorType, "StreamingPostProcessor"]
+):
+    """Factory for creating StreamingPostProcessor instances.
+    see: :class:`FactoryMixin` for more details.
     """

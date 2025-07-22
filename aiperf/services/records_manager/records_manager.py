@@ -11,16 +11,17 @@ from aiperf.common.comms.base import (
 )
 from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
 from aiperf.common.enums import CommandType, CreditPhase, MessageType, ServiceType
-from aiperf.common.factories import ServiceFactory
+from aiperf.common.factories import ServiceFactory, StreamingPostProcessorFactory
 from aiperf.common.hooks import (
     aiperf_task,
+    on_cleanup,
     on_init,
+    on_stop,
 )
 from aiperf.common.messages import (
     CommandMessage,
     CreditPhaseCompleteMessage,
     CreditPhaseStartMessage,
-    InferenceResultsMessage,
     ParsedInferenceResultsMessage,
     ProcessRecordsCommandData,
     ProfileResultsMessage,
@@ -34,7 +35,11 @@ from aiperf.common.models import (
 )
 from aiperf.common.service import BaseComponentService
 from aiperf.data_exporter.exporter_manager import ExporterManager
+from aiperf.services.records_manager.post_processors import StreamingPostProcessor
 from aiperf.services.records_manager.post_processors.metric_summary import MetricSummary
+
+DEFAULT_MAX_RECORDS_CONCURRENCY = 100_000
+"""The default maximum concurrency for the records manager pull client."""
 
 
 @ServiceFactory.register(ServiceType.RECORDS_MANAGER)
@@ -74,12 +79,7 @@ class RecordsManager(BaseComponentService):
         self.start_time_ns: int = time.time_ns()
         self.end_time_ns: int | None = None
 
-        self.start_time_ns: int = time.time_ns()
-        self.end_time_ns: int | None = None
-
-        self.user_config: UserConfig | None = None
-
-        self.incoming_records: asyncio.Queue[InferenceResultsMessage] = asyncio.Queue()
+        self.streaming_post_processors: list[StreamingPostProcessor] = []
 
         self.response_results_client: PullClientProtocol = (
             self.comms.create_pull_client(
@@ -104,11 +104,48 @@ class RecordsManager(BaseComponentService):
         await self.response_results_client.register_pull_callback(
             message_type=MessageType.PARSED_INFERENCE_RESULTS,
             callback=self._on_parsed_inference_results,
-            max_concurrency=100_000,
+            max_concurrency=DEFAULT_MAX_RECORDS_CONCURRENCY,
         )
+
         await self.sub_client.subscribe(
             MessageType.CREDIT_PHASE_START,
             self._on_credit_phase_start,
+        )
+
+    @on_init
+    async def _initialize_streaming_post_processors(self) -> None:
+        """Initialize the streaming post processors and start their lifecycle."""
+        for streamer_type in StreamingPostProcessorFactory.get_all_class_types():
+            streamer = StreamingPostProcessorFactory.create_instance(
+                class_type=streamer_type,
+                pub_client=self.pub_client,
+                sub_client=self.sub_client,
+                service_id=self.service_id,
+                service_config=self.service_config,
+                user_config=self.user_config,
+            )
+            self.info(f"Initializing streaming post processor: {streamer_type}")
+            self.streaming_post_processors.append(streamer)
+            self.debug(
+                lambda streamer=streamer: f"Starting lifecycle for {streamer.__class__.__name__}"
+            )
+            await streamer.run_async()
+
+    @on_stop
+    async def _stop_streaming_post_processors(self) -> None:
+        """Stop the streaming post processors."""
+        await asyncio.gather(
+            *[streamer.shutdown() for streamer in self.streaming_post_processors]
+        )
+
+    @on_cleanup
+    async def _cleanup(self) -> None:
+        """Cleanup the records manager."""
+        await asyncio.gather(
+            *[
+                streamer.wait_for_shutdown()
+                for streamer in self.streaming_post_processors
+            ]
         )
 
     @aiperf_task
@@ -155,13 +192,17 @@ class RecordsManager(BaseComponentService):
         self, message: ParsedInferenceResultsMessage
     ) -> None:
         """Handle a parsed inference results message."""
-
         self.trace(lambda: f"Received parsed inference results: {message}")
+
         if message.record.request.credit_phase != CreditPhase.PROFILING:
             self.debug(
                 lambda: f"Skipping non-profiling record: {message.record.request.credit_phase}"
             )
             return
+
+        # Stream the record to all of the streaming post processors
+        for streamer in self.streaming_post_processors:
+            self.execute_async(streamer.stream_record(message.record))
 
         worker_id = message.record.worker_id
         if worker_id not in self.worker_success_counts:

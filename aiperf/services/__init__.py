@@ -44,6 +44,8 @@ from aiperf.services.inference_result_parser import (
     OpenAIResponseExtractor,
 )
 from aiperf.services.records_manager import (
+    DEFAULT_MAX_QUEUE_SIZE,
+    DEFAULT_MAX_RECORDS_CONCURRENCY,
     BaseMetric,
     BenchmarkDurationMetric,
     InputSequenceLengthMetric,
@@ -55,6 +57,7 @@ from aiperf.services.records_manager import (
     RecordsManager,
     RequestLatencyMetric,
     RequestThroughputMetric,
+    StreamingPostProcessor,
     TTFTMetric,
     TTSTMetric,
     record_from_dataframe,
@@ -112,6 +115,8 @@ __all__ = [
     "CustomDatasetLoaderProtocol",
     "DATASET_CONFIGURATION_TIMEOUT",
     "DEFAULT_CORPUS_FILE",
+    "DEFAULT_MAX_QUEUE_SIZE",
+    "DEFAULT_MAX_RECORDS_CONCURRENCY",
     "DatasetManager",
     "FixedScheduleStrategy",
     "ImageGenerator",
@@ -143,6 +148,7 @@ __all__ = [
     "SignalHandlerMixin",
     "SingleTurn",
     "SingleTurnDatasetLoader",
+    "StreamingPostProcessor",
     "SyntheticDatasetComposer",
     "SystemController",
     "TTFTMetric",

@@ -4,9 +4,10 @@ from collections.abc import Callable
 from typing import ClassVar
 
 from aiperf.common.hooks import AIPERF_HOOK_TYPE, HookSystem, HookType
+from aiperf.common.mixins.base_mixin import BaseMixin
 
 
-class HooksMixin:
+class HooksMixin(BaseMixin):
     """
     Mixin to add hook support to a class. It abstracts away the details of the
     :class:`HookSystem` and provides a simple interface for registering and running hooks.

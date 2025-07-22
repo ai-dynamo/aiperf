@@ -6,9 +6,10 @@ from collections.abc import Coroutine
 from typing import Protocol, runtime_checkable
 
 from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
+from aiperf.common.mixins.base_mixin import BaseMixin
 
 
-class AsyncTaskManagerMixin:
+class AsyncTaskManagerMixin(BaseMixin):
     """Mixin to manage a set of async tasks."""
 
     def __init__(self, **kwargs):
@@ -23,6 +24,10 @@ class AsyncTaskManagerMixin:
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
         return task
+
+    async def wait_for_tasks(self) -> None:
+        """Wait for all current tasks to complete."""
+        await asyncio.gather(*list(self.tasks))
 
     async def cancel_all_tasks(
         self, timeout: float = TASK_CANCEL_TIMEOUT_SHORT

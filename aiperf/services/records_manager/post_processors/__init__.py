@@ -12,5 +12,14 @@ from aiperf.services.records_manager.post_processors.metric_summary import (
     MetricSummary,
     record_from_dataframe,
 )
+from aiperf.services.records_manager.post_processors.streaming_post_processor import (
+    DEFAULT_MAX_QUEUE_SIZE,
+    StreamingPostProcessor,
+)
 
-__all__ = ["MetricSummary", "record_from_dataframe"]
+__all__ = [
+    "DEFAULT_MAX_QUEUE_SIZE",
+    "MetricSummary",
+    "StreamingPostProcessor",
+    "record_from_dataframe",
+]

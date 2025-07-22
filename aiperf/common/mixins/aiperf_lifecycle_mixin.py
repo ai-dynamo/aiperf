@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import inspect
-import logging
 from collections.abc import Callable
 
 from aiperf.common.exceptions import InvalidStateError
@@ -13,6 +12,7 @@ from aiperf.common.hooks import (
     on_stop,
     supports_hooks,
 )
+from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
 from aiperf.common.mixins.async_task_manager_mixin import AsyncTaskManagerMixin
 from aiperf.common.mixins.hooks_mixin import HooksMixin
 
@@ -25,21 +25,20 @@ from aiperf.common.mixins.hooks_mixin import HooksMixin
     AIPerfHook.ON_STOP,
     AIPerfHook.ON_CLEANUP,
 )
-class AIPerfLifecycleMixin(HooksMixin, AsyncTaskManagerMixin):
+class AIPerfLifecycleMixin(HooksMixin, AsyncTaskManagerMixin, AIPerfLoggerMixin):
     """Mixin to add task support to a class. It abstracts away the details of the
     :class:`AIPerfTask` and provides a simple interface for registering and running tasks.
     It hooks into the :meth:`HooksMixin.on_start` and :meth:`HooksMixin.on_stop` hooks to
     start and stop the tasks.
     """
 
-    def __init__(self):
-        super().__init__()
-        self.logger = logging.getLogger(__class__.__name__)
+    def __init__(self, **kwargs):
         self.initialized_event: asyncio.Event = asyncio.Event()
         self.started_event: asyncio.Event = asyncio.Event()
         self.stop_requested: asyncio.Event = asyncio.Event()
         self.shutdown_event: asyncio.Event = asyncio.Event()
         self.lifecycle_task: asyncio.Task | None = None
+        super().__init__(**kwargs)
 
     def is_initialized(self) -> bool:
         """Check if the lifecycle has been initialized."""
@@ -78,6 +77,8 @@ class AIPerfLifecycleMixin(HooksMixin, AsyncTaskManagerMixin):
             self.logger.exception("Unhandled exception in lifecycle: %s", e)
         finally:
             self.shutdown_event.set()
+
+        self.trace("Lifecycle finished")
 
     async def run_async(self) -> None:
         """Start the lifecycle in the background. Will call the :meth:`HooksMixin.on_init` hooks,
@@ -136,20 +137,6 @@ class AIPerfLifecycleMixin(HooksMixin, AsyncTaskManagerMixin):
     async def _stop_tasks(self):
         """Stop all the background tasks. This will wait for all the tasks to complete."""
         await self.cancel_all_tasks()
-
-    @on_stop
-    async def _stop_lifecycle(self):
-        """Stop the lifecycle."""
-        # TODO: Investigate why this causes a deadlock
-        # NOTE: This appears to cause a deadlock
-        # if (
-        #     self.lifecycle_task
-        #     and not self.lifecycle_task.done()
-        #     and not self.lifecycle_task.cancelled()
-        #     and self.lifecycle_task != asyncio.current_task()
-        # ):
-        #     self.lifecycle_task.cancel()
-        #     await asyncio.wait_for(self.lifecycle_task, timeout=TASK_CANCEL_TIMEOUT_SHORT)
 
     async def _task_wrapper(
         self, func: Callable, interval: float | None = None
