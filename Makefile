@@ -91,7 +91,7 @@ internal-help:
 	@printf "────────────────────────────────────────────────────────────────────────────\n"
 
 init-files: #? run mkinit to generate the __init__.py files.
-	$(activate_venv) && mkinit --write --black --nomods --recursive aiperf
+	$(activate_venv) && tools/generate_init_files.sh
 
 ruff lint: #? run the ruff linters
 	$(activate_venv) && ruff check . $(args)

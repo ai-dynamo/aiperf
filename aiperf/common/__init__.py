@@ -158,6 +158,7 @@ from aiperf.common.enums import (
     ServiceType,
     SSEEventType,
     SSEFieldType,
+    StreamingPostProcessorType,
     SystemState,
     TimingMode,
     ZMQProxyType,
@@ -192,6 +193,7 @@ from aiperf.common.factories import (
     FactoryMixin,
     PostProcessorFactory,
     ServiceFactory,
+    StreamingPostProcessorFactory,
 )
 from aiperf.common.hooks import (
     AIPERF_HOOK_TYPE,
@@ -272,6 +274,7 @@ from aiperf.common.mixins import (
     AIPerfTaskMixin,
     AsyncTaskManagerMixin,
     AsyncTaskManagerProtocol,
+    BaseMixin,
     HooksMixin,
     ProcessHealthMixin,
 )
@@ -358,6 +361,7 @@ __all__ = [
     "BaseComponentService",
     "BaseConfig",
     "BaseControllerService",
+    "BaseMixin",
     "BaseModelT",
     "BaseService",
     "BaseServiceErrorMessage",
@@ -538,6 +542,8 @@ __all__ = [
     "ServiceType",
     "ShutdownError",
     "StatusMessage",
+    "StreamingPostProcessorFactory",
+    "StreamingPostProcessorType",
     "SubClientProtocol",
     "SweepConfig",
     "SweepParam",

@@ -59,6 +59,7 @@ from aiperf.common.enums.model_enums import (
 )
 from aiperf.common.enums.post_processor_enums import (
     PostProcessorType,
+    StreamingPostProcessorType,
 )
 from aiperf.common.enums.service_enums import (
     ServiceRegistrationStatus,
@@ -113,6 +114,7 @@ __all__ = [
     "ServiceRunType",
     "ServiceState",
     "ServiceType",
+    "StreamingPostProcessorType",
     "SystemState",
     "TimingMode",
     "ZMQProxyType",

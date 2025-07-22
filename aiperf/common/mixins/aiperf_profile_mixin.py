@@ -16,8 +16,8 @@ from aiperf.common.mixins.hooks_mixin import HooksMixin
 class AIPerfProfileMixin(HooksMixin):
     """Mixin to add profile-related hook support to a class."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.logger = logging.getLogger(__class__.__name__)
         self.profile_started_event: asyncio.Event = asyncio.Event()
         self.profile_stopped_event: asyncio.Event = asyncio.Event()

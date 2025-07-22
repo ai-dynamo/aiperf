@@ -5,14 +5,15 @@ import time
 import psutil
 
 from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.mixins.base_mixin import BaseMixin
 from aiperf.common.models import CPUTimes, CtxSwitches, ProcessHealth
 
 
-class ProcessHealthMixin:
+class ProcessHealthMixin(BaseMixin):
     """Mixin to provide process health information."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         # Initialize process-specific CPU monitoring
         self.process: psutil.Process = psutil.Process()
         self.process.cpu_percent()  # throw away the first result (will be 0)
