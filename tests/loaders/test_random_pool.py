@@ -171,10 +171,10 @@ class TestRandomPoolDatasetLoader:
             images_file = temp_path / "images.jsonl"
             with open(images_file, "w") as f:
                 f.write(
-                    '{"images": [{"name": "image", "content": ["/path/to/image1.png"]}]}\n'
+                    '{"images": [{"name": "image", "contents": ["/path/to/image1.png"]}]}\n'
                 )
                 f.write(
-                    '{"images": [{"name": "image", "content": ["/path/to/image2.png"]}]}\n'
+                    '{"images": [{"name": "image", "contents": ["/path/to/image2.png"]}]}\n'
                 )
 
             loader = RandomPoolDatasetLoader(str(temp_path))
@@ -205,5 +205,5 @@ class TestRandomPoolDatasetLoader:
             images_pool = dataset["images.jsonl"]
             assert len(images_pool) == 2
             assert all(item.images[0].name == "image" for item in images_pool)
-            assert images_pool[0].images[0].content == ["/path/to/image1.png"]
-            assert images_pool[1].images[0].content == ["/path/to/image2.png"]
+            assert images_pool[0].images[0].contents == ["/path/to/image1.png"]
+            assert images_pool[1].images[0].contents == ["/path/to/image2.png"]
