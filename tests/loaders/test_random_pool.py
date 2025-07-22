@@ -152,17 +152,19 @@ class TestRandomPoolDatasetLoader:
             # Create first file - queries
             queries_file = temp_path / "queries.jsonl"
             with open(queries_file, "w") as f:
-                f.write('{"texts": [{"name": "query", "content": ["Who are you?"]}]}\n')
-                f.write('{"texts": [{"name": "query", "content": ["What is AI?"]}]}\n')
+                f.write(
+                    '{"texts": [{"name": "query", "contents": ["Who are you?"]}]}\n'
+                )
+                f.write('{"texts": [{"name": "query", "contents": ["What is AI?"]}]}\n')
 
             # Create second file - passages
             passages_file = temp_path / "passages.jsonl"
             with open(passages_file, "w") as f:
                 f.write(
-                    '{"texts": [{"name": "passage", "content": ["I am an AI assistant."]}]}\n'
+                    '{"texts": [{"name": "passage", "contents": ["I am an AI assistant."]}]}\n'
                 )
                 f.write(
-                    '{"texts": [{"name": "passage", "content": ["AI is artificial intelligence."]}]}\n'
+                    '{"texts": [{"name": "passage", "contents": ["AI is artificial intelligence."]}]}\n'
                 )
 
             # Create third file - images
@@ -187,15 +189,15 @@ class TestRandomPoolDatasetLoader:
             queries_pool = dataset["queries.jsonl"]
             assert len(queries_pool) == 2
             assert all(item.texts[0].name == "query" for item in queries_pool)
-            assert queries_pool[0].texts[0].content == ["Who are you?"]
-            assert queries_pool[1].texts[0].content == ["What is AI?"]
+            assert queries_pool[0].texts[0].contents == ["Who are you?"]
+            assert queries_pool[1].texts[0].contents == ["What is AI?"]
 
             # Check passages file content
             passages_pool = dataset["passages.jsonl"]
             assert len(passages_pool) == 2
             assert all(item.texts[0].name == "passage" for item in passages_pool)
-            assert passages_pool[0].texts[0].content == ["I am an AI assistant."]
-            assert passages_pool[1].texts[0].content == [
+            assert passages_pool[0].texts[0].contents == ["I am an AI assistant."]
+            assert passages_pool[1].texts[0].contents == [
                 "AI is artificial intelligence."
             ]
 

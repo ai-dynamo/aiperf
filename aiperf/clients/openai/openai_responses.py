@@ -30,7 +30,9 @@ class OpenAIResponsesRequestConverter(RequestConverterProtocol[dict[str, Any]]):
         """Format payload for a responses request."""
 
         # TODO: Add support for image and audio inputs.
-        prompts = [content for text in turn.text for content in text.content if content]
+        prompts = [
+            content for text in turn.texts for content in text.contents if content
+        ]
 
         extra = model_endpoint.endpoint.extra or {}
 

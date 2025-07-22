@@ -37,8 +37,8 @@ class OpenAIChatCompletionRequestConverter(RequestConverterProtocol[dict[str, An
                 "name": text.name,
                 "content": content,
             }
-            for text in turn.text
-            for content in text.content
+            for text in turn.texts
+            for content in text.contents
             if content
         ]
 

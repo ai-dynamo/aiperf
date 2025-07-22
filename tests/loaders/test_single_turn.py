@@ -68,12 +68,12 @@ class TestSingleTurn:
         """Test creating SingleTurn with full-featured version."""
         data = SingleTurn(
             texts=[
-                Text(name="text_field_A", content=["Hello", "World"]),
-                Text(name="text_field_B", content=["Hi there"]),
+                Text(name="text_field_A", contents=["Hello", "World"]),
+                Text(name="text_field_B", contents=["Hi there"]),
             ],
             images=[
-                Image(name="image_field_A", content=["/path/1.png", "/path/2.png"]),
-                Image(name="image_field_B", content=["/path/3.png"]),
+                Image(name="image_field_A", contents=["/path/1.png", "/path/2.png"]),
+                Image(name="image_field_B", contents=["/path/3.png"]),
             ],
         )
 
@@ -82,14 +82,14 @@ class TestSingleTurn:
         assert data.audios is None
 
         assert data.texts[0].name == "text_field_A"
-        assert data.texts[0].content == ["Hello", "World"]
+        assert data.texts[0].contents == ["Hello", "World"]
         assert data.texts[1].name == "text_field_B"
-        assert data.texts[1].content == ["Hi there"]
+        assert data.texts[1].contents == ["Hi there"]
 
         assert data.images[0].name == "image_field_A"
-        assert data.images[0].content == ["/path/1.png", "/path/2.png"]
+        assert data.images[0].contents == ["/path/1.png", "/path/2.png"]
         assert data.images[1].name == "image_field_B"
-        assert data.images[1].content == ["/path/3.png"]
+        assert data.images[1].contents == ["/path/3.png"]
 
     def test_validation_errors(self):
         """Test that at least one modality must be provided."""
@@ -241,15 +241,15 @@ class TestSingleTurnDatasetLoader:
             json.dumps(
                 {
                     "texts": [
-                        {"name": "text_field_A", "content": ["Hello", "World"]},
-                        {"name": "text_field_B", "content": ["Hi there"]},
+                        {"name": "text_field_A", "contents": ["Hello", "World"]},
+                        {"name": "text_field_B", "contents": ["Hi there"]},
                     ],
                     "images": [
                         {
                             "name": "image_field_A",
-                            "content": ["/path/1.png", "/path/2.png"],
+                            "contents": ["/path/1.png", "/path/2.png"],
                         },
-                        {"name": "image_field_B", "content": ["/path/3.png"]},
+                        {"name": "image_field_B", "contents": ["/path/3.png"]},
                     ],
                 }
             )
@@ -266,11 +266,11 @@ class TestSingleTurnDatasetLoader:
         assert len(turn[0].images) == 2
 
         assert turn[0].texts[0].name == "text_field_A"
-        assert turn[0].texts[0].content == ["Hello", "World"]
+        assert turn[0].texts[0].contents == ["Hello", "World"]
         assert turn[0].texts[1].name == "text_field_B"
-        assert turn[0].texts[1].content == ["Hi there"]
+        assert turn[0].texts[1].contents == ["Hi there"]
 
         assert turn[0].images[0].name == "image_field_A"
-        assert turn[0].images[0].content == ["/path/1.png", "/path/2.png"]
+        assert turn[0].images[0].contents == ["/path/1.png", "/path/2.png"]
         assert turn[0].images[1].name == "image_field_B"
-        assert turn[0].images[1].content == ["/path/3.png"]
+        assert turn[0].images[1].contents == ["/path/3.png"]

@@ -240,8 +240,8 @@ class InferenceResultParser(BaseComponentService):
         turn = turn_response.turn
         return sum(
             len(tokenizer.encode(content))
-            for text in turn.text
-            for content in text.content
+            for text in turn.texts
+            for content in text.contents
         )
 
 

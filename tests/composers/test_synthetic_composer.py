@@ -109,10 +109,10 @@ class TestSyntheticDatasetComposer:
 
             for turn in conversation.turns:
                 assert isinstance(turn, Turn)
-                assert len(turn.text) == 1  # single text field per turn
-                assert len(turn.text[0].content) == 1  # batch_size = 1
-                assert len(turn.image) == 0  # no images
-                assert len(turn.audio) == 0  # no audio
+                assert len(turn.texts) == 1  # single text field per turn
+                assert len(turn.texts[0].contents) == 1  # batch_size = 1
+                assert len(turn.images) == 0  # no images
+                assert len(turn.audios) == 0  # no audio
 
     @patch(
         "aiperf.services.dataset.composer.synthetic.utils.sample_positive_normal_integer"
@@ -130,14 +130,14 @@ class TestSyntheticDatasetComposer:
         assert len(conversations) == 3
         for conversation in conversations:
             for turn in conversation.turns:
-                assert len(turn.text) == 1  # single text field per turn
-                assert len(turn.text[0].content) == 1  # batch_size = 1
-                assert len(turn.image) == 1  # single image field per turn
-                assert len(turn.image[0].content) == 1  # batch_size = 1
-                assert len(turn.audio) == 0  # no audio
+                assert len(turn.texts) == 1  # single text field per turn
+                assert len(turn.texts[0].contents) == 1  # batch_size = 1
+                assert len(turn.images) == 1  # single image field per turn
+                assert len(turn.images[0].contents) == 1  # batch_size = 1
+                assert len(turn.audios) == 0  # no audio
 
                 # Check image properties
-                image = turn.image[0]
+                image = turn.images[0]
                 assert isinstance(image, Image)
                 assert image.name == "image_url"
 
@@ -155,14 +155,14 @@ class TestSyntheticDatasetComposer:
         assert len(conversations) == 3
         for conversation in conversations:
             for turn in conversation.turns:
-                assert len(turn.text) == 1  # single text field per turn
-                assert len(turn.text[0].content) == 1  # batch_size = 1
-                assert len(turn.image) == 0  # no images
-                assert len(turn.audio) == 1  # single audio field per turn
-                assert len(turn.audio[0].content) == 1  # batch_size = 1
+                assert len(turn.texts) == 1  # single text field per turn
+                assert len(turn.texts[0].contents) == 1  # batch_size = 1
+                assert len(turn.images) == 0  # no images
+                assert len(turn.audios) == 1  # single audio field per turn
+                assert len(turn.audios[0].contents) == 1  # batch_size = 1
 
                 # Check audio properties
-                audio = turn.audio[0]
+                audio = turn.audios[0]
                 assert isinstance(audio, Audio)
 
     @patch(
@@ -182,12 +182,12 @@ class TestSyntheticDatasetComposer:
         for conversation in conversations:
             for turn in conversation.turns:
                 # Test correct batch sizes for all modalities
-                assert len(turn.text) == 1  # single text field per turn
-                assert len(turn.text[0].content) == 2  # batch_size = 2
-                assert len(turn.image) == 1  # single image field per turn
-                assert len(turn.image[0].content) == 2  # batch_size = 2
-                assert len(turn.audio) == 1  # single audio field per turn
-                assert len(turn.audio[0].content) == 2  # batch_size = 2
+                assert len(turn.texts) == 1  # single text field per turn
+                assert len(turn.texts[0].contents) == 2  # batch_size = 2
+                assert len(turn.images) == 1  # single image field per turn
+                assert len(turn.images[0].contents) == 2  # batch_size = 2
+                assert len(turn.audios) == 1  # single audio field per turn
+                assert len(turn.audios[0].contents) == 2  # batch_size = 2
 
     @patch(
         "aiperf.services.dataset.composer.synthetic.utils.sample_positive_normal_integer"
@@ -209,13 +209,13 @@ class TestSyntheticDatasetComposer:
         for conversation in conversations:
             # Test first turns include prefix prompts
             first_turn = conversation.turns[0]
-            first_text_content = first_turn.text[0].content[0]
+            first_text_content = first_turn.texts[0].contents[0]
             assert "Prefix prompt:" in first_text_content
 
             # Test subsequent turns don't include prefix prompts (if they exist)
             if len(conversation.turns) > 1:
                 subsequent_turn = conversation.turns[1]
-                subsequent_text_content = subsequent_turn.text[0].content[0]
+                subsequent_text_content = subsequent_turn.texts[0].contents[0]
                 assert "Prefix prompt:" not in subsequent_text_content
 
     def test_create_dataset_multiple_turns(self, multiturn_config, mock_tokenizer):
@@ -246,9 +246,9 @@ class TestSyntheticDatasetComposer:
         turn = composer._create_turn(is_first=True)
 
         assert isinstance(turn, Turn)
-        assert len(turn.text) == 1  # single text field per turn
-        assert len(turn.image) == 0  # no images
-        assert len(turn.audio) == 0  # no audio
+        assert len(turn.texts) == 1  # single text field per turn
+        assert len(turn.images) == 0  # no images
+        assert len(turn.audios) == 0  # no audio
         assert turn.delay is None  # first turn has no delay
 
     def test_create_turn_subsequent_turn(self, multiturn_config, mock_tokenizer):
@@ -259,7 +259,7 @@ class TestSyntheticDatasetComposer:
         turn = composer._create_turn(is_first=False)
 
         assert isinstance(turn, Turn)
-        assert len(turn.text) == 1
+        assert len(turn.texts) == 1
         # Test subsequent turns have delays
         assert turn.delay == 1500
 
@@ -273,12 +273,12 @@ class TestSyntheticDatasetComposer:
         turn = composer._create_turn(is_first=True)
 
         assert isinstance(turn, Turn)
-        assert len(turn.text) == 1  # single text field per turn
-        assert len(turn.text[0].content) == 2  # batch_size = 2
-        assert len(turn.image) == 1  # single image field per turn
-        assert len(turn.image[0].content) == 2  # batch_size = 2
-        assert len(turn.audio) == 1  # single audio field per turn
-        assert len(turn.audio[0].content) == 2  # batch_size = 2
+        assert len(turn.texts) == 1  # single text field per turn
+        assert len(turn.texts[0].contents) == 2  # batch_size = 2
+        assert len(turn.images) == 1  # single image field per turn
+        assert len(turn.images[0].contents) == 2  # batch_size = 2
+        assert len(turn.audios) == 1  # single audio field per turn
+        assert len(turn.audios[0].contents) == 2  # batch_size = 2
         assert turn.delay is None  # first turn has no delay
 
         # Test subsequent turn creation
@@ -303,16 +303,16 @@ class TestSyntheticDatasetComposer:
         # Test text payload generation
         turn = Turn()
         text = composer._generate_text_payloads(is_first=True)
-        turn.text.append(text)
+        turn.texts.append(text)
 
         # Test correct number of text payloads based on batch_size
-        assert len(turn.text) == 1  # batch_size = 1
+        assert len(turn.texts) == 1  # batch_size = 1
 
         # Test text content is generated using prompt generator
-        text_payload = turn.text[0]
+        text_payload = turn.texts[0]
         assert isinstance(text_payload, Text)
         assert text_payload.name == "text"
-        assert text_payload.content == ["Generated text content"]
+        assert text_payload.contents == ["Generated text content"]
 
     @patch(
         "aiperf.services.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt"
@@ -330,11 +330,11 @@ class TestSyntheticDatasetComposer:
         # Test prefix prompt is added to first turn
         turn = Turn()
         text = composer._generate_text_payloads(is_first=True)
-        turn.text.append(text)
+        turn.texts.append(text)
 
-        text_payload = turn.text[0]
+        text_payload = turn.texts[0]
         # Test prefix prompt format ("prefix prompt")
-        assert text_payload.content == ["Prefix prompt: User message"]
+        assert text_payload.contents == ["Prefix prompt: User message"]
 
     @patch("aiperf.services.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_subsequent_turn_no_prefix(
@@ -348,10 +348,10 @@ class TestSyntheticDatasetComposer:
         # Test no prefix prompt is added to subsequent turns
         turn = Turn()
         text = composer._generate_text_payloads(is_first=False)
-        turn.text.append(text)
+        turn.texts.append(text)
 
-        text_payload = turn.text[0]
-        assert text_payload.content == ["User message"]  # No prefix
+        text_payload = turn.texts[0]
+        assert text_payload.contents == ["User message"]  # No prefix
 
     @patch("aiperf.services.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_multiple_batch_size(
@@ -366,14 +366,14 @@ class TestSyntheticDatasetComposer:
         # Test multiple text payloads are generated per turn
         turn = Turn()
         text = composer._generate_text_payloads(is_first=True)
-        turn.text.append(text)
+        turn.texts.append(text)
 
-        assert len(turn.text) == 1  # single text field per turn
-        assert len(turn.text[0].content) == 3  # batch_size = 3
+        assert len(turn.texts) == 1  # single text field per turn
+        assert len(turn.texts[0].contents) == 3  # batch_size = 3
 
         # Batched text payloads
-        text_payload = turn.text[0]
-        assert text_payload.content == [
+        text_payload = turn.texts[0]
+        assert text_payload.contents == [
             "Generated text",
             "Generated text",
             "Generated text",
@@ -389,16 +389,16 @@ class TestSyntheticDatasetComposer:
         # Test image payload generation
         turn = Turn()
         image = composer._generate_image_payloads()
-        turn.image.append(image)
+        turn.images.append(image)
 
         # Test correct number of image payloads based on batch_size
-        assert len(turn.image) == 1  # batch_size = 1
+        assert len(turn.images) == 1  # batch_size = 1
 
         # Test image content is generated using image generator
-        image_payload = turn.image[0]
+        image_payload = turn.images[0]
         assert isinstance(image_payload, Image)
         assert image_payload.name == "image_url"
-        assert image_payload.content == ["fake_image_data"]
+        assert image_payload.contents == ["fake_image_data"]
 
     @patch("aiperf.services.dataset.generator.audio.AudioGenerator.generate")
     def test_generate_audio_payloads(self, mock_generate, audio_config, mock_tokenizer):
@@ -410,14 +410,14 @@ class TestSyntheticDatasetComposer:
         # Test audio payload generation
         turn = Turn()
         audio = composer._generate_audio_payloads()
-        turn.audio.append(audio)
+        turn.audios.append(audio)
 
         # Test correct number of audio payloads based on batch_size
-        assert len(turn.audio) == 1  # batch_size = 1
+        assert len(turn.audios) == 1  # batch_size = 1
 
-        audio_payload = turn.audio[0]
+        audio_payload = turn.audios[0]
         assert audio_payload.name == "input_audio"
-        assert audio_payload.content == ["fake_audio_data"]
+        assert audio_payload.contents == ["fake_audio_data"]
 
     # ============================================================================
     # Configuration Variations Tests
@@ -489,10 +489,10 @@ class TestSyntheticDatasetComposer:
 
         # Parametrized test for different batch_size values
         turn = conversations[0].turns[0]
-        assert len(turn.text) == 1  # single text field per turn
+        assert len(turn.texts) == 1  # single text field per turn
 
-        text_payload = turn.text[0]
-        assert len(text_payload.content) == batch_size
+        text_payload = turn.texts[0]
+        assert len(text_payload.contents) == batch_size
 
     # ============================================================================
     # Miscellaneous Tests
@@ -537,10 +537,10 @@ class TestSyntheticDatasetComposer:
         for conv1, conv2 in zip(conversations1, conversations2, strict=True):
             assert len(conv1.turns) == len(conv2.turns)
             for turn1, turn2 in zip(conv1.turns, conv2.turns, strict=True):
-                assert len(turn1.text) == len(turn2.text)
-                assert len(turn1.image) == len(turn2.image)
-                assert len(turn1.audio) == len(turn2.audio)
-                assert turn1.text[0].content == turn2.text[0].content
-                assert turn1.image[0].content == turn2.image[0].content
-                assert turn1.audio[0].content == turn2.audio[0].content
+                assert len(turn1.texts) == len(turn2.texts)
+                assert len(turn1.images) == len(turn2.images)
+                assert len(turn1.audios) == len(turn2.audios)
+                assert turn1.texts[0].contents == turn2.texts[0].contents
+                assert turn1.images[0].contents == turn2.images[0].contents
+                assert turn1.audios[0].contents == turn2.audios[0].contents
                 assert turn1.delay == turn2.delay
