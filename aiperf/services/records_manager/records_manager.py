@@ -45,9 +45,6 @@ class RecordsManager(BaseComponentService):
             user_config=user_config,
             service_id=service_id,
         )
-        self.user_config: UserConfig | None = None
-        self.configured_event = asyncio.Event()
-
         self.streaming_post_processors: list[BaseStreamingPostProcessor] = []
 
         self.response_results_client: PullClientProtocol = (
