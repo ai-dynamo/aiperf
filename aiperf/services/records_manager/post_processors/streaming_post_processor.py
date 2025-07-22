@@ -3,10 +3,12 @@
 
 import asyncio
 from abc import ABC, abstractmethod
+from typing import Any
 
 from aiperf.common.comms import PubClientProtocol, SubClientProtocol
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.hooks import aiperf_task
+from aiperf.common.messages.command_messages import CommandMessage
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ParsedResponseRecord
 
@@ -65,3 +67,10 @@ class BaseStreamingPostProcessor(AIPerfLifecycleMixin, ABC):
         raise NotImplementedError(
             "BaseStreamingPostProcessor.stream_record method must be implemented by the subclass."
         )
+
+    async def on_process_records_command(self, message: CommandMessage) -> Any:
+        """Handle the process records command. This method is called when the records manager receives
+        a command to process the records, and can be handled by the subclass. The results will be
+        returned by the records manager to the caller.
+        """
+        pass

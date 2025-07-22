@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
@@ -53,7 +54,7 @@ class BaseComponentService(BaseService):
         )
 
         self._command_callbacks: dict[
-            CommandType, Callable[[CommandMessage], Awaitable[None]]
+            CommandType, Callable[[CommandMessage], Awaitable[Any]]
         ] = {}
         self._heartbeat_interval_seconds = (
             self.service_config.heartbeat_interval_seconds
@@ -195,7 +196,7 @@ class BaseComponentService(BaseService):
     def register_command_callback(
         self,
         cmd: CommandType,
-        callback: Callable[[CommandMessage], Awaitable[None]],
+        callback: Callable[[CommandMessage], Awaitable[Any]],
     ) -> None:
         """Register a single callback for a command."""
         self._command_callbacks[cmd] = callback
