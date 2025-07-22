@@ -165,12 +165,23 @@ class TestRandomPoolDatasetLoader:
                     '{"texts": [{"name": "passage", "content": ["AI is artificial intelligence."]}]}\n'
                 )
 
+            # Create third file - images
+            images_file = temp_path / "images.jsonl"
+            with open(images_file, "w") as f:
+                f.write(
+                    '{"images": [{"name": "image", "content": ["/path/to/image1.png"]}]}\n'
+                )
+                f.write(
+                    '{"images": [{"name": "image", "content": ["/path/to/image2.png"]}]}\n'
+                )
+
             loader = RandomPoolDatasetLoader(str(temp_path))
             dataset = loader.load_dataset()
 
-            assert len(dataset) == 2
+            assert len(dataset) == 3
             assert "queries.jsonl" in dataset
             assert "passages.jsonl" in dataset
+            assert "images.jsonl" in dataset
 
             # Check queries file content
             queries_pool = dataset["queries.jsonl"]
@@ -187,3 +198,10 @@ class TestRandomPoolDatasetLoader:
             assert passages_pool[1].texts[0].content == [
                 "AI is artificial intelligence."
             ]
+
+            # Check images file content
+            images_pool = dataset["images.jsonl"]
+            assert len(images_pool) == 2
+            assert all(item.images[0].name == "image" for item in images_pool)
+            assert images_pool[0].images[0].content == ["/path/to/image1.png"]
+            assert images_pool[1].images[0].content == ["/path/to/image2.png"]
