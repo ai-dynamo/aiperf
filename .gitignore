@@ -16,3 +16,4 @@ dist/
 uv.lock
 profile.json
 profile.html
+.vscode/settings.json
