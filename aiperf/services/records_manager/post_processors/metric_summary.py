@@ -5,7 +5,6 @@ import logging
 
 import pandas as pd
 
-from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import MetricType, PostProcessorType
 from aiperf.common.factories import PostProcessorFactory
 from aiperf.common.models import MetricResult, ParsedResponseRecord
@@ -75,28 +74,28 @@ class MetricSummary:
         return metrics_summary
 
 
-def record_from_dataframe(
-    df: pd.DataFrame,
-    metric: BaseMetric,
-) -> MetricResult:
+def record_from_dataframe(df: pd.DataFrame, metric: BaseMetric) -> MetricResult:
     """Create a Record from a DataFrame."""
+
     column = df[metric.tag]
+    quantiles = column.quantile([0.01, 0.05, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99])
+
     return MetricResult(
         tag=metric.tag,
         header=metric.header,
         unit=metric.unit.name,
-        avg=column.mean() / NANOS_PER_MILLIS,
-        min=column.min() / NANOS_PER_MILLIS,
-        max=column.max() / NANOS_PER_MILLIS,
-        p1=column.quantile(0.01) / NANOS_PER_MILLIS,
-        p5=column.quantile(0.05) / NANOS_PER_MILLIS,
-        p25=column.quantile(0.25) / NANOS_PER_MILLIS,
-        p50=column.quantile(0.50) / NANOS_PER_MILLIS,
-        p75=column.quantile(0.75) / NANOS_PER_MILLIS,
-        p90=column.quantile(0.90) / NANOS_PER_MILLIS,
-        p95=column.quantile(0.95) / NANOS_PER_MILLIS,
-        p99=column.quantile(0.99) / NANOS_PER_MILLIS,
-        std=column.std() / NANOS_PER_MILLIS,
+        avg=column.mean(),
+        min=column.min(),
+        max=column.max(),
+        p1=quantiles[0.01],
+        p5=quantiles[0.05],
+        p25=quantiles[0.25],
+        p50=quantiles[0.50],
+        p75=quantiles[0.75],
+        p90=quantiles[0.90],
+        p95=quantiles[0.95],
+        p99=quantiles[0.99],
+        std=column.std(),
         count=int(column.count()),
         streaming_only=metric.streaming_only,
     )
