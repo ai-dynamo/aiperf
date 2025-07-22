@@ -6,7 +6,8 @@ from collections import defaultdict
 
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-from aiperf.services.dataset.loader.models import MultiTurn
+from aiperf.common.models import Audio, Conversation, Image, Text, Turn
+from aiperf.services.dataset.loader.models import MultiTurn, SingleTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.MULTI_TURN)
@@ -112,3 +113,98 @@ class MultiTurnDatasetLoader:
                 data[session_id].append(multi_turn_data)
 
         return data
+
+    def convert_to_conversations(
+        self, data: dict[str, list[MultiTurn]]
+    ) -> list[Conversation]:
+        """Convert multi-turn data to conversation objects.
+
+        Args:
+            data: A dictionary mapping session_id to list of MultiTurn objects.
+
+        Returns:
+            A list of conversations.
+        """
+        conversations = []
+        for session_id, multi_turns in data.items():
+            conversation = Conversation(session_id=session_id)
+
+            # Process all MultiTurn objects for this session
+            for multi_turn in multi_turns:
+                for single_turn in multi_turn.turns:
+                    turn = self._convert_single_turn_to_turn(single_turn)
+                    conversation.turns.append(turn)
+
+            conversations.append(conversation)
+        return conversations
+
+    def _convert_single_turn_to_turn(self, single_turn: SingleTurn) -> Turn:
+        """Convert a SingleTurn object to a Turn object.
+
+        Args:
+            single_turn: The SingleTurn object to convert.
+
+        Returns:
+            A Turn object.
+        """
+        turn = Turn(
+            timestamp=single_turn.timestamp,
+            delay=single_turn.delay,
+            role=single_turn.role,
+        )
+
+        # Convert text fields
+        if single_turn.text:
+            turn.texts.append(Text(name="text", contents=[single_turn.text]))
+        elif single_turn.texts:
+            turn.texts.extend(self._convert_to_text_objects(single_turn.texts))
+
+        # Convert image fields
+        if single_turn.image:
+            turn.images.append(Image(name="image_url", contents=[single_turn.image]))
+        elif single_turn.images:
+            turn.images.extend(self._convert_to_image_objects(single_turn.images))
+
+        # Convert audio fields
+        if single_turn.audio:
+            turn.audios.append(Audio(name="input_audio", contents=[single_turn.audio]))
+        elif single_turn.audios:
+            turn.audios.extend(self._convert_to_audio_objects(single_turn.audios))
+
+        return turn
+
+    def _convert_to_text_objects(self, texts: list[str] | list[Text]) -> list[Text]:
+        """Convert text data to Text objects."""
+        if not texts:
+            return []
+
+        # If already Text objects, return as is
+        if isinstance(texts[0], Text):
+            return texts  # type: ignore
+
+        # Convert list of strings to single Text object
+        return [Text(name="text", contents=texts)]  # type: ignore
+
+    def _convert_to_image_objects(self, images: list[str] | list[Image]) -> list[Image]:
+        """Convert image data to Image objects."""
+        if not images:
+            return []
+
+        # If already Image objects, return as is
+        if isinstance(images[0], Image):
+            return images  # type: ignore
+
+        # Convert list of strings to single Image object
+        return [Image(name="image_url", contents=images)]  # type: ignore
+
+    def _convert_to_audio_objects(self, audios: list[str] | list[Audio]) -> list[Audio]:
+        """Convert audio data to Audio objects."""
+        if not audios:
+            return []
+
+        # If already Audio objects, return as is
+        if isinstance(audios[0], Audio):
+            return audios  # type: ignore
+
+        # Convert list of strings to single Audio object
+        return [Audio(name="input_audio", contents=audios)]  # type: ignore

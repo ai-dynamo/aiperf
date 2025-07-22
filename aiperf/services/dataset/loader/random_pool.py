@@ -1,12 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import uuid
 from collections import defaultdict
 from pathlib import Path
 from typing import TypeAlias
 
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
+from aiperf.common.models import Audio, Conversation, Image, Text, Turn
 from aiperf.services.dataset.loader.models import RandomPool
 
 # Type aliases
@@ -126,3 +128,93 @@ class RandomPoolDatasetLoader:
                 data[file_path.name].extend(dataset_pool)
 
         return data
+
+    def convert_to_conversations(
+        self, data: dict[Filename, list[RandomPool]]
+    ) -> list[Conversation]:
+        """Convert random pool data to conversation objects.
+
+        Each RandomPool entry becomes a single-turn conversation with a unique session ID.
+
+        Args:
+            data: A dictionary mapping filename to list of RandomPool objects.
+
+        Returns:
+            A list of conversations.
+        """
+        conversations = []
+        for _, random_pools in data.items():
+            for pool_entry in random_pools:
+                session_id = str(uuid.uuid4())
+                conversation = Conversation(session_id=session_id)
+                turn = self._convert_random_pool_to_turn(pool_entry)
+                conversation.turns.append(turn)
+                conversations.append(conversation)
+        return conversations
+
+    def _convert_random_pool_to_turn(self, random_pool: RandomPool) -> Turn:
+        """Convert a RandomPool object to a Turn object.
+
+        Args:
+            random_pool: The RandomPool object to convert.
+
+        Returns:
+            A Turn object.
+        """
+        turn = Turn()
+
+        # Convert text fields
+        if random_pool.text:
+            turn.texts.append(Text(name="text", contents=[random_pool.text]))
+        elif random_pool.texts:
+            turn.texts.extend(self._convert_to_text_objects(random_pool.texts))
+
+        # Convert image fields
+        if random_pool.image:
+            turn.images.append(Image(name="image_url", contents=[random_pool.image]))
+        elif random_pool.images:
+            turn.images.extend(self._convert_to_image_objects(random_pool.images))
+
+        # Convert audio fields
+        if random_pool.audio:
+            turn.audios.append(Audio(name="input_audio", contents=[random_pool.audio]))
+        elif random_pool.audios:
+            turn.audios.extend(self._convert_to_audio_objects(random_pool.audios))
+
+        return turn
+
+    def _convert_to_text_objects(self, texts: list[str] | list[Text]) -> list[Text]:
+        """Convert text data to Text objects."""
+        if not texts:
+            return []
+
+        # If already Text objects, return as is
+        if isinstance(texts[0], Text):
+            return texts  # type: ignore
+
+        # Convert list of strings to single Text object
+        return [Text(name="text", contents=texts)]  # type: ignore
+
+    def _convert_to_image_objects(self, images: list[str] | list[Image]) -> list[Image]:
+        """Convert image data to Image objects."""
+        if not images:
+            return []
+
+        # If already Image objects, return as is
+        if isinstance(images[0], Image):
+            return images  # type: ignore
+
+        # Convert list of strings to single Image object
+        return [Image(name="image_url", contents=images)]  # type: ignore
+
+    def _convert_to_audio_objects(self, audios: list[str] | list[Audio]) -> list[Audio]:
+        """Convert audio data to Audio objects."""
+        if not audios:
+            return []
+
+        # If already Audio objects, return as is
+        if isinstance(audios[0], Audio):
+            return audios  # type: ignore
+
+        # Convert list of strings to single Audio object
+        return [Audio(name="input_audio", contents=audios)]  # type: ignore
