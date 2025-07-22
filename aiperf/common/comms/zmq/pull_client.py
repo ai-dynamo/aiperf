@@ -9,10 +9,11 @@ import zmq.asyncio
 
 from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.enums import CommunicationClientType, MessageType
+from aiperf.common.enums import CommunicationClientType
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 
 
@@ -69,7 +70,7 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
         """
         super().__init__(context, zmq.SocketType.PULL, address, bind, socket_ops)
         self._pull_callbacks: dict[
-            MessageType, Callable[[Message], Coroutine[Any, Any, None]]
+            MessageTypeT, Callable[[Message], Coroutine[Any, Any, None]]
         ] = {}
 
         if max_concurrency is not None:
@@ -145,7 +146,7 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
 
     async def register_pull_callback(
         self,
-        message_type: MessageType,
+        message_type: MessageTypeT,
         callback: Callable[[Message], Coroutine[Any, Any, None]],
         max_concurrency: int | None = None,
     ) -> None:

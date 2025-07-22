@@ -9,11 +9,12 @@ import zmq.asyncio
 
 from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.enums import CommunicationClientType, MessageType
+from aiperf.common.enums import CommunicationClientType
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import call_all_functions, yield_to_event_loop
 
 
@@ -73,14 +74,14 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
         """
         super().__init__(context, zmq.SocketType.SUB, address, bind, socket_ops)
 
-        self._subscribers: dict[MessageType | str, list[Callable[[Message], Any]]] = {}
+        self._subscribers: dict[MessageTypeT, list[Callable[[Message], Any]]] = {}
 
     @on_stop
     async def _on_stop(self) -> None:
         await self.cancel_all_tasks()
 
     async def subscribe_all(
-        self, message_callback_map: dict[MessageType, Callable[[Message], Any]]
+        self, message_callback_map: dict[MessageTypeT, Callable[[Message], Any]]
     ) -> None:
         """Subscribe to all message_types in the map."""
         await self._ensure_initialized()
@@ -92,12 +93,12 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
         await asyncio.sleep(0.1)
 
     async def subscribe(
-        self, message_type: MessageType, callback: Callable[[Message], Any]
+        self, message_type: MessageTypeT, callback: Callable[[Message], Any]
     ) -> None:
         """Subscribe to a message_type.
 
         Args:
-            message_type: MessageType to subscribe to
+            message_type: MessageTypeT to subscribe to
             callback: Function to call when a message is received (receives Message object)
 
         Raises:
@@ -111,12 +112,12 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
         await asyncio.sleep(0.1)
 
     async def _subscribe_internal(
-        self, message_type: MessageType, callback: Callable[[Message], Any]
+        self, message_type: MessageTypeT, callback: Callable[[Message], Any]
     ) -> None:
         """Subscribe to a message_type.
 
         Args:
-            message_type: MessageType to subscribe to
+            message_type: MessageTypeT to subscribe to
             callback: Function to call when a message is received (receives Message object)
         """
         try:
