@@ -62,7 +62,7 @@ class RandomPoolDatasetLoader:
 
     The loader will create two separate pools for each file: queries and passages.
     Each pool is a text dataset with a different field name (e.g. query, passage),
-    so later when loader will sample from these two pools to create conversations.
+    and loader will later sample from these two pools to create conversations.
     """
 
     def __init__(self, filename: str):

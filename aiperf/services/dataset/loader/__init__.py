@@ -12,6 +12,7 @@ from aiperf.services.dataset.loader.models import (
     CustomData,
     MooncakeTrace,
     MultiTurn,
+    RandomPool,
     SingleTurn,
 )
 from aiperf.services.dataset.loader.mooncake_trace import (
@@ -37,6 +38,7 @@ __all__ = [
     "MooncakeTraceDatasetLoader",
     "MultiTurn",
     "MultiTurnDatasetLoader",
+    "RandomPool",
     "RandomPoolDatasetLoader",
     "SingleTurn",
     "SingleTurnDatasetLoader",
