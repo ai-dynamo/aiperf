@@ -9,27 +9,27 @@ from aiperf.common.models.base_models import AIPerfBaseModel, exclude_if_none
 class Text(AIPerfBaseModel):
     name: str = Field(default="text", description="Name of the text field.")
 
-    content: list[str] = Field(
+    contents: list[str] = Field(
         default=[],
-        description="List of text content. Supports batched text payload in a single turn.",
+        description="List of text contents. Supports batched text payload in a single turn.",
     )
 
 
 class Image(AIPerfBaseModel):
     name: str = Field(default="image_url", description="Name of the image field.")
 
-    content: list[str] = Field(
+    contents: list[str] = Field(
         default=[],
-        description="List of image content. Supports batched image payload in a single turn.",
+        description="List of image contents. Supports batched image payload in a single turn.",
     )
 
 
 class Audio(AIPerfBaseModel):
     name: str = Field(default="input_audio", description="Name of the audio field.")
 
-    content: list[str] = Field(
+    contents: list[str] = Field(
         default=[],
-        description="List of audio content. Supports batched audio payload in a single turn.",
+        description="List of audio contents. Supports batched audio payload in a single turn.",
     )
 
 
@@ -49,13 +49,13 @@ class Turn(AIPerfBaseModel):
         description="Amount of milliseconds to wait before sending the turn.",
     )
     role: str | None = Field(default=None, description="Role of the turn.")
-    text: list[Text] = Field(
+    texts: list[Text] = Field(
         default=[], description="Collection of text data in each turn."
     )
-    image: list[Image] = Field(
+    images: list[Image] = Field(
         default=[], description="Collection of image data in each turn."
     )
-    audio: list[Audio] = Field(
+    audios: list[Audio] = Field(
         default=[], description="Collection of audio data in each turn."
     )
 

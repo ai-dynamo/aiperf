@@ -312,13 +312,13 @@ class TestMultiTurnDatasetLoader:
                             "texts": [
                                 {
                                     "name": "user_query",
-                                    "content": ["Analyze this data"],
+                                    "contents": ["Analyze this data"],
                                 },
-                                {"name": "user_context", "content": ["Be thorough"]},
+                                {"name": "user_context", "contents": ["Be thorough"]},
                             ],
                             "images": [
-                                {"name": "dataset_viz", "content": ["/chart.png"]},
-                                {"name": "raw_data", "content": ["/data.png"]},
+                                {"name": "dataset_viz", "contents": ["/chart.png"]},
+                                {"name": "raw_data", "contents": ["/data.png"]},
                             ],
                             "timestamp": 1000,
                         },
@@ -337,15 +337,15 @@ class TestMultiTurnDatasetLoader:
         turn = multi_turn.turns[0]
         assert len(turn.texts) == 2
         assert turn.texts[0].name == "user_query"
-        assert turn.texts[0].content == ["Analyze this data"]
+        assert turn.texts[0].contents == ["Analyze this data"]
         assert turn.texts[1].name == "user_context"
-        assert turn.texts[1].content == ["Be thorough"]
+        assert turn.texts[1].contents == ["Be thorough"]
 
         assert len(turn.images) == 2
         assert turn.images[0].name == "dataset_viz"
-        assert turn.images[0].content == ["/chart.png"]
+        assert turn.images[0].contents == ["/chart.png"]
         assert turn.images[1].name == "raw_data"
-        assert turn.images[1].content == ["/data.png"]
+        assert turn.images[1].contents == ["/data.png"]
         assert turn.timestamp == 1000
 
     def test_load_dataset_skips_empty_lines(self, create_jsonl_file):

@@ -75,12 +75,12 @@ class MultiTurnDatasetLoader:
             {
                 "timestamp": 1234,
                 "texts": [
-                    {"name": "text_field_a", "content": ["hello", "world"]},
-                    {"name": "text_field_b", "content": ["hi there"]}
+                    {"name": "text_field_a", "contents": ["hello", "world"]},
+                    {"name": "text_field_b", "contents": ["hi there"]}
                 ],
                 "images": [
-                    {"name": "image_field_a", "content": ["/path/1.png", "/path/2.png"]},
-                    {"name": "image_field_b", "content": ["/path/3.png"]}
+                    {"name": "image_field_a", "contents": ["/path/1.png", "/path/2.png"]},
+                    {"name": "image_field_b", "contents": ["/path/3.png"]}
                 ]
             }
         ]

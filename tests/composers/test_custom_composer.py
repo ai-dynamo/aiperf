@@ -72,7 +72,7 @@ class TestCoreFunctionality:
         assert len(conversations) == 3
         assert all(isinstance(c, Conversation) for c in conversations)
         assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
-        assert all(len(turn.text) == 1 for c in conversations for turn in c.turns)
+        assert all(len(turn.texts) == 1 for c in conversations for turn in c.turns)
 
 
 class TestErrorHandling:

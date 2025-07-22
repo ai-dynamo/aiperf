@@ -51,12 +51,12 @@ class SingleTurnDatasetLoader:
     ```json
     {
         "texts": [
-            {"name": "text_field_A", "content": ["Hello", "World"]},
-            {"name": "text_field_B", "content": ["Hi there"]}
+            {"name": "text_field_A", "contents": ["Hello", "World"]},
+            {"name": "text_field_B", "contents": ["Hi there"]}
         ],
         "images": [
-            {"name": "image_field_A", "content": ["/path/1.png", "/path/2.png"]},
-            {"name": "image_field_B", "content": ["/path/3.png"]}
+            {"name": "image_field_A", "contents": ["/path/1.png", "/path/2.png"]},
+            {"name": "image_field_B", "contents": ["/path/3.png"]}
         ]
     }
     ```

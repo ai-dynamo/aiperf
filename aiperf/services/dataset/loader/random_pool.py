@@ -48,15 +48,15 @@ class RandomPoolDatasetLoader:
 
     data/queries.jsonl
     ```jsonl
-    {"texts": [{"name": "query", "content": ["Who are you?"]}]}
-    {"texts": [{"name": "query", "content": ["What is the meaning of life?"]}]}
+    {"texts": [{"name": "query", "contents": ["Who are you?"]}]}
+    {"texts": [{"name": "query", "contents": ["What is the meaning of life?"]}]}
     ...
     ```
 
     data/passages.jsonl
     ```jsonl
-    {"texts": [{"name": "passage", "content": ["I am a cat."]}]}
-    {"texts": [{"name": "passage", "content": ["I am a dog."]}]}
+    {"texts": [{"name": "passage", "contents": ["I am a cat."]}]}
+    {"texts": [{"name": "passage", "contents": ["I am a dog."]}]}
     ...
     ```
 

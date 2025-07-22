@@ -73,7 +73,7 @@ class MooncakeTraceDatasetLoader:
                 )
                 turn = Turn(
                     timestamp=trace.timestamp,
-                    text=[Text(name="text", content=[prompt])],
+                    texts=[Text(name="text", contents=[prompt])],
                 )
                 conversation.turns.append(turn)
             conversations.append(conversation)
