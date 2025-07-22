@@ -14,13 +14,13 @@ from aiperf.common.messages.inference_messages import ParsedInferenceResultsMess
 from aiperf.common.models import ParsedResponseRecord, RequestRecord, ResponseData
 from aiperf.common.models.record_models import SSEField, SSEMessage
 from aiperf.services.records_manager.post_processors.streaming_post_processor import (
-    StreamingPostProcessor,
+    BaseStreamingPostProcessor,
 )
 from aiperf.services.records_manager.records_manager import RecordsManager
 from tests.utils.async_test_utils import async_fixture
 
 
-class StreamingPostProcessorTest(StreamingPostProcessor):
+class StreamingPostProcessorTest(BaseStreamingPostProcessor):
     """Test implementation of StreamingPostProcessor for testing purposes."""
 
     def __init__(self, **kwargs):

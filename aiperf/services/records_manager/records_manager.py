@@ -35,7 +35,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.service import BaseComponentService
 from aiperf.data_exporter.exporter_manager import ExporterManager
-from aiperf.services.records_manager.post_processors import StreamingPostProcessor
+from aiperf.services.records_manager.post_processors import BaseStreamingPostProcessor
 from aiperf.services.records_manager.post_processors.metric_summary import MetricSummary
 
 DEFAULT_MAX_RECORDS_CONCURRENCY = 100_000
@@ -79,7 +79,7 @@ class RecordsManager(BaseComponentService):
         self.start_time_ns: int = time.time_ns()
         self.end_time_ns: int | None = None
 
-        self.streaming_post_processors: list[StreamingPostProcessor] = []
+        self.streaming_post_processors: list[BaseStreamingPostProcessor] = []
 
         self.response_results_client: PullClientProtocol = (
             self.comms.create_pull_client(
@@ -124,7 +124,7 @@ class RecordsManager(BaseComponentService):
                 service_config=self.service_config,
                 user_config=self.user_config,
             )
-            self.info(f"Initializing streaming post processor: {streamer_type}")
+            self.debug(f"Initializing streaming post processor: {streamer_type}")
             self.streaming_post_processors.append(streamer)
             self.debug(
                 lambda streamer=streamer: f"Starting lifecycle for {streamer.__class__.__name__}"
@@ -202,7 +202,19 @@ class RecordsManager(BaseComponentService):
 
         # Stream the record to all of the streaming post processors
         for streamer in self.streaming_post_processors:
-            self.execute_async(streamer.stream_record(message.record))
+            try:
+                self.debug(
+                    lambda name=streamer.__class__.__name__: f"Putting record into queue for streamer {name}"
+                )
+                streamer.records_queue.put_nowait(message.record)
+            except asyncio.QueueFull:
+                self.error(
+                    f"Streaming post processor {streamer.__class__.__name__} is unable to keep up with the rate of incoming records."
+                )
+                self.warning(
+                    f"Waiting for queue to be available for streamer {streamer.__class__.__name__}. This will cause back pressure on the records manager."
+                )
+                await streamer.records_queue.put(message.record)
 
         worker_id = message.record.worker_id
         if worker_id not in self.worker_success_counts:

@@ -23,8 +23,8 @@ from aiperf.services.records_manager.metrics import (
 )
 from aiperf.services.records_manager.post_processors import (
     DEFAULT_MAX_QUEUE_SIZE,
+    BaseStreamingPostProcessor,
     MetricSummary,
-    StreamingPostProcessor,
     record_from_dataframe,
 )
 from aiperf.services.records_manager.records_manager import (
@@ -34,6 +34,7 @@ from aiperf.services.records_manager.records_manager import (
 
 __all__ = [
     "BaseMetric",
+    "BaseStreamingPostProcessor",
     "BenchmarkDurationMetric",
     "DEFAULT_MAX_QUEUE_SIZE",
     "DEFAULT_MAX_RECORDS_CONCURRENCY",
@@ -46,7 +47,6 @@ __all__ = [
     "RecordsManager",
     "RequestLatencyMetric",
     "RequestThroughputMetric",
-    "StreamingPostProcessor",
     "TTFTMetric",
     "TTSTMetric",
     "record_from_dataframe",
