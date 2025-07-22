@@ -21,6 +21,7 @@ class BenchmarkDurationMetric(BaseMetric):
     larger_is_better = False
     header = "Benchmark Duration"
     type = MetricType.METRIC_OF_METRICS
+    required_metrics: set[str] = {MinRequestMetric.tag, MaxResponseMetric.tag}
 
     def __init__(self):
         self.metric: float = 0.0
@@ -30,6 +31,7 @@ class BenchmarkDurationMetric(BaseMetric):
         record: ParsedResponseRecord | None = None,
         metrics: dict["BaseMetric"] | None = None,
     ) -> None:
+        self._check_metrics(metrics)
         min_req_time = metrics[MinRequestMetric.tag].values()
         max_res_time = metrics[MaxResponseMetric.tag].values()
         benchmark_duration = max_res_time - min_req_time
@@ -37,7 +39,7 @@ class BenchmarkDurationMetric(BaseMetric):
 
     def values(self) -> float:
         """
-        Returns the list of Time to First Token (BenchmarkDuration) metrics.
+        Returns the BenchmarkDuration metric.
         """
         return self.metric
 

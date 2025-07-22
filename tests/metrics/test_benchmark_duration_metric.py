@@ -27,12 +27,11 @@ def test_add_multiple_records(parsed_response_record_builder):
         .add_response(perf_ns=40)
         .build_all()
     )
-    # Creating metrics based on records
+
     for record in records:
         for metric in metrics.values():
             metric.update_value(record=record, metrics=None)
 
-    # Creating the metrics based on the metrics already calculated
     benchmark_duration_metric = BenchmarkDurationMetric()
     benchmark_duration_metric.update_value(record=None, metrics=metrics)
     assert benchmark_duration_metric.values() == 30.0  # 40 - 10

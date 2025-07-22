@@ -20,6 +20,7 @@ class BaseMetric(ABC):
     larger_is_better: ClassVar[bool] = True
     header: ClassVar[str] = ""
     streaming_only: ClassVar[bool] = False
+    base_metrics: set[str] = set()
 
     metric_interfaces: dict[str, type["BaseMetric"]] = {}
 
@@ -118,6 +119,41 @@ class BaseMetric(ABC):
         if not isinstance(unit, MetricTimeType):
             raise MetricTypeError("Invalid metric time type for conversion.")
 
-        scale_factor = self.unit.value - unit.value
+        scale_factor = self._get_conversion_factor(self.unit, unit)
 
         return [metric / 10**scale_factor for metric in self.values()]
+
+    def _check_metrics(self, metrics: dict[str, "BaseMetric"]) -> None:
+        """
+        Validates that the required dependent metrics are available.
+
+        Raises:
+            ValueError: If required metrics are missing.
+        """
+        if not metrics:
+            raise ValueError("Metrics dictionary is missing.")
+
+        for tag in self.required_metrics:
+            if tag not in metrics:
+                raise ValueError(f"Missing required metric: '{tag}'")
+
+    def _get_conversion_factor(
+        self, from_unit: MetricTimeType, to_unit: MetricTimeType
+    ) -> int:
+        unit_scales = {
+            MetricTimeType.NANOSECONDS: 9,
+            MetricTimeType.MILLISECONDS: 3,
+            MetricTimeType.SECONDS: 0,
+        }
+
+        return unit_scales[from_unit] - unit_scales[to_unit]
+
+    def _require_valid_record(self, record: ParsedResponseRecord) -> None:
+        """
+        Ensures the given record is not None and is marked as valid.
+
+        Raises:
+            ValueError: If the record is None or invalid.
+        """
+        if not record or not record.valid:
+            raise ValueError("Invalid Record")
