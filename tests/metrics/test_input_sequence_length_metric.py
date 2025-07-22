@@ -1,6 +1,7 @@
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 
+import pytest
 
 from aiperf.common.models import (
     ParsedResponseRecord,
@@ -12,7 +13,7 @@ from aiperf.services.records_manager.metrics.types.input_sequence_length_metric 
 )
 
 
-def make_record(input_token_count: int) -> ParsedResponseRecord:
+def make_record(input_token_count: int | None = None) -> ParsedResponseRecord:
     request = RequestRecord(
         request={},
         start_perf_ns=1,
@@ -39,3 +40,10 @@ def test_isl_metric_with_multiple_records():
     isl.update_value(record2)
 
     assert isl.values() == [5, 7]
+
+
+def test_isl_metric_missing_input_token_count():
+    record = make_record()
+    isl = InputSequenceLengthMetric()
+    with pytest.raises(ValueError, match="Input Token Count is not available"):
+        isl.update_value(record)

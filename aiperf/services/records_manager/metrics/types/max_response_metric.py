@@ -15,6 +15,7 @@ class MaxResponseMetric(BaseMetric):
     type = MetricType.METRIC_OF_RECORDS
     larger_is_better = False
     header = "Maximum Response Timestamp"
+    required_metrics: set[str] = set()
 
     def __init__(self):
         self.metric: float = 0
@@ -34,14 +35,12 @@ class MaxResponseMetric(BaseMetric):
 
     def values(self) -> float:
         """
-        Returns the list of Time to First Token (TTFT) metrics.
+        Returns the Max Response Timestamp metric.
         """
         return self.metric
 
     def _check_record(self, record: ParsedResponseRecord) -> None:
         """
         Checks if the record is valid for calculations.
-
         """
-        if not record.responses or not record.responses[-1].perf_ns:
-            raise ValueError("Record must have valid responses with timestamps.")
+        self._require_valid_record(record)
