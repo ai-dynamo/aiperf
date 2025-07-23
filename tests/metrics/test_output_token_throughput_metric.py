@@ -40,4 +40,4 @@ def test_output_token_throughput_metric(mock_metrics):
     metric = OutputTokenThroughputMetric()
     metric.update_value(metrics=mock_metrics)
     expected = 60 / 5  # 60 tokens / 5 seconds
-    assert metric.values() == pytest.approx(expected)
+    assert metric.values() == expected
