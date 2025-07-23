@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import uuid
-from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -19,6 +18,7 @@ from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import (
     ErrorDetails,
 )
+from aiperf.common.types import MessageTypeT
 
 
 class ProcessRecordsCommandData(BaseModel):
@@ -35,7 +35,7 @@ class CommandMessage(BaseServiceMessage):
     This message is sent by the system controller to a service to command it to do something.
     """
 
-    message_type: Literal[MessageType.COMMAND] = MessageType.COMMAND
+    message_type: MessageTypeT = MessageType.COMMAND
 
     command: CommandType = Field(
         ...,
@@ -72,7 +72,7 @@ class CommandResponseMessage(BaseServiceMessage):
     This message is sent by a component service to the system controller to respond to a command.
     """
 
-    message_type: Literal[MessageType.COMMAND_RESPONSE] = MessageType.COMMAND_RESPONSE
+    message_type: MessageTypeT = MessageType.COMMAND_RESPONSE
 
     command: CommandType = Field(
         ...,

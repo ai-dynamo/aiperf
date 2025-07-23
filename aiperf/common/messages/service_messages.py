@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
-from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -19,6 +18,7 @@ from aiperf.common.messages.base_messages import Message
 from aiperf.common.models import (
     ErrorDetails,
 )
+from aiperf.common.types import MessageTypeT
 
 
 class BaseServiceMessage(Message):
@@ -56,7 +56,7 @@ class StatusMessage(BaseStatusMessage):
     This message is sent by a service to the system controller to report its status.
     """
 
-    message_type: Literal[MessageType.STATUS] = MessageType.STATUS
+    message_type: MessageTypeT = MessageType.STATUS
 
 
 class RegistrationMessage(BaseStatusMessage):
@@ -64,7 +64,7 @@ class RegistrationMessage(BaseStatusMessage):
     This message is sent by a service to the system controller to register itself.
     """
 
-    message_type: Literal[MessageType.REGISTRATION] = MessageType.REGISTRATION
+    message_type: MessageTypeT = MessageType.REGISTRATION
 
     state: ServiceState = ServiceState.READY
 
@@ -75,13 +75,13 @@ class HeartbeatMessage(BaseStatusMessage):
     still running.
     """
 
-    message_type: Literal[MessageType.HEARTBEAT] = MessageType.HEARTBEAT
+    message_type: MessageTypeT = MessageType.HEARTBEAT
 
 
 class NotificationMessage(BaseServiceMessage):
     """Message containing a notification from a service. This is used to notify other services of events."""
 
-    message_type: Literal[MessageType.NOTIFICATION] = MessageType.NOTIFICATION
+    message_type: MessageTypeT = MessageType.NOTIFICATION
 
     notification_type: NotificationType = Field(
         ...,
@@ -97,6 +97,6 @@ class NotificationMessage(BaseServiceMessage):
 class BaseServiceErrorMessage(BaseServiceMessage):
     """Base message containing error data."""
 
-    message_type: Literal[MessageType.SERVICE_ERROR] = MessageType.SERVICE_ERROR
+    message_type: MessageTypeT = MessageType.SERVICE_ERROR
 
     error: ErrorDetails = Field(..., description="Error information")

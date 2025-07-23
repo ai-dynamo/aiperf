@@ -1,12 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Literal
-
 from pydantic import Field
 
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
+from aiperf.common.types import MessageTypeT
 
 
 class CreditDropMessage(BaseServiceMessage):
@@ -15,7 +14,7 @@ class CreditDropMessage(BaseServiceMessage):
     have been dropped.
     """
 
-    message_type: Literal[MessageType.CREDIT_DROP] = MessageType.CREDIT_DROP
+    message_type: MessageTypeT = MessageType.CREDIT_DROP
 
     phase: CreditPhase = Field(..., description="The type of credit phase")
     conversation_id: str | None = Field(
@@ -33,7 +32,7 @@ class CreditReturnMessage(BaseServiceMessage):
     been completed.
     """
 
-    message_type: Literal[MessageType.CREDIT_RETURN] = MessageType.CREDIT_RETURN
+    message_type: MessageTypeT = MessageType.CREDIT_RETURN
 
     phase: CreditPhase = Field(
         ...,
@@ -61,9 +60,7 @@ class CreditReturnMessage(BaseServiceMessage):
 class CreditPhaseStartMessage(BaseServiceMessage):
     """Message for credit phase start. Sent by the TimingManager to report that a credit phase has started."""
 
-    message_type: Literal[MessageType.CREDIT_PHASE_START] = (
-        MessageType.CREDIT_PHASE_START
-    )
+    message_type: MessageTypeT = MessageType.CREDIT_PHASE_START
     phase: CreditPhase = Field(..., description="The type of credit phase")
     start_ns: int = Field(
         ge=1,
@@ -84,9 +81,7 @@ class CreditPhaseStartMessage(BaseServiceMessage):
 class CreditPhaseProgressMessage(BaseServiceMessage):
     """Sent by the TimingManager to report the progress of a credit phase."""
 
-    message_type: Literal[MessageType.CREDIT_PHASE_PROGRESS] = (
-        MessageType.CREDIT_PHASE_PROGRESS
-    )
+    message_type: MessageTypeT = MessageType.CREDIT_PHASE_PROGRESS
     phase: CreditPhase = Field(..., description="The type of credit phase")
     sent: int = Field(default=0, description="The number of sent credits")
     completed: int = Field(
@@ -98,9 +93,7 @@ class CreditPhaseProgressMessage(BaseServiceMessage):
 class CreditPhaseSendingCompleteMessage(BaseServiceMessage):
     """Message for credit phase sending complete. Sent by the TimingManager to report that a credit phase has completed sending."""
 
-    message_type: Literal[MessageType.CREDIT_PHASE_SENDING_COMPLETE] = (
-        MessageType.CREDIT_PHASE_SENDING_COMPLETE
-    )
+    message_type: MessageTypeT = MessageType.CREDIT_PHASE_SENDING_COMPLETE
     phase: CreditPhase = Field(..., description="The type of credit phase")
     sent_end_ns: int | None = Field(
         default=None,
@@ -111,9 +104,7 @@ class CreditPhaseSendingCompleteMessage(BaseServiceMessage):
 class CreditPhaseCompleteMessage(BaseServiceMessage):
     """Message for credit phase complete. Sent by the TimingManager to report that a credit phase has completed."""
 
-    message_type: Literal[MessageType.CREDIT_PHASE_COMPLETE] = (
-        MessageType.CREDIT_PHASE_COMPLETE
-    )
+    message_type: MessageTypeT = MessageType.CREDIT_PHASE_COMPLETE
     phase: CreditPhase = Field(..., description="The type of credit phase")
     completed: int = Field(
         ...,
@@ -130,4 +121,4 @@ class CreditsCompleteMessage(BaseServiceMessage):
     """Credits complete message sent by the TimingManager to the System controller to signify all Credit Phases
     have been completed."""
 
-    message_type: Literal[MessageType.CREDITS_COMPLETE] = MessageType.CREDITS_COMPLETE
+    message_type: MessageTypeT = MessageType.CREDITS_COMPLETE

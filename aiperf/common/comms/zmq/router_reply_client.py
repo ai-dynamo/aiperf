@@ -8,11 +8,12 @@ import zmq.asyncio
 
 from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.enums import CommunicationClientType, MessageType
+from aiperf.common.enums import CommunicationClientType
 from aiperf.common.hooks import aiperf_task, on_cleanup, on_stop
 from aiperf.common.messages import ErrorMessage, Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.models import ErrorDetails
+from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 
 
@@ -67,7 +68,7 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
         super().__init__(context, zmq.SocketType.ROUTER, address, bind, socket_ops)
 
         self._request_handlers: dict[
-            MessageType,
+            MessageTypeT,
             tuple[str, Callable[[Message], Coroutine[Any, Any, Message | None]]],
         ] = {}
         self._response_futures: dict[str, asyncio.Future[Message | None]] = {}
@@ -83,7 +84,7 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
     def register_request_handler(
         self,
         service_id: str,
-        message_type: MessageType,
+        message_type: MessageTypeT,
         handler: Callable[[Message], Coroutine[Any, Any, Message | None]],
     ) -> None:
         """Register a request handler. Anytime a request is received that matches the

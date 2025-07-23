@@ -9,14 +9,10 @@ from aiperf.common.enums import (
     CommunicationBackend,
     CommunicationClientAddressType,
     CommunicationClientType,
-    MessageType,
 )
 from aiperf.common.factories import FactoryMixin
 from aiperf.common.messages import Message
-
-MessageT = TypeVar("MessageT", bound=Message)
-MessageOutputT = TypeVar("MessageOutputT", bound=Message)
-
+from aiperf.common.types import MessageOutputT, MessageT, MessageTypeT
 
 ################################################################################
 # Base Communication Client Interfaces
@@ -48,10 +44,9 @@ class PushClientProtocol(CommunicationClientProtocol):
 
     async def push(self, message: Message) -> None:
         """Push data to a target. The message will be routed automatically
-        based on the message type.
+        based on the message.message_type.
 
         Args:
-            message_type: MessageType to push to
             message: Message to be pushed
         """
         ...
@@ -63,7 +58,7 @@ class PullClientProtocol(CommunicationClientProtocol):
 
     async def register_pull_callback(
         self,
-        message_type: MessageType,
+        message_type: MessageTypeT,
         callback: Callable[[MessageT], Coroutine[Any, Any, None]],
         max_concurrency: int | None = None,
     ) -> None:
@@ -121,7 +116,7 @@ class ReplyClientProtocol(CommunicationClientProtocol):
     def register_request_handler(
         self,
         service_id: str,
-        message_type: MessageType,
+        message_type: MessageTypeT,
         handler: Callable[[MessageT], Coroutine[Any, Any, MessageOutputT | None]],
     ) -> None:
         """Register a request handler for a message type. The handler will be called when
@@ -141,7 +136,7 @@ class SubClientProtocol(CommunicationClientProtocol):
 
     async def subscribe(
         self,
-        message_type: MessageType,
+        message_type: MessageTypeT,
         callback: Callable[[MessageT], Coroutine[Any, Any, None]],
     ) -> None:
         """Subscribe to a specific message type. The callback will be called when

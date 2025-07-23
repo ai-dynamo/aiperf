@@ -1,19 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Literal
-
 from pydantic import Field, SerializeAsAny
 
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetailsCount, MetricResult, PhaseProcessingStats
+from aiperf.common.types import MessageTypeT
 
 
 class ProfileProgressMessage(BaseServiceMessage):
     """Message for profile progress. Sent by the timing manager to the system controller to report the progress of the profile run."""
 
-    message_type: Literal[MessageType.PROFILE_PROGRESS] = MessageType.PROFILE_PROGRESS
+    message_type: MessageTypeT = MessageType.PROFILE_PROGRESS
 
     profile_id: str | None = Field(
         default=None, description="The ID of the current profile"
@@ -41,7 +40,7 @@ class SweepProgressMessage(BaseServiceMessage):
 
     # TODO: add profile information
 
-    message_type: Literal[MessageType.SWEEP_PROGRESS] = MessageType.SWEEP_PROGRESS
+    message_type: MessageTypeT = MessageType.SWEEP_PROGRESS
 
     sweep_id: str = Field(..., description="The ID of the current sweep")
     sweep_start_ns: int = Field(
@@ -55,7 +54,7 @@ class SweepProgressMessage(BaseServiceMessage):
 class ProcessingStatsMessage(BaseServiceMessage):
     """Message for processing stats. Sent by the records manager to the system controller to report the stats of the profile run."""
 
-    message_type: Literal[MessageType.PROCESSING_STATS] = MessageType.PROCESSING_STATS
+    message_type: MessageTypeT = MessageType.PROCESSING_STATS
 
     error_count: int = Field(default=0, description="The number of errors encountered")
     completed: int = Field(
@@ -75,7 +74,7 @@ class RecordsProcessingStatsMessage(BaseServiceMessage):
     """Message for processing stats. Sent by the RecordsManager to report the stats of the profile run.
     This contains the stats for a single credit phase only."""
 
-    message_type: Literal[MessageType.PROCESSING_STATS] = MessageType.PROCESSING_STATS
+    message_type: MessageTypeT = MessageType.PROCESSING_STATS
 
     processing_stats: PhaseProcessingStats = Field(
         ..., description="The stats for the credit phase"
@@ -90,7 +89,7 @@ class RecordsProcessingStatsMessage(BaseServiceMessage):
 class ProfileResultsMessage(BaseServiceMessage):
     """Message for profile results."""
 
-    message_type: Literal[MessageType.PROFILE_RESULTS] = MessageType.PROFILE_RESULTS
+    message_type: MessageTypeT = MessageType.PROFILE_RESULTS
 
     records: SerializeAsAny[list[MetricResult]] = Field(
         ..., description="The records of the profile results"
