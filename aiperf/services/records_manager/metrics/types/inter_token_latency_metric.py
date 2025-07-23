@@ -44,8 +44,8 @@ class InterTokenLatencyMetric(BaseMetric):
         ttfts = metrics[TTFTMetric.tag].values()
         output_token_counts = metrics[OutputTokenCountMetric.tag].values()
 
-        for _, (latency, ttft, output_tokens) in enumerate(
-            zip(latencies, ttfts, output_token_counts, strict=False)
+        for latency, ttft, output_tokens in zip(
+            latencies, ttfts, output_token_counts, strict=False
         ):
             itl = (latency - ttft) / (output_tokens - 1)
             self.metric.append(itl)
