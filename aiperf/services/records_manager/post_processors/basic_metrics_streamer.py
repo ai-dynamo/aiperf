@@ -108,8 +108,8 @@ class BasicMetricsStreamer(BaseStreamingPostProcessor):
 
         profile_results = ProfileResultsMessage(
             service_id=self.service_id,
-            total=len(self.records),
-            completed=len(self.records) + len(self.error_records),
+            total=len(self.records or []),
+            completed=len(self.records or []) + len(self.error_records or []),
             start_ns=self.start_time_ns,
             end_ns=self.end_time_ns,
             records=None,
