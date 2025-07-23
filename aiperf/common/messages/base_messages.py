@@ -95,8 +95,8 @@ class Message(ExcludeIfNoneMixin):
             raise ValueError(f"Missing message_type: {json_str}")
 
         # Use cached message type lookup
-        message_class = cls._message_type_lookup[message_type]
-        if not message_class:
+        message_class = cls._message_type_lookup.get(message_type)
+        if message_class is None:
             raise ValueError(f"Unknown message type: {message_type}")
 
         return message_class.model_validate(data)
@@ -109,8 +109,8 @@ class Message(ExcludeIfNoneMixin):
         NOTE: This is more performant than :meth:`from_json` because it does not need to
         convert the JSON string to a dictionary first."""
         # Use cached message type lookup
-        message_class = cls._message_type_lookup[message_type]
-        if not message_class:
+        message_class = cls._message_type_lookup.get(message_type)
+        if message_class is None:
             raise ValueError(f"Unknown message type: {message_type}")
         return message_class.model_validate_json(json_str)
 
