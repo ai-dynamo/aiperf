@@ -208,6 +208,7 @@ class SystemController(SignalHandlerMixin, BaseControllerService):
             await self.kill()
             return
 
+        # TODO: HACK: This should only be sent as a followup from cancelling a profile
         await self.send_command_to_service(
             target_service_id=None,
             target_service_type=ServiceType.RECORDS_MANAGER,
