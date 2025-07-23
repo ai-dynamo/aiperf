@@ -34,10 +34,14 @@ def next_record(
     time_traveler.advance_time(advance_seconds)
     return sample_message.model_copy(
         update={
-            "request": sample_message.record.request.model_copy(
+            "record": sample_message.record.model_copy(
                 update={
-                    "start_perf_ns": time_traveler.perf_counter_ns(),
-                    "timestamp_ns": time_traveler.time_ns(),
+                    "request": sample_message.record.request.model_copy(
+                        update={
+                            "start_perf_ns": time_traveler.perf_counter_ns(),
+                            "timestamp_ns": time_traveler.time_ns(),
+                        }
+                    )
                 }
             )
         }
