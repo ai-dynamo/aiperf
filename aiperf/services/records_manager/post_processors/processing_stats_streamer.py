@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
 import time
 
 from aiperf.common.comms.base import SubClientProtocol
@@ -101,7 +100,7 @@ class ProcessingStatsStreamer(BaseStreamingPostProcessor):
     ) -> None:
         """Handle a credit phase complete message."""
         if phase_complete_msg.phase == CreditPhase.PROFILING:
-            self.info(f"Updating final request count to {self.final_request_count}")
+            self.info(f"Updating final request count to {phase_complete_msg.completed}")
             # This will equate to how many records we expect to receive,
             # and once we receive that many records, we know to stop.
             self.final_request_count = phase_complete_msg.completed

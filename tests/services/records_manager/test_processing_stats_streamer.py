@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-License-Identifier: Apache-2.0
 """
 Tests for the ProcessingStatsStreamer class.
 """
@@ -27,18 +26,22 @@ def streamer(records_manager: RecordsManager) -> ProcessingStatsStreamer:
 
 
 def next_record(
-    sample_record: ParsedInferenceResultsMessage,
+    sample_message: ParsedInferenceResultsMessage,
     time_traveler,
     advance_seconds: float = 1,
 ) -> ParsedInferenceResultsMessage:
     """Create a next record."""
     time_traveler.advance_time(advance_seconds)
-    return sample_record.model_copy(
+    return sample_message.model_copy(
         update={
-            "request": sample_record.record.request.model_copy(
+            "record": sample_message.record.model_copy(
                 update={
-                    "start_perf_ns": time_traveler.perf_counter_ns(),
-                    "timestamp_ns": time_traveler.time_ns(),
+                    "request": sample_message.record.request.model_copy(
+                        update={
+                            "start_perf_ns": time_traveler.perf_counter_ns(),
+                            "timestamp_ns": time_traveler.time_ns(),
+                        }
+                    )
                 }
             )
         }
@@ -52,16 +55,16 @@ class TestProcessingStatsStreamer:
     async def test_basic_functionality(
         self,
         streamer: ProcessingStatsStreamer,
-        sample_record: ParsedInferenceResultsMessage,
+        sample_message: ParsedInferenceResultsMessage,
     ):
         """Test the basic functionality of the ProcessingStatsStreamer class."""
-        await streamer.stream_record(sample_record.record)
+        await streamer.stream_record(sample_message.record)
 
     async def test_all_records_received(
         self,
         time_traveler,
         streamer: ProcessingStatsStreamer,
-        sample_record: ParsedInferenceResultsMessage,
+        sample_message: ParsedInferenceResultsMessage,
     ):
         """Test the all records received functionality of the ProcessingStatsStreamer class."""
 
@@ -69,8 +72,8 @@ class TestProcessingStatsStreamer:
         streamer.processing_stats.total_expected_requests = 10
 
         for _ in range(10):
-            await streamer.stream_record(sample_record.record)
-            sample_record = next_record(sample_record, time_traveler)
+            await streamer.stream_record(sample_message.record)
+            sample_message = next_record(sample_message, time_traveler)
 
         await streamer.wait_for_tasks()
 
@@ -83,7 +86,7 @@ class TestProcessingStatsStreamer:
         self,
         time_traveler,
         streamer: ProcessingStatsStreamer,
-        sample_record: ParsedInferenceResultsMessage,
+        sample_message: ParsedInferenceResultsMessage,
     ):
         """Test the report records task functionality of the ProcessingStatsStreamer class."""
         streamer.processing_stats.processed = 0
@@ -91,8 +94,8 @@ class TestProcessingStatsStreamer:
         streamer.processing_stats.total_expected_requests = 10
 
         for _ in range(10):
-            await streamer.stream_record(sample_record.record)
-            sample_record = next_record(sample_record, time_traveler)
+            await streamer.stream_record(sample_message.record)
+            sample_message = next_record(sample_message, time_traveler)
 
         await streamer.wait_for_tasks()
         await streamer._report_records_task()

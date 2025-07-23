@@ -37,7 +37,7 @@ async def records_manager(
 
 
 @pytest.fixture
-def sample_record(
+def sample_message(
     time_traveler, records_manager: RecordsManager
 ) -> ParsedInferenceResultsMessage:
     return ParsedInferenceResultsMessage(
