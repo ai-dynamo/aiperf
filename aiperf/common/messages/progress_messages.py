@@ -6,7 +6,12 @@ from pydantic import Field, SerializeAsAny
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.base_messages import RequiresRequestNSMixin
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetailsCount, MetricResult, PhaseProcessingStats
+from aiperf.common.models import (
+    ErrorDetails,
+    ErrorDetailsCount,
+    MetricResult,
+    PhaseProcessingStats,
+)
 from aiperf.common.types import MessageTypeT
 
 
@@ -92,7 +97,7 @@ class ProfileResultsMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.PROFILE_RESULTS
 
-    records: SerializeAsAny[list[MetricResult]] = Field(
+    records: SerializeAsAny[list[MetricResult] | ErrorDetails | None] = Field(
         ..., description="The records of the profile results"
     )
     total: int = Field(

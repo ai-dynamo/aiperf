@@ -17,6 +17,7 @@ from aiperf.common.messages.command_messages import (
     ProcessRecordsCommandData,
 )
 from aiperf.common.models import ErrorDetails, ErrorDetailsCount, ParsedResponseRecord
+from aiperf.common.models.record_models import MetricResult
 from aiperf.data_exporter.exporter_manager import ExporterManager
 from aiperf.services.records_manager.post_processors.metric_summary import MetricSummary
 from aiperf.services.records_manager.post_processors.streaming_post_processor import (
@@ -79,92 +80,64 @@ class BasicMetricsStreamer(BaseStreamingPostProcessor):
         # all the records have been processed on our side.
         await self.records_queue.join()
 
-        await self.process_records(cancelled=False)
+        try:
+            await self.process_records(cancelled=False)
+        except Exception as e:
+            self.error(f"Error processing records: {e}")
+            # TODO: What to do here?
 
     async def on_process_records_command(
         self, message: CommandMessage
-    ) -> ProfileResultsMessage | None:
+    ) -> list[MetricResult] | ErrorDetails | None:
         """Handle the process records command."""
-        cancelled = False
-        if isinstance(message.data, ProcessRecordsCommandData):
-            cancelled = message.data.cancelled
-        return await self.process_records(cancelled=cancelled)
+        cancelled = (
+            isinstance(message.data, ProcessRecordsCommandData)
+            and message.data.cancelled
+        )
+        return await self.process_records(cancelled)
 
-    async def process_records(self, cancelled: bool) -> None:
+    async def process_records(
+        self, cancelled: bool
+    ) -> list[MetricResult] | ErrorDetails | None:
         """Process the records.
 
         This method is called when the records manager receives a command to process the records.
         """
         self.notice("Processing records")
-        self.end_time_ns = time.time_ns()
+        self.end_time_ns = self.end_time_ns or time.time_ns()
 
-        profile_results = await self.post_process_records(cancelled=cancelled)
-
-        self.info(
-            f"Processed {len(self.records)} successful records and {len(self.error_records)} error records"
+        profile_results = ProfileResultsMessage(
+            service_id=self.service_id,
+            total=len(self.records),
+            completed=len(self.records) + len(self.error_records),
+            start_ns=self.start_time_ns,
+            end_ns=self.end_time_ns,
+            records=None,
+            errors_by_type=await self.get_error_summary(),
+            was_cancelled=cancelled,
         )
-        self.info(f"Profile results: {profile_results}")
 
-        if profile_results:
-            await self.pub_client.publish(
-                profile_results,
-            )
-
+        try:
+            if not self.records:
+                self.warning("No successful records to process")
+                return None
+            else:
+                self.info(
+                    f"Processing {len(self.records)} successful records and {len(self.error_records)} error records"
+                )
+                metric_summary = MetricSummary()
+                metric_summary.process(list(self.records))
+                profile_results.records = metric_summary.get_metrics_summary()
+                return profile_results.records
+        except Exception as e:
+            self.exception(f"Error processing records: {e}")
+            profile_results.records = ErrorDetails.from_exception(e)
+            return profile_results.records
+        finally:
+            # always publish the profile results
+            self.execute_async(self.pub_client.publish(profile_results))
             # TODO: HACK: Figure out a better place to put the exporter logic
             if self.user_config:
                 await ExporterManager(
                     results=profile_results, input_config=self.user_config
                 ).export_all()
-
-        else:
-            self.error("No profile results to publish")
-            await self.pub_client.publish(
-                ProfileResultsMessage(
-                    service_id=self.service_id,
-                    total=0,
-                    completed=0,
-                    start_ns=self.start_time_ns,
-                    end_ns=self.end_time_ns,
-                    records=[],
-                    errors_by_type=[],
-                    was_cancelled=cancelled,
-                ),
-            )
-
-    async def post_process_records(
-        self, cancelled: bool
-    ) -> ProfileResultsMessage | None:
-        """Post process the records."""
-        self.trace("Post processing records")
-
-        if not self.records:
-            self.warning("No successful records to process")
-            return ProfileResultsMessage(
-                service_id=self.service_id,
-                total=len(self.records),
-                completed=len(self.records) + len(self.error_records),
-                start_ns=self.start_time_ns or time.time_ns(),
-                end_ns=self.end_time_ns or time.time_ns(),
-                records=[],
-                errors_by_type=await self.get_error_summary(),
-                was_cancelled=cancelled,
-            )
-
-        self.trace(
-            lambda: f"Token counts: {', '.join([str(r.output_token_count) for r in self.records])}"
-        )
-        metric_summary = MetricSummary()
-        metric_summary.process(list(self.records))
-        metrics_summary = metric_summary.get_metrics_summary()
-
-        # Create and return ProfileResultsMessage
-        return ProfileResultsMessage(
-            service_id=self.service_id,
-            total=len(self.records),
-            completed=len(self.records) + len(self.error_records),
-            start_ns=self.start_time_ns or time.time_ns(),
-            end_ns=self.end_time_ns or time.time_ns(),
-            records=metrics_summary,
-            errors_by_type=await self.get_error_summary(),
-            was_cancelled=cancelled,
-        )
