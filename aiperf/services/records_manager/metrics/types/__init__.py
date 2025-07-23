@@ -26,6 +26,12 @@ from aiperf.services.records_manager.metrics.types.min_request_metric import (
 from aiperf.services.records_manager.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
 )
+from aiperf.services.records_manager.metrics.types.output_token_count_metric import (
+    OutputTokenCountMetric,
+)
+from aiperf.services.records_manager.metrics.types.output_token_throughput_metric import (
+    OutputTokenThroughputMetric,
+)
 from aiperf.services.records_manager.metrics.types.output_token_throughput_per_user_metric import (
     OutputTokenThroughputPerUserMetric,
 )
@@ -52,6 +58,8 @@ __all__ = [
     "MaxResponseMetric",
     "MinRequestMetric",
     "OutputSequenceLengthMetric",
+    "OutputTokenCountMetric",
+    "OutputTokenThroughputMetric",
     "OutputTokenThroughputPerUserMetric",
     "RequestCountMetric",
     "RequestLatencyMetric",
