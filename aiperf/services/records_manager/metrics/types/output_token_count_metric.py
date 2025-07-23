@@ -7,6 +7,10 @@ from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 
 class OutputTokenCountMetric(BaseMetric):
+    """
+    Post Processor for calculating Output Token Count Metric.
+    """
+
     tag = "output_token_count"
     unit = None
     larger_is_better = True

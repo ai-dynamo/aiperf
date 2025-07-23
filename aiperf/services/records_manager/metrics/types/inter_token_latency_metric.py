@@ -15,9 +15,7 @@ from aiperf.services.records_manager.metrics.types.ttft_metric import TTFTMetric
 
 class InterTokenLatencyMetric(BaseMetric):
     """
-    Post Processor for calculating Inter Token Latency (ITL) from validated metrics.
-
-    ITL = (Request Latency - TTFT) / (Output Token Count - 1)
+    Post Processor for calculating Inter Token Latency (ITL) metric.
     """
 
     tag = "inter_token_latency"
@@ -53,6 +51,9 @@ class InterTokenLatencyMetric(BaseMetric):
             self.metric.append(itl)
 
     def values(self) -> list[float]:
+        """
+        Returns the list of Inter Token Latency (ITL) metrics.
+        """
         return self.metric
 
     def _check_record(self, record):
