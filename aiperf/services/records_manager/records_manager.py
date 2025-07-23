@@ -9,29 +9,23 @@ from aiperf.common.comms.base import (
     CommunicationClientAddressType,
     PullClientProtocol,
 )
-from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommandType, CreditPhase, MessageType, ServiceType
 from aiperf.common.factories import ServiceFactory, StreamingPostProcessorFactory
 from aiperf.common.hooks import (
-    aiperf_task,
     on_cleanup,
     on_init,
     on_stop,
 )
 from aiperf.common.messages import (
-    CommandMessage,
-    CreditPhaseCompleteMessage,
-    CreditPhaseStartMessage,
     ParsedInferenceResultsMessage,
-    ProcessRecordsCommandData,
     ProfileResultsMessage,
-    RecordsProcessingStatsMessage,
 )
+from aiperf.common.messages.progress_messages import AllRecordsReceivedMessage
 from aiperf.common.models import (
     ErrorDetails,
     ErrorDetailsCount,
     ParsedResponseRecord,
-    PhaseProcessingStats,
 )
 from aiperf.common.service import BaseComponentService
 from aiperf.data_exporter.exporter_manager import ExporterManager
@@ -67,15 +61,6 @@ class RecordsManager(BaseComponentService):
         self.records: deque[ParsedResponseRecord] = deque()
         self.error_records: deque[ParsedResponseRecord] = deque()
 
-        self.total_expected_requests: int | None = None
-        self.error_records_count: int = 0
-        self.records_count: int = 0
-        self.final_request_count: int | None = None
-
-        # Track per-worker statistics
-        self.worker_success_counts: dict[str, int] = {}
-        self.worker_error_counts: dict[str, int] = {}
-
         self.start_time_ns: int = time.time_ns()
         self.end_time_ns: int | None = None
 
@@ -106,10 +91,9 @@ class RecordsManager(BaseComponentService):
             callback=self._on_parsed_inference_results,
             max_concurrency=DEFAULT_MAX_RECORDS_CONCURRENCY,
         )
-
         await self.sub_client.subscribe(
-            MessageType.CREDIT_PHASE_START,
-            self._on_credit_phase_start,
+            MessageType.ALL_RECORDS_RECEIVED,
+            self._on_all_records_received,
         )
 
     @on_init
@@ -148,45 +132,12 @@ class RecordsManager(BaseComponentService):
             ]
         )
 
-    @aiperf_task
-    async def _report_records_task(self) -> None:
-        """Report the records."""
-        while not self.stop_event.is_set():
-            await asyncio.sleep(ServiceDefaults.PROGRESS_REPORT_INTERVAL_SECONDS)
-            await self.publish_processing_stats()
-
-    async def publish_processing_stats(self) -> None:
-        """Publish the profile stats."""
-        await self.pub_client.publish(
-            RecordsProcessingStatsMessage(
-                service_id=self.service_id,
-                processing_stats=PhaseProcessingStats(
-                    processed=self.records_count,
-                    errors=self.error_records_count,
-                    total_expected_requests=self.total_expected_requests,
-                ),
-                worker_stats={
-                    worker_id: PhaseProcessingStats(
-                        processed=self.worker_success_counts[worker_id],
-                        errors=self.worker_error_counts[worker_id],
-                    )
-                    for worker_id in self.worker_success_counts
-                },
-                request_ns=time.time_ns(),
-            ),
-        )
-
-    async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
-        """Handle a credit phase start message."""
-        if message.phase == CreditPhase.PROFILING:
-            self.total_expected_requests = message.total_expected_requests
-
-    async def _on_credit_phase_complete(
-        self, message: CreditPhaseCompleteMessage
+    async def _on_all_records_received(
+        self, message: AllRecordsReceivedMessage
     ) -> None:
-        """Handle a credit phase complete message."""
-        if message.phase == CreditPhase.PROFILING:
-            self.final_request_count = message.completed
+        """Handle a all records received message."""
+        self.debug(lambda: f"Received all records: {message}")
+        await self.process_records(cancelled=False)
 
     async def _on_parsed_inference_results(
         self, message: ParsedInferenceResultsMessage
@@ -199,6 +150,14 @@ class RecordsManager(BaseComponentService):
                 lambda: f"Skipping non-profiling record: {message.record.request.credit_phase}"
             )
             return
+
+        if message.record.request.valid:
+            # TODO: we do not want to keep all the data forever
+            self.records.append(message.record)
+        else:
+            self.warning(lambda: f"Received invalid inference results: {message}")
+            # TODO: we do not want to keep all the data forever
+            self.error_records.append(message.record)
 
         # Stream the record to all of the streaming post processors
         for streamer in self.streaming_post_processors:
@@ -216,40 +175,6 @@ class RecordsManager(BaseComponentService):
                 )
                 await streamer.records_queue.put(message.record)
 
-        worker_id = message.record.worker_id
-        if worker_id not in self.worker_success_counts:
-            self.worker_success_counts[worker_id] = 0
-        if worker_id not in self.worker_error_counts:
-            self.worker_error_counts[worker_id] = 0
-
-        if message.record.request.has_error:
-            self.warning(lambda: f"Received error inference results: {message}")
-            # TODO: we do not want to keep all the data forever
-            self.error_records.append(message.record)
-            self.worker_error_counts[worker_id] += 1
-            self.error_records_count += 1
-        elif message.record.request.valid:
-            # TODO: we do not want to keep all the data forever
-            self.records.append(message.record)
-            self.worker_success_counts[worker_id] += 1
-            self.records_count += 1
-        else:
-            self.warning(lambda: f"Received invalid inference results: {message}")
-            # TODO: we do not want to keep all the data forever
-            self.error_records.append(message.record)
-            self.worker_error_counts[worker_id] += 1
-            self.error_records_count += 1
-
-        if (
-            self.final_request_count is not None
-            and self.records_count >= self.final_request_count
-        ):
-            self.info(
-                lambda: f"Processed {self.records_count} requests and {self.error_records_count} errors."
-            )
-            await self.publish_processing_stats()
-            # TODO: Publish PROFILE_RESULTS_COMPLETE message
-
     async def get_error_summary(self) -> list[ErrorDetailsCount]:
         """Generate a summary of the error records."""
         summary: dict[ErrorDetails, int] = {}
@@ -265,24 +190,24 @@ class RecordsManager(BaseComponentService):
             for error_details, count in summary.items()
         ]
 
-    async def process_records(self, message: CommandMessage) -> None:
+    async def process_records(self, cancelled: bool = False) -> None:
         """Process the records.
 
         This method is called when the records manager receives a command to process the records.
         """
-        self.notice(lambda: f"Processing records: {message}")
-        self.was_cancelled = (
-            message.data.cancelled
-            if isinstance(message.data, ProcessRecordsCommandData)
-            else False
-        )
+        self.notice(lambda: f"Processing records: {cancelled=}")
+        self.was_cancelled = cancelled
         self.end_time_ns = time.time_ns()
-        # TODO: Implement records processing
+
+        if not self.records:
+            self.warning("No records to process")
+            return
+
+        profile_results = await self.post_process_records()
         self.info(
             lambda: f"Processed {len(self.records)} successful records and {len(self.error_records)} error records"
         )
 
-        profile_results = await self.post_process_records()
         self.info(lambda: f"Profile results: {profile_results}")
 
         if profile_results:

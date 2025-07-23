@@ -29,6 +29,7 @@ from aiperf.common.exceptions import (
     AIPerfMultiError,
     UnsupportedHookError,
 )
+from aiperf.common.types import LifecycleMixinT
 
 ################################################################################
 # Hook Types
@@ -237,6 +238,26 @@ def hook_decorator(hook_type: HookType, func: Callable) -> Callable:
     return func
 
 
+def hook_kwargs_decorator(
+    hook_type: HookType, **kwargs
+) -> Callable[[Callable], Callable]:
+    """Generic decorator to specify that the function should be called during
+    a specific hook, and with the provided keyword arguments. The keyword
+    arguments provided are set on the function as attributes.
+
+    Args:
+        hook_type: The hook type to decorate the function with.
+        **kwargs: The keyword arguments to set on the function.
+    """
+
+    def decorator(func: Callable) -> Callable:
+        for key, value in kwargs.items():
+            setattr(func, key, value)
+        return hook_decorator(hook_type, func)
+
+    return decorator
+
+
 ################################################################################
 # Syntactic sugar for the hook decorators.
 ################################################################################
@@ -314,17 +335,17 @@ def aiperf_task(
     return hook_decorator(AIPerfTaskHook.AIPERF_TASK, func)
 
 
-def aiperf_auto_task(interval: float) -> Callable[[Callable], Callable]:
-    """Decorator to indicate that the function is a task function. It will be started
-    and stopped automatically by the base class lifecycle.
-    See :func:`aiperf.common.hooks.hook_decorator`.
+def aiperf_auto_task(
+    interval_sec: float | Callable[[LifecycleMixinT], float] | None,
+) -> Callable[[Callable], Callable]:
+    """Decorator to indicate that the function is an auto-managed task function. It will be started
+    and stopped automatically by the base class lifecycle, and will run at the specified interval.
+    See :func:`aiperf.common.hooks.hook_kwargs_decorator`.
 
     Args:
-        interval: The interval in seconds to sleep between runs.
+        interval_sec: The interval in seconds to sleep between runs. Can be a callable that returns a float.
+                    If None, the task will run once and then stop.
     """
-
-    def decorator(func: Callable) -> Callable:
-        setattr(func, AIPerfTaskHook.AIPERF_AUTO_TASK_INTERVAL, interval)
-        return hook_decorator(AIPerfTaskHook.AIPERF_AUTO_TASK, func)
-
-    return decorator
+    return hook_kwargs_decorator(
+        AIPerfTaskHook.AIPERF_AUTO_TASK, interval_sec=interval_sec
+    )

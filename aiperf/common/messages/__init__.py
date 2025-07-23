@@ -44,6 +44,7 @@ from aiperf.common.messages.inference_messages import (
     ParsedInferenceResultsMessage,
 )
 from aiperf.common.messages.progress_messages import (
+    AllRecordsReceivedMessage,
     ProcessingStatsMessage,
     ProfileProgressMessage,
     ProfileResultsMessage,
@@ -61,6 +62,7 @@ from aiperf.common.messages.service_messages import (
 )
 
 __all__ = [
+    "AllRecordsReceivedMessage",
     "BaseServiceErrorMessage",
     "BaseServiceMessage",
     "BaseStatusMessage",

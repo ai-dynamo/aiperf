@@ -4,6 +4,7 @@
 from pydantic import Field, SerializeAsAny
 
 from aiperf.common.enums import MessageType
+from aiperf.common.messages.base_messages import RequiresRequestNSMixin
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetailsCount, MetricResult, PhaseProcessingStats
 from aiperf.common.types import MessageTypeT
@@ -114,4 +115,13 @@ class ProfileResultsMessage(BaseServiceMessage):
     errors_by_type: list[ErrorDetailsCount] = Field(
         default_factory=list,
         description="A list of the unique error details and their counts",
+    )
+
+
+class AllRecordsReceivedMessage(BaseServiceMessage, RequiresRequestNSMixin):
+    """This is sent by the RecordsManager to signal that all parsed records have been received, and the final processing stats are available."""
+
+    message_type: MessageTypeT = MessageType.ALL_RECORDS_RECEIVED
+    final_processing_stats: PhaseProcessingStats = Field(
+        ..., description="The final processing stats for the profile run"
     )

@@ -202,6 +202,7 @@ from aiperf.common.hooks import (
     aiperf_auto_task,
     aiperf_task,
     hook_decorator,
+    hook_kwargs_decorator,
     on_cleanup,
     on_configure,
     on_init,
@@ -228,6 +229,7 @@ from aiperf.common.logging import (
     setup_rich_logging,
 )
 from aiperf.common.messages import (
+    AllRecordsReceivedMessage,
     BaseServiceErrorMessage,
     BaseServiceMessage,
     BaseStatusMessage,
@@ -318,6 +320,7 @@ from aiperf.common.tokenizer import (
 from aiperf.common.types import (
     ConfigT,
     InputT,
+    LifecycleMixinT,
     MessageOutputT,
     MessageT,
     MessageTypeT,
@@ -350,6 +353,7 @@ __all__ = [
     "AIPerfProfileMixin",
     "AIPerfTaskHook",
     "AIPerfTaskMixin",
+    "AllRecordsReceivedMessage",
     "AsyncTaskManagerMixin",
     "AsyncTaskManagerProtocol",
     "Audio",
@@ -460,6 +464,7 @@ __all__ = [
     "InvalidPayloadError",
     "InvalidStateError",
     "LOG_QUEUE_MAXSIZE",
+    "LifecycleMixinT",
     "LoadGeneratorConfig",
     "LoadGeneratorDefaults",
     "MAX_PUSH_RETRIES",
@@ -601,6 +606,7 @@ __all__ = [
     "exclude_if_none",
     "get_global_log_queue",
     "hook_decorator",
+    "hook_kwargs_decorator",
     "load_json_str",
     "load_service_config",
     "load_user_config",

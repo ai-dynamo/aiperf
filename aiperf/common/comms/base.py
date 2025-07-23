@@ -143,6 +143,21 @@ class SubClientProtocol(CommunicationClientProtocol):
         a message is received for the given message type."""
         ...
 
+    async def subscribe_all(
+        self,
+        message_callback_map: dict[
+            MessageTypeT,
+            Callable[[Message], Any] | list[Callable[[Message], Any]],
+        ],
+    ) -> None:
+        """Subscribe to all message types in the map. The callback(s) will be called when
+        a message is received for the given message type.
+
+        Args:
+            message_callback_map: A map of message types to callbacks. The callbacks can be a single callback or a list of callbacks.
+        """
+        ...
+
 
 @CommunicationClientProtocolFactory.register(CommunicationClientType.PUB)
 class PubClientProtocol(CommunicationClientProtocol):
