@@ -207,8 +207,8 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         return f"<{self.__class__.__qualname__} {self.id} (state={self.state})>"
 
 
-# # Add this file as one to be ignored when finding the caller of aiperf_logger.
-# # This helps to make it more transparent where the actual function is being called from.
+# Add this file as one to be ignored when finding the caller of aiperf_logger.
+# This helps to make it more transparent where the actual function is being called from.
 from aiperf.common import aiperf_logger  # noqa: E402 I001
 
 _srcfile = os.path.normcase(AIPerfLifecycleMixin.initialize.__code__.co_filename)
