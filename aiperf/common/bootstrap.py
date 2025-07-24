@@ -16,7 +16,7 @@ def bootstrap_and_run_service(
     service_config: ServiceConfig | None = None,
     user_config: UserConfig | None = None,
     service_id: str | None = None,
-    log_queue: multiprocessing.Queue | None = None,
+    log_queue: "multiprocessing.Queue | None" = None,
     **kwargs,
 ):
     """Bootstrap the service and run it.
