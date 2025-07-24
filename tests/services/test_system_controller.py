@@ -10,7 +10,7 @@ import pytest
 from pydantic import BaseModel
 
 from aiperf.common.enums import MessageType, ServiceType
-from aiperf.common.service.base_service import BaseService
+from aiperf.services.base_service import BaseService
 from aiperf.services.service_manager.multiprocess import MultiProcessServiceManager
 from aiperf.services.system_controller.system_controller import SystemController
 from tests.base_test_controller_service import BaseTestControllerService

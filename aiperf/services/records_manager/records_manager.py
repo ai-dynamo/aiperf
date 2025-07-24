@@ -20,7 +20,7 @@ from aiperf.common.messages import (
     ParsedInferenceResultsMessage,
 )
 from aiperf.common.messages.command_messages import CommandMessage
-from aiperf.common.service import BaseComponentService
+from aiperf.services.base_component_service import BaseComponentService
 from aiperf.services.records_manager.post_processors import BaseStreamingPostProcessor
 
 DEFAULT_MAX_RECORDS_CONCURRENCY = 100_000
