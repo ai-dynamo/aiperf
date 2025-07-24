@@ -17,6 +17,8 @@ from aiperf.common.messages.command_messages import (
     CommandMessage,
     CommandResponseMessage,
     ProcessRecordsCommandData,
+    ShutdownWorkersCommandData,
+    SpawnWorkersCommandData,
 )
 from aiperf.common.messages.credit_messages import (
     CreditDropMessage,
@@ -95,6 +97,8 @@ __all__ = [
     "RecordsProcessingStatsMessage",
     "RegistrationMessage",
     "RequiresRequestNSMixin",
+    "ShutdownWorkersCommandData",
+    "SpawnWorkersCommandData",
     "StatusMessage",
     "SweepProgressMessage",
     "WorkerHealthMessage",
