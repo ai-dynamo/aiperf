@@ -14,8 +14,8 @@ import pytest
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType, ServiceState
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.service.base_service import BaseService
 from aiperf.services import SystemController
+from aiperf.services.base_service import BaseService
 from tests.utils.async_test_utils import async_fixture
 
 real_sleep = (
