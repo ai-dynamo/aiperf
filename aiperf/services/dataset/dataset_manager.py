@@ -29,8 +29,8 @@ from aiperf.common.messages import (
     Message,
 )
 from aiperf.common.models import Conversation
-from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.services.base_component_service import BaseComponentService
 
 DATASET_CONFIGURATION_TIMEOUT = 30.0
 

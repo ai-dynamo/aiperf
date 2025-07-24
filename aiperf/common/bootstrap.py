@@ -8,7 +8,7 @@ import random
 
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.service.base_service import BaseService
+from aiperf.services.base_service import BaseService
 
 
 def bootstrap_and_run_service(

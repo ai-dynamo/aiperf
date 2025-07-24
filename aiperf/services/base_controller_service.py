@@ -8,7 +8,7 @@ from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import CommandType, ServiceType
 from aiperf.common.hooks import on_run
 from aiperf.common.messages import CommandMessage
-from aiperf.common.service.base_service import BaseService
+from aiperf.services.base_service import BaseService
 
 
 class BaseControllerService(BaseService):

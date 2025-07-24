@@ -23,7 +23,7 @@ from aiperf.common.hooks import (
 )
 from aiperf.common.messages import Message
 from aiperf.common.mixins import AIPerfLoggerMixin, AIPerfTaskMixin
-from aiperf.common.service.base_service_interface import BaseServiceInterface
+from aiperf.services.base_service_interface import BaseServiceInterface
 
 
 @supports_hooks(

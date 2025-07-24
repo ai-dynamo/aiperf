@@ -622,7 +622,8 @@ if '_monitor_system_health' in self.registered_tasks:
 When using with AIPerf services that inherit from `BaseService`, the lifecycle is automatically managed:
 
 ```python
-from aiperf.common.service.base_service import BaseService
+from aiperf.services.base_service import BaseService
+
 
 class MyService(BaseService):  # BaseService inherits from AIPerfTaskMixin
     @aiperf_task
