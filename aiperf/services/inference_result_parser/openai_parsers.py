@@ -8,6 +8,7 @@ from typing import Any
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion import Completion
+from openai.types.create_embedding_response import CreateEmbeddingResponse
 from openai.types.responses.response import Response as ResponsesModel
 from pydantic import BaseModel
 
@@ -25,22 +26,6 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 
 logger = logging.getLogger(__name__)
-
-
-# Model for embedding list response
-class EmbeddingData(BaseModel):
-    index: int
-    object: str
-    embedding: list[float]
-
-
-class EmbeddingListResponse(BaseModel):
-    id: str
-    object: str
-    created: int
-    model: str
-    data: list[EmbeddingData]
-    usage: dict[str, Any]
 
 
 class OpenAIObject(CaseInsensitiveStrEnum):
@@ -70,7 +55,7 @@ class OpenAIObject(CaseInsensitiveStrEnum):
             cls.CHAT_COMPLETION: ChatCompletion,
             cls.CHAT_COMPLETION_CHUNK: ChatCompletionChunk,
             cls.COMPLETION: Completion,
-            cls.LIST: EmbeddingListResponse,
+            cls.LIST: CreateEmbeddingResponse,
             cls.RESPONSE: ResponsesModel,
         }
 
@@ -184,7 +169,7 @@ class OpenAIResponseExtractor:
             ChatCompletionChunk: lambda obj: obj.choices[0].delta.content,
             # TODO: how to support multiple choices?
             Completion: lambda obj: obj.choices[0].text,
-            EmbeddingListResponse: lambda obj: "",  # Don't store embedding data
+            CreateEmbeddingResponse: lambda obj: "",  # Don't store embedding data
             ResponsesModel: lambda obj: obj.output_text,
         }
 

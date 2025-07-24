@@ -40,8 +40,6 @@ from aiperf.services.dataset import (
     sample_positive_normal_integer,
 )
 from aiperf.services.inference_result_parser import (
-    EmbeddingData,
-    EmbeddingListResponse,
     InferenceResultParser,
     OpenAIObject,
     OpenAIResponseExtractor,
@@ -129,8 +127,6 @@ __all__ = [
     "DEFAULT_MAX_QUEUE_SIZE",
     "DEFAULT_MAX_RECORDS_CONCURRENCY",
     "DatasetManager",
-    "EmbeddingData",
-    "EmbeddingListResponse",
     "FixedScheduleStrategy",
     "ImageGenerator",
     "InferenceResultParser",

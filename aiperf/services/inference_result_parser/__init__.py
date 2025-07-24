@@ -12,16 +12,8 @@ from aiperf.services.inference_result_parser.inference_result_parser import (
     InferenceResultParser,
 )
 from aiperf.services.inference_result_parser.openai_parsers import (
-    EmbeddingData,
-    EmbeddingListResponse,
     OpenAIObject,
     OpenAIResponseExtractor,
 )
 
-__all__ = [
-    "EmbeddingData",
-    "EmbeddingListResponse",
-    "InferenceResultParser",
-    "OpenAIObject",
-    "OpenAIResponseExtractor",
-]
+__all__ = ["InferenceResultParser", "OpenAIObject", "OpenAIResponseExtractor"]
