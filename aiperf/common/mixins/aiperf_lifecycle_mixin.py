@@ -1,158 +1,215 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
-import inspect
-from collections.abc import Callable
 
+import asyncio
+import os
+import signal
+import uuid
+
+from aiperf.common.enums.service_enums import LifecycleState
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.hooks import (
     AIPerfHook,
-    AIPerfTaskHook,
+    BackgroundTaskParams,
     on_start,
     on_stop,
-    supports_hooks,
+    provides_hooks,
 )
-from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
-from aiperf.common.mixins.async_task_manager_mixin import AsyncTaskManagerMixin
 from aiperf.common.mixins.hooks_mixin import HooksMixin
+from aiperf.common.mixins.task_manager_mixin import (
+    TaskManagerMixin,
+)
 
 
-@supports_hooks(
-    AIPerfTaskHook.AIPERF_TASK,
-    AIPerfTaskHook.AIPERF_AUTO_TASK,
+@provides_hooks(
     AIPerfHook.ON_INIT,
     AIPerfHook.ON_START,
     AIPerfHook.ON_STOP,
-    AIPerfHook.ON_CLEANUP,
+    AIPerfHook.ON_STATE_CHANGE,
+    AIPerfHook.BACKGROUND_TASK,
 )
-class AIPerfLifecycleMixin(HooksMixin, AsyncTaskManagerMixin, AIPerfLoggerMixin):
-    """Mixin to add task support to a class. It abstracts away the details of the
-    :class:`AIPerfTask` and provides a simple interface for registering and running tasks.
-    It hooks into the :meth:`HooksMixin.on_start` and :meth:`HooksMixin.on_stop` hooks to
-    start and stop the tasks.
+class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
+    """This mixin provides a lifecycle state machine, and is the basis for most components in the AIPerf framework.
+    It provides a set of hooks that are run at each state transition, and the ability to define background tasks
+    that are automatically ran on @on_start, and canceled via @on_stop.
+
+    It exposes to the outside world `initialize`, `start`, and `stop` methods, as well as getting the
+    current state of the lifecycle. These simple methods promote a simple interface for users to interact with.
     """
 
-    def __init__(self, **kwargs):
-        self.initialized_event: asyncio.Event = asyncio.Event()
-        self.started_event: asyncio.Event = asyncio.Event()
-        self.stop_requested: asyncio.Event = asyncio.Event()
-        self.shutdown_event: asyncio.Event = asyncio.Event()
-        self.lifecycle_task: asyncio.Task | None = None
+    def __init__(self, id: str | None = None, **kwargs) -> None:
+        self.id = id or f"{self.__class__.__name__}_{uuid.uuid4().hex[:8]}"
+        self._state = LifecycleState.CREATED
+        self.initialized_event = asyncio.Event()
+        self.started_event = asyncio.Event()
+        self._stop_requested_event = asyncio.Event()
+        self.stopped_event = asyncio.Event()  # set on stop or failure
+        if "logger_name" not in kwargs:
+            kwargs["logger_name"] = self.id
         super().__init__(**kwargs)
 
-    def is_initialized(self) -> bool:
-        """Check if the lifecycle has been initialized."""
+    @property
+    def state(self) -> LifecycleState:
+        return self._state
+
+    @state.setter
+    def state(self, state: LifecycleState) -> None:
+        if state == self._state:
+            return
+        old_state = self._state
+        self._state = state
+        self.debug(lambda: f"State changed from {old_state!r} to {state!r} for {self}")
+
+        self.execute_async(
+            self.run_hooks(
+                AIPerfHook.ON_STATE_CHANGE, old_state=old_state, new_state=state
+            )
+        )
+
+    @property
+    def was_initialized(self) -> bool:
         return self.initialized_event.is_set()
 
-    async def _run_lifecycle(self) -> None:
-        """Run the internal lifecycle."""
-        # Run all the initialization hooks and set the initialize_event
-        await self.run_hooks(AIPerfHook.ON_INIT)
-        self.initialized_event.set()
+    @property
+    def was_started(self) -> bool:
+        return self.started_event.is_set()
 
-        # Run all the start hooks and set the start_event
-        await self.run_hooks_async(AIPerfHook.ON_START)
-        self.started_event.set()
+    @property
+    def was_stopped(self) -> bool:
+        return self.stopped_event.is_set()
 
-        while not self.stop_requested.is_set() and not self.shutdown_event.is_set():
-            try:
-                # Wait forever until the stop_requested event is set
-                await self.stop_requested.wait()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self.logger.exception("Unhandled exception in lifecycle: %s", e)
-                continue
+    @property
+    def is_running(self) -> bool:
+        """Whether the lifecycle's current state is LifecycleState.RUNNING."""
+        return self.state == LifecycleState.RUNNING
 
+    @property
+    def stop_requested(self) -> bool:
+        """Whether the lifecycle has been requested to stop."""
+        return self._stop_requested_event.is_set()
+
+    async def _execute_state_transition(
+        self,
+        transient_state: LifecycleState,
+        final_state: LifecycleState,
+        hook_type: AIPerfHook,
+        event: asyncio.Event,
+        reversed: bool = False,
+    ) -> None:
+        """This method wraps the functionality of changing the state of the lifecycle, and running the hooks.
+        It is used to ensure that the state change and hook running are atomic, and that the state change is
+        only made after the hooks have completed. It also take in an event that is set when the state change is complete.
+        This is useful for external code waiting for the state change to complete before continuing.
+        """
+        self.state = transient_state
+        self.debug(lambda: f"{transient_state.title()} {self}")
         try:
-            # Run all the stop hooks
-            await self.run_hooks_async(AIPerfHook.ON_STOP)
+            await self.run_hooks(hook_type, reversed=reversed)
+            self.state = final_state
+            self.debug(lambda: f"{self} is now {final_state.title()}")
+            event.set()
         except Exception as e:
-            self.logger.exception("Unhandled exception in lifecycle: %s", e)
+            self._fail(e)
 
-        try:
-            # Run all the cleanup hooks and set the shutdown_event
-            await self.run_hooks(AIPerfHook.ON_CLEANUP)
-        except Exception as e:
-            self.logger.exception("Unhandled exception in lifecycle: %s", e)
-        finally:
-            self.shutdown_event.set()
+    async def initialize(self) -> None:
+        """Initialize the lifecycle and run the @on_init hooks."""
+        if self.state != LifecycleState.CREATED:
+            raise InvalidStateError(f"Cannot initialize from state {self.state}")
 
-        self.trace("Lifecycle finished")
+        await self._execute_state_transition(
+            LifecycleState.INITIALIZING,
+            LifecycleState.INITIALIZED,
+            AIPerfHook.ON_INIT,
+            self.initialized_event,
+        )
 
-    async def run_async(self) -> None:
-        """Start the lifecycle in the background. Will call the :meth:`HooksMixin.on_init` hooks,
-        followed by the :meth:`HooksMixin.on_start` hooks. Will return immediately."""
-        if self.lifecycle_task is not None:
-            raise InvalidStateError("Lifecycle is already running")
-        self.lifecycle_task = asyncio.create_task(self._run_lifecycle())
+    async def start(self) -> None:
+        """Start the lifecycle and run the @on_start hooks."""
+        if self.state != LifecycleState.INITIALIZED:
+            raise InvalidStateError(f"Cannot start from state {self.state}")
 
-    async def run_and_wait_for_start(self) -> None:
-        """Start the lifecycle in the background and wait until the lifecycle is initialized and started.
-        Will call the :meth:`HooksMixin.on_init` hooks, followed by the :meth:`HooksMixin.on_start` hooks."""
-        if self.lifecycle_task is not None:
-            raise InvalidStateError("Lifecycle is already running")
-        self.lifecycle_task = asyncio.create_task(self._run_lifecycle())
+        await self._execute_state_transition(
+            LifecycleState.STARTING,
+            LifecycleState.RUNNING,
+            AIPerfHook.ON_START,
+            self.started_event,
+        )
 
-        await self.initialized_event.wait()
-        await self.started_event.wait()
+    async def initialize_and_start(self) -> None:
+        """Initialize and start the lifecycle. This is a convenience method that calls `initialize` and `start` in sequence."""
+        await self.initialize()
+        await self.start()
 
-    async def wait_for_initialize(self) -> None:
-        """Wait for the lifecycle to be initialized. Will wait until the :meth:`HooksMixin.on_init` hooks have been called.
-        Will return immediately if the lifecycle is already initialized."""
-        await self.initialized_event.wait()
+    async def stop(self) -> None:
+        """Stop the lifecycle and run the @on_stop hooks."""
+        if self.stop_requested:
+            # If we are already in a stopping state, we need to kill the process to be safe.
+            self.warning(f"Attempted to stop {self} in state {self.state}. Killing.")
+            await self._kill()
+            return
 
-    async def wait_for_start(self) -> None:
-        """Wait for the lifecycle to be started. Will wait until the :meth:`HooksMixin.on_start` hooks have been called.
-        Will return immediately if the lifecycle is already started."""
-        await self.started_event.wait()
-
-    async def wait_for_shutdown(self) -> None:
-        """Wait for the lifecycle to be shutdown. Will wait until the :meth:`HooksMixin.on_stop` hooks have been called.
-        Will return immediately if the lifecycle is already shutdown."""
-        await self.shutdown_event.wait()
-
-    async def shutdown(self) -> None:
-        """Shutdown the lifecycle. Will call the :meth:`HooksMixin.on_stop` hooks,
-        followed by the :meth:`HooksMixin.on_cleanup` hooks."""
-        self.stop_requested.set()
+        self._stop_requested_event.set()
+        await self._execute_state_transition(
+            LifecycleState.STOPPING,
+            LifecycleState.STOPPED,
+            AIPerfHook.ON_STOP,
+            self.stopped_event,
+            reversed=True,  # run the stop hooks in reverse order
+        )
 
     @on_start
-    async def _start_tasks(self):
-        """Start all the registered tasks in the background."""
-
-        # Start all the non-auto tasks
-        for hook in self.get_hooks(AIPerfTaskHook.AIPERF_TASK):
-            if inspect.iscoroutinefunction(hook):
-                self.execute_async(hook())
-            else:
-                self.execute_async(asyncio.to_thread(hook))
-
-        # Start all the auto tasks
-        for hook in self.get_hooks(AIPerfTaskHook.AIPERF_AUTO_TASK):
-            interval = getattr(hook, AIPerfTaskHook.AIPERF_AUTO_TASK_INTERVAL, None)
-            self.execute_async(self._task_wrapper(hook, interval))
+    async def _start_background_tasks(self) -> None:
+        """Start all tasks that are decorated with the @background_task decorator."""
+        for hook in self.get_hooks(AIPerfHook.BACKGROUND_TASK):
+            if not isinstance(hook.params, BackgroundTaskParams):
+                raise AttributeError(
+                    f"Invalid hook parameters for {hook}: {hook.params}"
+                )
+            self.start_background_task(
+                hook.func,
+                interval=hook.params.interval,
+                immediate=hook.params.immediate,
+                stop_on_error=hook.params.stop_on_error,
+                stop_event=self._stop_requested_event,
+            )
 
     @on_stop
-    async def _stop_tasks(self):
-        """Stop all the background tasks. This will wait for all the tasks to complete."""
+    async def _stop_all_tasks(self) -> None:
+        """Stop all tasks that are decorated with the @background_task decorator,
+        and any custom ones that were ran using `self.execute_async()`.
+        """
         await self.cancel_all_tasks()
 
-    async def _task_wrapper(
-        self, func: Callable, interval: float | None = None
-    ) -> None:
-        """Wrapper to run a task in a loop until the stop_requested event is set."""
-        while not self.stop_requested.is_set():
-            try:
-                if inspect.iscoroutinefunction(func):
-                    await func()
-                else:
-                    await asyncio.to_thread(func)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                self.logger.exception("Unhandled exception in task: %s", func.__name__)
+    async def _kill(self) -> None:
+        """Kill the lifecycle. This is used when the lifecycle is requested to stop, but is already in a stopping state.
+        This is a last resort to ensure that the lifecycle is stopped.
+        """
+        self.state = LifecycleState.FAILED
+        self.debug(lambda: f"Killed {self}")
+        self.stopped_event.set()
+        os.kill(os.getpid(), signal.SIGKILL)
+        raise asyncio.CancelledError(f"Killed {self}")
 
-            if interval is None:
-                break
-            await asyncio.sleep(interval)
+    def _fail(self, e: Exception) -> None:
+        """Set the state to FAILED and raise an asyncio.CancelledError.
+        This is used when the transition from one state to another fails.
+        """
+        self.state = LifecycleState.FAILED
+        self.exception(f"Failed for {self}: {e}")
+        self._stop_requested_event.set()
+        self.stopped_event.set()
+        raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} (id={self.id})"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__qualname__} {self.id} (state={self.state})>"
+
+
+# # Add this file as one to be ignored when finding the caller of aiperf_logger.
+# # This helps to make it more transparent where the actual function is being called from.
+from aiperf.common import aiperf_logger  # noqa: E402 I001
+
+_srcfile = os.path.normcase(AIPerfLifecycleMixin.initialize.__code__.co_filename)
+aiperf_logger._ignored_files.append(_srcfile)
