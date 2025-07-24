@@ -46,9 +46,6 @@ class AIPerfHook(CaseInsensitiveStrEnum):
     ON_INIT = "__aiperf_on_init__"
     ON_RUN = "__aiperf_on_run__"
     ON_CONFIGURE = "__aiperf_on_configure__"
-    ON_PROFILE_CONFIGURE = "__aiperf_on_profile_configure__"
-    ON_PROFILE_START = "__aiperf_on_profile_start__"
-    ON_PROFILE_STOP = "__aiperf_on_profile_stop__"
     ON_START = "__aiperf_on_start__"
     ON_STOP = "__aiperf_on_stop__"
     ON_CLEANUP = "__aiperf_on_cleanup__"
@@ -305,24 +302,6 @@ def on_set_state(
     """Decorator to specify that the function should be called when the service state is set.
     See :func:`aiperf.common.hooks.hook_decorator`."""
     return hook_decorator(AIPerfHook.ON_SET_STATE, func)
-
-
-def on_profile_configure(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during the service profile configuration.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_PROFILE_CONFIGURE, func)
-
-
-def on_profile_start(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during the service profile start.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_PROFILE_START, func)
-
-
-def on_profile_stop(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during the service profile stop.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_PROFILE_STOP, func)
 
 
 def aiperf_task(

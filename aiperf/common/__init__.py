@@ -3,7 +3,7 @@
 ########################################################################
 ## 🚩                     mkinit flags                             🚩 ##
 ########################################################################
-# The list of submodules is intentionally left empty to prevent 
+# The list of submodules is intentionally left empty to prevent
 # automatically importing everything from submodules into the top-level namespace.
 # This means consumers must explicitly import from submodules as needed.
 # Example: Use `from aiperf.common.enums import EnumName` instead of importing from the top-level.
