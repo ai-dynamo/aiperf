@@ -4,50 +4,104 @@ import asyncio
 from abc import ABC, abstractmethod
 
 from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import ServiceType
-from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.config.user_config import UserConfig
+from aiperf.common.constants import (
+    DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
+    DEFAULT_SERVICE_START_TIMEOUT,
+)
+from aiperf.common.hooks import on_start, on_stop
+from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.models import ServiceRunInfo
+from aiperf.common.types import ServiceTypeT
 
 
-class BaseServiceManager(AIPerfLoggerMixin, ABC):
+class BaseServiceManager(AIPerfLifecycleMixin, ABC):
     """
-    Base class for service managers. It provides a common interface for
-    managing services and a way to look up service information by service ID.
+    Base class for service managers. It provides a common interface for managing services.
     """
 
     def __init__(
         self,
-        required_services: dict[ServiceType, int],
-        config: ServiceConfig,
+        required_services: dict[ServiceTypeT, int],
+        service_config: ServiceConfig,
+        user_config: UserConfig,
+        **kwargs,
     ):
         super().__init__(logger_name="service_manager")
         self.required_services = required_services
-        self.config = config
-
+        self.service_config = service_config
+        self.user_config = user_config
+        self.kwargs = kwargs
         # Maps to track service information
-        self.service_map: dict[ServiceType, list[ServiceRunInfo]] = {}
+        self.service_map: dict[ServiceTypeT, list[ServiceRunInfo]] = {}
 
         # Create service ID map for component lookups
         self.service_id_map: dict[str, ServiceRunInfo] = {}
 
+    @on_start
+    async def _start_service_manager(self) -> None:
+        await self.run_required_services()
+
+    @on_stop
+    async def _stop_service_manager(self) -> None:
+        await self.shutdown_all_services()
+
+    async def run_services(self, service_types: dict[ServiceTypeT, int]) -> None:
+        await asyncio.gather(
+            *[
+                self.run_service(service_type, num_replicas)
+                for service_type, num_replicas in service_types.items()
+            ],
+            return_exceptions=True,
+        )
+
     @abstractmethod
-    async def run_all_services(self) -> None:
-        """Run all required services."""
+    async def stop_service(
+        self, service_type: ServiceTypeT, num_replicas: int | None = None
+    ) -> None:
+        pass
+
+    async def stop_services(
+        self, service_types: dict[ServiceTypeT, int | None]
+    ) -> None:
+        """Stop a set of services."""
+        await asyncio.gather(
+            *[
+                self.stop_service(service_type, num_replicas)
+                for service_type, num_replicas in service_types.items()
+            ],
+            return_exceptions=True,
+        )
+
+    async def run_required_services(self) -> None:
+        await self.run_services(self.required_services)
+
+    @abstractmethod
+    async def run_service(
+        self, service_type: ServiceTypeT, num_replicas: int = 1
+    ) -> None:
         pass
 
     @abstractmethod
     async def shutdown_all_services(self) -> None:
-        """Shutdown all managed services."""
         pass
 
     @abstractmethod
     async def kill_all_services(self) -> None:
-        """Kill all managed services."""
         pass
 
     @abstractmethod
     async def wait_for_all_services_registration(
-        self, stop_event: asyncio.Event, timeout_seconds: int = 30
+        self,
+        stop_event: asyncio.Event,
+        timeout_seconds: float = DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     ) -> None:
-        """Wait for all required services to be registered."""
+        pass
+
+    @abstractmethod
+    async def wait_for_all_services_start(
+        self,
+        stop_event: asyncio.Event,
+        timeout_seconds: float = DEFAULT_SERVICE_START_TIMEOUT,
+    ) -> None:
         pass
