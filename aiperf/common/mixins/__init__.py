@@ -31,6 +31,9 @@ from aiperf.common.mixins.hooks_mixin import (
 from aiperf.common.mixins.process_health_mixin import (
     ProcessHealthMixin,
 )
+from aiperf.common.mixins.reply_client_mixin import (
+    ReplyClientMixin,
+)
 
 __all__ = [
     "AIPerfLifecycleMixin",
@@ -42,4 +45,5 @@ __all__ = [
     "BaseMixin",
     "HooksMixin",
     "ProcessHealthMixin",
+    "ReplyClientMixin",
 ]

@@ -3,20 +3,17 @@
 import asyncio
 import random
 
-from aiperf.common.comms import ReplyClientProtocol
-from aiperf.common.comms.base import (
-    CommunicationClientAddressType,
-)
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
+    CommAddress,
     ComposerType,
     MessageType,
     ServiceType,
 )
 from aiperf.common.factories import ComposerFactory, ServiceFactory
 from aiperf.common.hooks import (
-    on_configure,
     on_init,
+    request_handler,
 )
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -26,8 +23,8 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
     DatasetTimingRequest,
     DatasetTimingResponse,
-    Message,
 )
+from aiperf.common.mixins.reply_client_mixin import ReplyClientMixin
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.base_component_service import BaseComponentService
@@ -36,7 +33,7 @@ DATASET_CONFIGURATION_TIMEOUT = 30.0
 
 
 @ServiceFactory.register(ServiceType.DATASET_MANAGER)
-class DatasetManager(BaseComponentService):
+class DatasetManager(ReplyClientMixin, BaseComponentService):
     """
     The DatasetManager primary responsibility is to manage the data generation or acquisition.
     For synthetic generation, it contains the code to generate the prompts or tokens.
@@ -46,49 +43,28 @@ class DatasetManager(BaseComponentService):
     def __init__(
         self,
         service_config: ServiceConfig,
-        user_config: UserConfig | None = None,
+        user_config: UserConfig,
         service_id: str | None = None,
     ) -> None:
         super().__init__(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+            reply_client_address=CommAddress.DATASET_MANAGER_PROXY_BACKEND,
+            reply_client_bind=False,
         )
         self.debug("Dataset manager __init__")
         self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
-        self.router_reply_client: ReplyClientProtocol = self.comms.create_reply_client(
-            CommunicationClientAddressType.DATASET_MANAGER_PROXY_BACKEND
-        )
         self.dataset_configured = asyncio.Event()
-
-    @property
-    def service_type(self) -> ServiceType:
-        """The type of service."""
-        return ServiceType.DATASET_MANAGER
 
     @on_init
     async def _initialize(self) -> None:
         """Initialize dataset manager-specific components."""
         self.debug(lambda: f"Initializing dataset manager {self.service_id}")
-
-        self.router_reply_client.register_request_handler(
-            service_id=self.service_id,
-            message_type=MessageType.CONVERSATION_REQUEST,
-            handler=self._handle_conversation_request,
-        )
-        self.router_reply_client.register_request_handler(
-            service_id=self.service_id,
-            message_type=MessageType.DATASET_TIMING_REQUEST,
-            handler=self._handle_dataset_timing_request,
-        )
-        self.router_reply_client.register_request_handler(
-            service_id=self.service_id,
-            message_type=MessageType.CONVERSATION_TURN_REQUEST,
-            handler=self._handle_conversation_turn_request,
-        )
-
+        self.dataset_configured.clear()
+        await self._configure_dataset()
         self.debug(lambda: f"Dataset manager {self.service_id} initialized")
 
     async def _configure_dataset(self) -> None:
@@ -132,13 +108,7 @@ class DatasetManager(BaseComponentService):
             ),
         )
 
-    @on_configure
-    async def _configure(self, message: Message) -> None:
-        """Configure the dataset manager."""
-        # TODO: This is a temporary hack with the changes to user config loading
-        self.dataset_configured.clear()
-        await self._configure_dataset()
-
+    @request_handler(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(
         self, message: ConversationRequestMessage
     ) -> ConversationResponseMessage:
@@ -201,6 +171,7 @@ class DatasetManager(BaseComponentService):
             conversation=conversation,
         )
 
+    @request_handler(MessageType.CONVERSATION_TURN_REQUEST)
     async def _handle_conversation_turn_request(
         self, message: ConversationTurnRequestMessage
     ) -> ConversationTurnResponseMessage:
@@ -227,6 +198,7 @@ class DatasetManager(BaseComponentService):
             turn=turn,
         )
 
+    @request_handler(MessageType.DATASET_TIMING_REQUEST)
     async def _handle_dataset_timing_request(
         self, message: DatasetTimingRequest
     ) -> DatasetTimingResponse:
