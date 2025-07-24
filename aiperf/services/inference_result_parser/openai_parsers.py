@@ -8,7 +8,6 @@ from typing import Any
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion import Completion
-from openai.types.embedding import Embedding
 from openai.types.responses.response import Response as ResponsesModel
 from pydantic import BaseModel
 
@@ -28,6 +27,22 @@ from aiperf.common.utils import load_json_str
 logger = logging.getLogger(__name__)
 
 
+# Model for embedding list response
+class EmbeddingData(BaseModel):
+    index: int
+    object: str
+    embedding: list[float]
+
+
+class EmbeddingListResponse(BaseModel):
+    id: str
+    object: str
+    created: int
+    model: str
+    data: list[EmbeddingData]
+    usage: dict[str, Any]
+
+
 class OpenAIObject(CaseInsensitiveStrEnum):
     """Types of OpenAI objects."""
 
@@ -35,6 +50,7 @@ class OpenAIObject(CaseInsensitiveStrEnum):
     CHAT_COMPLETION_CHUNK = "chat.completion.chunk"
     COMPLETION = "completion"
     EMBEDDING = "embedding"
+    LIST = "list"
     RESPONSE = "response"
 
     @classmethod
@@ -54,27 +70,42 @@ class OpenAIObject(CaseInsensitiveStrEnum):
             cls.CHAT_COMPLETION: ChatCompletion,
             cls.CHAT_COMPLETION_CHUNK: ChatCompletionChunk,
             cls.COMPLETION: Completion,
-            cls.EMBEDDING: Embedding,
+            cls.LIST: EmbeddingListResponse,
             cls.RESPONSE: ResponsesModel,
         }
 
         obj_type = obj.get("object")
         if obj_type is None:
             raise ValueError(f"Invalid OpenAI object: {obj}")
-
         if obj_type not in _object_mapping:
             raise ValueError(f"Invalid OpenAI object type: {obj_type}")
-
         try:
             return _object_mapping[obj_type](**obj)
         except Exception as e:
             raise ValueError(f"Invalid OpenAI object: {text}") from e
+
+    @classmethod
+    def validate_if_embeddings_list(cls, obj: Any) -> bool:
+        """Check if the list is a valid OpenAI embeddings list.
+
+        Raises:
+            ValueError: If the list is not a valid OpenAI embeddings list.
+        """
+        obj_type = obj.get("object")
+        if obj_type == cls.LIST:
+            data = obj.get("data", [])
+            if not all(
+                isinstance(item, dict) and item.get("object") == "embedding"
+                for item in data
+            ):
+                raise ValueError(f"Received invalid list in response: {obj}")
 
 
 # TODO: Factory support for different supported parsers/extractors
 @ResponseExtractorFactory.register_all(
     EndpointType.OPENAI_CHAT_COMPLETIONS,
     EndpointType.OPENAI_COMPLETIONS,
+    EndpointType.OPENAI_EMBEDDINGS,
     EndpointType.OPENAI_RESPONSES,
 )
 class OpenAIResponseExtractor:
@@ -153,7 +184,7 @@ class OpenAIResponseExtractor:
             ChatCompletionChunk: lambda obj: obj.choices[0].delta.content,
             # TODO: how to support multiple choices?
             Completion: lambda obj: obj.choices[0].text,
-            Embedding: lambda obj: obj.embedding,
+            EmbeddingListResponse: lambda obj: "",  # Don't store embedding data
             ResponsesModel: lambda obj: obj.output_text,
         }
 
