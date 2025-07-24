@@ -31,8 +31,8 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
 )
-from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.services.base_component_service import BaseComponentService
 
 
 @ServiceFactory.register(ServiceType.INFERENCE_RESULT_PARSER)

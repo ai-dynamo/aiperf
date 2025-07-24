@@ -32,7 +32,7 @@ from aiperf.common.messages import (
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
-from aiperf.common.service.base_component_service import BaseComponentService
+from aiperf.services.base_component_service import BaseComponentService
 from aiperf.services.timing_manager.config import (
     TimingManagerConfig,
     TimingMode,

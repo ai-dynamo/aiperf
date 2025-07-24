@@ -12,7 +12,7 @@ import pytest
 
 from aiperf.common.enums import CommandType, CreditPhase, MessageType, ServiceType
 from aiperf.common.messages import CommandMessage, CreditReturnMessage
-from aiperf.common.service.base_service import BaseService
+from aiperf.services.base_service import BaseService
 from aiperf.services.timing_manager.config import TimingManagerConfig, TimingMode
 from aiperf.services.timing_manager.timing_manager import TimingManager
 from tests.base_test_component_service import BaseTestComponentService

@@ -20,7 +20,7 @@ from aiperf.common.messages import (
     StatusMessage,
 )
 from aiperf.common.models import ErrorDetails
-from aiperf.common.service.base_service import BaseService
+from aiperf.services.base_service import BaseService
 
 
 class BaseComponentService(BaseService):

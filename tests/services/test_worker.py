@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from aiperf.common.enums import ServiceState, ServiceType
-from aiperf.common.service.base_service import BaseService
+from aiperf.services.base_service import BaseService
 from aiperf.services.workers import Worker
 from tests.base_test_service import BaseTestService
 from tests.utils.async_test_utils import async_fixture
