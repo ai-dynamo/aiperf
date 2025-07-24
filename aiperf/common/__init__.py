@@ -308,12 +308,6 @@ from aiperf.common.models import (
     WorkerPhaseTaskStats,
     exclude_if_none,
 )
-from aiperf.common.service import (
-    BaseComponentService,
-    BaseControllerService,
-    BaseService,
-    BaseServiceInterface,
-)
 from aiperf.common.tokenizer import (
     Tokenizer,
 )
@@ -363,14 +357,10 @@ __all__ = [
     "AudioLengthConfig",
     "BYTES_PER_MIB",
     "BaseCommunication",
-    "BaseComponentService",
     "BaseConfig",
-    "BaseControllerService",
     "BaseMixin",
     "BaseModelT",
-    "BaseService",
     "BaseServiceErrorMessage",
-    "BaseServiceInterface",
     "BaseServiceMessage",
     "BaseStatusMessage",
     "BaseZMQClient",
