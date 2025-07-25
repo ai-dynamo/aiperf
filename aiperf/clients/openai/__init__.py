@@ -18,6 +18,9 @@ from aiperf.clients.openai.openai_chat import (
 from aiperf.clients.openai.openai_completions import (
     OpenAICompletionRequestConverter,
 )
+from aiperf.clients.openai.openai_embeddings import (
+    OpenAIEmbeddingsRequestConverter,
+)
 from aiperf.clients.openai.openai_responses import (
     OpenAIResponsesRequestConverter,
 )
@@ -27,5 +30,6 @@ __all__ = [
     "OpenAIChatCompletionRequestConverter",
     "OpenAIClientAioHttp",
     "OpenAICompletionRequestConverter",
+    "OpenAIEmbeddingsRequestConverter",
     "OpenAIResponsesRequestConverter",
 ]
