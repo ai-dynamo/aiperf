@@ -5,15 +5,16 @@ import os
 from aiperf.common import aiperf_logger
 from aiperf.common.exceptions import AIPerfMultiError, UnsupportedHookError
 from aiperf.common.hooks import (
-    AIPERF_HOOK_PARAMS,
-    AIPERF_HOOK_TYPE,
-    PROVIDES_HOOKS,
     Hook,
+    HookAttrs,
     HookType,
+    implements_protocol,
 )
 from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
+from aiperf.common.protocols import HooksProtocol
 
 
+@implements_protocol(HooksProtocol)
 class HooksMixin(AIPerfLoggerMixin):
     """Mixin for a class to be able to provide hooks to its subclasses, and to be able to run them. A "hook" is a function
     that is decorated with a hook type (AIPerfHook), and optional parameters.
@@ -46,10 +47,10 @@ class HooksMixin(AIPerfLoggerMixin):
         # Go through the MRO in reverse order to ensure that the hooks are
         # registered in the correct order (base classes first, then subclasses).
         for cls in reversed(self.__class__.__mro__):
-            if hasattr(cls, PROVIDES_HOOKS):
+            if hasattr(cls, HookAttrs.PROVIDES_HOOKS):
                 # As we find base classes that provide hooks, we add them to the
                 # set of provided hook types, which is used for validation.
-                self._provided_hook_types.update(getattr(cls, PROVIDES_HOOKS))
+                self._provided_hook_types.update(getattr(cls, HookAttrs.PROVIDES_HOOKS))
 
             # Go through the class's methods to find the hooks.
             for method in cls.__dict__.values():
@@ -57,8 +58,8 @@ class HooksMixin(AIPerfLoggerMixin):
                     continue
 
                 # If the method has the AIPERF_HOOK_TYPE attribute, it is a hook.
-                if hasattr(method, AIPERF_HOOK_TYPE):
-                    method_hook_type = getattr(method, AIPERF_HOOK_TYPE)
+                if hasattr(method, HookAttrs.HOOK_TYPE):
+                    method_hook_type = getattr(method, HookAttrs.HOOK_TYPE)
                     # If the hook type is not provided by any base class, it is an error.
                     # This is to ensure that the hook is only registered if it is provided by a base class.
                     # This is to avoid the case where a developer accidentally uses a hook that is not provided by a base class.
@@ -74,7 +75,7 @@ class HooksMixin(AIPerfLoggerMixin):
                     self._hooks.setdefault(method_hook_type, []).append(
                         Hook(
                             func=bound_method,
-                            params=getattr(method, AIPERF_HOOK_PARAMS, None),
+                            params=getattr(method, HookAttrs.HOOK_PARAMS, None),
                         ),
                     )
 

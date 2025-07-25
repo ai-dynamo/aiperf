@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-A "hook" is a function that is decorated with a hook type and optional parameters.
-
 This module provides an extensive set of hook definitions for AIPerf. It is designed to be
 used in conjunction with the :class:`HooksMixin` for classes to provide support for hooks.
 It provides a simple interface for registering hooks.
@@ -21,18 +19,20 @@ The hooks are run by calling the :meth:`HooksMixin.run_hooks` method or retrieve
 """
 
 import asyncio
+import warnings
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 from typing_extensions import Self
 
+from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
 from aiperf.common.enums import (
     CaseInsensitiveStrEnum,
     CommandType,
     LifecycleState,
 )
-from aiperf.common.types import HooksMixinT, MessageTypeT
+from aiperf.common.types import ClassProtocolT, HooksMixinT, MessageTypeT, ProtocolT
 
 if TYPE_CHECKING:
     pass
@@ -43,6 +43,7 @@ class AIPerfHook(CaseInsensitiveStrEnum):
     COMMAND_HANDLER = "@command_handler"
     ON_INIT = "@on_init"
     ON_MESSAGE = "@on_message"
+    ON_PULL_MESSAGE = "@on_pull_message"
     ON_START = "@on_start"
     ON_STATE_CHANGE = "@on_state_change"
     ON_STOP = "@on_stop"
@@ -52,13 +53,28 @@ class AIPerfHook(CaseInsensitiveStrEnum):
 HookType = AIPerfHook | str
 """Type alias for valid hook types. This is a union of the AIPerfHook enum and any user-defined custom strings."""
 
-AIPERF_HOOK_TYPE = "__aiperf_hook_type__"
-"""Constant attribute name that marks a function's hook type."""
 
-AIPERF_HOOK_PARAMS = "__aiperf_hook_params__"
-"""Constant attribute name that marks a function's hook parameters."""
+class HookAttrs:
+    """Constant attribute names for hooks.
 
-PROVIDES_HOOKS = "__provides_hooks__"
+    When you decorate a function with a hook decorator, the hook type and parameters are
+    set as attributes on the function or class.
+
+    Example:
+
+    @on_message(MessageType.STATUS)
+    def on_status(self, message: Message) -> None:
+        pass
+
+    # This will look like:
+    on_status.__aiperf_hook_type__ = AIPerfHook.ON_MESSAGE
+    on_status.__aiperf_hook_params__ = MessageHookParams(message_types={MessageType.STATUS})
+    """
+
+    HOOK_TYPE = "__aiperf_hook_type__"
+    HOOK_PARAMS = "__aiperf_hook_params__"
+    PROVIDES_HOOKS = "__provides_hooks__"
+    IMPLEMENTS_PROTOCOL = "__implements_protocol__"
 
 
 class Hook(BaseModel):
@@ -69,7 +85,7 @@ class Hook(BaseModel):
 
     @property
     def hook_type(self) -> HookType:
-        return getattr(self.func, AIPERF_HOOK_TYPE)
+        return getattr(self.func, HookAttrs.HOOK_TYPE)
 
     @property
     def func_name(self) -> str:
@@ -103,6 +119,11 @@ class CommandHookParams(BaseModel):
     command_types: set[CommandType]
 
 
+class PullHookParams(BaseModel):
+    message_types: set[MessageTypeT]
+    max_concurrency: int | None = DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
+
+
 def hook_decorator(hook_type: HookType, func: Callable) -> Callable:
     """Generic decorator to specify that the function should be called during
     a specific hook. See :func:`aiperf.common.hooks.hook_decorator_with_params` for a decorator that
@@ -114,7 +135,7 @@ def hook_decorator(hook_type: HookType, func: Callable) -> Callable:
     Returns:
         The decorated function.
     """
-    setattr(func, AIPERF_HOOK_TYPE, hook_type)
+    setattr(func, HookAttrs.HOOK_TYPE, hook_type)
     return func
 
 
@@ -131,8 +152,8 @@ def hook_decorator_with_params(
     """
 
     def decorator(func: Callable) -> Callable:
-        setattr(func, AIPERF_HOOK_TYPE, hook_type)
-        setattr(func, AIPERF_HOOK_PARAMS, params)
+        setattr(func, HookAttrs.HOOK_TYPE, hook_type)
+        setattr(func, HookAttrs.HOOK_PARAMS, params)
         return func
 
     return decorator
@@ -144,7 +165,38 @@ def provides_hooks(
     """Decorator to specify that the class provides a hook of the given type to all of its subclasses."""
 
     def decorator(cls: type[HooksMixinT]) -> type[HooksMixinT]:
-        setattr(cls, PROVIDES_HOOKS, set(hook_types))
+        setattr(cls, HookAttrs.PROVIDES_HOOKS, set(hook_types))
+        return cls
+
+    return decorator
+
+
+def implements_protocol(protocol: type[ProtocolT]) -> Callable:
+    """Decorator to specify that the class implements the given protocol."""
+
+    def decorator(cls: type[ClassProtocolT]) -> type[ClassProtocolT]:
+        if TYPE_CHECKING:
+            if not hasattr(protocol, "_is_runtime_protocol"):
+                warnings.warn(
+                    f"Protocol {protocol.__name__} is not a runtime protocol. "
+                    "Please use the @runtime_checkable decorator to mark it as a runtime protocol.",
+                    category=UserWarning,
+                    stacklevel=2,
+                )
+                raise TypeError(
+                    f"Protocol {protocol.__name__} is not a runtime protocol. "
+                    "Please use the @runtime_checkable decorator to mark it as a runtime protocol."
+                )
+            if not issubclass(cls, protocol):
+                warnings.warn(
+                    f"Class {cls.__name__} does not implement the {protocol.__name__} protocol.",
+                    category=UserWarning,
+                    stacklevel=2,
+                )
+                raise TypeError(
+                    f"Class {cls.__name__} does not implement the {protocol.__name__} protocol."
+                )
+        setattr(cls, HookAttrs.IMPLEMENTS_PROTOCOL, protocol)
         return cls
 
     return decorator
@@ -209,6 +261,22 @@ def on_message(
     See :func:`aiperf.common.hooks.hook_decorator_with_params`."""
     return hook_decorator_with_params(
         AIPerfHook.ON_MESSAGE, MessageHookParams(message_types=set(message_types))
+    )
+
+
+def on_pull_message(
+    *message_types: MessageTypeT,
+    max_concurrency: int | None = DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
+) -> Callable:
+    """Decorator to specify that the function is a hook that should be called a pull client
+    receives a message of the given type(s).
+    See :func:`aiperf.common.hooks.hook_decorator_with_params`."""
+    return hook_decorator_with_params(
+        AIPerfHook.ON_PULL_MESSAGE,
+        PullHookParams(
+            message_types=set(message_types),
+            max_concurrency=max_concurrency,
+        ),
     )
 
 
