@@ -78,7 +78,6 @@ class OpenAIObject(CaseInsensitiveStrEnum):
             ValueError: If the object is invalid.
         """
         data = obj.get("data", [])
-        # Embeddings return an empty string
         if all(
             isinstance(item, dict) and item.get("object") == cls.EMBEDDING
             for item in data
