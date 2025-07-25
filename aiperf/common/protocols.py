@@ -4,35 +4,33 @@
 import asyncio
 import multiprocessing
 from collections.abc import Callable, Coroutine
-from typing import Any, Generic, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
     DEFAULT_COMMS_REQUEST_TIMEOUT,
     DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
 )
-from aiperf.common.enums import CommClientType, LifecycleState
-from aiperf.common.factories import CommunicationClientProtocolFactory
+from aiperf.common.enums import LifecycleState
 from aiperf.common.hooks import Hook, HookType
+from aiperf.common.messages import Message
+from aiperf.common.models import RequestRecord, ResponseData, Turn
+from aiperf.common.models.service_models import ServiceRunInfo
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import (
     CommAddressType,
     MessageCallbackMapT,
     MessageOutputT,
-    MessageT,
     MessageTypeT,
     ModelEndpointInfoT,
     RequestInputT,
     RequestOutputT,
-    RequestRecordT,
-    ResponseDataT,
-    ServiceRunInfoT,
     ServiceTypeT,
-    TaskManagerProtocolT,
-    TokenizerT,
-    TurnT,
 )
+
+if TYPE_CHECKING:
+    from aiperf.common.config import ServiceConfig, UserConfig
 
 ################################################################################
 # Core Base Protocols (Cannot be sorted)
@@ -41,6 +39,11 @@ from aiperf.common.types import (
 
 @runtime_checkable
 class AIPerfLoggerProtocol(Protocol):
+    @property
+    def is_trace_enabled(self) -> bool: ...
+    @property
+    def is_debug_enabled(self) -> bool: ...
+
     def __init__(self, logger_name: str | None = None, **kwargs) -> None: ...
     def log(
         self, level: int, message: str | Callable[..., str], *args, **kwargs
@@ -66,7 +69,7 @@ class TaskManagerProtocol(AIPerfLoggerProtocol, Protocol):
     def start_background_task(
         self,
         method: Callable,
-        interval: float | Callable[[TaskManagerProtocolT], float] | None = None,
+        interval: float | Callable[["TaskManagerProtocol"], float] | None = None,
         immediate: bool = False,
         stop_on_error: bool = False,
     ) -> None: ...
@@ -78,14 +81,21 @@ class AIPerfLifecycleProtocol(TaskManagerProtocol, Protocol):
     see :class:`aiperf.common.mixins.aiperf_lifecycle_mixin.AIPerfLifecycleMixin` for more details.
     """
 
-    was_initialized: bool
-    was_started: bool
-    was_stopped: bool
-    is_running: bool
+    @property
+    def was_initialized(self) -> bool: ...
+    @property
+    def was_started(self) -> bool: ...
+    @property
+    def was_stopped(self) -> bool: ...
+    @property
+    def is_running(self) -> bool: ...
+
     initialized_event: asyncio.Event
     started_event: asyncio.Event
     stopped_event: asyncio.Event
-    state: LifecycleState
+
+    @property
+    def state(self) -> LifecycleState: ...
 
     async def initialize(self) -> None: ...
     async def start(self) -> None: ...
@@ -105,63 +115,57 @@ class CommunicationClientProtocol(AIPerfLifecycleProtocol, Protocol):
     communication client protocols with the communication client factory."""
 
 
-@CommunicationClientProtocolFactory.register(CommClientType.PUB)
 @runtime_checkable
 class PubClientProtocol(CommunicationClientProtocol, Protocol):
-    async def publish(self, message: MessageT) -> None: ...
+    async def publish(self, message: Message) -> None: ...
 
 
-@CommunicationClientProtocolFactory.register(CommClientType.PULL)
 @runtime_checkable
 class PullClientProtocol(CommunicationClientProtocol, Protocol):
     async def register_pull_callback(
         self,
         message_type: MessageTypeT,
-        callback: Callable[[MessageT], Coroutine[Any, Any, None]],
+        callback: Callable[[Message], Coroutine[Any, Any, None]],
         max_concurrency: int | None = DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
     ) -> None: ...
 
 
-@CommunicationClientProtocolFactory.register(CommClientType.PUSH)
 @runtime_checkable
 class PushClientProtocol(CommunicationClientProtocol, Protocol):
-    async def push(self, message: MessageT) -> None: ...
+    async def push(self, message: Message) -> None: ...
 
 
-@CommunicationClientProtocolFactory.register(CommClientType.REPLY)
 @runtime_checkable
 class ReplyClientProtocol(CommunicationClientProtocol, Protocol):
     def register_request_handler(
         self,
         service_id: str,
         message_type: MessageTypeT,
-        handler: Callable[[MessageT], Coroutine[Any, Any, MessageOutputT | None]],
+        handler: Callable[[Message], Coroutine[Any, Any, MessageOutputT | None]],
     ) -> None: ...
 
 
-@CommunicationClientProtocolFactory.register(CommClientType.REQUEST)
 @runtime_checkable
 class RequestClientProtocol(CommunicationClientProtocol, Protocol):
     async def request(
         self,
-        message: MessageT,
+        message: Message,
         timeout: float = DEFAULT_COMMS_REQUEST_TIMEOUT,
     ) -> MessageOutputT: ...
 
     async def request_async(
         self,
-        message: MessageT,
+        message: Message,
         callback: Callable[[MessageOutputT], Coroutine[Any, Any, None]],
     ) -> None: ...
 
 
-@CommunicationClientProtocolFactory.register(CommClientType.SUB)
 @runtime_checkable
 class SubClientProtocol(CommunicationClientProtocol, Protocol):
     async def subscribe(
         self,
         message_type: MessageTypeT,
-        callback: Callable[[MessageT], Coroutine[Any, Any, None]],
+        callback: Callable[[Message], Coroutine[Any, Any, None]],
     ) -> None: ...
 
     async def subscribe_all(
@@ -170,8 +174,13 @@ class SubClientProtocol(CommunicationClientProtocol, Protocol):
     ) -> None: ...
 
 
+@runtime_checkable
+class MessageBusClientProtocol(PubClientProtocol, SubClientProtocol, Protocol):
+    """A message bus client is a client that can publish and subscribe to messages on the event bus/message bus."""
+
+
 ################################################################################
-# Communication Protocols (sorted alphabetically)
+# Communication Protocol (must come after the clients)
 ################################################################################
 
 
@@ -229,12 +238,6 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     ) -> ReplyClientProtocol: ...
 
 
-@runtime_checkable
-class MessageBusClientProtocol(PubClientProtocol, SubClientProtocol, Protocol):
-    """A message bus client is a client that can publish and subscribe to messages
-    on the event bus/message bus."""
-
-
 ################################################################################
 # General Protocols (sorted alphabetically)
 ################################################################################
@@ -270,7 +273,7 @@ class HooksProtocol(Protocol):
 
 
 @runtime_checkable
-class InferenceClientProtocol(Protocol, Generic[RequestInputT]):
+class InferenceClientProtocol(Protocol):
     """Protocol for an inference server client.
 
     This protocol defines the methods that must be implemented by any inference server client
@@ -289,7 +292,7 @@ class InferenceClientProtocol(Protocol, Generic[RequestInputT]):
         self,
         model_endpoint: ModelEndpointInfoT,
         payload: RequestInputT,
-    ) -> RequestRecordT:
+    ) -> RequestRecord:
         """Send a request to the inference server.
 
         This method is used to send a request to the inference server.
@@ -309,6 +312,15 @@ class InferenceClientProtocol(Protocol, Generic[RequestInputT]):
 
 @runtime_checkable
 class PostProcessorProtocol(Protocol):
+    """
+    Protocol for post-processors.
+
+    Any class implementing this protocol must provide a `process` method
+    that takes a dictionary of records as input and returns a processed
+    dictionary. This is typically used to apply transformations or extract
+    relevant information from raw data.
+    """
+
     def process(self, records: dict) -> dict: ...
 
 
@@ -318,18 +330,18 @@ class ResponseExtractorProtocol(Protocol):
     response and converts it to a list of ResponseData objects."""
 
     async def extract_response_data(
-        self, record: RequestRecordT, tokenizer: TokenizerT | None
-    ) -> list[ResponseDataT]:
+        self, record: RequestRecord, tokenizer: Tokenizer | None
+    ) -> list[ResponseData]:
         """Extract the response data from a raw inference server response and convert it to a list of ResponseData objects."""
         ...
 
 
 @runtime_checkable
-class RequestConverterProtocol(Protocol, Generic[RequestOutputT]):
+class RequestConverterProtocol(Protocol):
     """Protocol for a request converter that converts a raw request to a formatted request for the inference server."""
 
     async def format_payload(
-        self, model_endpoint: ModelEndpointInfoT, turn: TurnT
+        self, model_endpoint: ModelEndpointInfoT, turn: Turn
     ) -> RequestOutputT:
         """Format the turn for the inference server."""
         ...
@@ -345,14 +357,14 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        service_config: "ServiceConfig",
+        user_config: "UserConfig",
         log_queue: "multiprocessing.Queue | None" = None,
     ): ...
 
     required_services: dict[ServiceTypeT, int]
-    service_map: dict[ServiceTypeT, list[ServiceRunInfoT]]
-    service_id_map: dict[str, ServiceRunInfoT]
+    service_map: dict[ServiceTypeT, list[ServiceRunInfo]]
+    service_id_map: dict[str, ServiceRunInfo]
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
@@ -382,8 +394,8 @@ class ServiceProtocol(MessageBusClientProtocol, Protocol):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        user_config: "UserConfig",
+        service_config: "ServiceConfig",
         service_id: str | None = None,
         **kwargs,
     ) -> None: ...
