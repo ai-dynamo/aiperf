@@ -126,7 +126,7 @@ class BasicMetricsStreamer(BaseStreamingPostProcessor):
                     f"Processing {len(self.records)} successful records and {len(self.error_records)} error records"
                 )
                 endpoint_type = None
-                if hasattr(self, "user_config") and self.user_config is not None:
+                if self.user_config:
                     endpoint_type = getattr(self.user_config.endpoint, "type", None)
                 metric_summary = MetricSummary(endpoint_type=endpoint_type)
                 metric_summary.process(list(self.records))

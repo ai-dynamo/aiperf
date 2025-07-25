@@ -55,38 +55,39 @@ class OpenAIObject(CaseInsensitiveStrEnum):
             cls.CHAT_COMPLETION: ChatCompletion,
             cls.CHAT_COMPLETION_CHUNK: ChatCompletionChunk,
             cls.COMPLETION: Completion,
-            cls.LIST: CreateEmbeddingResponse,
             cls.RESPONSE: ResponsesModel,
         }
 
         obj_type = obj.get("object")
         if obj_type is None:
             raise ValueError(f"Invalid OpenAI object: {obj}")
+        if obj_type == cls.LIST:
+            return cls.parse_list(obj)
         if obj_type not in _object_mapping:
             raise ValueError(f"Invalid OpenAI object type: {obj_type}")
         try:
-            return _object_mapping[obj_type](**obj)
+            return _object_mapping[obj_type].model_validate(obj)
         except Exception as e:
             raise ValueError(f"Invalid OpenAI object: {text}") from e
 
     @classmethod
-    def validate_if_embeddings_list(cls, obj: Any) -> bool:
-        """Check if the list is a valid OpenAI embeddings list.
+    def parse_list(cls, obj: Any) -> BaseModel:
+        """Attempt to parse a string into an OpenAI object from a list.
 
         Raises:
-            ValueError: If the list is not a valid OpenAI embeddings list.
+            ValueError: If the object is invalid.
         """
-        obj_type = obj.get("object")
-        if obj_type == cls.LIST:
-            data = obj.get("data", [])
-            if not all(
-                isinstance(item, dict) and item.get("object") == "embedding"
-                for item in data
-            ):
-                raise ValueError(f"Received invalid list in response: {obj}")
+        data = obj.get("data", [])
+        # Embeddings return an empty string
+        if all(
+            isinstance(item, dict) and item.get("object") == cls.EMBEDDING
+            for item in data
+        ):
+            return CreateEmbeddingResponse.model_validate(obj)
+        else:
+            raise ValueError(f"Receive invalid list in response: {obj}")
 
 
-# TODO: Factory support for different supported parsers/extractors
 @ResponseExtractorFactory.register_all(
     EndpointType.OPENAI_CHAT_COMPLETIONS,
     EndpointType.OPENAI_COMPLETIONS,

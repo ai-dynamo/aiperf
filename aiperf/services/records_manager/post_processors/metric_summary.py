@@ -20,14 +20,15 @@ class MetricSummary:
     It processes the records to extract relevant metrics and returns them in a structured format.
     """
 
-    def __init__(self, endpoint_type=None):
+    def __init__(self, endpoint_type: EndpointType | None = None):
         self.logger = logging.getLogger(__name__)
         self.logger.debug("Initializing MetricSummary post-processor")
 
         # Only include latency and throughput metrics for embeddings endpoint
         allowed_tags = None
-        if endpoint_type is not None and str(endpoint_type) == str(
-            EndpointType.OPENAI_EMBEDDINGS
+        if (
+            endpoint_type is not None
+            and endpoint_type == EndpointType.OPENAI_EMBEDDINGS
         ):
             allowed_tags = {
                 "request_latency",
