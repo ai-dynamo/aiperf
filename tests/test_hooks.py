@@ -1,38 +1,38 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
+from collections.abc import Callable
 
 import pytest
 
 from aiperf.common.exceptions import UnsupportedHookError
 from aiperf.common.hooks import (
     AIPerfHook,
-    on_cleanup,
     on_init,
     on_start,
-    supports_hooks,
+    on_stop,
+    provides_hooks,
 )
 from aiperf.common.mixins import HooksMixin
 
 
-@supports_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_CLEANUP)
-class BaseClass(HooksMixin):
+@provides_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_STOP)
+class MockHookProvider(HooksMixin):
     def __init__(self):
         super().__init__()
         self.called_hooks = set()
 
-    def add_called_hook(self, hook_name: str):
+    def add_called_hook(self, hook_name: Callable | str):
         self.called_hooks.add(hook_name)
         print(f"Hook called: {self.__class__.__name__}.{hook_name}")
 
     async def initialize(self) -> None:
-        await self.run_hooks_async(AIPerfHook.ON_INIT)
+        await self.run_hooks(AIPerfHook.ON_INIT)
 
-    async def cleanup(self) -> None:
-        await self.run_hooks_async(AIPerfHook.ON_CLEANUP)
+    async def stop(self) -> None:
+        await self.run_hooks(AIPerfHook.ON_STOP)
 
 
-class MockHooks(BaseClass):
+class MockHooks(MockHookProvider):
     @on_init
     async def on_init_3(self):
         self.add_called_hook(self.on_init_3)
@@ -45,23 +45,23 @@ class MockHooks(BaseClass):
     async def on_init_1(self):
         self.add_called_hook(self.on_init_1)
 
-    @on_cleanup
-    async def on_cleanup_1(self):
-        self.add_called_hook(self.on_cleanup_1)
+    @on_stop
+    async def on_stop_1(self):
+        self.add_called_hook(self.on_stop_1)
 
 
-@supports_hooks(AIPerfHook.ON_START)
+@provides_hooks(AIPerfHook.ON_START)
 class MockHooksInheritance(MockHooks):
     @on_init
     async def on_init_4(self):
         self.add_called_hook(self.on_init_4)
 
-    @on_cleanup
-    async def on_cleanup_2(self):
-        self.add_called_hook(self.on_cleanup_2)
+    @on_stop
+    async def on_stop_2(self):
+        self.add_called_hook(self.on_stop_2)
 
     async def start(self):
-        await self.run_hooks_async(AIPerfHook.ON_START)
+        await self.run_hooks(AIPerfHook.ON_START)
 
     @on_start
     async def on_start_1(self):
@@ -72,35 +72,38 @@ def test_hook_decorators():
     """Test the hook decorators."""
     test_hooks = MockHooks()
 
-    assert test_hooks.get_hooks(AIPerfHook.ON_INIT) == [
+    assert [hook.func for hook in test_hooks.get_hooks(AIPerfHook.ON_INIT)] == [
         test_hooks.on_init_3,
         test_hooks.on_init_2,
         test_hooks.on_init_1,
     ], "Init hooks should be registered in the order they are defined"
-    assert test_hooks.get_hooks(AIPerfHook.ON_CLEANUP) == [test_hooks.on_cleanup_1], (
-        "Cleanup hooks should be registered"
-    )
+
+    assert [hook.func for hook in test_hooks.get_hooks(AIPerfHook.ON_STOP)] == [
+        test_hooks.on_stop_1,
+    ], "Stop hooks should be registered"
 
 
 def test_hook_inheritance():
     """Test the hook inheritance."""
     test_hooks_inheritance = MockHooksInheritance()
 
-    assert test_hooks_inheritance.get_hooks(AIPerfHook.ON_INIT) == [
+    assert [
+        hook.func for hook in test_hooks_inheritance.get_hooks(AIPerfHook.ON_INIT)
+    ] == [
         test_hooks_inheritance.on_init_3,
         test_hooks_inheritance.on_init_2,
         test_hooks_inheritance.on_init_1,
         test_hooks_inheritance.on_init_4,
     ], "Init hooks should be registered in the order they are defined"
-
-    assert test_hooks_inheritance.get_hooks(AIPerfHook.ON_CLEANUP) == [
-        test_hooks_inheritance.on_cleanup_1,
-        test_hooks_inheritance.on_cleanup_2,
-    ], "Cleanup hooks should be registered in the order they are defined"
-
-    assert test_hooks_inheritance.get_hooks(AIPerfHook.ON_START) == [
-        test_hooks_inheritance.on_start_1
-    ], "Start hook should be registered"
+    assert [
+        hook.func for hook in test_hooks_inheritance.get_hooks(AIPerfHook.ON_STOP)
+    ] == [
+        test_hooks_inheritance.on_stop_1,
+        test_hooks_inheritance.on_stop_2,
+    ], "Stop hooks should be registered in the order they are defined"
+    assert [
+        hook.func for hook in test_hooks_inheritance.get_hooks(AIPerfHook.ON_START)
+    ] == [test_hooks_inheritance.on_start_1], "Start hook should be registered"
 
 
 @pytest.mark.asyncio
@@ -121,16 +124,16 @@ async def test_run_hooks_init():
 
 
 @pytest.mark.asyncio
-async def test_run_hooks_cleanup():
+async def test_run_stop_hooks():
     test_hooks = MockHooksInheritance()
 
-    await test_hooks.cleanup()
+    await test_hooks.stop()
 
-    assert test_hooks.on_cleanup_1 in test_hooks.called_hooks, (
-        "Cleanup hook 1 should be called"
+    assert test_hooks.on_stop_1 in test_hooks.called_hooks, (
+        "Stop hook 1 should be called"
     )
-    assert test_hooks.on_cleanup_2 in test_hooks.called_hooks, (
-        "Cleanup hook 2 should be called"
+    assert test_hooks.on_stop_2 in test_hooks.called_hooks, (
+        "Stop hook 2 should be called"
     )
     assert test_hooks.on_init_1 not in test_hooks.called_hooks, (
         "Init hook 1 should not be called"
@@ -149,8 +152,8 @@ async def test_inherited_run_hooks_start():
     assert test_hooks.on_init_1 not in test_hooks.called_hooks, (
         "Init hook should not be called"
     )
-    assert test_hooks.on_cleanup_1 not in test_hooks.called_hooks, (
-        "Cleanup hook should not be called"
+    assert test_hooks.on_stop_1 not in test_hooks.called_hooks, (
+        "Stop hook should not be called"
     )
 
 
@@ -159,7 +162,7 @@ def test_unsupported_hook_decorator():
     that does not support it.
     """
 
-    @supports_hooks(AIPerfHook.ON_CLEANUP)
+    @provides_hooks(AIPerfHook.ON_STOP)
     class TestHooksUnsupported(MockHooks):
         @on_start
         async def _on_start_1(self):
@@ -167,72 +170,6 @@ def test_unsupported_hook_decorator():
 
     with pytest.raises(UnsupportedHookError):
         TestHooksUnsupported()  # this should raise an UnsupportedHookError
-
-
-@pytest.mark.asyncio
-async def test_instance_additional_hooks():
-    """Test that additional hooks can be added to a class that supports hooks."""
-    test_hooks = MockHooksInheritance()
-
-    async def custom_start_hook():
-        test_hooks.add_called_hook(custom_start_hook)
-
-    test_hooks.register_hook(AIPerfHook.ON_START, custom_start_hook)
-
-    assert test_hooks.get_hooks(AIPerfHook.ON_START) == [
-        test_hooks.on_start_1,
-        custom_start_hook,
-    ]
-
-    await test_hooks.start()
-
-    assert custom_start_hook in test_hooks.called_hooks, (
-        "Custom start hook should be called"
-    )
-    assert test_hooks.on_start_1 in test_hooks.called_hooks, (
-        "Base start hook should be called"
-    )
-
-
-@pytest.mark.asyncio
-async def test_instance_additional_supported_hooks():
-    """Test that additional hook types can be supported by a class"""
-    test_hooks = MockHooks()
-
-    async def custom_stop_hook():
-        test_hooks.add_called_hook(custom_stop_hook)
-
-    # this should raise an UnsupportedHookError because the hook type is not supported
-    with pytest.raises(UnsupportedHookError):
-        test_hooks.register_hook(AIPerfHook.ON_STOP, custom_stop_hook)
-
-    # Now we add the hook type to the supported hooks
-    test_hooks.supported_hooks.add(AIPerfHook.ON_STOP)
-
-    # Now we can register the hook and it will not raise an UnsupportedHookError
-    test_hooks.register_hook(AIPerfHook.ON_STOP, custom_stop_hook)
-
-    # Expect the hook to be in the list of hooks
-    assert test_hooks.get_hooks(AIPerfHook.ON_STOP) == [custom_stop_hook]
-
-    async def custom_init_hook():
-        test_hooks.called_hooks.add(custom_init_hook)
-        # Hack to allow the hook to run the newly added ON_STOP hook
-        await test_hooks.run_hooks_async(AIPerfHook.ON_STOP)
-
-    test_hooks.register_hook(
-        AIPerfHook.ON_INIT, custom_init_hook
-    )  # this should not raise an UnsupportedHookError
-
-    await test_hooks.initialize()
-
-    # Expect the custom init and stop hooks to have been called
-    assert custom_init_hook in test_hooks.called_hooks, (
-        "Custom init hook should be called"
-    )
-    assert custom_stop_hook in test_hooks.called_hooks, (
-        "Custom stop hook should be called"
-    )
 
 
 @pytest.mark.asyncio
@@ -285,7 +222,7 @@ async def test_inheritance_hook_override():
 def test_hook_ordering():
     """Test that the hook ordering is correct."""
 
-    @supports_hooks(AIPerfHook.ON_INIT)
+    @provides_hooks(AIPerfHook.ON_INIT)
     class Hooks(HooksMixin):
         @on_init
         async def on_init_2(self):
@@ -302,7 +239,7 @@ def test_hook_ordering():
     hooks = Hooks()
 
     # Ensure the hooks are added in the order they are defined
-    assert hooks.get_hooks(AIPerfHook.ON_INIT) == [
+    assert [hook.func for hook in hooks.get_hooks(AIPerfHook.ON_INIT)] == [
         hooks.on_init_2,
         hooks.on_init_3,
         hooks.on_init_1,
@@ -310,17 +247,41 @@ def test_hook_ordering():
 
     class Hooks2(Hooks):
         @on_init
-        async def on_init_0(self):
+        async def on_init_99(self):
             pass
 
     hooks2 = Hooks2()
 
     # Ensure that base hooks are registered before the subclass hooks
-    assert hooks2.get_hooks(AIPerfHook.ON_INIT) == [
+    assert [hook.func for hook in hooks2.get_hooks(AIPerfHook.ON_INIT)] == [
         # Base hooks
         hooks2.on_init_2,
         hooks2.on_init_3,
         hooks2.on_init_1,
         # Subclass hooks
-        hooks2.on_init_0,
+        hooks2.on_init_99,
     ], "Base hooks should be registered before subclass hooks"
+
+
+@pytest.mark.asyncio
+async def test_hook_overridden_methods_still_callable():
+    """Test that overridden methods are still callable."""
+
+    @provides_hooks(AIPerfHook.ON_INIT)
+    class Hooks1(MockHookProvider):
+        @on_init
+        async def on_init_1(self):
+            self.add_called_hook("Hooks1.on_init_1")
+
+    class Hooks2(Hooks1):
+        @on_init
+        async def on_init_1(self):
+            self.add_called_hook("Hooks2.on_init_1")
+
+    hooks2 = Hooks2()
+    await hooks2.initialize()
+
+    assert hooks2.called_hooks == {
+        "Hooks1.on_init_1",
+        "Hooks2.on_init_1",
+    }, "Base class hooks should still be called even if overridden"
