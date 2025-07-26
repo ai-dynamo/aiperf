@@ -5,11 +5,13 @@ import inspect
 from collections.abc import Callable, Coroutine
 
 from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
-from aiperf.common.types import TaskManagerProtocolT
+from aiperf.common.protocols import TaskManagerProtocol
 from aiperf.common.utils import yield_to_event_loop
 
 
+@implements_protocol(TaskManagerProtocol)
 class TaskManagerMixin(AIPerfLoggerMixin):
     """Mixin to manage a set of async tasks, and provide background task loop capabilities.
     Can be used standalone, but it is most useful as part of the :class:`AIPerfLifecycleMixin`
@@ -58,7 +60,7 @@ class TaskManagerMixin(AIPerfLoggerMixin):
     def start_background_task(
         self,
         method: Callable,
-        interval: float | Callable[[TaskManagerProtocolT], float] | None = None,
+        interval: float | Callable[[TaskManagerProtocol], float] | None = None,
         immediate: bool = False,
         stop_on_error: bool = False,
         stop_event: asyncio.Event | None = None,
@@ -73,7 +75,7 @@ class TaskManagerMixin(AIPerfLoggerMixin):
     async def _background_task_loop(
         self,
         method: Callable,
-        interval: float | Callable[[TaskManagerProtocolT], float] | None = None,
+        interval: float | Callable[[TaskManagerProtocol], float] | None = None,
         immediate: bool = False,
         stop_on_error: bool = False,
         stop_event: asyncio.Event | None = None,

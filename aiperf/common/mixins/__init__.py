@@ -14,9 +14,6 @@ from aiperf.common.mixins.aiperf_lifecycle_mixin import (
 from aiperf.common.mixins.aiperf_logger_mixin import (
     AIPerfLoggerMixin,
 )
-from aiperf.common.mixins.aiperf_task_mixin import (
-    AIPerfTaskMixin,
-)
 from aiperf.common.mixins.base_mixin import (
     BaseMixin,
 )
@@ -42,7 +39,6 @@ from aiperf.common.mixins.task_manager_mixin import (
 __all__ = [
     "AIPerfLifecycleMixin",
     "AIPerfLoggerMixin",
-    "AIPerfTaskMixin",
     "BaseMixin",
     "CommunicationMixin",
     "HooksMixin",
