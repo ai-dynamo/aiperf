@@ -4,17 +4,10 @@ import asyncio
 import random
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import (
-    CommAddress,
-    ComposerType,
-    MessageType,
-    ServiceType,
-)
+from aiperf.common.decorators import implements_protocol
+from aiperf.common.enums import CommAddress, ComposerType, MessageType, ServiceType
 from aiperf.common.factories import ComposerFactory, ServiceFactory
-from aiperf.common.hooks import (
-    on_init,
-    request_handler,
-)
+from aiperf.common.hooks import on_init, on_request
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
@@ -24,14 +17,16 @@ from aiperf.common.messages import (
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
-from aiperf.common.mixins.reply_client_mixin import ReplyClientMixin
+from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import Conversation
+from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.base_component_service import BaseComponentService
 
 DATASET_CONFIGURATION_TIMEOUT = 30.0
 
 
+@implements_protocol(ServiceProtocol)
 @ServiceFactory.register(ServiceType.DATASET_MANAGER)
 class DatasetManager(ReplyClientMixin, BaseComponentService):
     """
@@ -102,13 +97,13 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.dataset = {conv.session_id: conv for conv in conversations}
 
         self.dataset_configured.set()
-        await self.pub_client.publish(
+        await self.publish(
             DatasetConfiguredNotification(
                 service_id=self.service_id,
             ),
         )
 
-    @request_handler(MessageType.CONVERSATION_REQUEST)
+    @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(
         self, message: ConversationRequestMessage
     ) -> ConversationResponseMessage:
@@ -171,7 +166,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             conversation=conversation,
         )
 
-    @request_handler(MessageType.CONVERSATION_TURN_REQUEST)
+    @on_request(MessageType.CONVERSATION_TURN_REQUEST)
     async def _handle_conversation_turn_request(
         self, message: ConversationTurnRequestMessage
     ) -> ConversationTurnResponseMessage:
@@ -198,7 +193,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             turn=turn,
         )
 
-    @request_handler(MessageType.DATASET_TIMING_REQUEST)
+    @on_request(MessageType.DATASET_TIMING_REQUEST)
     async def _handle_dataset_timing_request(
         self, message: DatasetTimingRequest
     ) -> DatasetTimingResponse:
