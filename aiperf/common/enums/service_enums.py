@@ -16,45 +16,17 @@ class ServiceRunType(CaseInsensitiveStrEnum):
     This is the default way for multi-node deployments."""
 
 
-class ServiceState(CaseInsensitiveStrEnum):
-    """States a service can be in throughout its lifecycle."""
+class LifecycleState(CaseInsensitiveStrEnum):
+    """This is the various states a lifecycle can be in."""
 
-    UNKNOWN = "unknown"
-    """The service is in an unknown state."""
-
+    CREATED = "created"
     INITIALIZING = "initializing"
-    """The service is currently initializing. This is a temporary state that should be
-    followed by PENDING."""
-
-    PENDING = "pending"
-    """The service is pending configuration."""
-
-    CONFIGURING = "configuring"
-    """The service is currently configuring. This is a temporary state that should be
-    followed by READY."""
-
-    READY = "ready"
-    """The service has been configured and is ready to be started."""
-
+    INITIALIZED = "initialized"
     STARTING = "starting"
-    """The service is starting. This is a temporary state that should be followed
-    by RUNNING."""
-
     RUNNING = "running"
-    """The service is running."""
-
     STOPPING = "stopping"
-    """The service is stopping. This is a temporary state that should be followed
-    by STOPPED."""
-
     STOPPED = "stopped"
-    """The service has been stopped."""
-
-    SHUTDOWN = "shutdown"
-    """The service has been shutdown."""
-
-    ERROR = "error"
-    """The service is currently in an error state."""
+    FAILED = "failed"
 
 
 class ServiceType(CaseInsensitiveStrEnum):

@@ -63,9 +63,9 @@ from aiperf.common.enums.post_processor_enums import (
     StreamingPostProcessorType,
 )
 from aiperf.common.enums.service_enums import (
+    LifecycleState,
     ServiceRegistrationStatus,
     ServiceRunType,
-    ServiceState,
     ServiceType,
 )
 from aiperf.common.enums.sse_enums import (
@@ -98,6 +98,7 @@ __all__ = [
     "DataExporterType",
     "EndpointType",
     "ImageFormat",
+    "LifecycleState",
     "MeasurementMode",
     "MessageType",
     "MetricTag",
@@ -114,7 +115,6 @@ __all__ = [
     "SSEFieldType",
     "ServiceRegistrationStatus",
     "ServiceRunType",
-    "ServiceState",
     "ServiceType",
     "StreamingPostProcessorType",
     "SystemState",
