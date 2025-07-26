@@ -11,14 +11,8 @@ __ignore__ = ["main"]
 from aiperf.services.base_component_service import (
     BaseComponentService,
 )
-from aiperf.services.base_controller_service import (
-    BaseControllerService,
-)
 from aiperf.services.base_service import (
     BaseService,
-)
-from aiperf.services.base_service_interface import (
-    BaseServiceInterface,
 )
 from aiperf.services.dataset import (
     DATASET_CONFIGURATION_TIMEOUT,
@@ -116,12 +110,10 @@ from aiperf.services.workers import (
 __all__ = [
     "AudioGenerator",
     "BaseComponentService",
-    "BaseControllerService",
     "BaseDatasetComposer",
     "BaseGenerator",
     "BaseMetric",
     "BaseService",
-    "BaseServiceInterface",
     "BaseServiceManager",
     "BaseStreamingPostProcessor",
     "BasicMetricsStreamer",
