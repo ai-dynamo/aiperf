@@ -4,14 +4,12 @@
 import asyncio
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import (
-    CommandType,
-    LifecycleState,
-)
+from aiperf.common.decorators import implements_protocol
+from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.hooks import (
     background_task,
-    command_handler,
-    on_init,
+    on_command,
+    on_start,
     on_state_change,
 )
 from aiperf.common.messages import (
@@ -20,9 +18,11 @@ from aiperf.common.messages import (
     RegistrationMessage,
     StatusMessage,
 )
+from aiperf.common.protocols import ServiceProtocol
 from aiperf.services.base_service import BaseService
 
 
+@implements_protocol(ServiceProtocol)
 class BaseComponentService(BaseService):
     """Base class for all Component services.
 
@@ -53,18 +53,15 @@ class BaseComponentService(BaseService):
     )
     async def _heartbeat_task(self) -> None:
         """Send a heartbeat notification to the system controller."""
-        try:
-            await self.pub_client.publish(
-                HeartbeatMessage(
-                    service_id=self.service_id,
-                    service_type=self.service_type,
-                    state=self.state,
-                )
+        await self.publish(
+            HeartbeatMessage(
+                service_id=self.service_id,
+                service_type=self.service_type,
+                state=self.state,
             )
-        except Exception as e:
-            raise self._service_error("Failed to send heartbeat") from e
+        )
 
-    @on_init
+    @on_start
     async def _register_service(self) -> None:
         """Publish a registration request to the system controller.
 
@@ -74,16 +71,13 @@ class BaseComponentService(BaseService):
         self.debug(
             lambda: f"Attempting to register service {self} ({self.service_id}) with system controller"
         )
-        try:
-            await self.pub_client.publish(
-                RegistrationMessage(
-                    service_id=self.service_id,
-                    service_type=self.service_type,
-                    state=self.state,
-                )
+        await self.publish(
+            RegistrationMessage(
+                service_id=self.service_id,
+                service_type=self.service_type,
+                state=self.state,
             )
-        except Exception as e:
-            raise self._service_error("Failed to register service") from e
+        )
 
     @on_state_change
     async def _on_state_change(
@@ -96,17 +90,17 @@ class BaseComponentService(BaseService):
         """
         if self.stop_requested:
             return
-        self.execute_async(
-            self.pub_client.publish(
-                StatusMessage(
-                    service_id=self.service_id,
-                    state=new_state,
-                    service_type=self.service_type,
-                )
+        if not self.comms.was_initialized:
+            return
+        await self.publish(
+            StatusMessage(
+                service_id=self.service_id,
+                service_type=self.service_type,
+                state=new_state,
             )
         )
 
-    @command_handler(CommandType.SHUTDOWN)
+    @on_command(CommandType.SHUTDOWN)
     async def _on_shutdown_command(self, message: CommandMessage) -> None:
         self.debug(f"Received shutdown command: {message}, {self.service_id}")
         try:
