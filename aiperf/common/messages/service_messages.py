@@ -9,16 +9,13 @@ from pydantic import (
 )
 
 from aiperf.common.enums import (
+    LifecycleState,
     MessageType,
     NotificationType,
-    ServiceState,
-    ServiceType,
 )
 from aiperf.common.messages.base_messages import Message
-from aiperf.common.models import (
-    ErrorDetails,
-)
-from aiperf.common.types import MessageTypeT
+from aiperf.common.models.error_models import ErrorDetails
+from aiperf.common.types import MessageTypeT, ServiceTypeT
 
 
 class BaseServiceMessage(Message):
@@ -41,11 +38,11 @@ class BaseStatusMessage(BaseServiceMessage):
         default=time.time_ns(),
         description="Timestamp of the request",
     )
-    state: ServiceState = Field(
+    state: LifecycleState = Field(
         ...,
         description="Current state of the service",
     )
-    service_type: ServiceType = Field(
+    service_type: ServiceTypeT = Field(
         ...,
         description="Type of service",
     )
@@ -65,8 +62,6 @@ class RegistrationMessage(BaseStatusMessage):
     """
 
     message_type: MessageTypeT = MessageType.REGISTRATION
-
-    state: ServiceState = ServiceState.READY
 
 
 class HeartbeatMessage(BaseStatusMessage):

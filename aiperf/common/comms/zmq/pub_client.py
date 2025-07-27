@@ -7,12 +7,12 @@ import zmq.asyncio
 
 from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.enums import CommunicationClientType
+from aiperf.common.enums import CommClientType
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.messages import Message
 
 
-@CommunicationClientFactory.register(CommunicationClientType.PUB)
+@CommunicationClientFactory.register(CommClientType.PUB)
 class ZMQPubClient(BaseZMQClient):
     """
     The PUB socket broadcasts messages to all connected SUB sockets that have

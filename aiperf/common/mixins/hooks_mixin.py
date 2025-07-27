@@ -1,17 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import os
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from aiperf.common import aiperf_logger
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.exceptions import AIPerfMultiError, UnsupportedHookError
-from aiperf.common.hooks import (
-    Hook,
-    HookAttrs,
-    HookType,
-    implements_protocol,
-)
+from aiperf.common.hooks import Hook, HookAttrs, HookType
 from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
 from aiperf.common.protocols import HooksProtocol
+from aiperf.common.types import AnyT
 
 
 @implements_protocol(HooksProtocol)
@@ -83,7 +82,7 @@ class HooksMixin(AIPerfLoggerMixin):
             lambda: f"Provided hook types: {self._provided_hook_types} for {self.__class__.__name__}"
         )
 
-    def get_hooks(self, *hook_types: HookType, reversed: bool = False) -> list[Hook]:
+    def get_hooks(self, *hook_types: HookType, reverse: bool = False) -> list[Hook]:
         """Get the hooks that are defined by the class for the given hook type(s), optionally reversed.
         This will return a list of Hook objects that can be inspected for their type and parameters,
         and optionally called."""
@@ -93,25 +92,63 @@ class HooksMixin(AIPerfLoggerMixin):
             if not hook_types or hook_type in hook_types
             for hook in hooks
         ]
-        if reversed:
+        if reverse:
             hooks.reverse()
         return hooks
 
+    def for_each_hook_param(
+        self,
+        *hook_types: HookType,
+        self_obj: Any,
+        param_type: AnyT,
+        lambda_func: Callable[[Hook, AnyT], None],
+        reverse: bool = False,
+    ) -> None:
+        """Iterate over the hooks for the given hook type(s), optionally reversed.
+        If a lambda_func is provided, it will be called for each parameter of the hook,
+        and the hook and parameter will be passed as arguments.
+
+        Args:
+            hook_types: The hook types to iterate over.
+            self_obj: The object to pass to the lambda_func.
+            param_type: The type of the parameter to pass to the lambda_func (for validation).
+            lambda_func: The function to call for each hook.
+            reverse: Whether to iterate over the hooks in reverse order.
+        """
+        for hook in self.get_hooks(*hook_types, reverse=reverse):
+            # in case the hook params are a callable, we need to resolve them to get the actual params
+            params = hook.resolve_params(self_obj)
+            if not isinstance(params, Iterable):
+                raise ValueError(
+                    f"Invalid hook params: {params}. Expected Iterable but got {type(params)}"
+                )
+            for param in params:
+                self.trace(
+                    lambda param=param,
+                    type=param_type: f"param: {param}, param_type: {type}"
+                )
+                if not isinstance(param, param_type):
+                    raise ValueError(
+                        f"Invalid hook param: {param}. Expected {param_type} but got {type(param)}"
+                    )
+                # Call the lambda_func for each parameter of each hook.
+                lambda_func(hook, param)
+
     async def run_hooks(
-        self, *hook_types: HookType, reversed: bool = False, **kwargs
+        self, *hook_types: HookType, reverse: bool = False, **kwargs
     ) -> None:
         """Run the hooks for the given hook type, waiting for each hook to complete before running the next one.
         Hooks are run in the order they are defined by the class, starting with hooks defined in the lowest level
         of base classes, moving up to the top level class. If more than one hook type is provided, the hooks
         from each level of classes will be run in the order of the hook types provided.
 
-        If reversed is True, the hooks will be run in reverse order. This is useful for stop/cleanup hooks, where you
+        If reverse is True, the hooks will be run in reverse order. This is useful for stop/cleanup hooks, where you
         want to start with the children and ending with the parent.
 
         The kwargs are passed through as keyword arguments to each hook.
         """
         exceptions: list[Exception] = []
-        for hook in self.get_hooks(*hook_types, reversed=reversed):
+        for hook in self.get_hooks(*hook_types, reverse=reverse):
             self.debug(lambda hook=hook: f"Running hook: {hook!r}")
             try:
                 await hook(**kwargs)

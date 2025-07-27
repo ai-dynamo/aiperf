@@ -5,7 +5,7 @@ from typing import Generic, Protocol, runtime_checkable
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import EndpointType
-from aiperf.common.factories import FactoryMixin
+from aiperf.common.factories import AIPerfFactory
 from aiperf.common.models import RequestRecord, ResponseData, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import RequestInputT, RequestOutputT
@@ -53,7 +53,7 @@ class InferenceClientProtocol(Protocol, Generic[RequestInputT]):
         ...
 
 
-class InferenceClientFactory(FactoryMixin[EndpointType, InferenceClientProtocol]):
+class InferenceClientFactory(AIPerfFactory[EndpointType, InferenceClientProtocol]):
     """Factory for registering and creating InferenceClientProtocol instances based on the specified endpoint type.
     see: :class:`FactoryMixin` for more details.
     """
@@ -75,7 +75,7 @@ class RequestConverterProtocol(Protocol, Generic[RequestOutputT]):
         ...
 
 
-class RequestConverterFactory(FactoryMixin[EndpointType, RequestConverterProtocol]):
+class RequestConverterFactory(AIPerfFactory[EndpointType, RequestConverterProtocol]):
     """Factory for registering and creating RequestConverterProtocol instances based on the specified request payload type.
     see: :class:`FactoryMixin` for more details.
     """
@@ -98,7 +98,7 @@ class ResponseExtractorProtocol(Protocol):
         ...
 
 
-class ResponseExtractorFactory(FactoryMixin[EndpointType, ResponseExtractorProtocol]):
+class ResponseExtractorFactory(AIPerfFactory[EndpointType, ResponseExtractorProtocol]):
     """Factory for registering and creating ResponseExtractorProtocol instances based on the specified response extractor type.
     see: :class:`FactoryMixin` for more details.
     """

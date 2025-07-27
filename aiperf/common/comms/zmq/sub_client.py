@@ -9,7 +9,7 @@ import zmq.asyncio
 
 from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.enums import CommunicationClientType
+from aiperf.common.enums import CommClientType
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
@@ -18,7 +18,7 @@ from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import call_all_functions, yield_to_event_loop
 
 
-@CommunicationClientFactory.register(CommunicationClientType.SUB)
+@CommunicationClientFactory.register(CommClientType.SUB)
 class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
     """
     ZMQ SUB socket client for subscribing to messages from PUB sockets.

@@ -8,7 +8,7 @@ import zmq.asyncio
 
 from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.enums import CommunicationClientType
+from aiperf.common.enums import CommClientType
 from aiperf.common.hooks import aiperf_task, on_cleanup, on_stop
 from aiperf.common.messages import ErrorMessage, Message
 from aiperf.common.mixins import AsyncTaskManagerMixin
@@ -17,7 +17,7 @@ from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 
 
-@CommunicationClientFactory.register(CommunicationClientType.REPLY)
+@CommunicationClientFactory.register(CommClientType.REPLY)
 class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
     """
     ZMQ ROUTER socket client for handling requests from DEALER clients.

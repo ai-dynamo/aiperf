@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import ServiceType
+from aiperf.common.types import ServiceTypeT
 
 
 class AIPerfError(Exception):
@@ -33,7 +33,7 @@ class ServiceError(AIPerfError):
     def __init__(
         self,
         message: str,
-        service_type: ServiceType,
+        service_type: ServiceTypeT,
         service_id: str,
     ) -> None:
         super().__init__(
@@ -43,32 +43,12 @@ class ServiceError(AIPerfError):
         self.service_id = service_id
 
 
-class InitializationError(AIPerfError):
-    """Exception raised when something fails to initialize."""
+class CommunicationError(AIPerfError):
+    """Generic communication error."""
 
 
 class ConfigurationError(AIPerfError):
     """Exception raised when something fails to configure, or there is a configuration error."""
-
-
-class NotInitializedError(AIPerfError):
-    """Exception raised when something that should be initialized is not."""
-
-
-class InvalidStateError(AIPerfError):
-    """Exception raised when something is in an invalid state."""
-
-
-class ValidationError(AIPerfError):
-    """Exception raised when something fails validation."""
-
-
-class NotFoundError(AIPerfError):
-    """Exception raised when something is not found or not available."""
-
-
-class CommunicationError(AIPerfError):
-    """Generic communication error."""
 
 
 class DatasetError(AIPerfError):
@@ -79,29 +59,53 @@ class DatasetGeneratorError(AIPerfError):
     """Generic dataset generator error."""
 
 
+class FactoryCreationError(AIPerfError):
+    """Exception raised when a factory encounters an error while creating a class."""
+
+
+class InitializationError(AIPerfError):
+    """Exception raised when something fails to initialize."""
+
+
 class InferenceClientError(AIPerfError):
     """Exception raised when a inference client encounters an error."""
+
+
+class InvalidOperationError(AIPerfError):
+    """Exception raised when an operation is invalid."""
 
 
 class InvalidPayloadError(InferenceClientError):
     """Exception raised when a inference client receives an invalid payload."""
 
 
-class UnsupportedHookError(AIPerfError):
-    """Exception raised when a hook is defined on a class that does not support it."""
-
-
-class FactoryCreationError(AIPerfError):
-    """Exception raised when a factory encounters an error while creating a class."""
+class InvalidStateError(AIPerfError):
+    """Exception raised when something is in an invalid state."""
 
 
 class MetricTypeError(AIPerfError):
     """Exception raised when a metric type encounters an error while creating a class."""
 
 
-class ShutdownError(AIPerfError):
-    """Exception raised when a service encounters an error while shutting down."""
+class NotFoundError(AIPerfError):
+    """Exception raised when something is not found or not available."""
+
+
+class NotInitializedError(AIPerfError):
+    """Exception raised when something that should be initialized is not."""
 
 
 class ProxyError(AIPerfError):
     """Exception raised when a proxy encounters an error."""
+
+
+class ShutdownError(AIPerfError):
+    """Exception raised when a service encounters an error while shutting down."""
+
+
+class UnsupportedHookError(AIPerfError):
+    """Exception raised when a hook is defined on a class that does not have any base classes that provide that hook type."""
+
+
+class ValidationError(AIPerfError):
+    """Exception raised when something fails validation."""

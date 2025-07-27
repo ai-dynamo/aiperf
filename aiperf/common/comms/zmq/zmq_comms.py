@@ -20,8 +20,8 @@ from aiperf.common.config import BaseZMQCommunicationConfig
 from aiperf.common.config.zmq_config import ZMQIPCConfig, ZMQTCPConfig
 from aiperf.common.enums import (
     CommAddress,
+    CommClientType,
     CommunicationBackend,
-    CommunicationClientType,
 )
 from aiperf.common.exceptions import ShutdownError
 from aiperf.common.mixins import AIPerfLoggerMixin
@@ -125,7 +125,7 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
 
     def create_client(
         self,
-        client_type: CommunicationClientType,
+        client_type: CommClientType,
         address: CommAddress | str,
         bind: bool = False,
         socket_ops: dict | None = None,
