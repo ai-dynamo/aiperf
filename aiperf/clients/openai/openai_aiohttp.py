@@ -22,6 +22,7 @@ from aiperf.common.models import (
 @InferenceClientFactory.register_all(
     EndpointType.OPENAI_CHAT_COMPLETIONS,
     EndpointType.OPENAI_COMPLETIONS,
+    EndpointType.OPENAI_EMBEDDINGS,
     EndpointType.OPENAI_RESPONSES,
 )
 class OpenAIClientAioHttp(AioHttpClientMixin, ABC):
