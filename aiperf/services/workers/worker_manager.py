@@ -8,7 +8,6 @@ from pydantic import ConfigDict, Field
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import MessageType, ServiceType
-from aiperf.common.enums.command_enums import CommandType
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_init,
@@ -19,9 +18,8 @@ from aiperf.common.messages import (
     WorkerHealthMessage,
 )
 from aiperf.common.messages.command_messages import (
-    CommandMessage,
-    ShutdownWorkersCommandData,
-    SpawnWorkersCommandData,
+    ShutdownWorkersCommand,
+    SpawnWorkersCommand,
 )
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.services.base_component_service import BaseComponentService
@@ -91,13 +89,9 @@ class WorkerManager(BaseComponentService):
         self.debug("WorkerManager initializing")
 
         await self.publish(
-            CommandMessage(
+            SpawnWorkersCommand(
                 service_id=self.service_id,
-                target_service_type=ServiceType.SYSTEM_CONTROLLER,
-                command=CommandType.SPAWN_WORKERS,
-                data=SpawnWorkersCommandData(
-                    num_workers=self.initial_workers,
-                ),
+                num_workers=self.initial_workers,
             )
         )
 
@@ -106,13 +100,9 @@ class WorkerManager(BaseComponentService):
         self.debug("WorkerManager stopping")
 
         await self.publish(
-            CommandMessage(
+            ShutdownWorkersCommand(
                 service_id=self.service_id,
-                target_service_type=ServiceType.SYSTEM_CONTROLLER,
-                command=CommandType.SHUTDOWN_WORKERS,
-                data=ShutdownWorkersCommandData(
-                    num_workers=len(self.workers),
-                ),
+                all_workers=True,
             )
         )
 

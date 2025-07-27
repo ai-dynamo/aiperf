@@ -5,15 +5,18 @@ from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
 class CommandType(CaseInsensitiveStrEnum):
-    SHUTDOWN = "shutdown"
+    DISCOVER_SERVICES = "discover_services"
     PROCESS_RECORDS = "process_records"
-    CONFIGURE_PROFILING = "configure_profiling"
-    START_PROFILING = "start_profiling"
-    SPAWN_WORKERS = "spawn_workers"
+    PROFILE_CANCEL = "profile_cancel"
+    PROFILE_CONFIGURE = "profile_configure"
+    PROFILE_START = "profile_start"
+    SHUTDOWN = "shutdown"
     SHUTDOWN_WORKERS = "shutdown_workers"
+    SPAWN_WORKERS = "spawn_workers"
 
 
 class CommandResponseStatus(CaseInsensitiveStrEnum):
     ACKNOWLEDGED = "acknowledged"
-    SUCCESS = "success"
     FAILURE = "failure"
+    SUCCESS = "success"
+    UNHANDLED = "unhandled"  # The command was received but not handled by any hook

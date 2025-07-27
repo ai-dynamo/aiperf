@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from enum import Enum
-from typing import Any
 
 
 class CaseInsensitiveStrEnum(str, Enum):
@@ -16,9 +15,11 @@ class CaseInsensitiveStrEnum(str, Enum):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}.{self.name}"
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: str | Enum) -> bool:
         if isinstance(other, str):
             return self.value.lower() == other.lower()
+        if isinstance(other, Enum):
+            return self.value.lower() == other.value.lower()
         return super().__eq__(other)
 
     def __hash__(self) -> int:
