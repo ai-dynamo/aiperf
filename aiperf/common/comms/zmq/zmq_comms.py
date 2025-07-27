@@ -19,8 +19,8 @@ from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.config import BaseZMQCommunicationConfig
 from aiperf.common.config.zmq_config import ZMQIPCConfig, ZMQTCPConfig
 from aiperf.common.enums import (
+    CommAddress,
     CommunicationBackend,
-    CommunicationClientAddressType,
     CommunicationClientType,
 )
 from aiperf.common.exceptions import ShutdownError
@@ -58,9 +58,9 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
         """Check if the communication channels are being shutdown."""
         return self.stop_event.is_set()
 
-    def get_address(self, address_type: CommunicationClientAddressType | str) -> str:
+    def get_address(self, address_type: CommAddress | str) -> str:
         """Get the actual address based on the address type from the config."""
-        if isinstance(address_type, CommunicationClientAddressType):
+        if isinstance(address_type, CommAddress):
             return self.config.get_address(address_type)
         return address_type
 
@@ -126,7 +126,7 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
     def create_client(
         self,
         client_type: CommunicationClientType,
-        address: CommunicationClientAddressType | str,
+        address: CommAddress | str,
         bind: bool = False,
         socket_ops: dict | None = None,
     ) -> CommunicationClientProtocol:

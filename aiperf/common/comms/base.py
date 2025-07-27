@@ -6,8 +6,8 @@ from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from aiperf.common.constants import DEFAULT_COMMS_REQUEST_TIMEOUT
 from aiperf.common.enums import (
+    CommAddress,
     CommunicationBackend,
-    CommunicationClientAddressType,
     CommunicationClientType,
 )
 from aiperf.common.factories import FactoryMixin
@@ -209,7 +209,7 @@ def _create_specific_client(
 ) -> Callable[
     [
         "BaseCommunication",
-        CommunicationClientAddressType | str,
+        CommAddress | str,
         bool,
         dict | None,
     ],
@@ -217,7 +217,7 @@ def _create_specific_client(
 ]:
     def _create_client(
         self: "BaseCommunication",
-        address: CommunicationClientAddressType | str,
+        address: CommAddress | str,
         bind: bool = False,
         socket_ops: dict | None = None,
     ) -> ClientProtocolT:
@@ -260,7 +260,7 @@ class BaseCommunication(ABC):
         """Gracefully shutdown communication channels."""
 
     @abstractmethod
-    def get_address(self, address_type: CommunicationClientAddressType | str) -> str:
+    def get_address(self, address_type: CommAddress | str) -> str:
         """Get the address for a given address type.
 
         Args:
@@ -274,7 +274,7 @@ class BaseCommunication(ABC):
     def create_client(
         self,
         client_type: CommunicationClientType,
-        address: CommunicationClientAddressType | str,
+        address: CommAddress | str,
         bind: bool = False,
         socket_ops: dict | None = None,
     ) -> CommunicationClientProtocol:

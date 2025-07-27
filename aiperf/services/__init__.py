@@ -11,14 +11,8 @@ __ignore__ = ["main"]
 from aiperf.services.base_component_service import (
     BaseComponentService,
 )
-from aiperf.services.base_controller_service import (
-    BaseControllerService,
-)
 from aiperf.services.base_service import (
     BaseService,
-)
-from aiperf.services.base_service_interface import (
-    BaseServiceInterface,
 )
 from aiperf.services.dataset import (
     DATASET_CONFIGURATION_TIMEOUT,
@@ -81,14 +75,12 @@ from aiperf.services.records_manager import (
     TTSTMetric,
     record_from_dataframe,
 )
-from aiperf.services.service_manager import (
+from aiperf.services.system_controller import (
     BaseServiceManager,
     KubernetesServiceManager,
     MultiProcessRunInfo,
     MultiProcessServiceManager,
     ServiceKubernetesRunInfo,
-)
-from aiperf.services.system_controller import (
     SignalHandlerMixin,
     SystemController,
 )
@@ -116,12 +108,10 @@ from aiperf.services.workers import (
 __all__ = [
     "AudioGenerator",
     "BaseComponentService",
-    "BaseControllerService",
     "BaseDatasetComposer",
     "BaseGenerator",
     "BaseMetric",
     "BaseService",
-    "BaseServiceInterface",
     "BaseServiceManager",
     "BaseStreamingPostProcessor",
     "BasicMetricsStreamer",
