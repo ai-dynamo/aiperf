@@ -6,16 +6,16 @@ import time
 from pydantic import BaseModel, Field
 
 from aiperf.common.enums import (
+    LifecycleState,
     ServiceRegistrationStatus,
-    ServiceState,
-    ServiceType,
 )
+from aiperf.common.types import ServiceTypeT
 
 
 class ServiceRunInfo(BaseModel):
     """Base model for tracking service run information."""
 
-    service_type: ServiceType = Field(
+    service_type: ServiceTypeT = Field(
         ...,
         description="The type of service",
     )
@@ -35,7 +35,7 @@ class ServiceRunInfo(BaseModel):
         default_factory=time.time_ns,
         description="The last time the service was seen",
     )
-    state: ServiceState = Field(
-        default=ServiceState.UNKNOWN,
+    state: LifecycleState = Field(
+        default=LifecycleState.CREATED,
         description="The current state of the service",
     )

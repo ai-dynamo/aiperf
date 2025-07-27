@@ -5,7 +5,7 @@ import sys
 from typing import Any
 
 from aiperf.common.comms.base import (
-    CommunicationClientAddressType,
+    CommAddress,
     PullClientProtocol,
 )
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -49,7 +49,7 @@ class RecordsManager(BaseComponentService):
 
         self.response_results_client: PullClientProtocol = (
             self.comms.create_pull_client(
-                CommunicationClientAddressType.RECORDS,
+                CommAddress.RECORDS,
                 bind=True,
             )
         )

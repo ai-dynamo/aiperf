@@ -13,7 +13,7 @@ from aiperf.common.comms.base import (
 )
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
-    CommunicationClientAddressType,
+    CommAddress,
     CreditPhase,
     MessageType,
     ServiceType,
@@ -67,22 +67,22 @@ class Worker(BaseComponentService, ProcessHealthMixin, CreditProcessorMixin):
 
         self.credit_drop_pull_client: PullClientProtocol = (
             self.comms.create_pull_client(
-                CommunicationClientAddressType.CREDIT_DROP,
+                CommAddress.CREDIT_DROP,
             )
         )
         self.credit_return_push_client: PushClientProtocol = (
             self.comms.create_push_client(
-                CommunicationClientAddressType.CREDIT_RETURN,
+                CommAddress.CREDIT_RETURN,
             )
         )
         self.inference_results_push_client: PushClientProtocol = (
             self.comms.create_push_client(
-                CommunicationClientAddressType.RAW_INFERENCE_PROXY_FRONTEND,
+                CommAddress.RAW_INFERENCE_PROXY_FRONTEND,
             )
         )
         self.conversation_request_client: RequestClientProtocol = (
             self.comms.create_request_client(
-                CommunicationClientAddressType.DATASET_MANAGER_PROXY_FRONTEND,
+                CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
             )
         )
 

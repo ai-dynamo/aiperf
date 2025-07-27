@@ -5,7 +5,7 @@ import asyncio
 import sys
 
 from aiperf.common.comms.base import (
-    CommunicationClientAddressType,
+    CommAddress,
     PullClientProtocol,
     PushClientProtocol,
     RequestClientProtocol,
@@ -66,18 +66,18 @@ class TimingManager(BaseComponentService, CreditPhaseMessagesMixin):
 
         self.dataset_request_client: RequestClientProtocol = (
             self.comms.create_request_client(
-                CommunicationClientAddressType.DATASET_MANAGER_PROXY_FRONTEND,
+                CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
             )
         )
         self.credit_drop_push_client: PushClientProtocol = (
             self.comms.create_push_client(
-                CommunicationClientAddressType.CREDIT_DROP,
+                CommAddress.CREDIT_DROP,
                 bind=True,
             )
         )
         self.credit_return_pull_client: PullClientProtocol = (
             self.comms.create_pull_client(
-                CommunicationClientAddressType.CREDIT_RETURN,
+                CommAddress.CREDIT_RETURN,
                 bind=True,
             )
         )

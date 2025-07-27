@@ -6,8 +6,16 @@ from pydantic import BaseModel
 
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import ServiceType
-from aiperf.services.service_manager.base import BaseServiceManager
+from aiperf.common.constants import (
+    DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
+    DEFAULT_SERVICE_START_TIMEOUT,
+)
+from aiperf.common.decorators import implements_protocol
+from aiperf.common.enums.service_enums import ServiceRunType
+from aiperf.common.factories import ServiceManagerFactory
+from aiperf.common.protocols import ServiceManagerProtocol
+from aiperf.common.types import ServiceTypeT
+from aiperf.services.system_controller.base_service_manager import BaseServiceManager
 
 
 class ServiceKubernetesRunInfo(BaseModel):
@@ -18,6 +26,8 @@ class ServiceKubernetesRunInfo(BaseModel):
     namespace: str
 
 
+@implements_protocol(ServiceManagerProtocol)
+@ServiceManagerFactory.register(ServiceRunType.KUBERNETES)
 class KubernetesServiceManager(BaseServiceManager):
     """
     Service Manager for starting and stopping services in a Kubernetes cluster.
@@ -25,21 +35,24 @@ class KubernetesServiceManager(BaseServiceManager):
 
     def __init__(
         self,
-        required_services: dict[ServiceType, int],
+        required_services: dict[ServiceTypeT, int],
+        service_config: ServiceConfig,
         user_config: UserConfig,
-        config: ServiceConfig,
+        **kwargs,
     ):
-        super().__init__(required_services, config)
+        super().__init__(required_services, service_config, user_config, **kwargs)
 
-    async def run_all_services(self) -> None:
-        """Initialize all required services as Kubernetes pods."""
-        self.logger.debug("Initializing all required services as Kubernetes pods")
+    async def run_service(
+        self, service_type: ServiceTypeT, num_replicas: int = 1
+    ) -> None:
+        """Run a service as a Kubernetes pod."""
+        self.logger.debug(f"Running service {service_type} as a Kubernetes pod")
         # TODO: Implement Kubernetes
         raise NotImplementedError(
-            "KubernetesServiceManager.initialize_all_services not implemented"
+            "KubernetesServiceManager.run_service not implemented"
         )
 
-    async def shutdown_all_services(self) -> None:
+    async def shutdown_all_services(self) -> list[BaseException | None]:
         """Stop all required services as Kubernetes pods."""
         self.logger.debug("Stopping all required services as Kubernetes pods")
         # TODO: Implement Kubernetes
@@ -47,7 +60,7 @@ class KubernetesServiceManager(BaseServiceManager):
             "KubernetesServiceManager.stop_all_services not implemented"
         )
 
-    async def kill_all_services(self) -> None:
+    async def kill_all_services(self) -> list[BaseException | None]:
         """Kill all required services as Kubernetes pods."""
         self.logger.debug("Killing all required services as Kubernetes pods")
         # TODO: Implement Kubernetes
@@ -56,7 +69,9 @@ class KubernetesServiceManager(BaseServiceManager):
         )
 
     async def wait_for_all_services_registration(
-        self, stop_event: asyncio.Event, timeout_seconds: int = 30
+        self,
+        stop_event: asyncio.Event,
+        timeout_seconds: float = DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     ) -> None:
         """Wait for all required services to be registered in Kubernetes."""
         self.logger.debug(
@@ -67,7 +82,11 @@ class KubernetesServiceManager(BaseServiceManager):
             "KubernetesServiceManager.wait_for_all_services_registration not implemented"
         )
 
-    async def wait_for_all_services_start(self) -> None:
+    async def wait_for_all_services_start(
+        self,
+        stop_event: asyncio.Event,
+        timeout_seconds: float = DEFAULT_SERVICE_START_TIMEOUT,
+    ) -> None:
         """Wait for all required services to be started in Kubernetes."""
         self.logger.debug(
             "Waiting for all required services to be started in Kubernetes"

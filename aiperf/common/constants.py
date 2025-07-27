@@ -15,3 +15,15 @@ TASK_CANCEL_TIMEOUT_LONG = 5.0
 
 DEFAULT_COMMS_REQUEST_TIMEOUT = 10.0
 """Default timeout for requests from req_clients to rep_clients in seconds."""
+
+DEFAULT_PULL_CLIENT_MAX_CONCURRENCY = 100_000
+"""Default maximum concurrency for pull clients."""
+
+DEFAULT_SERVICE_REGISTRATION_TIMEOUT = 5.0
+"""Default timeout for service registration in seconds."""
+
+DEFAULT_SERVICE_START_TIMEOUT = 5.0
+"""Default timeout for service start in seconds."""
+
+DEFAULT_STREAMING_MAX_QUEUE_SIZE = 100_000
+"""Default maximum queue size for streaming post processors."""
