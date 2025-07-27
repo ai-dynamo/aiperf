@@ -20,8 +20,8 @@ from aiperf.common.enums.command_enums import (
     CommandType,
 )
 from aiperf.common.enums.communication_enums import (
+    CommAddress,
     CommunicationBackend,
-    CommunicationClientAddressType,
     CommunicationClientType,
     ZMQProxyType,
 )
@@ -87,10 +87,10 @@ __all__ = [
     "BenchmarkSuiteCompletionTrigger",
     "BenchmarkSuiteType",
     "CaseInsensitiveStrEnum",
+    "CommAddress",
     "CommandResponseStatus",
     "CommandType",
     "CommunicationBackend",
-    "CommunicationClientAddressType",
     "CommunicationClientType",
     "ComposerType",
     "CreditPhase",

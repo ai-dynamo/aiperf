@@ -8,20 +8,29 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from aiperf.common.constants import (
     DEFAULT_COMMS_REQUEST_TIMEOUT,
-    DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
+    DEFAULT_STREAMING_MAX_QUEUE_SIZE,
 )
-from aiperf.common.enums import LifecycleState
+from aiperf.common.enums import (
+    CommClientType,
+    LifecycleState,
+    StreamingPostProcessorType,
+)
 from aiperf.common.hooks import Hook, HookType
-from aiperf.common.messages import Message
-from aiperf.common.models import RequestRecord, ResponseData, Turn
-from aiperf.common.models.service_models import ServiceRunInfo
+from aiperf.common.models import (
+    ParsedResponseRecord,
+    RequestRecord,
+    ResponseData,
+    ServiceRunInfo,
+    Turn,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import (
     CommAddressType,
     MessageCallbackMapT,
     MessageOutputT,
+    MessageT,
     MessageTypeT,
     ModelEndpointInfoT,
     RequestInputT,
@@ -31,6 +40,7 @@ from aiperf.common.types import (
 
 if TYPE_CHECKING:
     from aiperf.common.config import ServiceConfig, UserConfig
+
 
 ################################################################################
 # Core Base Protocols (Cannot be sorted)
@@ -101,7 +111,6 @@ class AIPerfLifecycleProtocol(TaskManagerProtocol, Protocol):
     async def start(self) -> None: ...
     async def initialize_and_start(self) -> None: ...
     async def stop(self) -> None: ...
-    async def kill(self) -> None: ...
 
 
 ################################################################################
@@ -111,28 +120,32 @@ class AIPerfLifecycleProtocol(TaskManagerProtocol, Protocol):
 
 @runtime_checkable
 class CommunicationClientProtocol(AIPerfLifecycleProtocol, Protocol):
-    """Specifically called out differently, as it will be used to register the
-    communication client protocols with the communication client factory."""
+    def __init__(
+        self,
+        address: str,
+        bind: bool,
+        socket_ops: dict | None = None,
+        **kwargs,
+    ) -> None: ...
 
 
 @runtime_checkable
 class PubClientProtocol(CommunicationClientProtocol, Protocol):
-    async def publish(self, message: Message) -> None: ...
+    async def publish(self, message: MessageT) -> None: ...
 
 
 @runtime_checkable
 class PullClientProtocol(CommunicationClientProtocol, Protocol):
-    async def register_pull_callback(
+    def register_pull_callback(
         self,
         message_type: MessageTypeT,
-        callback: Callable[[Message], Coroutine[Any, Any, None]],
-        max_concurrency: int | None = DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
+        callback: Callable[[MessageT], Coroutine[Any, Any, None]],
     ) -> None: ...
 
 
 @runtime_checkable
 class PushClientProtocol(CommunicationClientProtocol, Protocol):
-    async def push(self, message: Message) -> None: ...
+    async def push(self, message: MessageT) -> None: ...
 
 
 @runtime_checkable
@@ -141,7 +154,7 @@ class ReplyClientProtocol(CommunicationClientProtocol, Protocol):
         self,
         service_id: str,
         message_type: MessageTypeT,
-        handler: Callable[[Message], Coroutine[Any, Any, MessageOutputT | None]],
+        handler: Callable[[MessageT], Coroutine[Any, Any, MessageOutputT | None]],
     ) -> None: ...
 
 
@@ -149,13 +162,13 @@ class ReplyClientProtocol(CommunicationClientProtocol, Protocol):
 class RequestClientProtocol(CommunicationClientProtocol, Protocol):
     async def request(
         self,
-        message: Message,
+        message: MessageT,
         timeout: float = DEFAULT_COMMS_REQUEST_TIMEOUT,
     ) -> MessageOutputT: ...
 
     async def request_async(
         self,
-        message: Message,
+        message: MessageT,
         callback: Callable[[MessageOutputT], Coroutine[Any, Any, None]],
     ) -> None: ...
 
@@ -165,18 +178,13 @@ class SubClientProtocol(CommunicationClientProtocol, Protocol):
     async def subscribe(
         self,
         message_type: MessageTypeT,
-        callback: Callable[[Message], Coroutine[Any, Any, None]],
+        callback: Callable[[MessageT], Coroutine[Any, Any, None]],
     ) -> None: ...
 
     async def subscribe_all(
         self,
         message_callback_map: MessageCallbackMapT,
     ) -> None: ...
-
-
-@runtime_checkable
-class MessageBusClientProtocol(PubClientProtocol, SubClientProtocol, Protocol):
-    """A message bus client is a client that can publish and subscribe to messages on the event bus/message bus."""
 
 
 ################################################################################
@@ -186,56 +194,96 @@ class MessageBusClientProtocol(PubClientProtocol, SubClientProtocol, Protocol):
 
 @runtime_checkable
 class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
+    """Protocol for the base communication layer.
+    see :class:`aiperf.common.comms.base_comms.BaseCommunication` for more details.
+    """
+
     def get_address(self, address_type: CommAddressType) -> str: ...
+
+    """Get the address for the given address type can be an enum value for lookup, or a string for direct use."""
 
     def create_client(
         self,
+        client_type: CommClientType,
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
-    ) -> CommunicationClientProtocol: ...
+        max_pull_concurrency: int | None = None,
+    ) -> CommunicationClientProtocol:
+        """Create a client for the given client type and address, which will be automatically
+        started and stopped with the CommunicationProtocol instance."""
+        ...
 
     def create_pub_client(
         self,
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
-    ) -> PubClientProtocol: ...
+    ) -> PubClientProtocol:
+        """Create a PUB client for the given address, which will be automatically
+        started and stopped with the CommunicationProtocol instance."""
+        ...
 
     def create_sub_client(
         self,
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
-    ) -> SubClientProtocol: ...
+    ) -> SubClientProtocol:
+        """Create a SUB client for the given address, which will be automatically
+        started and stopped with the CommunicationProtocol instance."""
+        ...
 
     def create_push_client(
         self,
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
-    ) -> PushClientProtocol: ...
+    ) -> PushClientProtocol:
+        """Create a PUSH client for the given address, which will be automatically
+        started and stopped with the CommunicationProtocol instance."""
+        ...
 
     def create_pull_client(
         self,
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
-    ) -> PullClientProtocol: ...
+        max_pull_concurrency: int | None = None,
+    ) -> PullClientProtocol:
+        """Create a PULL client for the given address, which will be automatically
+        started and stopped with the CommunicationProtocol instance."""
+        ...
 
     def create_request_client(
         self,
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
-    ) -> RequestClientProtocol: ...
+    ) -> RequestClientProtocol:
+        """Create a REQUEST client for the given address, which will be automatically
+        started and stopped with the CommunicationProtocol instance."""
+        ...
 
     def create_reply_client(
         self,
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
-    ) -> ReplyClientProtocol: ...
+    ) -> ReplyClientProtocol:
+        """Create a REPLY client for the given address, which will be automatically
+        started and stopped with the CommunicationProtocol instance."""
+        ...
+
+
+@runtime_checkable
+class MessageBusClientProtocol(PubClientProtocol, SubClientProtocol, Protocol):
+    """A message bus client is a client that can publish and subscribe to messages
+    on the event bus/message bus."""
+
+    comms: CommunicationProtocol
+    sub_client: SubClientProtocol
+    pub_client: PubClientProtocol
 
 
 ################################################################################
@@ -372,9 +420,14 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
 
     async def run_services(self, service_types: dict[ServiceTypeT, int]) -> None: ...
     async def run_required_services(self) -> None: ...
-    async def shutdown_all_services(self) -> None: ...
-    async def kill_all_services(self) -> None: ...
-
+    async def shutdown_all_services(self) -> list[BaseException | None]: ...
+    async def kill_all_services(self) -> list[BaseException | None]: ...
+    async def stop_service(
+        self, service_type: ServiceTypeT, service_id: str | None = None
+    ) -> list[BaseException | None]: ...
+    async def stop_services_by_type(
+        self, service_types: list[ServiceTypeT]
+    ) -> list[BaseException | None]: ...
     async def wait_for_all_services_registration(
         self,
         stop_event: asyncio.Event,
@@ -402,3 +455,22 @@ class ServiceProtocol(MessageBusClientProtocol, Protocol):
 
     service_type: ServiceTypeT
     service_id: str
+
+
+@runtime_checkable
+class StreamingPostProcessorProtocol(MessageBusClientProtocol, Protocol):
+    """Protocol for a streaming post processor that streams the incoming records to the post processor."""
+
+    def __init__(
+        self,
+        class_type: StreamingPostProcessorType | str,
+        service_id: str,
+        service_config: "ServiceConfig",
+        user_config: "UserConfig",
+        max_queue_size: int = DEFAULT_STREAMING_MAX_QUEUE_SIZE,
+        **kwargs,
+    ) -> None: ...
+
+    records_queue: asyncio.Queue[ParsedResponseRecord]
+
+    async def stream_record(self, record: ParsedResponseRecord) -> None: ...
