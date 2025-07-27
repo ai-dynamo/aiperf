@@ -3,7 +3,7 @@
 
 import pandas as pd
 
-from aiperf.common.enums import MetricType, PostProcessorType
+from aiperf.common.enums import EndpointType, MetricType, PostProcessorType
 from aiperf.common.enums.endpoints_enums import EndpointType
 from aiperf.common.enums.metric_enums import MetricTag
 from aiperf.common.factories import PostProcessorFactory
@@ -40,11 +40,6 @@ class MetricSummary(AIPerfLoggerMixin):
 
         self._metrics = []
         for metric_cls in BaseMetric.get_all().values():
-            if (
-                allowed_tags is not None
-                and getattr(metric_cls, "tag", None) not in allowed_tags
-            ):
-                continue
             self._metrics.append(metric_cls())
 
     def process_record(self, record: ParsedResponseRecord) -> None:
