@@ -21,7 +21,11 @@ class OutputTokenCountMetric(BaseMetric):
     def __init__(self):
         self.metric: list[int] = []
 
-    def update_value(self, record: ParsedResponseRecord, metrics=None):
+    def update_value(
+        self,
+        record: ParsedResponseRecord | None = None,
+        metrics: dict[str, "BaseMetric"] | None = None,
+    ):
         self._check_record(record)
         self.metric.append(record.output_token_count)
 

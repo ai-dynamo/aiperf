@@ -15,7 +15,7 @@ class RequestLatencyMetric(BaseMetric):
     type = MetricType.METRIC_OF_RECORDS
     larger_is_better = False
     header = "Request Latency"
-    required_metrics: set[str] = set()
+    required_metrics = set()
 
     def __init__(self):
         self.metric: list[int] = []
@@ -23,7 +23,7 @@ class RequestLatencyMetric(BaseMetric):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict["BaseMetric"] | None = None,
+        metrics: dict[str, "BaseMetric"] | None = None,
     ) -> None:
         """
         Adds a new record and calculates the Request Latency metric.

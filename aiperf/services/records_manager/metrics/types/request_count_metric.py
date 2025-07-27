@@ -17,7 +17,7 @@ class RequestCountMetric(BaseMetric):
     header = "Request Count"
     type = MetricType.METRIC_OF_RECORDS
     streaming_only = False
-    required_metrics: set[str] = set()
+    required_metrics = set()
 
     def __init__(self):
         self.metric: int = 0

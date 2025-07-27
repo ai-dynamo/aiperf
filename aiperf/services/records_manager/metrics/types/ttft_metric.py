@@ -16,7 +16,7 @@ class TTFTMetric(BaseMetric):
     header = "Time to First Token (TTFT)"
     type = MetricType.METRIC_OF_RECORDS
     streaming_only = True
-    required_metrics: set[str] = set()
+    required_metrics = set()
 
     def __init__(self):
         self.metric: list[int] = []
@@ -24,7 +24,7 @@ class TTFTMetric(BaseMetric):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict["BaseMetric"] | None = None,
+        metrics: dict[str, "BaseMetric"] | None = None,
     ) -> None:
         """
         Adds a new record and calculates the Time To First Token (TTFT) metric.

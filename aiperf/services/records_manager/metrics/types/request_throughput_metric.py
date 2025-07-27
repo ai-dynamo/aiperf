@@ -23,10 +23,9 @@ class RequestThroughputMetric(BaseMetric):
     header = "Request Throughput"
     type = MetricType.METRIC_OF_METRICS
     streaming_only = False
-    required_metrics: set[str] = {RequestCountMetric.tag, BenchmarkDurationMetric.tag}
+    required_metrics = {RequestCountMetric.tag, BenchmarkDurationMetric.tag}
 
     def __init__(self):
-        self.total_requests: int = 0
         self.metric: float = 0.0
 
     def update_value(

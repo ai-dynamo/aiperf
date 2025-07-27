@@ -16,7 +16,7 @@ class TTSTMetric(BaseMetric):
     header = "Time to Second Token (TTST)"
     type = MetricType.METRIC_OF_RECORDS
     streaming_only = True
-    required_metrics: set[str] = set()
+    required_metrics = set()
 
     def __init__(self):
         self.metric: list[int] = []
@@ -24,7 +24,7 @@ class TTSTMetric(BaseMetric):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict["BaseMetric"] | None = None,
+        metrics: dict[str, "BaseMetric"] | None = None,
     ) -> None:
         """
         Adds a new record and calculates the Time To Second Token (TTST) metric.

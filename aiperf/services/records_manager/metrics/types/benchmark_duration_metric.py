@@ -21,7 +21,7 @@ class BenchmarkDurationMetric(BaseMetric):
     larger_is_better = False
     header = "Benchmark Duration"
     type = MetricType.METRIC_OF_METRICS
-    required_metrics: set[str] = {MinRequestMetric.tag, MaxResponseMetric.tag}
+    required_metrics = {MinRequestMetric.tag, MaxResponseMetric.tag}
 
     def __init__(self):
         self.metric: float = 0.0
@@ -29,7 +29,7 @@ class BenchmarkDurationMetric(BaseMetric):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict["BaseMetric"] | None = None,
+        metrics: dict[str, "BaseMetric"] | None = None,
     ) -> None:
         self._check_metrics(metrics)
         min_req_time = metrics[MinRequestMetric.tag].values()
