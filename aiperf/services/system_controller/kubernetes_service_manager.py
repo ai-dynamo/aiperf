@@ -10,10 +10,12 @@ from aiperf.common.constants import (
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
 )
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums.service_enums import ServiceRunType
 from aiperf.common.factories import ServiceManagerFactory
+from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
-from aiperf.services.service_manager.base import BaseServiceManager
+from aiperf.services.system_controller.base_service_manager import BaseServiceManager
 
 
 class ServiceKubernetesRunInfo(BaseModel):
@@ -24,6 +26,7 @@ class ServiceKubernetesRunInfo(BaseModel):
     namespace: str
 
 
+@implements_protocol(ServiceManagerProtocol)
 @ServiceManagerFactory.register(ServiceRunType.KUBERNETES)
 class KubernetesServiceManager(BaseServiceManager):
     """
@@ -49,7 +52,7 @@ class KubernetesServiceManager(BaseServiceManager):
             "KubernetesServiceManager.run_service not implemented"
         )
 
-    async def shutdown_all_services(self) -> None:
+    async def shutdown_all_services(self) -> list[BaseException | None]:
         """Stop all required services as Kubernetes pods."""
         self.logger.debug("Stopping all required services as Kubernetes pods")
         # TODO: Implement Kubernetes
@@ -57,7 +60,7 @@ class KubernetesServiceManager(BaseServiceManager):
             "KubernetesServiceManager.stop_all_services not implemented"
         )
 
-    async def kill_all_services(self) -> None:
+    async def kill_all_services(self) -> list[BaseException | None]:
         """Kill all required services as Kubernetes pods."""
         self.logger.debug("Killing all required services as Kubernetes pods")
         # TODO: Implement Kubernetes

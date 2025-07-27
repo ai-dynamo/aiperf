@@ -32,9 +32,9 @@ class TaskManagerMixin(AIPerfLoggerMixin):
         task.add_done_callback(self.tasks.discard)
         return task
 
-    async def wait_for_tasks(self) -> None:
+    async def wait_for_tasks(self) -> list[BaseException | None]:
         """Wait for all current tasks to complete."""
-        await asyncio.gather(*list(self.tasks), return_exceptions=True)
+        return await asyncio.gather(*list(self.tasks), return_exceptions=True)
 
     async def cancel_all_tasks(
         self, timeout: float = TASK_CANCEL_TIMEOUT_SHORT

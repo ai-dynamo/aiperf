@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import multiprocessing
+import uuid
 from multiprocessing import Process
 from multiprocessing.context import ForkProcess, SpawnProcess
 
@@ -14,11 +15,13 @@ from aiperf.common.constants import (
     DEFAULT_SERVICE_START_TIMEOUT,
     TASK_CANCEL_TIMEOUT_SHORT,
 )
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ServiceRegistrationStatus, ServiceRunType
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.factories import ServiceFactory, ServiceManagerFactory
+from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
-from aiperf.services.service_manager.base import BaseServiceManager
+from aiperf.services.system_controller.base_service_manager import BaseServiceManager
 
 
 class MultiProcessRunInfo(BaseModel):
@@ -31,8 +34,13 @@ class MultiProcessRunInfo(BaseModel):
         ...,
         description="Type of service running in the process",
     )
+    service_id: str = Field(
+        ...,
+        description="ID of the service running in the process",
+    )
 
 
+@implements_protocol(ServiceManagerProtocol)
 @ServiceManagerFactory.register(ServiceRunType.MULTIPROCESSING)
 class MultiProcessServiceManager(BaseServiceManager):
     """
@@ -58,12 +66,13 @@ class MultiProcessServiceManager(BaseServiceManager):
         service_class = ServiceFactory.get_class_from_type(service_type)
 
         for _ in range(num_replicas):
+            service_id = f"{service_type}_{uuid.uuid4().hex[:8]}"
             process = Process(
                 target=bootstrap_and_run_service,
                 name=f"{service_type}_process",
                 kwargs={
                     "service_class": service_class,
-                    "service_id": service_type if num_replicas == 1 else None,
+                    "service_id": service_id,
                     "service_config": self.service_config,
                     "user_config": self.user_config,
                     "log_queue": self.log_queue,
@@ -79,33 +88,40 @@ class MultiProcessServiceManager(BaseServiceManager):
             )
 
             self.multi_process_info.append(
-                MultiProcessRunInfo(process=process, service_type=service_type)
+                MultiProcessRunInfo(
+                    process=process,
+                    service_type=service_type,
+                    service_id=service_id,
+                )
             )
 
     async def stop_service(
-        self, service_type: ServiceTypeT, num_replicas: int | None = 1
-    ) -> None:
-        self.debug(lambda: f"Stopping {num_replicas} {service_type} processes")
-        for info in self.multi_process_info[:]:
-            if info.service_type == service_type:
-                await self._wait_for_process(info)
-                self.multi_process_info.remove(info)
-                if num_replicas is not None:
-                    num_replicas -= 1
-                    if num_replicas == 0:
-                        break
+        self, service_type: ServiceTypeT, service_id: str | None = None
+    ) -> list[BaseException | None]:
+        self.debug(lambda: f"Stopping {service_type} process(es) with id: {service_id}")
+        tasks = []
+        for info in list(self.multi_process_info):
+            if info.service_type == service_type and (
+                service_id is None or info.service_id == service_id
+            ):
+                task = asyncio.create_task(self._wait_for_process(info))
+                task.add_done_callback(
+                    lambda _, info=info: self.multi_process_info.remove(info)
+                )
+                tasks.append(task)
+        return await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def shutdown_all_services(self) -> None:
+    async def shutdown_all_services(self) -> list[BaseException | None]:
         """Stop all required services as multiprocessing processes."""
         self.debug("Stopping all service processes")
 
         # Wait for all to finish in parallel
-        await asyncio.gather(
+        return await asyncio.gather(
             *[self._wait_for_process(info) for info in self.multi_process_info],
             return_exceptions=True,
         )
 
-    async def kill_all_services(self) -> None:
+    async def kill_all_services(self) -> list[BaseException | None]:
         """Kill all required services as multiprocessing processes."""
         self.debug("Killing all service processes")
 
@@ -115,7 +131,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                 info.process.kill()
 
         # Wait for all to finish in parallel
-        await asyncio.gather(
+        return await asyncio.gather(
             *[self._wait_for_process(info) for info in self.multi_process_info],
             return_exceptions=True,
         )
@@ -137,13 +153,11 @@ class MultiProcessServiceManager(BaseServiceManager):
         self.debug("Waiting for all required services to register...")
 
         # Get the set of required service types for checking completion
-        required_types = set(self.required_services)
+        required_types = set(self.required_services.keys())
 
         # TODO: Can this be done better by using asyncio.Event()?
 
         async def _wait_for_registration():
-            required_types_set = set(typ for typ, _ in required_types)
-
             while not stop_event.is_set():
                 # Get all registered service types from the id map
                 registered_types = {
@@ -154,7 +168,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                 }
 
                 # Check if all required types are registered
-                if required_types_set.issubset(registered_types):
+                if required_types.issubset(registered_types):
                     return
 
                 # Wait a bit before checking again
@@ -171,7 +185,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                 == ServiceRegistrationStatus.REGISTERED
             )
 
-            for service_type, _ in required_types:
+            for service_type in required_types:
                 if service_type not in registered_types_set:
                     self.error(
                         f"Service {service_type} failed to register within timeout"
