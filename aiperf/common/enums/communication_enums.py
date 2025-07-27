@@ -25,7 +25,7 @@ class CommunicationClientType(CaseInsensitiveStrEnum):
     REPLY = "reply"
 
 
-class CommunicationClientAddressType(CaseInsensitiveStrEnum):
+class CommAddress(CaseInsensitiveStrEnum):
     """Enum for specifying the address type for communication clients.
     This is used to lookup the address in the communication config."""
 
