@@ -7,19 +7,21 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.enums import CommClientType
+from aiperf.common.decorators import implements_protocol
+from aiperf.common.enums import CommClientType, MessageType
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.hooks import aiperf_task, on_stop
-from aiperf.common.messages import Message
-from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.factories import CommunicationClientFactory
+from aiperf.common.hooks import background_task
+from aiperf.common.messages import CommandMessage, CommandResponseMessage, Message
+from aiperf.common.protocols import SubClientProtocol
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import call_all_functions, yield_to_event_loop
 
 
 @CommunicationClientFactory.register(CommClientType.SUB)
-class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
+@implements_protocol(SubClientProtocol)
+class ZMQSubClient(BaseZMQClient):
     """
     ZMQ SUB socket client for subscribing to messages from PUB sockets.
     One-to-Many or Many-to-One communication pattern.
@@ -58,27 +60,22 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
 
     def __init__(
         self,
-        context: zmq.asyncio.Context,
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        **kwargs,
     ) -> None:
         """
         Initialize the ZMQ Subscriber class.
 
         Args:
-            context (zmq.asyncio.Context): The ZMQ context.
             address (str): The address to bind or connect to.
             bind (bool): Whether to bind or connect the socket.
             socket_ops (dict, optional): Additional socket options to set.
         """
-        super().__init__(context, zmq.SocketType.SUB, address, bind, socket_ops)
+        super().__init__(zmq.SocketType.SUB, address, bind, socket_ops, **kwargs)
 
         self._subscribers: dict[MessageTypeT, list[Callable[[Message], Any]]] = {}
-
-    @on_stop
-    async def _on_stop(self) -> None:
-        await self.cancel_all_tasks()
 
     async def subscribe_all(
         self,
@@ -89,7 +86,7 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
     ) -> None:
         """Subscribe to all message_types in the map. For each MessageType, a single
         callback or a list of callbacks can be provided."""
-        await self._ensure_initialized()
+        await self._check_initialized()
         for message_type, callbacks in message_callback_map.items():
             if isinstance(callbacks, list):
                 for callback in callbacks:
@@ -113,7 +110,7 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
         Raises:
             Exception if subscription was not successful, None otherwise
         """
-        await self._ensure_initialized()
+        await self._check_initialized()
         await self._subscribe_internal(message_type, callback)
         # TODO: HACK: This is a hack to ensure that the subscriptions are registered
         # since we do not have any confirmation from the server that the subscriptions
@@ -156,26 +153,31 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
             lambda: f"Received message from message_type: '{message_type}', message: {message_json}"
         )
 
-        message = Message.from_json(message_json)
+        # Targeted messages are in the format "message_type.<target>"
+        if "." in message_type:
+            # grab the first part which is the message type
+            message_type = message_type.split(".")[0]
+
+        if message_type == MessageType.COMMAND:
+            message = CommandMessage.from_json(message_json)
+        elif message_type == MessageType.COMMAND_RESPONSE:
+            message = CommandResponseMessage.from_json(message_json)
+        else:
+            message = Message.from_json_with_type(message_type, message_json)
 
         # Call callbacks with the parsed message object
         if message_type in self._subscribers:
             with contextlib.suppress(Exception):  # Ignore errors, they will get logged
                 await call_all_functions(self._subscribers[message_type], message)
 
-    @aiperf_task
+    @background_task(immediate=True, interval=None)
     async def _sub_receiver(self) -> None:
         """Background task for receiving messages from subscribed topics.
 
         This method is a coroutine that will run indefinitely until the client is
         shutdown. It will wait for messages from the socket and handle them.
         """
-        if not self.is_initialized:
-            self.trace("Sub client %s waiting for initialization", self.client_id)
-            await self.initialized_event.wait()
-            self.trace(lambda: f"Sub client {self.client_id} initialized")
-
-        while not self.stop_event.is_set():
+        while not self.stop_requested:
             try:
                 (
                     topic_bytes,
@@ -185,12 +187,11 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
                 self.execute_async(self._handle_message(topic_bytes, message_bytes))
 
             except (asyncio.CancelledError, zmq.ContextTerminated):
-                self.trace(
-                    lambda: f"Sub client {self.client_id} receiver task cancelled"
-                )
+                self.debug(f"Sub client {self.client_id} receiver task cancelled")
                 break
 
             except zmq.Again:
+                self.debug(f"Sub client {self.client_id} receiver task timed out")
                 await yield_to_event_loop()
                 continue
 
@@ -198,6 +199,5 @@ class ZMQSubClient(BaseZMQClient, AsyncTaskManagerMixin):
                 self.exception(
                     f"Exception receiving message from subscription: {e}, {type(e)}"
                 )
-                # Sleep for a short time to allow the system to potentially recover
-                # if there are temporary issues.
-                await asyncio.sleep(0.1)
+                await yield_to_event_loop()
+                continue

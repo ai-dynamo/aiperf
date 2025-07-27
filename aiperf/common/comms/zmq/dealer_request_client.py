@@ -7,19 +7,22 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.constants import DEFAULT_COMMS_REQUEST_TIMEOUT
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.hooks import aiperf_task, on_stop
+from aiperf.common.factories import CommunicationClientFactory
+from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.messages import Message
-from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.mixins import TaskManagerMixin
+from aiperf.common.protocols import ReplyClientProtocol
 from aiperf.common.utils import yield_to_event_loop
 
 
 @CommunicationClientFactory.register(CommClientType.REQUEST)
-class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
+@implements_protocol(ReplyClientProtocol)
+class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
     """
     ZMQ DEALER socket client for asynchronous request-response communication.
 
@@ -43,32 +46,31 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
 
     def __init__(
         self,
-        context: zmq.asyncio.Context,
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        **kwargs,
     ) -> None:
         """
         Initialize the ZMQ Dealer (Req) client class.
 
         Args:
-            context (zmq.asyncio.Context): The ZMQ context.
             address (str): The address to bind or connect to.
             bind (bool): Whether to bind or connect the socket.
             socket_ops (dict, optional): Additional socket options to set.
         """
-        super().__init__(context, zmq.SocketType.DEALER, address, bind, socket_ops)
+        super().__init__(zmq.SocketType.DEALER, address, bind, socket_ops, **kwargs)
 
         self.request_callbacks: dict[
             str, Callable[[Message], Coroutine[Any, Any, None]]
         ] = {}
 
-    @aiperf_task
+    @background_task(immediate=True, interval=None)
     async def _request_async_task(self) -> None:
         """Task to handle incoming requests."""
-        while not self.stop_event.is_set():
+        while not self.stop_requested:
             try:
-                message = await self._socket.recv_string()
+                message = await self.socket.recv_string()
                 self.trace(lambda msg=message: f"Received response: {msg}")
                 response_message = Message.from_json(message)
 
@@ -78,11 +80,12 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
                     self.execute_async(callback(response_message))
 
             except zmq.Again:
-                self.trace(lambda: "No data received, yielding to event loop")
+                self.debug("No data on dealer socket received, yielding to event loop")
                 await yield_to_event_loop()
                 continue
 
             except (asyncio.CancelledError, zmq.ContextTerminated):
+                self.debug("Dealer request client receiver task cancelled")
                 raise  # re-raise the cancelled error
 
             except Exception as e:
@@ -101,7 +104,7 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
         callback: Callable[[Message], Coroutine[Any, Any, None]],
     ) -> None:
         """Send a request and be notified when the response is received."""
-        await self._ensure_initialized()
+        await self._check_initialized()
 
         if not isinstance(message, Message):
             raise TypeError(
@@ -118,7 +121,7 @@ class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
         self.trace(lambda msg=request_json: f"Sending request: {msg}")
 
         try:
-            await self._socket.send_string(request_json)
+            await self.socket.send_string(request_json)
 
         except Exception as e:
             raise CommunicationError(

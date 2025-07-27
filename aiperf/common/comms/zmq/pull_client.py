@@ -7,18 +7,20 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
-from aiperf.common.hooks import aiperf_task, on_stop
+from aiperf.common.factories import CommunicationClientFactory
+from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.messages import Message
-from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.protocols import PullClientProtocol
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 
 
 @CommunicationClientFactory.register(CommClientType.PULL)
-class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
+@implements_protocol(PullClientProtocol)
+class ZMQPullClient(BaseZMQClient):
     """
     ZMQ PULL socket client for receiving work from PUSH sockets.
 
@@ -52,45 +54,41 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
 
     def __init__(
         self,
-        context: zmq.asyncio.Context,
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
-        max_concurrency: int | None = None,
+        max_pull_concurrency: int | None = None,
+        **kwargs,
     ) -> None:
         """
         Initialize the ZMQ Puller class.
 
         Args:
-            context (zmq.asyncio.Context): The ZMQ context.
             address (str): The address to bind or connect to.
             bind (bool): Whether to bind or connect the socket.
             socket_ops (dict, optional): Additional socket options to set.
-            max_concurrency (int, optional): The maximum number of concurrent requests to allow.
+            max_pull_concurrency (int, optional): The maximum number of concurrent requests to allow.
         """
-        super().__init__(context, zmq.SocketType.PULL, address, bind, socket_ops)
+        super().__init__(zmq.SocketType.PULL, address, bind, socket_ops, **kwargs)
         self._pull_callbacks: dict[
             MessageTypeT, Callable[[Message], Coroutine[Any, Any, None]]
         ] = {}
 
-        if max_concurrency is not None:
-            self.semaphore = asyncio.Semaphore(value=max_concurrency)
+        if max_pull_concurrency is not None:
+            self.semaphore = asyncio.Semaphore(value=max_pull_concurrency)
         else:
             self.semaphore = asyncio.Semaphore(
                 value=int(os.getenv("AIPERF_WORKER_CONCURRENT_REQUESTS", 500))
             )
 
-    @aiperf_task
+    @background_task(immediate=True, interval=None)
     async def _pull_receiver(self) -> None:
         """Background task for receiving data from the pull socket.
 
         This method is a coroutine that will run indefinitely until the client is
         shutdown. It will wait for messages from the socket and handle them.
         """
-        if not self.is_initialized:
-            await self.initialized_event.wait()
-
-        while not self.stop_event.is_set():
+        while not self.stop_requested:
             try:
                 # acquire the semaphore to limit the number of concurrent requests
                 # NOTE: This MUST be done BEFORE calling recv_string() to allow the zmq push/pull
@@ -104,19 +102,20 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
                 self.execute_async(self._process_message(message_json))
 
             except zmq.Again:
+                self.debug("Pull client receiver task timed out")
                 self.semaphore.release()  # release the semaphore as it was not used
                 await yield_to_event_loop()
                 continue
 
             except (asyncio.CancelledError, zmq.ContextTerminated):
+                self.debug("Pull client receiver task cancelled")
                 self.semaphore.release()  # release the semaphore as it was not used
                 break
 
             except Exception as e:
                 self.exception(f"Exception receiving data from pull socket: {e}")
-                # Sleep for a short time to allow the system to potentially recover
-                # if there are temporary issues.
-                await asyncio.sleep(0.1)
+                self.semaphore.release()  # release the semaphore as it was not used
+                await yield_to_event_loop()
 
     @on_stop
     async def _stop(self) -> None:
@@ -144,11 +143,10 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
             # always release the semaphore to allow receiving more messages
             self.semaphore.release()
 
-    async def register_pull_callback(
+    def register_pull_callback(
         self,
         message_type: MessageTypeT,
         callback: Callable[[Message], Coroutine[Any, Any, None]],
-        max_concurrency: int | None = None,
     ) -> None:
         """Register a ZMQ Pull data callback for a given message type.
 
@@ -157,12 +155,9 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
         Args:
             message_type: The message type to register the callback for.
             callback: The function to call when data is received.
-            max_concurrency: The maximum number of concurrent requests to allow.
         Raises:
             CommunicationError: If the client is not initialized
         """
-        await self._ensure_initialized()
-
         # Register callback
         if message_type not in self._pull_callbacks:
             self._pull_callbacks[message_type] = callback
@@ -170,6 +165,3 @@ class ZMQPullClient(BaseZMQClient, AsyncTaskManagerMixin):
             raise ValueError(
                 f"Callback already registered for message type {message_type}"
             )
-
-        if max_concurrency is not None:
-            self.semaphore = asyncio.Semaphore(value=max_concurrency)

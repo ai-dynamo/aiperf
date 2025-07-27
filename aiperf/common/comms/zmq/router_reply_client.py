@@ -6,19 +6,21 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
-from aiperf.common.hooks import aiperf_task, on_cleanup, on_stop
+from aiperf.common.factories import CommunicationClientFactory
+from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.messages import ErrorMessage, Message
-from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.models import ErrorDetails
+from aiperf.common.protocols import ReplyClientProtocol
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 
 
 @CommunicationClientFactory.register(CommClientType.REPLY)
-class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
+@implements_protocol(ReplyClientProtocol)
+class ZMQRouterReplyClient(BaseZMQClient):
     """
     ZMQ ROUTER socket client for handling requests from DEALER clients.
 
@@ -51,21 +53,20 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
 
     def __init__(
         self,
-        context: zmq.asyncio.Context,
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        **kwargs,
     ) -> None:
         """
         Initialize the ZMQ Router (Rep) client class.
 
         Args:
-            context (zmq.asyncio.Context): The ZMQ context.
             address (str): The address to bind or connect to.
             bind (bool): Whether to bind or connect the socket.
             socket_ops (dict, optional): Additional socket options to set.
         """
-        super().__init__(context, zmq.SocketType.ROUTER, address, bind, socket_ops)
+        super().__init__(zmq.SocketType.ROUTER, address, bind, socket_ops, **kwargs)
 
         self._request_handlers: dict[
             MessageTypeT,
@@ -74,11 +75,7 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
         self._response_futures: dict[str, asyncio.Future[Message | None]] = {}
 
     @on_stop
-    async def _on_stop(self) -> None:
-        await self.cancel_all_tasks()
-
-    @on_cleanup
-    async def _cleanup(self) -> None:
+    async def _clear_request_handlers(self) -> None:
         self._request_handlers.clear()
 
     def register_request_handler(
@@ -172,7 +169,7 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
                 f"Exception waiting for response for request {request_id}: {e}"
             )
 
-    @aiperf_task
+    @background_task(immediate=True, interval=None)
     async def _rep_router_receiver(self) -> None:
         """Background task for receiving requests and sending responses.
 
@@ -180,13 +177,9 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
         shutdown. It will wait for requests from the socket and send responses in
         an asynchronous manner.
         """
-        self.debug("Waiting for router reply client to be initialized")
-        if not self.is_initialized:
-            await self.initialized_event.wait()
+        self.debug("Router reply client background task initialized")
 
-        self.debug("Router reply client initialized")
-
-        while not self.stop_event.is_set():
+        while not self.stop_requested:
             try:
                 # Receive request
                 try:
@@ -206,6 +199,7 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
                 except zmq.Again:
                     # This means we timed out waiting for a request.
                     # We can continue to the next iteration of the loop.
+                    self.debug("Router reply client receiver task timed out")
                     await yield_to_event_loop()
                     continue
 
@@ -219,10 +213,9 @@ class ZMQRouterReplyClient(BaseZMQClient, AsyncTaskManagerMixin):
                 )
 
             except asyncio.CancelledError:
-                self.trace(lambda: "Router reply client receiver task cancelled")
+                self.debug("Router reply client receiver task cancelled")
                 break
             except Exception as e:
                 self.exception(f"Exception receiving request: {e}")
-                # Sleep for a short time to allow the system to potentially recover
-                # if there are temporary issues.
-                await asyncio.sleep(0.1)
+                await yield_to_event_loop()
+                continue
