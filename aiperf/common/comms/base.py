@@ -7,10 +7,10 @@ from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 from aiperf.common.constants import DEFAULT_COMMS_REQUEST_TIMEOUT
 from aiperf.common.enums import (
     CommAddress,
+    CommClientType,
     CommunicationBackend,
-    CommunicationClientType,
 )
-from aiperf.common.factories import FactoryMixin
+from aiperf.common.factories import AIPerfFactory
 from aiperf.common.messages import Message
 from aiperf.common.types import MessageOutputT, MessageT, MessageTypeT
 
@@ -33,12 +33,12 @@ class CommunicationClientProtocol(Protocol):
 
 
 class CommunicationClientProtocolFactory(
-    FactoryMixin[CommunicationClientType, CommunicationClientProtocol]
+    AIPerfFactory[CommClientType, CommunicationClientProtocol]
 ):
     """Factory for registering CommunicationClientProtocol interfaces for dynamic client creation."""
 
 
-@CommunicationClientProtocolFactory.register(CommunicationClientType.PUSH)
+@CommunicationClientProtocolFactory.register(CommClientType.PUSH)
 class PushClientProtocol(CommunicationClientProtocol):
     """Interface for push clients."""
 
@@ -52,7 +52,7 @@ class PushClientProtocol(CommunicationClientProtocol):
         ...
 
 
-@CommunicationClientProtocolFactory.register(CommunicationClientType.PULL)
+@CommunicationClientProtocolFactory.register(CommClientType.PULL)
 class PullClientProtocol(CommunicationClientProtocol):
     """Interface for pull clients."""
 
@@ -73,7 +73,7 @@ class PullClientProtocol(CommunicationClientProtocol):
         ...
 
 
-@CommunicationClientProtocolFactory.register(CommunicationClientType.REQUEST)
+@CommunicationClientProtocolFactory.register(CommClientType.REQUEST)
 class RequestClientProtocol(CommunicationClientProtocol):
     """Interface for request clients."""
 
@@ -109,7 +109,7 @@ class RequestClientProtocol(CommunicationClientProtocol):
         ...
 
 
-@CommunicationClientProtocolFactory.register(CommunicationClientType.REPLY)
+@CommunicationClientProtocolFactory.register(CommClientType.REPLY)
 class ReplyClientProtocol(CommunicationClientProtocol):
     """Interface for reply clients."""
 
@@ -130,7 +130,7 @@ class ReplyClientProtocol(CommunicationClientProtocol):
         ...
 
 
-@CommunicationClientProtocolFactory.register(CommunicationClientType.SUB)
+@CommunicationClientProtocolFactory.register(CommClientType.SUB)
 class SubClientProtocol(CommunicationClientProtocol):
     """Interface for subscribe clients."""
 
@@ -159,7 +159,7 @@ class SubClientProtocol(CommunicationClientProtocol):
         ...
 
 
-@CommunicationClientProtocolFactory.register(CommunicationClientType.PUB)
+@CommunicationClientProtocolFactory.register(CommClientType.PUB)
 class PubClientProtocol(CommunicationClientProtocol):
     """Interface for publish clients."""
 
@@ -174,7 +174,7 @@ class PubClientProtocol(CommunicationClientProtocol):
 
 
 class CommunicationClientFactory(
-    FactoryMixin[CommunicationClientType, CommunicationClientProtocol]
+    AIPerfFactory[CommClientType, CommunicationClientProtocol]
 ):
     """Factory for registering and creating BaseCommunicationClient instances based on the specified client type.
 
@@ -204,7 +204,7 @@ ClientProtocolT = TypeVar("ClientProtocolT", bound=CommunicationClientProtocol)
 
 
 def _create_specific_client(
-    client_type: CommunicationClientType,
+    client_type: CommClientType,
     client_class: type[ClientProtocolT],
 ) -> Callable[
     [
@@ -273,7 +273,7 @@ class BaseCommunication(ABC):
     @abstractmethod
     def create_client(
         self,
-        client_type: CommunicationClientType,
+        client_type: CommClientType,
         address: CommAddress | str,
         bind: bool = False,
         socket_ops: dict | None = None,
@@ -287,27 +287,23 @@ class BaseCommunication(ABC):
             socket_ops: Additional socket options to set.
         """
 
-    create_pub_client = _create_specific_client(
-        CommunicationClientType.PUB, PubClientProtocol
-    )
-    create_sub_client = _create_specific_client(
-        CommunicationClientType.SUB, SubClientProtocol
-    )
+    create_pub_client = _create_specific_client(CommClientType.PUB, PubClientProtocol)
+    create_sub_client = _create_specific_client(CommClientType.SUB, SubClientProtocol)
     create_push_client = _create_specific_client(
-        CommunicationClientType.PUSH, PushClientProtocol
+        CommClientType.PUSH, PushClientProtocol
     )
     create_pull_client = _create_specific_client(
-        CommunicationClientType.PULL, PullClientProtocol
+        CommClientType.PULL, PullClientProtocol
     )
     create_request_client = _create_specific_client(
-        CommunicationClientType.REQUEST, RequestClientProtocol
+        CommClientType.REQUEST, RequestClientProtocol
     )
     create_reply_client = _create_specific_client(
-        CommunicationClientType.REPLY, ReplyClientProtocol
+        CommClientType.REPLY, ReplyClientProtocol
     )
 
 
-class CommunicationFactory(FactoryMixin[CommunicationBackend, BaseCommunication]):
+class CommunicationFactory(AIPerfFactory[CommunicationBackend, BaseCommunication]):
     """Factory for registering and creating BaseCommunication instances based on the specified communication backend.
-    See :class:`FactoryMixin` for more details.
+    See :class:`AIPerfFactory` for more details.
     """

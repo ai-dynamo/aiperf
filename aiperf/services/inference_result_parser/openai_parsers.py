@@ -8,7 +8,7 @@ from typing import Any
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion import Completion
-from openai.types.embedding import Embedding
+from openai.types.create_embedding_response import CreateEmbeddingResponse
 from openai.types.responses.response import Response as ResponsesModel
 from pydantic import BaseModel
 
@@ -35,6 +35,7 @@ class OpenAIObject(CaseInsensitiveStrEnum):
     CHAT_COMPLETION_CHUNK = "chat.completion.chunk"
     COMPLETION = "completion"
     EMBEDDING = "embedding"
+    LIST = "list"
     RESPONSE = "response"
 
     @classmethod
@@ -54,27 +55,42 @@ class OpenAIObject(CaseInsensitiveStrEnum):
             cls.CHAT_COMPLETION: ChatCompletion,
             cls.CHAT_COMPLETION_CHUNK: ChatCompletionChunk,
             cls.COMPLETION: Completion,
-            cls.EMBEDDING: Embedding,
             cls.RESPONSE: ResponsesModel,
         }
 
         obj_type = obj.get("object")
         if obj_type is None:
             raise ValueError(f"Invalid OpenAI object: {obj}")
-
+        if obj_type == cls.LIST:
+            return cls.parse_list(obj)
         if obj_type not in _object_mapping:
             raise ValueError(f"Invalid OpenAI object type: {obj_type}")
-
         try:
-            return _object_mapping[obj_type](**obj)
+            return _object_mapping[obj_type].model_validate(obj)
         except Exception as e:
             raise ValueError(f"Invalid OpenAI object: {text}") from e
 
+    @classmethod
+    def parse_list(cls, obj: Any) -> BaseModel:
+        """Attempt to parse a string into an OpenAI object from a list.
 
-# TODO: Factory support for different supported parsers/extractors
+        Raises:
+            ValueError: If the object is invalid.
+        """
+        data = obj.get("data", [])
+        if all(
+            isinstance(item, dict) and item.get("object") == cls.EMBEDDING
+            for item in data
+        ):
+            return CreateEmbeddingResponse.model_validate(obj)
+        else:
+            raise ValueError(f"Receive invalid list in response: {obj}")
+
+
 @ResponseExtractorFactory.register_all(
     EndpointType.OPENAI_CHAT_COMPLETIONS,
     EndpointType.OPENAI_COMPLETIONS,
+    EndpointType.OPENAI_EMBEDDINGS,
     EndpointType.OPENAI_RESPONSES,
 )
 class OpenAIResponseExtractor:
@@ -153,7 +169,7 @@ class OpenAIResponseExtractor:
             ChatCompletionChunk: lambda obj: obj.choices[0].delta.content,
             # TODO: how to support multiple choices?
             Completion: lambda obj: obj.choices[0].text,
-            Embedding: lambda obj: obj.embedding,
+            CreateEmbeddingResponse: lambda obj: "",  # Don't store embedding data
             ResponsesModel: lambda obj: obj.output_text,
         }
 

@@ -10,7 +10,7 @@ import zmq.asyncio
 from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.constants import DEFAULT_COMMS_REQUEST_TIMEOUT
-from aiperf.common.enums import CommunicationClientType
+from aiperf.common.enums import CommClientType
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.hooks import aiperf_task, on_stop
 from aiperf.common.messages import Message
@@ -18,7 +18,7 @@ from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.utils import yield_to_event_loop
 
 
-@CommunicationClientFactory.register(CommunicationClientType.REQUEST)
+@CommunicationClientFactory.register(CommClientType.REQUEST)
 class ZMQDealerRequestClient(BaseZMQClient, AsyncTaskManagerMixin):
     """
     ZMQ DEALER socket client for asynchronous request-response communication.
