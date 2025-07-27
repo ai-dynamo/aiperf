@@ -45,7 +45,9 @@ def test_metric_summary_process_with_all_metrics():
     ]
 
     summary = MetricSummary()
-    summary.process(records)
+    for record in records:
+        summary.process_record(record)
+    summary.post_process()
 
     for metric in summary._metrics:
         try:
