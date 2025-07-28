@@ -5,6 +5,7 @@ import pandas as pd
 
 from aiperf.common.enums import MetricType, PostProcessorType
 from aiperf.common.enums.endpoints_enums import EndpointType
+from aiperf.common.enums.metric_enums import MetricTag
 from aiperf.common.factories import PostProcessorFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult, ParsedResponseRecord
@@ -29,12 +30,12 @@ class MetricSummary(AIPerfLoggerMixin):
             and endpoint_type == EndpointType.OPENAI_EMBEDDINGS
         ):
             allowed_tags = {
-                "request_latency",
-                "request_throughput",
-                "benchmark_duration",
-                "request_count",
-                "min_request",
-                "max_response",
+                MetricTag.REQUEST_LATENCY,
+                MetricTag.REQUEST_THROUGHPUT,
+                MetricTag.BENCHMARK_DURATION,
+                MetricTag.REQUEST_COUNT,
+                MetricTag.MIN_REQUEST,
+                MetricTag.MAX_RESPONSE,
             }
 
         self._metrics = []
