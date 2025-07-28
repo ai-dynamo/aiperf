@@ -39,6 +39,8 @@ class InterTokenLatencyMetric(BaseMetric):
         metrics: dict[str, "BaseMetric"] | None = None,
     ):
         self._check_metrics(metrics)
+        # Clear the current value because we re-compute it each time
+        self.metric.clear()
 
         latencies = metrics[RequestLatencyMetric.tag].values()
         ttfts = metrics[TTFTMetric.tag].values()

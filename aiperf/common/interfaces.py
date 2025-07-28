@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from aiperf.common.models import ParsedResponseRecord, ResponseData
@@ -33,14 +33,19 @@ class PostProcessorProtocol(Protocol):
     It requires an `process` method that takes a list of records and returns a result.
     """
 
-    def process(self, records: dict) -> dict:
-        """
-        Execute the post-processing logic on the given payload.
+    def process_record(self, record: "ParsedResponseRecord") -> None:
+        """Process a single record."""
+        ...
 
-        :param payload: The input data to be processed.
-        :return: The processed data as a dictionary.
+    def post_process(self) -> None:
+        """
+        Execute the post-processing logic on the records.
         """
         pass
+
+    def get_results(self) -> Any:
+        """Get the results of the post-processing."""
+        ...
 
 
 ################################################################################

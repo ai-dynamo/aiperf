@@ -15,7 +15,7 @@ class MaxResponseMetric(BaseMetric):
     type = MetricType.METRIC_OF_RECORDS
     larger_is_better = False
     header = "Maximum Response Timestamp"
-    required_metrics: set[str] = set()
+    required_metrics = set()
 
     def __init__(self):
         self.metric: float = 0
@@ -23,7 +23,7 @@ class MaxResponseMetric(BaseMetric):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict["BaseMetric"] | None = None,
+        metrics: dict[str, "BaseMetric"] | None = None,
     ) -> None:
         """
         Adds a new record and calculates the maximum response timestamp metric.

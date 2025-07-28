@@ -1,28 +1,26 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
-
 import pandas as pd
 
-from aiperf.common.enums import EndpointType, MetricType, PostProcessorType
+from aiperf.common.enums import MetricType, PostProcessorType
+from aiperf.common.enums.endpoints_enums import EndpointType
 from aiperf.common.factories import PostProcessorFactory
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult, ParsedResponseRecord
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
-logger = logging.getLogger(__name__)
-
 
 @PostProcessorFactory.register(PostProcessorType.METRIC_SUMMARY)
-class MetricSummary:
+class MetricSummary(AIPerfLoggerMixin):
     """
     MetricSummary is a post-processor that generates a summary of metrics from the records.
     It processes the records to extract relevant metrics and returns them in a structured format.
     """
 
-    def __init__(self, endpoint_type: EndpointType | None = None):
-        self.logger = logging.getLogger(__name__)
-        self.logger.debug("Initializing MetricSummary post-processor")
+    def __init__(self, endpoint_type: EndpointType | None = None, **kwargs):
+        super().__init__(endpoint_type=endpoint_type, **kwargs)
+        self.debug("Initializing MetricSummary post-processor")
 
         # Only include latency and throughput metrics for embeddings endpoint
         allowed_tags = None
@@ -48,8 +46,9 @@ class MetricSummary:
                 continue
             self._metrics.append(metric_cls())
 
-    def process(self, records: list[ParsedResponseRecord]) -> None:
-        """
+    def process_record(self, record: ParsedResponseRecord) -> None:
+        """Process a single record.
+
         Classifies and computes metrics in dependency order to ensure correctness.
         The metrics are categorized based on their dependency types:
 
@@ -65,6 +64,38 @@ class MetricSummary:
             - Must not depend on other METRIC_OF_BOTH or METRIC_OF_METRICS.
 
         3. METRIC_OF_METRICS:
+            Computed once after all records have been processed.
+            see: :meth:`post_process`
+        """
+        if not record.valid:
+            return
+
+        # METRIC_OF_RECORDS
+        for metric in self._metrics:
+            if metric.type == MetricType.METRIC_OF_RECORDS:
+                metric.update_value(record=record)
+
+        # METRIC_OF_BOTH
+        for metric in self._metrics:
+            if metric.type == MetricType.METRIC_OF_BOTH:
+                metric.update_value(
+                    record=record, metrics={m.tag: m for m in self._metrics}
+                )
+
+    def post_process(self) -> None:
+        """
+        Classifies and computes metrics in dependency order to ensure correctness.
+        The metrics are categorized based on their dependency types:
+
+        1. METRIC_OF_RECORDS:
+            - Computed for each individual record.
+            see: :meth:`process_record`
+
+        2. METRIC_OF_BOTH:
+            - Computed for each individual record.
+            see: :meth:`process_record`
+
+        3. METRIC_OF_METRICS:
             - Computed based only on other metrics (not records).
             - May depend on any combination of:
                 - METRIC_OF_RECORDS,
@@ -76,21 +107,6 @@ class MetricSummary:
             - All metrics are computed exactly once, after dependencies are satisfied.
             - Misconfigured or cyclic dependencies will raise an explicit runtime error.
         """
-
-        # METRIC_OF_RECORDS
-        for record in records:
-            for metric in self._metrics:
-                if metric.type == MetricType.METRIC_OF_RECORDS:
-                    metric.update_value(record=record)
-
-        # METRIC_OF_BOTH
-        for record in records:
-            for metric in self._metrics:
-                if metric.type == MetricType.METRIC_OF_BOTH:
-                    metric.update_value(
-                        record=record, metrics={m.tag: m for m in self._metrics}
-                    )
-
         # METRIC_OF_METRICS
         # Precompute tags of all metrics already processed
         computed_tags = {
@@ -119,7 +135,8 @@ class MetricSummary:
                     f"Circular or unsatisfiable dependencies detected in METRIC_OF_METRICS: {missing}"
                 )
 
-    def get_metrics_summary(self) -> list[MetricResult]:
+    def get_results(self) -> list[MetricResult]:
+        """Gets the metrics summary."""
         metrics_summary = []
 
         df = pd.DataFrame({metric.tag: metric.values() for metric in self._metrics})

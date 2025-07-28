@@ -16,12 +16,13 @@ class BaseMetric(ABC):
 
     # Class attributes that subclasses must override
     tag: ClassVar[str] = ""
-    unit: ClassVar[MetricTimeType] = MetricTimeType.NANOSECONDS
+    unit: ClassVar[MetricTimeType | None] = None
     larger_is_better: ClassVar[bool] = True
     header: ClassVar[str] = ""
     streaming_only: ClassVar[bool] = False
-    base_metrics: set[str] = set()
+    required_metrics: ClassVar[set[str]] = set()
 
+    base_metrics: set[str] = set()
     metric_interfaces: dict[str, type["BaseMetric"]] = {}
 
     def __init_subclass__(cls, **kwargs):
@@ -90,7 +91,7 @@ class BaseMetric(ABC):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict["BaseMetric"] | None = None,
+        metrics: dict[str, "BaseMetric"] | None = None,
     ) -> None:
         """
         Updates the metric value based on the provided record and dictionary of other metrics.
@@ -115,7 +116,7 @@ class BaseMetric(ABC):
             ValueError: If the record does not meet the required conditions.
         """
 
-    def get_converted_metrics(self, unit: MetricTimeType) -> list[Any]:
+    def get_converted_metrics(self, unit: MetricTimeType | None) -> list[Any]:
         if not isinstance(unit, MetricTimeType):
             raise MetricTypeError("Invalid metric time type for conversion.")
 
@@ -123,7 +124,7 @@ class BaseMetric(ABC):
 
         return [metric / 10**scale_factor for metric in self.values()]
 
-    def _check_metrics(self, metrics: dict[str, "BaseMetric"]) -> None:
+    def _check_metrics(self, metrics: dict[str, "BaseMetric"] | None) -> None:
         """
         Validates that the required dependent metrics are available.
 

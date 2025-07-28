@@ -21,7 +21,7 @@ class OutputTokenThroughputPerUserMetric(BaseMetric):
     header = "Output Token Throughput Per User"
     type = MetricType.METRIC_OF_METRICS
     streaming_only = True
-    required_metrics: set[str] = {InterTokenLatencyMetric.tag}
+    required_metrics = {InterTokenLatencyMetric.tag}
 
     def __init__(self):
         self.metric: list[float] = []
@@ -32,6 +32,8 @@ class OutputTokenThroughputPerUserMetric(BaseMetric):
         metrics: dict[str, "BaseMetric"] | None = None,
     ):
         self._check_metrics(metrics)
+        # Clear the current value because we re-compute it each time
+        self.metric.clear()
         inter_token_latencies = metrics["inter_token_latency"].values()
         for inter_token_latency in inter_token_latencies:
             inter_token_latency_s = inter_token_latency / NANOS_PER_SECOND
