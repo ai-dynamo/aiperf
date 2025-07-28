@@ -37,6 +37,7 @@ class OpenAIObject(CaseInsensitiveStrEnum):
     EMBEDDING = "embedding"
     LIST = "list"
     RESPONSE = "response"
+    TEXT_COMPLETION = "text_completion"
 
     @classmethod
     def parse(cls, text: str) -> BaseModel:
@@ -56,6 +57,7 @@ class OpenAIObject(CaseInsensitiveStrEnum):
             cls.CHAT_COMPLETION_CHUNK: ChatCompletionChunk,
             cls.COMPLETION: Completion,
             cls.RESPONSE: ResponsesModel,
+            cls.TEXT_COMPLETION: Completion,  # Alias for vLLM compatibility
         }
 
         obj_type = obj.get("object")
@@ -66,6 +68,12 @@ class OpenAIObject(CaseInsensitiveStrEnum):
         if obj_type not in _object_mapping:
             raise ValueError(f"Invalid OpenAI object type: {obj_type}")
         try:
+            # Hotfix: vLLM does not always include a finish_reason, which Pydantic requires.
+            # Without this code, model_validate will raise an objection due to the missing finish_reason.
+            if obj_type == cls.TEXT_COMPLETION:
+                for choice in obj.get("choices", []):
+                    if choice.get("finish_reason") is None:
+                        choice["finish_reason"] = "stop"
             return _object_mapping[obj_type].model_validate(obj)
         except Exception as e:
             raise ValueError(f"Invalid OpenAI object: {text}") from e
