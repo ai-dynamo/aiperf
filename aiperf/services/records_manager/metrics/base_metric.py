@@ -9,21 +9,22 @@ from typing import Any, ClassVar
 from aiperf.common.enums import MetricTimeType
 from aiperf.common.exceptions import MetricTypeError
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.types import MetricTagT
 
 
 class BaseMetric(ABC):
     """Base class for all metrics with automatic subclass registration."""
 
     # Class attributes that subclasses must override
-    tag: ClassVar[str] = ""
+    tag: ClassVar[MetricTagT] = ""
     unit: ClassVar[MetricTimeType | None] = None
     larger_is_better: ClassVar[bool] = True
     header: ClassVar[str] = ""
     streaming_only: ClassVar[bool] = False
-    required_metrics: ClassVar[set[str]] = set()
+    required_metrics: ClassVar[set[MetricTagT]] = set()
 
-    base_metrics: set[str] = set()
-    metric_interfaces: dict[str, type["BaseMetric"]] = {}
+    base_metrics: set[MetricTagT] = set()
+    metric_interfaces: dict[MetricTagT, type["BaseMetric"]] = {}
 
     def __init_subclass__(cls, **kwargs):
         """
@@ -91,7 +92,7 @@ class BaseMetric(ABC):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict[str, "BaseMetric"] | None = None,
+        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
     ) -> None:
         """
         Updates the metric value based on the provided record and dictionary of other metrics.
@@ -117,14 +118,16 @@ class BaseMetric(ABC):
         """
 
     def get_converted_metrics(self, unit: MetricTimeType | None) -> list[Any]:
-        if not isinstance(unit, MetricTimeType):
+        if not isinstance(unit, MetricTimeType) or not isinstance(
+            self.unit, MetricTimeType
+        ):
             raise MetricTypeError("Invalid metric time type for conversion.")
 
         scale_factor = self._get_conversion_factor(self.unit, unit)
 
         return [metric / 10**scale_factor for metric in self.values()]
 
-    def _check_metrics(self, metrics: dict[str, "BaseMetric"] | None) -> None:
+    def _check_metrics(self, metrics: dict[MetricTagT, "BaseMetric"] | None) -> None:
         """
         Validates that the required dependent metrics are available.
 

@@ -27,3 +27,20 @@ class MetricType(Enum):
     METRIC_OF_RECORDS = auto()
     METRIC_OF_METRICS = auto()
     METRIC_OF_BOTH = auto()
+
+
+class MetricTag(CaseInsensitiveStrEnum):
+    BENCHMARK_DURATION = "benchmark_duration"
+    ISL = "isl"
+    INTER_TOKEN_LATENCY = "inter_token_latency"
+    MAX_RESPONSE = "max_response"
+    MIN_REQUEST = "min_request"
+    OSL = "osl"
+    OUTPUT_TOKEN_COUNT = "output_token_count"
+    OUTPUT_TOKEN_THROUGHPUT = "output_token_throughput"
+    OUTPUT_TOKEN_THROUGHPUT_PER_USER = "output_token_throughput_per_user"
+    REQUEST_COUNT = "request_count"
+    REQUEST_LATENCY = "request_latency"
+    REQUEST_THROUGHPUT = "request_throughput"
+    TTFT = "ttft"
+    TTST = "ttst"

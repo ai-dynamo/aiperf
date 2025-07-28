@@ -1,15 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import MetricTimeType, MetricType
+from aiperf.common.enums import MetricTag, MetricTimeType, MetricType
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.types import MetricTagT
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
-from aiperf.services.records_manager.metrics.types.benchmark_duration_metric import (
-    BenchmarkDurationMetric,
-)
-from aiperf.services.records_manager.metrics.types.request_count_metric import (
-    RequestCountMetric,
-)
 
 
 class RequestThroughputMetric(BaseMetric):
@@ -17,13 +12,13 @@ class RequestThroughputMetric(BaseMetric):
     Post Processor for calculating Request throughput metrics from records.
     """
 
-    tag = "request_throughput"
+    tag = MetricTag.REQUEST_THROUGHPUT
     unit = MetricTimeType.SECONDS
     larger_is_better = True
     header = "Request Throughput"
     type = MetricType.METRIC_OF_METRICS
     streaming_only = False
-    required_metrics = {RequestCountMetric.tag, BenchmarkDurationMetric.tag}
+    required_metrics = {MetricTag.REQUEST_COUNT, MetricTag.BENCHMARK_DURATION}
 
     def __init__(self):
         self.metric: float = 0.0
@@ -31,11 +26,11 @@ class RequestThroughputMetric(BaseMetric):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict[str, "BaseMetric"] | None = None,
+        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
     ) -> None:
         self._check_metrics(metrics)
-        total_requests = metrics[RequestCountMetric.tag].values()
-        benchmark_duration = metrics[BenchmarkDurationMetric.tag].values()
+        total_requests = metrics[MetricTag.REQUEST_COUNT].values()
+        benchmark_duration = metrics[MetricTag.BENCHMARK_DURATION].values()
         self.metric = total_requests / (benchmark_duration / NANOS_PER_SECOND)
 
     def values(self) -> float:

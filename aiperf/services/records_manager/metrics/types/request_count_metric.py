@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import MetricType
+from aiperf.common.enums import MetricTag, MetricType
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.types import MetricTagT
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 
@@ -11,7 +12,7 @@ class RequestCountMetric(BaseMetric):
     Post-processor for counting the number of valid requests.
     """
 
-    tag = "request_count"
+    tag = MetricTag.REQUEST_COUNT
     unit = None
     larger_is_better = True
     header = "Request Count"
@@ -25,7 +26,7 @@ class RequestCountMetric(BaseMetric):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict[str, "BaseMetric"] | None = None,
+        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
     ) -> None:
         self._check_record(record)
         self.metric += 1

@@ -50,6 +50,7 @@ from aiperf.common.enums.message_enums import (
     NotificationType,
 )
 from aiperf.common.enums.metric_enums import (
+    MetricTag,
     MetricTimeType,
     MetricType,
 )
@@ -99,6 +100,7 @@ __all__ = [
     "ImageFormat",
     "MeasurementMode",
     "MessageType",
+    "MetricTag",
     "MetricTimeType",
     "MetricType",
     "Modality",

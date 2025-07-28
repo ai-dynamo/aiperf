@@ -3,26 +3,21 @@
 
 import pytest
 
-from aiperf.services.records_manager.metrics.types.benchmark_duration_metric import (
-    BenchmarkDurationMetric,
-)
-from aiperf.services.records_manager.metrics.types.output_token_count_metric import (
-    OutputTokenCountMetric,
-)
+from aiperf.common.enums import MetricTag
 from aiperf.services.records_manager.metrics.types.output_token_throughput_metric import (
     OutputTokenThroughputMetric,
 )
 
 
 class MockBenchmarkDuration:
-    tag = BenchmarkDurationMetric.tag
+    tag = MetricTag.BENCHMARK_DURATION
 
     def values(self):
         return 5_000_000_000  # 5 seconds
 
 
 class MockOutputTokenCount:
-    tag = OutputTokenCountMetric.tag
+    tag = MetricTag.OUTPUT_TOKEN_COUNT
 
     def values(self):
         return [10, 20, 30]  # total = 60
@@ -31,8 +26,8 @@ class MockOutputTokenCount:
 @pytest.fixture
 def mock_metrics():
     return {
-        BenchmarkDurationMetric.tag: MockBenchmarkDuration(),
-        OutputTokenCountMetric.tag: MockOutputTokenCount(),
+        MetricTag.BENCHMARK_DURATION: MockBenchmarkDuration(),
+        MetricTag.OUTPUT_TOKEN_COUNT: MockOutputTokenCount(),
     }
 
 

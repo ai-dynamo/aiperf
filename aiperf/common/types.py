@@ -4,6 +4,7 @@
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from aiperf.common.enums.message_enums import MessageType
+from aiperf.common.enums.metric_enums import MetricTag
 
 if TYPE_CHECKING:
     from aiperf.common.messages.base_messages import Message
@@ -26,3 +27,5 @@ LifecycleMixinT = TypeVar("LifecycleMixinT", bound="AIPerfLifecycleMixin")
 
 MessageTypeT = MessageType | str
 """Alias for the MessageType being an enum or a custom string for user-defined message types."""
+
+MetricTagT = MetricTag | str
