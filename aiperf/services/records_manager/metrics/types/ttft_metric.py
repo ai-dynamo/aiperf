@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import MetricTimeType, MetricType
+from aiperf.common.enums import MetricTag, MetricTimeType, MetricType
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.types import MetricTagT
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 
@@ -10,7 +11,7 @@ class TTFTMetric(BaseMetric):
     Post-processor for calculating Time to First Token (TTFT) metrics from records.
     """
 
-    tag = "ttft"
+    tag = MetricTag.TTFT
     unit = MetricTimeType.NANOSECONDS
     larger_is_better = False
     header = "Time to First Token (TTFT)"
@@ -24,7 +25,7 @@ class TTFTMetric(BaseMetric):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict[str, "BaseMetric"] | None = None,
+        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
     ) -> None:
         """
         Adds a new record and calculates the Time To First Token (TTFT) metric.
