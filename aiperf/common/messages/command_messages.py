@@ -91,16 +91,16 @@ class CommandMessage(TargetedServiceMessage):
         return command_class.model_validate(data)
 
 
-class CommandResponseMessage(TargetedServiceMessage):
+class CommandResponse(TargetedServiceMessage):
     """Message containing a command response."""
 
     # Specialized lookup for command response messages by status
     _command_status_lookup: ClassVar[
-        dict[CommandResponseStatus, type["CommandResponseMessage"]]
+        dict[CommandResponseStatus, type["CommandResponse"]]
     ] = {}
     # Specialized lookup for command response messages by command type, for success messages
     _command_success_type_lookup: ClassVar[
-        dict[CommandTypeT, type["CommandResponseMessage"]]
+        dict[CommandTypeT, type["CommandResponse"]]
     ] = {}
 
     def __init_subclass__(cls, **kwargs):
@@ -127,7 +127,7 @@ class CommandResponseMessage(TargetedServiceMessage):
     status: CommandResponseStatus = Field(..., description="The status of the command")
 
     @classmethod
-    def from_json(cls, json_str: str | bytes | bytearray) -> "CommandResponseMessage":
+    def from_json(cls, json_str: str | bytes | bytearray) -> "CommandResponse":
         """Deserialize a command response message from a JSON string, attempting to auto-detect the command response type."""
         data = json.loads(json_str)
         status = data.get("status")
@@ -155,7 +155,7 @@ class CommandResponseMessage(TargetedServiceMessage):
         return command_response_class.model_validate(data)
 
 
-class ErrorCommandResponseMessage(CommandResponseMessage):
+class CommandErrorResponse(CommandResponse):
     status: CommandResponseStatus = CommandResponseStatus.FAILURE
     error: ErrorDetails = Field(
         ...,
@@ -175,7 +175,7 @@ class ErrorCommandResponseMessage(CommandResponseMessage):
         )
 
 
-class SuccessCommandResponseMessage(CommandResponseMessage):
+class CommandSuccessResponse(CommandResponse):
     """Generic command response message when a command succeeds. It should be
     subclassed for specific command types."""
 
@@ -193,7 +193,7 @@ class SuccessCommandResponseMessage(CommandResponseMessage):
         )
 
 
-class AcknowledgedCommandResponseMessage(CommandResponseMessage):
+class CommandAcknowledgedResponse(CommandResponse):
     status: CommandResponseStatus = CommandResponseStatus.ACKNOWLEDGED
 
     @classmethod
@@ -208,7 +208,7 @@ class AcknowledgedCommandResponseMessage(CommandResponseMessage):
         )
 
 
-class UnhandledCommandResponseMessage(CommandResponseMessage):
+class CommandUnhandledResponse(CommandResponse):
     status: CommandResponseStatus = CommandResponseStatus.UNHANDLED
 
     @classmethod
@@ -290,6 +290,18 @@ class ProfileStartCommand(CommandMessage):
     """Command message sent to request services to start profiling."""
 
     command: CommandTypeT = CommandType.PROFILE_START
+
+
+class ProfileCancelCommand(CommandMessage):
+    """Command message sent to request services to cancel profiling."""
+
+    command: CommandTypeT = CommandType.PROFILE_CANCEL
+
+
+class DiscoverServicesCommand(CommandMessage):
+    """Command message sent to request services to discover services."""
+
+    command: CommandTypeT = CommandType.DISCOVER_SERVICES
 
 
 class ShutdownCommand(CommandMessage):
