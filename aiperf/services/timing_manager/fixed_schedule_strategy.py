@@ -7,7 +7,6 @@ from collections import defaultdict
 
 from aiperf.common.enums import TimingMode
 from aiperf.common.enums.timing_enums import CreditPhase
-from aiperf.common.mixins import AsyncTaskManagerMixin
 from aiperf.common.models.credit_models import CreditPhaseStats
 from aiperf.services.timing_manager.config import TimingManagerConfig
 from aiperf.services.timing_manager.credit_issuing_strategy import (
@@ -18,7 +17,7 @@ from aiperf.services.timing_manager.credit_manager import CreditManagerProtocol
 
 
 @CreditIssuingStrategyFactory.register(TimingMode.FIXED_SCHEDULE)
-class FixedScheduleStrategy(CreditIssuingStrategy, AsyncTaskManagerMixin):
+class FixedScheduleStrategy(CreditIssuingStrategy):
     """
     Class for fixed schedule credit issuing strategy.
     """

@@ -32,10 +32,10 @@ def _is_service_in_types(service_id: str, service_types: set[ServiceType]) -> bo
         # for cases of service_id being "worker_xxxxxx" and service_type being "worker",
         # we want to set the log level to debug
         if (
-            service_id == service_type.value
-            or service_id.startswith(f"{service_type.value}_")
+            service_id == service_type
+            or service_id.startswith(f"{service_type}_")
             and service_id
-            != f"{service_type.value}_manager"  # for worker vs worker_manager, etc.
+            != f"{service_type}_manager"  # for worker vs worker_manager, etc.
         ):
             return True
 
@@ -192,7 +192,7 @@ class MultiProcessLogHandler(RichHandler):
             }
             self.log_queue.put_nowait(log_data)
         except queue.Full:
-            # Drop logs if queue is full to prevent blocking
+            # Drop logs if queue is full to prevent blocking. Do not log to prevent recursion.
             pass
         except Exception:
             # Do not log to prevent recursion

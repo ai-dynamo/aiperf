@@ -361,15 +361,18 @@ class InferenceClientProtocol(Protocol):
 @runtime_checkable
 class PostProcessorProtocol(Protocol):
     """
-    Protocol for post-processors.
-
-    Any class implementing this protocol must provide a `process` method
-    that takes a dictionary of records as input and returns a processed
-    dictionary. This is typically used to apply transformations or extract
-    relevant information from raw data.
+    PostProcessorProtocol is a protocol that defines the API for post-processors.
     """
 
-    def process(self, records: dict) -> dict: ...
+    def process_record(self, record: "ParsedResponseRecord") -> None:
+        """Process a single record."""
+        ...
+
+    def post_process(self) -> Any:
+        """
+        Execute the post-processing logic on the records.
+        """
+        ...
 
 
 @runtime_checkable
@@ -399,7 +402,7 @@ class RequestConverterProtocol(Protocol):
 class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for a service manager that manages the running of services using the specific ServiceRunType.
     Abstracts away the details of service deployment and management.
-    see :class:`aiperf.services.service_manager.base.BaseServiceManager` for more details.
+    see :class:`aiperf.services.system_controller.base.BaseServiceManager` for more details.
     """
 
     def __init__(
@@ -458,7 +461,7 @@ class ServiceProtocol(MessageBusClientProtocol, Protocol):
 
 
 @runtime_checkable
-class StreamingPostProcessorProtocol(MessageBusClientProtocol, Protocol):
+class StreamingPostProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for a streaming post processor that streams the incoming records to the post processor."""
 
     def __init__(
@@ -472,5 +475,8 @@ class StreamingPostProcessorProtocol(MessageBusClientProtocol, Protocol):
     ) -> None: ...
 
     records_queue: asyncio.Queue[ParsedResponseRecord]
+    cancellation_event: asyncio.Event
 
     async def stream_record(self, record: ParsedResponseRecord) -> None: ...
+
+    async def process_records(self, cancelled: bool) -> Any: ...

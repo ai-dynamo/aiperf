@@ -389,7 +389,7 @@ def on_command(
     ```python
     class MyService(BaseComponentService):
         @on_command(CommandType.PROFILE_START)
-        def _on_profile_start(self, message: CommandMessage) -> None:
+        def _on_profile_start(self, message: ProfileStartCommand) -> CommandResponse:
             pass
     ```
 

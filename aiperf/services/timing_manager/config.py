@@ -17,9 +17,7 @@ class TimingManagerConfig(AIPerfBaseModel):
     request_count: int = LoadGeneratorDefaults.REQUEST_COUNT
     warmup_request_count: int = LoadGeneratorDefaults.WARMUP_REQUEST_COUNT
     random_seed: int | None = None
-    progress_report_interval_sec: float = (
-        ServiceDefaults.PROGRESS_REPORT_INTERVAL_SECONDS
-    )
+    progress_report_interval_sec: float = ServiceDefaults.PROGRESS_REPORT_INTERVAL
 
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> "TimingManagerConfig":

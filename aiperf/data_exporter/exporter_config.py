@@ -4,10 +4,10 @@
 from dataclasses import dataclass
 
 from aiperf.common.config import UserConfig
-from aiperf.common.messages import ProfileResultsMessage
+from aiperf.common.models.record_models import ProfileResults
 
 
 @dataclass
 class ExporterConfig:
-    results: ProfileResultsMessage
+    results: ProfileResults
     input_config: UserConfig

@@ -19,14 +19,12 @@ from aiperf.services.records_manager.post_processors.processing_stats_streamer i
     ProcessingStatsStreamer,
 )
 from aiperf.services.records_manager.post_processors.streaming_post_processor import (
-    DEFAULT_MAX_QUEUE_SIZE,
     BaseStreamingPostProcessor,
 )
 
 __all__ = [
     "BaseStreamingPostProcessor",
     "BasicMetricsStreamer",
-    "DEFAULT_MAX_QUEUE_SIZE",
     "MetricSummary",
     "ProcessingStatsStreamer",
     "record_from_dataframe",

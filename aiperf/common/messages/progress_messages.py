@@ -1,17 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import Field, SerializeAsAny
+from pydantic import Field
 
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.base_messages import RequiresRequestNSMixin
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import (
-    ErrorDetails,
-    ErrorDetailsCount,
-    MetricResult,
-    PhaseProcessingStats,
-)
+from aiperf.common.models import PhaseProcessingStats
+from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
 from aiperf.common.types import MessageTypeT
 
 
@@ -97,30 +93,7 @@ class ProfileResultsMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.PROFILE_RESULTS
 
-    records: SerializeAsAny[list[MetricResult] | ErrorDetails | None] = Field(
-        ..., description="The records of the profile results"
-    )
-    total: int = Field(
-        ...,
-        description="The total number of inference requests expected to be made (if known)",
-    )
-    completed: int = Field(
-        ..., description="The number of inference requests completed"
-    )
-    start_ns: int = Field(
-        ..., description="The start time of the profile run in nanoseconds"
-    )
-    end_ns: int = Field(
-        ..., description="The end time of the profile run in nanoseconds"
-    )
-    was_cancelled: bool = Field(
-        default=False,
-        description="Whether the profile run was cancelled early",
-    )
-    errors_by_type: list[ErrorDetailsCount] = Field(
-        default_factory=list,
-        description="A list of the unique error details and their counts",
-    )
+    profile_results: ProfileResults = Field(..., description="The profile results")
 
 
 class AllRecordsReceivedMessage(BaseServiceMessage, RequiresRequestNSMixin):
@@ -129,4 +102,14 @@ class AllRecordsReceivedMessage(BaseServiceMessage, RequiresRequestNSMixin):
     message_type: MessageTypeT = MessageType.ALL_RECORDS_RECEIVED
     final_processing_stats: PhaseProcessingStats = Field(
         ..., description="The final processing stats for the profile run"
+    )
+
+
+class ProcessRecordsResultMessage(BaseServiceMessage):
+    """Message for process records result."""
+
+    message_type: MessageTypeT = MessageType.PROCESS_RECORDS_RESULT
+
+    process_records_result: ProcessRecordsResult = Field(
+        ..., description="The process records result"
     )

@@ -160,7 +160,7 @@ class ServiceDefaults:
     ENABLE_YAPPI = False
     DEBUG_SERVICES = None
     TRACE_SERVICES = None
-    PROGRESS_REPORT_INTERVAL_SECONDS = 1.0
+    PROGRESS_REPORT_INTERVAL = 1.0
 
 
 @dataclass(frozen=True)
@@ -203,4 +203,4 @@ class MeasurementDefaults:
 class WorkersDefaults:
     MIN = None
     MAX = None
-    HEALTH_CHECK_INTERVAL_SECONDS = 1.0
+    HEALTH_CHECK_INTERVAL = 1.0

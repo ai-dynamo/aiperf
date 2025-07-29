@@ -69,6 +69,14 @@ class AIPerfLogger:
         self.hasHandlers = self._logger.hasHandlers
         self.root = self._logger.root
 
+    @property
+    def is_debug_enabled(self) -> bool:
+        return self.is_enabled_for(_DEBUG)
+
+    @property
+    def is_trace_enabled(self) -> bool:
+        return self.is_enabled_for(_TRACE)
+
     def _log(self, level: int, msg: str | Callable[..., str], *args, **kwargs) -> None:
         """Internal log method that handles lazy evaluation of f-strings."""
         if callable(msg):
@@ -205,7 +213,7 @@ class AIPerfLogger:
             self._log(_CRITICAL, msg, *args, **kwargs)
 
 
-# Setup the list of files that should be ignored when finding the caller (built-in logging, this file)
+# Set up the list of files that should be ignored when finding the caller (built-in logging, this file)
 # This is required to avoid it appearing as all logs are coming from this file.
 # NOTE: Using similar logic to logging._srcfile
 _srcfile = os.path.normcase(AIPerfLogger.find_caller.__code__.co_filename)
