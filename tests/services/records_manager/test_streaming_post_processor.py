@@ -43,7 +43,7 @@ class TestStreamingPostProcessorBasicFunctionality:
     async def test_basic_streaming_functionality(
         self,
         records_manager: RecordsManager,
-        sample_message: ParsedInferenceResultsMessage,
+        sample_record: ParsedInferenceResultsMessage,
     ):
         # Clear the registry to avoid conflicts with other tests
         StreamingPostProcessorFactory._registry.clear()
@@ -60,7 +60,7 @@ class TestStreamingPostProcessorBasicFunctionality:
 
         for _ in range(10):
             await records_manager._on_parsed_inference_results(
-                sample_message,
+                sample_record,
             )
 
         # Make sure the records manager has finished streaming the records
