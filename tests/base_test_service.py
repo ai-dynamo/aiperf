@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommunicationBackend, ServiceRunType, ServiceState
+from aiperf.common.enums import CommunicationBackend, LifecycleState, ServiceRunType
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.services import SystemController
 from aiperf.services.base_service import BaseService
@@ -119,10 +119,12 @@ class BaseTestService(AIPerfLoggerMixin, ABC):
         ):
             if service_class is SystemController:
                 service = service_class(
-                    service_config=service_config, user_config=user_config
+                    user_config=user_config, service_config=service_config
                 )
             else:
-                service = service_class(service_config=service_config)
+                service = service_class(
+                    user_config=user_config, service_config=service_config
+                )
             yield service
 
     @pytest.fixture
@@ -173,14 +175,13 @@ class BaseTestService(AIPerfLoggerMixin, ABC):
         assert service.service_type is not None
 
         # Check that the service is not initialized
-        assert service.state == ServiceState.UNKNOWN
+        assert service.state == LifecycleState.CREATED
 
         # Initialize the service
         await service.initialize()
 
         # Check that the service is initialized and in the READY state
-        assert service.is_initialized
-        assert service.state == ServiceState.READY
+        assert service.state == LifecycleState.INITIALIZED
 
         await service.stop()
 
@@ -198,19 +199,19 @@ class BaseTestService(AIPerfLoggerMixin, ABC):
 
         # Start the service
         await service.start()
-        assert service.state == ServiceState.RUNNING
+        assert service.state == LifecycleState.RUNNING
 
         # Stop the service
         await service.stop()
-        assert service.state == ServiceState.STOPPED
+        assert service.state == LifecycleState.STOPPED
 
     @pytest.mark.parametrize(
         "state",
-        [state for state in ServiceState if state != ServiceState.UNKNOWN],
+        [state for state in LifecycleState],
     )
     @pytest.mark.asyncio
     async def test_service_state_transitions(
-        self, initialized_service: BaseService, state: ServiceState
+        self, initialized_service: BaseService, state: LifecycleState
     ) -> None:
         """
         Test that the service can transition to all possible states. This will be executed
@@ -219,7 +220,7 @@ class BaseTestService(AIPerfLoggerMixin, ABC):
         service = await async_fixture(initialized_service)
 
         # Update the service state
-        await service.set_state(state)
+        await service._set_state(state)
 
         # Check that the service state was updated
         assert service.state == state

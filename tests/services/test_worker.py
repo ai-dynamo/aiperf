@@ -7,7 +7,7 @@ Tests for the worker service.
 import pytest
 from pydantic import BaseModel
 
-from aiperf.common.enums import ServiceState, ServiceType
+from aiperf.common.enums import LifecycleState, ServiceType
 from aiperf.services.base_service import BaseService
 from aiperf.services.workers import Worker
 from tests.base_test_service import BaseTestService
@@ -61,4 +61,4 @@ class WorkerServiceTest(BaseTestService):
 
         # Check the worker is properly initialized
         assert service.is_initialized
-        assert service.state == ServiceState.READY
+        assert service.state == LifecycleState.READY

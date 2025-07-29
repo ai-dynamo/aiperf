@@ -4,18 +4,18 @@ import json
 
 from pydantic import Field
 
-from aiperf.common.enums import MessageType, ServiceState, ServiceType
+from aiperf.common.enums import LifecycleState, MessageType, ServiceType
 from aiperf.common.messages import Message, StatusMessage
 from aiperf.common.models import exclude_if_none
 
 
-@exclude_if_none(["b"])
+@exclude_if_none("b")
 class MockMessage(Message):
     a: int
     b: int | None = Field(default=None)
 
 
-@exclude_if_none(["c"])
+@exclude_if_none("c")
 class MockMessageSubclass(MockMessage):
     c: int | None = Field(default=None)
 
@@ -54,7 +54,7 @@ def test_exclude_if_none_subclass():
 
 
 def test_exclude_if_none_decorator():
-    @exclude_if_none(["some_field"])
+    @exclude_if_none("some_field")
     class ExampleMessage(Message):
         some_field: int | None = Field(default=None)
 
@@ -72,7 +72,7 @@ def test_exclude_if_none_decorator():
 
 def test_status_message():
     message = StatusMessage(
-        state=ServiceState.READY,
+        state=LifecycleState.RUNNING,
         service_id="test",
         service_type=ServiceType.WORKER,
         request_ns=1234567890,
@@ -80,18 +80,18 @@ def test_status_message():
     )
     assert message.model_dump() == {
         "message_type": MessageType.STATUS,
-        "state": ServiceState.READY,
+        "state": LifecycleState.RUNNING,
         "service_id": "test",
         "service_type": ServiceType.WORKER,
         "request_ns": 1234567890,
         "request_id": "test",
     }
     assert json.loads(message.model_dump_json()) == json.loads(
-        '{"message_type":"status","state":"ready","service_id":"test","service_type":"worker","request_ns":1234567890,"request_id":"test"}'
+        '{"message_type":"status","state":"running","service_id":"test","service_type":"worker","request_ns":1234567890,"request_id":"test"}'
     )
 
     message = StatusMessage(
-        state=ServiceState.READY,
+        state=LifecycleState.INITIALIZED,
         request_ns=1234567890,
         request_id=None,
         service_id="test",
@@ -99,11 +99,11 @@ def test_status_message():
     )
     assert message.model_dump() == {
         "message_type": MessageType.STATUS,
-        "state": ServiceState.READY,
+        "state": LifecycleState.INITIALIZED,
         "service_id": "test",
         "service_type": ServiceType.WORKER,
         "request_ns": 1234567890,
     }
     assert json.loads(message.model_dump_json()) == json.loads(
-        '{"message_type":"status","state":"ready","service_id":"test","service_type":"worker","request_ns":1234567890}'
+        '{"message_type":"status","state":"initialized","service_id":"test","service_type":"worker","request_ns":1234567890}'
     )
