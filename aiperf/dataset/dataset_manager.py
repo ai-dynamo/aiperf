@@ -90,7 +90,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         composer = ComposerFactory.create_instance(
             composer_type,
-            config=self.user_config.input,
+            config=self.user_config,
             tokenizer=tokenizer,
         )
         conversations = composer.create_dataset()

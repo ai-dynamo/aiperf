@@ -21,4 +21,5 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
 
     ROUND_ROBIN = "round_robin"
     RANDOM = "random"
-    MODALITY_AWARE = "modality_aware"
+    # TODO: Add support for modality-aware model selection.
+    # MODALITY_AWARE = "modality_aware"

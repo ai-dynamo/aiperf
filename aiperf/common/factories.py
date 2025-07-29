@@ -275,6 +275,7 @@ class AIPerfSingletonFactory(AIPerfFactory[ClassEnumT, ClassProtocolT]):
         """Syntactic sugar for create_instance, but with a more descriptive name for singleton factories."""
         return cls.create_instance(class_type, **kwargs)
 
+<<<<<<< HEAD
     @classmethod
     def create_instance(
         cls, class_type: ClassEnumT | str, **kwargs: Any
@@ -337,6 +338,43 @@ class CommunicationClientFactory(
 ):
     """Factory for registering and creating CommunicationClientProtocol instances based on the specified communication client type.
     see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+=======
+
+class PostProcessorFactory(FactoryMixin["PostProcessorType", "PostProcessorProtocol"]):
+    """Factory for registering and creating PostProcessor instances based on the specified post-processor type.
+
+    Example:
+    ```python
+        # Register a new post-processor type
+        @PostProcessorFactory.register(PostProcessorType.METRIC_SUMMARY)
+        class MetricSummary:
+            pass
+
+        # Create a new post-processor instance
+        post_processor = PostProcessorFactory.create_instance(
+            PostProcessorType.METRIC_SUMMARY,
+        )
+    """
+
+
+class ComposerFactory(FactoryMixin["ComposerType", "BaseDatasetComposer"]):
+    """Factory for registering and creating BaseDatasetComposer instances
+    based on the specified composer type.
+
+    Example:
+    ```python
+        # Register a new composer type
+        @ComposerFactory.register(ComposerType.SYNTHETIC)
+        class SyntheticDatasetComposer(BaseDatasetComposer):
+            pass
+
+        # Create a new composer instance
+        composer = ComposerFactory.create_instance(
+            ComposerType.SYNTHETIC,
+            config=UserConfig(...),
+        )
+    ```
+>>>>>>> 859a08e (Draft model selection based on strategy)
     """
 
     @classmethod
