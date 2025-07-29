@@ -3,9 +3,7 @@
 
 import pandas as pd
 
-from aiperf.common.enums import EndpointType, MetricType, PostProcessorType
-from aiperf.common.enums.endpoints_enums import EndpointType
-from aiperf.common.enums.metric_enums import MetricTag
+from aiperf.common.enums import EndpointType, MetricTag, MetricType, PostProcessorType
 from aiperf.common.factories import PostProcessorFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult, ParsedResponseRecord
@@ -40,6 +38,11 @@ class MetricSummary(AIPerfLoggerMixin):
 
         self._metrics = []
         for metric_cls in BaseMetric.get_all().values():
+            if (
+                allowed_tags is not None
+                and getattr(metric_cls, "tag", None) not in allowed_tags
+            ):
+                continue
             self._metrics.append(metric_cls())
 
     def process_record(self, record: ParsedResponseRecord) -> None:
@@ -78,7 +81,7 @@ class MetricSummary(AIPerfLoggerMixin):
                     record=record, metrics={m.tag: m for m in self._metrics}
                 )
 
-    def post_process(self) -> None:
+    def post_process(self) -> list[MetricResult]:
         """
         Classifies and computes metrics in dependency order to ensure correctness.
         The metrics are categorized based on their dependency types:
@@ -131,16 +134,8 @@ class MetricSummary(AIPerfLoggerMixin):
                     f"Circular or unsatisfiable dependencies detected in METRIC_OF_METRICS: {missing}"
                 )
 
-    def get_results(self) -> list[MetricResult]:
-        """Gets the metrics summary."""
-        metrics_summary = []
-
         df = pd.DataFrame({metric.tag: metric.values() for metric in self._metrics})
-
-        for metric in self._metrics:
-            res: MetricResult = record_from_dataframe(df, metric)
-            metrics_summary.append(res)
-        return metrics_summary
+        return [record_from_dataframe(df, metric) for metric in self._metrics]
 
 
 def record_from_dataframe(df: pd.DataFrame, metric: BaseMetric) -> MetricResult:

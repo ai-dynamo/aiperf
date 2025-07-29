@@ -20,7 +20,6 @@ class TaskManagerMixin(AIPerfLoggerMixin):
 
     def __init__(self, **kwargs):
         self.tasks: set[asyncio.Task] = set()
-        self._shutdown_in_progress = False
         super().__init__(**kwargs)
 
     def execute_async(self, coro: Coroutine) -> asyncio.Task:
@@ -47,15 +46,9 @@ class TaskManagerMixin(AIPerfLoggerMixin):
         if not self.tasks:
             return
 
-        # Set shutdown flag to prevent new tasks from being created
-        self._shutdown_in_progress = True
-
         task_list = list(self.tasks)
         for task in task_list:
             task.cancel()
-
-        # Clear the tasks set after cancellation to avoid memory leaks
-        self.tasks.clear()
 
     def start_background_task(
         self,
@@ -88,7 +81,7 @@ class TaskManagerMixin(AIPerfLoggerMixin):
             immediate: If True, run the task immediately on start, otherwise wait for the interval first.
             stop_on_error: If True, stop the task on any exception, otherwise log and continue.
         """
-        while not stop_event or not stop_event.is_set():
+        while stop_event is None or not stop_event.is_set():
             try:
                 if interval is None or immediate:
                     await yield_to_event_loop()

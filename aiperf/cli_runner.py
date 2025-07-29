@@ -33,10 +33,10 @@ def run_system_controller(
             log_queue=log_queue,
         )
     except Exception:
-        logger.exception("Error starting AIPerf System")
+        logger.exception("Error running AIPerf System")
         raise
     finally:
-        logger.info("AIPerf System exited")
+        logger.debug("AIPerf System exited")
 
 
 def warn_command_not_implemented(command: str) -> None:

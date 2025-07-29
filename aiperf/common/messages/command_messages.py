@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
@@ -15,7 +16,10 @@ from aiperf.common.enums import (
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetails
 from aiperf.common.models.base_models import exclude_if_none
+from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.common.types import CommandTypeT, MessageTypeT, ServiceTypeT
+
+_logger = AIPerfLogger(__name__)
 
 
 @exclude_if_none("target_service_id", "target_service_type")
@@ -86,7 +90,11 @@ class CommandMessage(TargetedServiceMessage):
         # Use cached command type lookup
         command_class = cls._command_type_lookup[command_type]
         if not command_class:
-            raise ValueError(f"Unknown command type: {command_type}")
+            _logger.debug(
+                lambda: f"No command class found for command type: {command_type}"
+            )
+            # fallback to regular command class
+            command_class = cls
 
         return command_class.model_validate(data)
 
@@ -105,12 +113,16 @@ class CommandResponse(TargetedServiceMessage):
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        if cls.status is not None:
-            cls._command_status_lookup[cls.status] = cls
         if (
-            cls.status == CommandResponseStatus.SUCCESS
-            and hasattr(cls, "command")
-            and cls.command is not None
+            hasattr(cls, "status")
+            and cls.status is not None
+            and cls.status not in cls._command_status_lookup
+        ):
+            cls._command_status_lookup[cls.status] = cls
+        elif (
+            cls.__pydantic_fields__.get("status") is not None
+            and cls.__pydantic_fields__.get("status").default
+            == CommandResponseStatus.SUCCESS
         ):
             # Cache the specialized lookup by command type for success messages
             cls._command_success_type_lookup[cls.command] = cls
@@ -149,7 +161,7 @@ class CommandResponse(TargetedServiceMessage):
             status == CommandResponseStatus.SUCCESS
             and command in cls._command_success_type_lookup
         ):
-            # For success messages, use the specialized lookup by command type
+            # For success messages, use the specialized lookup by command type if it exists
             command_response_class = cls._command_success_type_lookup[command]
 
         return command_response_class.model_validate(data)
@@ -180,16 +192,21 @@ class CommandSuccessResponse(CommandResponse):
     subclassed for specific command types."""
 
     status: CommandResponseStatus = CommandResponseStatus.SUCCESS
+    data: Any | None = Field(
+        default=None,
+        description="The data of the command response",
+    )
 
     @classmethod
     def from_command_message(
-        cls, command_message: CommandMessage, service_id: str
+        cls, command_message: CommandMessage, service_id: str, data: Any | None = None
     ) -> Self:
         return cls(
             service_id=service_id,
             target_service_id=command_message.service_id,
             command=command_message.command,
             command_id=command_message.command_id,
+            data=data,
         )
 
 
@@ -308,3 +325,14 @@ class ShutdownCommand(CommandMessage):
     """Command message sent to request a service to shutdown."""
 
     command: CommandTypeT = CommandType.SHUTDOWN
+
+
+class ProcessRecordsResponse(CommandSuccessResponse):
+    """Response to the process records command."""
+
+    command: CommandTypeT = CommandType.PROCESS_RECORDS
+
+    data: ProcessRecordsResult | None = Field(  # type: ignore[assignment]
+        default=None,
+        description="The result of the process records command",
+    )

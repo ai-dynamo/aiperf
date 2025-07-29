@@ -15,9 +15,12 @@ from aiperf.common.aiperf_logger import (
     _WARNING,
     AIPerfLogger,
 )
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.mixins.base_mixin import BaseMixin
+from aiperf.common.protocols import AIPerfLoggerProtocol
 
 
+@implements_protocol(AIPerfLoggerProtocol)
 class AIPerfLoggerMixin(BaseMixin):
     """Mixin to provide lazy evaluated logging for f-strings.
 
@@ -44,6 +47,14 @@ class AIPerfLoggerMixin(BaseMixin):
         self._log = self.logger._log
         self.is_enabled_for = self.logger._logger.isEnabledFor
         super().__init__(**kwargs)
+
+    @property
+    def is_debug_enabled(self) -> bool:
+        return self.is_enabled_for(_DEBUG)
+
+    @property
+    def is_trace_enabled(self) -> bool:
+        return self.is_enabled_for(_TRACE)
 
     def log(
         self, level: int, message: str | Callable[..., str], *args, **kwargs
