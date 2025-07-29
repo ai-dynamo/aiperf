@@ -65,7 +65,7 @@ class InputTokensConfig(BaseConfig):
         Parameter(
             name=(
                 "--prompt-input-tokens-block-size",
-                "--synthetic-input-tokens-block-size",  # GenAI-Perf
+                "--synthetic-input-tokens-block-size",
                 "--isl-block-size",
             ),
             group=_CLI_GROUP,
