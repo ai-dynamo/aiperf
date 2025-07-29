@@ -14,8 +14,8 @@ from aiperf.common.messages import Message, TargetedServiceMessage
 from aiperf.common.protocols import PubClientProtocol
 
 
-@CommunicationClientFactory.register(CommClientType.PUB)
 @implements_protocol(PubClientProtocol)
+@CommunicationClientFactory.register(CommClientType.PUB)
 class ZMQPubClient(BaseZMQClient):
     """
     The PUB socket broadcasts messages to all connected SUB sockets that have

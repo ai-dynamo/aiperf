@@ -16,12 +16,12 @@ from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins import TaskManagerMixin
-from aiperf.common.protocols import ReplyClientProtocol
+from aiperf.common.protocols import RequestClientProtocol
 from aiperf.common.utils import yield_to_event_loop
 
 
+@implements_protocol(RequestClientProtocol)
 @CommunicationClientFactory.register(CommClientType.REQUEST)
-@implements_protocol(ReplyClientProtocol)
 class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
     """
     ZMQ DEALER socket client for asynchronous request-response communication.
@@ -82,16 +82,12 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
             except zmq.Again:
                 self.debug("No data on dealer socket received, yielding to event loop")
                 await yield_to_event_loop()
-                continue
-
-            except (asyncio.CancelledError, zmq.ContextTerminated):
-                self.debug("Dealer request client receiver task cancelled")
-                raise  # re-raise the cancelled error
-
             except Exception as e:
                 self.exception(f"Exception receiving responses: {e}")
                 await yield_to_event_loop()
-                continue
+            except asyncio.CancelledError:
+                self.debug("Dealer request client receiver task cancelled")
+                raise  # re-raise the cancelled error
 
     @on_stop
     async def _stop_remaining_tasks(self) -> None:

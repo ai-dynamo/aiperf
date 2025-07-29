@@ -13,14 +13,14 @@ from aiperf.common.enums import CommClientType, MessageType
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task
-from aiperf.common.messages import CommandMessage, CommandResponseMessage, Message
+from aiperf.common.messages import CommandMessage, CommandResponse, Message
 from aiperf.common.protocols import SubClientProtocol
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import call_all_functions, yield_to_event_loop
 
 
-@CommunicationClientFactory.register(CommClientType.SUB)
 @implements_protocol(SubClientProtocol)
+@CommunicationClientFactory.register(CommClientType.SUB)
 class ZMQSubClient(BaseZMQClient):
     """
     ZMQ SUB socket client for subscribing to messages from PUB sockets.
@@ -161,7 +161,7 @@ class ZMQSubClient(BaseZMQClient):
         if message_type == MessageType.COMMAND:
             message = CommandMessage.from_json(message_json)
         elif message_type == MessageType.COMMAND_RESPONSE:
-            message = CommandResponseMessage.from_json(message_json)
+            message = CommandResponse.from_json(message_json)
         else:
             message = Message.from_json_with_type(message_type, message_json)
 
@@ -186,18 +186,14 @@ class ZMQSubClient(BaseZMQClient):
 
                 self.execute_async(self._handle_message(topic_bytes, message_bytes))
 
-            except (asyncio.CancelledError, zmq.ContextTerminated):
-                self.debug(f"Sub client {self.client_id} receiver task cancelled")
-                break
-
             except zmq.Again:
                 self.debug(f"Sub client {self.client_id} receiver task timed out")
                 await yield_to_event_loop()
-                continue
-
             except Exception as e:
                 self.exception(
                     f"Exception receiving message from subscription: {e}, {type(e)}"
                 )
                 await yield_to_event_loop()
-                continue
+            except (asyncio.CancelledError, zmq.ContextTerminated):
+                self.debug(f"Sub client {self.client_id} receiver task cancelled")
+                break

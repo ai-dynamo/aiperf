@@ -18,8 +18,8 @@ from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 
 
-@CommunicationClientFactory.register(CommClientType.PULL)
 @implements_protocol(PullClientProtocol)
+@CommunicationClientFactory.register(CommClientType.PULL)
 class ZMQPullClient(BaseZMQClient):
     """
     ZMQ PULL socket client for receiving work from PUSH sockets.
@@ -105,17 +105,14 @@ class ZMQPullClient(BaseZMQClient):
                 self.debug("Pull client receiver task timed out")
                 self.semaphore.release()  # release the semaphore as it was not used
                 await yield_to_event_loop()
-                continue
-
-            except (asyncio.CancelledError, zmq.ContextTerminated):
-                self.debug("Pull client receiver task cancelled")
-                self.semaphore.release()  # release the semaphore as it was not used
-                break
-
             except Exception as e:
                 self.exception(f"Exception receiving data from pull socket: {e}")
                 self.semaphore.release()  # release the semaphore as it was not used
                 await yield_to_event_loop()
+            except (asyncio.CancelledError, zmq.ContextTerminated):
+                self.debug("Pull client receiver task cancelled")
+                self.semaphore.release()  # release the semaphore as it was not used
+                break
 
     @on_stop
     async def _stop(self) -> None:
