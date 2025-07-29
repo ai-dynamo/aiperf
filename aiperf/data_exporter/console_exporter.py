@@ -4,12 +4,15 @@
 from rich.console import Console
 from rich.table import Table
 
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DataExporterType
 from aiperf.common.factories import DataExporterFactory
 from aiperf.common.models import MetricResult
+from aiperf.common.protocols import DataExporterProtocol
 from aiperf.data_exporter.exporter_config import ExporterConfig
 
 
+@implements_protocol(DataExporterProtocol)
 @DataExporterFactory.register(DataExporterType.CONSOLE)
 class ConsoleExporter:
     """A class that exports data to the console"""
@@ -31,6 +34,8 @@ class ConsoleExporter:
         console = Console()
         console.print("\n")
         console.print(table)
+        if self._results.was_cancelled:
+            console.print("[red][bold]Profile run was cancelled early[/bold][/red]")
         console.file.flush()
 
     def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
@@ -59,11 +64,4 @@ class ConsoleExporter:
         return row
 
     def _get_title(self) -> str:
-        type_titles = {
-            "embeddings": "Embeddings Metrics",
-            "rankings": "Rankings Metrics",
-            "image_retrieval": "Image Retrieval Metrics",
-            "multimodal": "Multi-Modal Metrics",
-        }
-        metric_title = type_titles.get(self._endpoint_type, "LLM Metrics")
-        return f"NVIDIA AIPerf | {metric_title}"
+        return f"NVIDIA AIPerf | {self._endpoint_type.metrics_title()}"

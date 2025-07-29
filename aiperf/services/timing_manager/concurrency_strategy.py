@@ -8,7 +8,6 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import TimingMode
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.messages import CreditReturnMessage
-from aiperf.common.mixins import AIPerfLoggerMixin, AsyncTaskManagerMixin
 from aiperf.common.models import CreditPhaseStats
 from aiperf.services.timing_manager.config import TimingManagerConfig
 from aiperf.services.timing_manager.credit_issuing_strategy import (
@@ -19,9 +18,7 @@ from aiperf.services.timing_manager.credit_issuing_strategy import (
 
 
 @CreditIssuingStrategyFactory.register(TimingMode.CONCURRENCY)
-class ConcurrencyStrategy(
-    CreditIssuingStrategy, AsyncTaskManagerMixin, AIPerfLoggerMixin
-):
+class ConcurrencyStrategy(CreditIssuingStrategy):
     """Class for concurrency credit issuing strategy."""
 
     def __init__(

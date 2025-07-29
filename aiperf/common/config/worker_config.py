@@ -37,13 +37,13 @@ class WorkersConfig(BaseConfig):
         ),
     ] = WorkersDefaults.MAX
 
-    health_check_interval_seconds: Annotated[
+    health_check_interval: Annotated[
         float,
         Field(
             description="Interval in seconds to for workers to publish their health status.",
         ),
         cyclopts.Parameter(
-            name=("--workers-health-check-interval-seconds"),
+            name=("--workers-health-check-interval"),
             group=_GROUP_NAME,
         ),
-    ] = WorkersDefaults.HEALTH_CHECK_INTERVAL_SECONDS
+    ] = WorkersDefaults.HEALTH_CHECK_INTERVAL

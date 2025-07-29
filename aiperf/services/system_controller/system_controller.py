@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import signal
 import sys
 import time
 from typing import cast
@@ -15,15 +14,15 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.factories import ServiceFactory, ServiceManagerFactory
-from aiperf.common.hooks import on_command, on_init, on_message, on_start
+from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
 from aiperf.common.logging import get_global_log_queue
 from aiperf.common.messages import (
     CommandResponse,
     CreditsCompleteMessage,
     HeartbeatMessage,
     NotificationMessage,
+    ProcessRecordsResultMessage,
     ProfileConfigureCommand,
-    ProfileResultsMessage,
     RegistrationMessage,
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
@@ -31,7 +30,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.messages.command_messages import (
     CommandErrorResponse,
-    ProcessRecordsCommand,
+    ProfileCancelCommand,
     ProfileStartCommand,
     ShutdownCommand,
 )
@@ -88,7 +87,7 @@ class SystemController(SignalHandlerMixin, BaseService):
                 log_queue=get_global_log_queue(),
             )
         )
-
+        self._stop_tasks: set[asyncio.Task] = set()
         self.debug("System Controller created")
 
     async def initialize(self) -> None:
@@ -97,6 +96,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         """
         self.debug("Running ZMQ Proxy Manager Before Initialize")
         await self.proxy_manager.initialize_and_start()
+        # Once the proxies are running, call the original initialize method
         await super().initialize()
 
     @on_init
@@ -125,7 +125,6 @@ class SystemController(SignalHandlerMixin, BaseService):
             raise self._service_error(
                 "Failed to initialize all services",
             ) from e
-
         await self.service_manager.wait_for_all_services_registration(
             stop_event=self._stop_requested_event,
         )
@@ -141,67 +140,6 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self.debug("All required services started successfully")
         self.info("AIPerf System is RUNNING")
-
-    async def stop(self) -> None:
-        """Stop the system controller and all running services.
-
-        This method will:
-        - Stop all running services
-        """
-        self.debug("Stopping System Controller")
-        self.debug("AIPerf System is EXITING")
-        await self.service_manager.kill_all_services()
-        await self.comms.stop()
-        await self.proxy_manager.stop()
-
-    def _handle_signal(self, sig: int) -> None:
-        """Handle received signals by triggering graceful shutdown.
-
-        Args:
-            sig: The signal number received
-        """
-        if sig == signal.SIGINT:
-            if self.stop_requested:
-                # If we are already in a stopping state, we need to kill the process to be safe.
-                self.warning(lambda: f"Received signal {sig}, killing")
-                asyncio.create_task(self._kill())
-                return
-            self.debug(lambda: f"Received signal {sig}, initiating graceful shutdown")
-            asyncio.create_task(self._stop_system_controller())
-            return
-
-    async def _stop_system_controller(self, cancelled: bool = False) -> None:
-        """Stop the system controller and all running services."""
-        # TODO: This is a hack to force printing results again
-        if cancelled:
-            # Process records command
-            await self.publish(
-                ProcessRecordsCommand(
-                    service_id=self.service_id,
-                    target_service_type=ServiceType.RECORDS_MANAGER,
-                    cancelled=True,
-                ),
-            )
-
-        # Broadcast a stop command to all services
-        await self.publish(
-            ShutdownCommand(service_id=self.service_id),
-        )
-
-        try:
-            await self.service_manager.shutdown_all_services()
-        except Exception as e:
-            raise self._service_error(
-                "Failed to stop all services",
-            ) from e
-
-        await self.cancel_all_tasks()
-
-        # TODO: HACK: This is a bit of a hack, but without the call to sys.exit, the process
-        # will continue to linger.
-        task = asyncio.create_task(self.stop())
-        task.add_done_callback(lambda _: sys.exit(0))
-        await task
 
     async def _start_profiling_all_services(self) -> None:
         """Tell all services to start profiling."""
@@ -366,16 +304,69 @@ class SystemController(SignalHandlerMixin, BaseService):
         # TODO: Handle individual worker shutdowns via worker id
         await self.service_manager.stop_service(ServiceType.WORKER)
 
-    @on_message(MessageType.PROFILE_RESULTS)
-    async def _on_profile_results_message(
-        self, profile_results: ProfileResultsMessage
+    @on_message(MessageType.PROCESS_RECORDS_RESULT)
+    async def _on_process_records_result_message(
+        self, message: ProcessRecordsResultMessage
     ) -> None:
         """Handle a profile results message."""
-        self.debug(lambda: f"Received profile results message: {profile_results}")
+        self.debug(lambda: f"Received profile results message: {message}")
+        if message.process_records_result.errors:
+            self.error(
+                f"Received process records result message with errors: {message.process_records_result.errors}"
+            )
+            return
+        if not message.process_records_result.records:
+            self.error(
+                f"Received process records result message with no records: {message.process_records_result.records}"
+            )
+            return
+
         await ExporterManager(
-            results=profile_results, input_config=self.user_config
+            results=message.process_records_result.records[0],
+            input_config=self.user_config,
         ).export_all()
-        await self._stop_system_controller()
+
+        # TODO: HACK: Stop the system controller after exporting the records
+        self.debug("Stopping system controller after exporting records")
+        await asyncio.shield(self.stop())
+
+    async def _handle_signal(self, sig: int) -> None:
+        """Handle received signals by triggering graceful shutdown.
+
+        Args:
+            sig: The signal number received
+        """
+        if self.stop_requested:
+            # If we are already in a stopping state, we need to kill the process to be safe.
+            self.warning(lambda: f"Received signal {sig}, killing")
+            await self._kill()
+            return
+
+        self.debug(lambda: f"Received signal {sig}, initiating graceful shutdown")
+        await self._cancel_profiling()
+
+    async def _cancel_profiling(self) -> None:
+        self.debug("Cancelling profiling of all services")
+        await self.publish(ProfileCancelCommand(service_id=self.service_id))
+
+        # TODO: HACK: Wait for 2 seconds to ensure the profiling is cancelled
+        # Wait for the profiling to be cancelled
+        await asyncio.sleep(2)
+        self.debug("Stopping system controller after profiling cancelled")
+        await asyncio.shield(self.stop())
+
+    @on_stop
+    async def _stop_system_controller(self) -> None:
+        """Stop the system controller and all running services."""
+        # Broadcast a shutdown command to all services
+        await self.publish(ShutdownCommand(service_id=self.service_id))
+
+        # TODO: HACK: Wait for 0.5 seconds to ensure the shutdown command is received
+        await asyncio.sleep(0.5)
+
+        await self.service_manager.shutdown_all_services()
+        await self.comms.stop()
+        await self.proxy_manager.stop()
 
     async def _kill(self):
         """Kill the system controller."""
@@ -397,3 +388,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    sys.exit(0)

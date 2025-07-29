@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union
 from aiperf.common.enums import (
     CommandType,
     MessageType,
+    MetricTag,
     ServiceType,
 )
 
@@ -50,6 +51,7 @@ MessageT = TypeVar("MessageT", bound="Message")
 MessageCallbackMapT = dict["MessageTypeT", Callable[["Message"], Any] | list[Callable[["Message"], Any]]]  # fmt: skip
 MessageOutputT = TypeVar("MessageOutputT", bound="Message")
 MessageTypeT = MessageType | str
+MetricTagT = MetricTag | str
 ModelEndpointInfoT = TypeVar("ModelEndpointInfoT", bound="ModelEndpointInfo")
 OutputT = TypeVar("OutputT", bound=Any)
 ProtocolT = TypeVar("ProtocolT", bound=Any)

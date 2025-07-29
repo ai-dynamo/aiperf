@@ -1,25 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
 from typing import Any
 
-from aiperf.clients.client_interfaces import (
-    RequestConverterFactory,
-    RequestConverterProtocol,
-)
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import EndpointType
+from aiperf.common.factories import RequestConverterFactory
+from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
 from aiperf.common.models import Turn
 
 
 @RequestConverterFactory.register(EndpointType.OPENAI_EMBEDDINGS)
-class OpenAIEmbeddingsRequestConverter(RequestConverterProtocol[dict[str, Any]]):
+class OpenAIEmbeddingsRequestConverter(AIPerfLoggerMixin):
     """Request converter for OpenAI embeddings requests."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.logger = logging.getLogger(self.__class__.__name__)
 
     async def format_payload(
         self,
@@ -42,5 +35,5 @@ class OpenAIEmbeddingsRequestConverter(RequestConverterProtocol[dict[str, Any]])
         if extra:
             payload.update(extra)
 
-        self.logger.debug("Formatted payload: %s", payload)
+        self.debug(lambda: f"Formatted payload: {payload}")
         return payload
