@@ -3,7 +3,7 @@
 
 from typing import Annotated
 
-import cyclopts
+from cyclopts import Parameter
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
@@ -12,6 +12,7 @@ from aiperf.common.config.config_defaults import (
     TurnDefaults,
     TurnDelayDefaults,
 )
+from aiperf.common.config.groups import Groups
 
 
 class TurnDelayConfig(BaseConfig):
@@ -19,7 +20,7 @@ class TurnDelayConfig(BaseConfig):
     A configuration class for defining turn delay related settings.
     """
 
-    _GROUP_NAME = "Input Conversation"
+    _CLI_GROUP = Groups.CONVERSATION_INPUT
 
     mean: Annotated[
         float,
@@ -27,12 +28,12 @@ class TurnDelayConfig(BaseConfig):
             ge=0,
             description="The mean delay between turns within a conversation in milliseconds.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--conversation-turn-delay-mean",
                 "--session-turn-delay-mean",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = TurnDelayDefaults.MEAN
 
@@ -43,12 +44,12 @@ class TurnDelayConfig(BaseConfig):
             description="The standard deviation of the delay between turns \n"
             "within a conversation in milliseconds.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--conversation-turn-delay-stddev",
                 "--session-turn-delay-stddev",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = TurnDelayDefaults.STDDEV
 
@@ -58,12 +59,12 @@ class TurnDelayConfig(BaseConfig):
             ge=0,
             description="A ratio to scale multi-turn delays.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--conversation-turn-delay-ratio",
                 "--session-delay-ratio",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = TurnDelayDefaults.RATIO
 
@@ -73,7 +74,7 @@ class TurnConfig(BaseConfig):
     A configuration class for defining turn related settings in a conversation.
     """
 
-    _GROUP_NAME = "Input Conversation"
+    _CLI_GROUP = Groups.CONVERSATION_INPUT
 
     mean: Annotated[
         int,
@@ -81,12 +82,12 @@ class TurnConfig(BaseConfig):
             ge=1,
             description="The mean number of turns within a conversation.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--conversation-turn-mean",
                 "--session-turns-mean",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = TurnDefaults.MEAN
 
@@ -96,12 +97,12 @@ class TurnConfig(BaseConfig):
             ge=0,
             description="The standard deviation of the number of turns within a conversation.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--conversation-turn-stddev",
                 "--session-turns-stddev",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = TurnDefaults.STDDEV
 
@@ -113,7 +114,7 @@ class ConversationConfig(BaseConfig):
     A configuration class for defining conversations related settings.
     """
 
-    _GROUP_NAME = "Input Conversation"
+    _CLI_GROUP = Groups.CONVERSATION_INPUT
 
     num: Annotated[
         int,
@@ -123,13 +124,13 @@ class ConversationConfig(BaseConfig):
             "Each conversation represents a single request session between client and server.\n"
             "Supported on synthetic mode only and conversations will be reused until benchmarking is complete.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--conversation-num",
                 "--num-conversations",
                 "--num-sessions",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ConversationDefaults.NUM
 

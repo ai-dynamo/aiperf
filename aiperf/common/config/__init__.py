@@ -56,6 +56,9 @@ from aiperf.common.config.conversation_config import (
 from aiperf.common.config.endpoint_config import (
     EndPointConfig,
 )
+from aiperf.common.config.groups import (
+    Groups,
+)
 from aiperf.common.config.image_config import (
     ImageConfig,
     ImageHeightConfig,
@@ -122,6 +125,7 @@ __all__ = [
     "ConversationDefaults",
     "EndPointConfig",
     "EndPointDefaults",
+    "Groups",
     "ImageConfig",
     "ImageDefaults",
     "ImageHeightConfig",

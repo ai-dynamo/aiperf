@@ -3,12 +3,13 @@
 
 from typing import Annotated
 
-import cyclopts
+from cyclopts import Parameter
 from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import AudioDefaults
 from aiperf.common.config.config_validators import parse_str_or_list_of_positive_values
+from aiperf.common.config.groups import Groups
 from aiperf.common.enums import AudioFormat
 
 
@@ -17,7 +18,7 @@ class AudioLengthConfig(BaseConfig):
     A configuration class for defining audio length related settings.
     """
 
-    _GROUP_NAME = "Input Audio"
+    _CLI_GROUP = Groups.AUDIO_INPUT
 
     mean: Annotated[
         float,
@@ -25,11 +26,11 @@ class AudioLengthConfig(BaseConfig):
             ge=0,
             description="The mean length of the audio in seconds.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--audio-length-mean",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = AudioDefaults.LENGTH_MEAN
 
@@ -39,11 +40,11 @@ class AudioLengthConfig(BaseConfig):
             ge=0,
             description="The standard deviation of the length of the audio in seconds.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--audio-length-stddev",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = AudioDefaults.LENGTH_STDDEV
 
@@ -53,7 +54,7 @@ class AudioConfig(BaseConfig):
     A configuration class for defining audio related settings.
     """
 
-    _GROUP_NAME = "Input Audio"
+    _CLI_GROUP = Groups.AUDIO_INPUT
 
     batch_size: Annotated[
         int,
@@ -62,12 +63,12 @@ class AudioConfig(BaseConfig):
             description="The batch size of audio requests AIPerf should send.\n"
             "This is currently supported with the OpenAI `multimodal` endpoint type",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--audio-batch-size",
                 "--batch-size-audio",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = AudioDefaults.BATCH_SIZE
 
@@ -78,11 +79,11 @@ class AudioConfig(BaseConfig):
         Field(
             description="The format of the audio files (wav or mp3).",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--audio-format",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = AudioDefaults.FORMAT
 
@@ -93,11 +94,11 @@ class AudioConfig(BaseConfig):
             description="A list of audio bit depths to randomly select from in bits.",
         ),
         BeforeValidator(parse_str_or_list_of_positive_values),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--audio-depths",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = AudioDefaults.DEPTHS
 
@@ -109,11 +110,11 @@ class AudioConfig(BaseConfig):
             "Common sample rates are 16, 44.1, 48, 96, etc.",
         ),
         BeforeValidator(parse_str_or_list_of_positive_values),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--audio-sample-rates",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = AudioDefaults.SAMPLE_RATES
 
@@ -124,10 +125,10 @@ class AudioConfig(BaseConfig):
             le=2,
             description="The number of audio channels to use for the audio data generation.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--audio-num-channels",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = AudioDefaults.NUM_CHANNELS
