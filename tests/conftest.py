@@ -25,16 +25,15 @@ from aiperf.common.types import MessageTypeT
 from tests.comms.mock_zmq import (
     mock_zmq_communication as mock_zmq_communication,  # import fixture globally
 )
-from tests.utils.time_traveler import (
-    time_traveler as time_traveler,  # import fixture globally
-)
-
-logging.basicConfig(level=_TRACE)
-
 
 real_sleep = (
     asyncio.sleep
 )  # save the real sleep so we can use it in the no_sleep fixture
+from tests.utils.time_traveler import (  # noqa: E402
+    time_traveler as time_traveler,  # import fixture globally
+)
+
+logging.basicConfig(level=_TRACE)
 
 
 def pytest_addoption(parser):

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.enums import MessageType, ServiceState
+from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.services.base_component_service import BaseComponentService
 from aiperf.services.base_service import BaseService
 from tests.base_test_service import BaseTestService, async_fixture
@@ -101,7 +101,7 @@ class BaseTestComponentService(BaseTestService):
         service = await async_fixture(initialized_service)
 
         # Update the service status
-        await service.set_state(ServiceState.READY)
+        await service.set_state(LifecycleState.READY)
 
         # Check that a status message was published
         assert MessageType.STATUS in mock_communication.mock_data.published_messages
@@ -112,4 +112,4 @@ class BaseTestComponentService(BaseTestService):
         ][0]
         assert status_msg.service_id == service.service_id
         assert status_msg.service_type == service.service_type
-        assert status_msg.state == ServiceState.READY
+        assert status_msg.state == LifecycleState.READY
