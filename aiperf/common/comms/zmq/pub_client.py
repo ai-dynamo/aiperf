@@ -5,13 +5,16 @@ import asyncio
 
 import zmq.asyncio
 
-from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.messages import Message
+from aiperf.common.factories import CommunicationClientFactory
+from aiperf.common.messages import Message, TargetedServiceMessage
+from aiperf.common.protocols import PubClientProtocol
 
 
+@implements_protocol(PubClientProtocol)
 @CommunicationClientFactory.register(CommClientType.PUB)
 class ZMQPubClient(BaseZMQClient):
     """
@@ -51,21 +54,20 @@ class ZMQPubClient(BaseZMQClient):
 
     def __init__(
         self,
-        context: zmq.asyncio.Context,
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        **kwargs,
     ) -> None:
         """
         Initialize the ZMQ Publisher client class.
 
         Args:
-            context (zmq.asyncio.Context): The ZMQ context.
             address (str): The address to bind or connect to.
             bind (bool): Whether to bind or connect the socket.
             socket_ops (dict, optional): Additional socket options to set.
         """
-        super().__init__(context, zmq.SocketType.PUB, address, bind, socket_ops)
+        super().__init__(zmq.SocketType.PUB, address, bind, socket_ops, **kwargs)
 
     async def publish(self, message: Message) -> None:
         """Publish a message. The topic will be set automatically based on the message type.
@@ -73,18 +75,17 @@ class ZMQPubClient(BaseZMQClient):
         Args:
             message: Message to publish (must be a Message object)
         """
-        await self._ensure_initialized()
+        await self._check_initialized()
 
         try:
+            topic = self._determine_topic(message)
             message_json = message.model_dump_json()
-
             # Publish message
-            await self.socket.send_multipart(
-                [message.message_type.encode(), message_json.encode()]
-            )
+            self.trace(lambda: f"Publishing message {topic=} {message_json=}")
+            await self.socket.send_multipart([topic.encode(), message_json.encode()])
 
         except (asyncio.CancelledError, zmq.ContextTerminated):
-            self.trace(
+            self.debug(
                 lambda: f"Pub client {self.client_id} cancelled or context terminated"
             )
             return
@@ -93,3 +94,15 @@ class ZMQPubClient(BaseZMQClient):
             raise CommunicationError(
                 f"Failed to publish message {message.message_type}: {e}",
             ) from e
+
+    def _determine_topic(self, message: Message) -> str:
+        """Determine the topic based on the message."""
+        # For targeted messages such as commands, we can set the topic to a specific service by id or type
+        # Note that target_service_id always takes precedence over target_service_type
+
+        if isinstance(message, TargetedServiceMessage):
+            if message.target_service_id:
+                return f"{message.message_type}.{message.target_service_id}"
+            if message.target_service_type:
+                return f"{message.message_type}.{message.target_service_type}"
+        return message.message_type

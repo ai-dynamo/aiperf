@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import zmq.asyncio
 from zmq import SocketType
 
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
@@ -9,10 +8,10 @@ from aiperf.common.comms.zmq.zmq_proxy_base import (
     BaseZMQProxy,
     ProxyEndType,
     ProxySocketClient,
-    ZMQProxyFactory,
 )
 from aiperf.common.config.zmq_config import BaseZMQProxyConfig
 from aiperf.common.enums import ZMQProxyType
+from aiperf.common.factories import ZMQProxyFactory
 
 ################################################################################
 # Proxy Sockets
@@ -33,7 +32,6 @@ def create_proxy_socket_class(
 
         def __init__(
             self,
-            context: zmq.asyncio.Context,
             address: str,
             socket_ops: dict | None = None,
             proxy_uuid: str | None = None,
@@ -41,7 +39,6 @@ def create_proxy_socket_class(
             """Initialize the ZMQ Proxy socket class."""
 
             super().__init__(
-                context,
                 socket_type,
                 address,
                 end_type=end_type,
@@ -80,14 +77,12 @@ def define_proxy_class(
 
         def __init__(
             self,
-            context: zmq.asyncio.Context,
             zmq_proxy_config: BaseZMQProxyConfig,
             socket_ops: dict | None = None,
         ) -> None:
             super().__init__(
                 frontend_socket_class=frontend_socket_class,
                 backend_socket_class=backend_socket_class,
-                context=context,
                 zmq_proxy_config=zmq_proxy_config,
                 socket_ops=socket_ops,
             )
@@ -101,7 +96,6 @@ def define_proxy_class(
             if config is None:
                 return None
             return cls(
-                context=zmq.asyncio.Context.instance(),
                 zmq_proxy_config=config,
                 socket_ops=socket_ops,
             )

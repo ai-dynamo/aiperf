@@ -6,109 +6,68 @@ import uuid
 import zmq.asyncio
 
 from aiperf.common.comms.zmq.zmq_defaults import ZMQSocketDefaults
-from aiperf.common.exceptions import (
-    AIPerfError,
-    CommunicationError,
-    InitializationError,
-)
-from aiperf.common.hooks import AIPerfHook, AIPerfTaskHook, supports_hooks
-from aiperf.common.mixins import AIPerfLoggerMixin, AIPerfTaskMixin
+from aiperf.common.exceptions import InitializationError, NotInitializedError
+from aiperf.common.hooks import on_init, on_stop
+from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 
 ################################################################################
 # Base ZMQ Client Class
 ################################################################################
 
 
-@supports_hooks(
-    AIPerfHook.ON_INIT,
-    AIPerfHook.ON_STOP,
-    AIPerfHook.ON_CLEANUP,
-    AIPerfTaskHook.AIPERF_TASK,
-)
-class BaseZMQClient(AIPerfTaskMixin, AIPerfLoggerMixin):
+class BaseZMQClient(AIPerfLifecycleMixin):
     """Base class for all ZMQ clients. It can be used as-is to create a new ZMQ client,
     or it can be subclassed to create specific ZMQ client functionality.
 
-    It inherits from the :class:`AIPerfTaskMixin`, allowing derived
+    It inherits from the :class:`AIPerfLifecycleMixin`, allowing derived
     classes to implement specific hooks.
     """
 
     def __init__(
         self,
-        context: zmq.asyncio.Context,
         socket_type: zmq.SocketType,
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
         client_id: str | None = None,
+        **kwargs,
     ) -> None:
         """
         Initialize the ZMQ Base class.
 
         Args:
-            context (zmq.asyncio.Context): The ZMQ context.
             address (str): The address to bind or connect to.
             bind (bool): Whether to BIND or CONNECT the socket.
             socket_type (SocketType): The type of ZMQ socket (eg. PUB, SUB, ROUTER, DEALER, etc.).
             socket_ops (dict, optional): Additional socket options to set.
         """
-        self.stop_event: asyncio.Event = asyncio.Event()
-        self.initialized_event: asyncio.Event = asyncio.Event()
-        self.context: zmq.asyncio.Context = context
+        self.context: zmq.asyncio.Context = zmq.asyncio.Context.instance()
+        self.socket_type: zmq.SocketType = socket_type
+        self.socket: zmq.asyncio.Socket = self.context.socket(self.socket_type)
         self.address: str = address
         self.bind: bool = bind
-        self.socket_type: zmq.SocketType = socket_type
-        self._socket: zmq.asyncio.Socket | None = None
         self.socket_ops: dict = socket_ops or {}
         self.client_id: str = (
             client_id
             or f"{self.socket_type.name.lower()}_client_{uuid.uuid4().hex[:8]}"
         )
-        super().__init__(logger_name=self.client_id)
+        super().__init__(id=self.client_id, **kwargs)
         self.trace(lambda: f"ZMQ client __init__: {self.client_id}")
 
-    @property
-    def is_initialized(self) -> bool:
-        """Check if the client is initialized."""
-        return self.initialized_event.is_set()
-
-    @property
-    def stop_requested(self) -> bool:
-        """Check if the client has been requested to stop."""
-        return self.stop_event.is_set()
+    async def _check_initialized(self) -> None:
+        """Raise an exception if the socket is not initialized or closed."""
+        if self.stop_requested:
+            raise asyncio.CancelledError("Socket was stopped")
+        if not self.socket:
+            raise NotInitializedError("Socket not initialized or closed")
 
     @property
     def socket_type_name(self) -> str:
         """Get the name of the socket type."""
         return self.socket_type.name
 
-    @property
-    def socket(self) -> zmq.asyncio.Socket:
-        """Get the zmq socket for the client.
-
-        Raises:
-            CommunicationError: If the client is not initialized
-        """
-        if not self._socket:
-            raise CommunicationError(
-                "Communication channels are not initialized",
-            )
-        return self._socket
-
-    async def _ensure_initialized(self) -> None:
-        """Ensure the communication channels are initialized and not shutdown.
-
-        If not initialized, it will automatically initialize.
-
-        Raises:
-            CommunicationError: If the communication channels are shutdown
-        """
-        if not self.is_initialized:
-            await self.initialize()
-        if self.stop_requested:
-            raise asyncio.CancelledError()
-
-    async def initialize(self) -> None:
+    @on_init
+    async def _initialize_socket(self) -> None:
         """Initialize the communication.
 
         This method will:
@@ -118,96 +77,56 @@ class BaseZMQClient(AIPerfTaskMixin, AIPerfLoggerMixin):
         - Run the AIPerfHook.ON_INIT hooks
         """
         try:
-            self._socket = self.context.socket(self.socket_type)
+            self.debug(
+                lambda: f"ZMQ {self.socket_type_name} socket initialized, try {'BIND' if self.bind else 'CONNECT'} to {self.address} ({self.client_id})"
+            )
+
             if self.bind:
-                self.debug(
-                    lambda: f"ZMQ {self.socket_type_name} socket initialized, try BIND to {self.address} ({self.client_id})"
-                )
-                self._socket.bind(self.address)
+                self.socket.bind(self.address)
             else:
-                self.debug(
-                    lambda: f"ZMQ {self.socket_type_name} socket initialized, try CONNECT to {self.address} ({self.client_id})"
-                )
-                self._socket.connect(self.address)
+                self.socket.connect(self.address)
 
             # Set default timeouts
-            self._socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
-            self._socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
+            self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
+            self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
 
             # Set performance-oriented socket options
-            self._socket.setsockopt(zmq.TCP_KEEPALIVE, ZMQSocketDefaults.TCP_KEEPALIVE)
-            self._socket.setsockopt(
+            self.socket.setsockopt(zmq.TCP_KEEPALIVE, ZMQSocketDefaults.TCP_KEEPALIVE)
+            self.socket.setsockopt(
                 zmq.TCP_KEEPALIVE_IDLE, ZMQSocketDefaults.TCP_KEEPALIVE_IDLE
             )
-            self._socket.setsockopt(
+            self.socket.setsockopt(
                 zmq.TCP_KEEPALIVE_INTVL, ZMQSocketDefaults.TCP_KEEPALIVE_INTVL
             )
-            self._socket.setsockopt(
+            self.socket.setsockopt(
                 zmq.TCP_KEEPALIVE_CNT, ZMQSocketDefaults.TCP_KEEPALIVE_CNT
             )
-            self._socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
-            self._socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
+            self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
+            self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
 
             # Set additional socket options requested by the caller
             for key, val in self.socket_ops.items():
-                self._socket.setsockopt(key, val)
+                self.socket.setsockopt(key, val)
 
-            await self.run_hooks(AIPerfHook.ON_INIT)
-
-            self.initialized_event.set()
             self.debug(
                 lambda: f"ZMQ {self.socket_type_name} socket {'BOUND' if self.bind else 'CONNECTED'} to {self.address} ({self.client_id})"
             )
 
-        except AIPerfError:
-            raise  # re-raise it up the stack
         except Exception as e:
             raise InitializationError(f"Failed to initialize ZMQ socket: {e}") from e
 
-    async def shutdown(self) -> None:
-        """Shutdown the communication.
-
-        This method will:
-        - Close the zmq socket
-        - Run the AIPerfHook.ON_CLEANUP hooks
-        """
-        if self.stop_requested:
+    @on_stop
+    async def _shutdown_socket(self) -> None:
+        """Shutdown the socket."""
+        try:
+            if self.socket:
+                self.socket.close()
+        except zmq.ContextTerminated:
+            self.debug(
+                lambda: f"ZMQ context already terminated, skipping socket close ({self.client_id})"
+            )
             return
-
-        self.stop_event.set()
-
-        try:
-            await self.run_hooks(AIPerfHook.ON_STOP)
-        except AIPerfError:
-            raise  # re-raise it up the stack
         except Exception as e:
             self.exception(
-                f"Uncaught exception running ON_STOP hooks: {e} ({self.client_id})"
+                f"Uncaught exception shutting down ZMQ socket: {e} ({self.client_id})"
             )
-
-        try:
-            await self.run_hooks(AIPerfHook.ON_CLEANUP)
-        except AIPerfError:
-            raise  # re-raise it up the stack
-        except Exception as e:
-            self.exception(
-                f"Uncaught exception cleaning up ZMQ socket: {e} ({self.client_id})"
-            )
-
-        finally:
-            try:
-                if self._socket:
-                    self._socket.close()
-            except zmq.ContextTerminated:
-                self.debug(
-                    lambda: f"ZMQ context already terminated, skipping socket close ({self.client_id})"
-                )
-                return
-            except AIPerfError:
-                raise  # re-raise it up the stack
-            except Exception as e:
-                self.exception(
-                    f"Uncaught exception shutting down ZMQ socket: {e} ({self.client_id})"
-                )
-            finally:
-                self._socket = None
