@@ -11,6 +11,9 @@ from aiperf.services.system_controller.multiprocess_service_manager import (
     MultiProcessRunInfo,
     MultiProcessServiceManager,
 )
+from aiperf.services.system_controller.proxy_manager import (
+    ProxyManager,
+)
 from aiperf.services.system_controller.system_controller import (
     SystemController,
     main,
@@ -24,6 +27,7 @@ __all__ = [
     "KubernetesServiceManager",
     "MultiProcessRunInfo",
     "MultiProcessServiceManager",
+    "ProxyManager",
     "ServiceKubernetesRunInfo",
     "SignalHandlerMixin",
     "SystemController",
