@@ -91,7 +91,7 @@ class CommandMessage(TargetedServiceMessage):
         command_class = cls._command_type_lookup[command_type]
         if not command_class:
             _logger.debug(
-                lambda: "No command class found for command type: {command_type}"
+                lambda: f"No command class found for command type: {command_type}"
             )
             # fallback to regular command class
             command_class = cls
