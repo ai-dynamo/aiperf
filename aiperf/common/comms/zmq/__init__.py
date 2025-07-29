@@ -36,7 +36,6 @@ from aiperf.common.comms.zmq.zmq_proxy_base import (
     BaseZMQProxy,
     ProxyEndType,
     ProxySocketClient,
-    ZMQProxyFactory,
 )
 from aiperf.common.comms.zmq.zmq_proxy_sockets import (
     ZMQDealerRouterProxy,
@@ -57,7 +56,6 @@ __all__ = [
     "ZMQDealerRequestClient",
     "ZMQDealerRouterProxy",
     "ZMQIPCCommunication",
-    "ZMQProxyFactory",
     "ZMQPubClient",
     "ZMQPullClient",
     "ZMQPushClient",
