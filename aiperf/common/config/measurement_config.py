@@ -3,11 +3,12 @@
 
 from typing import Annotated
 
-import cyclopts
+from cyclopts import Parameter
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import MeasurementDefaults
+from aiperf.common.config.groups import Groups
 
 
 class MeasurementConfig(BaseConfig):
@@ -15,7 +16,7 @@ class MeasurementConfig(BaseConfig):
     A configuration class for defining top-level measurement settings.
     """
 
-    _GROUP_NAME = "Measurement"
+    _CLI_GROUP = Groups.MEASUREMENT
 
     # TODO: Not implemented yet
     measurement_interval: Annotated[
@@ -29,13 +30,14 @@ class MeasurementConfig(BaseConfig):
             "When using the default stability percentage, AIPerf will benchmark  "
             "for 3*(measurement_interval) milliseconds.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--measurement-interval-ms",
                 "--measurement-interval",  # GenAI-Perf
                 "-p",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            parse=False,  # TODO: Not yet supported
+            group=_CLI_GROUP,
         ),
     ] = MeasurementDefaults.MEASUREMENT_INTERVAL
 
@@ -50,11 +52,12 @@ class MeasurementConfig(BaseConfig):
             "from the recent 3 measurements is within (stability percentage)\n"
             "in terms of both infer per second and latency.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--stability-percentage",  # GenAI-Perf
                 "-s",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            parse=False,  # TODO: Not yet supported
+            group=_CLI_GROUP,
         ),
     ] = MeasurementDefaults.STABILITY_PERCENTAGE

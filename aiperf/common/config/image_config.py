@@ -3,11 +3,12 @@
 
 from typing import Annotated
 
-import cyclopts
+from cyclopts import Parameter
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import ImageDefaults
+from aiperf.common.config.groups import Groups
 from aiperf.common.enums import ImageFormat
 
 
@@ -16,7 +17,7 @@ class ImageHeightConfig(BaseConfig):
     A configuration class for defining image height related settings.
     """
 
-    _GROUP_NAME = "Input Image"
+    _CLI_GROUP = Groups.IMAGE_INPUT
 
     mean: Annotated[
         float,
@@ -24,11 +25,11 @@ class ImageHeightConfig(BaseConfig):
             ge=0,
             description="The mean height of images when generating synthetic image data.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--image-height-mean",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ImageDefaults.HEIGHT_MEAN
 
@@ -38,11 +39,11 @@ class ImageHeightConfig(BaseConfig):
             ge=0,
             description="The standard deviation of height of images when generating synthetic image data.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--image-height-stddev",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ImageDefaults.HEIGHT_STDDEV
 
@@ -52,7 +53,7 @@ class ImageWidthConfig(BaseConfig):
     A configuration class for defining image width related settings.
     """
 
-    _GROUP_NAME = "Input Image"
+    _CLI_GROUP = Groups.IMAGE_INPUT
 
     mean: Annotated[
         float,
@@ -60,11 +61,11 @@ class ImageWidthConfig(BaseConfig):
             ge=0,
             description="The mean width of images when generating synthetic image data.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--image-width-mean",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ImageDefaults.WIDTH_MEAN
 
@@ -74,11 +75,11 @@ class ImageWidthConfig(BaseConfig):
             ge=0,
             description="The standard deviation of width of images when generating synthetic image data.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--image-width-stddev",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ImageDefaults.WIDTH_STDDEV
 
@@ -88,7 +89,7 @@ class ImageConfig(BaseConfig):
     A configuration class for defining image related settings.
     """
 
-    _GROUP_NAME = "Input Image"
+    _CLI_GROUP = Groups.IMAGE_INPUT
 
     width: ImageWidthConfig = ImageWidthConfig()
     height: ImageHeightConfig = ImageHeightConfig()
@@ -99,12 +100,12 @@ class ImageConfig(BaseConfig):
             description="The image batch size of the requests AIPerf should send.\n"
             "This is currently supported with the image retrieval endpoint type.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--image-batch-size",
                 "--batch-size-image",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ImageDefaults.BATCH_SIZE
 
@@ -113,10 +114,10 @@ class ImageConfig(BaseConfig):
         Field(
             description="The compression format of the images.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--image-format",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ImageDefaults.FORMAT

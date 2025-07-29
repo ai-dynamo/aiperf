@@ -3,16 +3,16 @@
 
 from typing import Annotated
 
-import cyclopts
+from cyclopts import Parameter
 from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import BaseConfig
-from aiperf.common.config.config_validators import (
-    parse_str_or_list,
-)
+from aiperf.common.config.config_validators import parse_str_or_list
 from aiperf.common.config.endpoint_config import EndPointConfig
+from aiperf.common.config.groups import Groups
 from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
+from aiperf.common.config.measurement_config import MeasurementConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 
@@ -29,13 +29,13 @@ class UserConfig(BaseConfig):
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
         ),
         BeforeValidator(parse_str_or_list),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--model-names",
                 "--model",  # GenAI-Perf
                 "-m",  # GenAI-Perf
             ),
-            group="Endpoint",
+            group=Groups.ENDPOINT,
         ),
     ]
 
@@ -44,7 +44,7 @@ class UserConfig(BaseConfig):
         Field(
             description="Endpoint configuration",
         ),
-    ] = EndPointConfig()
+    ]
 
     input: Annotated[
         InputConfig,
@@ -74,9 +74,9 @@ class UserConfig(BaseConfig):
         ),
     ] = LoadGeneratorConfig()
 
-    # measurement: Annotated[
-    #     MeasurementConfig,
-    #     Field(
-    #         description="Measurement configuration",
-    #     ),
-    # ] = MeasurementConfig()
+    measurement: Annotated[
+        MeasurementConfig,
+        Field(
+            description="Measurement configuration",
+        ),
+    ] = MeasurementConfig()

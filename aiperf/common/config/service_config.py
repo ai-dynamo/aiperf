@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import Annotated
 
-import cyclopts
+from cyclopts import Parameter
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
@@ -10,6 +10,7 @@ from typing_extensions import Self
 from aiperf.common.config.base_config import ADD_TO_TEMPLATE
 from aiperf.common.config.config_defaults import ServiceDefaults
 from aiperf.common.config.config_validators import parse_service_types
+from aiperf.common.config.groups import Groups
 from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
@@ -20,8 +21,8 @@ from aiperf.common.enums import (
     AIPerfLogLevel,
     CommunicationBackend,
     ServiceRunType,
-    ServiceType,
 )
+from aiperf.common.enums.service_enums import ServiceType
 
 
 class ServiceConfig(BaseSettings):
@@ -34,7 +35,7 @@ class ServiceConfig(BaseSettings):
         extra="allow",
     )
 
-    _GROUP_NAME = "Service"
+    _CLI_GROUP = Groups.SERVICE
 
     @model_validator(mode="after")
     def validate_log_level_from_verbose_flags(self) -> Self:
@@ -62,9 +63,9 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Type of service run (process, k8s)",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--service-run-type", "--run-type"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.SERVICE_RUN_TYPE
 
@@ -73,9 +74,9 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Communication backend to use",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--comm-backend"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.COMM_BACKEND
 
@@ -84,10 +85,8 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Communication configuration",
         ),
-        # TODO: Figure out if we need to be able to set this from the command line.
-        cyclopts.Parameter(
-            name=("--comm-config"),
-            group="Not Supported via CLI",
+        Parameter(
+            parse=False,  # This is not supported via CLI
         ),
     ] = ServiceDefaults.COMM_CONFIG
 
@@ -97,9 +96,9 @@ class ServiceConfig(BaseSettings):
             description="Time in seconds after which a service is considered dead if no "
             "heartbeat received",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--heartbeat-timeout"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.HEARTBEAT_TIMEOUT
 
@@ -108,9 +107,9 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Time in seconds to wait for all required services to register",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--registration-timeout"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.REGISTRATION_TIMEOUT
 
@@ -119,9 +118,9 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Default timeout for command responses",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--command-timeout", "--command-timeout-seconds"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.COMMAND_TIMEOUT
 
@@ -130,9 +129,9 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Interval in seconds between heartbeat messages",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--heartbeat-interval-seconds", "--heartbeat-interval"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.HEARTBEAT_INTERVAL_SECONDS
 
@@ -148,9 +147,9 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Logging level",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--log-level"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.LOG_LEVEL
 
@@ -160,9 +159,9 @@ class ServiceConfig(BaseSettings):
             description="Equivalent to --log-level DEBUG. Enables more verbose logging output, but lacks some raw message logging.",
             json_schema_extra={ADD_TO_TEMPLATE: False},
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--verbose", "-v"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.VERBOSE
 
@@ -172,9 +171,9 @@ class ServiceConfig(BaseSettings):
             description="Equivalent to --log-level TRACE. Enables the most verbose logging output possible.",
             json_schema_extra={ADD_TO_TEMPLATE: False},
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--extra-verbose", "-vv"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.EXTRA_VERBOSE
 
@@ -183,9 +182,9 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Disable the UI (prints progress to the console as log messages). This is equivalent to --ui-type none.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--disable-ui"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.DISABLE_UI
 
@@ -194,9 +193,9 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Enable the use of uvloop instead of the default asyncio event loop",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--enable-uvloop"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.ENABLE_UVLOOP
 
@@ -206,23 +205,23 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Number of services to spawn for parsing inference results. The higher the request rate, the more services should be spawned.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--result-parser-service-count"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.RESULT_PARSER_SERVICE_COUNT
 
     enable_yappi: Annotated[
         bool,
         Field(
-            description="[Developer use only] Enable yappi profiling (Yet Another Python Profiler) to profile AIPerf's internal python code. "
+            description="*[Developer use only]* Enable yappi profiling (Yet Another Python Profiler) to profile AIPerf's internal python code. "
             "This can be used in the development of AIPerf in order to find performance bottlenecks across the various services. "
-            "The output '*.prof' files can be viewed with snakeviz. Requires yappi and snakeviz to be installed. "
+            "The output '.prof' files can be viewed with snakeviz. Requires yappi and snakeviz to be installed. "
             "Run 'pip install yappi snakeviz' to install them.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--enable-yappi-profiling"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.ENABLE_YAPPI
 
@@ -232,9 +231,9 @@ class ServiceConfig(BaseSettings):
             description="List of services to enable debug logging for. Can be a comma-separated list, a single service type, "
             "or the cli flag can be used multiple times.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--debug-service", "--debug-services"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
         BeforeValidator(parse_service_types),
     ] = ServiceDefaults.DEBUG_SERVICES
@@ -245,9 +244,9 @@ class ServiceConfig(BaseSettings):
             description="List of services to enable trace logging for. Can be a comma-separated list, a single service type, "
             "or the cli flag can be used multiple times.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--trace-service", "--trace-services"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
         BeforeValidator(parse_service_types),
     ] = ServiceDefaults.TRACE_SERVICES

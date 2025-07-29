@@ -3,11 +3,12 @@
 
 from typing import Annotated
 
-import cyclopts
+from cyclopts import Parameter
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import TokenizerDefaults
+from aiperf.common.config.groups import Groups
 
 
 class TokenizerConfig(BaseConfig):
@@ -15,7 +16,7 @@ class TokenizerConfig(BaseConfig):
     A configuration class for defining tokenizer related settings.
     """
 
-    _GROUP_NAME = "Tokenizer"
+    _CLI_GROUP = Groups.TOKENIZER
 
     name: Annotated[
         str | None,
@@ -27,9 +28,9 @@ class TokenizerConfig(BaseConfig):
                 "The default value is the model name."
             ),
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--tokenizer"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = TokenizerDefaults.NAME
 
@@ -41,9 +42,9 @@ class TokenizerConfig(BaseConfig):
                 "It can be a branch name, tag name, or commit ID."
             ),
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--tokenizer-revision"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = TokenizerDefaults.REVISION
 
@@ -56,8 +57,8 @@ class TokenizerConfig(BaseConfig):
                 "This is only necessary for custom tokenizers stored in HuggingFace Hub."
             ),
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--tokenizer-trust-remote-code"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = TokenizerDefaults.TRUST_REMOTE_CODE

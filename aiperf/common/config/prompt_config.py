@@ -3,7 +3,7 @@
 
 from typing import Annotated
 
-import cyclopts
+from cyclopts import Parameter
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
@@ -13,6 +13,7 @@ from aiperf.common.config.config_defaults import (
     PrefixPromptDefaults,
     PromptDefaults,
 )
+from aiperf.common.config.groups import Groups
 
 
 class InputTokensConfig(BaseConfig):
@@ -20,7 +21,7 @@ class InputTokensConfig(BaseConfig):
     A configuration class for defining input token related settings.
     """
 
-    _GROUP_NAME = "Input Sequence Length"
+    _CLI_GROUP = Groups.INPUT_SEQUENCE_LENGTH
 
     mean: Annotated[
         int,
@@ -28,13 +29,13 @@ class InputTokensConfig(BaseConfig):
             ge=0,
             description="The mean of number of tokens in the generated prompts when using synthetic data.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--prompt-input-tokens-mean",
                 "--synthetic-input-tokens-mean",  # GenAI-Perf
                 "--isl",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = InputTokensDefaults.MEAN
 
@@ -44,12 +45,13 @@ class InputTokensConfig(BaseConfig):
             ge=0,
             description="The standard deviation of number of tokens in the generated prompts when using synthetic data.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--prompt-input-tokens-stddev",
                 "--synthetic-input-tokens-stddev",  # GenAI-Perf
+                "--isl-stddev",
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = InputTokensDefaults.STDDEV
 
@@ -60,12 +62,13 @@ class InputTokensConfig(BaseConfig):
             default=512,
             description="The block size of the prompt.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--prompt-input-tokens-block-size",
                 "--synthetic-input-tokens-block-size",  # GenAI-Perf
+                "--isl-block-size",
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = InputTokensDefaults.BLOCK_SIZE
 
@@ -75,7 +78,7 @@ class OutputTokensConfig(BaseConfig):
     A configuration class for defining output token related settings.
     """
 
-    _GROUP_NAME = "Output Sequence Length"
+    _CLI_GROUP = Groups.OUTPUT_SEQUENCE_LENGTH
 
     mean: Annotated[
         int,
@@ -83,13 +86,13 @@ class OutputTokensConfig(BaseConfig):
             ge=0,
             description="The mean number of tokens in each output.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--prompt-output-tokens-mean",
                 "--output-tokens-mean",  # GenAI-Perf
                 "--osl",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = OutputTokensDefaults.MEAN
 
@@ -102,12 +105,13 @@ class OutputTokensConfig(BaseConfig):
                 "This is currently supported with Triton."
             ),
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--prompt-output-tokens-deterministic",
                 "--output-tokens-mean-deterministic",  # GenAI-Perf
+                "--osl-deterministic",
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = OutputTokensDefaults.DETERMINISTIC
 
@@ -117,12 +121,13 @@ class OutputTokensConfig(BaseConfig):
             ge=0,
             description="The standard deviation of the number of tokens in each output.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--prompt-output-tokens-stddev",
                 "--output-tokens-stddev",  # GenAI-Perf
+                "--osl-stddev",
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = OutputTokensDefaults.STDDEV
 
@@ -132,7 +137,7 @@ class PrefixPromptConfig(BaseConfig):
     A configuration class for defining prefix prompt related settings.
     """
 
-    _GROUP_NAME = "Prefix Prompt"
+    _CLI_GROUP = Groups.PREFIX_PROMPT
 
     pool_size: Annotated[
         int,
@@ -144,13 +149,13 @@ class PrefixPromptConfig(BaseConfig):
                 "This is useful for benchmarking models that use a K-V cache."
             ),
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--prompt-prefix-pool-size",
                 "--prefix-prompt-pool-size",
                 "--num-prefix-prompts",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = PrefixPromptDefaults.POOL_SIZE
 
@@ -165,12 +170,12 @@ class PrefixPromptConfig(BaseConfig):
                 "the number of tokens in the final prompt may be off by one."
             ),
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--prompt-prefix-length",
                 "--prefix-prompt-length",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = PrefixPromptDefaults.LENGTH
 
@@ -180,7 +185,7 @@ class PromptConfig(BaseConfig):
     A configuration class for defining prompt related settings.
     """
 
-    _GROUP_NAME = "Prompt"
+    _CLI_GROUP = Groups.PROMPT
 
     batch_size: Annotated[
         int,
@@ -188,14 +193,14 @@ class PromptConfig(BaseConfig):
             description="The batch size of text requests AIPerf should send.\n"
             "This is currently supported with the embeddings and rankings endpoint types",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--prompt-batch-size",
                 "--batch-size-text",  # GenAI-Perf
                 "--batch-size",  # GenAI-Perf
                 "-b",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = PromptDefaults.BATCH_SIZE
 
