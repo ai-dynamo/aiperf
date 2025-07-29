@@ -18,7 +18,7 @@ from aiperf.common.factories import ServiceFactory, ServiceManagerFactory
 from aiperf.common.hooks import on_command, on_init, on_message, on_start
 from aiperf.common.logging import get_global_log_queue
 from aiperf.common.messages import (
-    CommandResponseMessage,
+    CommandResponse,
     CreditsCompleteMessage,
     HeartbeatMessage,
     NotificationMessage,
@@ -30,7 +30,7 @@ from aiperf.common.messages import (
     StatusMessage,
 )
 from aiperf.common.messages.command_messages import (
-    ErrorCommandResponseMessage,
+    CommandErrorResponse,
     ProcessRecordsCommand,
     ProfileStartCommand,
     ShutdownCommand,
@@ -334,9 +334,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.info(f"Received notification message: {message}")
 
     @on_message(MessageType.COMMAND_RESPONSE)
-    async def _process_command_response_message(
-        self, message: CommandResponseMessage
-    ) -> None:
+    async def _process_command_response_message(self, message: CommandResponse) -> None:
         """Process a command response message."""
         self.debug(lambda: f"Received command response message: {message}")
         if message.status == CommandResponseStatus.SUCCESS:
@@ -348,7 +346,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         elif message.status == CommandResponseStatus.UNHANDLED:
             self.debug(f"Command {message.command} unhandled from {message.service_id}")
         elif message.status == CommandResponseStatus.FAILURE:
-            message = cast(ErrorCommandResponseMessage, message)
+            message = cast(CommandErrorResponse, message)
             self.error(
                 f"Command {message.command} failed from {message.service_id}: {message.error}"
             )

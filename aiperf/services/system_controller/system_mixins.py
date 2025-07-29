@@ -10,11 +10,7 @@ from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
 class SignalHandlerMixin(AIPerfLoggerMixin):
     """Mixin for services that need to handle system signals."""
 
-    def __init__(self, **kwargs) -> None:
-        # Set to store signal handler tasks to prevent them from being garbage collected
-        self._signal_tasks = set()
-        self._signal_in_progress = False
-        super().__init__(**kwargs)
+    # TODO: Need to address this code, as the shutdown logic is not working as expected.
 
     def setup_signal_handlers(self, callback: Callable[[int], None]) -> None:
         """This method will set up signal handlers for the SIGTERM and SIGINT signals
