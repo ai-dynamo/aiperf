@@ -3,7 +3,10 @@
 
 import pytest
 
-from aiperf.common.config.config_validators import parse_str_or_dict
+from aiperf.common.config.config_validators import (
+    parse_str_or_dict,
+    parse_str_or_list_of_positive_values,
+)
 
 
 class TestParseStrOrDict:
@@ -197,3 +200,41 @@ class TestParseStrOrDict:
         """Test that none input returns none."""
         result = parse_str_or_dict(None)
         assert result is None
+
+
+class TestParseStrOrListOfPositiveValues:
+    """Test suite for the parse_str_or_list_of_positive_values function."""
+
+    @pytest.mark.parametrize(
+        "input_value,expected",
+        [
+            ("1,2,3", [1, 2, 3]),
+            ([1, 2, 3], [1, 2, 3]),
+            (["1", "2", "3"], [1, 2, 3]),
+            ("1.5,2.0,3.25", [1.5, 2.0, 3.25]),
+            (["1.5", "2.0", "3.25"], [1.5, 2.0, 3.25]),
+            ([1.5, 2.0, 3.25], [1.5, 2.0, 3.25]),
+            (["1", "2.5", "3"], [1, 2.5, 3]),
+            ("1e2,2e2", [100.0, 200.0]),
+            (["1e2", "2e2"], [100.0, 200.0]),
+            (["1.0", "1e2", "2.5"], [1.0, 100.0, 2.5]),
+        ],
+    )
+    def test_valid_inputs(self, input_value, expected):
+        result = parse_str_or_list_of_positive_values(input_value)
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        "invalid_input",
+        [
+            "0,-1,2",  # Zero and negative
+            [0, 1, 2],  # Zero
+            [-1, 2, 3],  # Negative
+            ["-1", "2", "3"],  # Negative string
+            "a,b,c",  # Non-numeric
+            ["1", "foo", "3"],  # Mixed valid/invalid
+        ],
+    )
+    def test_invalid_inputs_raise_value_error(self, invalid_input):
+        with pytest.raises(ValueError):
+            parse_str_or_list_of_positive_values(invalid_input)
