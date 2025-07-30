@@ -94,10 +94,11 @@ class TestAIPerfLoggerMixin:
             assert f"Test message {level}" not in caplog.text
 
     def test_lazy_evaluation(self, caplog):
-        """Test that lazy evaluation prevents expensive operations."""
+        """Test that lazy evaluation prevents expensive operations for logs at the wrong level."""
         caplog.set_level(_INFO)
 
         mock_class = MockClass()
+        mock_class.logger.set_level(_INFO)
         expensive_operation_called = False
 
         def expensive_operation():

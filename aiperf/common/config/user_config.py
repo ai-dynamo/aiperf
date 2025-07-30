@@ -44,7 +44,7 @@ class UserConfig(BaseConfig):
         Field(
             description="Endpoint configuration",
         ),
-    ]
+    ] = EndPointConfig()
 
     input: Annotated[
         InputConfig,
