@@ -33,7 +33,6 @@ class ExampleTaskClass(AIPerfLifecycleMixin):
 @pytest.mark.asyncio
 async def test_background_task(time_traveler: TimeTraveler):
     task_class = ExampleTaskClass()
-
     assert not task_class.running, "Task should not be running before starting"
     await task_class.initialize()
     await task_class.start()
@@ -41,7 +40,8 @@ async def test_background_task(time_traveler: TimeTraveler):
         await time_traveler.yield_to_event_loop()
     async with task_class.lock:
         assert task_class.running, "Task should be running after starting"
-
     await task_class.stop()
+    for _ in range(3):  # yield a few times to ensure the task got scheduled
+        await time_traveler.yield_to_event_loop()
     async with task_class.lock:
         assert not task_class.running, "Task should not be running after stopping"

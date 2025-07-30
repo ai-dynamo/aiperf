@@ -37,14 +37,14 @@ class UserConfig(BaseConfig):
             ),
             group=Groups.ENDPOINT,
         ),
-    ] = EndPointConfig()
+    ]
 
     endpoint: Annotated[
         EndPointConfig,
         Field(
             description="Endpoint configuration",
         ),
-    ]
+    ] = EndPointConfig()
 
     input: Annotated[
         InputConfig,

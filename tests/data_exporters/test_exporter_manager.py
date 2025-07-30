@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aiperf.common.config import EndPointConfig, OutputConfig, UserConfig
 from aiperf.common.enums import EndpointType
+from aiperf.common.enums.data_exporter_enums import DataExporterType
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProfileResults
 from aiperf.data_exporter.exporter_manager import ExporterManager
@@ -47,12 +48,27 @@ class TestExporterManager:
     async def test_export(
         self, endpoint_config, output_config, sample_records, mock_user_config
     ):
-        mock_exporter_instance = MagicMock()
-        mock_exporter_class = MagicMock(return_value=mock_exporter_instance)
+        exporter_types = [
+            DataExporterType.CONSOLE_ERROR,
+            DataExporterType.CONSOLE,
+            DataExporterType.JSON,
+        ]
+        mock_exporter_instances = []
+        mock_exporter_classes = {}
 
-        with patch(
-            "aiperf.common.factories.DataExporterFactory.get_all_classes",
-            return_value=[mock_exporter_class],
+        for exporter_type in exporter_types:
+            instance = MagicMock()
+            instance.export = AsyncMock()
+            mock_class = MagicMock(return_value=instance)
+            mock_exporter_classes[exporter_type] = mock_class
+            mock_exporter_instances.append(instance)
+
+        with patch.object(
+            __import__(
+                "aiperf.common.factories", fromlist=["DataExporterFactory"]
+            ).DataExporterFactory,
+            "_registry",
+            mock_exporter_classes,
         ):
             manager = ExporterManager(
                 results=ProfileResults(
@@ -66,5 +82,8 @@ class TestExporterManager:
                 input_config=mock_user_config,
             )
             await manager.export_all()
-        mock_exporter_class.assert_called_once()
-        mock_exporter_instance.export.assert_called_once()
+        for mock_class, mock_instance in zip(
+            mock_exporter_classes.values(), mock_exporter_instances, strict=False
+        ):
+            mock_class.assert_called_once()
+            mock_instance.export.assert_awaited_once()

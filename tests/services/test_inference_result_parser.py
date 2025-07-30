@@ -24,9 +24,9 @@ def mock_tokenizer():
 def sample_turn():
     return Turn(
         role="user",
-        text=[
-            Text(content=["Hello world", "Test case"]),
-            Text(content=["Another input", "Final message"]),
+        texts=[
+            Text(contents=["Hello world", "Test case"]),
+            Text(contents=["Another input", "Final message"]),
         ],
     )
 

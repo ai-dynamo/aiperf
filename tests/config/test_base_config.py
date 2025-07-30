@@ -3,13 +3,13 @@
 
 from enum import Enum
 
-from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from aiperf.common.config import BaseConfig
+from aiperf.common.models import AIPerfBaseModel
 
 
-class NestedConfig(BaseModel):
+class NestedConfig(AIPerfBaseModel):
     field1: str
     field2: int
 

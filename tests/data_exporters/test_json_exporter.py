@@ -41,16 +41,42 @@ class TestJsonExporter:
     def mock_user_config(self):
         return UserConfig(model_names=["test-model"])
 
+    @pytest.fixture
+    def mock_results(self, sample_records):
+        class MockResults:
+            def __init__(self, metrics):
+                self.metrics = metrics
+                self.start_ns = None
+                self.end_ns = None
+
+            @property
+            def records(self):
+                return self.metrics
+
+            @property
+            def has_results(self):
+                return bool(self.metrics)
+
+            @property
+            def was_cancelled(self):
+                return False
+
+            @property
+            def error_summary(self):
+                return []
+
+        return MockResults(sample_records)
+
     @pytest.mark.asyncio
     async def test_json_exporter_creates_expected_json(
-        self, sample_records, mock_user_config
+        self, mock_results, mock_user_config
     ):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
             mock_user_config.output.artifact_directory = output_dir
 
             exporter_config = ExporterConfig(
-                results=sample_records,
+                results=mock_results,
                 input_config=mock_user_config,
             )
 
@@ -63,9 +89,13 @@ class TestJsonExporter:
             with open(expected_file) as f:
                 data = json.load(f)
 
-            assert "Test Metric" in data
-            assert data["Test Metric"]["unit"] == "ms"
-            assert data["Test Metric"]["avg"] == 123.0
+            assert "records" in data
+            records = data["records"]
+            assert isinstance(records, dict)
+            assert len(records) == 1
+            assert "Test Metric" in records
+            assert records["Test Metric"]["unit"] == "ms"
+            assert records["Test Metric"]["avg"] == 123.0
 
             assert "input_config" in data
             assert isinstance(data["input_config"], dict)

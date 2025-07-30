@@ -4,6 +4,8 @@
 Tests for the ProcessingStatsStreamer class.
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from aiperf.common.messages.inference_messages import ParsedInferenceResultsMessage
@@ -66,6 +68,8 @@ class TestProcessingStatsStreamer:
 
         streamer.final_request_count = 10
         streamer.processing_stats.total_expected_requests = 10
+        if hasattr(streamer, "pub_client"):
+            streamer.pub_client.publish = AsyncMock()
 
         for _ in range(10):
             await streamer.stream_record(sample_record.record)
@@ -88,6 +92,8 @@ class TestProcessingStatsStreamer:
         streamer.processing_stats.processed = 0
         streamer.processing_stats.errors = 0
         streamer.processing_stats.total_expected_requests = 10
+        if hasattr(streamer, "pub_client"):
+            streamer.pub_client.publish = AsyncMock()
 
         for _ in range(10):
             await streamer.stream_record(sample_record.record)
