@@ -41,7 +41,6 @@ class MockStreamingPostProcessor(BaseStreamingPostProcessor):
 
     async def stream_record(self, record: ParsedResponseRecord) -> None:
         """Test implementation that stores processed records."""
-        print(f"stream_record called: {record}")
         self.trace(lambda: f"Got streaming post processor record: {record}")
         self.processed_records.append(record)
         self.stream_record_call_count += 1
@@ -63,7 +62,7 @@ class TestStreamingPostProcessorBasicFunctionality:
             for p in records_manager.streaming_post_processors
             if isinstance(p, MockStreamingPostProcessor)
         )
-        # Test hacK: manually start the background processing task
+        # Test hack: manually start the background processing task
         # This is necessary because the test does not go through the full lifecycle of RecordsManager
         # and its streaming post processors.
         proc._task = asyncio.create_task(proc._stream_records_task())
