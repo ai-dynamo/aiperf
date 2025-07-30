@@ -26,22 +26,18 @@ def streamer(records_manager: RecordsManager) -> ProcessingStatsStreamer:
 
 
 def next_record(
-    sample_message: ParsedInferenceResultsMessage,
+    sample_record: ParsedInferenceResultsMessage,
     time_traveler,
     advance_seconds: float = 1,
 ) -> ParsedInferenceResultsMessage:
     """Create a next record."""
     time_traveler.advance_time(advance_seconds)
-    return sample_message.model_copy(
+    return sample_record.model_copy(
         update={
-            "record": sample_message.record.model_copy(
+            "request": sample_record.record.request.model_copy(
                 update={
-                    "request": sample_message.record.request.model_copy(
-                        update={
-                            "start_perf_ns": time_traveler.perf_counter_ns(),
-                            "timestamp_ns": time_traveler.time_ns(),
-                        }
-                    )
+                    "start_perf_ns": time_traveler.perf_counter_ns(),
+                    "timestamp_ns": time_traveler.time_ns(),
                 }
             )
         }
@@ -55,16 +51,16 @@ class TestProcessingStatsStreamer:
     async def test_basic_functionality(
         self,
         streamer: ProcessingStatsStreamer,
-        sample_message: ParsedInferenceResultsMessage,
+        sample_record: ParsedInferenceResultsMessage,
     ):
         """Test the basic functionality of the ProcessingStatsStreamer class."""
-        await streamer.stream_record(sample_message.record)
+        await streamer.stream_record(sample_record.record)
 
     async def test_all_records_received(
         self,
         time_traveler,
         streamer: ProcessingStatsStreamer,
-        sample_message: ParsedInferenceResultsMessage,
+        sample_record: ParsedInferenceResultsMessage,
     ):
         """Test the all records received functionality of the ProcessingStatsStreamer class."""
 
@@ -72,8 +68,8 @@ class TestProcessingStatsStreamer:
         streamer.processing_stats.total_expected_requests = 10
 
         for _ in range(10):
-            await streamer.stream_record(sample_message.record)
-            sample_message = next_record(sample_message, time_traveler)
+            await streamer.stream_record(sample_record.record)
+            sample_record = next_record(sample_record, time_traveler)
 
         await streamer.wait_for_tasks()
 
@@ -86,7 +82,7 @@ class TestProcessingStatsStreamer:
         self,
         time_traveler,
         streamer: ProcessingStatsStreamer,
-        sample_message: ParsedInferenceResultsMessage,
+        sample_record: ParsedInferenceResultsMessage,
     ):
         """Test the report records task functionality of the ProcessingStatsStreamer class."""
         streamer.processing_stats.processed = 0
@@ -94,8 +90,8 @@ class TestProcessingStatsStreamer:
         streamer.processing_stats.total_expected_requests = 10
 
         for _ in range(10):
-            await streamer.stream_record(sample_message.record)
-            sample_message = next_record(sample_message, time_traveler)
+            await streamer.stream_record(sample_record.record)
+            sample_record = next_record(sample_record, time_traveler)
 
         await streamer.wait_for_tasks()
         await streamer._report_records_task()

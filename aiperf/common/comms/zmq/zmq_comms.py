@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
 import errno
 import glob
 import os
@@ -9,28 +8,32 @@ from pathlib import Path
 
 import zmq.asyncio
 
-from aiperf.common.comms.base import (
+from aiperf.common.comms.base_comms import (
     BaseCommunication,
-    CommunicationClientFactory,
     CommunicationClientProtocol,
-    CommunicationFactory,
 )
-from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.config import BaseZMQCommunicationConfig
 from aiperf.common.config.zmq_config import ZMQIPCConfig, ZMQTCPConfig
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
+    CommAddress,
+    CommClientType,
     CommunicationBackend,
-    CommunicationClientAddressType,
-    CommunicationClientType,
 )
-from aiperf.common.exceptions import ShutdownError
+from aiperf.common.enums.service_enums import LifecycleState
+from aiperf.common.exceptions import InvalidStateError
+from aiperf.common.factories import CommunicationClientFactory, CommunicationFactory
+from aiperf.common.hooks import on_stop
 from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.protocols import CommunicationProtocol
+from aiperf.common.types import CommAddressType
 
 
+@implements_protocol(CommunicationProtocol)
 class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
-    """ZeroMQ-based implementation of the Communication interface.
+    """ZeroMQ-based implementation of the CommunicationProtocol.
 
-    Uses ZeroMQ for publish/subscribe and request/reply patterns to
+    Uses ZeroMQ for publish/subscribe, request/reply, and pull/push patterns to
     facilitate communication between AIPerf components.
     """
 
@@ -39,96 +42,29 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
         config: BaseZMQCommunicationConfig,
     ) -> None:
         super().__init__()
-        self.stop_event: asyncio.Event = asyncio.Event()
-        self.initialized_event: asyncio.Event = asyncio.Event()
         self.config = config
 
         self.context = zmq.asyncio.Context.instance()
-        self.clients: list[BaseZMQClient] = []
+        self._clients_cache: dict[
+            tuple[CommClientType, CommAddressType, bool], CommunicationClientProtocol
+        ] = {}
 
         self.debug(f"ZMQ communication using protocol: {type(self.config).__name__}")
 
-    @property
-    def is_initialized(self) -> bool:
-        """Check if communication channels are initialized."""
-        return self.initialized_event.is_set()
-
-    @property
-    def stop_requested(self) -> bool:
-        """Check if the communication channels are being shutdown."""
-        return self.stop_event.is_set()
-
-    def get_address(self, address_type: CommunicationClientAddressType | str) -> str:
+    def get_address(self, address_type: CommAddressType) -> str:
         """Get the actual address based on the address type from the config."""
-        if isinstance(address_type, CommunicationClientAddressType):
+        if isinstance(address_type, CommAddress):
             return self.config.get_address(address_type)
         return address_type
 
-    async def initialize(self) -> None:
-        """Initialize communication channels."""
-        if self.is_initialized:
-            return
-
-        tasks = []
-        for client in self.clients:
-            if not client.is_initialized:
-                tasks.append(asyncio.create_task(client.initialize()))
-
-        await asyncio.gather(*tasks)
-        self.initialized_event.set()
-
-    async def shutdown(self) -> None:
-        """Gracefully shutdown communication channels.
-
-        This method will wait for all clients to shutdown before shutting down
-        the context.
-
-        Returns:
-            True if shutdown was successful, False otherwise
-        """
-        if self.stop_event.is_set():
-            return
-
-        try:
-            if not self.stop_event.is_set():
-                self.stop_event.set()
-
-            await asyncio.gather(
-                *(
-                    client.shutdown()
-                    for client in self.clients
-                    if client.is_initialized
-                ),
-            )
-
-            self.context.term()
-
-        except asyncio.CancelledError:
-            self.debug("ZMQ communication shutdown cancelled")
-            pass
-
-        except asyncio.TimeoutError:
-            self.debug("ZMQ communication shutdown timed out")
-            pass
-
-        except zmq.ContextTerminated:
-            self.debug("ZMQ communication context already terminated")
-            pass
-
-        except Exception as e:
-            raise ShutdownError(
-                "Failed to shutdown ZMQ communication",
-            ) from e
-
-        finally:
-            self.clients.clear()
-
     def create_client(
         self,
-        client_type: CommunicationClientType,
-        address: CommunicationClientAddressType | str,
+        client_type: CommClientType,
+        address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        max_pull_concurrency: int | None = None,
+        **kwargs,
     ) -> CommunicationClientProtocol:
         """Create a communication client for a given client type and address.
 
@@ -137,20 +73,35 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
             address: The type of address to use when looking up in the communication config, or the address itself.
             bind: Whether to bind or connect the socket.
             socket_ops: Additional socket options to set.
+            max_pull_concurrency: The maximum number of concurrent pull requests to allow. (Only used for pull clients)
         """
+        if (client_type, address, bind) in self._clients_cache:
+            return self._clients_cache[(client_type, address, bind)]
+
+        if self.state != LifecycleState.CREATED:
+            # We require the clients to be created before the communication class is initialized.
+            # This is because this class manages the lifecycle of the clients of as well.
+            raise InvalidStateError(
+                f"Communication clients must be created before the {self.__class__.__name__} "
+                f"class is initialized: {self.state!r}"
+            )
+
         client = CommunicationClientFactory.create_instance(
             client_type,
-            context=self.context,
             address=self.get_address(address),
             bind=bind,
             socket_ops=socket_ops,
+            max_pull_concurrency=max_pull_concurrency,
+            **kwargs,
         )
 
-        self.clients.append(client)
+        self._clients_cache[(client_type, address, bind)] = client
+        self.attach_child_lifecycle(client)
         return client
 
 
 @CommunicationFactory.register(CommunicationBackend.ZMQ_TCP)
+@implements_protocol(CommunicationProtocol)
 class ZMQTCPCommunication(BaseZMQCommunication):
     """ZeroMQ-based implementation of the Communication interface using TCP transport."""
 
@@ -164,6 +115,7 @@ class ZMQTCPCommunication(BaseZMQCommunication):
 
 
 @CommunicationFactory.register(CommunicationBackend.ZMQ_IPC)
+@implements_protocol(CommunicationProtocol)
 class ZMQIPCCommunication(BaseZMQCommunication):
     """ZeroMQ-based implementation of the Communication interface using IPC transport."""
 
@@ -177,22 +129,6 @@ class ZMQIPCCommunication(BaseZMQCommunication):
         # call after super init so that way self.config is set
         self._setup_ipc_directory()
 
-    async def initialize(self) -> None:
-        """Initialize communication channels.
-
-        This method will create the IPC socket directory if needed.
-        """
-        await super().initialize()
-
-    async def shutdown(self) -> None:
-        """Gracefully shutdown communication channels.
-
-        This method will wait for all clients to shutdown before shutting down
-        the context.
-        """
-        await super().shutdown()
-        self._cleanup_ipc_sockets()
-
     def _setup_ipc_directory(self) -> None:
         """Create IPC socket directory if using IPC transport."""
         self._ipc_socket_dir = Path(self.config.path)
@@ -205,6 +141,7 @@ class ZMQIPCCommunication(BaseZMQCommunication):
         else:
             self.debug(f"IPC socket directory already exists: {self._ipc_socket_dir}")
 
+    @on_stop
     def _cleanup_ipc_sockets(self) -> None:
         """Clean up IPC socket files."""
         if self._ipc_socket_dir and self._ipc_socket_dir.exists():
@@ -218,6 +155,5 @@ class ZMQIPCCommunication(BaseZMQCommunication):
                 except OSError as e:
                     if e.errno != errno.ENOENT:
                         self.warning(
-                            lambda ipc_file=ipc_file,
-                            e=e: f"Failed to remove IPC socket file {ipc_file}: {e}"
+                            f"Failed to remove IPC socket file {ipc_file}: {e}"
                         )

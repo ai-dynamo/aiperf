@@ -10,8 +10,6 @@ __ignore__ = []
 ########################################################################
 from aiperf.common.models.base_models import (
     AIPerfBaseModel,
-    BaseModelT,
-    ExcludeIfNoneMixin,
     exclude_if_none,
 )
 from aiperf.common.models.credit_models import (
@@ -40,6 +38,8 @@ from aiperf.common.models.record_models import (
     InferenceServerResponse,
     MetricResult,
     ParsedResponseRecord,
+    ProcessRecordsResult,
+    ProfileResults,
     RequestRecord,
     ResponseData,
     SSEField,
@@ -56,7 +56,6 @@ from aiperf.common.models.worker_models import (
 __all__ = [
     "AIPerfBaseModel",
     "Audio",
-    "BaseModelT",
     "CPUTimes",
     "Conversation",
     "CreditPhaseConfig",
@@ -64,7 +63,6 @@ __all__ = [
     "CtxSwitches",
     "ErrorDetails",
     "ErrorDetailsCount",
-    "ExcludeIfNoneMixin",
     "IOCounters",
     "Image",
     "InferenceServerResponse",
@@ -72,6 +70,8 @@ __all__ = [
     "ParsedResponseRecord",
     "PhaseProcessingStats",
     "ProcessHealth",
+    "ProcessRecordsResult",
+    "ProfileResults",
     "RequestRecord",
     "ResponseData",
     "SSEField",

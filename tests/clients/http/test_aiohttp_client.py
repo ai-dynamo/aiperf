@@ -364,7 +364,7 @@ class TestAioHttpClientMixin:
                 )
                 tasks.append(task)
 
-            records = await asyncio.gather(*tasks)
+            records = await asyncio.gather(*tasks, return_exceptions=True)
 
             assert len(records) == num_requests
             for record in records:

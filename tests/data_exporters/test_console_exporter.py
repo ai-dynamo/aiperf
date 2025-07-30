@@ -5,8 +5,8 @@ import pytest
 
 from aiperf.common.config import EndPointConfig, UserConfig
 from aiperf.common.enums import EndpointType
-from aiperf.common.messages import ProfileResultsMessage
 from aiperf.common.models import MetricResult
+from aiperf.common.models.record_models import ProfileResults
 from aiperf.data_exporter import ConsoleExporter
 from aiperf.data_exporter.exporter_config import ExporterConfig
 
@@ -65,7 +65,15 @@ def sample_records():
 @pytest.fixture
 def mock_exporter_config(sample_records, mock_endpoint_config):
     input_config = UserConfig(endpoint=mock_endpoint_config, model_names=["test-model"])
-    return ExporterConfig(results=sample_records, input_config=input_config)
+    return ExporterConfig(
+        results=ProfileResults(
+            records=sample_records,
+            start_ns=0,
+            end_ns=0,
+            completed=0,
+        ),
+        input_config=input_config,
+    )
 
 
 class TestConsoleExporter:
@@ -101,13 +109,11 @@ class TestConsoleExporter:
             endpoint=mock_endpoint_config, model_names=["test-model"]
         )
         config = ExporterConfig(
-            results=ProfileResultsMessage(
-                service_id="test-service",
+            results=ProfileResults(
                 records=[],
-                total=0,
-                completed=0,
                 start_ns=0,
                 end_ns=0,
+                completed=0,
             ),
             input_config=input_config,
         )

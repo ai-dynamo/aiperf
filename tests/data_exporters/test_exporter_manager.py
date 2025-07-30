@@ -8,6 +8,7 @@ import pytest
 from aiperf.common.config import EndPointConfig, OutputConfig, UserConfig
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
+from aiperf.common.models.record_models import ProfileResults
 from aiperf.data_exporter.exporter_manager import ExporterManager
 
 
@@ -54,7 +55,14 @@ class TestExporterManager:
             return_value=[mock_exporter_class],
         ):
             manager = ExporterManager(
-                results=sample_records,
+                results=ProfileResults(
+                    records=sample_records,
+                    start_ns=0,
+                    end_ns=0,
+                    completed=0,
+                    was_cancelled=False,
+                    error_summary=[],
+                ),
                 input_config=mock_user_config,
             )
             await manager.export_all()

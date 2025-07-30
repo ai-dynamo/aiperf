@@ -2,14 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config import InputConfig
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ComposerType, CustomDatasetType
 from aiperf.common.factories import ComposerFactory, CustomDatasetFactory
 from aiperf.common.models import Conversation
+from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.services.dataset import utils
 from aiperf.services.dataset.composer.base import BaseDatasetComposer
 
 
+@implements_protocol(ServiceProtocol)
 @ComposerFactory.register(ComposerType.CUSTOM)
 class CustomDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: InputConfig, tokenizer: Tokenizer):

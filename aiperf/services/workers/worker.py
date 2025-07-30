@@ -1,44 +1,45 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 
-from aiperf.clients import InferenceClientFactory
-from aiperf.clients.client_interfaces import RequestConverterFactory
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.comms.base import (
-    PullClientProtocol,
+from aiperf.common.comms.base_comms import (
     PushClientProtocol,
     RequestClientProtocol,
 )
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
-    CommunicationClientAddressType,
+    CommAddress,
     CreditPhase,
     MessageType,
     ServiceType,
 )
-from aiperf.common.factories import ServiceFactory
-from aiperf.common.hooks import (
-    aiperf_task,
-    on_configure,
-    on_init,
-    on_stop,
+from aiperf.common.enums.command_enums import CommandType
+from aiperf.common.factories import (
+    InferenceClientFactory,
+    RequestConverterFactory,
+    ServiceFactory,
 )
+from aiperf.common.hooks import background_task, on_command, on_pull_message, on_stop
 from aiperf.common.messages import (
-    CommandMessage,
     CreditDropMessage,
     CreditReturnMessage,
     WorkerHealthMessage,
 )
-from aiperf.common.mixins import ProcessHealthMixin
+from aiperf.common.messages.command_messages import (
+    CommandAcknowledgedResponse,
+    ProfileCancelCommand,
+)
+from aiperf.common.mixins import ProcessHealthMixin, PullClientMixin
 from aiperf.common.models import WorkerPhaseTaskStats
-from aiperf.common.service.base_component_service import BaseComponentService
+from aiperf.services.base_component_service import BaseComponentService
 from aiperf.services.workers.credit_processor_mixin import CreditProcessorMixin
 
 
 @ServiceFactory.register(ServiceType.WORKER)
-class Worker(BaseComponentService, ProcessHealthMixin, CreditProcessorMixin):
+class Worker(
+    PullClientMixin, BaseComponentService, ProcessHealthMixin, CreditProcessorMixin
+):
     """Worker is primarily responsible for making API calls to the inference server.
     It also manages the conversation between turns and returns the results to the Inference Results Parsers.
     """
@@ -46,7 +47,7 @@ class Worker(BaseComponentService, ProcessHealthMixin, CreditProcessorMixin):
     def __init__(
         self,
         service_config: ServiceConfig,
-        user_config: UserConfig | None = None,
+        user_config: UserConfig,
         service_id: str | None = None,
         **kwargs,
     ):
@@ -54,35 +55,30 @@ class Worker(BaseComponentService, ProcessHealthMixin, CreditProcessorMixin):
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+            pull_client_address=CommAddress.CREDIT_DROP,
+            pull_client_bind=False,
             **kwargs,
         )
 
-        self.debug(lambda: f"Initializing worker process: {self.process.pid}")
+        self.debug(lambda: f"Worker process __init__ (pid: {self.process.pid})")
 
-        self.health_check_interval = (
-            self.service_config.workers.health_check_interval_seconds
-        )
+        self.health_check_interval = self.service_config.workers.health_check_interval
 
         self.task_stats: dict[CreditPhase, WorkerPhaseTaskStats] = {}
 
-        self.credit_drop_pull_client: PullClientProtocol = (
-            self.comms.create_pull_client(
-                CommunicationClientAddressType.CREDIT_DROP,
-            )
-        )
         self.credit_return_push_client: PushClientProtocol = (
             self.comms.create_push_client(
-                CommunicationClientAddressType.CREDIT_RETURN,
+                CommAddress.CREDIT_RETURN,
             )
         )
         self.inference_results_push_client: PushClientProtocol = (
             self.comms.create_push_client(
-                CommunicationClientAddressType.RAW_INFERENCE_PROXY_FRONTEND,
+                CommAddress.RAW_INFERENCE_PROXY_FRONTEND,
             )
         )
         self.conversation_request_client: RequestClientProtocol = (
             self.comms.create_request_client(
-                CommunicationClientAddressType.DATASET_MANAGER_PROXY_FRONTEND,
+                CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
             )
         )
 
@@ -100,28 +96,9 @@ class Worker(BaseComponentService, ProcessHealthMixin, CreditProcessorMixin):
             model_endpoint=self.model_endpoint,
         )
 
-    @property
-    def service_type(self) -> ServiceType:
-        return ServiceType.WORKER
-
-    @on_init
-    async def _initialize_worker(self) -> None:
-        self.debug("Initializing worker")
-
-        await self.credit_drop_pull_client.register_pull_callback(
-            MessageType.CREDIT_DROP, self._credit_drop_callback
-        )
-
-        self.debug("Worker initialized")
-
-    @on_configure
-    async def _configure_worker(self, message: CommandMessage) -> None:
-        # NOTE: Right now we are configuring the worker in the __init__ method,
-        #       but that may change based on how we implement sweeps.
-        pass
-
+    @on_pull_message(MessageType.CREDIT_DROP)
     async def _credit_drop_callback(self, message: CreditDropMessage) -> None:
-        """Handle an incoming credit drop message. Every credit must be returned after processing."""
+        """Handle an incoming credit drop message from the timing manager. Every credit must be returned after processing."""
 
         # Create a default credit return message in case of an exception
         credit_return_message = CreditReturnMessage(
@@ -147,20 +124,13 @@ class Worker(BaseComponentService, ProcessHealthMixin, CreditProcessorMixin):
         if self.inference_client:
             await self.inference_client.close()
 
-    @aiperf_task
+    @background_task(
+        immediate=False,
+        interval=lambda self: self.health_check_interval,
+    )
     async def _health_check_task(self) -> None:
         """Task to report the health of the worker to the worker manager."""
-        while True:
-            try:
-                health_message = self.create_health_message()
-                await self.pub_client.publish(health_message)
-            except Exception as e:
-                self.exception(f"Error reporting health: {e}")
-            except asyncio.CancelledError:
-                self.debug("Health check task cancelled")
-                break
-
-            await asyncio.sleep(self.health_check_interval)
+        await self.publish(self.create_health_message())
 
     def create_health_message(self) -> WorkerHealthMessage:
         return WorkerHealthMessage(
@@ -168,6 +138,16 @@ class Worker(BaseComponentService, ProcessHealthMixin, CreditProcessorMixin):
             process=self.get_process_health(),
             task_stats=self.task_stats,
         )
+
+    @on_command(CommandType.PROFILE_CANCEL)
+    async def _handle_profile_cancel_command(
+        self, message: ProfileCancelCommand
+    ) -> None:
+        self.debug(lambda: f"Received profile cancel command: {message}")
+        await self.publish(
+            CommandAcknowledgedResponse.from_command_message(message, self.service_id)
+        )
+        await self.stop()
 
 
 def main() -> None:

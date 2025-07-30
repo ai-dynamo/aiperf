@@ -20,9 +20,9 @@ from aiperf.common.enums.command_enums import (
     CommandType,
 )
 from aiperf.common.enums.communication_enums import (
+    CommAddress,
+    CommClientType,
     CommunicationBackend,
-    CommunicationClientAddressType,
-    CommunicationClientType,
     ZMQProxyType,
 )
 from aiperf.common.enums.data_exporter_enums import (
@@ -63,9 +63,9 @@ from aiperf.common.enums.post_processor_enums import (
     StreamingPostProcessorType,
 )
 from aiperf.common.enums.service_enums import (
+    LifecycleState,
     ServiceRegistrationStatus,
     ServiceRunType,
-    ServiceState,
     ServiceType,
 )
 from aiperf.common.enums.sse_enums import (
@@ -87,17 +87,18 @@ __all__ = [
     "BenchmarkSuiteCompletionTrigger",
     "BenchmarkSuiteType",
     "CaseInsensitiveStrEnum",
+    "CommAddress",
+    "CommClientType",
     "CommandResponseStatus",
     "CommandType",
     "CommunicationBackend",
-    "CommunicationClientAddressType",
-    "CommunicationClientType",
     "ComposerType",
     "CreditPhase",
     "CustomDatasetType",
     "DataExporterType",
     "EndpointType",
     "ImageFormat",
+    "LifecycleState",
     "MeasurementMode",
     "MessageType",
     "MetricTag",
@@ -114,7 +115,6 @@ __all__ = [
     "SSEFieldType",
     "ServiceRegistrationStatus",
     "ServiceRunType",
-    "ServiceState",
     "ServiceType",
     "StreamingPostProcessorType",
     "SystemState",

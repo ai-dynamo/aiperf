@@ -1,42 +1,40 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import sys
 
-from aiperf.clients.client_interfaces import ResponseExtractorFactory
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.comms.base import (
-    PullClientProtocol,
+from aiperf.common.comms.base_comms import (
     PushClientProtocol,
     RequestClientProtocol,
 )
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import CommunicationClientAddressType, MessageType, ServiceType
-from aiperf.common.factories import ServiceFactory
+from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
+from aiperf.common.enums import CommAddress, MessageType, ServiceType
+from aiperf.common.factories import ResponseExtractorFactory, ServiceFactory
 from aiperf.common.hooks import (
-    on_configure,
     on_init,
+    on_pull_message,
 )
 from aiperf.common.messages import (
-    CommandMessage,
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
     ErrorMessage,
     InferenceResultsMessage,
     ParsedInferenceResultsMessage,
 )
+from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponseRecord,
     RequestRecord,
 )
-from aiperf.common.service.base_component_service import BaseComponentService
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.services.base_component_service import BaseComponentService
 
 
 @ServiceFactory.register(ServiceType.INFERENCE_RESULT_PARSER)
-class InferenceResultParser(BaseComponentService):
+class InferenceResultParser(PullClientMixin, BaseComponentService):
     """InferenceResultParser is responsible for parsing the inference results
     and pushing them to the RecordsManager.
     """
@@ -51,19 +49,18 @@ class InferenceResultParser(BaseComponentService):
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+            pull_client_address=CommAddress.RAW_INFERENCE_PROXY_BACKEND,
+            pull_client_bind=False,
+            pull_client_max_concurrency=DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
         )
         self.debug("Initializing inference result parser")
-        self.inference_results_client: PullClientProtocol = (
-            self.comms.create_pull_client(
-                CommunicationClientAddressType.RAW_INFERENCE_PROXY_BACKEND,
-            )
-        )
+
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
-            CommunicationClientAddressType.RECORDS,
+            CommAddress.RECORDS,
         )
         self.conversation_request_client: RequestClientProtocol = (
             self.comms.create_request_client(
-                CommunicationClientAddressType.DATASET_MANAGER_PROXY_FRONTEND,
+                CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
             )
         )
         self.tokenizers: dict[str, Tokenizer] = {}
@@ -73,22 +70,10 @@ class InferenceResultParser(BaseComponentService):
             user_config
         )
 
-    @property
-    def service_type(self) -> ServiceType:
-        """The type of service."""
-        return ServiceType.INFERENCE_RESULT_PARSER
-
     @on_init
     async def _initialize(self) -> None:
         """Initialize inference result parser-specific components."""
         self.debug("Initializing inference result parser")
-
-        await self.inference_results_client.register_pull_callback(
-            message_type=MessageType.INFERENCE_RESULTS,
-            callback=self._on_inference_results,
-            # TODO: Support for unbounded concurrency in the future by setting to None or 0?
-            max_concurrency=1_000_000,
-        )
 
         self.extractor = ResponseExtractorFactory.create_instance(
             self.model_endpoint.endpoint.type,
@@ -117,10 +102,7 @@ class InferenceResultParser(BaseComponentService):
                 )
             return self.tokenizers[model]
 
-    @on_configure
-    async def _configure(self, message: CommandMessage) -> None:
-        """Configure the inference result parser."""
-
+    @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
         """Handle an inference results message."""
         self.debug(lambda: f"Received inference results message: {message}")
@@ -252,4 +234,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

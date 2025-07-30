@@ -64,6 +64,16 @@ class EndpointType(CaseInsensitiveStrEnum):
 
         return endpoint_path_map[self]
 
+    def metrics_title(self) -> str:
+        """Get the title string for the endpoint type."""
+        metrics_title_map = {
+            EndpointType.OPENAI_EMBEDDINGS: "Embeddings Metrics",
+            # EndpointType.RANKINGS: "Rankings Metrics",
+            # EndpointType.IMAGE_RETRIEVAL: "Image Retrieval Metrics",
+            # EndpointType.OPENAI_MULTIMODAL: "Multi-Modal Metrics",
+        }
+        return metrics_title_map.get(self, "LLM Metrics")
+
     def response_payload_type(self) -> "ResponsePayloadType":
         """Get the response payload type for the request payload type."""
         return ResponsePayloadType.from_endpoint_type(self)
