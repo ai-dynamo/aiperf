@@ -23,20 +23,10 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
     ) -> dict[str, Any]:
         """Format payload for a chat completion request."""
 
-        # TODO: Do we need to support image and audio inputs?
-        messages = [
-            {
-                "role": turn.role or DEFAULT_ROLE,
-                "name": text.name,
-                "content": content,
-            }
-            for text in turn.texts
-            for content in text.contents
-            if content
-        ]
+        message = await self._create_message(turn)
 
         payload = {
-            "messages": messages,
+            "messages": [message],
             "model": model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }
@@ -46,3 +36,43 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
 
         self.debug(lambda: f"Formatted payload: {payload}")
         return payload
+
+    def _create_message(self, turn: Turn) -> dict[Any, Any]:
+        message = {
+            "role": turn.role or DEFAULT_ROLE,
+            "content": [],
+        }
+        for text in turn.texts:
+            for content in text.contents:
+                if not content:
+                    continue
+                message["content"].append({"type": "text", "text": content})
+
+        for image in turn.images:
+            for content in image.contents:
+                if not content:
+                    continue
+                message["content"].append(
+                    {"type": "image_url", "image_url": {"url": content}}
+                )
+
+        for audio in turn.audios:
+            for content in audio.contents:
+                if not content:
+                    continue
+                if "," not in content:
+                    raise ValueError(
+                        "Audio content must be in the format 'format,b64_audio'."
+                    )
+                format, b64_audio = content.split(",", 1)
+                message["content"].append(
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": b64_audio,
+                            "format": format,
+                        },
+                    }
+                )
+
+        return message

@@ -22,7 +22,6 @@ class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
     ) -> dict[str, Any]:
         """Format payload for a completion request."""
 
-        # TODO: Do we need to support image and audio inputs?
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]

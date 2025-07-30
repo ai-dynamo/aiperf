@@ -159,11 +159,16 @@ def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
 
     output = parse_str_or_list(input)
 
-    for value in output:
-        if not isinstance(value, (int | float)) or value <= 0:
-            raise ValueError(
-                f"User Config: {output} - all values {value} must be a positive integer or float"
-            )
+    try:
+        output = [
+            float(x) if "." in str(x) or "e" in str(x).lower() else int(x)
+            for x in output
+        ]
+    except ValueError as e:
+        raise ValueError(f"User Config: {output} - all values must be numeric") from e
+
+    if not all(isinstance(x, (int | float)) and x > 0 for x in output):
+        raise ValueError(f"User Config: {output} - all values must be positive numbers")
 
     return output
 
