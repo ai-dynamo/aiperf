@@ -23,7 +23,7 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
     ) -> dict[str, Any]:
         """Format payload for a chat completion request."""
 
-        message = await self._create_message(turn)
+        message = self._create_message(turn)
 
         payload = {
             "messages": [message],
