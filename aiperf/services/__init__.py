@@ -42,14 +42,6 @@ from aiperf.services.records_manager import (
     TTSTMetric,
     record_from_dataframe,
 )
-from aiperf.services.workers import (
-    CreditProcessorMixin,
-    CreditProcessorMixinRequirements,
-    CreditProcessorProtocol,
-    Worker,
-    WorkerManager,
-    WorkerProcessInfo,
-)
 
 __all__ = [
     "BaseComponentService",
@@ -58,9 +50,6 @@ __all__ = [
     "BaseStreamingPostProcessor",
     "BasicMetricsStreamer",
     "BenchmarkDurationMetric",
-    "CreditProcessorMixin",
-    "CreditProcessorMixinRequirements",
-    "CreditProcessorProtocol",
     "InferenceResultParser",
     "InputSequenceLengthMetric",
     "InterTokenLatencyMetric",
@@ -80,8 +69,5 @@ __all__ = [
     "RequestThroughputMetric",
     "TTFTMetric",
     "TTSTMetric",
-    "Worker",
-    "WorkerManager",
-    "WorkerProcessInfo",
     "record_from_dataframe",
 ]
