@@ -18,7 +18,7 @@ from aiperf.common.exceptions import (
     InvalidStateError,
     NotInitializedError,
 )
-from aiperf.services.dataset.generator.prompt import PromptGenerator
+from aiperf.dataset.generator.prompt import PromptGenerator
 
 MOCK_CORPUS_CONTENT = "To be or not to be, that is the question.\nWhether 'tis nobler in the mind to suffer.\n"
 
@@ -89,9 +89,7 @@ class TestPromptGeneratorComprehensive:
     # Generate Method Tests
     # ============================================================================
 
-    @patch(
-        "aiperf.services.dataset.utils.sample_positive_normal_integer", return_value=50
-    )
+    @patch("aiperf.dataset.utils.sample_positive_normal_integer", return_value=50)
     def test_generate_without_hash_ids(self, mock_sample, basic_config):
         """Test generate method without hash_ids uses normal generation."""
         tokenizer, config = basic_config
@@ -119,9 +117,7 @@ class TestPromptGeneratorComprehensive:
             mock_cached.assert_called_once_with(100, [1, 2, 3], 512)
             assert result == "cached prompt"
 
-    @patch(
-        "aiperf.services.dataset.utils.sample_positive_normal_integer", return_value=30
-    )
+    @patch("aiperf.dataset.utils.sample_positive_normal_integer", return_value=30)
     def test_generate_with_empty_hash_ids(self, mock_sample, basic_config):
         """Test generate method with empty hash_ids list."""
         tokenizer, config = basic_config
@@ -408,7 +404,7 @@ class TestPromptGeneratorComprehensive:
             assert len(tokens) == corpus_size
             assert tokens == generator._tokenized_corpus
 
-    @patch("aiperf.services.dataset.generator.prompt.logger.warning")
+    @patch("aiperf.dataset.generator.prompt.logger.warning")
     @patch("random.randrange", return_value=0)
     def test_sample_tokens_longer_than_corpus_with_warning(
         self, mock_randrange, mock_warning, basic_config

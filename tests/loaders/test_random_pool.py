@@ -7,8 +7,7 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.enums import CustomDatasetType
-from aiperf.services.dataset.loader.models import RandomPool
-from aiperf.services.dataset.loader.random_pool import RandomPoolDatasetLoader
+from aiperf.dataset import RandomPool, RandomPoolDatasetLoader
 
 
 class TestRandomPool:

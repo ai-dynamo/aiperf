@@ -9,8 +9,8 @@ from PIL import Image
 
 from aiperf.common.config import ImageConfig
 from aiperf.common.enums import ImageFormat
-from aiperf.services.dataset import utils
-from aiperf.services.dataset.generator.base import BaseGenerator
+from aiperf.dataset import utils
+from aiperf.dataset.generator.base import BaseGenerator
 
 
 class ImageGenerator(BaseGenerator):

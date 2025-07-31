@@ -7,7 +7,7 @@ from typing import TypeAlias
 
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-from aiperf.services.dataset.loader.models import RandomPool
+from aiperf.dataset.loader.models import RandomPool
 
 # Type aliases
 Filename: TypeAlias = str

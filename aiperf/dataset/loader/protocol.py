@@ -4,7 +4,7 @@
 from typing import Protocol
 
 from aiperf.common.models import Conversation
-from aiperf.services.dataset.loader.models import CustomData
+from aiperf.dataset.loader.models import CustomData
 
 
 class CustomDatasetLoaderProtocol(Protocol):

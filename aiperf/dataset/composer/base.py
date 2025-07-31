@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from aiperf.common.config import InputConfig
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.dataset.generator import (
+from aiperf.dataset.generator import (
     AudioGenerator,
     ImageGenerator,
     PromptGenerator,

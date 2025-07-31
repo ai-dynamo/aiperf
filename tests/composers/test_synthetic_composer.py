@@ -22,7 +22,7 @@ from aiperf.common.config import (
     TurnDelayConfig,
 )
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
-from aiperf.services.dataset.composer.synthetic import SyntheticDatasetComposer
+from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
 
 
 class TestSyntheticDatasetComposer:
@@ -87,9 +87,7 @@ class TestSyntheticDatasetComposer:
     # Create Dataset Method Tests
     # ============================================================================
 
-    @patch(
-        "aiperf.services.dataset.composer.synthetic.utils.sample_positive_normal_integer"
-    )
+    @patch("aiperf.dataset.composer.synthetic.utils.sample_positive_normal_integer")
     def test_create_dataset_basic(self, mock_sample, synthetic_config, mock_tokenizer):
         """Test basic dataset creation with text-only conversations."""
         # Mock the number of turns per conversation
@@ -114,9 +112,7 @@ class TestSyntheticDatasetComposer:
                 assert len(turn.images) == 0  # no images
                 assert len(turn.audios) == 0  # no audio
 
-    @patch(
-        "aiperf.services.dataset.composer.synthetic.utils.sample_positive_normal_integer"
-    )
+    @patch("aiperf.dataset.composer.synthetic.utils.sample_positive_normal_integer")
     def test_create_dataset_with_images(
         self, mock_sample, image_config, mock_tokenizer
     ):
@@ -141,9 +137,7 @@ class TestSyntheticDatasetComposer:
                 assert isinstance(image, Image)
                 assert image.name == "image_url"
 
-    @patch(
-        "aiperf.services.dataset.composer.synthetic.utils.sample_positive_normal_integer"
-    )
+    @patch("aiperf.dataset.composer.synthetic.utils.sample_positive_normal_integer")
     def test_create_dataset_with_audio(self, mock_sample, audio_config, mock_tokenizer):
         """Test dataset creation with audio generation enabled."""
         mock_sample.return_value = 1
@@ -165,9 +159,7 @@ class TestSyntheticDatasetComposer:
                 audio = turn.audios[0]
                 assert isinstance(audio, Audio)
 
-    @patch(
-        "aiperf.services.dataset.composer.synthetic.utils.sample_positive_normal_integer"
-    )
+    @patch("aiperf.dataset.composer.synthetic.utils.sample_positive_normal_integer")
     def test_create_dataset_multimodal(
         self, mock_sample, multimodal_config, mock_tokenizer
     ):
@@ -189,12 +181,8 @@ class TestSyntheticDatasetComposer:
                 assert len(turn.audios) == 1  # single audio field per turn
                 assert len(turn.audios[0].contents) == 2  # batch_size = 2
 
-    @patch(
-        "aiperf.services.dataset.composer.synthetic.utils.sample_positive_normal_integer"
-    )
-    @patch(
-        "aiperf.services.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt"
-    )
+    @patch("aiperf.dataset.composer.synthetic.utils.sample_positive_normal_integer")
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt")
     def test_create_dataset_with_prefix_prompts(
         self, mock_prefix, mock_sample, prefix_prompt_config, mock_tokenizer
     ):
@@ -291,7 +279,7 @@ class TestSyntheticDatasetComposer:
     # Generate Payload Methods Tests
     # ============================================================================
 
-    @patch("aiperf.services.dataset.generator.prompt.PromptGenerator.generate")
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_basic(
         self, mock_generate, synthetic_config, mock_tokenizer
     ):
@@ -314,10 +302,8 @@ class TestSyntheticDatasetComposer:
         assert text_payload.name == "text"
         assert text_payload.contents == ["Generated text content"]
 
-    @patch(
-        "aiperf.services.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt"
-    )
-    @patch("aiperf.services.dataset.generator.prompt.PromptGenerator.generate")
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt")
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_first_turn_with_prefix(
         self, mock_generate, mock_prefix, prefix_prompt_config, mock_tokenizer
     ):
@@ -336,7 +322,7 @@ class TestSyntheticDatasetComposer:
         # Test prefix prompt format ("prefix prompt")
         assert text_payload.contents == ["Prefix prompt: User message"]
 
-    @patch("aiperf.services.dataset.generator.prompt.PromptGenerator.generate")
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_subsequent_turn_no_prefix(
         self, mock_generate, prefix_prompt_config, mock_tokenizer
     ):
@@ -353,7 +339,7 @@ class TestSyntheticDatasetComposer:
         text_payload = turn.texts[0]
         assert text_payload.contents == ["User message"]  # No prefix
 
-    @patch("aiperf.services.dataset.generator.prompt.PromptGenerator.generate")
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_multiple_batch_size(
         self, mock_generate, synthetic_config, mock_tokenizer
     ):
@@ -379,7 +365,7 @@ class TestSyntheticDatasetComposer:
             "Generated text",
         ]
 
-    @patch("aiperf.services.dataset.generator.image.ImageGenerator.generate")
+    @patch("aiperf.dataset.generator.image.ImageGenerator.generate")
     def test_generate_image_payloads(self, mock_generate, image_config, mock_tokenizer):
         """Test _generate_image_payloads method."""
         mock_generate.return_value = "fake_image_data"
@@ -400,7 +386,7 @@ class TestSyntheticDatasetComposer:
         assert image_payload.name == "image_url"
         assert image_payload.contents == ["fake_image_data"]
 
-    @patch("aiperf.services.dataset.generator.audio.AudioGenerator.generate")
+    @patch("aiperf.dataset.generator.audio.AudioGenerator.generate")
     def test_generate_audio_payloads(self, mock_generate, audio_config, mock_tokenizer):
         """Test _generate_audio_payloads method."""
         mock_generate.return_value = "fake_audio_data"
@@ -432,9 +418,7 @@ class TestSyntheticDatasetComposer:
 
         assert len(conversations) == 0
 
-    @patch(
-        "aiperf.services.dataset.composer.synthetic.utils.sample_positive_normal_integer"
-    )
+    @patch("aiperf.dataset.composer.synthetic.utils.sample_positive_normal_integer")
     def test_edge_case_statistical_parameters(self, mock_sample, mock_tokenizer):
         """Test behavior with edge case statistical parameters."""
         mock_sample.return_value = 1
@@ -473,9 +457,7 @@ class TestSyntheticDatasetComposer:
         assert len(conversations) == num_conversations
 
     @pytest.mark.parametrize("batch_size", [1, 2, 5, 10])
-    @patch(
-        "aiperf.services.dataset.composer.synthetic.utils.sample_positive_normal_integer"
-    )
+    @patch("aiperf.dataset.composer.synthetic.utils.sample_positive_normal_integer")
     def test_different_batch_sizes(
         self, mock_sample, synthetic_config, batch_size, mock_tokenizer
     ):

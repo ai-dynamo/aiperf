@@ -8,8 +8,8 @@ from aiperf.common.enums import ComposerType
 from aiperf.common.factories import ComposerFactory
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.dataset import utils
-from aiperf.services.dataset.composer.base import BaseDatasetComposer
+from aiperf.dataset import utils
+from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
 @ComposerFactory.register(ComposerType.SYNTHETIC)

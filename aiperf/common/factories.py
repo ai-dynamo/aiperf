@@ -56,10 +56,10 @@ if TYPE_CHECKING:
         StreamingPostProcessorProtocol,
     )
     from aiperf.data_exporter.exporter_config import ExporterConfig
-    from aiperf.services.dataset.composer.base import BaseDatasetComposer
-    from aiperf.services.dataset.loader.protocol import (
+    from aiperf.dataset import (
         CustomDatasetLoaderProtocol,
     )
+    from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
 class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):

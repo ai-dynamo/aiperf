@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from PIL import Image, UnidentifiedImageError
 
-from aiperf.services.dataset import utils
+from aiperf.dataset import utils
 
 
 class TestCheckFileExists:
@@ -165,7 +165,7 @@ class TestSamplePositiveNormal:
 
 
 class TestSamplePositiveNormalInteger:
-    @patch("aiperf.services.dataset.utils.sample_positive_normal", return_value=2.3)
+    @patch("aiperf.dataset.utils.sample_positive_normal", return_value=2.3)
     def test_basic(self, mock_sample_positive_normal):
         """Test sampling positive integer from normal distribution."""
         result = utils.sample_positive_normal_integer(2.0, 1.0)
@@ -177,7 +177,7 @@ class TestSamplePositiveNormalInteger:
         with pytest.raises(ValueError, match="Mean value.*should be greater than 0"):
             _ = utils.sample_positive_normal(-1.0, 1.0)
 
-    @patch("aiperf.services.dataset.utils.sample_positive_normal", return_value=0.1)
+    @patch("aiperf.dataset.utils.sample_positive_normal", return_value=0.1)
     def test_small_value(self, mock_sample_positive_normal):
         """Test that small positive values are ceiled to at least 1."""
         result = utils.sample_positive_normal_integer(0.5, 0.1)

@@ -6,8 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from aiperf.common.enums import CustomDatasetType
-from aiperf.services.dataset.loader import MooncakeTraceDatasetLoader
-from aiperf.services.dataset.loader.models import MooncakeTrace
+from aiperf.dataset import MooncakeTrace, MooncakeTraceDatasetLoader
 
 
 class TestMooncakeTrace:

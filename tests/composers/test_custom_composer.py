@@ -7,13 +7,13 @@ import pytest
 
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.models import Conversation, Turn
-from aiperf.services.dataset.composer.custom import CustomDatasetComposer
-from aiperf.services.dataset.loader import (
+from aiperf.dataset import (
     MooncakeTraceDatasetLoader,
     MultiTurnDatasetLoader,
     RandomPoolDatasetLoader,
     SingleTurnDatasetLoader,
 )
+from aiperf.dataset.composer.custom import CustomDatasetComposer
 
 
 class TestInitialization:
@@ -62,7 +62,7 @@ class TestCoreFunctionality:
         composer._create_loader_instance(dataset_type)
         assert isinstance(composer.loader, expected_instance)
 
-    @patch("aiperf.services.dataset.composer.custom.utils.check_file_exists")
+    @patch("aiperf.dataset.composer.custom.utils.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     def test_create_dataset_trace(self, mock_check_file, trace_config, mock_tokenizer):
         """Test that create_dataset returns correct type."""
@@ -78,10 +78,8 @@ class TestCoreFunctionality:
 class TestErrorHandling:
     """Test class for CustomDatasetComposer error handling scenarios."""
 
-    @patch("aiperf.services.dataset.composer.custom.utils.check_file_exists")
-    @patch(
-        "aiperf.services.dataset.composer.custom.CustomDatasetFactory.create_instance"
-    )
+    @patch("aiperf.dataset.composer.custom.utils.check_file_exists")
+    @patch("aiperf.dataset.composer.custom.CustomDatasetFactory.create_instance")
     def test_create_dataset_empty_result(
         self, mock_factory, mock_check_file, custom_config, mock_tokenizer
     ):

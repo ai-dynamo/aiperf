@@ -10,8 +10,8 @@ import soundfile as sf
 from aiperf.common.config import AudioConfig
 from aiperf.common.enums import AudioFormat
 from aiperf.common.exceptions import ConfigurationError
-from aiperf.services.dataset import utils
-from aiperf.services.dataset.generator.base import BaseGenerator
+from aiperf.dataset import utils
+from aiperf.dataset.generator.base import BaseGenerator
 
 # MP3 supported sample rates in Hz
 MP3_SUPPORTED_SAMPLE_RATES = {

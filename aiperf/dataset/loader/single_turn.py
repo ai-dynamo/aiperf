@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-from aiperf.services.dataset.loader.models import SingleTurn
+from aiperf.dataset.loader.models import SingleTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.SINGLE_TURN)

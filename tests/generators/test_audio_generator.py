@@ -12,7 +12,7 @@ import soundfile as sf
 from aiperf.common.config import AudioConfig, AudioLengthConfig
 from aiperf.common.enums import AudioFormat
 from aiperf.common.exceptions import ConfigurationError
-from aiperf.services.dataset.generator.audio import (
+from aiperf.dataset.generator import (
     AudioGenerator,
 )
 
