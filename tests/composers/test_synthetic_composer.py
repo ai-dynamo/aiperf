@@ -546,7 +546,6 @@ class TestSyntheticDatasetComposer:
     @patch("random.choice", return_value="test-model-1")
     def test_model_selection_random(self, mock_choice, custom_config, mock_tokenizer):
         """Test random model selection strategy."""
-        mock_choice.return_value = "test-model-1"
 
         custom_config.endpoint.model_selection_strategy = "random"
         composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
