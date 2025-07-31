@@ -9,7 +9,7 @@ from aiperf.common.enums import DataExporterType
 from aiperf.common.factories import DataExporterFactory
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import DataExporterProtocol
-from aiperf.data_exporter.exporter_config import ExporterConfig
+from aiperf.exporters.exporter_config import ExporterConfig
 
 
 @implements_protocol(DataExporterProtocol)

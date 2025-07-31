@@ -55,7 +55,7 @@ if TYPE_CHECKING:
         ServiceProtocol,  # noqa: F401
         StreamingPostProcessorProtocol,
     )
-    from aiperf.data_exporter.exporter_config import ExporterConfig
+    from aiperf.exporters.exporter_config import ExporterConfig
     from aiperf.services.dataset.composer.base import BaseDatasetComposer
     from aiperf.services.dataset.loader.protocol import (
         CustomDatasetLoaderProtocol,
