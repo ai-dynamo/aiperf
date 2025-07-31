@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import random
 from abc import ABC, abstractmethod
 
 from aiperf.common.config.user_config import UserConfig
@@ -40,7 +41,7 @@ class BaseDatasetComposer(ABC):
             self.config.endpoint.model_selection_strategy
             == ModelSelectionStrategy.RANDOM
         ):
-            return self.rng.choice(self.config.endpoint.model_names)
+            return random.choice(self.config.endpoint.model_names)
         elif (
             self.config.endpoint.model_selection_strategy
             == ModelSelectionStrategy.ROUND_ROBIN

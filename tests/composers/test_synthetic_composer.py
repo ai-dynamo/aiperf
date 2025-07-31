@@ -538,3 +538,34 @@ class TestSyntheticDatasetComposer:
                 assert turn1.images[0].contents == turn2.images[0].contents
                 assert turn1.audios[0].contents == turn2.audios[0].contents
                 assert turn1.delay == turn2.delay
+
+    # ============================================================================
+    # Model Selection Strategy Tests
+    # ============================================================================
+
+    @patch("random.choice", return_value="test-model-1")
+    def test_model_selection_random(self, mock_choice, custom_config, mock_tokenizer):
+        """Test random model selection strategy."""
+        mock_choice.return_value = "test-model-1"
+
+        custom_config.endpoint.model_selection_strategy = "random"
+        composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
+
+        conversations = composer.create_dataset()
+
+        for conversation in conversations:
+            for turn in conversation.turns:
+                assert turn.model == "test-model-1"
+
+    def test_model_selection_round_robin(self, custom_config, mock_tokenizer):
+        custom_config.endpoint.model_selection_strategy = "round_robin"
+        custom_config.endpoint.model_names = ["test-model-1", "test-model-2"]
+
+        composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        # Check that models are selected in round-robin fashion
+        for i, conversation in enumerate(conversations):
+            for j, turn in enumerate(conversation.turns):
+                expected_model = "test-model-1" if (i + j) % 2 == 0 else "test-model-2"
+                assert turn.model == expected_model
