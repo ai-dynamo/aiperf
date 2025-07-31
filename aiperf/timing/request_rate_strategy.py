@@ -8,8 +8,8 @@ import time
 from aiperf.common.enums import RequestRateMode, TimingMode
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.models import CreditPhaseStats
-from aiperf.services.timing_manager.config import TimingManagerConfig
-from aiperf.services.timing_manager.credit_issuing_strategy import (
+from aiperf.timing.config import TimingManagerConfig
+from aiperf.timing.credit_issuing_strategy import (
     CreditIssuingStrategy,
     CreditIssuingStrategyFactory,
     CreditManagerProtocol,

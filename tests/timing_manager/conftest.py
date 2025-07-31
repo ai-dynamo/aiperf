@@ -15,7 +15,7 @@ from aiperf.common.messages import (
     CreditsCompleteMessage,
 )
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.services.timing_manager import CreditIssuingStrategy
+from aiperf.timing import CreditIssuingStrategy
 
 
 class MockCreditManager(AIPerfLoggerMixin):
