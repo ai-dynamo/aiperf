@@ -7,18 +7,35 @@ from cyclopts import Parameter
 from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import BaseConfig
-from aiperf.common.config.config_defaults import EndPointDefaults
+from aiperf.common.config.config_defaults import EndpointDefaults
 from aiperf.common.config.config_validators import parse_str_or_list
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 
 
-class EndPointConfig(BaseConfig):
+class EndpointConfig(BaseConfig):
     """
     A configuration class for defining endpoint related settings.
     """
 
     _CLI_GROUP = Groups.ENDPOINT
+
+    model_names: Annotated[
+        list[str],
+        Field(
+            ...,
+            description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
+        ),
+        BeforeValidator(parse_str_or_list),
+        Parameter(
+            name=(
+                "--model-names",
+                "--model",  # GenAI-Perf
+                "-m",  # GenAI-Perf
+            ),
+            group=_CLI_GROUP,
+        ),
+    ]
 
     model_selection_strategy: Annotated[
         ModelSelectionStrategy,
@@ -31,9 +48,10 @@ class EndPointConfig(BaseConfig):
             name=(
                 "--model-selection-strategy",  # GenAI-Perf
             ),
+            parse=False,  # TODO: Not yet supported
             group=_CLI_GROUP,
         ),
-    ] = EndPointDefaults.MODEL_SELECTION_STRATEGY
+    ] = EndpointDefaults.MODEL_SELECTION_STRATEGY
 
     custom_endpoint: Annotated[
         str | None,
@@ -47,7 +65,7 @@ class EndPointConfig(BaseConfig):
             ),
             group=_CLI_GROUP,
         ),
-    ] = EndPointDefaults.CUSTOM_ENDPOINT
+    ] = EndpointDefaults.CUSTOM_ENDPOINT
 
     type: Annotated[
         EndpointType,
@@ -60,7 +78,7 @@ class EndPointConfig(BaseConfig):
             ),
             group=_CLI_GROUP,
         ),
-    ] = EndPointDefaults.TYPE
+    ] = EndpointDefaults.TYPE
 
     streaming: Annotated[
         bool,
@@ -73,7 +91,7 @@ class EndPointConfig(BaseConfig):
             ),
             group=_CLI_GROUP,
         ),
-    ] = EndPointDefaults.STREAMING
+    ] = EndpointDefaults.STREAMING
 
     server_metrics_urls: Annotated[
         list[str],
@@ -90,7 +108,7 @@ class EndPointConfig(BaseConfig):
             parse=False,  # TODO: Not yet supported
             group=_CLI_GROUP,
         ),
-    ] = EndPointDefaults.SERVER_METRICS_URLS
+    ] = EndpointDefaults.SERVER_METRICS_URLS
 
     url: Annotated[
         str,
@@ -104,7 +122,7 @@ class EndPointConfig(BaseConfig):
             ),
             group=_CLI_GROUP,
         ),
-    ] = EndPointDefaults.URL
+    ] = EndpointDefaults.URL
 
     grpc_method: Annotated[
         str,
@@ -121,7 +139,7 @@ class EndPointConfig(BaseConfig):
             parse=False,  # TODO: Not yet supported
             group=_CLI_GROUP,
         ),
-    ] = EndPointDefaults.GRPC_METHOD
+    ] = EndpointDefaults.GRPC_METHOD
 
     # NEW AIPerf Option
     timeout_seconds: Annotated[
@@ -133,7 +151,7 @@ class EndPointConfig(BaseConfig):
             name=("--request-timeout-seconds"),
             group=_CLI_GROUP,
         ),
-    ] = EndPointDefaults.TIMEOUT
+    ] = EndpointDefaults.TIMEOUT
 
     # NEW AIPerf Option
     api_key: Annotated[
@@ -146,4 +164,4 @@ class EndPointConfig(BaseConfig):
             name=("--api-key"),
             group=_CLI_GROUP,
         ),
-    ] = EndPointDefaults.API_KEY
+    ] = EndpointDefaults.API_KEY

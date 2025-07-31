@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import Field
 
-from aiperf.common.config.config_defaults import EndPointDefaults
+from aiperf.common.config.config_defaults import EndpointDefaults
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import EndpointType, Modality, ModelSelectionStrategy
 from aiperf.common.models import AIPerfBaseModel
@@ -53,7 +53,9 @@ class ModelListInfo(AIPerfBaseModel):
     def from_user_config(cls, user_config: UserConfig) -> "ModelListInfo":
         """Create a ModelListInfo from a UserConfig."""
         return cls(
-            models=[ModelInfo(name=model) for model in user_config.model_names],
+            models=[
+                ModelInfo(name=model) for model in user_config.endpoint.model_names
+            ],
             model_selection_strategy=user_config.endpoint.model_selection_strategy,
         )
 
@@ -93,7 +95,7 @@ class EndpointInfo(AIPerfBaseModel):
         description="SSL options to use for the endpoint.",
     )
     timeout: float = Field(
-        default=EndPointDefaults.TIMEOUT,
+        default=EndpointDefaults.TIMEOUT,
         description="The timeout in seconds for each request to the endpoint.",
     )
     extra: dict[str, Any] | None = Field(

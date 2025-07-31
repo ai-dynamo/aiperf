@@ -3,13 +3,13 @@
 from unittest.mock import mock_open, patch
 
 from aiperf.common.config import (
-    EndPointConfig,
+    EndpointConfig,
+    EndpointDefaults,
     InputConfig,
     OutputConfig,
     TokenizerConfig,
     UserConfig,
 )
-from aiperf.common.config.config_defaults import EndPointDefaults
 from aiperf.common.enums import EndpointType
 
 
@@ -31,8 +31,8 @@ def test_user_config_serialization_to_file():
     - `pathlib.Path.open` is mocked to simulate file operations without actual file I/O.
     """
     config = UserConfig(
-        model_names=["model1", "model2"],
-        endpoint=EndPointConfig(
+        endpoint=EndpointConfig(
+            model_names=["model1", "model2"],
             type=EndpointType.OPENAI_CHAT_COMPLETIONS,
             custom_endpoint="custom_endpoint",
             streaming=True,
@@ -66,18 +66,24 @@ def test_user_config_defaults():
     - `model_names` matches `UserDefaults.MODEL_NAMES`.
     - `verbose` matches `UserDefaults.VERBOSE`.
     - `template_filename` matches `UserDefaults.TEMPLATE_FILENAME`.
-    - `endpoint` is an instance of `EndPointConfig`.
+    - `endpoint` is an instance of `EndpointConfig`.
     - `input` is an instance of `InputConfig`.
     - `output` is an instance of `OutputConfig`
     - `tokenizer` is an instance of `TokenizerConfig`.
     """
 
-    config = UserConfig(model_names=["model1", "model2"])
-    assert config.model_names == ["model1", "model2"]
-    assert config.endpoint.streaming == EndPointDefaults.STREAMING
-    assert config.endpoint.url == EndPointDefaults.URL
-    assert config.endpoint.grpc_method == EndPointDefaults.GRPC_METHOD
-    assert isinstance(config.endpoint, EndPointConfig)
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["model1", "model2"],
+            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            custom_endpoint="custom_endpoint",
+        )
+    )
+    assert config.endpoint.model_names == ["model1", "model2"]
+    assert config.endpoint.streaming == EndpointDefaults.STREAMING
+    assert config.endpoint.url == EndpointDefaults.URL
+    assert config.endpoint.grpc_method == EndpointDefaults.GRPC_METHOD
+    assert isinstance(config.endpoint, EndpointConfig)
     assert isinstance(config.input, InputConfig)
     assert isinstance(config.output, OutputConfig)
     assert isinstance(config.tokenizer, TokenizerConfig)
@@ -96,21 +102,21 @@ def test_user_config_custom_values():
     """
 
     custom_values = {
-        "model_names": ["model1", "model2"],
-        "endpoint": EndPointConfig(
+        "endpoint": EndpointConfig(
             type=EndpointType.OPENAI_CHAT_COMPLETIONS,
             custom_endpoint="custom_endpoint",
+            model_names=["model1", "model2"],
             streaming=True,
             url="http://custom-url",
             grpc_method="custom.package.Service/Method",
         ),
     }
     config = UserConfig(**custom_values)
-    assert config.model_names == ["model1", "model2"]
+    assert config.endpoint.model_names == ["model1", "model2"]
     assert config.endpoint.streaming is True
     assert config.endpoint.url == "http://custom-url"
     assert config.endpoint.grpc_method == "custom.package.Service/Method"
-    assert isinstance(config.endpoint, EndPointConfig)
+    assert isinstance(config.endpoint, EndpointConfig)
     assert isinstance(config.input, InputConfig)
     assert isinstance(config.output, OutputConfig)
     assert isinstance(config.tokenizer, TokenizerConfig)

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.common.aiperf_logger import _TRACE
-from aiperf.common.config import UserConfig
+from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceRunType
 from aiperf.common.enums.communication_enums import CommunicationBackend
@@ -181,7 +181,7 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
 
 @pytest.fixture
 def user_config() -> UserConfig:
-    config = UserConfig(model_names=["test-model"])
+    config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
     return config
 
 

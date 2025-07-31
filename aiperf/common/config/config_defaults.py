@@ -31,7 +31,7 @@ class CLIDefaults:
 
 
 @dataclass(frozen=True)
-class EndPointDefaults:
+class EndpointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
     CUSTOM_ENDPOINT = None
     TYPE = EndpointType.OPENAI_CHAT_COMPLETIONS
@@ -54,7 +54,6 @@ class InputDefaults:
     CUSTOM_DATASET_TYPE = CustomDatasetType.MOONCAKE_TRACE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
-    RANDOM_SEED = None
 
 
 @dataclass(frozen=True)

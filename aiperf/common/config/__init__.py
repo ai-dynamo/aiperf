@@ -20,7 +20,7 @@ from aiperf.common.config.config_defaults import (
     AudioDefaults,
     CLIDefaults,
     ConversationDefaults,
-    EndPointDefaults,
+    EndpointDefaults,
     ImageDefaults,
     InputDefaults,
     InputTokensDefaults,
@@ -54,7 +54,7 @@ from aiperf.common.config.conversation_config import (
     TurnDelayConfig,
 )
 from aiperf.common.config.endpoint_config import (
-    EndPointConfig,
+    EndpointConfig,
 )
 from aiperf.common.config.groups import (
     Groups,
@@ -123,8 +123,8 @@ __all__ = [
     "CLIDefaults",
     "ConversationConfig",
     "ConversationDefaults",
-    "EndPointConfig",
-    "EndPointDefaults",
+    "EndpointConfig",
+    "EndpointDefaults",
     "Groups",
     "ImageConfig",
     "ImageDefaults",
