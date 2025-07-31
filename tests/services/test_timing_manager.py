@@ -10,9 +10,9 @@ from unittest.mock import patch
 
 import pytest
 
+from aiperf.common.base_service import BaseService
 from aiperf.common.enums import CommandType, CreditPhase, MessageType, ServiceType
 from aiperf.common.messages import CommandMessage, CreditReturnMessage
-from aiperf.services.base_service import BaseService
 from aiperf.timing.config import TimingManagerConfig, TimingMode
 from aiperf.timing.timing_manager import TimingManager
 from tests.base_test_component_service import BaseTestComponentService

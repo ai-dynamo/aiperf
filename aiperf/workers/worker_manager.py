@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import ConfigDict, Field
 
+from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import MessageType, ServiceType
@@ -22,7 +23,6 @@ from aiperf.common.messages.command_messages import (
     SpawnWorkersCommand,
 )
 from aiperf.common.models import AIPerfBaseModel
-from aiperf.services.base_component_service import BaseComponentService
 
 
 class WorkerProcessInfo(AIPerfBaseModel):

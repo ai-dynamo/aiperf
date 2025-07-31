@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,
@@ -34,7 +35,6 @@ from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
 )
-from aiperf.services.base_component_service import BaseComponentService
 from aiperf.timing.config import (
     TimingManagerConfig,
     TimingMode,

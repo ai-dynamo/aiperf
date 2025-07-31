@@ -5,6 +5,7 @@ import sys
 import time
 from typing import cast
 
+from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommandResponseStatus,
@@ -42,7 +43,6 @@ from aiperf.controller.system_mixins import (
     SignalHandlerMixin,
 )
 from aiperf.exporters.exporter_manager import ExporterManager
-from aiperf.services.base_service import BaseService
 
 
 @ServiceFactory.register(ServiceType.SYSTEM_CONTROLLER)
