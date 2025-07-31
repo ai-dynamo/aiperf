@@ -9,8 +9,8 @@ import pytest
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import MetricResult
-from aiperf.data_exporter.exporter_config import ExporterConfig
-from aiperf.data_exporter.json_exporter import JsonExporter
+from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.exporters.json_exporter import JsonExporter
 
 
 class TestJsonExporter:

@@ -37,7 +37,7 @@ from aiperf.common.messages.command_messages import (
 from aiperf.common.models import ServiceRunInfo
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
-from aiperf.data_exporter.exporter_manager import ExporterManager
+from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.services.base_service import BaseService
 from aiperf.services.system_controller.proxy_manager import ProxyManager
 from aiperf.services.system_controller.system_mixins import (

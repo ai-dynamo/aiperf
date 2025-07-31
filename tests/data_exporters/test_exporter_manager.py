@@ -10,7 +10,7 @@ from aiperf.common.enums import EndpointType
 from aiperf.common.enums.data_exporter_enums import DataExporterType
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProfileResults
-from aiperf.data_exporter.exporter_manager import ExporterManager
+from aiperf.exporters.exporter_manager import ExporterManager
 
 
 @pytest.fixture

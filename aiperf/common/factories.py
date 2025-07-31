@@ -55,11 +55,11 @@ if TYPE_CHECKING:
         ServiceProtocol,  # noqa: F401
         StreamingPostProcessorProtocol,
     )
-    from aiperf.data_exporter.exporter_config import ExporterConfig
     from aiperf.dataset import (
         CustomDatasetLoaderProtocol,
     )
     from aiperf.dataset.composer.base import BaseDatasetComposer
+    from aiperf.exporters.exporter_config import ExporterConfig
 
 
 class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
