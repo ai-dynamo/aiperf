@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import time
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.comms.base_comms import (
@@ -11,8 +12,10 @@ from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
 from aiperf.common.enums import CommAddress, MessageType, ServiceType
+from aiperf.common.enums.command_enums import CommandType
 from aiperf.common.factories import ResponseExtractorFactory, ServiceFactory
 from aiperf.common.hooks import (
+    on_command,
     on_init,
     on_pull_message,
 )
@@ -23,6 +26,7 @@ from aiperf.common.messages import (
     InferenceResultsMessage,
     ParsedInferenceResultsMessage,
 )
+from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -80,6 +84,13 @@ class InferenceResultParser(PullClientMixin, BaseComponentService):
             model_endpoint=self.model_endpoint,
         )
 
+    @on_command(CommandType.PROFILE_CONFIGURE)
+    async def _profile_configure_command(
+        self, message: ProfileConfigureCommand
+    ) -> None:
+        """Configure the tokenizers."""
+        self.info("Configuring tokenizers for inference result parser")
+        begin = time.perf_counter()
         async with self.tokenizer_lock:
             self.tokenizers = {
                 model.name: Tokenizer.from_pretrained(
@@ -89,7 +100,15 @@ class InferenceResultParser(PullClientMixin, BaseComponentService):
                 )
                 for model in self.model_endpoint.models.models
             }
-            self.info("Initialized tokenizers for %d models", len(self.tokenizers))
+        duration = time.perf_counter() - begin
+        tokenizer_info = {
+            model: {
+                "class": tokenizer._tokenizer.__class__.__name__,
+                "name_or_path": getattr(tokenizer._tokenizer, "name_or_path", ""),
+            }
+            for model, tokenizer in self.tokenizers.items()
+        }
+        self.info(f"Initialized tokenizers: {tokenizer_info} in {duration:.2f} seconds")
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model."""

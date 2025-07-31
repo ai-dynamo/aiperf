@@ -4,14 +4,13 @@ import asyncio
 
 from pydantic import BaseModel
 
-from aiperf.common.config import ServiceConfig
-from aiperf.common.config.user_config import UserConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
 )
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums.service_enums import ServiceRunType
+from aiperf.common.enums import ServiceRunType
 from aiperf.common.factories import ServiceManagerFactory
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT

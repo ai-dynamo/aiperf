@@ -8,6 +8,11 @@ from typing import Any
 import zmq.asyncio
 
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
+from aiperf.common.comms.zmq.zmq_defaults import (
+    TOPIC_DELIMITER,
+    TOPIC_END,
+    TOPIC_END_ENCODED,
+)
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType, MessageType
 from aiperf.common.exceptions import CommunicationError
@@ -93,10 +98,6 @@ class ZMQSubClient(BaseZMQClient):
                     await self._subscribe_internal(message_type, callback)
             else:
                 await self._subscribe_internal(message_type, callbacks)
-        # TODO: HACK: This is a hack to ensure that the subscriptions are registered
-        # since we do not have any confirmation from the server that the subscriptions
-        # are registered, yet.
-        await asyncio.sleep(0.1)
 
     async def subscribe(
         self, message_type: MessageTypeT, callback: Callable[[Message], Any]
@@ -112,13 +113,9 @@ class ZMQSubClient(BaseZMQClient):
         """
         await self._check_initialized()
         await self._subscribe_internal(message_type, callback)
-        # TODO: HACK: This is a hack to ensure that the subscriptions are registered
-        # since we do not have any confirmation from the server that the subscriptions
-        # are registered, yet.
-        await asyncio.sleep(0.1)
 
     async def _subscribe_internal(
-        self, message_type: MessageTypeT, callback: Callable[[Message], Any]
+        self, topic: str, callback: Callable[[Message], Any]
     ) -> None:
         """Subscribe to a message_type.
 
@@ -127,36 +124,40 @@ class ZMQSubClient(BaseZMQClient):
             callback: Function to call when a message is received (receives Message object)
         """
         try:
-            # Only subscribe to message_type if this is the first callback for this type
-            if message_type not in self._subscribers:
-                self.socket.subscribe(message_type.encode())
-                self._subscribers[message_type] = []
+            # Only subscribe to topic if this is the first callback for this type
+            if topic not in self._subscribers:
+                self.debug(lambda: f"Subscribed to topic: {topic}")
+                self.socket.setsockopt(
+                    zmq.SUBSCRIBE, topic.encode() + TOPIC_END_ENCODED
+                )
+            else:
+                self.debug(
+                    lambda: f"Adding callback to existing subscription for topic: {topic}"
+                )
 
-            # Register callback
-            self._subscribers[message_type].append(callback)
-
-            self.trace(
-                lambda: f"Subscribed to message_type: {message_type}, {self._subscribers[message_type]}"
-            )
+            self._subscribers.setdefault(topic, []).append(callback)
 
         except Exception as e:
-            self.exception(f"Exception subscribing to message_type {message_type}: {e}")
+            self.exception(f"Exception subscribing to topic {topic}: {e}")
             raise CommunicationError(
-                f"Failed to subscribe to message_type {message_type}: {e}",
+                f"Failed to subscribe to topic {topic}: {e}",
             ) from e
 
     async def _handle_message(self, topic_bytes: bytes, message_bytes: bytes) -> None:
         """Handle a message from a subscribed message_type."""
-        message_type = topic_bytes.decode()
+
+        # strip the final TOPIC_END chars from the topic
+        topic = topic_bytes.decode()[: -len(TOPIC_END)]
         message_json = message_bytes.decode()
         self.trace(
-            lambda: f"Received message from message_type: '{message_type}', message: {message_json}"
+            lambda: f"Received message from topic: '{topic}', message: {message_json}"
         )
 
-        # Targeted messages are in the format "message_type.<target>"
-        if "." in message_type:
-            # grab the first part which is the message type
-            message_type = message_type.split(".")[0]
+        # Targeted messages are in the format "<target>.<message_type>"
+        # grab the last part which is the message type
+        message_type = (
+            topic.split(TOPIC_DELIMITER)[-1] if TOPIC_DELIMITER in topic else topic
+        )
 
         if message_type == MessageType.COMMAND:
             message = CommandMessage.from_json(message_json)
@@ -165,10 +166,14 @@ class ZMQSubClient(BaseZMQClient):
         else:
             message = Message.from_json_with_type(message_type, message_json)
 
+        self.debug(
+            lambda: f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"
+        )
+
         # Call callbacks with the parsed message object
-        if message_type in self._subscribers:
+        if topic in self._subscribers:
             with contextlib.suppress(Exception):  # Ignore errors, they will get logged
-                await call_all_functions(self._subscribers[message_type], message)
+                await call_all_functions(self._subscribers[topic], message)
 
     @background_task(immediate=True, interval=None)
     async def _sub_receiver(self) -> None:
@@ -179,11 +184,11 @@ class ZMQSubClient(BaseZMQClient):
         """
         while not self.stop_requested:
             try:
-                (
-                    topic_bytes,
-                    message_bytes,
-                ) = await self.socket.recv_multipart()
-
+                topic_bytes, message_bytes = await self.socket.recv_multipart()
+                self.trace(
+                    lambda topic=topic_bytes,
+                    message=message_bytes: f"Socket received message: {topic} {message}"
+                )
                 self.execute_async(self._handle_message(topic_bytes, message_bytes))
 
             except zmq.Again:

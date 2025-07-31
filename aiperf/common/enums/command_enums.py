@@ -10,6 +10,7 @@ class CommandType(CaseInsensitiveStrEnum):
     PROFILE_CANCEL = "profile_cancel"
     PROFILE_CONFIGURE = "profile_configure"
     PROFILE_START = "profile_start"
+    REGISTER_SERVICE = "register_service"
     SHUTDOWN = "shutdown"
     SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"

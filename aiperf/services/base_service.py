@@ -5,38 +5,20 @@ import os
 import signal
 import uuid
 from abc import ABC
-from collections.abc import Iterable
 from typing import ClassVar
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import (
-    CommandType,
-    LifecycleState,
-    MessageType,
-)
+from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.exceptions import ServiceError
-from aiperf.common.hooks import (
-    AIPerfHook,
-    on_command,
-    on_message,
-    provides_hooks,
-)
-from aiperf.common.messages import (
-    CommandMessage,
-    CommandSuccessResponse,
-)
-from aiperf.common.messages.command_messages import (
-    CommandAcknowledgedResponse,
-    CommandErrorResponse,
-    CommandUnhandledResponse,
-)
-from aiperf.common.mixins import MessageBusClientMixin
-from aiperf.common.models import ErrorDetails
+from aiperf.common.hooks import on_command
+from aiperf.common.messages import CommandMessage
+from aiperf.common.messages.command_messages import CommandAcknowledgedResponse
+from aiperf.common.mixins import CommandHandlerMixin
+from aiperf.common.models import ServiceInfo
 from aiperf.common.types import ServiceTypeT
 
 
-@provides_hooks(AIPerfHook.ON_COMMAND)
-class BaseService(MessageBusClientMixin, ABC):
+class BaseService(CommandHandlerMixin, ABC):
     """Base class for all AIPerf services, providing common functionality for
     communication, state management, and lifecycle operations.
     This class inherits from the MessageBusClientMixin, which provides the
@@ -88,66 +70,6 @@ class BaseService(MessageBusClientMixin, ABC):
             service_id=self.service_id,
         )
 
-    @on_message(
-        lambda self: {
-            MessageType.COMMAND,
-            f"{MessageType.COMMAND}.{self.service_type}",
-            f"{MessageType.COMMAND}.{self.service_id}",
-        }
-    )
-    async def _process_command_message(self, message: CommandMessage) -> None:
-        """Process a command message received from the controller, and forward it to the appropriate handler.
-        Wait for the handler to complete and publish the response, or handle the error and publish the failure response.
-        """
-        if message.service_id == self.service_id:
-            self.debug(
-                lambda: f"Received command message from self: {message}. Ignoring."
-            )
-            return
-
-        self.debug(lambda: f"Received command message: {message}")
-
-        # Go through the hooks and find the first one that matches the command type.
-        # Currently, we only support a single handler per command type, so we break out of the loop after the first one.
-        # TODO: Do we want/need to add support for multiple handlers per command type?
-        for hook in self.get_hooks(AIPerfHook.ON_COMMAND):
-            if isinstance(hook.params, Iterable) and message.command in hook.params:
-                try:
-                    response = await hook.func(message)
-                    if response is None:
-                        # If there is no data to send back, just send an acknowledged response.
-                        await self.publish(
-                            CommandAcknowledgedResponse.from_command_message(
-                                message, self.service_id
-                            )
-                        )
-                        return
-
-                    await self.publish(
-                        CommandSuccessResponse.from_command_message(
-                            message, self.service_id, response
-                        )
-                    )
-                except Exception as e:
-                    self.exception(
-                        f"Failed to handle command {message.command} with hook {hook}: {e}"
-                    )
-                    await self.publish(
-                        CommandErrorResponse.from_command_message(
-                            message,
-                            self.service_id,
-                            ErrorDetails.from_exception(e),
-                        )
-                    )
-
-                # Only one handler per command type, so return after the first handler.
-                return
-
-        # If we reach here, no handler was found for the command, so we publish an unhandled response.
-        await self.publish(
-            CommandUnhandledResponse.from_command_message(message, self.service_id)
-        )
-
     @on_command(CommandType.SHUTDOWN)
     async def _on_shutdown_command(self, message: CommandMessage) -> None:
         self.debug(f"Received shutdown command from {message.service_id}")
@@ -163,6 +85,17 @@ class BaseService(MessageBusClientMixin, ABC):
                 f"Failed to stop service {self} ({self.service_id}) after receiving shutdown command: {e}. Killing."
             )
             await self._kill()
+
+    @on_command(CommandType.DISCOVER_SERVICES)
+    async def _on_discover_services_command(
+        self, message: CommandMessage
+    ) -> ServiceInfo:
+        self.debug(f"Received discover services command from {message.service_id}")
+        return ServiceInfo(
+            service_id=self.service_id,
+            service_type=self.service_type,
+            state=self.state,
+        )
 
     async def stop(self) -> None:
         """This overrides the base class stop method to handle the case where the service is already stopping.

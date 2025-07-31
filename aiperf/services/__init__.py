@@ -9,6 +9,8 @@ __ignore__ = ["main"]
 ## ⚠️             Do not edit below this line                      ⚠️ ##
 ########################################################################
 from aiperf.services.base_component_service import (
+    DEFAULT_MAX_REGISTRATION_ATTEMPTS,
+    DEFAULT_REGISTRATION_INTERVAL,
     BaseComponentService,
 )
 from aiperf.services.base_service import (
@@ -129,6 +131,8 @@ __all__ = [
     "CustomDatasetLoaderProtocol",
     "DATASET_CONFIGURATION_TIMEOUT",
     "DEFAULT_CORPUS_FILE",
+    "DEFAULT_MAX_REGISTRATION_ATTEMPTS",
+    "DEFAULT_REGISTRATION_INTERVAL",
     "DatasetManager",
     "FixedScheduleStrategy",
     "ImageGenerator",

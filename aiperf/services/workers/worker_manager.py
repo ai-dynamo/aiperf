@@ -10,8 +10,8 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import MessageType, ServiceType
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
-    on_init,
     on_message,
+    on_start,
     on_stop,
 )
 from aiperf.common.messages import (
@@ -83,17 +83,20 @@ class WorkerManager(BaseComponentService):
         )
         self.initial_workers = self.max_workers
 
-    @on_init
-    async def _initialize(self) -> None:
-        """Initialize worker manager-specific components."""
-        self.debug("WorkerManager initializing")
+    @on_start
+    async def _start(self) -> None:
+        """Start worker manager-specific components."""
+        self.debug("WorkerManager starting")
 
-        await self.publish(
+        await self.send_command_and_wait_for_response(
             SpawnWorkersCommand(
                 service_id=self.service_id,
                 num_workers=self.initial_workers,
+                # Target the system controller directly to avoid broadcasting to all services.
+                target_service_type=ServiceType.SYSTEM_CONTROLLER,
             )
         )
+        self.debug("WorkerManager started")
 
     @on_stop
     async def _stop(self) -> None:
@@ -103,6 +106,8 @@ class WorkerManager(BaseComponentService):
             ShutdownWorkersCommand(
                 service_id=self.service_id,
                 all_workers=True,
+                # Target the system controller directly to avoid broadcasting to all services.
+                target_service_type=ServiceType.SYSTEM_CONTROLLER,
             )
         )
 

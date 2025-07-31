@@ -19,7 +19,7 @@ DEFAULT_COMMS_REQUEST_TIMEOUT = 10.0
 DEFAULT_PULL_CLIENT_MAX_CONCURRENCY = 100_000
 """Default maximum concurrency for pull clients."""
 
-DEFAULT_SERVICE_REGISTRATION_TIMEOUT = 5.0
+DEFAULT_SERVICE_REGISTRATION_TIMEOUT = 10.0
 """Default timeout for service registration in seconds."""
 
 DEFAULT_SERVICE_START_TIMEOUT = 5.0
@@ -27,3 +27,18 @@ DEFAULT_SERVICE_START_TIMEOUT = 5.0
 
 DEFAULT_STREAMING_MAX_QUEUE_SIZE = 100_000
 """Default maximum queue size for streaming post processors."""
+
+DEFAULT_COMMAND_RESPONSE_TIMEOUT = 30.0
+"""Default timeout for command responses in seconds."""
+
+DEFAULT_CONNECTION_PROBE_INTERVAL = 0.1
+"""Default interval for connection probes in seconds until a response is received."""
+
+DEFAULT_CONNECTION_PROBE_TIMEOUT = 10.0
+"""Maximum amount of time to wait for connection probe response."""
+
+DEFAULT_PROFILE_CONFIGURE_TIMEOUT = 60.0
+"""Default timeout for profile configure command in seconds."""
+
+DEFAULT_PROFILE_START_TIMEOUT = 5.0
+"""Default timeout for profile start command in seconds."""
