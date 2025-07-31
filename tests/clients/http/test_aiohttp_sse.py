@@ -58,7 +58,9 @@ class TestAioHttpSSEStreamReader:
             patch.object(
                 AioHttpSSEStreamReader, "__aiter__", return_value=mock_aiter()
             ),
-            patch("aiperf.clients.http.aiohttp_client.parse_sse_message") as mock_parse,
+            patch(
+                "aiperf.inference.clients.http.aiohttp_client.parse_sse_message"
+            ) as mock_parse,
         ):
             mock_messages = [
                 SSEMessage(perf_ns=123456789),

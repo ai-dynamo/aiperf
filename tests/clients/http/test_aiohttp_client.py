@@ -44,7 +44,7 @@ class TestAioHttpClientMixin:
     def test_init_creates_connector_and_timeout(self, user_config: UserConfig) -> None:
         """Test that initialization creates TCP connector and timeout configurations."""
         with patch(
-            "aiperf.clients.http.aiohttp_client.create_tcp_connector"
+            "aiperf.inference.clients.http.aiohttp_client.create_tcp_connector"
         ) as mock_create:
             mock_connector = Mock()
             mock_create.return_value = mock_connector
@@ -74,7 +74,7 @@ class TestAioHttpClientMixin:
     def test_timeout_conversion(self, timeout_ms: int, expected_seconds: float) -> None:
         """Test that timeout milliseconds are correctly converted to seconds."""
 
-        with patch("aiperf.clients.http.aiohttp_client.create_tcp_connector"):
+        with patch("aiperf.inference.clients.http.aiohttp_client.create_tcp_connector"):
             client = AioHttpClientMixin(
                 model_endpoint=ModelEndpointInfo(
                     endpoint=EndpointInfo(
@@ -148,7 +148,7 @@ class TestAioHttpClientMixin:
         with (
             patch("aiohttp.ClientSession") as mock_session_class,
             patch(
-                "aiperf.clients.http.aiohttp_client.AioHttpSSEStreamReader"
+                "aiperf.inference.clients.http.aiohttp_client.AioHttpSSEStreamReader"
             ) as mock_reader_class,
         ):
             setup_mock_session(mock_session_class, mock_sse_response, ["post"])
