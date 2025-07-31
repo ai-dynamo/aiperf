@@ -35,15 +35,15 @@ from aiperf.common.protocols import (
     RequestClientProtocol,
 )
 from aiperf.services.base_component_service import BaseComponentService
-from aiperf.services.timing_manager.config import (
+from aiperf.timing.config import (
     TimingManagerConfig,
     TimingMode,
 )
-from aiperf.services.timing_manager.credit_issuing_strategy import (
+from aiperf.timing.credit_issuing_strategy import (
     CreditIssuingStrategy,
     CreditIssuingStrategyFactory,
 )
-from aiperf.services.timing_manager.credit_manager import CreditPhaseMessagesMixin
+from aiperf.timing.credit_manager import CreditPhaseMessagesMixin
 
 
 @ServiceFactory.register(ServiceType.TIMING_MANAGER)

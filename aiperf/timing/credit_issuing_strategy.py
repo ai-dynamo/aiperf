@@ -11,8 +11,8 @@ from aiperf.common.factories import AIPerfFactory
 from aiperf.common.messages import CreditReturnMessage
 from aiperf.common.mixins import TaskManagerMixin
 from aiperf.common.models import CreditPhaseConfig, CreditPhaseStats
-from aiperf.services.timing_manager.config import TimingManagerConfig
-from aiperf.services.timing_manager.credit_manager import CreditManagerProtocol
+from aiperf.timing.config import TimingManagerConfig
+from aiperf.timing.credit_manager import CreditManagerProtocol
 
 
 class CreditIssuingStrategy(TaskManagerMixin, ABC):
