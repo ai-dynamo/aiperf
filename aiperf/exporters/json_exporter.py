@@ -15,7 +15,7 @@ from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
 from aiperf.common.models import ErrorDetailsCount, MetricResult
 from aiperf.common.protocols import DataExporterProtocol
 from aiperf.common.types import MetricTagT
-from aiperf.data_exporter.exporter_config import ExporterConfig
+from aiperf.exporters.exporter_config import ExporterConfig
 
 
 class JsonExportData(BaseModel):

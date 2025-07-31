@@ -16,8 +16,8 @@ from aiperf.common.messages import (
     ConversationResponseMessage,
     DatasetTimingResponse,
 )
+from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.services.base_service import BaseService
-from aiperf.services.dataset.dataset_manager import DatasetManager
 from tests.base_test_component_service import BaseTestComponentService
 from tests.utils.async_test_utils import async_fixture
 
