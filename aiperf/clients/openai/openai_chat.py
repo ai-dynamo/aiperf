@@ -23,22 +23,7 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
     ) -> dict[str, Any]:
         """Format payload for a chat completion request."""
 
-        message = self._create_message(turn)
-        # Hotfix for Dynamo API which does not yet support a list of messages
-        if (
-            len(message["content"]) == 1
-            and "text" in message["content"][0]
-            and len(turn.texts) == 1
-        ):
-            messages = [
-                {
-                    "role": message["role"],
-                    "name": turn.texts[0].name,
-                    "content": message["content"][0].get("text"),
-                }
-            ]
-        else:
-            messages = [message]
+        messages = self._create_messages(turn)
 
         payload = {
             "messages": messages,
@@ -52,7 +37,7 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
         self.debug(lambda: f"Formatted payload: {payload}")
         return payload
 
-    def _create_message(self, turn: Turn) -> dict[Any, Any]:
+    def _create_messages(self, turn: Turn) -> list[dict[str, Any]]:
         message = {
             "role": turn.role or DEFAULT_ROLE,
             "content": [],
@@ -90,4 +75,19 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
                     }
                 )
 
-        return message
+        # Hotfix for Dynamo API which does not yet support a list of messages
+        if (
+            len(message["content"]) == 1
+            and "text" in message["content"][0]
+            and len(turn.texts) == 1
+        ):
+            messages = [
+                {
+                    "role": message["role"],
+                    "name": turn.texts[0].name,
+                    "content": message["content"][0].get("text"),
+                }
+            ]
+        else:
+            messages = [message]
+        return messages

@@ -61,7 +61,7 @@ class AudioConfig(BaseConfig):
         Field(
             ge=0,
             description="The batch size of audio requests AIPerf should send.\n"
-            "This is currently supported with the OpenAI `multimodal` endpoint type",
+            "This is currently supported with the OpenAI `chat` endpoint type",
         ),
         Parameter(
             name=(
