@@ -54,6 +54,7 @@ dev = [
   "pytest-asyncio",
   "pytest-cov",
   "pytest>=7.0.0",
+  "pytest-xdist>=3.8.0",
   "ruff>=0.0.0",
   "scipy>=1.13.0",
 ]
