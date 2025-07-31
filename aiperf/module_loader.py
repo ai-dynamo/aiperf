@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Service loader for AIPerf.
+"""Module loader for AIPerf.
 
-This module is used to load all services into the system to ensure everything is
+This module is used to load all modules into the system to ensure everything is
 registered and ready to be used. This is done to avoid the performance penalty of
-importing all services during CLI startup.
+importing all modules during CLI startup, while still ensuring that all
+implementations are properly registered with their factories.
 """
 
 import importlib
@@ -26,6 +27,7 @@ def _load_all_modules() -> None:
             module.is_dir()
             and not module.name.startswith("_")
             and not module.name.startswith(".")
+            and (module / "__init__.py").exists()
         ):
             _logger.debug(f"Loading module: aiperf.{module.name}")
             importlib.import_module(f"aiperf.{module.name}")
