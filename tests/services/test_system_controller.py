@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
+from aiperf.common.base_service import BaseService
 from aiperf.common.enums import MessageType
 from aiperf.controller import (
     MultiProcessServiceManager,
     SystemController,
 )
-from aiperf.services.base_service import BaseService
 from tests.base_test_service import BaseTestService, async_fixture
 
 

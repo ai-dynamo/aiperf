@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 
+from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
 from aiperf.common.decorators import implements_protocol
@@ -27,7 +28,6 @@ from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
 from aiperf.common.protocols import ServiceProtocol, StreamingPostProcessorProtocol
-from aiperf.services.base_component_service import BaseComponentService
 
 
 @implements_protocol(ServiceProtocol)

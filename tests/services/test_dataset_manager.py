@@ -7,6 +7,7 @@ Tests for the dataset manager service.
 import pytest
 from pydantic import BaseModel
 
+from aiperf.common.base_service import BaseService
 from aiperf.common.enums import (
     ServiceType,
 )
@@ -17,7 +18,6 @@ from aiperf.common.messages import (
     DatasetTimingResponse,
 )
 from aiperf.dataset.dataset_manager import DatasetManager
-from aiperf.services.base_service import BaseService
 from tests.base_test_component_service import BaseTestComponentService
 from tests.utils.async_test_utils import async_fixture
 
