@@ -53,14 +53,6 @@ def test_ttst_metric_with_one_response_raises(parsed_response_record_builder):
         metric.update_value(record=record, metrics=None)
 
 
-def test_ttst_metric_with_no_request_raises():
-    metric = TTSTMetric()
-    metric.metric = []
-    record = None
-    with pytest.raises(ValueError, match="valid request"):
-        metric.update_value(record=record, metrics=None)
-
-
 def test_ttst_metric_response_timestamp_order_raises(parsed_response_record_builder):
     metric = TTSTMetric()
     metric.metric = []

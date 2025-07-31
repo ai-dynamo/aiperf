@@ -14,6 +14,9 @@ from aiperf.services.records_manager.metrics.types.benchmark_duration_metric imp
 from aiperf.services.records_manager.metrics.types.input_sequence_length_metric import (
     InputSequenceLengthMetric,
 )
+from aiperf.services.records_manager.metrics.types.inter_token_latency_metric import (
+    InterTokenLatencyMetric,
+)
 from aiperf.services.records_manager.metrics.types.max_response_metric import (
     MaxResponseMetric,
 )
@@ -23,8 +26,17 @@ from aiperf.services.records_manager.metrics.types.min_request_metric import (
 from aiperf.services.records_manager.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
 )
+from aiperf.services.records_manager.metrics.types.output_token_count_metric import (
+    OutputTokenCountMetric,
+)
+from aiperf.services.records_manager.metrics.types.output_token_throughput_metric import (
+    OutputTokenThroughputMetric,
+)
 from aiperf.services.records_manager.metrics.types.output_token_throughput_per_user_metric import (
     OutputTokenThroughputPerUserMetric,
+)
+from aiperf.services.records_manager.metrics.types.request_count_metric import (
+    RequestCountMetric,
 )
 from aiperf.services.records_manager.metrics.types.request_latency_metric import (
     RequestLatencyMetric,
@@ -42,10 +54,14 @@ from aiperf.services.records_manager.metrics.types.ttst_metric import (
 __all__ = [
     "BenchmarkDurationMetric",
     "InputSequenceLengthMetric",
+    "InterTokenLatencyMetric",
     "MaxResponseMetric",
     "MinRequestMetric",
     "OutputSequenceLengthMetric",
+    "OutputTokenCountMetric",
+    "OutputTokenThroughputMetric",
     "OutputTokenThroughputPerUserMetric",
+    "RequestCountMetric",
     "RequestLatencyMetric",
     "RequestThroughputMetric",
     "TTFTMetric",

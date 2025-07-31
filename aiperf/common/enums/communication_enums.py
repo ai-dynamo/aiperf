@@ -5,18 +5,11 @@ from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
 class CommunicationBackend(CaseInsensitiveStrEnum):
-    """Supported communication backends."""
-
     ZMQ_TCP = "zmq_tcp"
-    """ZeroMQ backend using TCP sockets."""
-
     ZMQ_IPC = "zmq_ipc"
-    """ZeroMQ backend using IPC sockets."""
 
 
-class CommunicationClientType(CaseInsensitiveStrEnum):
-    """Enum for specifying the communication client type for communication clients."""
-
+class CommClientType(CaseInsensitiveStrEnum):
     PUB = "pub"
     SUB = "sub"
     PUSH = "push"
@@ -25,7 +18,7 @@ class CommunicationClientType(CaseInsensitiveStrEnum):
     REPLY = "reply"
 
 
-class CommunicationClientAddressType(CaseInsensitiveStrEnum):
+class CommAddress(CaseInsensitiveStrEnum):
     """Enum for specifying the address type for communication clients.
     This is used to lookup the address in the communication config."""
 
@@ -58,8 +51,6 @@ class CommunicationClientAddressType(CaseInsensitiveStrEnum):
 
 
 class ZMQProxyType(CaseInsensitiveStrEnum):
-    """Types of ZMQ proxies."""
-
     DEALER_ROUTER = "dealer_router"
     XPUB_XSUB = "xpub_xsub"
     PUSH_PULL = "push_pull"

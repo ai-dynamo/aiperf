@@ -12,6 +12,7 @@ class MessageType(CaseInsensitiveStrEnum):
     of each message type, go to its definition in :mod:`aiperf.common.messages`.
     """
 
+    ALL_RECORDS_RECEIVED = "all_records_received"
     COMMAND = "command"
     COMMAND_RESPONSE = "command_response"
     CONVERSATION_REQUEST = "conversation_request"
@@ -36,6 +37,7 @@ class MessageType(CaseInsensitiveStrEnum):
     PROCESSING_STATS = "processing_stats"
     PROCESS_RECORDS_REQUEST = "process_records_request"
     PROCESS_RECORDS_RESPONSE = "process_records_response"
+    PROCESS_RECORDS_RESULT = "process_records_result"
     PROFILE_ERROR = "profile_error"
     PROFILE_PROGRESS = "profile_progress"
     PROFILE_RESULTS = "profile_results"

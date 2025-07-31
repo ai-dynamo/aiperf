@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import MetricTimeType, MetricType
+from aiperf.common.enums import MetricTag, MetricTimeType, MetricType
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.types import MetricTagT
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 
@@ -10,11 +11,13 @@ class TTFTMetric(BaseMetric):
     Post-processor for calculating Time to First Token (TTFT) metrics from records.
     """
 
-    tag = "ttft"
+    tag = MetricTag.TTFT
     unit = MetricTimeType.NANOSECONDS
     larger_is_better = False
     header = "Time to First Token (TTFT)"
     type = MetricType.METRIC_OF_RECORDS
+    streaming_only = True
+    required_metrics = set()
 
     def __init__(self):
         self.metric: list[int] = []
@@ -22,7 +25,7 @@ class TTFTMetric(BaseMetric):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict["BaseMetric"] | None = None,
+        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
     ) -> None:
         """
         Adds a new record and calculates the Time To First Token (TTFT) metric.
@@ -47,15 +50,6 @@ class TTFTMetric(BaseMetric):
         Checks if the record is valid for TTFT calculation.
 
         Raises:
-            ValueError: If the record does not have at least one response.
+            ValueError: If record is None or record is not valid
         """
-        if not record or not record.request or not record.request.start_perf_ns:
-            raise ValueError("Record must have a valid request with a timestamp.")
-        if not record.responses or len(record.responses) < 1:
-            raise ValueError(
-                "Record must have at least one response to calculate TTFT."
-            )
-        if record.responses[0].perf_ns < record.start_perf_ns:
-            raise ValueError(
-                "Response timestamp must be greater than or equal to request timestamp."
-            )
+        self._require_valid_record(record)

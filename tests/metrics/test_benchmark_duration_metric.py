@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from aiperf.common.enums import MetricTag
 from aiperf.services.records_manager.metrics.types.benchmark_duration_metric import (
     BenchmarkDurationMetric,
 )
@@ -14,8 +15,8 @@ from aiperf.services.records_manager.metrics.types.min_request_metric import (
 
 def test_add_multiple_records(parsed_response_record_builder):
     metrics = {}
-    metrics[MinRequestMetric.tag] = MinRequestMetric()
-    metrics[MaxResponseMetric.tag] = MaxResponseMetric()
+    metrics[MetricTag.MIN_REQUEST] = MinRequestMetric()
+    metrics[MetricTag.MAX_RESPONSE] = MaxResponseMetric()
     records = (
         parsed_response_record_builder.with_request_start_time(10)
         .add_response(perf_ns=15)
@@ -27,12 +28,11 @@ def test_add_multiple_records(parsed_response_record_builder):
         .add_response(perf_ns=40)
         .build_all()
     )
-    # Creating metrics based on records
+
     for record in records:
         for metric in metrics.values():
             metric.update_value(record=record, metrics=None)
 
-    # Creating the metrics based on the metrics already calculated
     benchmark_duration_metric = BenchmarkDurationMetric()
     benchmark_duration_metric.update_value(record=None, metrics=metrics)
     assert benchmark_duration_metric.values() == 30.0  # 40 - 10

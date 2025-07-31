@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
-from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -10,15 +9,13 @@ from pydantic import (
 )
 
 from aiperf.common.enums import (
+    LifecycleState,
     MessageType,
     NotificationType,
-    ServiceState,
-    ServiceType,
 )
 from aiperf.common.messages.base_messages import Message
-from aiperf.common.models import (
-    ErrorDetails,
-)
+from aiperf.common.models.error_models import ErrorDetails
+from aiperf.common.types import MessageTypeT, ServiceTypeT
 
 
 class BaseServiceMessage(Message):
@@ -41,11 +38,11 @@ class BaseStatusMessage(BaseServiceMessage):
         default=time.time_ns(),
         description="Timestamp of the request",
     )
-    state: ServiceState = Field(
+    state: LifecycleState = Field(
         ...,
         description="Current state of the service",
     )
-    service_type: ServiceType = Field(
+    service_type: ServiceTypeT = Field(
         ...,
         description="Type of service",
     )
@@ -56,7 +53,7 @@ class StatusMessage(BaseStatusMessage):
     This message is sent by a service to the system controller to report its status.
     """
 
-    message_type: Literal[MessageType.STATUS] = MessageType.STATUS
+    message_type: MessageTypeT = MessageType.STATUS
 
 
 class RegistrationMessage(BaseStatusMessage):
@@ -64,9 +61,7 @@ class RegistrationMessage(BaseStatusMessage):
     This message is sent by a service to the system controller to register itself.
     """
 
-    message_type: Literal[MessageType.REGISTRATION] = MessageType.REGISTRATION
-
-    state: ServiceState = ServiceState.READY
+    message_type: MessageTypeT = MessageType.REGISTRATION
 
 
 class HeartbeatMessage(BaseStatusMessage):
@@ -75,13 +70,13 @@ class HeartbeatMessage(BaseStatusMessage):
     still running.
     """
 
-    message_type: Literal[MessageType.HEARTBEAT] = MessageType.HEARTBEAT
+    message_type: MessageTypeT = MessageType.HEARTBEAT
 
 
 class NotificationMessage(BaseServiceMessage):
     """Message containing a notification from a service. This is used to notify other services of events."""
 
-    message_type: Literal[MessageType.NOTIFICATION] = MessageType.NOTIFICATION
+    message_type: MessageTypeT = MessageType.NOTIFICATION
 
     notification_type: NotificationType = Field(
         ...,
@@ -97,6 +92,6 @@ class NotificationMessage(BaseServiceMessage):
 class BaseServiceErrorMessage(BaseServiceMessage):
     """Base message containing error data."""
 
-    message_type: Literal[MessageType.SERVICE_ERROR] = MessageType.SERVICE_ERROR
+    message_type: MessageTypeT = MessageType.SERVICE_ERROR
 
     error: ErrorDetails = Field(..., description="Error information")

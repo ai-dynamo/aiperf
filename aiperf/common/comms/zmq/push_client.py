@@ -5,12 +5,13 @@ import asyncio
 
 import zmq.asyncio
 
-from aiperf.common.comms.base import CommunicationClientFactory
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.enums import CommunicationClientType
+from aiperf.common.decorators import implements_protocol
+from aiperf.common.enums import CommClientType
 from aiperf.common.exceptions import CommunicationError
+from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.messages import Message
-from aiperf.common.mixins import AsyncTaskManagerMixin
+from aiperf.common.protocols import PushClientProtocol
 
 MAX_PUSH_RETRIES = 2
 """Maximum number of retries for pushing a message."""
@@ -19,8 +20,9 @@ RETRY_DELAY_INTERVAL_SEC = 0.1
 """The interval to wait before retrying to push a message."""
 
 
-@CommunicationClientFactory.register(CommunicationClientType.PUSH)
-class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
+@implements_protocol(PushClientProtocol)
+@CommunicationClientFactory.register(CommClientType.PUSH)
+class ZMQPushClient(BaseZMQClient):
     """
     ZMQ PUSH socket client for sending work to PULL sockets.
 
@@ -54,21 +56,20 @@ class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
 
     def __init__(
         self,
-        context: zmq.asyncio.Context,
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        **kwargs,
     ) -> None:
         """
         Initialize the ZMQ Push client class.
 
         Args:
-            context (zmq.asyncio.Context): The ZMQ context.
             address (str): The address to bind or connect to.
             bind (bool): Whether to bind or connect the socket.
             socket_ops (dict, optional): Additional socket options to set.
         """
-        super().__init__(context, zmq.SocketType.PUSH, address, bind, socket_ops)
+        super().__init__(zmq.SocketType.PUSH, address, bind, socket_ops, **kwargs)
 
     async def _push_message(
         self,
@@ -88,8 +89,10 @@ class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
             await self.socket.send_string(data_json)
             self.trace(lambda msg=data_json: f"Pushed json data: {msg}")
         except (asyncio.CancelledError, zmq.ContextTerminated):
+            self.debug("Push client cancelled or context terminated")
             return
         except zmq.Again as e:
+            self.debug("Push client timed out")
             if retry_count >= max_retries:
                 raise CommunicationError(
                     f"Failed to push data after {retry_count} retries: {e}",
@@ -107,6 +110,6 @@ class ZMQPushClient(BaseZMQClient, AsyncTaskManagerMixin):
         Args:
             message: Message to be sent must be a Message object
         """
-        await self._ensure_initialized()
+        await self._check_initialized()
 
         await self._push_message(message)

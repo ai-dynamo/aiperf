@@ -14,7 +14,7 @@ class EndpointType(CaseInsensitiveStrEnum):
 
     OPENAI_CHAT_COMPLETIONS = "chat"
     OPENAI_COMPLETIONS = "completions"
-    # OPENAI_EMBEDDINGS = "embeddings"
+    OPENAI_EMBEDDINGS = "embeddings"
     # OPENAI_MULTIMODAL = "multimodal"
     OPENAI_RESPONSES = "responses"
 
@@ -42,7 +42,7 @@ class EndpointType(CaseInsensitiveStrEnum):
             EndpointType.OPENAI_CHAT_COMPLETIONS: "/v1/chat/completions",
             # EndpointType.OPENAI_MULTIMODAL: "/v1/chat/completions",
             EndpointType.OPENAI_COMPLETIONS: "/v1/completions",
-            # EndpointType.OPENAI_EMBEDDINGS: "/v1/embeddings",
+            EndpointType.OPENAI_EMBEDDINGS: "/v1/embeddings",
             EndpointType.OPENAI_RESPONSES: "/v1/responses",
             # TODO: implement other endpoints
             # Other
@@ -64,6 +64,16 @@ class EndpointType(CaseInsensitiveStrEnum):
 
         return endpoint_path_map[self]
 
+    def metrics_title(self) -> str:
+        """Get the title string for the endpoint type."""
+        metrics_title_map = {
+            EndpointType.OPENAI_EMBEDDINGS: "Embeddings Metrics",
+            # EndpointType.RANKINGS: "Rankings Metrics",
+            # EndpointType.IMAGE_RETRIEVAL: "Image Retrieval Metrics",
+            # EndpointType.OPENAI_MULTIMODAL: "Multi-Modal Metrics",
+        }
+        return metrics_title_map.get(self, "LLM Metrics")
+
     def response_payload_type(self) -> "ResponsePayloadType":
         """Get the response payload type for the request payload type."""
         return ResponsePayloadType.from_endpoint_type(self)
@@ -79,7 +89,7 @@ class ResponsePayloadType(CaseInsensitiveStrEnum):
 
     OPENAI_CHAT_COMPLETIONS = "openai_chat_completions"
     OPENAI_COMPLETIONS = "openai_completions"
-    # OPENAI_EMBEDDINGS = "openai_embeddings"
+    OPENAI_EMBEDDINGS = "openai_embeddings"
     # OPENAI_MULTIMODAL = "openai_multimodal"
     OPENAI_RESPONSES = "openai_responses"
 
@@ -97,7 +107,7 @@ class ResponsePayloadType(CaseInsensitiveStrEnum):
             EndpointType.OPENAI_CHAT_COMPLETIONS: ResponsePayloadType.OPENAI_CHAT_COMPLETIONS,
             # EndpointType.OPENAI_MULTIMODAL: ResponsePayloadType.OPENAI_CHAT_COMPLETIONS,
             EndpointType.OPENAI_COMPLETIONS: ResponsePayloadType.OPENAI_COMPLETIONS,
-            # EndpointType.OPENAI_EMBEDDINGS: ResponsePayloadType.OPENAI_EMBEDDINGS,
+            EndpointType.OPENAI_EMBEDDINGS: ResponsePayloadType.OPENAI_EMBEDDINGS,
             EndpointType.OPENAI_RESPONSES: ResponsePayloadType.OPENAI_RESPONSES,
             # TODO: implement other endpoints
             # EndpointType.HUGGINGFACE_GENERATE: ResponsePayloadType.HUGGINGFACE_GENERATE,

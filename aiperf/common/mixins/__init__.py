@@ -13,37 +13,41 @@ from aiperf.common.mixins.aiperf_lifecycle_mixin import (
 )
 from aiperf.common.mixins.aiperf_logger_mixin import (
     AIPerfLoggerMixin,
-    AIPerfLoggerProtocol,
-)
-from aiperf.common.mixins.aiperf_profile_mixin import (
-    AIPerfProfileMixin,
-)
-from aiperf.common.mixins.aiperf_task_mixin import (
-    AIPerfTaskMixin,
-)
-from aiperf.common.mixins.async_task_manager_mixin import (
-    AsyncTaskManagerMixin,
-    AsyncTaskManagerProtocol,
 )
 from aiperf.common.mixins.base_mixin import (
     BaseMixin,
 )
+from aiperf.common.mixins.communication_mixin import (
+    CommunicationMixin,
+)
 from aiperf.common.mixins.hooks_mixin import (
     HooksMixin,
 )
+from aiperf.common.mixins.message_bus_mixin import (
+    MessageBusClientMixin,
+)
 from aiperf.common.mixins.process_health_mixin import (
     ProcessHealthMixin,
+)
+from aiperf.common.mixins.pull_client_mixin import (
+    PullClientMixin,
+)
+from aiperf.common.mixins.reply_client_mixin import (
+    ReplyClientMixin,
+)
+from aiperf.common.mixins.task_manager_mixin import (
+    TaskManagerMixin,
 )
 
 __all__ = [
     "AIPerfLifecycleMixin",
     "AIPerfLoggerMixin",
-    "AIPerfLoggerProtocol",
-    "AIPerfProfileMixin",
-    "AIPerfTaskMixin",
-    "AsyncTaskManagerMixin",
-    "AsyncTaskManagerProtocol",
     "BaseMixin",
+    "CommunicationMixin",
     "HooksMixin",
+    "MessageBusClientMixin",
     "ProcessHealthMixin",
+    "PullClientMixin",
+    "ReplyClientMixin",
+    "TaskManagerMixin",
 ]

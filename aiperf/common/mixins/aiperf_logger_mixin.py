@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import os
 from collections.abc import Callable
-from typing import Protocol, runtime_checkable
 
 from aiperf.common import aiperf_logger
 from aiperf.common.aiperf_logger import (
@@ -16,9 +15,12 @@ from aiperf.common.aiperf_logger import (
     _WARNING,
     AIPerfLogger,
 )
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.mixins.base_mixin import BaseMixin
+from aiperf.common.protocols import AIPerfLoggerProtocol
 
 
+@implements_protocol(AIPerfLoggerProtocol)
 class AIPerfLoggerMixin(BaseMixin):
     """Mixin to provide lazy evaluated logging for f-strings.
 
@@ -41,10 +43,18 @@ class AIPerfLoggerMixin(BaseMixin):
     """
 
     def __init__(self, logger_name: str | None = None, **kwargs) -> None:
-        super().__init__(**kwargs)
         self.logger = AIPerfLogger(logger_name or self.__class__.__name__)
         self._log = self.logger._log
         self.is_enabled_for = self.logger._logger.isEnabledFor
+        super().__init__(**kwargs)
+
+    @property
+    def is_debug_enabled(self) -> bool:
+        return self.is_enabled_for(_DEBUG)
+
+    @property
+    def is_trace_enabled(self) -> bool:
+        return self.is_enabled_for(_TRACE)
 
     def log(
         self, level: int, message: str | Callable[..., str], *args, **kwargs
@@ -104,23 +114,3 @@ class AIPerfLoggerMixin(BaseMixin):
 # NOTE: Using similar logic to logging._srcfile
 _srcfile = os.path.normcase(AIPerfLoggerMixin.info.__code__.co_filename)
 aiperf_logger._ignored_files.append(_srcfile)
-
-
-@runtime_checkable
-class AIPerfLoggerProtocol(Protocol):
-    """Protocol to provide lazy evaluated logging for f-strings."""
-
-    def __init__(self, logger_name: str | None = None, **kwargs) -> None: ...
-    def log(
-        self, level: int, message: str | Callable[..., str], *args, **kwargs
-    ) -> None: ...
-    def trace(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
-    def debug(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
-    def info(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
-    def notice(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
-    def warning(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
-    def success(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
-    def error(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
-    def exception(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
-    def critical(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
-    def is_enabled_for(self, level: int) -> bool: ...

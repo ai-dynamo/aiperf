@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import MetricTimeType, MetricType
+from aiperf.common.enums import MetricTag, MetricTimeType, MetricType
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.types import MetricTagT
 from aiperf.services.records_manager.metrics.base_metric import BaseMetric
 
 
@@ -10,11 +11,13 @@ class TTSTMetric(BaseMetric):
     Post-processor for calculating Time to Second Token (TTST) metrics from records.
     """
 
-    tag = "ttst"
+    tag = MetricTag.TTST
     unit = MetricTimeType.NANOSECONDS
     larger_is_better = False
     header = "Time to Second Token (TTST)"
     type = MetricType.METRIC_OF_RECORDS
+    streaming_only = True
+    required_metrics = set()
 
     def __init__(self):
         self.metric: list[int] = []
@@ -22,7 +25,7 @@ class TTSTMetric(BaseMetric):
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
-        metrics: dict["BaseMetric"] | None = None,
+        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
     ) -> None:
         """
         Adds a new record and calculates the Time To Second Token (TTST) metric.
@@ -49,9 +52,8 @@ class TTSTMetric(BaseMetric):
         Raises:
             ValueError: If the record does not have at least two responses.
         """
-        if not record or not record.start_perf_ns:
-            raise ValueError("Record must have a valid request with a timestamp.")
-        if not record.responses or len(record.responses) < 2:
+        self._require_valid_record(record)
+        if len(record.responses) < 2:
             raise ValueError(
                 "Record must have at least two responses to calculate TTST."
             )

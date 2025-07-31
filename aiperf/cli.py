@@ -11,13 +11,13 @@
 import sys
 from typing import Annotated
 
-import cyclopts
+from cyclopts import App, Parameter
 from pydantic import Field
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import CLIDefaults
 
-app = cyclopts.App(name="aiperf", help="NVIDIA AIPerf")
+app = App(name="aiperf", help="NVIDIA AIPerf")
 
 
 @app.command(name="profile")
@@ -58,7 +58,7 @@ def create_template(
         Field(
             description=f"Path to the template file. Defaults to {CLIDefaults.TEMPLATE_FILENAME}."
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--template-filename", "-t"),
         ),
     ] = CLIDefaults.TEMPLATE_FILENAME,

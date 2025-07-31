@@ -1,19 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Literal
-
-from pydantic import Field, SerializeAsAny
+from pydantic import Field
 
 from aiperf.common.enums import MessageType
+from aiperf.common.messages.base_messages import RequiresRequestNSMixin
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetailsCount, MetricResult, PhaseProcessingStats
+from aiperf.common.models import PhaseProcessingStats
+from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
+from aiperf.common.types import MessageTypeT
 
 
 class ProfileProgressMessage(BaseServiceMessage):
     """Message for profile progress. Sent by the timing manager to the system controller to report the progress of the profile run."""
 
-    message_type: Literal[MessageType.PROFILE_PROGRESS] = MessageType.PROFILE_PROGRESS
+    message_type: MessageTypeT = MessageType.PROFILE_PROGRESS
 
     profile_id: str | None = Field(
         default=None, description="The ID of the current profile"
@@ -41,7 +42,7 @@ class SweepProgressMessage(BaseServiceMessage):
 
     # TODO: add profile information
 
-    message_type: Literal[MessageType.SWEEP_PROGRESS] = MessageType.SWEEP_PROGRESS
+    message_type: MessageTypeT = MessageType.SWEEP_PROGRESS
 
     sweep_id: str = Field(..., description="The ID of the current sweep")
     sweep_start_ns: int = Field(
@@ -55,7 +56,7 @@ class SweepProgressMessage(BaseServiceMessage):
 class ProcessingStatsMessage(BaseServiceMessage):
     """Message for processing stats. Sent by the records manager to the system controller to report the stats of the profile run."""
 
-    message_type: Literal[MessageType.PROCESSING_STATS] = MessageType.PROCESSING_STATS
+    message_type: MessageTypeT = MessageType.PROCESSING_STATS
 
     error_count: int = Field(default=0, description="The number of errors encountered")
     completed: int = Field(
@@ -75,7 +76,7 @@ class RecordsProcessingStatsMessage(BaseServiceMessage):
     """Message for processing stats. Sent by the RecordsManager to report the stats of the profile run.
     This contains the stats for a single credit phase only."""
 
-    message_type: Literal[MessageType.PROCESSING_STATS] = MessageType.PROCESSING_STATS
+    message_type: MessageTypeT = MessageType.PROCESSING_STATS
 
     processing_stats: PhaseProcessingStats = Field(
         ..., description="The stats for the credit phase"
@@ -90,29 +91,25 @@ class RecordsProcessingStatsMessage(BaseServiceMessage):
 class ProfileResultsMessage(BaseServiceMessage):
     """Message for profile results."""
 
-    message_type: Literal[MessageType.PROFILE_RESULTS] = MessageType.PROFILE_RESULTS
+    message_type: MessageTypeT = MessageType.PROFILE_RESULTS
 
-    records: SerializeAsAny[list[MetricResult]] = Field(
-        ..., description="The records of the profile results"
+    profile_results: ProfileResults = Field(..., description="The profile results")
+
+
+class AllRecordsReceivedMessage(BaseServiceMessage, RequiresRequestNSMixin):
+    """This is sent by the RecordsManager to signal that all parsed records have been received, and the final processing stats are available."""
+
+    message_type: MessageTypeT = MessageType.ALL_RECORDS_RECEIVED
+    final_processing_stats: PhaseProcessingStats = Field(
+        ..., description="The final processing stats for the profile run"
     )
-    total: int = Field(
-        ...,
-        description="The total number of inference requests expected to be made (if known)",
-    )
-    completed: int = Field(
-        ..., description="The number of inference requests completed"
-    )
-    start_ns: int = Field(
-        ..., description="The start time of the profile run in nanoseconds"
-    )
-    end_ns: int = Field(
-        ..., description="The end time of the profile run in nanoseconds"
-    )
-    was_cancelled: bool = Field(
-        default=False,
-        description="Whether the profile run was cancelled early",
-    )
-    errors_by_type: list[ErrorDetailsCount] = Field(
-        default_factory=list,
-        description="A list of the unique error details and their counts",
+
+
+class ProcessRecordsResultMessage(BaseServiceMessage):
+    """Message for process records result."""
+
+    message_type: MessageTypeT = MessageType.PROCESS_RECORDS_RESULT
+
+    process_records_result: ProcessRecordsResult = Field(
+        ..., description="The process records result"
     )

@@ -3,7 +3,7 @@
 
 from typing import Annotated, Any
 
-import cyclopts
+from cyclopts import Parameter
 from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
@@ -17,6 +17,7 @@ from aiperf.common.config.config_validators import (
     parse_str_or_dict,
 )
 from aiperf.common.config.conversation_config import ConversationConfig
+from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.enums import CustomDatasetType
@@ -29,7 +30,7 @@ class InputConfig(BaseConfig):
     A configuration class for defining input related settings.
     """
 
-    _GROUP_NAME = "Input"
+    _CLI_GROUP = Groups.INPUT
 
     @model_validator(mode="after")
     def validate_fixed_schedule(self) -> Self:
@@ -47,11 +48,11 @@ class InputConfig(BaseConfig):
             description="Provide additional inputs to include with every request.\n"
             "Inputs should be in an 'input_name:value' format.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--extra-inputs",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
         BeforeValidator(parse_str_or_dict),
     ] = InputDefaults.EXTRA
@@ -65,11 +66,11 @@ class InputConfig(BaseConfig):
             "either milliseconds or a throughput value per second.\n"
             "For example: request_latency:300,output_token_throughput_per_user:600",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--goodput",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
         BeforeValidator(parse_goodput),
     ] = InputDefaults.GOODPUT
@@ -81,12 +82,12 @@ class InputConfig(BaseConfig):
             "Headers must be specified as 'Header:Value' pairs.",
         ),
         BeforeValidator(parse_str_or_dict),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--header",  # GenAI-Perf
                 "-H",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.HEADERS
 
@@ -98,11 +99,11 @@ class InputConfig(BaseConfig):
             "to support different types of user provided datasets.",
         ),
         BeforeValidator(parse_file),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--input-file",  # GenAI-Perf,
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.FILE
 
@@ -111,11 +112,11 @@ class InputConfig(BaseConfig):
         Field(
             description="Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file parameter, but can be set manually here."
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--fixed-schedule",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.FIXED_SCHEDULE
 
@@ -126,9 +127,9 @@ class InputConfig(BaseConfig):
             description="The type of custom dataset to use.\n"
             "This parameter is used in conjunction with the --file parameter.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--custom-dataset-type"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.CUSTOM_DATASET_TYPE
 
@@ -140,11 +141,11 @@ class InputConfig(BaseConfig):
             "Set to some value to make the synthetic data generation deterministic.\n"
             "It will use system default if not provided.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--random-seed",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.RANDOM_SEED
 

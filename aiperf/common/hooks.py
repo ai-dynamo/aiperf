@@ -1,231 +1,128 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-This module provides an extensive hook system for AIPerf. It is designed to be
-used as a mixin for classes that support hooks. It provides a simple interface
-for registering and running hooks.
+This module provides an extensive set of hook definitions for AIPerf. It is designed to be
+used in conjunction with the :class:`HooksMixin` for classes to provide support for hooks.
+It provides a simple interface for registering hooks.
 
-Classes should inherit from the :class:`HooksMixin`, and specify the supported
-hook types by decorating the class with the :func:`supports_hooks` decorator.
+Classes should inherit from the :class:`HooksMixin`, and specify the provided
+hook types by decorating the class with the :func:`provides_hooks` decorator.
 
 The hook functions are registered by decorating functions with the various hook
 decorators such as :func:`on_init`, :func:`on_start`, :func:`on_stop`, etc.
 
-The hooks are run by calling the :meth:`HooksMixin.run_hooks` or
-:meth:`HooksMixin.run_hooks_async` methods on the class.
-
 More than one hook can be registered for a given hook type, and classes that inherit from
 classes with existing hooks will inherit the hooks from the base classes as well.
+
+The hooks are run by calling the :meth:`HooksMixin.run_hooks` method or retrieved via the
+:meth:`HooksMixin.get_hooks` method on the class.
 """
 
 import asyncio
-import inspect
-import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
+from typing import Any, Generic
 
-from aiperf.common.enums import CaseInsensitiveStrEnum
-from aiperf.common.exceptions import (
-    AIPerfError,
-    AIPerfMultiError,
-    UnsupportedHookError,
+from pydantic import BaseModel, Field
+
+from aiperf.common.enums import (
+    CaseInsensitiveStrEnum,
+    LifecycleState,
 )
-
-################################################################################
-# Hook Types
-################################################################################
+from aiperf.common.types import (
+    CommandTypeT,
+    HookCallableParamsT,
+    HookParamsT,
+    HooksMixinT,
+    MessageTypeT,
+    SelfT,
+)
 
 
 class AIPerfHook(CaseInsensitiveStrEnum):
-    """Enum for the various AIPerf hooks.
+    BACKGROUND_TASK = "@background_task"
+    ON_COMMAND = "@on_command"
+    ON_INIT = "@on_init"
+    ON_MESSAGE = "@on_message"
+    ON_PULL_MESSAGE = "@on_pull_message"
+    ON_START = "@on_start"
+    ON_STATE_CHANGE = "@on_state_change"
+    ON_STOP = "@on_stop"
+    ON_REQUEST = "@on_request"
 
-    Note: If you add a new hook, you must also add it to the @supports_hooks
-    decorator of the class you wish to use the hook in.
+
+HookType = AIPerfHook | str
+"""Type alias for valid hook types. This is a union of the AIPerfHook enum and any user-defined custom strings."""
+
+
+class HookAttrs:
+    """Constant attribute names for hooks.
+
+    When you decorate a function with a hook decorator, the hook type and parameters are
+    set as attributes on the function or class.
     """
 
-    ON_INIT = "__aiperf_on_init__"
-    ON_RUN = "__aiperf_on_run__"
-    ON_CONFIGURE = "__aiperf_on_configure__"
-    ON_PROFILE_CONFIGURE = "__aiperf_on_profile_configure__"
-    ON_PROFILE_START = "__aiperf_on_profile_start__"
-    ON_PROFILE_STOP = "__aiperf_on_profile_stop__"
-    ON_START = "__aiperf_on_start__"
-    ON_STOP = "__aiperf_on_stop__"
-    ON_CLEANUP = "__aiperf_on_cleanup__"
-
-    ON_SET_STATE = "__aiperf_on_set_state__"
+    HOOK_TYPE = "__aiperf_hook_type__"
+    HOOK_PARAMS = "__aiperf_hook_params__"
+    PROVIDES_HOOKS = "__provides_hooks__"
 
 
-class AIPerfTaskHook(CaseInsensitiveStrEnum):
-    """Enum for the various AIPerf task hooks."""
-
-    AIPERF_TASK = "__aiperf_task__"
-    AIPERF_AUTO_TASK = "__aiperf_auto_task__"
-    AIPERF_AUTO_TASK_INTERVAL = "__aiperf_auto_task_interval__"
-
-
-HookType = AIPerfHook | AIPerfTaskHook | str
-"""Type alias for valid hook types. This is a union of the AIPerfHook enum, the AIPerfTaskHook enum, and any user-defined custom strings."""
-
-
-AIPERF_HOOK_TYPE = "__aiperf_hook_type__"
-"""Constant attribute name that marks a function's hook type."""
-
-
-################################################################################
-# Hook System
-################################################################################
-
-
-class HookSystem:
-    """
-    System for managing hooks.
-
-    This class is responsible for managing the hooks for a class. It will
-    store the hooks in a dictionary, and provide methods to register and run
-    the hooks.
+class Hook(BaseModel, Generic[HookParamsT]):
+    """A hook is a function that is decorated with a hook type and optional parameters.
+    The HookParamsT is the type of the parameters. You can either have a static value,
+    or a callable that returns the parameters.
     """
 
-    def __init__(self, supported_hooks: set[HookType]):
-        """
-        Initialize the hook system.
+    func: Callable
+    params: HookParamsT | Callable[[SelfT], HookParamsT] | None = None  # type: ignore
 
-        Args:
-            supported_hooks: The hook types that the class supports.
-        """
-        self.logger = logging.getLogger(__class__.__name__)
-        self.supported_hooks: set[HookType] = supported_hooks
-        self._hooks: dict[HookType, list[Callable]] = {}
+    @property
+    def hook_type(self) -> HookType:
+        return getattr(self.func, HookAttrs.HOOK_TYPE)
 
-    def register_hook(self, hook_type: HookType, func: Callable):
-        """Register a hook function for a given hook type.
+    @property
+    def func_name(self) -> str:
+        return self.func.__name__
 
-        Args:
-            hook_type: The hook type to register the function for.
-            func: The function to register.
-        """
-        if hook_type not in self.supported_hooks:
-            raise UnsupportedHookError(f"Hook {hook_type} is not supported by class.")
+    @property
+    def qualified_name(self) -> str:
+        return f"{self.func.__qualname__}"
 
-        self._hooks.setdefault(hook_type, []).append(func)
+    def resolve_params(self, self_obj: SelfT) -> HookParamsT | None:
+        """Resolve the parameters for the hook. If the parameters are a callable, it will be called
+        with the self_obj as the argument, otherwise the parameters are returned as is."""
+        if self.params is None:
+            return None
+        # With variable length parameters, you get a tuple with 1 item in it, so we need to check for that.
+        if (
+            isinstance(self.params, Iterable)
+            and len(self.params) == 1
+            and callable(self.params[0])
+        ):  # type: ignore
+            return self.params[0](self_obj)  # type: ignore
+        if callable(self.params):
+            return self.params(self_obj)
+        return self.params  # type: ignore
 
-    def get_hooks(self, hook_type: HookType) -> list[Callable]:
-        """Get all the registered hooks for the given hook type.
+    async def __call__(self, **kwargs) -> None:
+        if asyncio.iscoroutinefunction(self.func):
+            await self.func(**kwargs)
+        else:
+            await asyncio.to_thread(self.func, **kwargs)
 
-        Args:
-            hook_type: The hook type to get the hooks for.
-
-        Returns:
-            A list of the hooks for the given hook type.
-        """
-        return self._hooks.get(hook_type, [])
-
-    async def run_hooks(self, hook_type: HookType, *args, **kwargs):
-        """
-        Run all the hooks for a given hook type serially. This will wait for each
-        hook to complete before running the next one.
-
-        Args:
-            hook_type: The hook type to run.
-            *args: The arguments to pass to the hooks.
-            **kwargs: The keyword arguments to pass to the hooks.
-        """
-        if hook_type not in self.supported_hooks:
-            raise UnsupportedHookError(f"Hook {hook_type} is not supported by class.")
-
-        exceptions: list[Exception] = []
-        for func in self.get_hooks(hook_type):
-            try:
-                if inspect.iscoroutinefunction(func):
-                    await func(*args, **kwargs)
-                else:
-                    await asyncio.to_thread(func, *args, **kwargs)
-            except Exception as e:
-                self.logger.exception("Error running hook %s: %s", func.__qualname__, e)
-                exceptions.append(
-                    AIPerfError(
-                        f"Error running hook {func.__qualname__}: {e.__class__.__name__} {e}"
-                    )
-                )
-
-        if exceptions:
-            raise AIPerfMultiError("Errors running hooks", exceptions)
-
-    async def run_hooks_async(self, hook_type: HookType, *args, **kwargs):
-        """
-        Run all the hooks for a given hook type concurrently. This will run all
-        the hooks at the same time and return when all the hooks have completed.
-
-        Args:
-            hook_type: The hook type to run.
-            *args: The arguments to pass to the hooks.
-            **kwargs: The keyword arguments to pass to the hooks.
-        """
-        if hook_type not in self.supported_hooks:
-            raise UnsupportedHookError(f"Hook {hook_type} is not supported by class.")
-
-        coroutines: list[Awaitable] = []
-        for func in self.get_hooks(hook_type):
-            if inspect.iscoroutinefunction(func):
-                coroutines.append(func(*args, **kwargs))
-            else:
-                coroutines.append(asyncio.to_thread(func, *args, **kwargs))
-
-        if coroutines:
-            results = await asyncio.gather(*coroutines, return_exceptions=True)
-
-            exceptions = [result for result in results if isinstance(result, Exception)]
-            if exceptions:
-                raise AIPerfMultiError("Errors running hooks", exceptions)
+    def __str__(self) -> str:
+        return f"{self.hook_type} 🡒 {self.qualified_name}"
 
 
-################################################################################
-# Hook Decorators
-################################################################################
+class BackgroundTaskParams(BaseModel):
+    interval: float | Callable[[Any], float] | None = Field(default=None)
+    immediate: bool = Field(default=False)
+    stop_on_error: bool = Field(default=False)
 
 
-def supports_hooks(
-    *supported_hook_types: HookType,
-) -> Callable[[type], type]:
-    """Decorator to indicate that a class supports hooks and sets the
-    supported hook types.
-
-    Args:
-        supported_hook_types: The hook types that the class supports.
-
-    Returns:
-        The decorated class
-    """
-
-    def decorator(cls: type) -> type:
-        # TODO: We can consider creating a HooksMixinProtocol, but it would still
-        #       need to exist somewhere both hooks.py and mixins module can access.
-        # Import this here to prevent circular imports. Also make sure you use
-        # fully qualified import name to avoid partial loaded module errors.
-        from aiperf.common.mixins.hooks_mixin import HooksMixin
-
-        # Ensure the class inherits from HooksMixin
-        if not issubclass(cls, HooksMixin):
-            raise TypeError(f"Class {cls.__name__} does not inherit from HooksMixin.")
-
-        # Inherit any hooks defined by base classes in the MRO (Method Resolution Order).
-        base_hooks = [
-            base.supported_hooks
-            for base in cls.__mro__[1:]  # Skip this class itself (cls)
-            if issubclass(
-                base, HooksMixin
-            )  # Only include classes that inherit from HooksMixin
-        ]
-
-        # Set the supported hooks to be the union of the existing base hooks and the new supported hook types.
-        cls.supported_hooks = set.union(*base_hooks, set(supported_hook_types))
-        return cls
-
-    return decorator
-
-
-def hook_decorator(hook_type: HookType, func: Callable) -> Callable:
+def _hook_decorator(hook_type: HookType, func: Callable) -> Callable:
     """Generic decorator to specify that the function should be called during
-    a specific hook.
+    a specific hook. See :func:`aiperf.common.hooks._hook_decorator_with_params` for a decorator that
+    can also set parameters on the function.
 
     Args:
         hook_type: The hook type to decorate the function with.
@@ -233,98 +130,273 @@ def hook_decorator(hook_type: HookType, func: Callable) -> Callable:
     Returns:
         The decorated function.
     """
-    setattr(func, AIPERF_HOOK_TYPE, hook_type)
+    setattr(func, HookAttrs.HOOK_TYPE, hook_type)
     return func
 
 
-################################################################################
-# Syntactic sugar for the hook decorators.
-################################################################################
-
-
-def on_init(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during initialization.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_INIT, func)
-
-
-def on_start(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during start.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_START, func)
-
-
-def on_stop(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during stop.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_STOP, func)
-
-
-def on_configure(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during the service configuration.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_CONFIGURE, func)
-
-
-def on_cleanup(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during cleanup.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_CLEANUP, func)
-
-
-def on_run(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during run.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_RUN, func)
-
-
-def on_set_state(
-    func: Callable,
-) -> Callable:
-    """Decorator to specify that the function should be called when the service state is set.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_SET_STATE, func)
-
-
-def on_profile_configure(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during the service profile configuration.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_PROFILE_CONFIGURE, func)
-
-
-def on_profile_start(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during the service profile start.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_PROFILE_START, func)
-
-
-def on_profile_stop(func: Callable) -> Callable:
-    """Decorator to specify that the function should be called during the service profile stop.
-    See :func:`aiperf.common.hooks.hook_decorator`."""
-    return hook_decorator(AIPerfHook.ON_PROFILE_STOP, func)
-
-
-def aiperf_task(
-    func: Callable,
-) -> Callable:
-    """Decorator to indicate that the function is a task function. It will be started
-    and stopped automatically by the base class lifecycle.
-    See :func:`aiperf.common.hooks.hook_decorator`.
-    """
-    return hook_decorator(AIPerfTaskHook.AIPERF_TASK, func)
-
-
-def aiperf_auto_task(interval: float) -> Callable[[Callable], Callable]:
-    """Decorator to indicate that the function is a task function. It will be started
-    and stopped automatically by the base class lifecycle.
-    See :func:`aiperf.common.hooks.hook_decorator`.
+def _hook_decorator_with_params(
+    hook_type: HookType, params: HookCallableParamsT
+) -> Callable[[Callable], Callable]:
+    """Generic decorator to specify that the function should be called during
+    a specific hook, and with the provided parameters. The parameters are set on
+    the function as an attribute, that can later be retrieved via the :meth:`HooksMixin.get_hooks` method.
 
     Args:
-        interval: The interval in seconds to sleep between runs.
+        hook_type: The hook type to decorate the function with.
+        params: The parameters to set on the function. Can be any data type, or a callable that returns
+            the parameters (for dynamic parameters).
     """
 
     def decorator(func: Callable) -> Callable:
-        setattr(func, AIPerfTaskHook.AIPERF_AUTO_TASK_INTERVAL, interval)
-        return hook_decorator(AIPerfTaskHook.AIPERF_AUTO_TASK, func)
+        setattr(func, HookAttrs.HOOK_TYPE, hook_type)
+        setattr(func, HookAttrs.HOOK_PARAMS, params)
+        return func
 
     return decorator
+
+
+def background_task(
+    interval: float | Callable[[SelfT], float] | None = None,
+    immediate: bool = True,
+    stop_on_error: bool = False,
+) -> Callable:
+    """
+    Decorator to mark a method as a background task with automatic management.
+
+    Tasks are automatically started when the service starts and stopped when the service stops.
+    The decorated method will be run periodically in the background when the service is running.
+
+    Args:
+        interval: Time between task executions in seconds. If None, the task will run once.
+            Can be a callable that returns the interval, and will be called with 'self' as the argument.
+        immediate: If True, run the task immediately on start, otherwise wait for the interval first.
+        stop_on_error: If True, stop the task on any exception, otherwise log and continue.
+
+    Example:
+    ```python
+    class MyPlugin(AIPerfLifecycleMixin):
+        @background_task(interval=1.0)
+        def _background_task(self) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._background_task.__aiperf_hook_type__ = AIPerfHook.BACKGROUND_TASK
+    MyPlugin._background_task.__aiperf_hook_params__ = BackgroundTaskParams(
+        interval=1.0, immediate=True, stop_on_error=False
+    )
+    ```
+    """
+    return _hook_decorator_with_params(
+        AIPerfHook.BACKGROUND_TASK,
+        BackgroundTaskParams(
+            interval=interval, immediate=immediate, stop_on_error=stop_on_error
+        ),
+    )
+
+
+def provides_hooks(
+    *hook_types: HookType,
+) -> Callable[[type[HooksMixinT]], type[HooksMixinT]]:
+    """Decorator to specify that the class provides a hook of the given type to all of its subclasses.
+
+    Example:
+    ```python
+    @provides_hooks(AIPerfHook.ON_MESSAGE)
+    class MessageBusClientMixin(CommunicationMixin):
+        pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MessageBusClientMixin.__provides_hooks__ = {AIPerfHook.ON_MESSAGE}
+    ```
+    """
+
+    def decorator(cls: type[HooksMixinT]) -> type[HooksMixinT]:
+        setattr(cls, HookAttrs.PROVIDES_HOOKS, set(hook_types))
+        return cls
+
+    return decorator
+
+
+def on_init(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called during initialization.
+    See :func:`aiperf.common.hooks._hook_decorator`.
+
+    Example:
+    ```python
+    class MyPlugin(AIPerfLifecycleMixin):
+        @on_init
+        def _init_plugin(self) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._init_plugin.__aiperf_hook_type__ = AIPerfHook.ON_INIT
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_INIT, func)
+
+
+def on_start(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called during start.
+    See :func:`aiperf.common.hooks._hook_decorator`.
+
+    Example:
+    ```python
+    class MyPlugin(AIPerfLifecycleMixin):
+        @on_start
+        def _start_plugin(self) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._start_plugin.__aiperf_hook_type__ = AIPerfHook.ON_START
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_START, func)
+
+
+def on_stop(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called during stop.
+    See :func:`aiperf.common.hooks._hook_decorator`.
+
+    Example:
+    ```python
+    class MyPlugin(AIPerfLifecycleMixin):
+        @on_stop
+        def _stop_plugin(self) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._stop_plugin.__aiperf_hook_type__ = AIPerfHook.ON_STOP
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_STOP, func)
+
+
+def on_state_change(
+    func: Callable[["HooksMixinT", LifecycleState, LifecycleState], Awaitable],
+) -> Callable[["HooksMixinT", LifecycleState, LifecycleState], Awaitable]:
+    """Decorator to specify that the function is a hook that should be called during the service state change.
+    See :func:`aiperf.common.hooks._hook_decorator`.
+
+    Example:
+    ```python
+    class MyPlugin(AIPerfLifecycleMixin):
+        @on_state_change
+        def _on_state_change(self, old_state: LifecycleState, new_state: LifecycleState) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._on_state_change.__aiperf_hook_type__ = AIPerfHook.ON_STATE_CHANGE
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_STATE_CHANGE, func)
+
+
+def on_message(
+    *message_types: MessageTypeT | Callable[[SelfT], Iterable[MessageTypeT]],
+) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when messages of the
+    given type(s) are received from the message bus.
+    See :func:`aiperf.common.hooks._hook_decorator_with_params`.
+
+    Example:
+    ```python
+    class MyService(MessageBusClientMixin):
+        @on_message(MessageType.STATUS)
+        def _on_status_message(self, message: StatusMessage) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyService._on_status_message.__aiperf_hook_type__ = AIPerfHook.ON_MESSAGE
+    MyService._on_status_message.__aiperf_hook_params__ = (MessageType.STATUS,)
+    ```
+    """
+    return _hook_decorator_with_params(AIPerfHook.ON_MESSAGE, message_types)
+
+
+def on_pull_message(
+    *message_types: MessageTypeT | Callable[[SelfT], Iterable[MessageTypeT]],
+) -> Callable:
+    """Decorator to specify that the function is a hook that should be called a pull client
+    receives a message of the given type(s).
+    See :func:`aiperf.common.hooks._hook_decorator_for_message_types`.
+
+    Example:
+    ```python
+    class MyService(PullClientMixin, BaseComponentService):
+        @on_pull_message(MessageType.CREDIT_DROP)
+        def _on_credit_drop_pull(self, message: CreditDropMessage) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyService._on_pull_message.__aiperf_hook_type__ = AIPerfHook.ON_PULL_MESSAGE
+    MyService._on_pull_message.__aiperf_hook_params__ = (MessageType.CREDIT_DROP,)
+    """
+    return _hook_decorator_with_params(AIPerfHook.ON_PULL_MESSAGE, message_types)
+
+
+def on_request(
+    *message_types: MessageTypeT | Callable[[SelfT], Iterable[MessageTypeT]],
+) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when requests of the
+    given type(s) are received from a ReplyClient.
+    See :func:`aiperf.common.hooks._hook_decorator_for_message_types`.
+
+    Example:
+    ```python
+    class MyService(RequestClientMixin, BaseComponentService):
+        @on_request(MessageType.CONVERSATION_REQUEST)
+        async def _handle_conversation_request(
+            self, message: ConversationRequestMessage
+        ) -> ConversationResponseMessage:
+            return ConversationResponseMessage(
+                ...
+            )
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyService._handle_conversation_request.__aiperf_hook_type__ = AIPerfHook.ON_REQUEST
+    MyService._handle_conversation_request.__aiperf_hook_params__ = (MessageType.CONVERSATION_REQUEST,)
+    ```
+    """
+    return _hook_decorator_with_params(AIPerfHook.ON_REQUEST, message_types)
+
+
+def on_command(
+    *command_types: CommandTypeT | Callable[[SelfT], Iterable[CommandTypeT]],
+) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when a CommandMessage with the given
+    command type(s) is received from the message bus.
+    See :func:`aiperf.common.hooks._hook_decorator_for_message_types`.
+
+    Example:
+    ```python
+    class MyService(BaseComponentService):
+        @on_command(CommandType.PROFILE_START)
+        def _on_profile_start(self, message: ProfileStartCommand) -> CommandResponse:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyService._on_profile_start.__aiperf_hook_type__ = AIPerfHook.ON_COMMAND
+    MyService._on_profile_start.__aiperf_hook_params__ = (CommandType.PROFILE_START,)
+    ```
+    """
+    return _hook_decorator_with_params(AIPerfHook.ON_COMMAND, command_types)

@@ -3,12 +3,13 @@
 
 from typing import Annotated
 
-import cyclopts
+from cyclopts import Parameter
 from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import EndPointDefaults
 from aiperf.common.config.config_validators import parse_str_or_list
+from aiperf.common.config.groups import Groups
 from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 
 
@@ -17,7 +18,7 @@ class EndPointConfig(BaseConfig):
     A configuration class for defining endpoint related settings.
     """
 
-    _GROUP_NAME = "Endpoint"
+    _CLI_GROUP = Groups.ENDPOINT
 
     model_selection_strategy: Annotated[
         ModelSelectionStrategy,
@@ -26,11 +27,11 @@ class EndPointConfig(BaseConfig):
             "round_robin: nth prompt in the list gets assigned to n-mod len(models).\n"
             "random: assignment is uniformly random",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--model-selection-strategy",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = EndPointDefaults.MODEL_SELECTION_STRATEGY
 
@@ -39,12 +40,12 @@ class EndPointConfig(BaseConfig):
         Field(
             description="Set a custom endpoint that differs from the OpenAI defaults.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--custom-endpoint",
                 "--endpoint",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = EndPointDefaults.CUSTOM_ENDPOINT
 
@@ -53,11 +54,11 @@ class EndPointConfig(BaseConfig):
         Field(
             description="The type to send requests to on the server.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--endpoint-type",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = EndPointDefaults.TYPE
 
@@ -66,11 +67,11 @@ class EndPointConfig(BaseConfig):
         Field(
             description="An option to enable the use of the streaming API.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--streaming",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = EndPointDefaults.STREAMING
 
@@ -81,12 +82,13 @@ class EndPointConfig(BaseConfig):
             "These are used for Telemetry metric reporting with Triton.",
         ),
         BeforeValidator(parse_str_or_list),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--server-metrics-urls",  # GenAI-Perf
                 "--server-metrics-url",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            parse=False,  # TODO: Not yet supported
+            group=_CLI_GROUP,
         ),
     ] = EndPointDefaults.SERVER_METRICS_URLS
 
@@ -95,12 +97,12 @@ class EndPointConfig(BaseConfig):
         Field(
             description="URL of the endpoint to target for benchmarking.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--url",  # GenAI-Perf
                 "-u",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = EndPointDefaults.URL
 
@@ -112,11 +114,12 @@ class EndPointConfig(BaseConfig):
             "The option is only supported by dynamic gRPC service kind and is\n"
             "required to identify the RPC to use when sending requests to the server.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=(
                 "--grpc-method",  # GenAI-Perf
             ),
-            group=_GROUP_NAME,
+            parse=False,  # TODO: Not yet supported
+            group=_CLI_GROUP,
         ),
     ] = EndPointDefaults.GRPC_METHOD
 
@@ -126,9 +129,9 @@ class EndPointConfig(BaseConfig):
         Field(
             description="The timeout in floating points seconds for each request to the endpoint.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--request-timeout-seconds"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = EndPointDefaults.TIMEOUT
 
@@ -136,11 +139,11 @@ class EndPointConfig(BaseConfig):
     api_key: Annotated[
         str | None,
         Field(
-            description="The API key to use for the endpoint. If provided, it will be sent with every request as"
-            "as a header: `Authorization: Bearer <api_key>`.",
+            description="The API key to use for the endpoint. If provided, it will be sent with every request as "
+            "a header: `Authorization: Bearer <api_key>`.",
         ),
-        cyclopts.Parameter(
+        Parameter(
             name=("--api-key"),
-            group=_GROUP_NAME,
+            group=_CLI_GROUP,
         ),
     ] = EndPointDefaults.API_KEY

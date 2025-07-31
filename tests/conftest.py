@@ -9,7 +9,7 @@ and made available to test functions in the same directory and subdirectories.
 
 import asyncio
 import logging
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,20 +19,21 @@ from aiperf.common.config import UserConfig
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import ServiceRunType
 from aiperf.common.enums.communication_enums import CommunicationBackend
+from aiperf.common.messages import Message
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.common.types import MessageTypeT
 from tests.comms.mock_zmq import (
     mock_zmq_communication as mock_zmq_communication,  # import fixture globally
 )
-from tests.utils.time_traveler import (
-    time_traveler as time_traveler,  # import fixture globally
-)
-
-logging.basicConfig(level=_TRACE)
-
 
 real_sleep = (
     asyncio.sleep
 )  # save the real sleep so we can use it in the no_sleep fixture
+from tests.utils.time_traveler import (  # noqa: E402
+    time_traveler as time_traveler,  # import fixture globally
+)
+
+logging.basicConfig(level=_TRACE)
 
 
 def pytest_addoption(parser):
@@ -190,3 +191,43 @@ def service_config() -> ServiceConfig:
         service_run_type=ServiceRunType.MULTIPROCESSING,
         comm_backend=CommunicationBackend.ZMQ_IPC,
     )
+
+
+class MockPubClient:
+    """Mock pub client."""
+
+    def __init__(self):
+        self.publish_calls = []
+
+    async def publish(self, message: Message) -> None:
+        self.publish_calls.append(message)
+
+
+@pytest.fixture
+def mock_pub_client() -> MockPubClient:
+    """Create a mock pub client."""
+    return MockPubClient()
+
+
+class MockSubClient:
+    """Mock sub client."""
+
+    def __init__(self):
+        self.subscribe_calls = []
+        self.subscribe_all_calls = []
+
+    async def subscribe(
+        self, message_type: MessageTypeT, callback: Callable[[Message], None]
+    ) -> None:
+        self.subscribe_calls.append((message_type, callback))
+
+    async def subscribe_all(
+        self, message_callback_map: dict[MessageTypeT, Callable[[Message], None]]
+    ) -> None:
+        self.subscribe_all_calls.append(message_callback_map)
+
+
+@pytest.fixture
+def mock_sub_client() -> MockSubClient:
+    """Create a mock sub client."""
+    return MockSubClient()
