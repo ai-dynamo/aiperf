@@ -15,7 +15,6 @@ class EndpointType(CaseInsensitiveStrEnum):
     OPENAI_CHAT_COMPLETIONS = "chat"
     OPENAI_COMPLETIONS = "completions"
     OPENAI_EMBEDDINGS = "embeddings"
-    # OPENAI_MULTIMODAL = "multimodal"
     OPENAI_RESPONSES = "responses"
 
     # TODO: implement other endpoints
@@ -40,7 +39,6 @@ class EndpointType(CaseInsensitiveStrEnum):
         endpoint_path_map = {
             # OpenAI endpoints
             EndpointType.OPENAI_CHAT_COMPLETIONS: "/v1/chat/completions",
-            # EndpointType.OPENAI_MULTIMODAL: "/v1/chat/completions",
             EndpointType.OPENAI_COMPLETIONS: "/v1/completions",
             EndpointType.OPENAI_EMBEDDINGS: "/v1/embeddings",
             EndpointType.OPENAI_RESPONSES: "/v1/responses",
@@ -70,7 +68,6 @@ class EndpointType(CaseInsensitiveStrEnum):
             EndpointType.OPENAI_EMBEDDINGS: "Embeddings Metrics",
             # EndpointType.RANKINGS: "Rankings Metrics",
             # EndpointType.IMAGE_RETRIEVAL: "Image Retrieval Metrics",
-            # EndpointType.OPENAI_MULTIMODAL: "Multi-Modal Metrics",
         }
         return metrics_title_map.get(self, "LLM Metrics")
 
@@ -90,7 +87,6 @@ class ResponsePayloadType(CaseInsensitiveStrEnum):
     OPENAI_CHAT_COMPLETIONS = "openai_chat_completions"
     OPENAI_COMPLETIONS = "openai_completions"
     OPENAI_EMBEDDINGS = "openai_embeddings"
-    # OPENAI_MULTIMODAL = "openai_multimodal"
     OPENAI_RESPONSES = "openai_responses"
 
     # TODO: implement other endpoints
@@ -105,7 +101,6 @@ class ResponsePayloadType(CaseInsensitiveStrEnum):
         """Get the response payload type for the endpoint type."""
         endpoint_to_payload_map = {
             EndpointType.OPENAI_CHAT_COMPLETIONS: ResponsePayloadType.OPENAI_CHAT_COMPLETIONS,
-            # EndpointType.OPENAI_MULTIMODAL: ResponsePayloadType.OPENAI_CHAT_COMPLETIONS,
             EndpointType.OPENAI_COMPLETIONS: ResponsePayloadType.OPENAI_COMPLETIONS,
             EndpointType.OPENAI_EMBEDDINGS: ResponsePayloadType.OPENAI_EMBEDDINGS,
             EndpointType.OPENAI_RESPONSES: ResponsePayloadType.OPENAI_RESPONSES,
