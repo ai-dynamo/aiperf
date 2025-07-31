@@ -3,13 +3,10 @@
 
 from typing import Annotated
 
-from cyclopts import Parameter
-from pydantic import BeforeValidator, Field
+from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
-from aiperf.common.config.config_validators import parse_str_or_list
-from aiperf.common.config.endpoint_config import EndPointConfig
-from aiperf.common.config.groups import Groups
+from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.measurement_config import MeasurementConfig
@@ -22,29 +19,12 @@ class UserConfig(BaseConfig):
     A configuration class for defining top-level user settings.
     """
 
-    model_names: Annotated[
-        list[str],
-        Field(
-            ...,
-            description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
-        ),
-        BeforeValidator(parse_str_or_list),
-        Parameter(
-            name=(
-                "--model-names",
-                "--model",  # GenAI-Perf
-                "-m",  # GenAI-Perf
-            ),
-            group=Groups.ENDPOINT,
-        ),
-    ]
-
     endpoint: Annotated[
-        EndPointConfig,
+        EndpointConfig,
         Field(
             description="Endpoint configuration",
         ),
-    ] = EndPointConfig()
+    ]
 
     input: Annotated[
         InputConfig,

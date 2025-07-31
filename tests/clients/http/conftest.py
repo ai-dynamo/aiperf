@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import aiohttp
 import pytest
 
-from aiperf.common.config import UserConfig
-from aiperf.common.config.user_config import EndPointConfig
+from aiperf.common.config.endpoint_config import EndpointConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import (
     RequestRecord,
@@ -108,11 +108,11 @@ def create_sse_chunk_list(messages: list[str]) -> list[tuple[bytes, bytes]]:
 def user_config() -> UserConfig:
     """Fixture providing a sample UserConfig."""
     return UserConfig(
-        model_names=["gpt-4"],
-        endpoint=EndPointConfig(
+        endpoint=EndpointConfig(
             type=EndpointType.OPENAI_CHAT_COMPLETIONS,
             url="http://localhost:8080",
-            timeout=30,
+            timeout_seconds=600,
+            model_names=["gpt-4"],
             api_key="test-api-key",
         ),
     )

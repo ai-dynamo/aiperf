@@ -48,18 +48,16 @@ if TYPE_CHECKING:
         DataExporterProtocol,
         InferenceClientProtocol,
         PostProcessorProtocol,
-        # noqa: F401
+        RequestConverterProtocol,  # noqa: F401
         ResponseExtractorProtocol,
         ServiceManagerProtocol,
-        # noqa: F401
+        ServiceProtocol,  # noqa: F401
         StreamingPostProcessorProtocol,
     )
-    from aiperf.data_exporter.exporter_config import ExporterConfig
+    from aiperf.dataset import CustomDatasetLoaderProtocol
+    from aiperf.dataset.composer.base import BaseDatasetComposer
+    from aiperf.exporters.exporter_config import ExporterConfig
     from aiperf.inference.model_endpoint_info import ModelEndpointInfo
-    from aiperf.services.dataset.composer.base import BaseDatasetComposer
-    from aiperf.services.dataset.loader.protocol import (
-        CustomDatasetLoaderProtocol,
-    )
 
 
 class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):

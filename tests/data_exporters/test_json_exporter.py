@@ -7,10 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.user_config import UserConfig
+from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
-from aiperf.data_exporter.exporter_config import ExporterConfig
-from aiperf.data_exporter.json_exporter import JsonExporter
+from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.exporters.json_exporter import JsonExporter
 
 
 class TestJsonExporter:
@@ -39,7 +41,13 @@ class TestJsonExporter:
 
     @pytest.fixture
     def mock_user_config(self):
-        return UserConfig(model_names=["test-model"])
+        return UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+                custom_endpoint="custom_endpoint",
+            )
+        )
 
     @pytest.fixture
     def mock_results(self, sample_records):
