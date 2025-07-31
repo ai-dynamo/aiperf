@@ -24,9 +24,24 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
         """Format payload for a chat completion request."""
 
         message = self._create_message(turn)
+        # Hotfix for Dynamo API which does not yet support a list of messages
+        if (
+            len(message["content"]) == 1
+            and "text" in message["content"][0]
+            and len(turn.texts) == 1
+        ):
+            messages = [
+                {
+                    "role": message["role"],
+                    "name": turn.texts[0].name,
+                    "content": message["content"][0].get("text"),
+                }
+            ]
+        else:
+            messages = [message]
 
         payload = {
-            "messages": [message],
+            "messages": messages,
             "model": turn.model or model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }
