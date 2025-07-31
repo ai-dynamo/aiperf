@@ -45,6 +45,9 @@ from aiperf.common.enums.logging_enums import (
 from aiperf.common.enums.measurement_enums import (
     MeasurementMode,
 )
+from aiperf.common.enums.media_enums import (
+    MediaType,
+)
 from aiperf.common.enums.message_enums import (
     MessageType,
     NotificationType,
@@ -100,6 +103,7 @@ __all__ = [
     "ImageFormat",
     "LifecycleState",
     "MeasurementMode",
+    "MediaType",
     "MessageType",
     "MetricTag",
     "MetricTimeType",

@@ -4,7 +4,7 @@
 import uuid
 from collections import defaultdict
 
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, MediaType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.models import Conversation, Turn
 from aiperf.services.dataset.loader.mixins import MediaConversionMixin
@@ -104,12 +104,12 @@ class SingleTurnDatasetLoader(MediaConversionMixin):
         for session_id, single_turns in data.items():
             conversation = Conversation(session_id=session_id)
             for single_turn in single_turns:
-                texts, images, audios = self.convert_all_media_data(single_turn)
+                media = self.convert_to_media_objects(single_turn)
                 conversation.turns.append(
                     Turn(
-                        texts=texts,
-                        images=images,
-                        audios=audios,
+                        texts=media[MediaType.TEXT],
+                        images=media[MediaType.IMAGE],
+                        audios=media[MediaType.AUDIO],
                         timestamp=single_turn.timestamp,
                         delay=single_turn.delay,
                         role=single_turn.role,

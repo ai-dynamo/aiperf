@@ -1,36 +1,42 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import ClassVar
+
 from pydantic import Field
 
+from aiperf.common.enums import MediaType
 from aiperf.common.models.base_models import AIPerfBaseModel, exclude_if_none
+from aiperf.common.types import MediaTypeT
 
 
-class Text(AIPerfBaseModel):
-    name: str | None = Field(default=None, description="Name of the text field.")
+class Media(AIPerfBaseModel):
+    """Base class for all media fields. Contains name and contents of the media data."""
 
-    contents: list[str] = Field(
-        default=[],
-        description="List of text contents. Supports batched text payload in a single turn.",
-    )
-
-
-class Image(AIPerfBaseModel):
-    name: str | None = Field(default=None, description="Name of the image field.")
+    name: str | None = Field(default=None, description="Name of the media field.")
 
     contents: list[str] = Field(
         default=[],
-        description="List of image contents. Supports batched image payload in a single turn.",
+        description="List of media contents. Supports batched media payload in a single turn.",
     )
 
 
-class Audio(AIPerfBaseModel):
-    name: str | None = Field(default=None, description="Name of the audio field.")
+class Text(Media):
+    """Media that contains text/prompt data."""
 
-    contents: list[str] = Field(
-        default=[],
-        description="List of audio contents. Supports batched audio payload in a single turn.",
-    )
+    media_type: ClassVar[MediaTypeT] = MediaType.TEXT
+
+
+class Image(Media):
+    """Media that contains image data."""
+
+    media_type: ClassVar[MediaTypeT] = MediaType.IMAGE
+
+
+class Audio(Media):
+    """Media that contains audio data."""
+
+    media_type: ClassVar[MediaTypeT] = MediaType.AUDIO
 
 
 @exclude_if_none("role")

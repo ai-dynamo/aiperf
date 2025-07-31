@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union
 
 from aiperf.common.enums import (
     CommandType,
+    MediaType,
     MessageType,
     MetricTag,
     ServiceType,
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
     from aiperf.common.mixins.hooks_mixin import HooksMixin
     from aiperf.common.models.base_models import AIPerfBaseModel
+    from aiperf.common.models.dataset_models import Media
     from aiperf.common.protocols import ServiceProtocol
 
 
@@ -47,6 +49,8 @@ HookParamsT = TypeVar("HookParamsT", bound=Any)
 HookCallableParamsT = HookParamsT | Callable[["SelfT"], HookParamsT]
 InputT = TypeVar("InputT", bound=Any)
 LifecycleMixinT = TypeVar("LifecycleMixinT", bound="AIPerfLifecycleMixin")
+MediaT = TypeVar("MediaT", bound="Media")
+MediaTypeT = MediaType | str
 MessageT = TypeVar("MessageT", bound="Message")
 MessageCallbackMapT = dict["MessageTypeT", Callable[["Message"], Any] | list[Callable[["Message"], Any]]]  # fmt: skip
 MessageOutputT = TypeVar("MessageOutputT", bound="Message")

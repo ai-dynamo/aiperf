@@ -21,6 +21,7 @@ from aiperf.common.models.dataset_models import (
     Audio,
     Conversation,
     Image,
+    Media,
     Text,
     Turn,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "IOCounters",
     "Image",
     "InferenceServerResponse",
+    "Media",
     "MetricResult",
     "ParsedResponseRecord",
     "PhaseProcessingStats",

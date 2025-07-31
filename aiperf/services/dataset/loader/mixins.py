@@ -1,12 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import TypeVar
-
-from aiperf.common.models import Audio, Image, Text
+from aiperf.common.models import Media
+from aiperf.common.types import MediaT
 from aiperf.services.dataset.loader.models import CustomDatasetT
-
-MediaTypeT = TypeVar("MediaTypeT", bound=Text | Image | Audio)
 
 
 class MediaConversionMixin:
@@ -14,34 +11,44 @@ class MediaConversionMixin:
     It is used to construct text, image, and audio data from a CustomDatasetT object.
     """
 
-    def convert_all_media_data(
+    @property
+    def _media_classes(self) -> list[type[MediaT]]:
+        """Dynamically get all Media subclasses."""
+        return Media.__subclasses__()
+
+    def convert_to_media_objects(
         self, data: CustomDatasetT, name: str | None = None
-    ) -> tuple[MediaTypeT, ...]:
-        """Convert all media data from a CustomDatasetT object.
+    ) -> dict[str, list[MediaT]]:
+        """Convert all custom dataset into media objects.
 
         Args:
-            data: The data to convert media data from.
+            data: The custom dataset to convert into media objects.
+            name: The name of the media field.
 
         Returns:
-            A tuple of media objects.
+            A dictionary of media objects.
         """
-        return (
-            self._convert_to_media_objects(data, Text, "text", name),
-            self._convert_to_media_objects(data, Image, "image", name),
-            self._convert_to_media_objects(data, Audio, "audio", name),
-        )
+        media_objects: dict[str, list[MediaT]] = {}
+        for media_class in self._media_classes:
+            media_objects[media_class.media_type] = self._convert_to_media_objects(
+                data,
+                media_class=media_class,
+                field=media_class.media_type,
+                name=name,
+            )
+        return media_objects
 
     def _convert_to_media_objects(
         self,
         data: CustomDatasetT,
-        media_class: type[MediaTypeT],
+        media_class: type[MediaT],
         field: str,
         name: str | None = None,
-    ) -> list[MediaTypeT]:
-        """Generic method to construct media data from a CustomDatasetT object.
+    ) -> list[MediaT]:
+        """Generic method to construct media objects from a CustomDatasetT object.
 
         Args:
-            data: The data to construct media data from.
+            data: The custom dataset to construct media objects from.
             media_class: The target media class (Text, Image, or Audio).
             field: The name of the field (e.g., 'text', 'image', 'audio').
             name: The name of the media field.

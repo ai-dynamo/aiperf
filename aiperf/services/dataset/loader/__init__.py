@@ -10,7 +10,6 @@ __ignore__ = []
 ########################################################################
 from aiperf.services.dataset.loader.mixins import (
     MediaConversionMixin,
-    MediaTypeT,
 )
 from aiperf.services.dataset.loader.models import (
     CustomDatasetT,
@@ -39,7 +38,6 @@ __all__ = [
     "CustomDatasetLoaderProtocol",
     "CustomDatasetT",
     "MediaConversionMixin",
-    "MediaTypeT",
     "MooncakeTrace",
     "MooncakeTraceDatasetLoader",
     "MultiTurn",

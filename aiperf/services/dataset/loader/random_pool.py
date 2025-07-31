@@ -7,7 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TypeAlias
 
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, MediaType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.models import Conversation, Turn
 from aiperf.services.dataset.loader.mixins import MediaConversionMixin
@@ -158,14 +158,12 @@ class RandomPoolDatasetLoader(MediaConversionMixin):
             samples = random.choices(dataset_pool, k=self.num_conversations)
             turns: list[Turn] = []
             for sample in samples:
-                texts, images, audios = self.convert_all_media_data(
-                    sample, name=Path(filename).stem
-                )
+                media = self.convert_to_media_objects(sample, name=Path(filename).stem)
                 turns.append(
                     Turn(
-                        texts=texts,
-                        images=images,
-                        audios=audios,
+                        texts=media[MediaType.TEXT],
+                        images=media[MediaType.IMAGE],
+                        audios=media[MediaType.AUDIO],
                     )
                 )
             sampled_dataset[filename] = turns
