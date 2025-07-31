@@ -18,6 +18,7 @@ from aiperf.common.config import (
     TurnDelayConfig,
     UserConfig,
 )
+from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.enums import CustomDatasetType
 
 
@@ -38,7 +39,7 @@ def mock_tokenizer(mock_tokenizer_cls):
 def synthetic_config() -> UserConfig:
     """Basic synthetic configuration for testing."""
     config = UserConfig(
-        model_names=["test-model"],
+        endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
             conversation=ConversationConfig(num=5),
             prompt=PromptConfig(
@@ -53,7 +54,7 @@ def synthetic_config() -> UserConfig:
 def image_config() -> UserConfig:
     """Synthetic configuration with image generation enabled."""
     config = UserConfig(
-        model_names=["test-model"],
+        endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
             conversation=ConversationConfig(num=3),
             prompt=PromptConfig(
@@ -73,7 +74,7 @@ def image_config() -> UserConfig:
 def audio_config() -> UserConfig:
     """Synthetic configuration with audio generation enabled."""
     config = UserConfig(
-        model_names=["test-model"],
+        endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
             conversation=ConversationConfig(num=3),
             prompt=PromptConfig(
@@ -92,7 +93,7 @@ def audio_config() -> UserConfig:
 def prefix_prompt_config() -> UserConfig:
     """Synthetic configuration with prefix prompts enabled."""
     config = UserConfig(
-        model_names=["test-model"],
+        endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
             conversation=ConversationConfig(num=5),
             prompt=PromptConfig(
@@ -108,7 +109,7 @@ def prefix_prompt_config() -> UserConfig:
 def multimodal_config() -> UserConfig:
     """Synthetic configuration with multimodal data generation enabled."""
     config = UserConfig(
-        model_names=["test-model"],
+        endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
             conversation=ConversationConfig(num=2),
             prompt=PromptConfig(
@@ -134,7 +135,7 @@ def multimodal_config() -> UserConfig:
 def multiturn_config():
     """Synthetic configuration with multiturn settings."""
     config = UserConfig(
-        model_names=["test-model"],
+        endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
             conversation=ConversationConfig(
                 num=3,
@@ -176,7 +177,7 @@ def trace_config() -> UserConfig:
     """Configuration for TRACE dataset type."""
     # Use model_construct to bypass validation for testing
     return UserConfig(
-        model_names=["test-model"],
+        endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig.model_construct(
             file="trace_data.jsonl",
             custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
