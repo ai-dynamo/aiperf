@@ -52,14 +52,6 @@ from aiperf.services.system_controller import (
     SignalHandlerMixin,
     SystemController,
 )
-from aiperf.services.workers import (
-    CreditProcessorMixin,
-    CreditProcessorMixinRequirements,
-    CreditProcessorProtocol,
-    Worker,
-    WorkerManager,
-    WorkerProcessInfo,
-)
 
 __all__ = [
     "BaseComponentService",
@@ -69,9 +61,6 @@ __all__ = [
     "BaseStreamingPostProcessor",
     "BasicMetricsStreamer",
     "BenchmarkDurationMetric",
-    "CreditProcessorMixin",
-    "CreditProcessorMixinRequirements",
-    "CreditProcessorProtocol",
     "InferenceResultParser",
     "InputSequenceLengthMetric",
     "InterTokenLatencyMetric",
@@ -98,8 +87,5 @@ __all__ = [
     "SystemController",
     "TTFTMetric",
     "TTSTMetric",
-    "Worker",
-    "WorkerManager",
-    "WorkerProcessInfo",
     "record_from_dataframe",
 ]

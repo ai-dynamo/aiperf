@@ -33,7 +33,7 @@ from aiperf.common.messages.command_messages import (
 from aiperf.common.mixins import ProcessHealthMixin, PullClientMixin
 from aiperf.common.models import WorkerPhaseTaskStats
 from aiperf.services.base_component_service import BaseComponentService
-from aiperf.services.workers.credit_processor_mixin import CreditProcessorMixin
+from aiperf.workers.credit_processor_mixin import CreditProcessorMixin
 
 
 @ServiceFactory.register(ServiceType.WORKER)
