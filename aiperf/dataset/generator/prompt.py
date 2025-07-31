@@ -14,8 +14,8 @@ from aiperf.common.exceptions import (
     NotInitializedError,
 )
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.dataset import utils
-from aiperf.services.dataset.generator.base import BaseGenerator
+from aiperf.dataset import utils
+from aiperf.dataset.generator.base import BaseGenerator
 
 logger = logging.getLogger(__name__)
 
