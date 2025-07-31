@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.enums import CustomDatasetType
+from aiperf.common.models import Text
 from aiperf.services.dataset.loader.models import RandomPool
 from aiperf.services.dataset.loader.random_pool import RandomPoolDatasetLoader
 
@@ -207,3 +208,162 @@ class TestRandomPoolDatasetLoader:
             assert all(item.images[0].name == "image" for item in images_pool)
             assert images_pool[0].images[0].contents == ["/path/to/image1.png"]
             assert images_pool[1].images[0].contents == ["/path/to/image2.png"]
+
+    def test_convert_simple_pool_data(self):
+        """Test converting simple random pool data to conversations."""
+        data = {"file1.jsonl": [RandomPool(text="Hello world")]}
+
+        loader = RandomPoolDatasetLoader("dummy.jsonl")
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 1
+        assert conversations[0].turns[0].texts[0].contents == ["Hello world"]
+
+    def test_convert_multimodal_pool_data(self):
+        """Test converting multimodal random pool data."""
+        data = {
+            "multimodal.jsonl": [
+                RandomPool(
+                    text="What's in this image?",
+                    image="/path/to/image.png",
+                    audio="/path/to/audio.wav",
+                )
+            ]
+        }
+
+        loader = RandomPoolDatasetLoader("dummy.jsonl")
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert len(turn.texts) == 1
+        assert turn.texts[0].contents == ["What's in this image?"]
+        assert len(turn.images) == 1
+        assert turn.images[0].contents == ["/path/to/image.png"]
+        assert len(turn.audios) == 1
+        assert turn.audios[0].contents == ["/path/to/audio.wav"]
+
+    def test_convert_batched_pool_data(self):
+        """Test converting pool data with batched content."""
+        data = {
+            "batched.jsonl": [
+                RandomPool(
+                    texts=["First question", "Second question"],
+                    images=["/image1.png", "/image2.png"],
+                )
+            ]
+        }
+
+        loader = RandomPoolDatasetLoader("dummy.jsonl")
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert len(turn.texts) == 1
+        assert turn.texts[0].contents == ["First question", "Second question"]
+        assert len(turn.images) == 1
+        assert turn.images[0].contents == ["/image1.png", "/image2.png"]
+
+    def test_convert_multiple_files_no_name_specified(self):
+        """Test converting data from multiple files without name specified."""
+        # Simplified version with no name specified
+        data = {
+            "queries.jsonl": [
+                RandomPool(text="What is AI?"),
+            ],
+            "contexts.jsonl": [RandomPool(text="AI is artificial intelligence")],
+        }
+
+        loader = RandomPoolDatasetLoader("dummy_dir")
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1  # merged queries & contexts
+        assert len(conversations[0].turns) == 1
+        turn = conversations[0].turns[0]
+        assert len(turn.texts) == 2
+        assert turn.texts[0].name == "queries"  # use filename if not specified
+        assert turn.texts[0].contents == ["What is AI?"]
+        assert turn.texts[1].name == "contexts"  # use filename if not specified
+        assert turn.texts[1].contents == ["AI is artificial intelligence"]
+
+    def test_convert_multiple_files_with_name_specified(self):
+        """Test converting data from multiple files with name specified."""
+        data = {
+            "queries.jsonl": [
+                RandomPool(texts=[Text(name="abc123", contents=["What is AI?"])]),
+            ],
+            "contexts.jsonl": [
+                RandomPool(
+                    texts=[
+                        Text(name="def456", contents=["AI is artificial intelligence"])
+                    ]
+                )
+            ],
+        }
+
+        loader = RandomPoolDatasetLoader("dummy_dir")
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1  # merged queries & contexts
+        assert len(conversations[0].turns) == 1
+        turn = conversations[0].turns[0]
+        assert len(turn.texts) == 2
+        assert turn.texts[0].name == "abc123"  # uses name from Text object
+        assert turn.texts[0].contents == ["What is AI?"]
+        assert turn.texts[1].name == "def456"  # uses name from Text object
+        assert turn.texts[1].contents == ["AI is artificial intelligence"]
+
+    def test_convert_multiple_files_with_multiple_samples(self):
+        """Test converting data from multiple files with multiple samples."""
+        data = {
+            "queries.jsonl": [
+                RandomPool(text="text1", image="image1.png"),
+                RandomPool(text="text2", image="image2.png"),
+            ],
+            "contexts.jsonl": [
+                RandomPool(text="text3", image="image3.png"),
+                RandomPool(text="text4", image="image4.png"),
+            ],
+        }
+
+        loader = RandomPoolDatasetLoader("dummy_dir", num_conversations=2)
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 2
+
+        # make sure it's single turn
+        conv1, conv2 = conversations
+        assert len(conv1.turns) == 1
+        assert len(conv2.turns) == 1
+
+        # each turn contains 2 text & image data from the two files
+        # (e.g. queries and contexts)
+        turn1, turn2 = conv1.turns[0], conv2.turns[0]
+        assert len(turn1.texts) == 2
+        assert len(turn1.images) == 2
+        assert len(turn2.texts) == 2
+        assert len(turn2.images) == 2
+
+        possible_text_contents = {
+            ("text1", "text3"),
+            ("text1", "text4"),
+            ("text2", "text3"),
+            ("text2", "text4"),
+        }
+        possible_image_contents = {
+            ("image1.png", "image3.png"),
+            ("image1.png", "image4.png"),
+            ("image2.png", "image3.png"),
+            ("image2.png", "image4.png"),
+        }
+
+        text_contents = tuple(t.contents[0] for t in turn1.texts)
+        image_contents = tuple(i.contents[0] for i in turn1.images)
+        assert text_contents in possible_text_contents
+        assert image_contents in possible_image_contents
+
+        text_contents = tuple(t.contents[0] for t in turn2.texts)
+        image_contents = tuple(i.contents[0] for i in turn2.images)
+        assert text_contents in possible_text_contents
+        assert image_contents in possible_image_contents

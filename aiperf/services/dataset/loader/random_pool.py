@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import random
 import uuid
 from collections import defaultdict
 from pathlib import Path
@@ -8,7 +9,8 @@ from typing import TypeAlias
 
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-from aiperf.common.models import Audio, Conversation, Image, Text, Turn
+from aiperf.common.models import Conversation, Turn
+from aiperf.services.dataset.loader.mixins import MediaConversionMixin
 from aiperf.services.dataset.loader.models import RandomPool
 
 # Type aliases
@@ -16,7 +18,7 @@ Filename: TypeAlias = str
 
 
 @CustomDatasetFactory.register(CustomDatasetType.RANDOM_POOL)
-class RandomPoolDatasetLoader:
+class RandomPoolDatasetLoader(MediaConversionMixin):
     """A dataset loader that loads data from a single file or a directory.
 
     Each line in the file represents single-turn conversation data,
@@ -67,8 +69,9 @@ class RandomPoolDatasetLoader:
     and loader will later sample from these two pools to create conversations.
     """
 
-    def __init__(self, filename: str):
+    def __init__(self, filename: str, num_conversations: int = 1):
         self.filename = filename
+        self.num_conversations = num_conversations
 
     def load_dataset(self) -> dict[Filename, list[RandomPool]]:
         """Load random pool data from a file or directory.
@@ -142,79 +145,50 @@ class RandomPoolDatasetLoader:
         Returns:
             A list of conversations.
         """
-        conversations = []
-        for _, random_pools in data.items():
-            for pool_entry in random_pools:
-                session_id = str(uuid.uuid4())
-                conversation = Conversation(session_id=session_id)
-                turn = self._convert_random_pool_to_turn(pool_entry)
-                conversation.turns.append(turn)
-                conversations.append(conversation)
+        conversations = [
+            Conversation(session_id=str(uuid.uuid4()))
+            for _ in range(self.num_conversations)
+        ]
+
+        # F x N (F: num of files, N: num of conversations)
+        sampled_dataset: dict[Filename, list[Turn]] = {}
+
+        # Randomly sample (with replacement) from each dataset pool
+        for filename, dataset_pool in data.items():
+            samples = random.choices(dataset_pool, k=self.num_conversations)
+            turns: list[Turn] = []
+            for sample in samples:
+                texts, images, audios = self.convert_all_media_data(
+                    sample, name=Path(filename).stem
+                )
+                turns.append(
+                    Turn(
+                        texts=texts,
+                        images=images,
+                        audios=audios,
+                    )
+                )
+            sampled_dataset[filename] = turns
+
+        # Merge turns for each conversation
+        for i, batched_turns in enumerate(zip(*sampled_dataset.values(), strict=False)):
+            turn = self._merge_turns(batched_turns)
+            conversations[i].turns.append(turn)
+
         return conversations
 
-    def _convert_random_pool_to_turn(self, random_pool: RandomPool) -> Turn:
-        """Convert a RandomPool object to a Turn object.
+    def _merge_turns(self, turns: list[Turn]) -> Turn:
+        """Merge turns into a single turn.
 
         Args:
-            random_pool: The RandomPool object to convert.
+            turns: A list of turns.
 
         Returns:
-            A Turn object.
+            A single turn.
         """
-        turn = Turn()
-
-        # Convert text fields
-        if random_pool.text:
-            turn.texts.append(Text(name="text", contents=[random_pool.text]))
-        elif random_pool.texts:
-            turn.texts.extend(self._convert_to_text_objects(random_pool.texts))
-
-        # Convert image fields
-        if random_pool.image:
-            turn.images.append(Image(name="image_url", contents=[random_pool.image]))
-        elif random_pool.images:
-            turn.images.extend(self._convert_to_image_objects(random_pool.images))
-
-        # Convert audio fields
-        if random_pool.audio:
-            turn.audios.append(Audio(name="input_audio", contents=[random_pool.audio]))
-        elif random_pool.audios:
-            turn.audios.extend(self._convert_to_audio_objects(random_pool.audios))
-
-        return turn
-
-    def _convert_to_text_objects(self, texts: list[str] | list[Text]) -> list[Text]:
-        """Convert text data to Text objects."""
-        if not texts:
-            return []
-
-        # If already Text objects, return as is
-        if isinstance(texts[0], Text):
-            return texts  # type: ignore
-
-        # Convert list of strings to single Text object
-        return [Text(name="text", contents=texts)]  # type: ignore
-
-    def _convert_to_image_objects(self, images: list[str] | list[Image]) -> list[Image]:
-        """Convert image data to Image objects."""
-        if not images:
-            return []
-
-        # If already Image objects, return as is
-        if isinstance(images[0], Image):
-            return images  # type: ignore
-
-        # Convert list of strings to single Image object
-        return [Image(name="image_url", contents=images)]  # type: ignore
-
-    def _convert_to_audio_objects(self, audios: list[str] | list[Audio]) -> list[Audio]:
-        """Convert audio data to Audio objects."""
-        if not audios:
-            return []
-
-        # If already Audio objects, return as is
-        if isinstance(audios[0], Audio):
-            return audios  # type: ignore
-
-        # Convert list of strings to single Audio object
-        return [Audio(name="input_audio", contents=audios)]  # type: ignore
+        merged_turn = Turn(
+            texts=[text for turn in turns for text in turn.texts],
+            images=[image for turn in turns for image in turn.images],
+            audios=[audio for turn in turns for audio in turn.audios],
+        )
+        return merged_turn

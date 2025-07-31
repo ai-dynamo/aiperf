@@ -7,7 +7,7 @@ from aiperf.common.models.base_models import AIPerfBaseModel, exclude_if_none
 
 
 class Text(AIPerfBaseModel):
-    name: str = Field(default="text", description="Name of the text field.")
+    name: str | None = Field(default=None, description="Name of the text field.")
 
     contents: list[str] = Field(
         default=[],
@@ -16,7 +16,7 @@ class Text(AIPerfBaseModel):
 
 
 class Image(AIPerfBaseModel):
-    name: str = Field(default="image_url", description="Name of the image field.")
+    name: str | None = Field(default=None, description="Name of the image field.")
 
     contents: list[str] = Field(
         default=[],
@@ -25,7 +25,7 @@ class Image(AIPerfBaseModel):
 
 
 class Audio(AIPerfBaseModel):
-    name: str = Field(default="input_audio", description="Name of the audio field.")
+    name: str | None = Field(default=None, description="Name of the audio field.")
 
     contents: list[str] = Field(
         default=[],

@@ -36,7 +36,10 @@ class CustomDatasetComposer(BaseDatasetComposer):
             dataset_type: The type of custom dataset to create.
         """
         kwargs = {"filename": self.config.file}
+
         if dataset_type == CustomDatasetType.MOONCAKE_TRACE:
             kwargs["prompt_generator"] = self.prompt_generator
+        elif dataset_type == CustomDatasetType.RANDOM_POOL:
+            kwargs["num_conversations"] = self.config.conversation.num
 
         self.loader = CustomDatasetFactory.create_instance(dataset_type, **kwargs)

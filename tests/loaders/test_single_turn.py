@@ -274,3 +274,115 @@ class TestSingleTurnDatasetLoader:
         assert turn[0].images[0].contents == ["/path/1.png", "/path/2.png"]
         assert turn[0].images[1].name == "image_field_B"
         assert turn[0].images[1].contents == ["/path/3.png"]
+
+
+class TestSingleTurnDatasetLoaderConvertToConversations:
+    """Test convert_to_conversations method for SingleTurnDatasetLoader."""
+
+    def test_convert_simple_text_data(self):
+        """Test converting simple text data to conversations."""
+        loader = SingleTurnDatasetLoader("dummy.jsonl")
+        data = {
+            "session_1": [SingleTurn(text="Hello world")],
+            "session_2": [SingleTurn(text="How are you?")],
+        }
+
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 2
+        assert conversations[0].session_id == "session_1"
+        assert len(conversations[0].turns) == 1
+        assert conversations[0].turns[0].texts[0].contents == ["Hello world"]
+
+        assert conversations[1].session_id == "session_2"
+        assert len(conversations[1].turns) == 1
+        assert conversations[1].turns[0].texts[0].contents == ["How are you?"]
+
+    def test_convert_multimodal_data(self):
+        """Test converting multimodal data to conversations."""
+        loader = SingleTurnDatasetLoader("dummy.jsonl")
+        data = {
+            "session_1": [
+                SingleTurn(
+                    text="What's in this image?",
+                    image="/path/to/image.png",
+                    audio="/path/to/audio.wav",
+                )
+            ]
+        }
+
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert len(turn.texts) == 1
+        assert turn.texts[0].contents == ["What's in this image?"]
+        assert len(turn.images) == 1
+        assert turn.images[0].contents == ["/path/to/image.png"]
+        assert len(turn.audios) == 1
+        assert turn.audios[0].contents == ["/path/to/audio.wav"]
+
+    def test_convert_batched_data(self):
+        """Test converting batched data to conversations."""
+        loader = SingleTurnDatasetLoader("dummy.jsonl")
+        data = {
+            "session_1": [
+                SingleTurn(
+                    texts=["First message", "Second message"],
+                    images=["/path/1.png", "/path/2.png"],
+                )
+            ]
+        }
+
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert len(turn.texts) == 1
+        assert turn.texts[0].contents == ["First message", "Second message"]
+        assert len(turn.images) == 1
+        assert turn.images[0].contents == ["/path/1.png", "/path/2.png"]
+
+    def test_convert_with_timing_data(self):
+        """Test converting data with timestamp and delay."""
+        loader = SingleTurnDatasetLoader("dummy.jsonl")
+        data = {
+            "session_1": [
+                SingleTurn(text="First", timestamp=1000),
+                SingleTurn(text="Second", delay=500, role="user"),
+            ]
+        }
+
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2
+
+        first_turn = conversations[0].turns[0]
+        assert first_turn.timestamp == 1000
+        assert first_turn.delay is None
+        assert first_turn.role is None
+
+        second_turn = conversations[0].turns[1]
+        assert second_turn.timestamp is None
+        assert second_turn.delay == 500
+        assert second_turn.role == "user"
+
+    def test_convert_structured_text_objects(self):
+        """Test converting data with structured Text objects."""
+        loader = SingleTurnDatasetLoader("dummy.jsonl")
+        text_objects = [
+            Text(name="query", contents=["What is AI?"]),
+            Text(name="context", contents=["AI stands for artificial intelligence"]),
+        ]
+        data = {"session_1": [SingleTurn(texts=text_objects)]}
+
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert len(turn.texts) == 2
+        assert turn.texts[0].name == "query"
+        assert turn.texts[0].contents == ["What is AI?"]
+        assert turn.texts[1].name == "context"
+        assert turn.texts[1].contents == ["AI stands for artificial intelligence"]

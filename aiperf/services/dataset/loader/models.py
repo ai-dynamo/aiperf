@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated, Literal
+from typing import Literal, TypeVar
 
 from pydantic import Field, model_validator
 
@@ -166,8 +166,7 @@ class MooncakeTrace(AIPerfBaseModel):
     timestamp: int = Field(..., description="The timestamp of a request")
 
 
-CustomData = Annotated[
-    SingleTurn | MooncakeTrace | MultiTurn,
-    Field(discriminator="type"),
-]
+CustomDatasetT = TypeVar(
+    "CustomDatasetT", bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace
+)
 """A union type of all custom data types."""
