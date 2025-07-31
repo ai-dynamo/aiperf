@@ -95,14 +95,6 @@ from aiperf.services.timing_manager import (
     TimingManager,
     TimingManagerConfig,
 )
-from aiperf.services.workers import (
-    CreditProcessorMixin,
-    CreditProcessorMixinRequirements,
-    CreditProcessorProtocol,
-    Worker,
-    WorkerManager,
-    WorkerProcessInfo,
-)
 
 __all__ = [
     "AudioGenerator",
@@ -121,9 +113,6 @@ __all__ = [
     "CreditManagerProtocol",
     "CreditPhaseMessagesMixin",
     "CreditPhaseMessagesRequirements",
-    "CreditProcessorMixin",
-    "CreditProcessorMixinRequirements",
-    "CreditProcessorProtocol",
     "CustomData",
     "CustomDatasetComposer",
     "CustomDatasetLoaderProtocol",
@@ -173,9 +162,6 @@ __all__ = [
     "TTSTMetric",
     "TimingManager",
     "TimingManagerConfig",
-    "Worker",
-    "WorkerManager",
-    "WorkerProcessInfo",
     "check_file_exists",
     "encode_image",
     "load_json_str",
