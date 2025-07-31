@@ -15,7 +15,7 @@
 # the project.
 
 
-.PHONY: test coverage cov clean install docker docker-run first-time-setup \
+.PHONY: test coverage clean install docker docker-run first-time-setup \
 		test-verbose \
 		internal-help help
 
@@ -89,14 +89,14 @@ internal-help:
 	} | sort
 	@printf "────────────────────────────────────────────────────────────────────────────\n"
 
-test: #? run the tests using pytest.
-	$(activate_venv) && pytest tests $(args)
+test: #? run the tests using pytest-xdist.
+	$(activate_venv) && pytest -n auto $(args)
 
-test-verbose: #? run the tests using pytest with DEBUG logging
-	$(activate_venv) && pytest tests -v -s --log-cli-level DEBUG
+test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
+	$(activate_venv) && pytest -n auto -v -s --log-cli-level DEBUG
 
-coverage cov: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest tests --cov=integration_tests --cov-report=html $(args)
+coverage: #? run the tests and generate an html coverage report.
+	$(activate_venv) && pytest -n auto --cov=aiperf --cov-report=html $(args)
 
 install: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]" $(args)
