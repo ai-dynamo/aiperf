@@ -50,4 +50,4 @@ class CustomDatasetComposer(BaseDatasetComposer):
     ) -> None:
         for conversation in conversations:
             for turn in conversation.turns:
-                turn.model_name = self._select_model_name()
+                turn.model = self._select_model_name()
