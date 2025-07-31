@@ -1,17 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.services.dataset.composer import (
+from aiperf.dataset.composer import (
     BaseDatasetComposer,
     CustomDatasetComposer,
     SyntheticDatasetComposer,
 )
-from aiperf.services.dataset.dataset_manager import (
+from aiperf.dataset.dataset_manager import (
     DATASET_CONFIGURATION_TIMEOUT,
     DatasetManager,
     main,
 )
-from aiperf.services.dataset.generator import (
+from aiperf.dataset.generator import (
     DEFAULT_CORPUS_FILE,
     MP3_SUPPORTED_SAMPLE_RATES,
     SUPPORTED_BIT_DEPTHS,
@@ -20,7 +20,7 @@ from aiperf.services.dataset.generator import (
     ImageGenerator,
     PromptGenerator,
 )
-from aiperf.services.dataset.loader import (
+from aiperf.dataset.loader import (
     CustomData,
     CustomDatasetLoaderProtocol,
     MooncakeTrace,
@@ -32,7 +32,7 @@ from aiperf.services.dataset.loader import (
     SingleTurn,
     SingleTurnDatasetLoader,
 )
-from aiperf.services.dataset.utils import (
+from aiperf.dataset.utils import (
     check_file_exists,
     encode_image,
     load_json_str,
