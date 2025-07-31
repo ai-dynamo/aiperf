@@ -17,7 +17,7 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage cov clean install docker docker-run first-time-setup \
-		test-verbose init-files \
+		test-verbose init-files sanity-check \
 		internal-help help
 
 
@@ -116,6 +116,7 @@ coverage cov: #? run the tests and generate an html coverage report.
 
 install: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]" $(args)
+	$(MAKE) -C integration-tests install
 
 docker: #? build the docker image.
 	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args) .
@@ -167,3 +168,9 @@ first-time-setup: #? convenience command to setup the environment for the first 
 
 	@# Print a success message
 	@printf "$(bold)$(green)Done!$(reset)\n"
+
+sanity-check: #? Run a quick integration level sanity check to ensure things are working ok
+	$(MAKE) test
+	aiperf-mock-server -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B --ttft 10 --itl 5 --workers 1 --port 53000 &
+	aiperf profile -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B --concurrency 20 --num-requests 60 -u localhost:53000 --max-workers 5 --isl 20
+	pkill -9 aiperf
