@@ -3,7 +3,7 @@
 import pytest
 
 from aiperf.common.models import ParsedResponseRecord, RequestRecord, ResponseData
-from aiperf.services.records_manager.post_processors.metric_summary import MetricSummary
+from aiperf.post_processors import MetricSummary
 
 
 def build_record(

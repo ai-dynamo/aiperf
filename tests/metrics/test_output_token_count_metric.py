@@ -4,7 +4,7 @@
 import pytest
 
 from aiperf.common.models import ParsedResponseRecord, RequestRecord, ResponseData
-from aiperf.services.records_manager.metrics.types.output_token_count_metric import (
+from aiperf.metrics.types import (
     OutputTokenCountMetric,
 )
 

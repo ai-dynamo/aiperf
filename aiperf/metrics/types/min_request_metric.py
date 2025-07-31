@@ -3,23 +3,23 @@
 from aiperf.common.enums import MetricTag, MetricTimeType, MetricType
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.types import MetricTagT
-from aiperf.services.records_manager.metrics.base_metric import BaseMetric
+from aiperf.metrics.base_metric import BaseMetric
 
 
-class RequestLatencyMetric(BaseMetric):
+class MinRequestMetric(BaseMetric):
     """
-    Post-processor for calculating Request Latency metrics from records.
+    Post-processor for calculating the minimum request time stamp metric from records.
     """
 
-    tag = MetricTag.REQUEST_LATENCY
+    tag = MetricTag.MIN_REQUEST
     unit = MetricTimeType.NANOSECONDS
     type = MetricType.METRIC_OF_RECORDS
     larger_is_better = False
-    header = "Request Latency"
+    header = "Minimum Request Timestamp"
     required_metrics = set()
 
     def __init__(self):
-        self.metric: list[int] = []
+        self.metric: float = float("inf")
 
     def update_value(
         self,
@@ -27,22 +27,22 @@ class RequestLatencyMetric(BaseMetric):
         metrics: dict[MetricTagT, "BaseMetric"] | None = None,
     ) -> None:
         """
-        Adds a new record and calculates the Request Latency metric.
+        Adds a new record and calculates the minimum request timestamp metric.
 
-        This method extracts the request and last response timestamps, calculates the differences in time, and
-        appends the result to the metric list.
         """
         self._check_record(record)
-        request_ts = record.start_perf_ns
-        final_response_ts = record.responses[-1].perf_ns
-        request_latency = final_response_ts - request_ts
-        self.metric.append(request_latency)
+        if record.start_perf_ns < self.metric:
+            self.metric = record.start_perf_ns
 
-    def values(self) -> list[int]:
+    def values(self) -> float:
         """
-        Returns the list of Request Latency metrics.
+        Returns the Minimum Request Timestamp metric.
         """
         return self.metric
 
     def _check_record(self, record: ParsedResponseRecord) -> None:
+        """
+        Checks if the record is valid for calculations.
+
+        """
         self._require_valid_record(record)

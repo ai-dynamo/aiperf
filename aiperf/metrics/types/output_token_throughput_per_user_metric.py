@@ -5,7 +5,7 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import MetricTag, MetricTimeType, MetricType
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.types import MetricTagT
-from aiperf.services.records_manager.metrics.base_metric import BaseMetric
+from aiperf.metrics.base_metric import BaseMetric
 
 
 class OutputTokenThroughputPerUserMetric(BaseMetric):

@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.services.records_manager.metrics.types.output_token_throughput_per_user_metric import (
+from aiperf.metrics.types.output_token_throughput_per_user_metric import (
     OutputTokenThroughputPerUserMetric,
 )
 

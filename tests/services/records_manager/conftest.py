@@ -22,7 +22,7 @@ from aiperf.common.models import (
     SSEField,
     SSEMessage,
 )
-from aiperf.services.records_manager.records_manager import RecordsManager
+from aiperf.records import RecordsManager
 
 
 @pytest.fixture

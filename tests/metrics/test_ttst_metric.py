@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.services.records_manager.metrics.types.ttst_metric import TTSTMetric
+from aiperf.metrics.types import TTSTMetric
 
 
 def test_ttst_metric_update_value_and_values(parsed_response_record_builder):
