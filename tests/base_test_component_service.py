@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.base_service import BaseService
 from aiperf.common.enums import LifecycleState, MessageType
-from aiperf.services.base_component_service import BaseComponentService
-from aiperf.services.base_service import BaseService
 from tests.base_test_service import BaseTestService, async_fixture
 
 

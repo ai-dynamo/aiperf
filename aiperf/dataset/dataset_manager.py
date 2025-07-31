@@ -3,6 +3,7 @@
 import asyncio
 import random
 
+from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommAddress, ComposerType, MessageType, ServiceType
@@ -21,7 +22,6 @@ from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import Conversation
 from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.base_component_service import BaseComponentService
 
 DATASET_CONFIGURATION_TIMEOUT = 30.0
 

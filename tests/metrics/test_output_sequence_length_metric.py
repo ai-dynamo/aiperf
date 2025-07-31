@@ -7,7 +7,7 @@ from aiperf.common.models import (
     RequestRecord,
     ResponseData,
 )
-from aiperf.services.records_manager.metrics.types.output_sequence_length_metric import (
+from aiperf.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
 )
 

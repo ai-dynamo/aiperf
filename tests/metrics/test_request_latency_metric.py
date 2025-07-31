@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.services.records_manager.metrics.types.request_latency_metric import (
+from aiperf.metrics.types.request_latency_metric import (
     RequestLatencyMetric,
 )
 

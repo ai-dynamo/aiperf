@@ -13,10 +13,10 @@ from aiperf.common.enums.timing_enums import CreditPhase
 from aiperf.common.factories import StreamingPostProcessorFactory
 from aiperf.common.messages.inference_messages import ParsedInferenceResultsMessage
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.services.records_manager.post_processors.streaming_post_processor import (
+from aiperf.post_processors import (
     BaseStreamingPostProcessor,
 )
-from aiperf.services.records_manager.records_manager import RecordsManager
+from aiperf.records import RecordsManager
 
 
 @pytest.fixture(autouse=True)
