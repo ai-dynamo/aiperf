@@ -10,7 +10,7 @@ from PIL import Image
 
 from aiperf.common.config import ImageConfig, ImageHeightConfig, ImageWidthConfig
 from aiperf.common.enums import ImageFormat
-from aiperf.services.dataset.generator.image import ImageGenerator
+from aiperf.dataset.generator import ImageGenerator
 
 
 @pytest.fixture
@@ -62,9 +62,9 @@ def test_image() -> Image.Image:
 def mock_file_system():
     """Mock file system for testing source image sampling."""
     with (
-        patch("aiperf.services.dataset.generator.image.glob.glob") as mock_glob,
-        patch("aiperf.services.dataset.generator.image.random.choice") as mock_choice,
-        patch("aiperf.services.dataset.generator.image.Image.open") as mock_open,
+        patch("aiperf.dataset.generator.image.glob.glob") as mock_glob,
+        patch("aiperf.dataset.generator.image.random.choice") as mock_choice,
+        patch("aiperf.dataset.generator.image.Image.open") as mock_open,
     ):
         mock_image = Mock(spec=Image.Image)
         mock_open.return_value = mock_image
@@ -133,7 +133,7 @@ class TestImageGenerator:
         assert generator.config == various_configs
 
     @patch(
-        "aiperf.services.dataset.generator.image.utils.encode_image",
+        "aiperf.dataset.generator.image.utils.encode_image",
         return_value="fake_base64_string",
     )
     def test_generate_with_specified_format(self, mock_encode, base_config):

@@ -8,8 +8,8 @@ from aiperf.common.factories import ComposerFactory, CustomDatasetFactory
 from aiperf.common.models import Conversation
 from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.dataset import utils
-from aiperf.services.dataset.composer.base import BaseDatasetComposer
+from aiperf.dataset import utils
+from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
 @implements_protocol(ServiceProtocol)
