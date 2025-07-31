@@ -21,7 +21,7 @@ from aiperf.common.exceptions import AIPerfError
 from aiperf.common.factories import ServiceFactory, ServiceManagerFactory
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
-from aiperf.services.system_controller.base_service_manager import BaseServiceManager
+from aiperf.controller.base_service_manager import BaseServiceManager
 
 
 class MultiProcessRunInfo(BaseModel):
