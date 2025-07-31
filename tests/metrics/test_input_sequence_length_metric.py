@@ -8,7 +8,7 @@ from aiperf.common.models import (
     RequestRecord,
     ResponseData,
 )
-from aiperf.services.records_manager.metrics.types.input_sequence_length_metric import (
+from aiperf.metrics.types.input_sequence_length_metric import (
     InputSequenceLengthMetric,
 )
 

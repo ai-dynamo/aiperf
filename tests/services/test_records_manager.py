@@ -8,8 +8,8 @@ import pytest
 from pydantic import BaseModel
 
 from aiperf.common.enums import ServiceType
+from aiperf.records import RecordsManager
 from aiperf.services.base_service import BaseService
-from aiperf.services.records_manager.records_manager import RecordsManager
 from tests.base_test_component_service import BaseTestComponentService
 from tests.utils.async_test_utils import async_fixture
 

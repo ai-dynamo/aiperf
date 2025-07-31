@@ -4,38 +4,36 @@
 from aiperf.common.enums import MetricTag, MetricType
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.types import MetricTagT
-from aiperf.services.records_manager.metrics.base_metric import BaseMetric
+from aiperf.metrics.base_metric import BaseMetric
 
 
-class RequestCountMetric(BaseMetric):
+class OutputTokenCountMetric(BaseMetric):
     """
-    Post-processor for counting the number of valid requests.
+    Post Processor for calculating Output Token Count Metric.
     """
 
-    tag = MetricTag.REQUEST_COUNT
+    tag = MetricTag.OUTPUT_TOKEN_COUNT
     unit = None
     larger_is_better = True
-    header = "Request Count"
+    header = "Output Token Count"
     type = MetricType.METRIC_OF_RECORDS
-    streaming_only = False
     required_metrics = set()
 
     def __init__(self):
-        self.metric: int = 0
+        self.metric: list[int] = []
 
     def update_value(
         self,
         record: ParsedResponseRecord | None = None,
         metrics: dict[MetricTagT, "BaseMetric"] | None = None,
-    ) -> None:
+    ):
         self._check_record(record)
-        self.metric += 1
+        self.metric.append(record.output_token_count)
 
-    def values(self) -> int:
-        """
-        Returns the Request Count metric.
-        """
+    def values(self) -> list[int]:
         return self.metric
 
-    def _check_record(self, record: ParsedResponseRecord) -> None:
+    def _check_record(self, record: ParsedResponseRecord):
         self._require_valid_record(record)
+        if record.output_token_count is None or record.output_token_count < 0:
+            raise ValueError("Record has invalid output token count.")

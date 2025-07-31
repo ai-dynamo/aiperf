@@ -21,7 +21,7 @@ from aiperf.common.models import (
     ParsedResponseRecord,
 )
 from aiperf.common.models.record_models import ProfileResults
-from aiperf.services.records_manager.post_processors.streaming_post_processor import (
+from aiperf.post_processors.streaming_post_processor import (
     BaseStreamingPostProcessor,
 )
 

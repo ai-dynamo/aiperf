@@ -7,7 +7,7 @@ from aiperf.common.enums import EndpointType, MetricTag, MetricType, PostProcess
 from aiperf.common.factories import PostProcessorFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult, ParsedResponseRecord
-from aiperf.services.records_manager.metrics.base_metric import BaseMetric
+from aiperf.metrics.base_metric import BaseMetric
 
 
 @PostProcessorFactory.register(PostProcessorType.METRIC_SUMMARY)

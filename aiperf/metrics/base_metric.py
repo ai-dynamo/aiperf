@@ -78,9 +78,7 @@ class BaseMetric(ABC):
                 if python_file.name != "__init__.py":
                     module_name = python_file.stem  # Get filename without extension
                     try:
-                        importlib.import_module(
-                            f"aiperf.services.records_manager.metrics.types.{module_name}"
-                        )
+                        importlib.import_module(f"aiperf.metrics.types.{module_name}")
                     except ImportError as err:
                         raise MetricTypeError(
                             f"Error importing metric type module '{module_name}'"
