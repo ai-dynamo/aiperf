@@ -3,6 +3,7 @@
 
 import asyncio
 
+from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommandType, LifecycleState
@@ -19,7 +20,6 @@ from aiperf.common.messages import (
     StatusMessage,
 )
 from aiperf.common.protocols import ServiceProtocol
-from aiperf.services.base_service import BaseService
 
 
 @implements_protocol(ServiceProtocol)

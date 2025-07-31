@@ -11,11 +11,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aiperf.common.base_service import BaseService
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, LifecycleState, ServiceRunType
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.controller import SystemController
-from aiperf.services.base_service import BaseService
 from tests.utils.async_test_utils import async_fixture
 
 real_sleep = (
