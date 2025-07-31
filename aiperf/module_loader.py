@@ -9,6 +9,7 @@ implementations are properly registered with their factories.
 """
 
 import importlib
+import threading
 import time
 from pathlib import Path
 
@@ -30,20 +31,28 @@ def _load_all_modules() -> None:
             and (module / "__init__.py").exists()
         ):
             _logger.debug(f"Loading module: aiperf.{module.name}")
-            importlib.import_module(f"aiperf.{module.name}")
+            try:
+                importlib.import_module(f"aiperf.{module.name}")
+            except ImportError:
+                _logger.exception(
+                    f"Error loading AIPerf module: aiperf.{module.name}. Ensure the folder {module.resolve()} is a valid Python package"
+                )
+                raise
 
 
 _modules_loaded = False
+_modules_loaded_lock = threading.Lock()
 
 
 def ensure_modules_loaded() -> None:
     """Ensure all modules are loaded exactly once."""
     global _modules_loaded
-    if not _modules_loaded:
-        start_time = time.perf_counter()
-        _logger.debug("Loading all modules")
-        _load_all_modules()
-        _logger.debug(
-            f"Modules loaded in {time.perf_counter() - start_time:.2f} seconds"
-        )
-        _modules_loaded = True
+    with _modules_loaded_lock:
+        if not _modules_loaded:
+            start_time = time.perf_counter()
+            _logger.debug("Loading all modules")
+            _load_all_modules()
+            _logger.debug(
+                f"Modules loaded in {time.perf_counter() - start_time:.2f} seconds"
+            )
+            _modules_loaded = True
