@@ -10,11 +10,11 @@ import pytest
 from pydantic import BaseModel
 
 from aiperf.common.enums import MessageType
-from aiperf.services.base_service import BaseService
-from aiperf.services.system_controller.multiprocess_service_manager import (
+from aiperf.controller import (
     MultiProcessServiceManager,
+    SystemController,
 )
-from aiperf.services.system_controller.system_controller import SystemController
+from aiperf.services.base_service import BaseService
 from tests.base_test_service import BaseTestService, async_fixture
 
 
@@ -102,11 +102,11 @@ class SystemControllerServiceTest(BaseTestService):
 
         with (
             patch(
-                "aiperf.services.system_controller.system_controller.SystemController._forever_loop",
+                "aiperf.controller.system_controller.SystemController._forever_loop",
                 return_value=None,
             ) as mock_forever_loop,
             patch(
-                "aiperf.services.system_controller.system_controller.SystemController.start",
+                "aiperf.controller.system_controller.SystemController.start",
                 return_value=None,
             ) as mock_start,
         ):

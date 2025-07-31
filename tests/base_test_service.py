@@ -14,7 +14,7 @@ import pytest
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, LifecycleState, ServiceRunType
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.services import SystemController
+from aiperf.controller import SystemController
 from aiperf.services.base_service import BaseService
 from tests.utils.async_test_utils import async_fixture
 
