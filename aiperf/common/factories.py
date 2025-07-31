@@ -49,10 +49,10 @@ if TYPE_CHECKING:
         DataExporterProtocol,
         InferenceClientProtocol,
         PostProcessorProtocol,
-        # noqa: F401
+        RequestConverterProtocol,  # noqa: F401
         ResponseExtractorProtocol,
         ServiceManagerProtocol,
-        # noqa: F401
+        ServiceProtocol,  # noqa: F401
         StreamingPostProcessorProtocol,
     )
     from aiperf.data_exporter.exporter_config import ExporterConfig
