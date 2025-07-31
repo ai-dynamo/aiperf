@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndPointConfig, OutputConfig, UserConfig
+from aiperf.common.config import EndpointConfig, OutputConfig, UserConfig
 from aiperf.common.enums import EndpointType
 from aiperf.common.enums.data_exporter_enums import DataExporterType
 from aiperf.common.models import MetricResult
@@ -15,7 +15,9 @@ from aiperf.data_exporter.exporter_manager import ExporterManager
 
 @pytest.fixture
 def endpoint_config():
-    return EndPointConfig(type=EndpointType.OPENAI_CHAT_COMPLETIONS, streaming=True)
+    return EndpointConfig(
+        type=EndpointType.OPENAI_CHAT_COMPLETIONS, streaming=True, model_names=["gpt2"]
+    )
 
 
 @pytest.fixture
@@ -37,9 +39,7 @@ def sample_records():
 
 @pytest.fixture
 def mock_user_config(endpoint_config, output_config):
-    config = UserConfig(model_names=["test-model"])
-    config.endpoint = endpoint_config
-    config.output = output_config
+    config = UserConfig(endpoint=endpoint_config, output=output_config)
     return config
 
 
