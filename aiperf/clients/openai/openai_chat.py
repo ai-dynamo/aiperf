@@ -23,10 +23,19 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
     ) -> dict[str, Any]:
         """Format payload for a chat completion request."""
 
-        message = self._create_message(turn)
+        messages = [
+            {
+                "role": turn.role or DEFAULT_ROLE,
+                "name": text.name,
+                "content": content,
+            }
+            for text in turn.texts
+            for content in text.contents
+            if content
+        ]
 
         payload = {
-            "messages": [message],
+            "messages": messages,
             "model": model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }
@@ -37,6 +46,7 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
         self.debug(lambda: f"Formatted payload: {payload}")
         return payload
 
+    # TODO: Fix this to work with Dynamo and OpenAI Mock Server
     def _create_message(self, turn: Turn) -> dict[Any, Any]:
         message = {
             "role": turn.role or DEFAULT_ROLE,
