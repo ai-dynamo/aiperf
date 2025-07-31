@@ -11,6 +11,7 @@ def run_system_controller(
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.module_loader import ensure_modules_loaded
     from aiperf.services import SystemController
 
     logger = AIPerfLogger(__name__)
@@ -23,6 +24,8 @@ def run_system_controller(
 
     # Create and start the system controller
     logger.info("Starting AIPerf System")
+
+    ensure_modules_loaded()
 
     try:
         bootstrap_and_run_service(
