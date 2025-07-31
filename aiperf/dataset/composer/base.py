@@ -4,8 +4,6 @@
 import logging
 from abc import ABC, abstractmethod
 
-import numpy as np
-
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums.model_enums import ModelSelectionStrategy
 from aiperf.common.models import Conversation
@@ -42,7 +40,7 @@ class BaseDatasetComposer(ABC):
             self.config.endpoint.model_selection_strategy
             == ModelSelectionStrategy.RANDOM
         ):
-            return np.random.choice(self.config.endpoint.model_names)
+            return self.rng.choice(self.config.endpoint.model_names)
         elif (
             self.config.endpoint.model_selection_strategy
             == ModelSelectionStrategy.ROUND_ROBIN
