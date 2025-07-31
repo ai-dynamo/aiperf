@@ -12,7 +12,6 @@ from openai.types.create_embedding_response import CreateEmbeddingResponse
 from openai.types.responses.response import Response as ResponsesModel
 from pydantic import BaseModel
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import CaseInsensitiveStrEnum, EndpointType
 from aiperf.common.factories import ResponseExtractorFactory
 from aiperf.common.models import (
@@ -24,6 +23,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
+from aiperf.inference.model_endpoint_info import ModelEndpointInfo
 
 logger = logging.getLogger(__name__)
 

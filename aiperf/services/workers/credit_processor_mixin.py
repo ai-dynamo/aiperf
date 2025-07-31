@@ -5,7 +5,6 @@ import asyncio
 import time
 from typing import Protocol, runtime_checkable
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import NotInitializedError
@@ -25,6 +24,7 @@ from aiperf.common.protocols import (
     RequestClientProtocol,
     RequestConverterProtocol,
 )
+from aiperf.inference.model_endpoint_info import ModelEndpointInfo
 
 
 @runtime_checkable

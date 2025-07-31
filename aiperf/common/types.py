@@ -19,7 +19,6 @@ from aiperf.common.enums import (
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from aiperf.clients.model_endpoint_info import ModelEndpointInfo
     from aiperf.common.enums import (
         CaseInsensitiveStrEnum,
         CommAddress,
@@ -30,7 +29,7 @@ if TYPE_CHECKING:
     from aiperf.common.mixins.hooks_mixin import HooksMixin
     from aiperf.common.models.base_models import AIPerfBaseModel
     from aiperf.common.protocols import ServiceProtocol
-
+    from aiperf.inference.model_endpoint_info import ModelEndpointInfo
 
 AnyT = Any
 AnyClassT = type | UnionType

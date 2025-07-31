@@ -9,19 +9,19 @@ from unittest.mock import AsyncMock, Mock, patch
 import aiohttp
 import pytest
 
-from aiperf.clients.http.aiohttp_client import (
-    AioHttpClientMixin,
-)
-from aiperf.clients.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 from aiperf.common.models import (
     SSEMessage,
+)
+from aiperf.inference.clients.http.aiohttp_client import (
+    AioHttpClientMixin,
+)
+from aiperf.inference.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
 )
 from tests.clients.http.conftest import (
     assert_error_request_record,

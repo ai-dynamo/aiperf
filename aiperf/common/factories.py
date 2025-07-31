@@ -35,7 +35,6 @@ from aiperf.common.types import (
 if TYPE_CHECKING:
     # NOTE: These imports are for the factory class type hints.
     #       We do not want to import these classes directly.
-    from aiperf.clients.model_endpoint_info import ModelEndpointInfo
     from aiperf.common.comms.zmq.zmq_proxy_base import BaseZMQProxy
     from aiperf.common.config import (
         BaseZMQCommunicationConfig,
@@ -49,13 +48,14 @@ if TYPE_CHECKING:
         DataExporterProtocol,
         InferenceClientProtocol,
         PostProcessorProtocol,
-        RequestConverterProtocol,  # noqa: F401
+        # noqa: F401
         ResponseExtractorProtocol,
         ServiceManagerProtocol,
-        ServiceProtocol,  # noqa: F401
+        # noqa: F401
         StreamingPostProcessorProtocol,
     )
     from aiperf.data_exporter.exporter_config import ExporterConfig
+    from aiperf.inference.model_endpoint_info import ModelEndpointInfo
     from aiperf.services.dataset.composer.base import BaseDatasetComposer
     from aiperf.services.dataset.loader.protocol import (
         CustomDatasetLoaderProtocol,

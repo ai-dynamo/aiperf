@@ -8,8 +8,6 @@ from typing import Any
 
 import aiohttp
 
-from aiperf.clients.http.defaults import AioHttpDefaults, SocketDefaults
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import SSEFieldType
 from aiperf.common.models import (
     ErrorDetails,
@@ -18,6 +16,8 @@ from aiperf.common.models import (
     SSEMessage,
     TextResponse,
 )
+from aiperf.inference.clients.http.defaults import AioHttpDefaults, SocketDefaults
+from aiperf.inference.model_endpoint_info import ModelEndpointInfo
 
 ################################################################################
 # AioHTTP Client

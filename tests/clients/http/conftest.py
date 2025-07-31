@@ -7,8 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import aiohttp
 import pytest
 
-from aiperf.clients.http.aiohttp_client import AioHttpClientMixin, create_tcp_connector
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.config import UserConfig
 from aiperf.common.config.user_config import EndPointConfig
 from aiperf.common.enums import EndpointType
@@ -17,6 +15,11 @@ from aiperf.common.models import (
     SSEMessage,
     TextResponse,
 )
+from aiperf.inference.clients.http.aiohttp_client import (
+    AioHttpClientMixin,
+    create_tcp_connector,
+)
+from aiperf.inference.model_endpoint_info import ModelEndpointInfo
 
 
 @pytest.fixture

@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.comms.base_comms import (
     PushClientProtocol,
     RequestClientProtocol,
@@ -32,6 +31,7 @@ from aiperf.common.messages.command_messages import (
 )
 from aiperf.common.mixins import ProcessHealthMixin, PullClientMixin
 from aiperf.common.models import WorkerPhaseTaskStats
+from aiperf.inference.model_endpoint_info import ModelEndpointInfo
 from aiperf.services.base_component_service import BaseComponentService
 from aiperf.services.workers.credit_processor_mixin import CreditProcessorMixin
 

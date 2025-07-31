@@ -8,7 +8,7 @@ import pytest
 from aiperf.common.messages import ConversationTurnResponseMessage
 from aiperf.common.models import RequestRecord, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.inference_result_parser.inference_result_parser import (
+from aiperf.inference.parsers.inference_result_parser import (
     InferenceResultParser,
 )
 

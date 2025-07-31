@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.comms.base_comms import (
     PushClientProtocol,
     RequestClientProtocol,
@@ -30,6 +29,7 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.inference.model_endpoint_info import ModelEndpointInfo
 from aiperf.services.base_component_service import BaseComponentService
 
 

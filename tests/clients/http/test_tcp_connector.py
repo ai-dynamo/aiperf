@@ -11,8 +11,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.clients.http import SocketDefaults
-from aiperf.clients.http.aiohttp_client import create_tcp_connector
+from aiperf.inference.clients.http import SocketDefaults
+from aiperf.inference.clients.http.aiohttp_client import create_tcp_connector
 
 ################################################################################
 # Test create_tcp_connector

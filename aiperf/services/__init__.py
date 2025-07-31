@@ -45,11 +45,6 @@ from aiperf.services.dataset import (
     sample_positive_normal,
     sample_positive_normal_integer,
 )
-from aiperf.services.inference_result_parser import (
-    InferenceResultParser,
-    OpenAIObject,
-    OpenAIResponseExtractor,
-)
 from aiperf.services.records_manager import (
     BaseMetric,
     BaseStreamingPostProcessor,
@@ -132,7 +127,6 @@ __all__ = [
     "DatasetManager",
     "FixedScheduleStrategy",
     "ImageGenerator",
-    "InferenceResultParser",
     "InputSequenceLengthMetric",
     "InterTokenLatencyMetric",
     "KubernetesServiceManager",
@@ -146,8 +140,6 @@ __all__ = [
     "MultiProcessServiceManager",
     "MultiTurn",
     "MultiTurnDatasetLoader",
-    "OpenAIObject",
-    "OpenAIResponseExtractor",
     "OutputSequenceLengthMetric",
     "OutputTokenCountMetric",
     "OutputTokenThroughputMetric",

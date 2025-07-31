@@ -3,25 +3,26 @@
 
 from typing import Any
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import EndpointType
 from aiperf.common.factories import RequestConverterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Turn
+from aiperf.inference.model_endpoint_info import ModelEndpointInfo
 
 
 # TODO: Not fully implemented yet.
-@RequestConverterFactory.register(EndpointType.OPENAI_COMPLETIONS)
-class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
-    """Request converter for OpenAI completion requests."""
+@RequestConverterFactory.register(EndpointType.OPENAI_RESPONSES)
+class OpenAIResponsesRequestConverter(AIPerfLoggerMixin):
+    """Request converter for OpenAI Responses requests."""
 
     async def format_payload(
         self,
         model_endpoint: ModelEndpointInfo,
         turn: Turn,
     ) -> dict[str, Any]:
-        """Format payload for a completion request."""
+        """Format payload for a responses request."""
 
+        # TODO: Add support for image and audio inputs.
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]
@@ -29,8 +30,10 @@ class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
         extra = model_endpoint.endpoint.extra or {}
 
         payload = {
-            "prompt": prompts,
+            "input": prompts,
             "model": model_endpoint.primary_model_name,
+            # TODO: How do we handle max_output_tokens? Should be provided by OSL logic
+            "max_output_tokens": extra.pop("max_output_tokens", None),
             "stream": model_endpoint.endpoint.streaming,
         }
 
