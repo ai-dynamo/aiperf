@@ -21,7 +21,7 @@ from aiperf.common.config import (
     TurnConfig,
     TurnDelayConfig,
 )
-from aiperf.common.config.user_config import UserConfig
+from aiperf.common.config.user_config import EndpointConfig, UserConfig
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
 
@@ -74,7 +74,9 @@ class TestSyntheticDatasetComposer:
     def test_initialization_with_all_zero_mean(self, mock_tokenizer):
         """Test initialization with no generators enabled."""
         config = UserConfig(
-            model_names=["test_model"],
+            endpoint=EndpointConfig(
+                model_names=["test_model"],
+            ),
             input=InputConfig(
                 conversation=ConversationConfig(num=5),
                 prompt=PromptConfig(input_tokens=InputTokensConfig(mean=0)),
@@ -429,7 +431,9 @@ class TestSyntheticDatasetComposer:
         mock_sample.return_value = 1
 
         config = UserConfig(
-            model_names=["test-model"],
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+            ),
             input=InputConfig(
                 conversation=ConversationConfig(num=2),
                 prompt=PromptConfig(

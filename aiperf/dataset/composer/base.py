@@ -42,13 +42,13 @@ class BaseDatasetComposer(ABC):
             self.config.endpoint.model_selection_strategy
             == ModelSelectionStrategy.RANDOM
         ):
-            return np.random.choice(self.config.model_names)
+            return np.random.choice(self.config.endpoint.model_names)
         elif (
             self.config.endpoint.model_selection_strategy
             == ModelSelectionStrategy.ROUND_ROBIN
         ):
-            model_name = self.config.model_names[
-                self.turn_count % len(self.config.model_names)
+            model_name = self.config.endpoint.model_names[
+                self.turn_count % len(self.config.endpoint.model_names)
             ]
             self.turn_count += 1
             return model_name

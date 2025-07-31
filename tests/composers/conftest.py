@@ -164,7 +164,7 @@ def custom_config() -> UserConfig:
     """Basic custom configuration for testing."""
     # Use model_construct to bypass validation for testing
     return UserConfig(
-        model_names=["test-model"],
+        endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig.model_construct(
             file="test_data.jsonl",
             custom_dataset_type=CustomDatasetType.SINGLE_TURN,
