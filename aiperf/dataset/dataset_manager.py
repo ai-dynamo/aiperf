@@ -81,7 +81,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         if tokenizer_name is None:
             # TODO: What do we do if there are multiple models?
             # How will we know which tokenizer to use?
-            tokenizer_name = self.user_config.model_names[0]
+            tokenizer_name = self.user_config.endpoint.model_names[0]
 
         tokenizer = Tokenizer.from_pretrained(
             tokenizer_name,
