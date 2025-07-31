@@ -54,7 +54,6 @@ class ProcessingStatsStreamer(BaseStreamingPostProcessor):
             self.worker_stats[worker_id].processed += 1
             self.processing_stats.processed += 1
         else:
-            self.warning(f"Received invalid inference results: {record}")
             self.worker_stats[worker_id].errors += 1
             self.processing_stats.errors += 1
 
