@@ -155,10 +155,6 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
         self.debug(
             lambda: f"Backend {self.backend_socket.socket_type.name} socket binding to: {self.backend_address} (for {self.frontend_socket.socket_type.name} services)"
         )
-        if hasattr(self.backend_socket, "proxy_id"):
-            self.debug(
-                lambda: f"Backend socket identity: {self.backend_socket.proxy_id}"
-            )
 
         try:
             exceptions = await asyncio.gather(

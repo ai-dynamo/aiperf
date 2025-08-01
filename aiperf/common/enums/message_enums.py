@@ -15,6 +15,7 @@ class MessageType(CaseInsensitiveStrEnum):
     ALL_RECORDS_RECEIVED = "all_records_received"
     COMMAND = "command"
     COMMAND_RESPONSE = "command_response"
+    CONNECTION_PROBE = "connection_probe"
     CONVERSATION_REQUEST = "conversation_request"
     CONVERSATION_RESPONSE = "conversation_response"
     CONVERSATION_TURN_REQUEST = "conversation_turn_request"

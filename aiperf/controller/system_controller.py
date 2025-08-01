@@ -7,6 +7,10 @@ from typing import cast
 
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.constants import (
+    DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
+    DEFAULT_PROFILE_START_TIMEOUT,
+)
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
@@ -23,8 +27,6 @@ from aiperf.common.messages import (
     HeartbeatMessage,
     NotificationMessage,
     ProcessRecordsResultMessage,
-    ProfileConfigureCommand,
-    RegistrationMessage,
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
     StatusMessage,
@@ -32,7 +34,9 @@ from aiperf.common.messages import (
 from aiperf.common.messages.command_messages import (
     CommandErrorResponse,
     ProfileCancelCommand,
+    ProfileConfigureCommand,
     ProfileStartCommand,
+    RegisterServiceCommand,
     ShutdownCommand,
 )
 from aiperf.common.models import ServiceRunInfo
@@ -117,42 +121,53 @@ class SystemController(SignalHandlerMixin, BaseService):
         - Start all required services
         """
         self.debug("System Controller is bootstrapping services")
-
         # Start all required services
-        try:
-            await self.service_manager.start()
-        except Exception as e:
-            raise self._service_error(
-                "Failed to initialize all services",
-            ) from e
+        await self.service_manager.start()
         await self.service_manager.wait_for_all_services_registration(
             stop_event=self._stop_requested_event,
         )
 
-        # TODO: HACK: Wait for 1 second to ensure registrations made. This needs to be
-        # removed once we have the ability to track registrations of services and their state before
-        # starting the profiling.
-        await asyncio.sleep(1)
-
-        self.info("AIPerf System is READY")
-
+        self.info("AIPerf System is CONFIGURING")
+        await self._profile_configure_all_services()
+        self.info("AIPerf System is CONFIGURED")
         await self._start_profiling_all_services()
+        self.info("AIPerf System is PROFILING")
 
-        self.debug("All required services started successfully")
-        self.info("AIPerf System is RUNNING")
+    async def _profile_configure_all_services(self) -> None:
+        """Configure all services to start profiling.
+
+        This is a blocking call that will wait for all services to be configured before returning. This way
+        we can ensure that all services are configured before we start profiling.
+        """
+        self.info("Configuring all services to start profiling")
+        begin = time.perf_counter()
+        await self.send_command_and_wait_for_all_responses(
+            ProfileConfigureCommand(
+                service_id=self.service_id,
+                config=self.user_config,
+            ),
+            list(self.service_manager.service_id_map.keys()),
+            timeout=DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
+        )
+        duration = time.perf_counter() - begin
+        self.info(f"All services configured in {duration:.2f} seconds")
 
     async def _start_profiling_all_services(self) -> None:
         """Tell all services to start profiling."""
-        # TODO: HACK: Wait for 1 second to ensure services are ready
-        await asyncio.sleep(1)
-
-        self.debug("Sending START_PROFILING command to all services")
-        await self.publish(
-            ProfileStartCommand(service_id=self.service_id),
+        self.debug("Sending PROFILE_START command to all services")
+        await self.send_command_and_wait_for_all_responses(
+            ProfileStartCommand(
+                service_id=self.service_id,
+            ),
+            list(self.service_manager.service_id_map.keys()),
+            timeout=DEFAULT_PROFILE_START_TIMEOUT,
         )
+        self.info("All services started profiling successfully")
 
-    @on_message(MessageType.REGISTRATION)
-    async def _process_registration_message(self, message: RegistrationMessage) -> None:
+    @on_command(CommandType.REGISTER_SERVICE)
+    async def _handle_register_service_command(
+        self, message: RegisterServiceCommand
+    ) -> None:
         """Process a registration message from a service. It will
         add the service to the service manager and send a configure command
         to the service.
@@ -160,42 +175,30 @@ class SystemController(SignalHandlerMixin, BaseService):
         Args:
             message: The registration message to process
         """
-        service_id = message.service_id
-        service_type = message.service_type
 
         self.debug(
-            lambda: f"Processing registration from {service_type} with ID: {service_id}"
+            lambda: f"Processing registration from {message.service_type} with ID: {message.service_id}"
         )
 
         service_info = ServiceRunInfo(
             registration_status=ServiceRegistrationStatus.REGISTERED,
-            service_type=service_type,
-            service_id=service_id,
+            service_type=message.service_type,
+            service_id=message.service_id,
             first_seen=time.time_ns(),
             state=message.state,
             last_seen=time.time_ns(),
         )
 
-        self.service_manager.service_id_map[service_id] = service_info
-        if service_type not in self.service_manager.service_map:
-            self.service_manager.service_map[service_type] = []
-        self.service_manager.service_map[service_type].append(service_info)
+        self.service_manager.service_id_map[message.service_id] = service_info
+        if message.service_type not in self.service_manager.service_map:
+            self.service_manager.service_map[message.service_type] = []
+        self.service_manager.service_map[message.service_type].append(service_info)
 
-        self.info(lambda: f"Registered service: {service_type=} with ID: {service_id=}")
-
-        # Send configure command to the newly registered service
         try:
-            await self.publish(
-                ProfileConfigureCommand(service_id=service_id, config=self.user_config)
-            )
-        except Exception as e:
-            raise self._service_error(
-                f"Failed to send configure command to {service_type} (ID: {service_id})",
-            ) from e
-
-        self.debug(
-            lambda: f"Sent configure command to {service_type} (ID: {service_id})"
-        )
+            type_name = ServiceType(message.service_type).name.title().replace("_", " ")
+        except (TypeError, ValueError):
+            type_name = message.service_type
+        self.info(lambda: f"Registered {type_name} (id: '{message.service_id}')")
 
     @on_message(MessageType.HEARTBEAT)
     async def _process_heartbeat_message(self, message: HeartbeatMessage) -> None:

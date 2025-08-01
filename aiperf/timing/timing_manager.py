@@ -151,7 +151,9 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
             raise InvalidStateError("No credit issuing strategy configured")
 
         self.execute_async(self._credit_issuing_strategy.start())
-        self.info("Profiling started")
+        self.info(
+            f"Credit issuing strategy for {self.config.timing_mode.title()} started"
+        )
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _handle_profile_cancel_command(

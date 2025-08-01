@@ -4,7 +4,6 @@ import json
 import time
 from typing import ClassVar
 
-import orjson
 from pydantic import Field
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -97,9 +96,8 @@ class Message(AIPerfBaseModel):
             raise ValueError(f"Unknown message type: {message_type}")
         return message_class.model_validate_json(json_str)
 
-    def to_json(self) -> str:
-        """Fast serialization without full validation"""
-        return orjson.dumps(self.__dict__).decode("utf-8")
+    def __str__(self) -> str:
+        return self.model_dump_json()
 
 
 class RequiresRequestNSMixin(Message):
