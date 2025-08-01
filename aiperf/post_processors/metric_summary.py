@@ -3,7 +3,13 @@
 
 import pandas as pd
 
-from aiperf.common.enums import EndpointType, MetricTag, MetricType, PostProcessorType
+from aiperf.common.enums import (
+    EndpointType,
+    MetricTag,
+    MetricTimeType,
+    MetricType,
+    PostProcessorType,
+)
 from aiperf.common.factories import PostProcessorFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult, ParsedResponseRecord
@@ -141,13 +147,18 @@ class MetricSummary(AIPerfLoggerMixin):
 def record_from_dataframe(df: pd.DataFrame, metric: BaseMetric) -> MetricResult:
     """Create a Record from a DataFrame."""
 
+    # Convert nanoseconds to milliseconds if needed
     column = df[metric.tag]
+    unit = getattr(metric, "unit", None)
+    if unit == MetricTimeType.NANOSECONDS:
+        column = column / 1_000_000
+        unit = MetricTimeType.MILLISECONDS
     quantiles = column.quantile([0.01, 0.05, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99])
 
     return MetricResult(
         tag=metric.tag,
         header=metric.header,
-        unit=metric.unit.short_name() if metric.unit else "",
+        unit=unit,
         avg=column.mean(),
         min=column.min(),
         max=column.max(),

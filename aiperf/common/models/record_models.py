@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import Field, SerializeAsAny
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase, SSEFieldType
+from aiperf.common.enums import CreditPhase, MetricTimeType, SSEFieldType
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 
@@ -18,7 +18,7 @@ class MetricResult(AIPerfBaseModel):
     """The result values of a single metric."""
 
     tag: str = Field(description="The unique identifier of the metric")
-    unit: str = Field(description="The unit of the metric, e.g. 'ms'")
+    unit: MetricTimeType | None = Field(description="The unit of the metric, e.g. 'ms'")
     header: str = Field(
         description="The user friendly name of the metric (e.g. 'Inter Token Latency')"
     )

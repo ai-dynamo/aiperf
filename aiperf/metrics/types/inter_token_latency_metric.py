@@ -13,7 +13,7 @@ class InterTokenLatencyMetric(BaseMetric):
     """
 
     tag = MetricTag.INTER_TOKEN_LATENCY
-    unit = MetricTimeType.MILLISECONDS
+    unit = MetricTimeType.NANOSECONDS
     larger_is_better = False
     header = "Inter Token Latency (ITL)"
     type = MetricType.METRIC_OF_METRICS
