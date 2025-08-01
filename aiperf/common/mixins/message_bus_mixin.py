@@ -76,7 +76,7 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
         # subscribed to before the connection probe is received.
         await self.sub_client.subscribe(
             # NOTE: It is important to use `self.id` here, as not all message bus clients are services
-            f"{self.id}.{MessageType.CONNECTION_PROBE}",
+            f"{MessageType.CONNECTION_PROBE}.{self.id}",
             self._process_connection_probe_message,
         )
 

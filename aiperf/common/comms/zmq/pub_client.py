@@ -104,7 +104,7 @@ class ZMQPubClient(BaseZMQClient):
         # NOTE: Keep in mind that subscriptions in ZMQ are prefix based wildcards, so the unique portion has to come first.
         if isinstance(message, TargetedServiceMessage):
             if message.target_service_id:
-                return f"{message.target_service_id}{TOPIC_DELIMITER}{message.message_type}{TOPIC_END}"
+                return f"{message.message_type}{TOPIC_DELIMITER}{message.target_service_id}{TOPIC_END}"
             if message.target_service_type:
-                return f"{message.target_service_type}{TOPIC_DELIMITER}{message.message_type}{TOPIC_END}"
+                return f"{message.message_type}{TOPIC_DELIMITER}{message.target_service_type}{TOPIC_END}"
         return f"{message.message_type}{TOPIC_END}"

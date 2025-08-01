@@ -153,10 +153,11 @@ class ZMQSubClient(BaseZMQClient):
             lambda: f"Received message from topic: '{topic}', message: {message_json}"
         )
 
-        # Targeted messages are in the format "<target>.<message_type>"
-        # grab the last part which is the message type
+        # Targeted messages are in the format "<message_type>.<target_service_id>"
+        # or "<message_type>.<target_service_type>"
+        # grab the first part which is the message type
         message_type = (
-            topic.split(TOPIC_DELIMITER)[-1] if TOPIC_DELIMITER in topic else topic
+            topic.split(TOPIC_DELIMITER)[0] if TOPIC_DELIMITER in topic else topic
         )
 
         if message_type == MessageType.COMMAND:
