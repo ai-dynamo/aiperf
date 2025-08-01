@@ -10,7 +10,7 @@ from aiperf.common.factories import DataExporterFactory
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.exporter_config import ExporterConfig
-from aiperf.services.records_manager.metrics.types import (
+from aiperf.metrics.types import (
     InputSequenceLengthMetric,
     InterTokenLatencyMetric,
     OutputSequenceLengthMetric,
