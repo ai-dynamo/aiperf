@@ -186,10 +186,10 @@ class ZMQSubClient(BaseZMQClient):
         while not self.stop_requested:
             try:
                 topic_bytes, message_bytes = await self.socket.recv_multipart()
-                self.trace(
-                    lambda topic=topic_bytes,
-                    message=message_bytes: f"Socket received message: {topic} {message}"
-                )
+                if self.is_trace_enabled:
+                    self.trace(
+                        f"Socket received message: {topic_bytes} {message_bytes}"
+                    )
                 self.execute_async(self._handle_message(topic_bytes, message_bytes))
 
             except zmq.Again:

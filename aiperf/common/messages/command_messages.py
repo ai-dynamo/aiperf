@@ -18,7 +18,6 @@ from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import (
     ErrorDetails,
     ProcessRecordsResult,
-    ServiceInfo,
     exclude_if_none,
 )
 from aiperf.common.types import CommandTypeT, MessageTypeT, ServiceTypeT
@@ -314,12 +313,6 @@ class ProfileCancelCommand(CommandMessage):
     command: CommandTypeT = CommandType.PROFILE_CANCEL
 
 
-class DiscoverServicesCommand(CommandMessage):
-    """Command message sent to request services to discover services."""
-
-    command: CommandTypeT = CommandType.DISCOVER_SERVICES
-
-
 class ShutdownCommand(CommandMessage):
     """Command message sent to request a service to shutdown."""
 
@@ -347,14 +340,6 @@ class ProcessRecordsResponse(CommandSuccessResponse):
         default=None,
         description="The result of the process records command",
     )
-
-
-class DiscoverServicesResponse(CommandSuccessResponse):
-    """Response to the discover services command."""
-
-    command: CommandTypeT = CommandType.DISCOVER_SERVICES
-
-    data: ServiceInfo = Field(..., description="The service info")  # type: ignore
 
 
 class ConnectionProbeMessage(TargetedServiceMessage):

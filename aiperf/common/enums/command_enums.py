@@ -5,7 +5,6 @@ from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
 class CommandType(CaseInsensitiveStrEnum):
-    DISCOVER_SERVICES = "discover_services"
     PROCESS_RECORDS = "process_records"
     PROFILE_CANCEL = "profile_cancel"
     PROFILE_CONFIGURE = "profile_configure"

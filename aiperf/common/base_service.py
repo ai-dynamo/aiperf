@@ -14,7 +14,6 @@ from aiperf.common.hooks import on_command
 from aiperf.common.messages import CommandMessage
 from aiperf.common.messages.command_messages import CommandAcknowledgedResponse
 from aiperf.common.mixins import CommandHandlerMixin
-from aiperf.common.models import ServiceInfo
 from aiperf.common.types import ServiceTypeT
 
 
@@ -85,17 +84,6 @@ class BaseService(CommandHandlerMixin, ABC):
                 f"Failed to stop service {self} ({self.service_id}) after receiving shutdown command: {e}. Killing."
             )
             await self._kill()
-
-    @on_command(CommandType.DISCOVER_SERVICES)
-    async def _on_discover_services_command(
-        self, message: CommandMessage
-    ) -> ServiceInfo:
-        self.debug(f"Received discover services command from {message.service_id}")
-        return ServiceInfo(
-            service_id=self.service_id,
-            service_type=self.service_type,
-            state=self.state,
-        )
 
     async def stop(self) -> None:
         """This overrides the base class stop method to handle the case where the service is already stopping.
