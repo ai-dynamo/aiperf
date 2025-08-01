@@ -30,7 +30,7 @@ class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
 
         payload = {
             "prompt": prompts,
-            "model": model_endpoint.primary_model_name,
+            "model": turn.model or model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }
 

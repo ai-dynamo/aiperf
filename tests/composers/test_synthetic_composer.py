@@ -21,6 +21,7 @@ from aiperf.common.config import (
     TurnConfig,
     TurnDelayConfig,
 )
+from aiperf.common.config.user_config import EndpointConfig, UserConfig
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
 
@@ -35,7 +36,7 @@ class TestSyntheticDatasetComposer:
         composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
 
         assert composer.config == synthetic_config
-        assert composer.config.conversation.num == 5
+        assert composer.config.input.conversation.num == 5
         assert composer.prompt_generator is not None
         assert composer.include_image is False
         assert composer.include_audio is False
@@ -44,8 +45,8 @@ class TestSyntheticDatasetComposer:
         """Test initialization with image generation enabled."""
         composer = SyntheticDatasetComposer(image_config, mock_tokenizer)
 
-        assert composer.config.image.width.mean == 10
-        assert composer.config.image.height.mean == 10
+        assert composer.config.input.image.width.mean == 10
+        assert composer.config.input.image.height.mean == 10
         assert composer.include_image is True
         assert composer.include_audio is False
 
@@ -53,7 +54,7 @@ class TestSyntheticDatasetComposer:
         """Test initialization with audio generation enabled."""
         composer = SyntheticDatasetComposer(audio_config, mock_tokenizer)
 
-        assert composer.config.audio.length.mean == 2
+        assert composer.config.input.audio.length.mean == 2
         assert composer.include_image is False
         assert composer.include_audio is True
 
@@ -63,21 +64,27 @@ class TestSyntheticDatasetComposer:
 
         assert composer.include_image is True
         assert composer.include_audio is True
-        assert composer.config.image.batch_size == 2
-        assert composer.config.audio.batch_size == 2
-        assert composer.config.image.width.mean == 10
-        assert composer.config.image.height.mean == 10
-        assert composer.config.audio.length.mean == 2
+        input_config = composer.config.input
+        assert input_config.image.batch_size == 2
+        assert input_config.audio.batch_size == 2
+        assert input_config.image.width.mean == 10
+        assert input_config.image.height.mean == 10
+        assert input_config.audio.length.mean == 2
 
     def test_initialization_with_all_zero_mean(self, mock_tokenizer):
         """Test initialization with no generators enabled."""
-        config = InputConfig(
-            conversation=ConversationConfig(num=5),
-            prompt=PromptConfig(input_tokens=InputTokensConfig(mean=0)),
-            image=ImageConfig(
-                width=ImageWidthConfig(mean=0), height=ImageHeightConfig(mean=0)
+        config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test_model"],
             ),
-            audio=AudioConfig(length=AudioLengthConfig(mean=0)),
+            input=InputConfig(
+                conversation=ConversationConfig(num=5),
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=0)),
+                image=ImageConfig(
+                    width=ImageWidthConfig(mean=0), height=ImageHeightConfig(mean=0)
+                ),
+                audio=AudioConfig(length=AudioLengthConfig(mean=0)),
+            ),
         )
 
         with pytest.raises(ValueError):
@@ -170,7 +177,7 @@ class TestSyntheticDatasetComposer:
         conversations = composer.create_dataset()
 
         # Test conversations include both image and audio payloads
-        assert len(conversations) == multimodal_config.conversation.num
+        assert len(conversations) == multimodal_config.input.conversation.num
         for conversation in conversations:
             for turn in conversation.turns:
                 # Test correct batch sizes for all modalities
@@ -225,8 +232,8 @@ class TestSyntheticDatasetComposer:
 
     def test_create_first_turn(self, synthetic_config, mock_tokenizer):
         """Test _create_turn method for first turn in conversation."""
-        synthetic_config.conversation.turn.delay.mean = 1500
-        synthetic_config.conversation.turn.delay.stddev = 0
+        synthetic_config.input.conversation.turn.delay.mean = 1500
+        synthetic_config.input.conversation.turn.delay.stddev = 0
 
         composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
 
@@ -253,8 +260,8 @@ class TestSyntheticDatasetComposer:
 
     def test_create_turn_with_all_modalities(self, multimodal_config, mock_tokenizer):
         """Test _create_turn method with text, image, and audio."""
-        multimodal_config.conversation.turn.delay.mean = 1500
-        multimodal_config.conversation.turn.delay.stddev = 0
+        multimodal_config.input.conversation.turn.delay.mean = 1500
+        multimodal_config.input.conversation.turn.delay.stddev = 0
 
         composer = SyntheticDatasetComposer(multimodal_config, mock_tokenizer)
 
@@ -345,7 +352,7 @@ class TestSyntheticDatasetComposer:
     ):
         """Test _generate_text_payloads with batch_size > 1."""
         mock_generate.return_value = "Generated text"
-        synthetic_config.prompt.batch_size = 3
+        synthetic_config.input.prompt.batch_size = 3
 
         composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
 
@@ -411,7 +418,7 @@ class TestSyntheticDatasetComposer:
 
     def test_zero_conversations(self, synthetic_config, mock_tokenizer):
         """Test behavior with zero conversations requested."""
-        synthetic_config.conversation.num = 0
+        synthetic_config.input.conversation.num = 0
 
         composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
         conversations = composer.create_dataset()
@@ -423,16 +430,21 @@ class TestSyntheticDatasetComposer:
         """Test behavior with edge case statistical parameters."""
         mock_sample.return_value = 1
 
-        config = InputConfig(
-            conversation=ConversationConfig(num=2),
-            prompt=PromptConfig(
-                mean=1,  # Very small mean
-                stddev=0,  # Zero stddev
-                prefix_prompt=PrefixPromptConfig(pool_size=0),
+        config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
             ),
-            turn=TurnConfig(
-                mean=100,  # Large mean
-                stddev=50,  # Large stddev
+            input=InputConfig(
+                conversation=ConversationConfig(num=2),
+                prompt=PromptConfig(
+                    mean=1,  # Very small mean
+                    stddev=0,  # Zero stddev
+                    prefix_prompt=PrefixPromptConfig(pool_size=0),
+                ),
+                turn=TurnConfig(
+                    mean=100,  # Large mean
+                    stddev=50,  # Large stddev
+                ),
             ),
         )
 
@@ -448,7 +460,7 @@ class TestSyntheticDatasetComposer:
         self, synthetic_config, num_conversations, mock_tokenizer
     ):
         """Test dataset creation with different conversation counts."""
-        synthetic_config.conversation.num = num_conversations
+        synthetic_config.input.conversation.num = num_conversations
 
         composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
         conversations = composer.create_dataset()
@@ -464,7 +476,7 @@ class TestSyntheticDatasetComposer:
         """Test dataset creation with different batch sizes."""
         mock_sample.return_value = 1
 
-        synthetic_config.prompt.batch_size = batch_size
+        synthetic_config.input.prompt.batch_size = batch_size
 
         composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
         conversations = composer.create_dataset()
@@ -493,11 +505,11 @@ class TestSyntheticDatasetComposer:
 
     def test_reproducibility_with_fixed_seed(self, multimodal_config, mock_tokenizer):
         """Test that dataset generation is reproducible with fixed random seed."""
-        multimodal_config.prompt.input_tokens.stddev = 2
-        multimodal_config.image.width.stddev = 2
-        multimodal_config.image.height.stddev = 2
-        multimodal_config.audio.length.stddev = 2
-        multimodal_config.conversation.turn = TurnConfig(
+        multimodal_config.input.prompt.input_tokens.stddev = 2
+        multimodal_config.input.image.width.stddev = 2
+        multimodal_config.input.image.height.stddev = 2
+        multimodal_config.input.audio.length.stddev = 2
+        multimodal_config.input.conversation.turn = TurnConfig(
             mean=2, stddev=2, delay=TurnDelayConfig(mean=1500, stddev=2)
         )
 
@@ -526,3 +538,33 @@ class TestSyntheticDatasetComposer:
                 assert turn1.images[0].contents == turn2.images[0].contents
                 assert turn1.audios[0].contents == turn2.audios[0].contents
                 assert turn1.delay == turn2.delay
+
+    # ============================================================================
+    # Model Selection Strategy Tests
+    # ============================================================================
+
+    @patch("random.choice", return_value="test-model-1")
+    def test_model_selection_random(self, mock_choice, custom_config, mock_tokenizer):
+        """Test random model selection strategy."""
+
+        custom_config.endpoint.model_selection_strategy = "random"
+        composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
+
+        conversations = composer.create_dataset()
+
+        for conversation in conversations:
+            for turn in conversation.turns:
+                assert turn.model == "test-model-1"
+
+    def test_model_selection_round_robin(self, custom_config, mock_tokenizer):
+        custom_config.endpoint.model_selection_strategy = "round_robin"
+        custom_config.endpoint.model_names = ["test-model-1", "test-model-2"]
+
+        composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        # Check that models are selected in round-robin fashion
+        for i, conversation in enumerate(conversations):
+            for j, turn in enumerate(conversation.turns):
+                expected_model = "test-model-1" if (i + j) % 2 == 0 else "test-model-2"
+                assert turn.model == expected_model

@@ -48,7 +48,6 @@ class EndpointConfig(BaseConfig):
             name=(
                 "--model-selection-strategy",  # GenAI-Perf
             ),
-            parse=False,  # TODO: Not yet supported
             group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.MODEL_SELECTION_STRATEGY

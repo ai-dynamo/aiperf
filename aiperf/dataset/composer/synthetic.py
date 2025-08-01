@@ -3,7 +3,7 @@
 
 import uuid
 
-from aiperf.common.config import InputConfig
+from aiperf.common.config import UserConfig
 from aiperf.common.enums import ComposerType
 from aiperf.common.factories import ComposerFactory
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
@@ -14,7 +14,7 @@ from aiperf.dataset.composer.base import BaseDatasetComposer
 
 @ComposerFactory.register(ComposerType.SYNTHETIC)
 class SyntheticDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: InputConfig, tokenizer: Tokenizer):
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer):
         super().__init__(config, tokenizer)
 
         if (
@@ -38,12 +38,12 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             list[Conversation]: A list of conversation objects.
         """
         conversations = []
-        for _ in range(self.config.conversation.num):
+        for _ in range(self.config.input.conversation.num):
             conversation = Conversation(session_id=str(uuid.uuid4()))
 
             num_turns = utils.sample_positive_normal_integer(
-                self.config.conversation.turn.mean,
-                self.config.conversation.turn.stddev,
+                self.config.input.conversation.turn.mean,
+                self.config.input.conversation.turn.stddev,
             )
             self.logger.debug("Creating conversation with %d turns", num_turns)
 
@@ -77,8 +77,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         # Add randomized delays between each turn. Skip if first turn.
         if not is_first:
             turn.delay = utils.sample_positive_normal_integer(
-                self.config.conversation.turn.delay.mean,
-                self.config.conversation.turn.delay.stddev,
+                self.config.input.conversation.turn.delay.mean,
+                self.config.input.conversation.turn.delay.stddev,
             )
 
         if not turn.texts and not turn.images and not turn.audios:
@@ -87,6 +87,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 "Please enable at least one of prompt, image, or audio by "
                 "setting the mean to a positive value."
             )
+
+        turn.model = self._select_model_name()
 
         return turn
 
@@ -103,10 +105,10 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Text: A text payload object.
         """
         text = Text(name="text")
-        for _ in range(self.config.prompt.batch_size):
+        for _ in range(self.config.input.prompt.batch_size):
             prompt = self.prompt_generator.generate(
-                mean=self.config.prompt.input_tokens.mean,
-                stddev=self.config.prompt.input_tokens.stddev,
+                mean=self.config.input.prompt.input_tokens.mean,
+                stddev=self.config.input.prompt.input_tokens.stddev,
             )
 
             if self.prefix_prompt_enabled and is_first:
@@ -125,7 +127,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Image: An image payload object.
         """
         image = Image(name="image_url")
-        for _ in range(self.config.image.batch_size):
+        for _ in range(self.config.input.image.batch_size):
             data = self.image_generator.generate()
             image.contents.append(data)
         return image
@@ -138,19 +140,22 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Audio: An audio payload object.
         """
         audio = Audio(name="input_audio")
-        for _ in range(self.config.audio.batch_size):
+        for _ in range(self.config.input.audio.batch_size):
             data = self.audio_generator.generate()
             audio.contents.append(data)
         return audio
 
     @property
     def include_prompt(self) -> bool:
-        return self.config.prompt.input_tokens.mean > 0
+        return self.config.input.prompt.input_tokens.mean > 0
 
     @property
     def include_image(self) -> bool:
-        return self.config.image.width.mean > 0 and self.config.image.height.mean > 0
+        return (
+            self.config.input.image.width.mean > 0
+            and self.config.input.image.height.mean > 0
+        )
 
     @property
     def include_audio(self) -> bool:
-        return self.config.audio.length.mean > 0
+        return self.config.input.audio.length.mean > 0

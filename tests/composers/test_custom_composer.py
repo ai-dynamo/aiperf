@@ -30,9 +30,10 @@ class TestInitialization:
         """Test that the config is properly stored."""
         composer = CustomDatasetComposer(custom_config, mock_tokenizer)
 
-        assert composer.config is custom_config
-        assert composer.config.file == "test_data.jsonl"
-        assert composer.config.custom_dataset_type == CustomDatasetType.SINGLE_TURN
+        input_config = composer.config.input
+        assert input_config is custom_config.input
+        assert input_config.file == "test_data.jsonl"
+        assert input_config.custom_dataset_type == CustomDatasetType.SINGLE_TURN
 
 
 MOCK_TRACE_CONTENT = """{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
@@ -57,7 +58,7 @@ class TestCoreFunctionality:
         self, custom_config, dataset_type, expected_instance, mock_tokenizer
     ):
         """Test _create_loader_instance with different dataset types."""
-        custom_config.custom_dataset_type = dataset_type
+        custom_config.input.custom_dataset_type = dataset_type
         composer = CustomDatasetComposer(custom_config, mock_tokenizer)
         composer._create_loader_instance(dataset_type)
         assert isinstance(composer.loader, expected_instance)
