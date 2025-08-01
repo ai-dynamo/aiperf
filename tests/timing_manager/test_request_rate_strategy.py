@@ -16,8 +16,8 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import RequestRateMode
 from aiperf.common.enums.timing_enums import CreditPhase
 from aiperf.common.models.credit_models import CreditPhaseStats
-from aiperf.services.timing_manager.config import TimingManagerConfig
-from aiperf.services.timing_manager.request_rate_strategy import RequestRateStrategy
+from aiperf.timing.config import TimingManagerConfig
+from aiperf.timing.request_rate_strategy import RequestRateStrategy
 from tests.timing_manager.conftest import MockCreditManager
 
 

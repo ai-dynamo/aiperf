@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricTag
-from aiperf.services.records_manager.metrics.types.benchmark_duration_metric import (
-    BenchmarkDurationMetric,
-)
-from aiperf.services.records_manager.metrics.types.max_response_metric import (
+from aiperf.metrics.types import (
     MaxResponseMetric,
 )
-from aiperf.services.records_manager.metrics.types.min_request_metric import (
+from aiperf.metrics.types.benchmark_duration_metric import (
+    BenchmarkDurationMetric,
+)
+from aiperf.metrics.types.min_request_metric import (
     MinRequestMetric,
 )
 

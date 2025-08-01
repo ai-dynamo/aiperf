@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from aiperf.common.messages.inference_messages import ParsedInferenceResultsMessage
-from aiperf.services.records_manager.post_processors.processing_stats_streamer import (
+from aiperf.post_processors import (
     ProcessingStatsStreamer,
 )
-from aiperf.services.records_manager.records_manager import RecordsManager
+from aiperf.records import RecordsManager
 
 
 @pytest.fixture

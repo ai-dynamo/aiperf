@@ -19,7 +19,7 @@ description = "AIPerf is a package for performance testing of AI models"
 authors = []
 dependencies = [
   "aiofiles~=24.1.0",
-  "aiohttp==3.12.13",
+  "aiohttp==3.12.14",
   "cyclopts>=3.0.0",
   "numpy==2.2.6",
   "openai[aiohttp]~=1.92.2",
@@ -54,6 +54,7 @@ dev = [
   "pytest-asyncio",
   "pytest-cov",
   "pytest>=7.0.0",
+  "pytest-xdist>=3.8.0",
   "ruff>=0.0.0",
   "scipy>=1.13.0",
 ]

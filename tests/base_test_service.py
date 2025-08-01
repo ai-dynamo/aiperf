@@ -11,11 +11,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.base_service import BaseService
+from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, LifecycleState, ServiceRunType
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.services import SystemController
-from aiperf.services.base_service import BaseService
+from aiperf.controller import SystemController
 from tests.utils.async_test_utils import async_fixture
 
 real_sleep = (
@@ -87,7 +87,7 @@ class BaseTestService(AIPerfLoggerMixin, ABC):
 
     @pytest.fixture
     def user_config(self) -> UserConfig:
-        return UserConfig(model_names=["test-model"])
+        return UserConfig(endpoint=EndpointConfig(model_names=["gpt2"]))
 
     @pytest.fixture
     async def uninitialized_service(

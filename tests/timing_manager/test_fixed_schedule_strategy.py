@@ -11,7 +11,7 @@ import pytest
 from aiperf.common.enums.timing_enums import CreditPhase
 from aiperf.common.messages import CreditReturnMessage
 from aiperf.common.messages.base_messages import MessageType
-from aiperf.services.timing_manager import FixedScheduleStrategy, TimingManagerConfig
+from aiperf.timing import FixedScheduleStrategy, TimingManagerConfig
 from tests.timing_manager.conftest import MockCreditManager
 
 
