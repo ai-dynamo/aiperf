@@ -6,6 +6,10 @@ import uuid
 
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.constants import (
+    DEFAULT_MAX_REGISTRATION_ATTEMPTS,
+    DEFAULT_REGISTRATION_INTERVAL,
+)
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommandType, LifecycleState, ServiceType
 from aiperf.common.hooks import (
@@ -25,9 +29,6 @@ from aiperf.common.messages.command_messages import (
 )
 from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.protocols import ServiceProtocol
-
-DEFAULT_MAX_REGISTRATION_ATTEMPTS = 10
-DEFAULT_REGISTRATION_INTERVAL = 1.0
 
 
 @implements_protocol(ServiceProtocol)
@@ -72,13 +73,6 @@ class BaseComponentService(BaseService):
     @on_start
     async def _register_service_on_start(self) -> None:
         """Register the service with the system controller on startup."""
-        await self._register_service()
-
-    async def _register_service(self) -> None:
-        """Publish a registration request to the system controller.
-
-        This method should be called after the service has been initialized.
-        """
         self.debug(
             lambda: f"Attempting to register service {self} ({self.service_id}) with system controller"
         )

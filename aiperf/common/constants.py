@@ -42,3 +42,9 @@ DEFAULT_PROFILE_CONFIGURE_TIMEOUT = 120.0
 
 DEFAULT_PROFILE_START_TIMEOUT = 60.0
 """Default timeout for profile start command in seconds."""
+
+DEFAULT_MAX_REGISTRATION_ATTEMPTS = 10
+"""Default maximum number of registration attempts for component services before giving up."""
+
+DEFAULT_REGISTRATION_INTERVAL = 1.0
+"""Default interval between registration attempts in seconds for component services."""
