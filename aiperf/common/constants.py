@@ -13,17 +13,38 @@ TASK_CANCEL_TIMEOUT_SHORT = 2.0
 TASK_CANCEL_TIMEOUT_LONG = 5.0
 """Maximum time to wait for complex tasks to complete when cancelling them (like parent tasks)."""
 
-DEFAULT_COMMS_REQUEST_TIMEOUT = 10.0
+DEFAULT_COMMS_REQUEST_TIMEOUT = 30.0
 """Default timeout for requests from req_clients to rep_clients in seconds."""
 
 DEFAULT_PULL_CLIENT_MAX_CONCURRENCY = 100_000
 """Default maximum concurrency for pull clients."""
 
-DEFAULT_SERVICE_REGISTRATION_TIMEOUT = 5.0
+DEFAULT_SERVICE_REGISTRATION_TIMEOUT = 30.0
 """Default timeout for service registration in seconds."""
 
-DEFAULT_SERVICE_START_TIMEOUT = 5.0
+DEFAULT_SERVICE_START_TIMEOUT = 30.0
 """Default timeout for service start in seconds."""
 
 DEFAULT_STREAMING_MAX_QUEUE_SIZE = 100_000
 """Default maximum queue size for streaming post processors."""
+
+DEFAULT_COMMAND_RESPONSE_TIMEOUT = 30.0
+"""Default timeout for command responses in seconds."""
+
+DEFAULT_CONNECTION_PROBE_INTERVAL = 0.1
+"""Default interval for connection probes in seconds until a response is received."""
+
+DEFAULT_CONNECTION_PROBE_TIMEOUT = 30.0
+"""Maximum amount of time to wait for connection probe response."""
+
+DEFAULT_PROFILE_CONFIGURE_TIMEOUT = 120.0
+"""Default timeout for profile configure command in seconds."""
+
+DEFAULT_PROFILE_START_TIMEOUT = 60.0
+"""Default timeout for profile start command in seconds."""
+
+DEFAULT_MAX_REGISTRATION_ATTEMPTS = 10
+"""Default maximum number of registration attempts for component services before giving up."""
+
+DEFAULT_REGISTRATION_INTERVAL = 1.0
+"""Default interval between registration attempts in seconds for component services."""

@@ -307,7 +307,7 @@ def on_message(
     *message_types: MessageTypeT | Callable[[SelfT], Iterable[MessageTypeT]],
 ) -> Callable:
     """Decorator to specify that the function is a hook that should be called when messages of the
-    given type(s) are received from the message bus.
+    given type(s) (or topics) are received from the message bus.
     See :func:`aiperf.common.hooks._hook_decorator_with_params`.
 
     Example:

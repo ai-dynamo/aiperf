@@ -6,6 +6,7 @@ import asyncio
 import zmq.asyncio
 
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
+from aiperf.common.comms.zmq.zmq_defaults import TOPIC_DELIMITER, TOPIC_END
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
 from aiperf.common.exceptions import CommunicationError
@@ -100,9 +101,10 @@ class ZMQPubClient(BaseZMQClient):
         # For targeted messages such as commands, we can set the topic to a specific service by id or type
         # Note that target_service_id always takes precedence over target_service_type
 
+        # NOTE: Keep in mind that subscriptions in ZMQ are prefix based wildcards, so the unique portion has to come first.
         if isinstance(message, TargetedServiceMessage):
             if message.target_service_id:
-                return f"{message.message_type}.{message.target_service_id}"
+                return f"{message.message_type}{TOPIC_DELIMITER}{message.target_service_id}{TOPIC_END}"
             if message.target_service_type:
-                return f"{message.message_type}.{message.target_service_type}"
-        return message.message_type
+                return f"{message.message_type}{TOPIC_DELIMITER}{message.target_service_type}{TOPIC_END}"
+        return f"{message.message_type}{TOPIC_END}"

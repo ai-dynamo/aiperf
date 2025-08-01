@@ -21,4 +21,3 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
 
     ROUND_ROBIN = "round_robin"
     RANDOM = "random"
-    MODALITY_AWARE = "modality_aware"

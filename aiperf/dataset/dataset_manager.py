@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import random
+import time
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommAddress, ComposerType, MessageType, ServiceType
+from aiperf.common.enums.command_enums import CommandType
 from aiperf.common.factories import ComposerFactory, ServiceFactory
-from aiperf.common.hooks import on_init, on_request
+from aiperf.common.hooks import on_command, on_request
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
@@ -17,6 +19,7 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
     DatasetTimingRequest,
     DatasetTimingResponse,
+    ProfileConfigureCommand,
 )
 from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import Conversation
@@ -54,18 +57,22 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
         self.dataset_configured = asyncio.Event()
 
-    @on_init
-    async def _initialize(self) -> None:
-        """Initialize dataset manager-specific components."""
-        self.debug(lambda: f"Initializing dataset manager {self.service_id}")
-        self.dataset_configured.clear()
+    @on_command(CommandType.PROFILE_CONFIGURE)
+    async def _profile_configure_command(
+        self, message: ProfileConfigureCommand
+    ) -> None:
+        """Configure the dataset."""
+        self.info(lambda: f"Configuring dataset for {self.service_id}")
+        begin = time.perf_counter()
         await self._configure_dataset()
-        self.debug(lambda: f"Dataset manager {self.service_id} initialized")
+        duration = time.perf_counter() - begin
+        self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
 
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
             raise self._service_error("User config is required for dataset manager")
 
+        self.dataset_configured.clear()
         if self.user_config.input.file:
             composer_type = ComposerType.CUSTOM
             self.debug(
@@ -90,7 +97,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         composer = ComposerFactory.create_instance(
             composer_type,
-            config=self.user_config.input,
+            config=self.user_config,
             tokenizer=tokenizer,
         )
         conversations = composer.create_dataset()

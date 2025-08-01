@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import zmq
 from zmq import SocketType
 
 from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
@@ -12,6 +13,7 @@ from aiperf.common.comms.zmq.zmq_proxy_base import (
 from aiperf.common.config.zmq_config import BaseZMQProxyConfig
 from aiperf.common.enums import ZMQProxyType
 from aiperf.common.factories import ZMQProxyFactory
+from aiperf.common.hooks import on_init
 
 ################################################################################
 # Proxy Sockets
@@ -19,7 +21,8 @@ from aiperf.common.factories import ZMQProxyFactory
 
 
 def create_proxy_socket_class(
-    socket_type: SocketType, end_type: ProxyEndType
+    socket_type: SocketType,
+    end_type: ProxyEndType,
 ) -> type[BaseZMQClient]:
     """Create a proxy socket class using the specified socket type. This is used to
     reduce the boilerplate code required to create a ZMQ Proxy class.
@@ -45,6 +48,15 @@ def create_proxy_socket_class(
                 socket_ops=socket_ops,
                 proxy_uuid=proxy_uuid,
             )
+
+        @on_init
+        async def _initialize_socket(self) -> None:
+            """Initialize the socket with proper configuration for XPUB/XSUB proxy."""
+            if self.socket_type == SocketType.XPUB:
+                self.socket.setsockopt(zmq.XPUB_VERBOSE, 1)
+                self.debug(
+                    lambda: "XPUB socket configured with XPUB_VERBOSE=1 for subscription forwarding"
+                )
 
     # Dynamically set the class name and qualname based on the socket and end type
     ProxySocket.__name__ = class_name

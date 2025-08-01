@@ -13,10 +13,13 @@ from aiperf.common.enums import (
     CommandType,
     MessageType,
 )
+from aiperf.common.enums.service_enums import LifecycleState
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetails
-from aiperf.common.models.base_models import exclude_if_none
-from aiperf.common.models.record_models import ProcessRecordsResult
+from aiperf.common.models import (
+    ErrorDetails,
+    ProcessRecordsResult,
+    exclude_if_none,
+)
 from aiperf.common.types import CommandTypeT, MessageTypeT, ServiceTypeT
 
 _logger = AIPerfLogger(__name__)
@@ -72,11 +75,6 @@ class CommandMessage(TargetedServiceMessage):
     command_id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         description="Unique identifier for this command. If not provided, a random UUID will be generated.",
-    )
-    # TODO: Not really using this for anything right now.
-    require_response: bool = Field(
-        default=False,
-        description="Whether a response is required for this command",
     )
 
     @classmethod
@@ -315,16 +313,22 @@ class ProfileCancelCommand(CommandMessage):
     command: CommandTypeT = CommandType.PROFILE_CANCEL
 
 
-class DiscoverServicesCommand(CommandMessage):
-    """Command message sent to request services to discover services."""
-
-    command: CommandTypeT = CommandType.DISCOVER_SERVICES
-
-
 class ShutdownCommand(CommandMessage):
     """Command message sent to request a service to shutdown."""
 
     command: CommandTypeT = CommandType.SHUTDOWN
+
+
+class RegisterServiceCommand(CommandMessage):
+    """Command message sent from a service to the system controller to register itself."""
+
+    command: CommandTypeT = CommandType.REGISTER_SERVICE
+
+    service_id: str = Field(..., description="The ID of the service to register")
+    service_type: ServiceTypeT = Field(
+        ..., description="The type of the service to register"
+    )
+    state: LifecycleState = Field(..., description="The current state of the service")
 
 
 class ProcessRecordsResponse(CommandSuccessResponse):
@@ -336,3 +340,9 @@ class ProcessRecordsResponse(CommandSuccessResponse):
         default=None,
         description="The result of the process records command",
     )
+
+
+class ConnectionProbeMessage(TargetedServiceMessage):
+    """Message containing a connection probe from a service. This is used to probe the connection to the service."""
+
+    message_type: MessageTypeT = MessageType.CONNECTION_PROBE
