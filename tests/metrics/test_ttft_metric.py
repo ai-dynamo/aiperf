@@ -3,7 +3,7 @@
 
 
 from aiperf.common.enums import MetricTimeType
-from aiperf.services.records_manager.metrics.types.ttft_metric import TTFTMetric
+from aiperf.metrics.types.ttft_metric import TTFTMetric
 
 
 def test_single_record(parsed_response_record_builder):

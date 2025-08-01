@@ -3,16 +3,16 @@
 
 import pytest
 
-from aiperf.services.records_manager.metrics.types.inter_token_latency_metric import (
-    InterTokenLatencyMetric,
-)
-from aiperf.services.records_manager.metrics.types.output_token_count_metric import (
+from aiperf.metrics.types import (
     OutputTokenCountMetric,
 )
-from aiperf.services.records_manager.metrics.types.request_latency_metric import (
+from aiperf.metrics.types.inter_token_latency_metric import (
+    InterTokenLatencyMetric,
+)
+from aiperf.metrics.types.request_latency_metric import (
     RequestLatencyMetric,
 )
-from aiperf.services.records_manager.metrics.types.ttft_metric import TTFTMetric
+from aiperf.metrics.types.ttft_metric import TTFTMetric
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@
 import pytest
 
 from aiperf.common.enums import MetricTag
-from aiperf.services.records_manager.metrics.types.output_token_throughput_metric import (
+from aiperf.metrics.types.output_token_throughput_metric import (
     OutputTokenThroughputMetric,
 )
 

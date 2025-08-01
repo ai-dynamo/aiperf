@@ -3,17 +3,22 @@
 
 import pytest
 
-from aiperf.common.config import EndPointConfig, UserConfig
+from aiperf.common.config.endpoint_config import EndpointConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProfileResults
-from aiperf.data_exporter import ConsoleExporter
-from aiperf.data_exporter.exporter_config import ExporterConfig
+from aiperf.exporters import ConsoleExporter
+from aiperf.exporters.exporter_config import ExporterConfig
 
 
 @pytest.fixture
 def mock_endpoint_config():
-    return EndPointConfig(type=EndpointType.OPENAI_CHAT_COMPLETIONS, streaming=True)
+    return EndpointConfig(
+        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+        streaming=True,
+        model_names=["test-model"],
+    )
 
 
 @pytest.fixture

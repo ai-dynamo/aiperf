@@ -4,6 +4,7 @@ import asyncio
 import time
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.comms.base_comms import (
     PushClientProtocol,
     RequestClientProtocol,
@@ -34,7 +35,6 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.services.base_component_service import BaseComponentService
 
 
 @ServiceFactory.register(ServiceType.INFERENCE_RESULT_PARSER)
