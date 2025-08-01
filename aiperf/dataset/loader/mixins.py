@@ -17,7 +17,7 @@ class MediaConversionMixin:
         return Media.__subclasses__()
 
     def convert_to_media_objects(
-        self, data: CustomDatasetT, name: str | None = None
+        self, data: CustomDatasetT, name: str = ""
     ) -> dict[str, list[MediaT]]:
         """Convert all custom dataset into media objects.
 
@@ -43,7 +43,7 @@ class MediaConversionMixin:
         data: CustomDatasetT,
         media_class: type[MediaT],
         field: str,
-        name: str | None = None,
+        name: str = "",
     ) -> list[MediaT]:
         """Generic method to construct media objects from a CustomDatasetT object.
 
@@ -62,12 +62,12 @@ class MediaConversionMixin:
             return [media_class(name=name, contents=[value])]
 
         # Check plural field
-        value = getattr(data, f"{field}s", None)
-        if not value:
+        values = getattr(data, f"{field}s", None)
+        if values is None:
             return []
 
         # If already correct media objects, return as is
-        if all(isinstance(v, media_class) for v in value):
-            return value  # type: ignore
+        if all(isinstance(v, media_class) for v in values):
+            return values
 
-        return [media_class(name=name, contents=value)]
+        return [media_class(name=name, contents=values)]

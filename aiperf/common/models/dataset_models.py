@@ -13,7 +13,7 @@ from aiperf.common.types import MediaTypeT
 class Media(AIPerfBaseModel):
     """Base class for all media fields. Contains name and contents of the media data."""
 
-    name: str | None = Field(default=None, description="Name of the media field.")
+    name: str = Field(default="", description="Name of the media field.")
 
     contents: list[str] = Field(
         default=[],
