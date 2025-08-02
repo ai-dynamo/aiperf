@@ -82,3 +82,37 @@ def test_server_metrics_urls_validator():
         model_names=["gpt2"],
     )
     assert config.server_metrics_urls == ["http://metrics-url1", "http://metrics-url2"]
+
+
+def test_streaming_validation():
+    """
+    Test the validation of the `streaming` attribute in the `EndpointConfig` class.
+    """
+
+    config = EndpointConfig(
+        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+        streaming=True,
+        model_names=["gpt2"],
+    )
+    assert config.streaming
+
+    config = EndpointConfig(
+        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+        streaming=False,
+        model_names=["gpt2"],
+    )
+    assert not config.streaming
+
+    config = EndpointConfig(
+        type=EndpointType.OPENAI_EMBEDDINGS,
+        streaming=True,
+        model_names=["gpt2"],
+    )
+    assert not config.streaming  # Streaming is not supported for embeddings
+
+    config = EndpointConfig(
+        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+        streaming=False,
+        model_names=["gpt2"],
+    )
+    assert not config.streaming

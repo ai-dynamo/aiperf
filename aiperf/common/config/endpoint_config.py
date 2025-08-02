@@ -4,13 +4,17 @@
 from typing import Annotated
 
 from cyclopts import Parameter
-from pydantic import BeforeValidator, Field
+from pydantic import BeforeValidator, Field, model_validator
+from typing_extensions import Self
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import EndpointDefaults
 from aiperf.common.config.config_validators import parse_str_or_list
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+
+_logger = AIPerfLogger(__name__)
 
 
 class EndpointConfig(BaseConfig):
@@ -19,6 +23,15 @@ class EndpointConfig(BaseConfig):
     """
 
     _CLI_GROUP = Groups.ENDPOINT
+
+    @model_validator(mode="after")
+    def validate_streaming(self) -> Self:
+        if not self.type.supports_streaming:
+            _logger.warning(
+                f"Streaming is not supported for --endpoint-type {self.type}, setting streaming to False"
+            )
+            self.streaming = False
+        return self
 
     model_names: Annotated[
         list[str],
