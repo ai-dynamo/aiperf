@@ -3,6 +3,7 @@
 import logging
 import time
 import timeit
+from collections.abc import Callable
 from unittest.mock import Mock
 
 import pytest
@@ -21,6 +22,7 @@ from aiperf.common.aiperf_logger import (
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import RequestRecord, TextResponse
+from tests.utils.time_traveler import TimeTraveler
 
 
 @pytest.fixture
@@ -115,6 +117,34 @@ def compare_logger_performance(
         assert speed_up >= min_speed_up, speed_up_msg
 
 
+class MockLogCall:
+    """Simple class to store the arguments of a log call, with lazy evaluation support for the message argument."""
+
+    def __init__(self):
+        self.level = None
+        self.msg = None
+        self.args = None
+        self.kwargs = None
+
+    def __call__(self, level: int, msg: str | Callable[..., str], *args, **kwargs):
+        self.level = level
+        self.msg = msg() if callable(msg) else msg
+        self.args = args
+        self.kwargs = kwargs
+
+    def reset(self):
+        self.level = None
+        self.msg = None
+        self.args = None
+        self.kwargs = None
+
+    def assert_called_with(self, level: int, msg: str, *args, **kwargs):
+        assert self.level == level
+        assert self.msg == msg
+        assert self.args == args
+        assert self.kwargs == kwargs
+
+
 class TestAIPerfLogger:
     def test_logger_initialization(self):
         """Test that logger initializes correctly."""
@@ -169,6 +199,119 @@ class TestAIPerfLogger:
         logger.setLevel(_WARNING)
         assert logger.getEffectiveLevel() == _WARNING
         assert logger.isEnabledFor(_WARNING)
+
+    def test_trace_or_debug(self, time_traveler: TimeTraveler):
+        """Test that the lambda overloading of trace_or_debug logs the correct message depending on the level of the logger."""
+        logger = AIPerfLogger("test")
+        logger.setLevel(_TRACE)
+
+        mock_log = MockLogCall()
+        logger._log = mock_log
+
+        logger.trace_or_debug(
+            lambda: f"Current time ns: {time_traveler.time_ns()}",
+            lambda: f"Current perf counter ns: {time_traveler.perf_counter_ns()}",
+        )
+        mock_log.assert_called_with(
+            _TRACE, f"Current time ns: {time_traveler.time_ns()}"
+        )
+
+        logger.setLevel(_DEBUG)
+        logger.trace_or_debug(
+            lambda: f"Current time ns: {time_traveler.time_ns()}",
+            lambda: f"Current perf counter ns: {time_traveler.perf_counter_ns()}",
+        )
+        mock_log.assert_called_with(
+            _DEBUG, f"Current perf counter ns: {time_traveler.perf_counter_ns()}"
+        )
+
+    def test_trace_or_debug_formatting(self):
+        """Test that the format overloading of trace_or_debug logs the correct message depending on the level of the logger."""
+        logger = AIPerfLogger("test")
+        logger.setLevel(_TRACE)
+        mock_log = MockLogCall()
+        logger._log = mock_log
+
+        monday = "Monday"
+        tuesday = "Tuesday"
+
+        logger.trace_or_debug(
+            "The current day is: {}",
+            monday,
+            tuesday,
+        )
+        mock_log.assert_called_with(_TRACE, "The current day is: {}".format(monday))  # noqa: UP032
+
+        mock_log.reset()
+        logger.setLevel(_DEBUG)
+        logger.trace_or_debug(
+            "The current day is: {}",
+            monday,
+            tuesday,
+        )
+        mock_log.assert_called_with(_DEBUG, "The current day is: {}".format(tuesday))  # noqa: UP032
+
+    def test_trace_or_debug_multiple_format_args(self):
+        """Test that the format overloading of trace_or_debug logs the correct message depending on the level of the logger
+        when multiple format arguments are provided."""
+        logger = AIPerfLogger("test")
+        logger.setLevel(_TRACE)
+        mock_log = MockLogCall()
+        logger._log = mock_log
+
+        trace_args = ("Monday", "Tuesday")
+        debug_args = ("Wednesday", "Thursday")
+
+        logger.trace_or_debug(
+            "The current day is: {} not {}",
+            trace_args,
+            debug_args,
+        )
+        mock_log.assert_called_with(
+            _TRACE, "The current day is: {} not {}".format(*trace_args)
+        )  # noqa: UP032
+
+        mock_log.reset()
+        logger.setLevel(_DEBUG)
+        logger.trace_or_debug(
+            "The current day is: {} not {}",
+            trace_args,
+            debug_args,
+        )
+        mock_log.assert_called_with(
+            _DEBUG, "The current day is: {} not {}".format(*debug_args)
+        )  # noqa: UP032
+
+    def test_trace_or_debug_format_with_single_arg_tuple(self):
+        """Test that the format overloading of trace_or_debug logs the correct message depending on the level of the logger
+        when a single argument tuple is provided."""
+        logger = AIPerfLogger("test")
+        logger.setLevel(_TRACE)
+        mock_log = MockLogCall()
+        logger._log = mock_log
+
+        trace_args = ("SAT",)
+        debug_args = ("SUN",)
+
+        logger.trace_or_debug(
+            "The current day is: {}",
+            trace_args,
+            debug_args,
+        )
+        mock_log.assert_called_with(
+            _TRACE, "The current day is: {}".format(*trace_args)
+        )  # noqa: UP032
+
+        mock_log.reset()
+        logger.setLevel(_DEBUG)
+        logger.trace_or_debug(
+            "The current day is: {}",
+            trace_args,
+            debug_args,
+        )
+        mock_log.assert_called_with(
+            _DEBUG, "The current day is: {}".format(*debug_args)
+        )  # noqa: UP032
 
 
 @pytest.mark.performance

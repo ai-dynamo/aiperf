@@ -6,6 +6,7 @@ import os
 import traceback
 from collections.abc import Callable
 from inspect import currentframe
+from typing import Any, overload
 
 _TRACE = logging.DEBUG - 5
 _DEBUG = logging.DEBUG
@@ -212,8 +213,72 @@ class AIPerfLogger:
         if self.is_enabled_for(_CRITICAL):
             self._log(_CRITICAL, msg, *args, **kwargs)
 
+    @overload
+    def trace_or_debug(
+        self, base_msg: str, trace_args: Any | tuple, debug_args: Any | tuple
+    ) -> None: ...
 
-# Set up the list of files that should be ignored when finding the caller (built-in logging, this file)
+    @overload
+    def trace_or_debug(
+        self, trace_msg: Callable[..., str], debug_msg: Callable[..., str]
+    ) -> None: ...
+
+    def trace_or_debug(self, *args) -> None:  # type: ignore
+        """Log different messages depending on the level of the logger.
+
+        This method is used to log a message at the trace level if the trace level is enabled,
+        otherwise it will log a debug message. It enables us to use a single method to log
+        different messages depending on the level of the logger. Use this method to provide
+        full dumps of data when the logger is in trace mode, and a more concise message when
+        the logger is in debug mode.
+
+        Example:
+        ```python
+        # trace_or_debug(self, base_msg: str, trace_args: Any, debug_args: Any)
+        self.trace_or_debug(
+            "Received request: {}", request, request.id
+        )
+
+        # trace_or_debug(self, trace_msg: Callable[..., str], debug_msg: Callable[..., str])
+        self.trace_or_debug(
+            lambda: f"Received request: {request}",
+            lambda: f"Received request id: {request.id}",
+        )
+        ```
+        """
+        # NOTE: We are checking the args *after* the is_enabled_for check to avoid the overhead of the
+        #       extra if-statement if neither of the levels are enabled.
+        if self.is_enabled_for(_TRACE):
+            if len(args) == 3:
+                # equivalent to `base_msg.format(trace_args)`
+                self._log(
+                    _TRACE,
+                    args[0].format(
+                        *args[1] if isinstance(args[1], tuple) else (args[1],)
+                    ),
+                )
+            elif len(args) == 2:
+                # equivalent to `trace_msg` str or callable
+                self._log(_TRACE, args[0])
+            else:
+                raise ValueError("trace_or_debug requires 2 or 3 arguments")
+        elif self.is_enabled_for(_DEBUG):
+            if len(args) == 3:
+                # equivalent to `base_msg.format(debug_args)`
+                self._log(
+                    _DEBUG,
+                    args[0].format(
+                        *args[2] if isinstance(args[2], tuple) else (args[2],)
+                    ),
+                )
+            elif len(args) == 2:
+                # equivalent to `debug_msg` str or callable
+                self._log(_DEBUG, args[1])
+            else:
+                raise ValueError("trace_or_debug requires 2 or 3 arguments")
+
+
+# Setup the list of files that should be ignored when finding the caller (built-in logging, this file)
 # This is required to avoid it appearing as all logs are coming from this file.
 # NOTE: Using similar logic to logging._srcfile
 _srcfile = os.path.normcase(AIPerfLogger.find_caller.__code__.co_filename)
