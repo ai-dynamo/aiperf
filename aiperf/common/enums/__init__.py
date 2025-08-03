@@ -9,6 +9,8 @@ __ignore__ = []
 ## ⚠️             Do not edit below this line                      ⚠️ ##
 ########################################################################
 from aiperf.common.enums.base_enums import (
+    BasePydanticBackedStrEnum,
+    BasePydanticEnumInfo,
     CaseInsensitiveStrEnum,
 )
 from aiperf.common.enums.benchmark_suite_enums import (
@@ -84,6 +86,8 @@ from aiperf.common.enums.timing_enums import (
 __all__ = [
     "AIPerfLogLevel",
     "AudioFormat",
+    "BasePydanticBackedStrEnum",
+    "BasePydanticEnumInfo",
     "BenchmarkSuiteCompletionTrigger",
     "BenchmarkSuiteType",
     "CaseInsensitiveStrEnum",
