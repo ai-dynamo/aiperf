@@ -8,7 +8,7 @@ from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
 class EndpointTypeInfo(BaseModel):
-    """Pydantic model for endpoint-specific metadata. This model us used to store additional info on each EndpointType enum value."""
+    """Pydantic model for endpoint-specific metadata. This model is used to store additional info on each EndpointType enum value."""
 
     tag: str = Field(
         ..., min_length=1, description="The string value for the endpoint type."
