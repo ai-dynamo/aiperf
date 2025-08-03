@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import os
 from collections.abc import Callable
-from typing import Any, overload
 
 from aiperf.common import aiperf_logger
 from aiperf.common.aiperf_logger import (
@@ -111,16 +110,6 @@ class AIPerfLoggerMixin(BaseMixin):
         """Log a critical message with lazy evaluation."""
         if self.is_enabled_for(_CRITICAL):
             self._log(_CRITICAL, message, *args, **kwargs)
-
-    @overload
-    def trace_or_debug(  # type: ignore
-        self, base_msg: str, trace_args: Any | tuple, debug_args: Any | tuple
-    ) -> None: ...
-
-    @overload
-    def trace_or_debug(
-        self, trace_msg: Callable[..., str], debug_msg: Callable[..., str]
-    ) -> None: ...
 
 
 # Add this file to the list of ignored files to avoid this file from being the source of the log messages
