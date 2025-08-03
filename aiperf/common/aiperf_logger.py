@@ -216,8 +216,6 @@ class AIPerfLogger:
         self,
         trace_msg: str | Callable[..., str],
         debug_msg: str | Callable[..., str],
-        *args,
-        **kwargs,
     ) -> None:
         """Log different messages depending on the level of the logger.
 
@@ -236,9 +234,9 @@ class AIPerfLogger:
         ```
         """
         if self.is_enabled_for(_TRACE):
-            self._log(_TRACE, trace_msg, *args, **kwargs)
+            self._log(_TRACE, trace_msg)
         elif self.is_enabled_for(_DEBUG):
-            self._log(_DEBUG, debug_msg, *args, **kwargs)
+            self._log(_DEBUG, debug_msg)
 
 
 # Setup the list of files that should be ignored when finding the caller (built-in logging, this file)
