@@ -401,3 +401,136 @@ class TestMultiTurnDatasetLoader:
         multi_turn = dataset["shared_session"]
         assert multi_turn[0].turns[0].text == "First conversation"
         assert multi_turn[1].turns[0].text == "Second conversation"
+
+
+class TestMultiTurnDatasetLoaderConvertToConversations:
+    """Test convert_to_conversations method for MultiTurnDatasetLoader."""
+
+    def test_convert_simple_multi_turn_data(self):
+        """Test converting simple multi-turn data to conversations."""
+        data = {
+            "session_123": [
+                MultiTurn(
+                    session_id="session_123",
+                    turns=[
+                        SingleTurn(text="Hello"),
+                        SingleTurn(text="How are you?", delay=1000),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader("dummy.jsonl")
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        conversation = conversations[0]
+        assert conversation.session_id == "session_123"
+        assert len(conversation.turns) == 2
+
+        assert conversation.turns[0].texts[0].contents == ["Hello"]
+        assert conversation.turns[0].delay is None
+
+        assert conversation.turns[1].texts[0].contents == ["How are you?"]
+        assert conversation.turns[1].delay == 1000
+
+    def test_convert_multiple_multi_turn_entries_same_session(self):
+        """Test converting multiple MultiTurn entries with same session ID."""
+        data = {
+            "session_123": [
+                MultiTurn(session_id="session_123", turns=[SingleTurn(text="First")]),
+                MultiTurn(session_id="session_123", turns=[SingleTurn(text="Second")]),
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader("dummy.jsonl")
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        conversation = conversations[0]
+        assert conversation.session_id == "session_123"
+        assert len(conversation.turns) == 2
+        assert conversation.turns[0].texts[0].contents == ["First"]
+        assert conversation.turns[1].texts[0].contents == ["Second"]
+
+    def test_convert_multimodal_multi_turn_data(self):
+        """Test converting multimodal multi-turn data."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(text="What's this?", image="image1.png"),
+                        SingleTurn(text="Follow up", image="image2.png"),
+                    ],
+                )
+            ]
+        }
+        loader = MultiTurnDatasetLoader("dummy.jsonl")
+
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        conversation = conversations[0]
+        assert len(conversation.turns) == 2
+
+        # First turn
+        first_turn = conversation.turns[0]
+        assert first_turn.texts[0].contents == ["What's this?"]
+        assert first_turn.images[0].contents == ["image1.png"]
+
+        # Second turn
+        second_turn = conversation.turns[1]
+        assert second_turn.texts[0].contents == ["Follow up"]
+        assert second_turn.images[0].contents == ["image2.png"]
+
+    def test_convert_structured_objects_in_turns(self):
+        """Test converting MultiTurn with structured Text objects."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(
+                            texts=[
+                                Text(name="query", contents=["What is this?"]),
+                                Text(name="context", contents=["Some context"]),
+                            ],
+                        )
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader("dummy.jsonl")
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert len(turn.texts) == 2
+        assert turn.texts[0].name == "query"
+        assert turn.texts[0].contents == ["What is this?"]
+        assert turn.texts[1].name == "context"
+        assert turn.texts[1].contents == ["Some context"]
+
+    def test_convert_multiple_sessions(self):
+        """Test converting multiple sessions."""
+        data = {
+            "session_1": [
+                MultiTurn(session_id="session_1", turns=[SingleTurn(text="First")]),
+            ],
+            "session_2": [
+                MultiTurn(session_id="session_2", turns=[SingleTurn(text="Second")]),
+            ],
+        }
+
+        loader = MultiTurnDatasetLoader("dummy.jsonl")
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 2
+        assert conversations[0].session_id == "session_1"
+        assert conversations[1].session_id == "session_2"
+        assert len(conversations[0].turns) == 1
+        assert len(conversations[1].turns) == 1
+        assert conversations[0].turns[0].texts[0].contents == ["First"]
+        assert conversations[1].turns[0].texts[0].contents == ["Second"]

@@ -42,6 +42,8 @@ class CustomDatasetComposer(BaseDatasetComposer):
         kwargs = {"filename": self.config.input.file}
         if dataset_type == CustomDatasetType.MOONCAKE_TRACE:
             kwargs["prompt_generator"] = self.prompt_generator
+        elif dataset_type == CustomDatasetType.RANDOM_POOL:
+            kwargs["num_conversations"] = self.config.input.conversation.num
 
         self.loader = CustomDatasetFactory.create_instance(dataset_type, **kwargs)
 
