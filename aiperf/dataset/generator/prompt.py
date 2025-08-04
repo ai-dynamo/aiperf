@@ -209,7 +209,7 @@ class PromptGenerator(BaseGenerator):
         if end_idx > self._corpus_size:
             prompt_tokens += self._tokenized_corpus[: end_idx - self._corpus_size]
 
-        self.debug(lambda: f"Sampled {len(prompt_tokens)} tokens from corpus")
+        self.trace(lambda: f"Sampled {len(prompt_tokens)} tokens from corpus")
         return prompt_tokens
 
     def get_random_prefix_prompt(self) -> str:
