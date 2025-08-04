@@ -3,6 +3,7 @@
 import logging
 import time
 import timeit
+from collections.abc import Callable
 from unittest.mock import Mock
 
 import pytest
@@ -21,6 +22,7 @@ from aiperf.common.aiperf_logger import (
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import RequestRecord, TextResponse
+from tests.utils.time_traveler import TimeTraveler
 
 
 @pytest.fixture
@@ -115,6 +117,51 @@ def compare_logger_performance(
         assert speed_up >= min_speed_up, speed_up_msg
 
 
+class MockLogCall:
+    """Simple class to store the arguments of a log call, with lazy evaluation support for the message argument."""
+
+    def __init__(self):
+        self.level = None
+        self.msg = None
+        self.args = None
+        self.kwargs = None
+
+    def __call__(self, level: int, msg: str | Callable[..., str], *args, **kwargs):
+        self.level = level
+        self.msg = msg() if callable(msg) else msg
+        self.args = args
+        self.kwargs = kwargs
+
+    def reset(self):
+        self.level = None
+        self.msg = None
+        self.args = None
+        self.kwargs = None
+
+    def assert_called_with(self, level: int, msg: str, *args, **kwargs):
+        assert self.level == level
+        assert self.msg == msg
+        assert self.args == args
+        assert self.kwargs == kwargs
+
+
+@pytest.fixture
+def mock_aiperf_logger():
+    aiperf_logger = AIPerfLogger("test")
+    aiperf_logger.set_level(_INFO)
+    for handler in aiperf_logger.root.handlers[:]:
+        aiperf_logger.root.removeHandler(handler)
+    aiperf_logger.addHandler(logging.NullHandler())
+    yield aiperf_logger
+
+
+@pytest.fixture
+def mock_log(mock_aiperf_logger: AIPerfLogger):
+    mock_log = MockLogCall()
+    mock_aiperf_logger._log = mock_log
+    return mock_log
+
+
 class TestAIPerfLogger:
     def test_logger_initialization(self):
         """Test that logger initializes correctly."""
@@ -169,6 +216,54 @@ class TestAIPerfLogger:
         logger.setLevel(_WARNING)
         assert logger.getEffectiveLevel() == _WARNING
         assert logger.isEnabledFor(_WARNING)
+
+    def test_trace_or_debug_lazy(
+        self,
+        time_traveler: TimeTraveler,
+        mock_aiperf_logger: AIPerfLogger,
+        mock_log: MockLogCall,
+    ):
+        """Test that the lambda overloading of trace_or_debug logs the correct message depending on the level of the logger."""
+        mock_aiperf_logger.setLevel(_TRACE)
+
+        mock_aiperf_logger.trace_or_debug(
+            lambda: f"Current time ns: {time_traveler.time_ns()}",
+            lambda: f"Current perf counter ns: {time_traveler.perf_counter_ns()}",
+        )
+        mock_log.assert_called_with(
+            _TRACE, f"Current time ns: {time_traveler.time_ns()}"
+        )
+
+        mock_aiperf_logger.setLevel(_DEBUG)
+        mock_aiperf_logger.trace_or_debug(
+            lambda: f"Current time ns: {time_traveler.time_ns()}",
+            lambda: f"Current perf counter ns: {time_traveler.perf_counter_ns()}",
+        )
+        mock_log.assert_called_with(
+            _DEBUG, f"Current perf counter ns: {time_traveler.perf_counter_ns()}"
+        )
+
+    def test_trace_or_debug_non_lazy(
+        self,
+        time_traveler: TimeTraveler,
+        mock_aiperf_logger: AIPerfLogger,
+        mock_log: MockLogCall,
+    ):
+        """Test that the lambda overloading of trace_or_debug logs the correct message depending on the level of the logger."""
+        mock_aiperf_logger.setLevel(_TRACE)
+
+        mock_aiperf_logger.trace_or_debug(
+            "This is a trace message",
+            "This is a debug message",
+        )
+        mock_log.assert_called_with(_TRACE, "This is a trace message")
+
+        mock_aiperf_logger.setLevel(_DEBUG)
+        mock_aiperf_logger.trace_or_debug(
+            "This is a trace message",
+            "This is a debug message",
+        )
+        mock_log.assert_called_with(_DEBUG, "This is a debug message")
 
 
 @pytest.mark.performance

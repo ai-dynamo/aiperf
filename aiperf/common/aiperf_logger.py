@@ -212,8 +212,34 @@ class AIPerfLogger:
         if self.is_enabled_for(_CRITICAL):
             self._log(_CRITICAL, msg, *args, **kwargs)
 
+    def trace_or_debug(
+        self,
+        trace_msg: str | Callable[..., str],
+        debug_msg: str | Callable[..., str],
+    ) -> None:
+        """Log different messages depending on the level of the logger.
 
-# Set up the list of files that should be ignored when finding the caller (built-in logging, this file)
+        This method is used to log a message at the trace level if the trace level is enabled,
+        otherwise it will log a debug message. It enables us to use a single method to log
+        different messages depending on the level of the logger. Use this method to provide
+        full dumps of data when the logger is in trace mode, and a more concise message when
+        the logger is in debug mode.
+
+        Example:
+        ```python
+        self.trace_or_debug(
+            lambda: f"Received request: {request}",
+            lambda: f"Received request id: {request.id}",
+        )
+        ```
+        """
+        if self.is_enabled_for(_TRACE):
+            self._log(_TRACE, trace_msg)
+        elif self.is_enabled_for(_DEBUG):
+            self._log(_DEBUG, debug_msg)
+
+
+# Setup the list of files that should be ignored when finding the caller (built-in logging, this file)
 # This is required to avoid it appearing as all logs are coming from this file.
 # NOTE: Using similar logic to logging._srcfile
 _srcfile = os.path.normcase(AIPerfLogger.find_caller.__code__.co_filename)

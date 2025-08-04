@@ -46,6 +46,9 @@ class AIPerfLoggerMixin(BaseMixin):
         self.logger = AIPerfLogger(logger_name or self.__class__.__name__)
         self._log = self.logger._log
         self.is_enabled_for = self.logger._logger.isEnabledFor
+        # Directly set the trace_or_debug method to the logger's trace_or_debug method to avoid
+        # the overhead of the extra call stack.
+        self.trace_or_debug = self.logger.trace_or_debug
         super().__init__(**kwargs)
 
     @property
