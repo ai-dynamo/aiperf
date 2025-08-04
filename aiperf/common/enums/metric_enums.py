@@ -104,17 +104,15 @@ class MetricFlags(Flag):
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
-        return flags & self == flags
+        # Bitwise AND will return the input flags only if all of the given flags are present.
+        return (flags & self) == flags
 
     def missing_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric does not have ANY of the given flag(s) (regardless of other flags). It will
         return False if the metric has ANY of the given flags. If the input flags are NONE, it will return True."""
-        if flags == MetricFlags.NONE or self == MetricFlags.NONE:
-            return True  # NONE means there are no flags to check, so we return True
+        if flags == MetricFlags.NONE:
+            return True  # If there are no flags to check, return True
 
-        # NOTE: We need to check each possible flag separately, as we want to return False if the metric has ANY of
-        #       the given flags. If we simply & the flags, that would only return False if the metric has ALL of the
-        #       given flags.
-        return not any(
-            flags.has_flags(flag) and self.has_flags(flag) for flag in MetricFlags
-        )
+        # Bitwise AND will return 0 (MetricFlags.NONE) if there are no common flags.
+        # If there are some missing, but some found, the result will not be 0.
+        return (self & flags) == MetricFlags.NONE
