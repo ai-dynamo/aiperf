@@ -9,6 +9,8 @@ __ignore__ = []
 ## ⚠️             Do not edit below this line                      ⚠️ ##
 ########################################################################
 from aiperf.common.enums.base_enums import (
+    BasePydanticBackedStrEnum,
+    BasePydanticEnumInfo,
     CaseInsensitiveStrEnum,
 )
 from aiperf.common.enums.benchmark_suite_enums import (
@@ -37,7 +39,7 @@ from aiperf.common.enums.dataset_enums import (
 )
 from aiperf.common.enums.endpoints_enums import (
     EndpointType,
-    ResponsePayloadType,
+    EndpointTypeInfo,
 )
 from aiperf.common.enums.logging_enums import (
     AIPerfLogLevel,
@@ -87,6 +89,8 @@ from aiperf.common.enums.timing_enums import (
 __all__ = [
     "AIPerfLogLevel",
     "AudioFormat",
+    "BasePydanticBackedStrEnum",
+    "BasePydanticEnumInfo",
     "BenchmarkSuiteCompletionTrigger",
     "BenchmarkSuiteType",
     "CaseInsensitiveStrEnum",
@@ -100,6 +104,7 @@ __all__ = [
     "CustomDatasetType",
     "DataExporterType",
     "EndpointType",
+    "EndpointTypeInfo",
     "ImageFormat",
     "LifecycleState",
     "MeasurementMode",
@@ -114,7 +119,6 @@ __all__ = [
     "PostProcessorType",
     "PromptSource",
     "RequestRateMode",
-    "ResponsePayloadType",
     "SSEEventType",
     "SSEFieldType",
     "ServiceRegistrationStatus",

@@ -146,7 +146,7 @@ class ModelEndpointInfo(AIPerfBaseModel):
         url = self.endpoint.base_url.rstrip("/") if self.endpoint.base_url else ""
         if self.endpoint.custom_endpoint:
             url += "/" + self.endpoint.custom_endpoint.lstrip("/")
-        elif path := self.endpoint.type.endpoint_path():
+        elif path := self.endpoint.type.endpoint_path:
             url += "/" + path.lstrip("/")
         return url
 

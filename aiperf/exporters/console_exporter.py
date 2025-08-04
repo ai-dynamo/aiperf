@@ -64,4 +64,4 @@ class ConsoleExporter:
         return row
 
     def _get_title(self) -> str:
-        return f"NVIDIA AIPerf | {self._endpoint_type.metrics_title()}"
+        return f"NVIDIA AIPerf | {self._endpoint_type.metrics_title}"
