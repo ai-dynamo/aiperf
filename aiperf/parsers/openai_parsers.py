@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-import logging
 from typing import Any
 
 from openai.types.chat.chat_completion import ChatCompletion
@@ -24,8 +23,6 @@ from aiperf.common.models import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
-
-logger = logging.getLogger(__name__)
 
 
 class OpenAIObject(CaseInsensitiveStrEnum):
