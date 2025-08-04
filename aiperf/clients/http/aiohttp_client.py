@@ -33,6 +33,7 @@ class AioHttpClientMixin(AIPerfLoggerMixin):
 
     def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None:
         self.model_endpoint = model_endpoint
+        super().__init__(model_endpoint=model_endpoint, **kwargs)
         self.tcp_connector = create_tcp_connector()
 
         # For now, just set all timeouts to the same value.
@@ -44,8 +45,6 @@ class AioHttpClientMixin(AIPerfLoggerMixin):
             sock_read=self.model_endpoint.endpoint.timeout,
             ceil_threshold=self.model_endpoint.endpoint.timeout,
         )
-
-        super().__init__(model_endpoint=model_endpoint, **kwargs)
 
     async def close(self) -> None:
         """Close the client."""
