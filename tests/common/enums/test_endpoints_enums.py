@@ -175,7 +175,8 @@ class TestEndpointType:
         endpoint_type.info.metrics_title = None
 
         try:
-            assert endpoint_type.metrics_title == "LLM Metrics"
+            # Check that the metrics_title returns the default value
+            assert endpoint_type.metrics_title == "Metrics"
         finally:
             # Restore original value
             endpoint_type.info.metrics_title = original_title

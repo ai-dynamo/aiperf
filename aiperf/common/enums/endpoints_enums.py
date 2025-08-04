@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from functools import cached_property
+
 from pydantic import Field
 
 from aiperf.common.enums.base_enums import (
@@ -65,10 +67,10 @@ class EndpointType(BasePydanticBackedStrEnum):
         metrics_title="LLM Metrics",
     )
 
-    @property
+    @cached_property
     def info(self) -> EndpointTypeInfo:
         """Get the endpoint info for the endpoint type."""
-        return self._info
+        return self._info  # type: ignore
 
     @property
     def supports_streaming(self) -> bool:
@@ -100,4 +102,4 @@ class EndpointType(BasePydanticBackedStrEnum):
     @property
     def metrics_title(self) -> str:
         """Get the metrics table title string for the endpoint type. If None, the default title is used."""
-        return self.info.metrics_title or "LLM Metrics"
+        return self.info.metrics_title or "Metrics"
