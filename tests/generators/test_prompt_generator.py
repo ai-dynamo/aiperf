@@ -404,7 +404,7 @@ class TestPromptGeneratorComprehensive:
             assert len(tokens) == corpus_size
             assert tokens == generator._tokenized_corpus
 
-    @patch("aiperf.dataset.generator.prompt.logger.warning")
+    @patch("aiperf.common.mixins.aiperf_logger_mixin.AIPerfLoggerMixin.warning")
     @patch("random.randrange", return_value=0)
     def test_sample_tokens_longer_than_corpus_with_warning(
         self, mock_randrange, mock_warning, basic_config

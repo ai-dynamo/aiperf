@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import inspect
-import logging
 import os
 import traceback
 from collections.abc import Callable
@@ -11,9 +10,10 @@ from typing import Any
 import orjson
 
 from aiperf.common import aiperf_logger
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import AIPerfMultiError
 
-logger = logging.getLogger(__name__)
+_logger = AIPerfLogger(__name__)
 
 
 async def call_all_functions_self(
@@ -94,7 +94,7 @@ def load_json_str(json_str: str, func: Callable = lambda x: x) -> dict[str, Any]
         return func(orjson.loads(json_str))
     except orjson.JSONDecodeError:
         snippet = json_str[:200] + ("..." if len(json_str) > 200 else "")
-        logger.error("Failed to parse JSON string: '%s'", snippet)
+        _logger.error(f"Failed to parse JSON string: '{snippet}'")
         raise
 
 

@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import logging
 import socket
 import time
 import typing
@@ -11,6 +10,7 @@ import aiohttp
 from aiperf.clients.http.defaults import AioHttpDefaults, SocketDefaults
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import SSEFieldType
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     ErrorDetails,
     RequestRecord,
@@ -24,16 +24,14 @@ from aiperf.common.models import (
 ################################################################################
 
 
-class AioHttpClientMixin:
+class AioHttpClientMixin(AIPerfLoggerMixin):
     """A high-performance HTTP client for communicating with HTTP based REST APIs using aiohttp.
 
     This class is optimized for maximum performance and accurate timing measurements,
     making it ideal for benchmarking scenarios.
     """
 
-    def __init__(self, model_endpoint: ModelEndpointInfo) -> None:
-        super().__init__()
-        self.logger = logging.getLogger(self.__class__.__name__)
+    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None:
         self.model_endpoint = model_endpoint
         self.tcp_connector = create_tcp_connector()
 
@@ -46,6 +44,8 @@ class AioHttpClientMixin:
             sock_read=self.model_endpoint.endpoint.timeout,
             ceil_threshold=self.model_endpoint.endpoint.timeout,
         )
+
+        super().__init__(model_endpoint=model_endpoint, **kwargs)
 
     async def close(self) -> None:
         """Close the client."""
@@ -66,7 +66,7 @@ class AioHttpClientMixin:
         Otherwise, the response will be parsed into a TextResponse object.
         """
 
-        self.logger.debug("Sending POST request to %s", url)
+        self.debug(lambda: f"Sending POST request to {url}")
 
         record: RequestRecord = RequestRecord(
             start_perf_ns=time.perf_counter_ns(),
@@ -122,7 +122,7 @@ class AioHttpClientMixin:
 
         except Exception as e:
             record.end_perf_ns = time.perf_counter_ns()
-            self.logger.error("Error in aiohttp request: %s", str(e))
+            self.error(f"Error in aiohttp request: {e}")
             record.error = ErrorDetails(type=e.__class__.__name__, message=str(e))
 
         return record

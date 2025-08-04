@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor
@@ -16,8 +15,6 @@ from aiperf.common.exceptions import (
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset import utils
 from aiperf.dataset.generator.base import BaseGenerator
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
 
@@ -34,13 +31,13 @@ class PromptGenerator(BaseGenerator):
     prompts that can be randomly selected.
     """
 
-    def __init__(self, config: PromptConfig, tokenizer: Tokenizer):
-        super().__init__()
+    def __init__(self, config: PromptConfig, tokenizer: Tokenizer, **kwargs):
         self.config = config
         self.tokenizer = tokenizer
         self._tokenized_corpus = None
         self._corpus_size = 0
         self._prefix_prompts: list[str] = []
+        super().__init__(config=config, tokenizer=tokenizer, **kwargs)
 
         # Cached prompts: block ID -> list of tokens
         self._cache: dict[int, list[int]] = {}
@@ -81,7 +78,7 @@ class PromptGenerator(BaseGenerator):
             token for chunk in tokenized_chunks for token in chunk
         ]
         self._corpus_size = len(self._tokenized_corpus)
-        self.logger.debug("Initialized corpus with %d tokens", self._corpus_size)
+        self.debug(lambda: f"Initialized corpus with {self._corpus_size} tokens")
 
     def _create_prefix_prompt_pool(self) -> None:
         """Generate a pool of prefix prompts to sample from."""
@@ -92,9 +89,8 @@ class PromptGenerator(BaseGenerator):
             self._generate_prompt(self.config.prefix_prompt.length)
             for _ in range(self.config.prefix_prompt.pool_size)
         ]
-        self.logger.debug(
-            "Initialized prefix prompts pool with %d prompts",
-            len(self._prefix_prompts),
+        self.debug(
+            lambda: f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
         )
 
     def generate(
@@ -201,7 +197,7 @@ class PromptGenerator(BaseGenerator):
         if not self._tokenized_corpus:
             raise NotInitializedError("Tokenized corpus is not initialized.")
         if num_tokens > self._corpus_size:
-            logger.warning(
+            self.warning(
                 f"Requested prompt length {num_tokens} is longer than the corpus. "
                 f"Returning a prompt of length {self._corpus_size}."
             )
@@ -213,7 +209,7 @@ class PromptGenerator(BaseGenerator):
         if end_idx > self._corpus_size:
             prompt_tokens += self._tokenized_corpus[: end_idx - self._corpus_size]
 
-        self.logger.debug("Sampled %d tokens from corpus", len(prompt_tokens))
+        self.debug(lambda: f"Sampled {len(prompt_tokens)} tokens from corpus")
         return prompt_tokens
 
     def get_random_prefix_prompt(self) -> str:

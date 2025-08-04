@@ -17,7 +17,7 @@ from aiperf.common.factories import ServiceFactory
 LOG_QUEUE_MAXSIZE = 1000
 
 
-logger = AIPerfLogger(__name__)
+_logger = AIPerfLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -143,7 +143,7 @@ def setup_rich_logging(user_config: UserConfig, service_config: ServiceConfig) -
     )
     logging.root.addHandler(file_handler)
 
-    logger.debug(lambda: f"Logging initialized with level: {level}")
+    _logger.debug(lambda: f"Logging initialized with level: {level}")
 
 
 def create_file_handler(
