@@ -23,6 +23,7 @@ class SingleTurn(AIPerfBaseModel):
 
     type: Literal[CustomDatasetType.SINGLE_TURN] = CustomDatasetType.SINGLE_TURN
 
+    # TODO (TL-89): investigate if we only want to support single field for each modality
     text: str | None = Field(None, description="Simple text string content")
     texts: list[str] | list[Text] | None = Field(
         None,

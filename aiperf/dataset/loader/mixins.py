@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Iterable
+
 from aiperf.common.models import Media
 from aiperf.common.types import MediaT
 from aiperf.dataset.loader.models import CustomDatasetT
@@ -63,7 +65,7 @@ class MediaConversionMixin:
 
         # Check plural field
         values = getattr(data, f"{field}s", None)
-        if values is None:
+        if values is None or not isinstance(values, Iterable):
             return []
 
         # If already correct media objects, return as is
