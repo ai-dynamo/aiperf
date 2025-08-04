@@ -10,22 +10,17 @@ from aiperf.common.enums.base_enums import (
 
 
 class EndpointTypeInfo(BasePydanticEnumInfo):
-    """Pydantic model for endpoint-specific metadata. This model is used to store additional info on each EndpointType enum value."""
+    """Pydantic model for endpoint-specific metadata. This model is used to store additional info on each EndpointType enum value.
 
-    supports_streaming: bool = Field(
-        ..., description="True if the endpoint supports streaming, False otherwise."
-    )
-    produces_tokens: bool = Field(
-        ..., description="True if the endpoint produces tokens, False otherwise."
-    )
-    endpoint_path: str | None = Field(
-        None,
-        description="The default URL path for the endpoint. If None, the endpoint does not have a specific path.",
-    )
-    metrics_title: str | None = Field(
-        None,
-        description="The title string for the metrics table. If None, the default title is used.",
-    )
+    For documentation on the fields, see the :class:`EndpointType` @property functions.
+    """
+
+    supports_streaming: bool = Field(...)
+    produces_tokens: bool = Field(...)
+    supports_audio: bool = Field(default=False)
+    supports_images: bool = Field(default=False)
+    endpoint_path: str | None = Field(default=None)
+    metrics_title: str | None = Field(default=None)
 
 
 class EndpointType(BasePydanticBackedStrEnum):
@@ -41,6 +36,8 @@ class EndpointType(BasePydanticBackedStrEnum):
         tag="chat",
         supports_streaming=True,
         produces_tokens=True,
+        supports_audio=True,
+        supports_images=True,
         endpoint_path="/v1/chat/completions",
         metrics_title="LLM Metrics",
     )
@@ -62,6 +59,8 @@ class EndpointType(BasePydanticBackedStrEnum):
         tag="responses",
         supports_streaming=True,
         produces_tokens=True,
+        supports_audio=False,  # Not yet supported by OpenAI
+        supports_images=True,
         endpoint_path="/v1/responses",
         metrics_title="LLM Metrics",
     )
@@ -69,7 +68,7 @@ class EndpointType(BasePydanticBackedStrEnum):
     @property
     def info(self) -> EndpointTypeInfo:
         """Get the endpoint info for the endpoint type."""
-        return self._info  # type: ignore
+        return self._info
 
     @property
     def supports_streaming(self) -> bool:
@@ -85,6 +84,18 @@ class EndpointType(BasePydanticBackedStrEnum):
     def endpoint_path(self) -> str | None:
         """Get the default endpoint path for the endpoint type. If None, the endpoint does not have a specific path."""
         return self.info.endpoint_path
+
+    @property
+    def supports_audio(self) -> bool:
+        """Return True if the endpoint supports audio input.
+        This is used to determine what metrics are applicable to the endpoint, as well as what inputs can be used."""
+        return self.info.supports_audio
+
+    @property
+    def supports_images(self) -> bool:
+        """Return True if the endpoint supports image input.
+        This is used to determine what metrics are applicable to the endpoint, as well as what inputs can be used."""
+        return self.info.supports_images
 
     @property
     def metrics_title(self) -> str:
