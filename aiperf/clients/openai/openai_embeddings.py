@@ -35,5 +35,5 @@ class OpenAIEmbeddingsRequestConverter(AIPerfLoggerMixin):
         if extra:
             payload.update(extra)
 
-        self.debug(lambda: f"Formatted payload: {payload}")
+        self.trace(lambda: f"Formatted payload: {payload}")
         return payload

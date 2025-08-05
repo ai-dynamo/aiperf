@@ -34,7 +34,7 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
-        self.debug(lambda: f"Formatted payload: {payload}")
+        self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
     def _create_messages(self, turn: Turn) -> list[dict[str, Any]]:

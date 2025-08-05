@@ -113,7 +113,7 @@ class WorkerManager(BaseComponentService):
 
     @on_message(MessageType.WORKER_HEALTH)
     async def _on_worker_health(self, message: WorkerHealthMessage) -> None:
-        self.debug(lambda: f"Received worker health message: {message}")
+        self.trace(lambda: f"Received worker health message: {message}")
         self.worker_health[message.service_id] = message
 
 

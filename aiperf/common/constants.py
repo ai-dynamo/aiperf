@@ -6,6 +6,13 @@ NANOS_PER_MILLIS = 1_000_000
 BYTES_PER_MIB = 1024 * 1024
 
 GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+"""Default timeout for shutting down services in seconds."""
+
+DEFAULT_SHUTDOWN_ACK_TIMEOUT = 5.0
+"""Default timeout for waiting for services to respond to a shutdown command in seconds before giving up."""
+
+DEFAULT_PROFILE_CANCEL_TIMEOUT = 10.0
+"""Default timeout for cancelling a profile run in seconds."""
 
 TASK_CANCEL_TIMEOUT_SHORT = 2.0
 """Maximum time to wait for simple tasks to complete when cancelling them."""

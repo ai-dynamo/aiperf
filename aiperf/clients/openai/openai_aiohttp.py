@@ -64,8 +64,9 @@ class OpenAIClientAioHttp(AioHttpClientMixin, AIPerfLoggerMixin, ABC):
         # capture start time before request is sent in the case of an error
         start_perf_ns = time.perf_counter_ns()
         try:
-            self.debug(
-                lambda: f"Sending OpenAI request to {model_endpoint.url}, payload: {payload}"
+            self.trace_or_debug(
+                lambda: f"Sending OpenAI request to {model_endpoint.url}, payload: {payload}",
+                lambda: f"Sending OpenAI request to {model_endpoint.url}",
             )
 
             record = await self.post_request(

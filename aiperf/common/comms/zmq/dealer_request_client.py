@@ -14,8 +14,9 @@ from aiperf.common.enums import CommClientType
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task, on_stop
-from aiperf.common.messages import Message
+from aiperf.common.messages import ErrorMessage, Message
 from aiperf.common.mixins import TaskManagerMixin
+from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.protocols import RequestClientProtocol
 from aiperf.common.utils import yield_to_event_loop
 
@@ -148,4 +149,15 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
             future.set_result(response_message)
 
         await self.request_async(message, callback)
-        return await asyncio.wait_for(future, timeout=timeout)
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except asyncio.TimeoutError:
+            self.error(
+                f"Request '{message.message_type}' timed out after {timeout} seconds"
+            )
+            return ErrorMessage(
+                error=ErrorDetails(
+                    message=f"Request '{message.message_type}' timed out after {timeout} seconds",
+                    type="TimeoutError",
+                )
+            )

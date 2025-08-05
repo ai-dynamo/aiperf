@@ -8,8 +8,10 @@ from typing import cast
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
+    DEFAULT_PROFILE_CANCEL_TIMEOUT,
     DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
     DEFAULT_PROFILE_START_TIMEOUT,
+    DEFAULT_SHUTDOWN_ACK_TIMEOUT,
 )
 from aiperf.common.enums import (
     CommandResponseStatus,
@@ -350,11 +352,12 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     async def _cancel_profiling(self) -> None:
         self.debug("Cancelling profiling of all services")
-        await self.publish(ProfileCancelCommand(service_id=self.service_id))
+        await self.send_command_and_wait_for_all_responses(
+            ProfileCancelCommand(service_id=self.service_id),
+            list(self.service_manager.service_id_map.keys()),
+            timeout=DEFAULT_PROFILE_CANCEL_TIMEOUT,
+        )
 
-        # TODO: HACK: Wait for 2 seconds to ensure the profiling is cancelled
-        # Wait for the profiling to be cancelled
-        await asyncio.sleep(2)
         self.debug("Stopping system controller after profiling cancelled")
         await asyncio.shield(self.stop())
 
@@ -362,10 +365,11 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _stop_system_controller(self) -> None:
         """Stop the system controller and all running services."""
         # Broadcast a shutdown command to all services
-        await self.publish(ShutdownCommand(service_id=self.service_id))
-
-        # TODO: HACK: Wait for 0.5 seconds to ensure the shutdown command is received
-        await asyncio.sleep(0.5)
+        await self.send_command_and_wait_for_all_responses(
+            ShutdownCommand(service_id=self.service_id),
+            list(self.service_manager.service_id_map.keys()),
+            timeout=DEFAULT_SHUTDOWN_ACK_TIMEOUT,
+        )
 
         await self.service_manager.shutdown_all_services()
         await self.comms.stop()
