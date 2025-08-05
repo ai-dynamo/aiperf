@@ -5,8 +5,8 @@ from aiperf.common.enums import MetricOverTimeUnit
 from aiperf.common.enums.metric_enums import MetricFlags
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
-from aiperf.metrics.types.benchmark_duration import BenchmarkDurationMetric
-from aiperf.metrics.types.valid_request_count import ValidRequestCountMetric
+from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
+from aiperf.metrics.types.request_count_metric import ValidRequestCountMetric
 
 
 class RequestThroughputMetric(BaseDerivedMetric[float]):

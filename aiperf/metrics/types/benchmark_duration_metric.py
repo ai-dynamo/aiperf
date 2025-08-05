@@ -4,8 +4,8 @@
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
-from aiperf.metrics.types.max_response_timestamp import MaxResponseTimestampMetric
-from aiperf.metrics.types.min_request_timestamp import MinRequestTimestampMetric
+from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
+from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 
 
 class BenchmarkDurationMetric(BaseDerivedMetric[int]):

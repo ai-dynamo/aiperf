@@ -5,7 +5,7 @@ from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_token_count import BenchmarkTokenCountMetric
-from aiperf.metrics.types.inter_token_latency import InterTokenLatencyMetric
+from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
 
 
 class OutputTokenThroughputPerUserMetric(BaseDerivedMetric[float]):

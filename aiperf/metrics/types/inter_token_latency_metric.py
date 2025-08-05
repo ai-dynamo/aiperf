@@ -5,9 +5,11 @@ from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
-from aiperf.metrics.types.output_sequence_length import OutputSequenceLengthMetric
-from aiperf.metrics.types.request_latency import RequestLatencyMetric
-from aiperf.metrics.types.time_to_first_token import TTFTMetric
+from aiperf.metrics.types.output_sequence_length_metric import (
+    OutputSequenceLengthMetric,
+)
+from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from aiperf.metrics.types.ttft_metric import TTFTMetric
 
 
 class InterTokenLatencyMetric(BaseRecordMetric[float]):

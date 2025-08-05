@@ -4,7 +4,7 @@
 from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
-from aiperf.metrics.types.benchmark_duration import BenchmarkDurationMetric
+from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.benchmark_token_count import BenchmarkTokenCountMetric
 
 

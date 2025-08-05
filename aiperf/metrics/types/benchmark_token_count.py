@@ -6,7 +6,9 @@ from aiperf.common.enums import GenericMetricUnit, MetricFlags
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_aggregate_metric import BaseAggregateMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
-from aiperf.metrics.types.output_sequence_length import OutputSequenceLengthMetric
+from aiperf.metrics.types.output_sequence_length_metric import (
+    OutputSequenceLengthMetric,
+)
 
 
 class BenchmarkTokenCountMetric(BaseAggregateMetric):

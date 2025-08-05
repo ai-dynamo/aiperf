@@ -5,7 +5,7 @@ from aiperf.common.enums import MetricDateTimeUnit, MetricFlags, MetricTimeUnit
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
-from aiperf.metrics.types.request_latency import RequestLatencyMetric
+from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 
 
 class MaxResponseTimestampMetric(BaseAggregateMetric[int]):
