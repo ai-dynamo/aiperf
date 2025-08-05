@@ -97,7 +97,7 @@ class ProcessingStatsStreamer(BaseStreamingPostProcessor):
             self.final_request_count = phase_complete_msg.completed
             self.end_time_ns = phase_complete_msg.end_ns
             self.info(f"Updating final request count to {self.final_request_count}")
-            if self.final_request_count == self.processing_stats.total_records:
+            if self.processing_stats.total_records >= self.final_request_count:
                 # If we received all the records before the credit phase complete message,
                 # then send a message to the event bus to signal that we received all the records.
                 await self.publish(
