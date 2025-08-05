@@ -6,25 +6,31 @@ import time
 from functools import cached_property
 from typing import Any
 
-from pydantic import Field, SerializeAsAny
+from pydantic import (
+    Field,
+    SerializeAsAny,
+)
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, SSEFieldType
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
+from aiperf.common.types import MetricTagT
 
 
 class MetricResult(AIPerfBaseModel):
     """The result values of a single metric."""
 
-    tag: str = Field(description="The unique identifier of the metric")
+    tag: MetricTagT = Field(description="The unique identifier of the metric")
+    # NOTE: We do not use a MetricUnitT here, as that is harder to de-serialize from JSON strings with pydantic.
+    #       If we need an instance of a MetricUnitT, lookup the unit based on the tag in the MetricRegistry.
     unit: str = Field(description="The unit of the metric, e.g. 'ms'")
     header: str = Field(
         description="The user friendly name of the metric (e.g. 'Inter Token Latency')"
     )
     avg: float | None = None
-    min: float | None = None
-    max: float | None = None
+    min: int | float | None = None
+    max: int | float | None = None
     p1: float | None = None
     p5: float | None = None
     p25: float | None = None
@@ -38,14 +44,10 @@ class MetricResult(AIPerfBaseModel):
         default=None,
         description="The total number of records used to calculate the metric",
     )
-    streaming_only: bool = Field(
-        default=False,
-        description="Whether the metric only applies when streaming is enabled",
-    )
 
 
 class ProfileResults(AIPerfBaseModel):
-    records: SerializeAsAny[list[MetricResult] | ErrorDetails | None] = Field(
+    records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
     )
     total_expected: int | None = Field(
@@ -74,13 +76,10 @@ class ProfileResults(AIPerfBaseModel):
 class ProcessRecordsResult(AIPerfBaseModel):
     """Result of the process records command."""
 
-    records: list[ProfileResults] | None = Field(
-        default=None,
-        description="The records of the profile results",
-    )
-    errors: list[ErrorDetails] | None = Field(
-        default=None,
-        description="The errors of the profile results",
+    results: ProfileResults = Field(..., description="The profile results")
+    errors: list[ErrorDetails] = Field(
+        default_factory=list,
+        description="Any error that occurred while processing the profile results",
     )
 
 
@@ -188,6 +187,9 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The HTTP status code of the response.",
     )
+    # TODO: Maybe we could improve this with subclassing the responses to allow for more specific types.
+    #       This would allow us to remove the SerializeAsAny and use a more specific type. Look at how we handle
+    #       the CommandMessage and CommandResponse classes for an example.
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
@@ -330,9 +332,6 @@ class ResponseData(AIPerfBaseModel):
 class ParsedResponseRecord(AIPerfBaseModel):
     """Record of a request and its associated responses, already parsed and ready for metrics."""
 
-    worker_id: str = Field(
-        description="The ID of the worker that processed the request."
-    )
     request: RequestRecord = Field(description="The original request record")
     responses: list[ResponseData] = Field(description="The parsed response data.")
     input_token_count: int | None = Field(

@@ -33,6 +33,17 @@ class OutputConfig(BaseConfig):
         ),
     ] = OutputDefaults.ARTIFACT_DIRECTORY
 
+    show_internal_metrics: Annotated[
+        bool,
+        Field(
+            description="Whether to show internal and hidden metrics in the output",
+        ),
+        Parameter(
+            name=("--show-internal-metrics"),
+            group=_CLI_GROUP,
+        ),
+    ] = OutputDefaults.SHOW_INTERNAL_METRICS
+
     # profile_export_file: Annotated[
     #     Path,
     #     Field(

@@ -148,7 +148,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         # TODO: Implement the user specified method (random, round robin, etc.)
         conversation = random.choice(list(self.dataset.values()))
-        self.debug(lambda: f"Sending random conversation response: {conversation}")
+        self.trace_or_debug(
+            lambda: f"Sending random conversation response: {conversation}",
+            lambda: f"Sending random conversation response with id: {conversation.session_id}",
+        )
         return ConversationResponseMessage(
             service_id=self.service_id,
             request_id=request_id,
@@ -166,7 +169,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
 
         conversation = self.dataset[conversation_id]
-        self.debug(lambda: f"Sending conversation response: {conversation}")
+        self.trace_or_debug(
+            lambda: f"Sending conversation response: {conversation}",
+            lambda: f"Sending conversation response with id: {conversation.session_id}",
+        )
         return ConversationResponseMessage(
             service_id=self.service_id,
             request_id=request_id,
@@ -193,7 +199,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         turn = conversation.turns[message.turn_index]
 
-        self.debug(lambda: f"Sending turn response: {turn}")
+        self.trace_or_debug(
+            lambda: f"Sending turn response: {turn}",
+            "Sending turn response",
+        )
         return ConversationTurnResponseMessage(
             service_id=self.service_id,
             request_id=message.request_id,
@@ -205,7 +214,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self, message: DatasetTimingRequest
     ) -> DatasetTimingResponse:
         """Handle a dataset timing request."""
-        self.debug(lambda: f"Handling dataset timing request: {message}")
+        self.trace_or_debug(
+            lambda: f"Handling dataset timing request: {message}",
+            "Handling dataset timing request",
+        )
         if not self.dataset:
             raise self._service_error(
                 "Dataset is empty and must be configured before handling timing requests.",

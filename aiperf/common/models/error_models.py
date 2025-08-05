@@ -38,7 +38,7 @@ class ErrorDetails(AIPerfBaseModel):
         return hash((self.code, self.type, self.message))
 
     @classmethod
-    def from_exception(cls, e: Exception) -> "ErrorDetails":
+    def from_exception(cls, e: BaseException) -> "ErrorDetails":
         """Create an error details object from an exception."""
         return cls(
             type=e.__class__.__name__,

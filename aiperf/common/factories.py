@@ -6,7 +6,6 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.constants import DEFAULT_STREAMING_MAX_QUEUE_SIZE
 from aiperf.common.enums import (
     CommClientType,
     CommunicationBackend,
@@ -14,10 +13,10 @@ from aiperf.common.enums import (
     CustomDatasetType,
     DataExporterType,
     EndpointType,
-    PostProcessorType,
+    RecordProcessorType,
+    ResultsProcessorType,
     ServiceRunType,
     ServiceType,
-    StreamingPostProcessorType,
     ZMQProxyType,
 )
 from aiperf.common.exceptions import (
@@ -48,12 +47,12 @@ if TYPE_CHECKING:
         CommunicationProtocol,
         DataExporterProtocol,
         InferenceClientProtocol,
-        PostProcessorProtocol,
+        RecordProcessorProtocol,  # noqa: F401
         RequestConverterProtocol,  # noqa: F401
         ResponseExtractorProtocol,
+        ResultsProcessorProtocol,  # noqa: F401
         ServiceManagerProtocol,
         ServiceProtocol,  # noqa: F401
-        StreamingPostProcessorProtocol,
     )
     from aiperf.dataset import (
         CustomDatasetLoaderProtocol,
@@ -434,20 +433,6 @@ class InferenceClientFactory(AIPerfFactory[EndpointType, "InferenceClientProtoco
         )
 
 
-class PostProcessorFactory(AIPerfFactory[PostProcessorType, "PostProcessorProtocol"]):
-    """Factory for registering and creating PostProcessorProtocol instances based on the specified post processor type.
-    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
-    """
-
-    @classmethod
-    def create_instance(  # type: ignore[override]
-        cls,
-        class_type: PostProcessorType | str,
-        **kwargs,
-    ) -> "PostProcessorProtocol":
-        return super().create_instance(class_type, **kwargs)
-
-
 class RequestConverterFactory(
     AIPerfSingletonFactory[EndpointType, "RequestConverterProtocol"]
 ):
@@ -526,29 +511,48 @@ class ServiceManagerFactory(AIPerfFactory[ServiceRunType, "ServiceManagerProtoco
         )
 
 
-class StreamingPostProcessorFactory(
-    AIPerfFactory[StreamingPostProcessorType, "StreamingPostProcessorProtocol"]
+class RecordProcessorFactory(
+    AIPerfFactory[RecordProcessorType, "RecordProcessorProtocol"]
 ):
-    """Factory for registering and creating StreamingPostProcessorProtocol instances based on the specified streaming post processor type.
+    """Factory for registering and creating RecordProcessorProtocol instances based on the specified record processor type.
     see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
     """
 
     @classmethod
     def create_instance(  # type: ignore[override]
         cls,
-        class_type: StreamingPostProcessorType | str,
-        service_id: str,
+        class_type: RecordProcessorType | str,
         service_config: "ServiceConfig",
         user_config: "UserConfig",
-        max_queue_size: int = DEFAULT_STREAMING_MAX_QUEUE_SIZE,
         **kwargs,
-    ) -> "StreamingPostProcessorProtocol":
+    ) -> "RecordProcessorProtocol":
         return super().create_instance(
             class_type,
-            service_id=service_id,
             service_config=service_config,
             user_config=user_config,
-            max_queue_size=max_queue_size,
+            **kwargs,
+        )
+
+
+class ResultsProcessorFactory(
+    AIPerfFactory[ResultsProcessorType, "ResultsProcessorProtocol"]
+):
+    """Factory for registering and creating ResultsProcessorProtocol instances based on the specified results processor type.
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
+
+    @classmethod
+    def create_instance(  # type: ignore[override]
+        cls,
+        class_type: ResultsProcessorType | str,
+        service_config: "ServiceConfig",
+        user_config: "UserConfig",
+        **kwargs,
+    ) -> "ResultsProcessorProtocol":
+        return super().create_instance(
+            class_type,
+            service_config=service_config,
+            user_config=user_config,
             **kwargs,
         )
 

@@ -1,48 +1,42 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import MetricTag, MetricTimeType, MetricType
+import sys
+
+from aiperf.common.enums import MetricDateTimeUnit, MetricFlags, MetricTimeUnit
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.types import MetricTagT
-from aiperf.metrics.base_metric import BaseMetric
+from aiperf.metrics import BaseAggregateMetric
+from aiperf.metrics.metric_dicts import MetricRecordDict
 
 
-class MinRequestMetric(BaseMetric):
+class MinRequestTimestampMetric(BaseAggregateMetric[int]):
     """
     Post-processor for calculating the minimum request time stamp metric from records.
+
+    Formula:
+        Minimum Request Timestamp = Min(Request Timestamps)
     """
 
-    tag = MetricTag.MIN_REQUEST
-    unit = MetricTimeType.NANOSECONDS
-    type = MetricType.METRIC_OF_RECORDS
-    larger_is_better = False
+    tag = "min_request_timestamp"
     header = "Minimum Request Timestamp"
-    required_metrics = set()
+    unit = MetricTimeUnit.NANOSECONDS
+    display_unit = MetricDateTimeUnit.DATE_TIME
+    flags = MetricFlags.HIDDEN
+    required_metrics = None
 
-    def __init__(self):
-        self.metric: float = float("inf")
+    def __init__(self) -> None:
+        # Default to a large value, so that any request timestamp will be smaller.
+        super().__init__(default_value=sys.maxsize)
 
-    def update_value(
+    def _parse_record(
         self,
-        record: ParsedResponseRecord | None = None,
-        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
-    ) -> None:
-        """
-        Adds a new record and calculates the minimum request timestamp metric.
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> int:
+        """Return the request timestamp."""
+        # NOTE: Use the request timestamp_ns, not the start_perf_ns, because we want wall-clock timestamps,
+        return record.timestamp_ns
 
-        """
-        self._check_record(record)
-        if record.start_perf_ns < self.metric:
-            self.metric = record.start_perf_ns
-
-    def values(self) -> float:
-        """
-        Returns the Minimum Request Timestamp metric.
-        """
-        return self.metric
-
-    def _check_record(self, record: ParsedResponseRecord) -> None:
-        """
-        Checks if the record is valid for calculations.
-
-        """
-        self._require_valid_record(record)
+    def _aggregate_value(self, value: int) -> None:
+        """Aggregate the metric value. For this metric, we just take the min of the values from the different processes."""
+        if value < self._value:
+            self._value = value

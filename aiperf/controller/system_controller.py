@@ -76,8 +76,14 @@ class SystemController(SignalHandlerMixin, BaseService):
             ServiceType.TIMING_MANAGER: 1,
             ServiceType.WORKER_MANAGER: 1,
             ServiceType.RECORDS_MANAGER: 1,
-            ServiceType.INFERENCE_RESULT_PARSER: service_config.result_parser_service_count,
         }
+        if self.service_config.record_processor_service_count is not None:
+            self.required_services[ServiceType.RECORD_PROCESSOR] = (
+                self.service_config.record_processor_service_count
+            )
+            self.auto_scale_record_processor_service_count = False
+        else:
+            self.auto_scale_record_processor_service_count = True
 
         self.proxy_manager: ProxyManager = ProxyManager(
             service_config=self.service_config
@@ -296,7 +302,13 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _handle_spawn_workers_command(self, message: SpawnWorkersCommand) -> None:
         """Handle a spawn workers command."""
         self.debug(lambda: f"Received spawn workers command: {message}")
+        # Spawn the workers
         await self.service_manager.run_service(ServiceType.WORKER, message.num_workers)
+        # If we are auto-scaling the record processor service count, spawn the record processors
+        if self.auto_scale_record_processor_service_count:
+            await self.service_manager.run_service(
+                ServiceType.RECORD_PROCESSOR, message.num_workers
+            )
 
     @on_command(CommandType.SHUTDOWN_WORKERS)
     async def _handle_shutdown_workers_command(
@@ -306,6 +318,8 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.debug(lambda: f"Received shutdown workers command: {message}")
         # TODO: Handle individual worker shutdowns via worker id
         await self.service_manager.stop_service(ServiceType.WORKER)
+        if self.auto_scale_record_processor_service_count:
+            await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
 
     @on_message(MessageType.PROCESS_RECORDS_RESULT)
     async def _on_process_records_result_message(
@@ -313,21 +327,23 @@ class SystemController(SignalHandlerMixin, BaseService):
     ) -> None:
         """Handle a profile results message."""
         self.debug(lambda: f"Received profile results message: {message}")
-        if message.process_records_result.errors:
+        if message.results.errors:
             self.error(
-                f"Received process records result message with errors: {message.process_records_result.errors}"
+                f"Received process records result message with errors: {message.results.errors}"
             )
-            return
-        if not message.process_records_result.records:
-            self.error(
-                f"Received process records result message with no records: {message.process_records_result.records}"
-            )
-            return
 
-        await ExporterManager(
-            results=message.process_records_result.records[0],
-            input_config=self.user_config,
-        ).export_all()
+        # This will be displayed by the console error exporter
+        self.debug(lambda: f"Error summary: {message.results.results.error_summary}")
+
+        if message.results.results:
+            await ExporterManager(
+                results=message.results.results,
+                input_config=self.user_config,
+            ).export_all()
+        else:
+            self.error(
+                f"Received process records result message with no records: {message.results.results}"
+            )
 
         # TODO: HACK: Stop the system controller after exporting the records
         self.debug("Stopping system controller after exporting records")

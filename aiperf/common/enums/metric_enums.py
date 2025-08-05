@@ -1,49 +1,363 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from enum import Enum, Flag, auto
+from collections import deque
+from collections.abc import Callable
+from datetime import datetime
+from enum import Flag
+from functools import cached_property
+from typing import Any, TypeAlias, TypeVar
 
-from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
+import pandas as pd
+from pydantic import Field, model_validator
+from typing_extensions import Self
 
+from aiperf.common.enums.base_enums import (
+    BasePydanticBackedStrEnum,
+    BasePydanticEnumInfo,
+    CaseInsensitiveStrEnum,
+)
+from aiperf.common.exceptions import MetricUnitError
 
-class MetricTimeType(CaseInsensitiveStrEnum):
-    """Defines the time types for metrics."""
-
-    NANOSECONDS = "nanoseconds"
-    MILLISECONDS = "milliseconds"
-    SECONDS = "seconds"
-
-    def short_name(self) -> str:
-        """Get the short name for the time type."""
-        _short_name_map = {
-            MetricTimeType.NANOSECONDS: "ns",
-            MetricTimeType.MILLISECONDS: "ms",
-            MetricTimeType.SECONDS: "s",
-        }
-        return _short_name_map[self]
-
-
-class MetricType(Enum):
-    METRIC_OF_RECORDS = auto()
-    METRIC_OF_METRICS = auto()
-    METRIC_OF_BOTH = auto()
+MetricValueTypeT: TypeAlias = int | float | list[float] | list[int]
+MetricValueTypeVarT = TypeVar("MetricValueTypeVarT", bound=MetricValueTypeT)
+MetricDictValueTypeT: TypeAlias = MetricValueTypeT | deque[MetricValueTypeT] | pd.Series
 
 
-class MetricTag(CaseInsensitiveStrEnum):
-    BENCHMARK_DURATION = "benchmark_duration"
-    ISL = "isl"
-    INTER_TOKEN_LATENCY = "inter_token_latency"
-    MAX_RESPONSE = "max_response"
-    MIN_REQUEST = "min_request"
-    OSL = "osl"
-    OUTPUT_TOKEN_COUNT = "output_token_count"
-    OUTPUT_TOKEN_THROUGHPUT = "output_token_throughput"
-    OUTPUT_TOKEN_THROUGHPUT_PER_USER = "output_token_throughput_per_user"
-    REQUEST_COUNT = "request_count"
-    REQUEST_LATENCY = "request_latency"
-    REQUEST_THROUGHPUT = "request_throughput"
-    TTFT = "ttft"
-    TTST = "ttst"
+class BaseMetricUnitInfo(BasePydanticEnumInfo):
+    """Base class for all metric units. Provides a base implementation for converting between units which
+    can be overridden by subclasses to support more complex conversions.
+    """
+
+    def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
+        """Convert a value from this unit to another unit."""
+        # If the other unit is the same as this unit, return the value. This allows for chaining conversions,
+        # as well as if a type does not have a conversion method, we do not want to raise an error if the conversion is a no-op.
+        if other_unit == self:
+            return value
+
+        # Otherwise, we cannot convert between the two units.
+        raise MetricUnitError(
+            f"Cannot convert from '{self}' to '{other_unit}'.",
+        )
+
+
+class BaseMetricUnit(BasePydanticBackedStrEnum):
+    """Base class for all metric units."""
+
+    @cached_property
+    def info(self) -> BaseMetricUnitInfo:
+        """Get the info for the metric unit."""
+        return self._info  # type: ignore
+
+    def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
+        """Convert a value from this unit to another unit. This is a passthrough to the info class."""
+        return self.info.convert_to(other_unit, value)
+
+
+# We allow either an actual enum unit, or an info object that can act like a unit.
+MetricUnitT: TypeAlias = BaseMetricUnit | BaseMetricUnitInfo
+
+
+class MetricSizeUnitInfo(BaseMetricUnitInfo):
+    """Information about a size unit for metrics."""
+
+    long_name: str
+    num_bytes: int
+
+    def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
+        """Convert a value from this unit to another unit."""
+        if not isinstance(other_unit, MetricSizeUnit | MetricSizeUnitInfo):
+            return super().convert_to(other_unit, value)
+
+        return value * (self.num_bytes / other_unit.num_bytes)
+
+
+class MetricSizeUnit(BaseMetricUnit):
+    """Defines the size types for metrics."""
+
+    BYTES = MetricSizeUnitInfo(
+        tag="B",
+        long_name="bytes",
+        num_bytes=1,
+    )
+    KILOBYTES = MetricSizeUnitInfo(
+        tag="KB",
+        long_name="kilobytes",
+        num_bytes=1024,
+    )
+    MEGABYTES = MetricSizeUnitInfo(
+        tag="MB",
+        long_name="megabytes",
+        num_bytes=1024 * 1024,
+    )
+    GIGABYTES = MetricSizeUnitInfo(
+        tag="GB",
+        long_name="gigabytes",
+        num_bytes=1024 * 1024 * 1024,
+    )
+    TERABYTES = MetricSizeUnitInfo(
+        tag="TB",
+        long_name="terabytes",
+        num_bytes=1024 * 1024 * 1024 * 1024,
+    )
+
+    @cached_property
+    def info(self) -> MetricSizeUnitInfo:
+        """Get the info for the metric size unit."""
+        return self._info  # type: ignore
+
+    @cached_property
+    def num_bytes(self) -> int:
+        """The number of bytes in the metric size unit."""
+        return self.info.num_bytes
+
+    @cached_property
+    def long_name(self) -> str:
+        """The long name of the metric size unit."""
+        return self.info.long_name
+
+
+class MetricTimeUnitInfo(BaseMetricUnitInfo):
+    """Information about a time unit for metrics."""
+
+    long_name: str
+    per_second: int
+
+
+class MetricTimeUnit(BaseMetricUnit):
+    """Defines the various time units that can be used for metrics, as well as the conversion factor to convert to other units."""
+
+    NANOSECONDS = MetricTimeUnitInfo(
+        tag="ns",
+        long_name="nanoseconds",
+        per_second=1_000_000_000,
+    )
+    MICROSECONDS = MetricTimeUnitInfo(
+        tag="us",
+        long_name="microseconds",
+        per_second=1_000_000,
+    )
+    MILLISECONDS = MetricTimeUnitInfo(
+        tag="ms",
+        long_name="milliseconds",
+        per_second=1_000,
+    )
+    SECONDS = MetricTimeUnitInfo(
+        tag="sec",
+        long_name="seconds",
+        per_second=1,
+    )
+
+    @cached_property
+    def info(self) -> MetricTimeUnitInfo:
+        """Get the info for the metric time unit."""
+        return self._info  # type: ignore
+
+    @cached_property
+    def per_second(self) -> int:
+        """How many of these units there are in one second. Used as a common conversion factor to convert to other units."""
+        return self.info.per_second
+
+    @cached_property
+    def long_name(self) -> str:
+        """The long name of the metric time unit."""
+        return self.info.long_name
+
+    def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
+        """Convert a value from this unit to another unit."""
+        if not isinstance(
+            other_unit, MetricTimeUnit | MetricTimeUnitInfo | MetricDateTimeUnit
+        ):
+            return super().convert_to(other_unit, value)
+
+        if isinstance(other_unit, MetricDateTimeUnit):
+            return datetime.fromtimestamp(
+                self.convert_to(MetricTimeUnit.SECONDS, value)
+            )
+
+        return value * (other_unit.per_second / self.per_second)
+
+
+# Syntactic sugar for creating BaseMetricUnitInfo instances with a tag
+def _unit(tag: str) -> BaseMetricUnitInfo:
+    return BaseMetricUnitInfo(tag=tag)
+
+
+class GenericMetricUnit(BaseMetricUnit):
+    """Defines generic units for metrics. These dont have any extra information other than the tag, which is used for display purposes."""
+
+    COUNT = _unit("count")
+    REQUESTS = _unit("requests")
+    TOKENS = _unit("tokens")
+    USER = _unit("user")
+
+
+class MetricDateTimeUnit(BaseMetricUnit):
+    """Defines the various date time units that can be used for metrics."""
+
+    DATE_TIME = _unit("datetime")
+
+
+class MetricOverTimeUnitInfo(BaseMetricUnitInfo):
+    """Information about a metric over time unit."""
+
+    @model_validator(mode="after")
+    def _set_tag(self: Self) -> Self:
+        """Set the tag based on the existing units. ie. requests/sec, tokens/sec, etc."""
+        self.tag = f"{self.primary_unit}/{self.time_unit}"
+        if self.third_unit:
+            # If there is a third unit, add it to the tag. ie. tokens/sec/user
+            self.tag += f"/{self.third_unit}"
+        return self
+
+    tag: str = Field(
+        default="",
+        description="The tag for the metric over time unit. This will be set automatically by the model_validator.",
+    )
+    primary_unit: "MetricUnitT"
+    time_unit: MetricTimeUnit | MetricTimeUnitInfo
+    third_unit: "MetricUnitT | None" = None
+
+    def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
+        """Convert a value from this unit to another unit."""
+        # If the other unit is the same as this unit, return the value.
+        if other_unit == self:
+            return value
+
+        if isinstance(other_unit, MetricOverTimeUnit | MetricOverTimeUnitInfo):
+            # Chain convert each unit to the other unit.
+            value = self.primary_unit.convert_to(other_unit.primary_unit, value)
+            value = self.time_unit.convert_to(other_unit.time_unit, value)
+            if self.third_unit and other_unit.third_unit:
+                value = self.third_unit.convert_to(other_unit.third_unit, value)
+            return value
+
+        # If the other unit is a time unit, convert our time unit to the other unit.
+        # TODO: Should we even allow this?
+        if isinstance(other_unit, MetricTimeUnit | MetricTimeUnitInfo):
+            return self.time_unit.convert_to(other_unit, value)
+
+        # Otherwise, convert the primary unit to the other unit.
+        return self.primary_unit.convert_to(other_unit, value)
+
+
+class MetricOverTimeUnit(BaseMetricUnit):
+    """Defines the units for metrics that are a generic unit over a specific time unit."""
+
+    REQUESTS_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=GenericMetricUnit.REQUESTS,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
+    TOKENS_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=GenericMetricUnit.TOKENS,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
+    TOKENS_PER_SECOND_PER_USER = MetricOverTimeUnitInfo(
+        primary_unit=GenericMetricUnit.TOKENS,
+        time_unit=MetricTimeUnit.SECONDS,
+        third_unit=GenericMetricUnit.USER,
+    )
+
+    @cached_property
+    def info(self) -> MetricOverTimeUnitInfo:
+        """Get the info for the metric over time unit."""
+        return self._info  # type: ignore
+
+    @cached_property
+    def primary_unit(self) -> "MetricUnitT":
+        """Get the primary unit."""
+        return self.info.primary_unit
+
+    @cached_property
+    def time_unit(self) -> MetricTimeUnit | MetricTimeUnitInfo:
+        """Get the time unit."""
+        return self.info.time_unit
+
+    @cached_property
+    def third_unit(self) -> "MetricUnitT | None":
+        """Get the third unit (if applicable)."""
+        return self.info.third_unit
+
+
+class MetricType(CaseInsensitiveStrEnum):
+    """Defines the possible types of metrics."""
+
+    RECORD = "record"
+    """Metrics that provide a distinct value for each request. Every request that comes in will produce a new value that is not affected by any other requests.
+    These metrics can be tracked over time and compared to each other.
+    Examples: request latency, ISL, ITL, OSL, etc."""
+
+    AGGREGATE = "aggregate"
+    """Metrics that keep track of one or more values over time, that are updated for each request, such as total counts, min/max values, etc.
+    These metrics may or may not change each request, and are affected by other requests.
+    Examples: min/max request latency, total request count, benchmark duration, etc."""
+
+    DERIVED = "derived"
+    """Metrics that are purely derived from other metrics as a summary, and do not require per-request values.
+    Examples: request throughput, output token throughput, etc."""
+
+
+class MetricValueTypeInfo(BasePydanticEnumInfo):
+    """Information about a metric value type."""
+
+    default_factory: Callable[[], MetricValueTypeT]
+    converter: Callable[[Any], MetricValueTypeT]
+    dtype: Any
+
+
+class MetricValueType(BasePydanticBackedStrEnum):
+    """Defines the possible types of values for metrics.
+
+    NOTE: The string representation is important here, as it is used to automatically determine the type
+    based on the python generic type definition.
+    """
+
+    FLOAT = MetricValueTypeInfo(
+        tag="float",
+        default_factory=float,
+        converter=float,
+        dtype=float,
+    )
+    INT = MetricValueTypeInfo(
+        tag="int",
+        default_factory=int,
+        converter=int,
+        dtype=int,
+    )
+
+    @cached_property
+    def info(self) -> MetricValueTypeInfo:
+        """Get the info for the metric value type."""
+        return self._info  # type: ignore
+
+    @cached_property
+    def default_factory(self) -> Callable[[], MetricValueTypeT]:
+        """Get the default value generator for the metric value type."""
+        return self.info.default_factory
+
+    @cached_property
+    def converter(self) -> Callable[[Any], MetricValueTypeT]:
+        """Get the converter for the metric value type."""
+        return self.info.converter
+
+    @cached_property
+    def dtype(self) -> Any:
+        """Get the dtype for the metric value type (for pandas/numpy)."""
+        return self.info.dtype
+
+    @classmethod
+    def from_python_type(cls, type: type[MetricValueTypeT]) -> "MetricValueType":
+        """Get the MetricValueType for a given type."""
+        # If the type is a simple type like float or int, we have to use __name__.
+        # This is because using str() on float or int will return <class 'float'> or <class 'int'>, etc.
+        type_name = type.__name__
+        if type_name == "list":
+            # However, if the type is a list, we have to use str() to get the list type as well, e.g. list[int]
+            type_name = str(type)
+        elif type_name == "MetricValueTypeVarT":
+            type_name = "float"  # Default to float if the user did not specify a type.
+        return MetricValueType(type_name)
 
 
 class MetricFlags(Flag):

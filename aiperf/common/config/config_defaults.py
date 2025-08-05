@@ -124,6 +124,7 @@ class TurnDelayDefaults:
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
     PROFILE_EXPORT_FILE = Path("profile_export.json")
+    SHOW_INTERNAL_METRICS = False
 
 
 @dataclass(frozen=True)
@@ -155,7 +156,7 @@ class ServiceDefaults:
     LOG_PATH = None
     DISABLE_UI = True  # TODO: Make this False by default once we have a UI
     ENABLE_UVLOOP = True
-    RESULT_PARSER_SERVICE_COUNT = 2
+    RECORD_PROCESSOR_SERVICE_COUNT = None
     ENABLE_YAPPI = False
     DEBUG_SERVICES = None
     TRACE_SERVICES = None

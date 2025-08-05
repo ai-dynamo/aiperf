@@ -1,48 +1,37 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import MetricTag, MetricType
-from aiperf.common.models.record_models import ParsedResponseRecord
-from aiperf.common.types import MetricTagT
-from aiperf.metrics.base_metric import BaseMetric
+from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
+from aiperf.metrics.base_derived_metric import BaseDerivedMetric
+from aiperf.metrics.metric_dicts import MetricResultsDict
+from aiperf.metrics.types.benchmark_duration import BenchmarkDurationMetric
+from aiperf.metrics.types.benchmark_token_count import BenchmarkTokenCountMetric
 
 
-class OutputTokenThroughputMetric(BaseMetric):
+class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
     """
     Post Processor for calculating Output Token Throughput Metric.
+
+    Formula:
+        Output Token Throughput = Benchmark Token Count / Benchmark Duration (seconds)
     """
 
-    tag = MetricTag.OUTPUT_TOKEN_THROUGHPUT
-    unit = None
-    larger_is_better = True
-    header = "Output Token Throughput (tokens/sec)"
-    type = MetricType.METRIC_OF_METRICS
+    tag = "output_token_throughput"
+    header = "Output Token Throughput"
+    unit = MetricOverTimeUnit.TOKENS_PER_SECOND
+    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER
     required_metrics = {
-        MetricTag.OUTPUT_TOKEN_COUNT,
-        MetricTag.BENCHMARK_DURATION,
+        BenchmarkTokenCountMetric.tag,
+        BenchmarkDurationMetric.tag,
     }
 
-    def __init__(self):
-        self.metric: float = 0.0
-
-    def update_value(
+    def _derive_value(
         self,
-        record: ParsedResponseRecord | None = None,
-        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
-    ):
-        self._check_metrics(metrics)
-        tokens = metrics[MetricTag.OUTPUT_TOKEN_COUNT].values()
-        total_tokens = sum(tokens)
-
-        duration_ns = metrics[MetricTag.BENCHMARK_DURATION].values()
-        self.metric = total_tokens / (duration_ns / NANOS_PER_SECOND)
-
-    def values(self) -> float:
-        """
-        Returns the OutputTokenThroughput metric.
-        """
-        return self.metric
-
-    def _check_record(self, record):
-        pass
+        metric_results: MetricResultsDict,
+    ) -> float:
+        benchmark_token_count = metric_results[BenchmarkTokenCountMetric.tag]
+        benchmark_duration_converted = metric_results.get_converted(  # type: ignore
+            BenchmarkDurationMetric,
+            self.unit.time_unit,  # type: ignore
+        )
+        return benchmark_token_count / benchmark_duration_converted  # type: ignore

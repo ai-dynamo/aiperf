@@ -1,55 +1,47 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import MetricTag, MetricTimeType, MetricType
+from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.types import MetricTagT
-from aiperf.metrics.base_metric import BaseMetric
+from aiperf.metrics import BaseRecordMetric
+from aiperf.metrics.metric_dicts import MetricRecordDict
 
 
-class TTFTMetric(BaseMetric):
+class TTFTMetric(BaseRecordMetric[int]):
     """
     Post-processor for calculating Time to First Token (TTFT) metrics from records.
+
+    Formula:
+        TTFT = First Response Timestamp - Request Start Timestamp
+
+    Alternatively, this is equivalent to:
+        TTFT = Stream Setup Latency + Stream Prefill Latency
     """
 
-    tag = MetricTag.TTFT
-    unit = MetricTimeType.NANOSECONDS
-    larger_is_better = False
-    header = "Time to First Token (TTFT)"
-    type = MetricType.METRIC_OF_RECORDS
-    streaming_only = True
-    required_metrics = set()
+    tag = "ttft"
+    header = "Time to First Token"
+    unit = MetricTimeUnit.NANOSECONDS
+    display_unit = MetricTimeUnit.MILLISECONDS
+    flags = MetricFlags.STREAMING_TOKENS_ONLY
+    required_metrics = None
 
-    def __init__(self):
-        self.metric: list[int] = []
-
-    def update_value(
+    def _parse_record(
         self,
-        record: ParsedResponseRecord | None = None,
-        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
-    ) -> None:
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> int:
         """
-        Adds a new record and calculates the Time To First Token (TTFT) metric.
-
-        This method extracts the timestamp from the request and the first response in the given
-        RequestRecord object, computes the difference (TTFT), and appends the result to the metric list.
-        """
-        self._check_record(record)
-        request_ts = record.request.start_perf_ns
-        response_ts = record.responses[0].perf_ns
-        ttft = response_ts - request_ts
-        self.metric.append(ttft)
-
-    def values(self) -> list[int]:
-        """
-        Returns the list of Time to First Token (TTFT) metrics.
-        """
-        return self.metric
-
-    def _check_record(self, record: ParsedResponseRecord) -> None:
-        """
-        Checks if the record is valid for TTFT calculation.
+        This method extracts the timestamps from the request start and the first response in the given
+        RequestRecord object, computes the difference (TTFT), and returns the result.
 
         Raises:
-            ValueError: If record is None or record is not valid
+            ValueError: If the record does not have at least one response.
         """
-        self._require_valid_record(record)
+
+        if len(record.responses) < 1:
+            raise ValueError(
+                "Record must have at least one response to calculate TTFT."
+            )
+
+        request_ts: int = record.request.start_perf_ns
+        first_response_ts: int = record.responses[0].perf_ns
+        return first_response_ts - request_ts

@@ -4,18 +4,17 @@
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
-class PostProcessorType(CaseInsensitiveStrEnum):
-    METRIC_SUMMARY = "metric_summary"
+class RecordProcessorType(CaseInsensitiveStrEnum):
+    """Type of streaming record processor."""
+
+    METRIC_RECORD = "metric_record"
+    """Streamer that streams records and computes metrics from MetricType.RECORD and MetricType.AGGREGATE.
+    This is the first stage of the metrics processing pipeline, and is done is a distributed manner across multiple service instances."""
 
 
-class StreamingPostProcessorType(CaseInsensitiveStrEnum):
-    """Type of response streamer."""
+class ResultsProcessorType(CaseInsensitiveStrEnum):
+    """Type of streaming results processor."""
 
-    PROCESSING_STATS = "processing_stats"
-    """Streamer that provides the processing stats of the records."""
-
-    BASIC_METRICS = "basic_metrics"
-    """Streamer that handles the basic metrics of the records."""
-
-    JSONL = "jsonl"
-    """Streams all parsed records to a JSONL file."""
+    METRIC_RESULTS = "metric_results"
+    """Processor that processes the metric results from METRIC_RECORD and computes metrics from MetricType.DERIVED. as well as aggregates the results.
+    This is the last stage of the metrics processing pipeline, and is done from the RecordsManager after all the service instances have completed their processing."""

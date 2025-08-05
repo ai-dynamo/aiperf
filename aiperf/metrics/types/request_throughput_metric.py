@@ -1,49 +1,49 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import MetricTag, MetricTimeType, MetricType
-from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.types import MetricTagT
-from aiperf.metrics.base_metric import BaseMetric
+
+from aiperf.common.enums import MetricOverTimeUnit
+from aiperf.common.enums.metric_enums import MetricFlags
+from aiperf.metrics.base_derived_metric import BaseDerivedMetric
+from aiperf.metrics.metric_dicts import MetricResultsDict
+from aiperf.metrics.types.benchmark_duration import BenchmarkDurationMetric
+from aiperf.metrics.types.valid_request_count import ValidRequestCountMetric
 
 
-class RequestThroughputMetric(BaseMetric):
+class RequestThroughputMetric(BaseDerivedMetric[float]):
     """
     Post Processor for calculating Request throughput metrics from records.
+
+    Formula:
+        Request Throughput = Valid Request Count / Benchmark Duration (seconds)
     """
 
-    tag = MetricTag.REQUEST_THROUGHPUT
-    unit = MetricTimeType.SECONDS
-    larger_is_better = True
+    tag = "request_throughput"
     header = "Request Throughput"
-    type = MetricType.METRIC_OF_METRICS
-    streaming_only = False
-    required_metrics = {MetricTag.REQUEST_COUNT, MetricTag.BENCHMARK_DURATION}
+    unit = MetricOverTimeUnit.REQUESTS_PER_SECOND
+    flags = MetricFlags.LARGER_IS_BETTER
+    required_metrics = {
+        ValidRequestCountMetric.tag,
+        BenchmarkDurationMetric.tag,
+    }
 
-    def __init__(self):
-        self.metric: float = 0.0
-
-    def update_value(
+    def _derive_value(
         self,
-        record: ParsedResponseRecord | None = None,
-        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
-    ) -> None:
-        self._check_metrics(metrics)
-        total_requests = metrics[MetricTag.REQUEST_COUNT].values()
-        benchmark_duration = metrics[MetricTag.BENCHMARK_DURATION].values()
-        self.metric = total_requests / (benchmark_duration / NANOS_PER_SECOND)
+        metric_results: MetricResultsDict,
+    ) -> float:
+        benchmark_duration = metric_results[BenchmarkDurationMetric.tag]
+        if benchmark_duration is None or benchmark_duration == 0:
+            raise ValueError(
+                "Benchmark duration is required and must be greater than 0 to calculate request throughput."
+            )
 
-    def values(self) -> float:
-        """
-        Returns the Request Throughput metric.
-        """
-        return self.metric
+        valid_request_count = metric_results[ValidRequestCountMetric.tag]
+        if valid_request_count is None:
+            raise ValueError(
+                "Valid request count is required to calculate request throughput."
+            )
 
-    def _check_record(self, record: ParsedResponseRecord) -> None:
-        """
-        Checks if the record is valid.
-
-        Raises:
-            ValueError: If the record is None or is invalid.
-        """
-        self._require_valid_record(record)
+        benchmark_duration_converted = metric_results.get_converted(  # type: ignore
+            BenchmarkDurationMetric,
+            self.unit.time_unit,  # type: ignore
+        )
+        return valid_request_count / benchmark_duration_converted  # type: ignore

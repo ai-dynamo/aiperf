@@ -10,12 +10,10 @@ from aiperf.common.constants import (
     DEFAULT_COMMS_REQUEST_TIMEOUT,
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
-    DEFAULT_STREAMING_MAX_QUEUE_SIZE,
 )
 from aiperf.common.enums import (
     CommClientType,
     LifecycleState,
-    StreamingPostProcessorType,
 )
 from aiperf.common.hooks import Hook, HookType
 from aiperf.common.models import (
@@ -32,6 +30,7 @@ from aiperf.common.types import (
     MessageOutputT,
     MessageT,
     MessageTypeT,
+    MetricTagT,
     ModelEndpointInfoT,
     RequestInputT,
     RequestOutputT,
@@ -40,6 +39,9 @@ from aiperf.common.types import (
 
 if TYPE_CHECKING:
     from aiperf.common.config import ServiceConfig, UserConfig
+    from aiperf.common.enums.metric_enums import MetricValueTypeT
+    from aiperf.common.models.record_models import MetricResult
+    from aiperf.metrics.metric_dicts import MetricRecordDict
 
 
 ################################################################################
@@ -359,23 +361,6 @@ class InferenceClientProtocol(Protocol):
 
 
 @runtime_checkable
-class PostProcessorProtocol(Protocol):
-    """
-    PostProcessorProtocol is a protocol that defines the API for post-processors.
-    """
-
-    def process_record(self, record: "ParsedResponseRecord") -> None:
-        """Process a single record."""
-        ...
-
-    def post_process(self) -> Any:
-        """
-        Execute the post-processing logic on the records.
-        """
-        ...
-
-
-@runtime_checkable
 class ResponseExtractorProtocol(Protocol):
     """Protocol for a response extractor that extracts the response data from a raw inference server
     response and converts it to a list of ResponseData objects."""
@@ -461,22 +446,21 @@ class ServiceProtocol(MessageBusClientProtocol, Protocol):
 
 
 @runtime_checkable
-class StreamingPostProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
-    """Protocol for a streaming post processor that streams the incoming records to the post processor."""
+class RecordProcessorProtocol(Protocol):
+    """Protocol for a record processor that processes the incoming records and returns the results of the post processing."""
 
-    def __init__(
-        self,
-        class_type: StreamingPostProcessorType | str,
-        service_id: str,
-        service_config: "ServiceConfig",
-        user_config: "UserConfig",
-        max_queue_size: int = DEFAULT_STREAMING_MAX_QUEUE_SIZE,
-        **kwargs,
+    async def process_record(
+        self, record: ParsedResponseRecord
+    ) -> "MetricRecordDict": ...
+
+
+@runtime_checkable
+class ResultsProcessorProtocol(Protocol):
+    """Protocol for a results processor that processes the results of multiple
+    record processors, and provides the ability to summarize the results."""
+
+    async def process_result(
+        self, result: dict[MetricTagT, "MetricValueTypeT"]
     ) -> None: ...
 
-    records_queue: asyncio.Queue[ParsedResponseRecord]
-    cancellation_event: asyncio.Event
-
-    async def stream_record(self, record: ParsedResponseRecord) -> None: ...
-
-    async def process_records(self, cancelled: bool) -> Any: ...
+    async def summarize(self) -> list["MetricResult"]: ...

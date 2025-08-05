@@ -1,35 +1,56 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import importlib
+
 import inspect
-from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import Any, ClassVar
+from abc import ABC
+from typing import ClassVar, Generic, get_args, get_origin
 
-from aiperf.common.enums import MetricTimeType
-from aiperf.common.exceptions import MetricTypeError
-from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.enums.metric_enums import (
+    MetricFlags,
+    MetricType,
+    MetricUnitT,
+    MetricValueType,
+    MetricValueTypeVarT,
+)
+from aiperf.common.models.record_models import ParsedResponseRecord
 from aiperf.common.types import MetricTagT
+from aiperf.metrics.metric_dicts import (
+    MetricRecordDict,
+    MetricResultsDict,
+)
 
 
-class BaseMetric(ABC):
-    """Base class for all metrics with automatic subclass registration."""
+class BaseMetric(Generic[MetricValueTypeVarT], ABC):
+    """A definition of a metric type.
 
-    # Class attributes that subclasses must override
-    tag: ClassVar[MetricTagT] = ""
-    unit: ClassVar[MetricTimeType | None] = None
-    larger_is_better: ClassVar[bool] = True
+    This class is not meant to be instantiated directly or subclassed directly.
+    It is meant to be a common base for all of the base metric classes by type.
+
+    The class attributes are:
+    - tag: The tag of the metric. This must be a non-empty string that uniquely identifies the metric type.
+    - header: The header of the metric. This is the user-friendly name of the metric that will be displayed in the UI.
+    - unit: The unit of the internal representation of the metric. This is used for converting to other units and for display.
+    - display_unit: The unit of the metric that is used for display (if different from the unit). None means use the unit for display.
+    - flags: The flags of the metric that determine how and when it is computed and displayed.
+    - required_metrics: The metrics that must be available to compute the metric. This is a set of metric tags.
+    """
+
+    # User-defined attributes to be overridden by subclasses
+    tag: ClassVar[MetricTagT]
     header: ClassVar[str] = ""
-    streaming_only: ClassVar[bool] = False
-    required_metrics: ClassVar[set[MetricTagT]] = set()
+    unit: ClassVar[MetricUnitT]
+    display_unit: ClassVar[MetricUnitT | None] = None
+    flags: ClassVar[MetricFlags] = MetricFlags.NONE
+    required_metrics: ClassVar[set[MetricTagT] | None] = None
 
-    base_metrics: set[MetricTagT] = set()
-    metric_interfaces: dict[MetricTagT, type["BaseMetric"]] = {}
+    # Auto-derived attributes
+    value_type: ClassVar[MetricValueType]  # Auto set based on generic type parameter
+    type: ClassVar[MetricType]  # Set by base subclasses
 
     def __init_subclass__(cls, **kwargs):
         """
         This method is called when a class is subclassed from Metric.
-        It automatically registers the subclass in the metric_interfaces
+        It automatically registers the subclass in the MetricRegistry
         dictionary using the `tag` class attribute.
         The `tag` attribute must be a non-empty string that uniquely identifies the
         metric type. Only concrete (non-abstract) classes will be registered.
@@ -41,121 +62,85 @@ class BaseMetric(ABC):
         if inspect.isabstract(cls):
             return
 
+        # Verify that the class is a valid metric type
+        # Make sure to do this after checking for abstractness, so that the imports are available
+        cls._verify_base_class()
+
+        # Import MetricRegistry here to avoid circular imports
+        from aiperf.metrics.metric_registry import MetricRegistry
+
         # Enforce that subclasses define a non-empty tag
         if not cls.tag or not isinstance(cls.tag, str):
             raise TypeError(
                 f"Concrete metric class {cls.__name__} must define a non-empty 'tag' class attribute"
             )
 
-        # Check for duplicate tags
-        if cls.tag in cls.metric_interfaces:
-            raise ValueError(
-                f"Metric tag '{cls.tag}' is already registered by {cls.metric_interfaces[cls.tag].__name__}"
-            )
+        # Auto-detect value type from generic parameter
+        cls.value_type = cls._detect_value_type()
 
-        cls.metric_interfaces[cls.tag] = cls
+        MetricRegistry.register_metric(cls)
 
     @classmethod
-    def get_all(cls) -> dict[str, type["BaseMetric"]]:
+    def _verify_base_class(cls) -> None:
+        """Verify that the class is a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric.
+        This is done to ensure that the class is a valid metric type.
         """
-        Returns the dictionary of all registered metric interfaces.
+        # Note: this is valid because the below imports are abstract, so they will not get here
+        from aiperf.metrics import (
+            BaseAggregateMetric,
+            BaseDerivedMetric,
+            BaseRecordMetric,
+        )
 
-        This method dynamically imports all metric type modules from the 'types'
-        directory to ensure all metric classes are registered via __init_subclass__.
+        # Enforce that concrete subclasses are a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric
+        valid_base_classes = {
+            BaseRecordMetric,
+            BaseAggregateMetric,
+            BaseDerivedMetric,
+        }
+        if not any(issubclass(cls, base) for base in valid_base_classes):
+            raise TypeError(
+                f"Concrete metric class {cls.__name__} must be a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric"
+            )
 
-        Returns:
-            dict[str, type[Metric]]: Mapping of metric tags to their corresponding classes
+    @classmethod
+    def _detect_value_type(cls) -> MetricValueType:
+        """Automatically detect the MetricValueType from the generic type parameter."""
+        # Look through the class hierarchy for the first Generic[Type] definition
+        for base in cls.__orig_bases__:  # type: ignore
+            if get_origin(base) is not None:
+                args = get_args(base)
+                if args:
+                    # the first argument is the generic type
+                    generic_type = args[0]
+                    return MetricValueType.from_python_type(generic_type)
 
-        Raises:
-            MetricTypeError: If there's an error importing metric type modules
-        """
-        # Get the types directory path
-        types_dir = Path(__file__).parent / "types"
+        raise ValueError(
+            f"Unable to detect the value type for {cls.__name__}. Please check the generic type parameter."
+        )
 
-        # Import all metric type modules to trigger registration
-        if types_dir.exists():
-            for python_file in types_dir.glob("*.py"):
-                if python_file.name != "__init__.py":
-                    module_name = python_file.stem  # Get filename without extension
-                    try:
-                        importlib.import_module(f"aiperf.metrics.types.{module_name}")
-                    except ImportError as err:
-                        raise MetricTypeError(
-                            f"Error importing metric type module '{module_name}'"
-                        ) from err
-
-        return cls.metric_interfaces
-
-    @abstractmethod
-    def update_value(
-        self,
-        record: ParsedResponseRecord | None = None,
-        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
-    ) -> None:
-        """
-        Updates the metric value based on the provided record and dictionary of other metrics.
-
-        Args:
-            record (Optional[Record]): The record to update the metric with.
-            metrics (Optional[dict[BaseMetric]]): A dictionary of other metrics that may be needed for calculation.
-        """
-
-    @abstractmethod
-    def values(self) -> Any:
-        """
-        Returns the list of calculated metrics.
-        """
-
-    @abstractmethod
-    def _check_record(self, record: ParsedResponseRecord) -> None:
-        """
-        Checks if the record is valid for metric calculation.
-
-        Raises:
-            ValueError: If the record does not meet the required conditions.
-        """
-
-    def get_converted_metrics(self, unit: MetricTimeType | None) -> list[Any]:
-        if not isinstance(unit, MetricTimeType) or not isinstance(
-            self.unit, MetricTimeType
+    def _require_valid_record(self, record: ParsedResponseRecord) -> None:
+        """Check that the record is valid."""
+        if (not record or not record.valid) and not self.has_flags(
+            MetricFlags.ERROR_ONLY
         ):
-            raise MetricTypeError("Invalid metric time type for conversion.")
+            raise ValueError("Invalid Record")
 
-        scale_factor = self._get_conversion_factor(self.unit, unit)
-
-        return [metric / 10**scale_factor for metric in self.values()]
-
-    def _check_metrics(self, metrics: dict[MetricTagT, "BaseMetric"] | None) -> None:
-        """
-        Validates that the required dependent metrics are available.
-
-        Raises:
-            ValueError: If required metrics are missing.
-        """
-        if not metrics:
-            raise ValueError("Metrics dictionary is missing.")
-
+    def _check_metrics(self, metrics: MetricRecordDict | MetricResultsDict) -> None:
+        """Check that the required metrics are available."""
+        if self.required_metrics is None:
+            return
         for tag in self.required_metrics:
             if tag not in metrics:
                 raise ValueError(f"Missing required metric: '{tag}'")
 
-    def _get_conversion_factor(
-        self, from_unit: MetricTimeType, to_unit: MetricTimeType
-    ) -> int:
-        unit_scales = {
-            MetricTimeType.NANOSECONDS: 9,
-            MetricTimeType.MILLISECONDS: 3,
-            MetricTimeType.SECONDS: 0,
-        }
+    @classmethod
+    def has_flags(cls, flags: MetricFlags) -> bool:
+        """Return True if the metric has the given flag(s) (regardless of other flags)."""
+        return cls.flags.has_flags(flags)
 
-        return unit_scales[from_unit] - unit_scales[to_unit]
-
-    def _require_valid_record(self, record: ParsedResponseRecord) -> None:
-        """
-        Ensures the given record is not None and is marked as valid.
-
-        Raises:
-            ValueError: If the record is None or invalid.
-        """
-        if not record or not record.valid:
-            raise ValueError("Invalid Record")
+    @classmethod
+    def missing_flags(cls, flags: MetricFlags) -> bool:
+        """Return True if the metric does not have the given flag(s) (regardless of other flags). It will
+        return False if the metric has ANY of the given flags."""
+        return cls.flags.missing_flags(flags)

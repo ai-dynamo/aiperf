@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.types import ServiceTypeT
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aiperf.common.types import ServiceTypeT
 
 
 class AIPerfError(Exception):
@@ -33,7 +36,7 @@ class ServiceError(AIPerfError):
     def __init__(
         self,
         message: str,
-        service_type: ServiceTypeT,
+        service_type: "ServiceTypeT",
         service_id: str,
     ) -> None:
         super().__init__(
@@ -85,6 +88,10 @@ class InvalidStateError(AIPerfError):
 
 class MetricTypeError(AIPerfError):
     """Exception raised when a metric type encounters an error while creating a class."""
+
+
+class MetricUnitError(AIPerfError):
+    """Exception raised when trying to convert a metric to or from a unit that is does not support it."""
 
 
 class NotFoundError(AIPerfError):

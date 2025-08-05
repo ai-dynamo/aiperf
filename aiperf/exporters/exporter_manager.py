@@ -26,7 +26,7 @@ class ExporterManager(AIPerfLoggerMixin):
         tasks: set[asyncio.Task] = set()
         exporter_config = ExporterConfig(
             results=self._results,
-            input_config=self._input_config,
+            user_config=self._input_config,
         )
 
         def task_done_callback(task: asyncio.Task) -> None:

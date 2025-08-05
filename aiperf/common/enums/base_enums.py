@@ -60,6 +60,9 @@ class BasePydanticEnumInfo(BaseModel):
         description="The string value of the enum member used for lookup, serialization, and string insensitive comparison.",
     )
 
+    def __str__(self) -> str:
+        return self.tag
+
 
 class BasePydanticBackedStrEnum(CaseInsensitiveStrEnum):
     """

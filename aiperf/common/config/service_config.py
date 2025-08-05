@@ -200,16 +200,19 @@ class ServiceConfig(BaseSettings):
     ] = ServiceDefaults.ENABLE_UVLOOP
 
     # TODO: Potentially auto-scale this in the future.
-    result_parser_service_count: Annotated[
-        int,
+    record_processor_service_count: Annotated[
+        int | None,
         Field(
-            description="Number of services to spawn for parsing inference results. The higher the request rate, the more services should be spawned.",
+            ge=1,
+            description="Number of services to spawn for processing records. The higher the request rate, the more services "
+            "should be spawned in order to keep up with the incoming records. If not specified, the number of services will be "
+            "automatically determined based on the worker count.",
         ),
         Parameter(
-            name=("--result-parser-service-count"),
+            name=("--record-processor-service-count", "--record-processors"),
             group=_CLI_GROUP,
         ),
-    ] = ServiceDefaults.RESULT_PARSER_SERVICE_COUNT
+    ] = ServiceDefaults.RECORD_PROCESSOR_SERVICE_COUNT
 
     progress_report_interval: Annotated[
         float,

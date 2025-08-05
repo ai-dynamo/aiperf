@@ -1,58 +1,39 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import MetricTag, MetricTimeType, MetricType
+from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.types import MetricTagT
-from aiperf.metrics.base_metric import BaseMetric
+from aiperf.metrics import BaseRecordMetric
+from aiperf.metrics.metric_dicts import MetricRecordDict
 
 
-class TTSTMetric(BaseMetric):
+class TTSTMetric(BaseRecordMetric[int]):
     """
     Post-processor for calculating Time to Second Token (TTST) metrics from records.
+
+    Formula:
+        TTST = Second Response Timestamp - First Response Timestamp
     """
 
-    tag = MetricTag.TTST
-    unit = MetricTimeType.NANOSECONDS
-    larger_is_better = False
-    header = "Time to Second Token (TTST)"
-    type = MetricType.METRIC_OF_RECORDS
-    streaming_only = True
-    required_metrics = set()
+    tag = "ttst"
+    header = "Time to Second Token"
+    unit = MetricTimeUnit.NANOSECONDS
+    display_unit = MetricTimeUnit.MILLISECONDS
+    flags = MetricFlags.STREAMING_TOKENS_ONLY
+    required_metrics = None
 
-    def __init__(self):
-        self.metric: list[int] = []
-
-    def update_value(
+    def _parse_record(
         self,
-        record: ParsedResponseRecord | None = None,
-        metrics: dict[MetricTagT, "BaseMetric"] | None = None,
-    ) -> None:
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> int:
         """
-        Adds a new record and calculates the Time To Second Token (TTST) metric.
-
-        This method extracts the timestamp from the first and second response in the given
-        Record object, computes the difference (TTST), and appends the result to the metric list.
-        """
-        self._check_record(record)
-        first_reponse_ts = record.responses[0].perf_ns
-        second_response_ts = record.responses[1].perf_ns
-        ttst = second_response_ts - first_reponse_ts
-        self.metric.append(ttst)
-
-    def values(self) -> list[int]:
-        """
-        Returns the list of Time to First Token (TTST) metrics.
-        """
-        return self.metric
-
-    def _check_record(self, record: ParsedResponseRecord) -> None:
-        """
-        Checks if the record is valid for TTST calculation.
+        This method extracts the timestamps from the first and second response in the given
+        RequestRecord object, computes the difference (TTST), and returns the result.
 
         Raises:
-            ValueError: If the record does not have at least two responses.
+            ValueError: If the record does not have at least two responses, or if the second response is before the first response.
         """
-        self._require_valid_record(record)
+
         if len(record.responses) < 2:
             raise ValueError(
                 "Record must have at least two responses to calculate TTST."
@@ -61,3 +42,7 @@ class TTSTMetric(BaseMetric):
             raise ValueError(
                 "Second response timestamp must be greater than or equal to the first response timestamp."
             )
+
+        first_response_ts: int = record.responses[0].perf_ns
+        second_response_ts: int = record.responses[1].perf_ns
+        return second_response_ts - first_response_ts
