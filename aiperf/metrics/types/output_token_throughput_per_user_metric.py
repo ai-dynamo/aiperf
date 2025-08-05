@@ -2,18 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
-from aiperf.metrics.base_derived_metric import BaseDerivedMetric
-from aiperf.metrics.metric_dicts import MetricResultsDict
-from aiperf.metrics.types.benchmark_token_count import BenchmarkTokenCountMetric
+from aiperf.common.models.record_models import ParsedResponseRecord
+from aiperf.metrics.base_record_metric import BaseRecordMetric
+from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
 
 
-class OutputTokenThroughputPerUserMetric(BaseDerivedMetric[float]):
+class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):
     """
-    Post Processor for calculating Output Token Throughput per user metrics from records.
+    Post Processor for calculating Output Token Throughput Per User Metric.
 
     Formula:
-        Output Token Throughput Per User = Sum(Inter-Token Latencies) / Benchmark Token Count
+        Output Token Throughput Per User = 1 / Inter-Token Latency (seconds)
     """
 
     tag = "output_token_throughput_per_user"
@@ -22,13 +22,20 @@ class OutputTokenThroughputPerUserMetric(BaseDerivedMetric[float]):
     flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER
     required_metrics = {
         InterTokenLatencyMetric.tag,
-        BenchmarkTokenCountMetric.tag,
     }
 
-    def _derive_value(
+    def _parse_record(
         self,
-        metric_results: MetricResultsDict,
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
     ) -> float:
-        inter_token_latencies = metric_results[InterTokenLatencyMetric.tag]
-        benchmark_token_count = metric_results[BenchmarkTokenCountMetric.tag]
-        return sum(inter_token_latencies) / benchmark_token_count  # type: ignore
+        """This method calculates the output inference speed by computing the inverse of the inter-token latency."""
+        converted_itl = record_metrics.get_converted(
+            InterTokenLatencyMetric,
+            self.unit.time_unit,  # type: ignore
+        )
+        if converted_itl == 0:
+            raise ValueError(
+                "Inter-token latency is 0, cannot compute output token throughput per user."
+            )
+        return 1 / converted_itl
