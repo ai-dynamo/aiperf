@@ -234,10 +234,7 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         a command response is received, and we use it to set the result of the future for the command ID.
         This will alert the the task that is waiting for the response to continue.
         """
-        self.trace_or_debug(
-            lambda: f"Received command response message: {message}",
-            lambda: f"Received command response message for command '{message.command}' with id: {message.command_id} and status: {message.status}",
-        )
+        self.debug(lambda: f"Received command response message: {message}")
 
         # If the command ID is in the single response futures, we set the result of the future.
         # This will alert the the task that is waiting for the response to continue.
