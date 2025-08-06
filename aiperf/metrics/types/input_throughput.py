@@ -20,7 +20,11 @@ class InputThroughputMetric(BaseRecordMetric[float]):
     tag = "input_throughput"
     header = "Input Throughput"
     unit = MetricOverTimeUnit.TOKENS_PER_SECOND
-    flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER
+    flags = (
+        MetricFlags.STREAMING_TOKENS_ONLY
+        | MetricFlags.LARGER_IS_BETTER
+        | MetricFlags.HIDDEN  # Hidden for now, as it is new and not yet validated
+    )
     required_metrics = {
         InputSequenceLengthMetric.tag,
         TTFTMetric.tag,
