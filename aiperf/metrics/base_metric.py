@@ -31,6 +31,7 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
     - header: The header of the metric. This is the user-friendly name of the metric that will be displayed in the UI.
     - unit: The unit of the internal representation of the metric. This is used for converting to other units and for display.
     - display_unit: The unit of the metric that is used for display (if different from the unit). None means use the unit for display.
+    - display_order: The display order in the ConsoleExporter. Lower numbers are displayed first. None means unordered after any ordered metrics.
     - flags: The flags of the metric that determine how and when it is computed and displayed.
     - required_metrics: The metrics that must be available to compute the metric. This is a set of metric tags.
     """
@@ -40,6 +41,7 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
     header: ClassVar[str] = ""
     unit: ClassVar[MetricUnitT]
     display_unit: ClassVar[MetricUnitT | None] = None
+    display_order: ClassVar[int | None] = None
     flags: ClassVar[MetricFlags] = MetricFlags.NONE
     required_metrics: ClassVar[set[MetricTagT] | None] = None
 

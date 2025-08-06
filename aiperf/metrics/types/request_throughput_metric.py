@@ -20,6 +20,7 @@ class RequestThroughputMetric(BaseDerivedMetric[float]):
     tag = "request_throughput"
     header = "Request Throughput"
     unit = MetricOverTimeUnit.REQUESTS_PER_SECOND
+    display_order = 900
     flags = MetricFlags.LARGER_IS_BETTER
     required_metrics = {
         ValidRequestCountMetric.tag,

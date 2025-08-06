@@ -18,6 +18,7 @@ class ValidRequestCountMetric(BaseAggregateMetric[int]):
     tag = "valid_request_count"
     header = "Valid Request Count"
     unit = GenericMetricUnit.REQUESTS
+    display_order = 1000
     flags = MetricFlags.LARGER_IS_BETTER
     required_metrics = None
 

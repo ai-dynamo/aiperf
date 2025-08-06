@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import sys
 from datetime import datetime
 
 from rich.console import Console
@@ -52,6 +53,10 @@ class ConsoleExporter(AIPerfLoggerMixin):
         console.file.flush()
 
     def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
+        records = sorted(
+            records,
+            key=lambda x: MetricRegistry.get_class(x.tag).display_order or sys.maxsize,
+        )
         for record in records:
             if self._should_skip(record):
                 continue

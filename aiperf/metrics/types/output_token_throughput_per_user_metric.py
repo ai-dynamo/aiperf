@@ -19,6 +19,7 @@ class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):
     tag = "output_token_throughput_per_user"
     header = "Output Token Throughput Per User"
     unit = MetricOverTimeUnit.TOKENS_PER_SECOND_PER_USER
+    display_order = 500
     flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER
     required_metrics = {
         InterTokenLatencyMetric.tag,

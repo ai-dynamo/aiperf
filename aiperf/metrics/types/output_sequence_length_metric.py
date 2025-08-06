@@ -18,6 +18,7 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
     tag = "output_sequence_length"
     header = "Output Sequence Length"
     unit = GenericMetricUnit.TOKENS
+    display_order = 600
     flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER
     required_metrics = None
 

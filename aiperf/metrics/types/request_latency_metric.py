@@ -19,6 +19,7 @@ class RequestLatencyMetric(BaseRecordMetric[int]):
     header = "Request Latency"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
+    display_order = 300
     flags = MetricFlags.NONE
     required_metrics = None
 
