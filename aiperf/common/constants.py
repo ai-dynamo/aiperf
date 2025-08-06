@@ -6,6 +6,13 @@ NANOS_PER_MILLIS = 1_000_000
 BYTES_PER_MIB = 1024 * 1024
 
 GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+"""Default timeout for shutting down services in seconds."""
+
+DEFAULT_SHUTDOWN_ACK_TIMEOUT = 5.0
+"""Default timeout for waiting for a shutdown command response in seconds."""
+
+DEFAULT_PROFILE_CANCEL_TIMEOUT = 10.0
+"""Default timeout for cancelling a profile run in seconds."""
 
 TASK_CANCEL_TIMEOUT_SHORT = 2.0
 """Maximum time to wait for simple tasks to complete when cancelling them."""
@@ -25,9 +32,6 @@ DEFAULT_SERVICE_REGISTRATION_TIMEOUT = 30.0
 DEFAULT_SERVICE_START_TIMEOUT = 30.0
 """Default timeout for service start in seconds."""
 
-DEFAULT_STREAMING_MAX_QUEUE_SIZE = 100_000
-"""Default maximum queue size for streaming post processors."""
-
 DEFAULT_COMMAND_RESPONSE_TIMEOUT = 30.0
 """Default timeout for command responses in seconds."""
 
@@ -37,7 +41,7 @@ DEFAULT_CONNECTION_PROBE_INTERVAL = 0.1
 DEFAULT_CONNECTION_PROBE_TIMEOUT = 30.0
 """Maximum amount of time to wait for connection probe response."""
 
-DEFAULT_PROFILE_CONFIGURE_TIMEOUT = 120.0
+DEFAULT_PROFILE_CONFIGURE_TIMEOUT = 300.0
 """Default timeout for profile configure command in seconds."""
 
 DEFAULT_PROFILE_START_TIMEOUT = 60.0

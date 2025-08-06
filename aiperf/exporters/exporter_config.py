@@ -10,4 +10,4 @@ from aiperf.common.models.record_models import ProfileResults
 @dataclass
 class ExporterConfig:
     results: ProfileResults
-    input_config: UserConfig
+    user_config: UserConfig

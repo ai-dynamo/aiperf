@@ -110,6 +110,4 @@ class ProcessRecordsResultMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.PROCESS_RECORDS_RESULT
 
-    process_records_result: ProcessRecordsResult = Field(
-        ..., description="The process records result"
-    )
+    results: ProcessRecordsResult = Field(..., description="The process records result")

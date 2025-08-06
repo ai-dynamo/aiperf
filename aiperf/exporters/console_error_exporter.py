@@ -18,22 +18,19 @@ class ConsoleErrorExporter:
         self._results = exporter_config.results
 
     async def export(self, width: int | None = None) -> None:
+        if not self._results.error_summary:
+            return
+
+        table = Table(title=self._get_title(), width=width)
+        table.add_column("Code", justify="right", style="yellow")
+        table.add_column("Type", justify="right", style="yellow")
+        table.add_column("Message", justify="left", style="yellow")
+        table.add_column("Count", justify="right", style="yellow")
+        self._construct_table(table, self._results.error_summary)
+
         console = Console()
-
-        if len(self._results.error_summary) > 0:
-            table = Table(title=self._get_title(), width=width)
-            table.add_column("Code", justify="right", style="yellow")
-            table.add_column("Type", justify="right", style="yellow")
-            table.add_column("Message", justify="left", style="yellow")
-            table.add_column("Count", justify="right", style="yellow")
-            self._construct_table(table, self._results.error_summary)
-
-            console.print("\n")
-            console.print(table)
-
-            if self._results.was_cancelled:
-                console.print("[red][bold]Profile run was cancelled early[/bold][/red]")
-
+        console.print("\n")
+        console.print(table)
         console.file.flush()
 
     def _construct_table(

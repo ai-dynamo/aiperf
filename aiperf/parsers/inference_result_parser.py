@@ -4,63 +4,40 @@ import asyncio
 import time
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.comms.base_comms import (
-    PushClientProtocol,
-    RequestClientProtocol,
-)
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
-from aiperf.common.enums import CommAddress, MessageType, ServiceType
-from aiperf.common.enums.command_enums import CommandType
-from aiperf.common.factories import ResponseExtractorFactory, ServiceFactory
+from aiperf.common.enums import CommAddress
+from aiperf.common.factories import ResponseExtractorFactory
 from aiperf.common.hooks import (
-    on_command,
     on_init,
-    on_pull_message,
 )
 from aiperf.common.messages import (
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
     ErrorMessage,
-    InferenceResultsMessage,
-    ParsedInferenceResultsMessage,
 )
-from aiperf.common.messages.command_messages import ProfileConfigureCommand
-from aiperf.common.mixins import PullClientMixin
+from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponseRecord,
     RequestRecord,
 )
+from aiperf.common.protocols import RequestClientProtocol, ResponseExtractorProtocol
 from aiperf.common.tokenizer import Tokenizer
 
 
-@ServiceFactory.register(ServiceType.INFERENCE_RESULT_PARSER)
-class InferenceResultParser(PullClientMixin, BaseComponentService):
-    """InferenceResultParser is responsible for parsing the inference results
-    and pushing them to the RecordsManager.
-    """
+# TODO: Should we create non-tokenizer based parsers?
+class InferenceResultParser(CommunicationMixin):
+    """InferenceResultParser is responsible for parsing the inference results."""
 
     def __init__(
         self,
         service_config: ServiceConfig,
         user_config: UserConfig,
-        service_id: str | None = None,
     ) -> None:
         super().__init__(
             service_config=service_config,
             user_config=user_config,
-            service_id=service_id,
-            pull_client_address=CommAddress.RAW_INFERENCE_PROXY_BACKEND,
-            pull_client_bind=False,
-            pull_client_max_concurrency=DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
-        )
-        self.debug("Initializing inference result parser")
-
-        self.records_push_client: PushClientProtocol = self.comms.create_push_client(
-            CommAddress.RECORDS,
         )
         self.conversation_request_client: RequestClientProtocol = (
             self.comms.create_request_client(
@@ -73,6 +50,12 @@ class InferenceResultParser(PullClientMixin, BaseComponentService):
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
             user_config
         )
+        self.extractor: ResponseExtractorProtocol = (
+            ResponseExtractorFactory.create_instance(
+                self.model_endpoint.endpoint.type,
+                model_endpoint=self.model_endpoint,
+            )
+        )
 
     @on_init
     async def _initialize(self) -> None:
@@ -84,10 +67,7 @@ class InferenceResultParser(PullClientMixin, BaseComponentService):
             model_endpoint=self.model_endpoint,
         )
 
-    @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def configure(self) -> None:
         """Configure the tokenizers."""
         self.info("Configuring tokenizers for inference result parser")
         begin = time.perf_counter()
@@ -121,85 +101,68 @@ class InferenceResultParser(PullClientMixin, BaseComponentService):
                 )
             return self.tokenizers[model]
 
-    @on_pull_message(MessageType.INFERENCE_RESULTS)
-    async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
+    async def parse_request_record(
+        self, request_record: RequestRecord
+    ) -> ParsedResponseRecord:
         """Handle an inference results message."""
-        self.debug(lambda: f"Received inference results message: {message}")
+        self.trace_or_debug(
+            lambda: f"Received inference results message: {request_record}",
+            lambda: "Received inference results",
+        )
 
-        if message.record.has_error:
-            await self.records_push_client.push(
-                ParsedInferenceResultsMessage(
-                    service_id=self.service_id,
-                    record=ParsedResponseRecord(
-                        worker_id=message.service_id,
-                        request=message.record,
-                        responses=[],
-                    ),
-                )
+        if request_record.has_error:
+            return ParsedResponseRecord(
+                request=request_record,
+                responses=[],
             )
 
-        elif message.record.valid:
+        elif request_record.valid:
             try:
-                record = await self.process_valid_record(message)
+                record = await self.process_valid_record(request_record)
                 self.debug(
                     lambda: f"Received {len(record.request.responses)} responses, input_token_count: {record.input_token_count}, output_token_count: {record.output_token_count}"
                 )
-                await self.records_push_client.push(
-                    ParsedInferenceResultsMessage(
-                        service_id=self.service_id,
-                        record=record,
-                    )
-                )
+                return record
             except Exception as e:
+                # TODO: We should add an ErrorDetails to the response record and not the request record.
                 self.exception(f"Error processing valid record: {e}")
-                await self.records_push_client.push(
-                    ParsedInferenceResultsMessage(
-                        service_id=self.service_id,
-                        record=ParsedResponseRecord(
-                            worker_id=message.service_id,
-                            request=message.record,
-                            responses=[],
-                        ),
-                    )
+                request_record.error = ErrorDetails.from_exception(e)
+                return ParsedResponseRecord(
+                    request=request_record,
+                    responses=[],
                 )
         else:
-            self.warning(f"Received invalid inference results: {message.record}")
-            message.record.error = ErrorDetails(
+            self.warning(f"Received invalid inference results: {request_record}")
+            # TODO: We should add an ErrorDetails to response record and not the request record.
+            request_record.error = ErrorDetails(
                 code=None,
                 message="Invalid inference results",
                 type="InvalidInferenceResults",
             )
-            await self.records_push_client.push(
-                ParsedInferenceResultsMessage(
-                    service_id=self.service_id,
-                    record=ParsedResponseRecord(
-                        worker_id=message.service_id,
-                        request=message.record,
-                        responses=[],
-                    ),
-                )
+            return ParsedResponseRecord(
+                request=request_record,
+                responses=[],
             )
 
     async def process_valid_record(
-        self, message: InferenceResultsMessage
+        self, request_record: RequestRecord
     ) -> ParsedResponseRecord:
         """Process a valid request record."""
-        if message.record.model_name is None:
+        if request_record.model_name is None:
             self.warning(
-                lambda: f"Model name is None, unable to process record: {message.record}"
+                lambda: f"Model name is None, unable to process record: {request_record}"
             )
             return ParsedResponseRecord(
-                worker_id=message.service_id,
-                request=message.record,
+                request=request_record,
                 responses=[],
                 input_token_count=None,
                 output_token_count=None,
             )
 
-        tokenizer = await self.get_tokenizer(message.record.model_name)
-        resp = await self.extractor.extract_response_data(message.record, tokenizer)
+        tokenizer = await self.get_tokenizer(request_record.model_name)
+        resp = await self.extractor.extract_response_data(request_record, tokenizer)
         input_token_count = await self.compute_input_token_count(
-            message.record, tokenizer
+            request_record, tokenizer
         )
         output_token_count = sum(
             response.token_count
@@ -208,29 +171,28 @@ class InferenceResultParser(PullClientMixin, BaseComponentService):
         )
 
         return ParsedResponseRecord(
-            worker_id=message.service_id,
-            request=message.record,
+            request=request_record,
             responses=resp,
             input_token_count=input_token_count,
             output_token_count=output_token_count,
         )
 
     async def compute_input_token_count(
-        self, record: RequestRecord, tokenizer: Tokenizer
+        self, request_record: RequestRecord, tokenizer: Tokenizer
     ) -> int | None:
         """Compute the number of tokens in the input for a given request record."""
-        if record.conversation_id is None or record.turn_index is None:
+        if request_record.conversation_id is None or request_record.turn_index is None:
             self.warning(
-                lambda: f"Conversation ID or turn index is None: {record.conversation_id=} {record.turn_index=}"
+                lambda: f"Conversation ID or turn index is None: {request_record.conversation_id=} {request_record.turn_index=}"
             )
             return None
 
         turn_response: ConversationTurnResponseMessage = (
             await self.conversation_request_client.request(
                 ConversationTurnRequestMessage(
-                    service_id=self.service_id,
-                    conversation_id=record.conversation_id,
-                    turn_index=record.turn_index,
+                    service_id=self.id,
+                    conversation_id=request_record.conversation_id,
+                    turn_index=request_record.turn_index,
                 )
             )
         )
@@ -244,13 +206,3 @@ class InferenceResultParser(PullClientMixin, BaseComponentService):
             for text in turn.texts
             for content in text.contents
         )
-
-
-def main() -> None:
-    from aiperf.common.bootstrap import bootstrap_and_run_service
-
-    bootstrap_and_run_service(InferenceResultParser)
-
-
-if __name__ == "__main__":
-    main()

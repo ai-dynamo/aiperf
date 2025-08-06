@@ -40,8 +40,8 @@ class JsonExporter(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         self.debug(lambda: f"Initializing JsonExporter with config: {exporter_config}")
         self._results = exporter_config.results
-        self._output_directory = exporter_config.input_config.output.artifact_directory
-        self._input_config = exporter_config.input_config
+        self._output_directory = exporter_config.user_config.output.artifact_directory
+        self._input_config = exporter_config.user_config
 
     async def export(self) -> None:
         filename = self._output_directory / "profile_export_aiperf.json"

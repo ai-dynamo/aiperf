@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import time
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -13,21 +14,32 @@ from aiperf.common.enums import (
     MessageType,
     ServiceType,
 )
-from aiperf.common.factories import ServiceFactory, StreamingPostProcessorFactory
-from aiperf.common.hooks import on_command, on_message, on_pull_message
-from aiperf.common.messages import (
-    ParsedInferenceResultsMessage,
-    ProcessRecordsCommand,
+from aiperf.common.enums.metric_enums import MetricValueTypeT
+from aiperf.common.factories import (
+    ResultsProcessorFactory,
+    ServiceFactory,
 )
-from aiperf.common.messages.command_messages import ProfileCancelCommand
-from aiperf.common.messages.progress_messages import (
+from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
+from aiperf.common.messages import (
     AllRecordsReceivedMessage,
+    CreditPhaseCompleteMessage,
+    CreditPhaseStartMessage,
+    MetricRecordsMessage,
+    ProcessRecordsCommand,
     ProcessRecordsResultMessage,
+    ProfileCancelCommand,
+    RecordsProcessingStatsMessage,
 )
 from aiperf.common.mixins import PullClientMixin
-from aiperf.common.models.error_models import ErrorDetails
-from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
-from aiperf.common.protocols import ServiceProtocol, StreamingPostProcessorProtocol
+from aiperf.common.models import (
+    ErrorDetails,
+    PhaseProcessingStats,
+    ProcessRecordsResult,
+    ProfileResults,
+)
+from aiperf.common.models.error_models import ErrorDetailsCount
+from aiperf.common.protocols import ResultsProcessorProtocol, ServiceProtocol
+from aiperf.common.types import MetricTagT
 
 
 @implements_protocol(ServiceProtocol)
@@ -53,58 +65,143 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             pull_client_max_concurrency=DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
         )
         self._profile_cancelled = False
-        self.streaming_post_processors: list[StreamingPostProcessorProtocol] = []
-        for streamer_type in StreamingPostProcessorFactory.get_all_class_types():
-            streamer = StreamingPostProcessorFactory.create_instance(
-                class_type=streamer_type,
+
+        self.start_time_ns: int | None = None
+        self.processing_stats: PhaseProcessingStats = PhaseProcessingStats()
+        self.final_request_count: int | None = None
+        self.end_time_ns: int | None = None
+        self.error_summary: dict[ErrorDetails, int] = {}
+        # Track per-worker statistics
+        self.worker_stats: dict[str, PhaseProcessingStats] = {}
+
+        self._results_processors: list[ResultsProcessorProtocol] = []
+        for results_processor_type in ResultsProcessorFactory.get_all_class_types():
+            results_processor = ResultsProcessorFactory.create_instance(
+                class_type=results_processor_type,
                 service_id=self.service_id,
                 service_config=self.service_config,
                 user_config=self.user_config,
             )
             self.debug(
-                f"Created streaming post processor: {streamer_type}: {streamer.__class__.__name__}"
+                f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
             )
-            self.streaming_post_processors.append(streamer)
-            self.attach_child_lifecycle(streamer)
+            self._results_processors.append(results_processor)
 
-    @on_pull_message(MessageType.PARSED_INFERENCE_RESULTS)
-    async def _on_parsed_inference_results(
-        self, message: ParsedInferenceResultsMessage
+    @on_pull_message(MessageType.METRIC_RECORDS)
+    async def _on_metric_records(self, message: MetricRecordsMessage) -> None:
+        """Handle a metric records message."""
+        self.trace(lambda: f"Received metric records: {message}")
+
+        if message.credit_phase != CreditPhase.PROFILING:
+            self.debug(lambda: f"Skipping non-profiling record: {message.credit_phase}")
+            return
+
+        worker_id = message.worker_id
+        if worker_id not in self.worker_stats:
+            self.worker_stats[worker_id] = PhaseProcessingStats()
+
+        if message.valid:
+            self.worker_stats[worker_id].processed += 1
+            self.processing_stats.processed += 1
+        else:
+            self.worker_stats[worker_id].errors += 1
+            self.processing_stats.errors += 1
+            if message.error:
+                self.error_summary[message.error] = (
+                    self.error_summary.get(message.error, 0) + 1
+                )
+
+        await self._send_results_to_results_processors(message.results)
+
+        if (
+            self.final_request_count is not None
+            and self.processing_stats.total_records >= self.final_request_count
+        ):
+            self.info(
+                lambda: f"Processed {self.processing_stats.processed} valid requests and {self.processing_stats.errors} errors ({self.processing_stats.total_records} total)."
+            )
+            # Make sure everyone knows the final stats, including the worker stats
+            await self._publish_processing_stats()
+
+            # Send a message to the event bus to signal that we received all the records
+            await self.publish(
+                AllRecordsReceivedMessage(
+                    service_id=self.service_id,
+                    request_ns=time.time_ns(),
+                    final_processing_stats=self.processing_stats,
+                )
+            )
+
+            self.debug(lambda: f"Received all records: {message}, processing now...")
+            await self._process_records(cancelled=self._profile_cancelled)
+
+    async def _send_results_to_results_processors(
+        self, results: list[dict[MetricTagT, MetricValueTypeT]]
     ) -> None:
-        """Handle a parsed inference results message."""
-        self.trace(lambda: f"Received parsed inference results: {message}")
+        """Send the results to each of the results processors."""
+        await asyncio.gather(
+            *[
+                results_processor.process_result(result)
+                for results_processor in self._results_processors
+                for result in results
+            ]
+        )
 
-        if self._profile_cancelled:
-            self.debug("Skipping record because profiling is cancelled")
-            return
-
-        if message.record.request.credit_phase != CreditPhase.PROFILING:
-            self.debug(
-                lambda: f"Skipping non-profiling record: {message.record.request.credit_phase}"
+    @on_message(MessageType.CREDIT_PHASE_START)
+    async def _on_credit_phase_start(
+        self, phase_start_msg: CreditPhaseStartMessage
+    ) -> None:
+        """Handle a credit phase start message in order to track the total number of expected requests."""
+        if phase_start_msg.phase == CreditPhase.PROFILING:
+            self.start_time_ns = phase_start_msg.start_ns or time.time_ns()
+            self.processing_stats.total_expected_requests = (
+                phase_start_msg.total_expected_requests
             )
-            return
 
-        # Stream the record to all of the streaming post processors
-        for streamer in self.streaming_post_processors:
-            try:
-                self.debug(
-                    lambda name=streamer.__class__.__name__: f"Putting record into queue for streamer {name}"
-                )
-                streamer.records_queue.put_nowait(message.record)
-            except asyncio.QueueFull:
-                self.error(
-                    f"Streaming post processor {streamer.__class__.__name__} is unable to keep up with the rate of incoming records."
-                )
-                self.warning(
-                    f"Waiting for queue to be available for streamer {streamer.__class__.__name__}. This will cause back pressure on the records manager."
-                )
-                await streamer.records_queue.put(message.record)
+    @on_message(MessageType.CREDIT_PHASE_COMPLETE)
+    async def _on_credit_phase_complete(
+        self, phase_complete_msg: CreditPhaseCompleteMessage
+    ) -> None:
+        """Handle a credit phase complete message in order to track the final request count."""
+        if phase_complete_msg.phase != CreditPhase.PROFILING:
+            return
+        # This will equate to how many records we expect to receive,
+        # and once we receive that many records, we know to stop.
+        self.final_request_count = phase_complete_msg.completed
+        self.end_time_ns = phase_complete_msg.end_ns or time.time_ns()
+        self.info(f"Updating final request count to {self.final_request_count}")
+        self.notice(
+            f"All requests have completed, please wait for the results to be processed (currently {self.processing_stats.total_records} of {self.final_request_count} records processed)..."
+        )
+        if self.final_request_count == self.processing_stats.total_records:
+            await self._process_records(cancelled=False)
+
+    @background_task(
+        interval=lambda self: self.service_config.progress_report_interval,
+        immediate=False,
+    )
+    async def _report_records_task(self) -> None:
+        """Report the records processing stats."""
+        if self.processing_stats.processed > 0 or self.processing_stats.errors > 0:
+            # Only publish stats if there are records to report
+            await self._publish_processing_stats()
+
+    async def _publish_processing_stats(self) -> None:
+        """Publish the profile processing stats."""
+        await self.publish(
+            RecordsProcessingStatsMessage(
+                service_id=self.service_id,
+                request_ns=time.time_ns(),
+                processing_stats=self.processing_stats,
+                worker_stats=self.worker_stats,
+            ),
+        )
 
     @on_command(CommandType.PROCESS_RECORDS)
     async def _on_process_records_command(
         self, message: ProcessRecordsCommand
     ) -> ProcessRecordsResult:
-        """Handle the process records command by forwarding it to all of the streaming post processors, and returning the results."""
+        """Handle the process records command by forwarding it to all of the results processors, and returning the results."""
         self.debug(lambda: f"Received process records command: {message}")
         return await self._process_records(cancelled=message.cancelled)
 
@@ -115,57 +212,57 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle the profile cancel command by cancelling the streaming post processors."""
         self.debug(lambda: f"Received profile cancel command: {message}")
         self._profile_cancelled = True
-        for streamer in self.streaming_post_processors:
-            streamer.cancellation_event.set()
         return await self._process_records(cancelled=True)
-
-    @on_message(MessageType.ALL_RECORDS_RECEIVED)
-    async def _on_all_records_received(
-        self, message: AllRecordsReceivedMessage
-    ) -> None:
-        """Handle a all records received message."""
-        self.debug(lambda: f"Received all records: {message}, processing now...")
-        await self._process_records(cancelled=self._profile_cancelled)
 
     async def _process_records(self, cancelled: bool) -> ProcessRecordsResult:
         """Process the records."""
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
 
-        # Even though all the records have been received, we need to ensure that
-        # all the records have been processed through the streaming post processors.
-        await asyncio.gather(
-            *[
-                streamer.records_queue.join()
-                for streamer in self.streaming_post_processors
-            ]
-        )
-
-        # Process the records through the streaming post processors
+        self.info("Processing records results...")
+        # Process the records through the results processors.
         results = await asyncio.gather(
             *[
-                streamer.process_records(cancelled)
-                for streamer in self.streaming_post_processors
+                results_processor.summarize()
+                for results_processor in self._results_processors
             ],
             return_exceptions=True,
         )
-        self.debug(lambda: f"Processed records results: {results}")
 
-        records_results = [
-            result for result in results if isinstance(result, ProfileResults)
-        ]
-        error_results = [
-            result for result in results if isinstance(result, ErrorDetails)
-        ]
+        records_results, error_results = [], []
+        for result in results:
+            if isinstance(result, list):
+                records_results.extend(result)
+            elif isinstance(result, ErrorDetails):
+                error_results.append(result)
+            elif isinstance(result, BaseException):
+                error_results.append(ErrorDetails.from_exception(result))
 
-        result = ProcessRecordsResult(records=records_results, errors=error_results)
-        self.debug(lambda: f"Processed records result: {result}")
+        result = ProcessRecordsResult(
+            results=ProfileResults(
+                records=records_results,
+                completed=len(records_results),
+                start_ns=self.start_time_ns or time.time_ns(),
+                end_ns=self.end_time_ns or time.time_ns(),
+                error_summary=self.get_error_summary(),
+                was_cancelled=cancelled,
+            ),
+            errors=error_results,
+        )
+        self.debug(lambda: f"Process records result: {result}")
         await self.publish(
             ProcessRecordsResultMessage(
                 service_id=self.service_id,
-                process_records_result=result,
+                results=result,
             )
         )
         return result
+
+    def get_error_summary(self) -> list[ErrorDetailsCount]:
+        """Generate a summary of the error records."""
+        return [
+            ErrorDetailsCount(error_details=error_details, count=count)
+            for error_details, count in self.error_summary.items()
+        ]
 
 
 def main() -> None:

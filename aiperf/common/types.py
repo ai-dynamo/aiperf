@@ -7,13 +7,15 @@ helps with type hinting.
 
 from collections.abc import Awaitable, Callable
 from types import UnionType
-from typing import TYPE_CHECKING, Any, TypeVar, Union
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, Union
 
 from aiperf.common.enums import (
+    CaseInsensitiveStrEnum,
+    CommAddress,
     CommandType,
     MediaType,
     MessageType,
-    MetricTag,
+    MetricType,
     ServiceType,
 )
 
@@ -21,10 +23,6 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-    from aiperf.common.enums import (
-        CaseInsensitiveStrEnum,
-        CommAddress,
-    )
     from aiperf.common.messages.base_messages import Message
     from aiperf.common.messages.command_messages import CommandMessage
     from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
@@ -34,15 +32,17 @@ if TYPE_CHECKING:
     from aiperf.common.protocols import ServiceProtocol
 
 
-AnyT = Any
-AnyClassT = type | UnionType
+AnyT: TypeAlias = Any
+AnyClassT: TypeAlias = type | UnionType
 AIPerfBaseModelT = TypeVar("AIPerfBaseModelT", bound="AIPerfBaseModel")
 BaseModelT = TypeVar("BaseModelT", bound="BaseModel")
 ClassEnumT = TypeVar("ClassEnumT", bound="CaseInsensitiveStrEnum")
 ClassProtocolT = TypeVar("ClassProtocolT", bound=Any)
-CommAddressType = Union["CommAddress", str]
-CommandCallbackMapT = dict["CommandType", Callable[["CommandMessage"], Awaitable[Any]]]
-CommandTypeT = CommandType | str
+CommAddressType: TypeAlias = Union["CommAddress", str]
+CommandCallbackMapT: TypeAlias = dict[
+    "CommandType", Callable[["CommandMessage"], Awaitable[Any]]
+]
+CommandTypeT: TypeAlias = CommandType | str
 ConfigT = TypeVar("ConfigT", bound=Any, covariant=True)
 HooksMixinT = TypeVar("HooksMixinT", bound="HooksMixin")
 HookParamsT = TypeVar("HookParamsT", bound=Any)
@@ -52,10 +52,11 @@ LifecycleMixinT = TypeVar("LifecycleMixinT", bound="AIPerfLifecycleMixin")
 MediaT = TypeVar("MediaT", bound="Media")
 MediaTypeT = MediaType | str
 MessageT = TypeVar("MessageT", bound="Message")
-MessageCallbackMapT = dict["MessageTypeT", Callable[["Message"], Any] | list[Callable[["Message"], Any]]]  # fmt: skip
+MessageCallbackMapT: TypeAlias = dict["MessageTypeT", Callable[["Message"], Any] | list[Callable[["Message"], Any]]]  # fmt: skip
 MessageOutputT = TypeVar("MessageOutputT", bound="Message")
-MessageTypeT = MessageType | str
-MetricTagT = MetricTag | str
+MetricTypeT: TypeAlias = MetricType | str
+MessageTypeT: TypeAlias = MessageType | str
+MetricTagT: TypeAlias = str
 ModelEndpointInfoT = TypeVar("ModelEndpointInfoT", bound="ModelEndpointInfo")
 OutputT = TypeVar("OutputT", bound=Any)
 ProtocolT = TypeVar("ProtocolT", bound=Any)
@@ -66,4 +67,4 @@ RequestOutputT = TypeVar("RequestOutputT", bound=Any, covariant=True)
 ResponseT = TypeVar("ResponseT", bound=Any, covariant=True)
 SelfT = TypeVar("SelfT", bound=Any)
 ServiceProtocolT = TypeVar("ServiceProtocolT", bound="ServiceProtocol")
-ServiceTypeT = ServiceType | str
+ServiceTypeT: TypeAlias = ServiceType | str
