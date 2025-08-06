@@ -5,6 +5,7 @@ import sys
 import time
 from typing import cast
 
+from aiperf.cli_utils import warn_cancelled_early
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
@@ -69,6 +70,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             service_id=service_id,
         )
         self.debug("Creating System Controller")
+        self._was_cancelled = False
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
         self.required_services: dict[ServiceTypeT, int] = {
@@ -345,6 +347,9 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"Received process records result message with no records: {message.results.results}"
             )
 
+        if self._was_cancelled:
+            warn_cancelled_early()
+
         # TODO: HACK: Stop the system controller after exporting the records
         self.debug("Stopping system controller after exporting records")
         await asyncio.shield(self.stop())
@@ -366,6 +371,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     async def _cancel_profiling(self) -> None:
         self.debug("Cancelling profiling of all services")
+        self._was_cancelled = True
         await self.publish(ProfileCancelCommand(service_id=self.service_id))
 
         # TODO: HACK: Wait for 2 seconds to ensure the profiling is cancelled

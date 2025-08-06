@@ -48,8 +48,6 @@ class ConsoleExporter(AIPerfLoggerMixin):
         console = Console()
         console.print("\n")
         console.print(table)
-        if self._results.was_cancelled:
-            console.print("[red][bold]Profile run was cancelled early[/bold][/red]")
         console.file.flush()
 
     def _construct_table(self, table: Table, records: list[MetricResult]) -> None:

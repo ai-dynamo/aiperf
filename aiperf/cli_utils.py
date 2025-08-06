@@ -3,6 +3,8 @@
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING
 
+# NOTE: Do as little imports as possible in this file to ensure the CLI is fast to start up
+
 if TYPE_CHECKING:
     from rich.align import AlignMethod
     from rich.console import RenderableType
@@ -103,3 +105,25 @@ class exit_on_error(AbstractContextManager):
                 title=self.title,
                 exit_code=self.exit_code,
             )
+
+
+def warn_cancelled_early() -> None:
+    """Warn the user that the profile run was cancelled early."""
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+
+    console = Console()
+    console.print("\n")
+    console.print(
+        Panel(
+            Text(
+                "The profile run was cancelled early. Results shown may be incomplete or inaccurate.",
+                style="yellow",
+            ),
+            border_style="bold yellow",
+            title="Warning: Profile Run Cancelled Early",
+            title_align="left",
+        )
+    )
+    console.file.flush()
