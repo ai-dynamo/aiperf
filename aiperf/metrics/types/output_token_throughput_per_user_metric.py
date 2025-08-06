@@ -29,7 +29,7 @@ class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
-        """This method calculates the output inference speed by computing the inverse of the inter-token latency."""
+        """This method calculates the output token throughput per user by computing the inverse of the inter-token latency."""
         itl = record_metrics[InterTokenLatencyMetric.tag]
         if itl is None or itl == 0:
             raise ValueError(
