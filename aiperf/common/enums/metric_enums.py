@@ -405,17 +405,14 @@ class MetricFlags(Flag):
     """Metrics that are better when the value is larger. By default, it is assumed that metrics are
     better when the value is smaller."""
 
-    HIDE_IF_ZERO = 1 << 5
-    """Metrics that should be hidden if the value is 0, such as error counts."""
-
-    INTERNAL = (1 << 6) | HIDDEN
+    INTERNAL = (1 << 5) | HIDDEN
     """Metrics that are internal to the system and not applicable to the user. This inherently means that the metric
     is HIDDEN as well."""
 
-    SUPPORTS_AUDIO_ONLY = 1 << 7
+    SUPPORTS_AUDIO_ONLY = 1 << 6
     """Metrics that are only applicable to audio-based endpoints."""
 
-    SUPPORTS_IMAGE_ONLY = 1 << 8
+    SUPPORTS_IMAGE_ONLY = 1 << 7
     """Metrics that are only applicable to image-based endpoints."""
 
     STREAMING_TOKENS_ONLY = STREAMING_ONLY | PRODUCES_TOKENS_ONLY

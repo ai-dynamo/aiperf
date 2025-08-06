@@ -58,12 +58,12 @@ class ConsoleExporter(AIPerfLoggerMixin):
             table.add_row(*self._format_row(record))
 
     def _should_skip(self, record: MetricResult) -> bool:
-        if self._show_internal_metrics:
-            return False  # Show everything
         metric_class = MetricRegistry.get_class(record.tag)
-        return metric_class.has_flags(MetricFlags.HIDDEN) or (
-            metric_class.has_flags(MetricFlags.HIDE_IF_ZERO)
-            and (record.avg == 0 or record.count == 0)
+        if metric_class.has_flags(MetricFlags.ERROR_ONLY):
+            return True
+        return (
+            metric_class.has_flags(MetricFlags.HIDDEN)
+            and not self._show_internal_metrics
         )
 
     def _format_row(self, record: MetricResult) -> list[str]:

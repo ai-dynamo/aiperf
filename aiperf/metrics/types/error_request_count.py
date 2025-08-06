@@ -20,7 +20,7 @@ class ErrorRequestCountMetric(BaseAggregateMetric[int]):
     tag = "error_request_count"
     header = "Error Request Count"
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.ERROR_ONLY | MetricFlags.HIDE_IF_ZERO
+    flags = MetricFlags.ERROR_ONLY
     required_metrics = None
 
     def _parse_record(
