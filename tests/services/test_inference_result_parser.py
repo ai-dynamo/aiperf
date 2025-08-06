@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiperf.common.config.endpoint_config import EndpointConfig
+from aiperf.common.config.input_config import InputConfig
+from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.messages import ConversationTurnResponseMessage
 from aiperf.common.models import RequestRecord, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.parsers import (
-    InferenceResultParser,
-)
+from aiperf.parsers import InferenceResultParser
 
 
 @pytest.fixture
@@ -35,8 +37,6 @@ def sample_turn():
 def mock_turn_response(sample_turn):
     return ConversationTurnResponseMessage(
         service_id="test-service",
-        conversation_id="cid",
-        turn_index=0,
         turn=sample_turn,
     )
 
@@ -48,9 +48,15 @@ def sample_request_record():
 
 @pytest.fixture
 def parser(mock_turn_response):
-    with patch.object(InferenceResultParser, "__init__", lambda self: None):
-        parser = InferenceResultParser()
-        parser.service_id = "test-parser"
+    with patch.object(InferenceResultParser, "__init__", lambda self, **kwargs: None):
+        parser = InferenceResultParser(
+            service_config=ServiceConfig(),
+            user_config=UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(),
+            ),
+        )
+        parser.id = "test-parser"
         parser.conversation_request_client = MagicMock()
         parser.conversation_request_client.request = AsyncMock(
             return_value=mock_turn_response

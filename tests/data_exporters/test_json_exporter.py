@@ -20,8 +20,8 @@ class TestJsonExporter:
     def sample_records(self):
         return [
             MetricResult(
-                tag="Test Metric",
-                header="Test Metric",
+                tag="ttft",
+                header="Time to First Token",
                 unit="ms",
                 avg=123.0,
                 min=100.0,
@@ -35,7 +35,6 @@ class TestJsonExporter:
                 p95=None,
                 p99=149.0,
                 std=10.0,
-                streaming_only=False,
             )
         ]
 
@@ -85,7 +84,7 @@ class TestJsonExporter:
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                input_config=mock_user_config,
+                user_config=mock_user_config,
             )
 
             exporter = JsonExporter(exporter_config)
@@ -101,9 +100,9 @@ class TestJsonExporter:
             records = data["records"]
             assert isinstance(records, dict)
             assert len(records) == 1
-            assert "Test Metric" in records
-            assert records["Test Metric"]["unit"] == "ms"
-            assert records["Test Metric"]["avg"] == 123.0
+            assert "ttft" in records
+            assert records["ttft"]["unit"] == "ms"
+            assert records["ttft"]["avg"] == 123.0
 
             assert "input_config" in data
             assert isinstance(data["input_config"], dict)
