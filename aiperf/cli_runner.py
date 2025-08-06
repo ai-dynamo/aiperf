@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig
 
 
@@ -25,7 +27,13 @@ def run_system_controller(
     # Create and start the system controller
     logger.info("Starting AIPerf System")
 
-    ensure_modules_loaded()
+    try:
+        ensure_modules_loaded()
+    except Exception as e:
+        raise_startup_error_and_exit(
+            f"Error loading modules: {e}",
+            title="Error Loading Modules",
+        )
 
     try:
         bootstrap_and_run_service(
@@ -40,23 +48,3 @@ def run_system_controller(
         raise
     finally:
         logger.debug("AIPerf System exited")
-
-
-def warn_command_not_implemented(command: str) -> None:
-    """Warn the user that the subcommand is not implemented."""
-    import sys
-
-    from rich.console import Console
-    from rich.panel import Panel
-
-    console = Console()
-    console.print(
-        Panel(
-            f"Command [bold red]{command}[/bold red] is not yet implemented",
-            title="Error",
-            title_align="left",
-            border_style="red",
-        )
-    )
-
-    sys.exit(1)

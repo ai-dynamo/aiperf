@@ -12,9 +12,6 @@ class TTFTMetric(BaseRecordMetric[int]):
 
     Formula:
         TTFT = First Response Timestamp - Request Start Timestamp
-
-    Alternatively, this is equivalent to:
-        TTFT = Stream Setup Latency + Stream Prefill Latency
     """
 
     tag = "ttft"

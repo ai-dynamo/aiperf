@@ -14,6 +14,7 @@ from typing import Annotated
 from cyclopts import App, Parameter
 from pydantic import Field
 
+from aiperf.cli_utils import exit_on_error, warn_command_not_implemented
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import CLIDefaults
 
@@ -31,12 +32,13 @@ def profile(
         user_config: User configuration for the benchmark
         service_config: Service configuration options
     """
-    from aiperf.cli_runner import run_system_controller
-    from aiperf.common.config import load_service_config
+    with exit_on_error(title="Error Running AIPerf System"):
+        from aiperf.cli_runner import run_system_controller
+        from aiperf.common.config import load_service_config
 
-    service_config = service_config or load_service_config()
+        service_config = service_config or load_service_config()
 
-    run_system_controller(user_config, service_config)
+        run_system_controller(user_config, service_config)
 
 
 @app.command(name="analyze")
@@ -46,7 +48,6 @@ def analyze(
 ) -> None:
     """Sweep through one or more parameters."""
     # TODO: Implement this
-    from aiperf.cli_runner import warn_command_not_implemented
 
     warn_command_not_implemented("analyze")
 
@@ -65,7 +66,6 @@ def create_template(
 ) -> None:
     """Create a template configuration file."""
     # TODO: Implement this
-    from aiperf.cli_runner import warn_command_not_implemented
 
     warn_command_not_implemented("create-template")
 
@@ -77,7 +77,6 @@ def validate_config(
 ) -> None:
     """Validate the configuration file."""
     # TODO: Implement this
-    from aiperf.cli_runner import warn_command_not_implemented
 
     warn_command_not_implemented("validate-config")
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING
 
+from aiperf.cli_utils import exit_on_error
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums.metric_enums import (
     MetricFlags,
@@ -189,19 +190,37 @@ class MetricRegistry:
         all_tags = cls._metrics_map.keys()
         all_classes = cls._metrics_map.values()
 
-        # Validate that all required metrics are registered
+        # Map of metric types to the types of metrics they can have dependencies on
+        _allowed_dependencies_by_type = {
+            # Record metrics can only depend on other record metrics
+            MetricType.RECORD: {MetricType.RECORD},
+            # Aggregate metrics can depend on other record or aggregate metrics
+            MetricType.AGGREGATE: {MetricType.RECORD, MetricType.AGGREGATE},
+            # Derived metrics can depend on any other metric type
+            MetricType.DERIVED: {
+                MetricType.RECORD,
+                MetricType.AGGREGATE,
+                MetricType.DERIVED,
+            },
+        }
+
+        # Validate that all required metrics are registered, and that the dependencies are allowed
         for metric in all_classes:
             for required_tag in metric.required_metrics or set():
+                # Validate that the dependency is registered
                 if required_tag not in all_tags:
                     raise MetricTypeError(
                         f"Metric '{metric.tag}' depends on '{required_tag}', which is not registered"
                     )
+
+                # Validate that the dependency is allowed
+                required_metric_type = cls._metrics_map[required_tag].type
                 if (
-                    metric.type in {MetricType.RECORD, MetricType.AGGREGATE}
-                    and cls._metrics_map[required_tag].type == MetricType.DERIVED
+                    required_metric_type
+                    not in _allowed_dependencies_by_type[metric.type]
                 ):
                     raise MetricTypeError(
-                        f"Metric '{metric.tag}' is a '{metric.type}' metric, but depends on '{required_tag}', which is a derived metric"
+                        f"Metric '{metric.tag}' is a {metric.type} metric, but depends on '{required_tag}', which is a {required_metric_type} metric"
                     )
 
     @classmethod
@@ -237,8 +256,6 @@ class MetricRegistry:
         if tags is None:
             tags = cls._metrics_map.keys()
 
-        cls._validate_dependencies()
-
         # Build the dependency graph
         sorter = graphlib.TopologicalSorter()
 
@@ -260,4 +277,16 @@ class MetricRegistry:
 
 
 # Ensure that the metrics are discovered when the module is imported.
-MetricRegistry._discover_metrics()
+with exit_on_error(
+    MetricTypeError,
+    title="Error Discovering Metrics",
+):
+    MetricRegistry._discover_metrics()
+
+# Ensure that the dependencies are validated, and no circular dependencies are detected
+with exit_on_error(
+    MetricTypeError,
+    title="Error Validating Metric Dependencies",
+):
+    MetricRegistry._validate_dependencies()
+    MetricRegistry.create_dependency_order()
