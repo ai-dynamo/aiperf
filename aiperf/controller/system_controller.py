@@ -83,9 +83,9 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.required_services[ServiceType.RECORD_PROCESSOR] = (
                 self.service_config.record_processor_service_count
             )
-            self.auto_scale_record_processor_service_count = False
+            self.scale_record_processors_with_workers = False
         else:
-            self.auto_scale_record_processor_service_count = True
+            self.scale_record_processors_with_workers = True
 
         self.proxy_manager: ProxyManager = ProxyManager(
             service_config=self.service_config
@@ -306,8 +306,8 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.debug(lambda: f"Received spawn workers command: {message}")
         # Spawn the workers
         await self.service_manager.run_service(ServiceType.WORKER, message.num_workers)
-        # If we are auto-scaling the record processor service count, spawn the record processors
-        if self.auto_scale_record_processor_service_count:
+        # If we are scaling the record processor service count with the number of workers, spawn the record processors
+        if self.scale_record_processors_with_workers:
             await self.service_manager.run_service(
                 ServiceType.RECORD_PROCESSOR, message.num_workers
             )
@@ -320,7 +320,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.debug(lambda: f"Received shutdown workers command: {message}")
         # TODO: Handle individual worker shutdowns via worker id
         await self.service_manager.stop_service(ServiceType.WORKER)
-        if self.auto_scale_record_processor_service_count:
+        if self.scale_record_processors_with_workers:
             await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
 
     @on_message(MessageType.PROCESS_RECORDS_RESULT)
