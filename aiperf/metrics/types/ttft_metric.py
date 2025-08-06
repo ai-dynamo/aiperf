@@ -44,4 +44,9 @@ class TTFTMetric(BaseRecordMetric[int]):
 
         request_ts: int = record.request.start_perf_ns
         first_response_ts: int = record.responses[0].perf_ns
+        if first_response_ts < request_ts:
+            raise ValueError(
+                "First response timestamp is before request start timestamp, cannot compute TTFT."
+            )
+
         return first_response_ts - request_ts

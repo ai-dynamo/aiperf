@@ -40,6 +40,9 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
         Calculates the Inter Token Latency (ITL) metric.
         """
         osl = record_metrics[OutputSequenceLengthMetric.tag]
+        if osl is None or osl < 2:
+            raise ValueError(f"Output sequence length must be at least 2, got {osl}")
+
         ttft = record_metrics[TTFTMetric.tag]
         request_latency = record_metrics[RequestLatencyMetric.tag]
 

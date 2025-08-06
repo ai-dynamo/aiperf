@@ -30,6 +30,10 @@ class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
         metric_results: MetricResultsDict,
     ) -> float:
         benchmark_token_count = metric_results[BenchmarkTokenCountMetric.tag]
+        benchmark_duration = metric_results[BenchmarkDurationMetric.tag]
+        if benchmark_duration is None or benchmark_duration == 0:
+            raise ValueError("Benchmark duration is not available.")
+
         benchmark_duration_converted = metric_results.get_converted(  # type: ignore
             BenchmarkDurationMetric,
             self.unit.time_unit,  # type: ignore

@@ -30,12 +30,13 @@ class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):
         record_metrics: MetricRecordDict,
     ) -> float:
         """This method calculates the output inference speed by computing the inverse of the inter-token latency."""
+        itl = record_metrics[InterTokenLatencyMetric.tag]
+        if itl is None or itl == 0:
+            raise ValueError(
+                "Inter-token latency is 0, cannot compute output token throughput per user."
+            )
         converted_itl = record_metrics.get_converted(
             InterTokenLatencyMetric,
             self.unit.time_unit,  # type: ignore
         )
-        if converted_itl == 0:
-            raise ValueError(
-                "Inter-token latency is 0, cannot compute output token throughput per user."
-            )
         return 1 / converted_itl

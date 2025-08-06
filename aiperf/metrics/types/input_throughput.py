@@ -34,5 +34,8 @@ class InputThroughputMetric(BaseRecordMetric[float]):
         """This method calculates the input throughput by dividing the input sequence length by the TTFT."""
 
         isl = record_metrics[InputSequenceLengthMetric.tag]
+        ttft = record_metrics[TTFTMetric.tag]
+        if ttft is None or ttft == 0:
+            raise ValueError("Time to first token is not available for the record.")
         converted_ttft = record_metrics.get_converted(TTFTMetric, self.unit.time_unit)  # type: ignore
         return isl / converted_ttft  # type: ignore
