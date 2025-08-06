@@ -90,10 +90,10 @@ class ConsoleExporter(AIPerfLoggerMixin):
 
             if isinstance(value, datetime):
                 value = value.strftime("%Y-%m-%d %H:%M:%S")
-            elif value == int(value):
-                value = f"{int(value):,}"
-            else:
+            elif isinstance(value, int | float):
                 value = f"{value:,.2f}"
+            else:
+                value = str(value)
             row.append(value)
         return row
 
