@@ -56,6 +56,16 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
     def credit_return_address(self) -> str:
         """Get the credit return address based on protocol configuration."""
 
+    @property
+    @abstractmethod
+    def dataset_job_address(self) -> str:
+        """Get the dataset job address based on protocol configuration."""
+
+    @property
+    @abstractmethod
+    def dataset_result_address(self) -> str:
+        """Get the dataset result address based on protocol configuration."""
+
     def get_address(self, address_type: CommAddress) -> str:
         """Get the actual address based on the address type."""
         address_map = {
@@ -65,6 +75,8 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
             CommAddress.DATASET_MANAGER_PROXY_BACKEND: self.dataset_manager_proxy_config.backend_address,
             CommAddress.CREDIT_DROP: self.credit_drop_address,
             CommAddress.CREDIT_RETURN: self.credit_return_address,
+            CommAddress.DATASET_JOB: self.dataset_job_address,
+            CommAddress.DATASET_RESULT: self.dataset_result_address,
             CommAddress.RECORDS: self.records_push_pull_address,
             CommAddress.RAW_INFERENCE_PROXY_FRONTEND: self.raw_inference_proxy_config.frontend_address,
             CommAddress.RAW_INFERENCE_PROXY_BACKEND: self.raw_inference_proxy_config.backend_address,
@@ -170,6 +182,12 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     credit_return_port: int = Field(
         default=5563, description="Port for credit return operations"
     )
+    dataset_job_port: int = Field(
+        default=5665, description="Port for dataset job operations"
+    )
+    dataset_result_port: int = Field(
+        default=5666, description="Port for dataset result operations"
+    )
     dataset_manager_proxy_config: ZMQTCPProxyConfig = Field(  # type: ignore
         default=ZMQTCPProxyConfig(
             frontend_port=5661,
@@ -239,3 +257,13 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
     def credit_return_address(self) -> str:
         """Get the credit return address based on protocol configuration."""
         return f"ipc://{self.path}/credit_return.ipc"
+
+    @property
+    def dataset_job_address(self) -> str:
+        """Get the dataset job address based on protocol configuration."""
+        return f"ipc://{self.path}/dataset_job.ipc"
+
+    @property
+    def dataset_result_address(self) -> str:
+        """Get the dataset result address based on protocol configuration."""
+        return f"ipc://{self.path}/dataset_result.ipc"

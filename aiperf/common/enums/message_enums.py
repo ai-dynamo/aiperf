@@ -30,6 +30,8 @@ class MessageType(CaseInsensitiveStrEnum):
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
     DATASET_TIMING_REQUEST = "dataset_timing_request"
     DATASET_TIMING_RESPONSE = "dataset_timing_response"
+    DATASET_JOB = "dataset_job"
+    DATASET_RESULT = "dataset_result"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
     INFERENCE_RESULTS = "inference_results"

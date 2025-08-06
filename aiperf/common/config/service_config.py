@@ -192,6 +192,17 @@ class ServiceConfig(BaseSettings):
         ),
     ] = ServiceDefaults.RECORD_PROCESSOR_SERVICE_COUNT
 
+    dataset_processor_service_count: Annotated[
+        int,
+        Field(
+            description="Number of services to spawn for processing dataset generation.",
+        ),
+        Parameter(
+            name=("--dataset-processor-service-count", "--dataset-processors"),
+            group=_CLI_GROUP,
+        ),
+    ] = ServiceDefaults.DATASET_PROCESSOR_SERVICE_COUNT
+
     progress_report_interval: Annotated[
         float,
         Field(

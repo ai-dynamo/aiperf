@@ -285,6 +285,52 @@ class ShutdownWorkersCommand(CommandMessage):
     )
 
 
+class SpawnDatasetProcessorsCommand(CommandMessage):
+    command: CommandTypeT = CommandType.SPAWN_DATASET_PROCESSORS
+
+    num_processors: int = Field(
+        ..., description="Number of dataset processors to spawn"
+    )
+
+
+@exclude_if_none("processor_ids", "num_processors")
+class ShutdownDatasetProcessorsCommand(CommandMessage):
+    command: CommandTypeT = CommandType.SHUTDOWN_DATASET_PROCESSORS
+
+    # TODO: check if these are needed
+    @model_validator(mode="after")
+    def validate_processor_ids_or_num_processors(self) -> Self:
+        if self.all_processors:
+            if self.processor_ids is not None or self.num_processors is not None:
+                raise ValueError(
+                    "When all_processors is True, processor_ids and num_processors must not be specified"
+                )
+            return self
+
+        if self.processor_ids is None and self.num_processors is None:
+            raise ValueError(
+                "Either processor_ids, num_processors, or all_processors must be provided"
+            )
+        if self.processor_ids is not None and self.num_processors is not None:
+            raise ValueError(
+                "Either processor_ids or num_processors must be provided, not both"
+            )
+        return self
+
+    all_processors: bool = Field(
+        default=False,
+        description="Whether to shutdown all processors. If True, processor_ids and num_processors must be None.",
+    )
+    processor_ids: list[str] | None = Field(
+        default=None,
+        description="Specific IDs of the processors to shutdown.",
+    )
+    num_processors: int | None = Field(
+        default=None,
+        description="Number of processors to shutdown if processor_ids is not provided.",
+    )
+
+
 class ProcessRecordsCommand(CommandMessage):
     """Data to send with the process records command."""
 

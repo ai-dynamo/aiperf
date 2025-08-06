@@ -14,6 +14,8 @@ class CommandType(CaseInsensitiveStrEnum):
     SHUTDOWN = "shutdown"
     SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"
+    SPAWN_DATASET_PROCESSORS = "spawn_dataset_processors"
+    SHUTDOWN_DATASET_PROCESSORS = "shutdown_dataset_processors"
 
 
 class CommandResponseStatus(CaseInsensitiveStrEnum):

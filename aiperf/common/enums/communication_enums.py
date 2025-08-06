@@ -49,6 +49,12 @@ class CommAddress(CaseInsensitiveStrEnum):
     RAW_INFERENCE_PROXY_BACKEND = "raw_inference_proxy_backend"
     """Backend address for the InferenceParser to receive raw inference messages from Workers."""
 
+    DATASET_JOB = "dataset_job"
+    """Address for sending dataset generation jobs to the DatasetProcessor."""
+
+    DATASET_RESULT = "dataset_result"
+    """Address for sending dataset generation results to the DatasetManager."""
+
 
 class ZMQProxyType(CaseInsensitiveStrEnum):
     DEALER_ROUTER = "dealer_router"

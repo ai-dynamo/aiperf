@@ -1,12 +1,65 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
+
 from pydantic import Field
 
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import Conversation, Turn
+from aiperf.common.models import AIPerfBaseModel, Conversation, Turn
 from aiperf.common.types import MessageTypeT
+
+
+# NEW: Dataset Processor Messages for parallel data generation
+class DatasetJobInfo(AIPerfBaseModel):
+    """Specification for a dataset generation job."""
+
+    job_id: str = Field(..., description="Unique identifier for this job")
+    num_turns: int = Field(..., description="Number of conversation turns to generate")
+    tokens_per_turn: int = Field(..., description="Target number of tokens per turn")
+    conversation_id: str | None = Field(
+        default=None, description="Conversation ID if extending existing"
+    )
+    generation_params: dict[str, Any] = Field(
+        default_factory=dict, description="Additional generation parameters"
+    )
+
+
+class DatasetJobResult(AIPerfBaseModel):
+    """Result of a dataset generation job."""
+
+    job_id: str = Field(
+        ..., description="Job identifier that this result corresponds to"
+    )
+    success: bool = Field(..., description="Whether the job completed successfully")
+    generated_data: list[dict[str, Any]] = Field(
+        default_factory=list, description="Generated conversation turns or data"
+    )
+    error_message: str | None = Field(
+        default=None, description="Error message if job failed"
+    )
+    processing_time_ms: float | None = Field(
+        default=None, description="Time taken to process the job in milliseconds"
+    )
+
+
+class DatasetJobMessage(BaseServiceMessage):
+    """Message for sending dataset generation requests to processors."""
+
+    message_type: MessageTypeT = MessageType.DATASET_JOB
+
+    info: DatasetJobInfo = Field(..., description="The dataset generation job info")
+
+
+class DatasetResultMessage(BaseServiceMessage):
+    """Message for returning dataset generation responses."""
+
+    message_type: MessageTypeT = MessageType.DATASET_RESULT
+
+    result: DatasetJobResult = Field(
+        ..., description="The dataset generation job result"
+    )
 
 
 class ConversationRequestMessage(BaseServiceMessage):
