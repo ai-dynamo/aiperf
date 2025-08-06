@@ -1,0 +1,426 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the AIPerf project">
+      
+      
+        <meta name="author" content="NVIDIA CORPORATION & AFFILIATES">
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.16">
+    
+    
+      
+        <title>Metrics flow - AIPerf Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.7e37652d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="AIPerf Documentation" class="md-header__button md-logo" aria-label="AIPerf Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AIPerf Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Metrics flow
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AIPerf Documentation" class="md-nav__button md-logo" aria-label="AIPerf Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AIPerf Documentation
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../Development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Development
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+  <h1>Metrics flow</h1>
+
+<!--
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+-->
+
+<div class="codehilite"><pre><span></span><code>flowchart<span class="w"> </span>TD
+<span class="w">    </span>%%<span class="w"> </span>Input<span class="w"> </span>Data
+<span class="w">    </span>A[&quot;Parsed<span class="w"> </span>Inference<span class="w"> </span>Results<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Load<span class="ni">&amp;nbsp;</span>Balanced)<span class="nt">&lt;/em&gt;</span>&quot;]
+
+<span class="w">    </span>%%<span class="w"> </span>Stage<span class="w"> </span>1:<span class="w"> </span>Distributed<span class="w"> </span>Record<span class="w"> </span>Processing
+<span class="w">    </span>A<span class="w"> </span>--&gt;<span class="w"> </span>B1[&quot;MetricRecordProcessor<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Distributed<span class="ni">&amp;nbsp;</span>instance<span class="ni">&amp;nbsp;</span>1)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>A<span class="w"> </span>--&gt;<span class="w"> </span>B2[&quot;MetricRecordProcessor<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Distributed<span class="ni">&amp;nbsp;</span>instance<span class="ni">&amp;nbsp;</span>2)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>A<span class="w"> </span>--&gt;<span class="w"> </span>B3[&quot;MetricRecordProcessor<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Distributed<span class="ni">&amp;nbsp;</span>instance<span class="ni">&amp;nbsp;</span>N)<span class="nt">&lt;/em&gt;</span>&quot;]
+
+<span class="w">    </span>%%<span class="w"> </span>RECORD<span class="w"> </span>Metric<span class="w"> </span>Path
+<span class="w">    </span>B1<span class="w"> </span>--&gt;<span class="w"> </span>C1[&quot;RECORD:<span class="w"> </span>RequestLatencyMetric<span class="nt">&lt;br/&gt;</span>parse_record()<span class="w"> </span>→<span class="w"> </span>125ms<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Individual<span class="ni">&amp;nbsp;</span>value<span class="ni">&amp;nbsp;</span>per<span class="ni">&amp;nbsp;</span>request)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>B2<span class="w"> </span>--&gt;<span class="w"> </span>C2[&quot;RECORD:<span class="w"> </span>RequestLatencyMetric<span class="nt">&lt;br/&gt;</span>parse_record()<span class="w"> </span>→<span class="w"> </span>87ms<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Individual<span class="ni">&amp;nbsp;</span>value<span class="ni">&amp;nbsp;</span>per<span class="ni">&amp;nbsp;</span>request)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>B3<span class="w"> </span>--&gt;<span class="w"> </span>C3[&quot;RECORD:<span class="w"> </span>RequestLatencyMetric<span class="nt">&lt;br/&gt;</span>parse_record()<span class="w"> </span>→<span class="w"> </span>203ms<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Individual<span class="ni">&amp;nbsp;</span>value<span class="ni">&amp;nbsp;</span>per<span class="ni">&amp;nbsp;</span>request)<span class="nt">&lt;/em&gt;</span>&quot;]
+
+<span class="w">    </span>%%<span class="w"> </span>AGGREGATE<span class="w"> </span>Metric<span class="w"> </span>Path
+<span class="w">    </span>B1<span class="w"> </span>--&gt;<span class="w"> </span>D1[&quot;AGGREGATE:<span class="w"> </span>TotalRequestsMetric<span class="nt">&lt;br/&gt;</span>parse_record()<span class="w"> </span>→<span class="w"> </span>+1<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Individual<span class="ni">&amp;nbsp;</span>contribution)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>B2<span class="w"> </span>--&gt;<span class="w"> </span>D2[&quot;AGGREGATE:<span class="w"> </span>TotalRequestsMetric<span class="nt">&lt;br/&gt;</span>parse_record()<span class="w"> </span>→<span class="w"> </span>+1<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Individual<span class="ni">&amp;nbsp;</span>contribution)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>B3<span class="w"> </span>--&gt;<span class="w"> </span>D3[&quot;AGGREGATE:<span class="w"> </span>TotalRequestsMetric<span class="nt">&lt;br/&gt;</span>parse_record()<span class="w"> </span>→<span class="w"> </span>+1<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Individual<span class="ni">&amp;nbsp;</span>contribution)<span class="nt">&lt;/em&gt;</span>&quot;]
+
+<span class="w">    </span>%%<span class="w"> </span>MetricRecordDict<span class="w"> </span>Collection
+<span class="w">    </span>C1<span class="w"> </span>--&gt;<span class="w"> </span>E1[&quot;MetricRecordDict<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Per-record<span class="ni">&amp;nbsp;</span>results)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>D1<span class="w"> </span>--&gt;<span class="w"> </span>E1
+<span class="w">    </span>C2<span class="w"> </span>--&gt;<span class="w"> </span>E2[&quot;MetricRecordDict<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Per-record<span class="ni">&amp;nbsp;</span>results)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>D2<span class="w"> </span>--&gt;<span class="w"> </span>E2
+<span class="w">    </span>C3<span class="w"> </span>--&gt;<span class="w"> </span>E3[&quot;MetricRecordDict<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Per-record<span class="ni">&amp;nbsp;</span>results)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>D3<span class="w"> </span>--&gt;<span class="w"> </span>E3
+
+<span class="w">    </span>%%<span class="w"> </span>Stage<span class="w"> </span>2:<span class="w"> </span>Centralized<span class="w"> </span>Results<span class="w"> </span>Processing
+<span class="w">    </span>E1<span class="w"> </span>--&gt;<span class="w"> </span>G[&quot;RecordsManager<span class="w"> </span>→<span class="w"> </span>MetricResultsProcessor<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Single<span class="ni">&amp;nbsp;</span>centralized<span class="ni">&amp;nbsp;</span>instance)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>E2<span class="w"> </span>--&gt;<span class="w"> </span>G
+<span class="w">    </span>E3<span class="w"> </span>--&gt;<span class="w"> </span>G
+
+<span class="w">    </span>%%<span class="w"> </span>RECORD<span class="w"> </span>Processing<span class="w"> </span>in<span class="w"> </span>Central
+<span class="w">    </span>G<span class="w"> </span>--&gt;<span class="w"> </span>H1[&quot;RECORD<span class="w"> </span>Collection<span class="nt">&lt;br/&gt;</span>append(125ms)<span class="nt">&lt;br/&gt;</span>append(87ms)<span class="nt">&lt;br/&gt;</span>append(203ms)<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Collect<span class="ni">&amp;nbsp;</span>all<span class="ni">&amp;nbsp;</span>individual<span class="ni">&amp;nbsp;</span>values)<span class="nt">&lt;/em&gt;</span>&quot;]
+
+<span class="w">    </span>%%<span class="w"> </span>AGGREGATE<span class="w"> </span>Processing<span class="w"> </span>in<span class="w"> </span>Central
+<span class="w">    </span>G<span class="w"> </span>--&gt;<span class="w"> </span>H2[&quot;AGGREGATE<span class="w"> </span>Accumulation<span class="nt">&lt;br/&gt;</span>aggregate_value(+1)<span class="w"> </span>→<span class="w"> </span>total=1<span class="nt">&lt;br/&gt;</span>aggregate_value(+1)<span class="w"> </span>→<span class="w"> </span>total=2<span class="nt">&lt;br/&gt;</span>aggregate_value(+1)<span class="w"> </span>→<span class="w"> </span>total=3<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Accumulate<span class="ni">&amp;nbsp;</span>across<span class="ni">&amp;nbsp;</span>processors)<span class="nt">&lt;/em&gt;</span>&quot;]
+
+<span class="w">    </span>H1<span class="w"> </span>--&gt;<span class="w"> </span>L[&quot;MetricResultsDict<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Full<span class="ni">&amp;nbsp;</span>profile<span class="ni">&amp;nbsp;</span>run<span class="ni">&amp;nbsp;</span>results)<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>H2<span class="w"> </span>--&gt;<span class="w"> </span>L
+
+<span class="w">    </span>%%<span class="w"> </span>Stage<span class="w"> </span>4:<span class="w"> </span>Summarize<span class="w"> </span>Function<span class="w"> </span>Processing
+<span class="w">    </span>L<span class="w"> </span>--&gt;<span class="w"> </span>I2[&quot;Summarize<span class="w"> </span>Function<span class="nt">&lt;br/&gt;</span>summarize()<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Process<span class="ni">&amp;nbsp;</span>all<span class="ni">&amp;nbsp;</span>collected<span class="ni">&amp;nbsp;</span>results)<span class="nt">&lt;/em&gt;</span>&quot;]
+
+<span class="w">    </span>%%<span class="w"> </span>Three<span class="w"> </span>outputs<span class="w"> </span>from<span class="w"> </span>Summarize<span class="w"> </span>Function
+<span class="w">    </span>I2<span class="w"> </span>--&gt;<span class="w"> </span>J1[&quot;RECORD<span class="w"> </span>Statistics<span class="nt">&lt;br/&gt;</span>p50=125ms,<span class="w"> </span>p95=203ms<span class="nt">&lt;br/&gt;</span>mean=138ms,<span class="w"> </span>std=58ms<span class="nt">&lt;br/&gt;</span>min=87ms,<span class="w"> </span>max=203ms<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Full<span class="ni">&amp;nbsp;</span>statistical<span class="ni">&amp;nbsp;</span>analysis)<span class="nt">&lt;/em&gt;</span>&quot;]
+
+<span class="w">    </span>I2<span class="w"> </span>--&gt;<span class="w"> </span>J2[&quot;AGGREGATE<span class="w"> </span>Results<span class="nt">&lt;br/&gt;</span>final_value=3<span class="nt">&lt;br/&gt;</span>count=1<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Single<span class="ni">&amp;nbsp;</span>accumulated<span class="ni">&amp;nbsp;</span>total)<span class="nt">&lt;/em&gt;</span>&quot;]
+
+<span class="w">    </span>I2<span class="w"> </span>--&gt;<span class="w"> </span>J3[&quot;DERIVED:<span class="w"> </span>ThroughputMetric<span class="nt">&lt;br/&gt;</span>derive_value(results)<span class="nt">&lt;br/&gt;</span>=<span class="w"> </span>total_requests<span class="w"> </span>/<span class="w"> </span>duration<span class="nt">&lt;br/&gt;</span>=<span class="w"> </span>3<span class="w"> </span>/<span class="w"> </span>5.2s<span class="w"> </span>=<span class="w"> </span>0.58<span class="w"> </span>req/s<span class="nt">&lt;br/&gt;&lt;em&gt;</span>(Computed<span class="ni">&amp;nbsp;</span>from<span class="ni">&amp;nbsp;</span>other<span class="ni">&amp;nbsp;</span>metrics)<span class="nt">&lt;/em&gt;</span>&quot;]
+
+<span class="w">    </span>%%<span class="w"> </span>Final<span class="w"> </span>Output
+<span class="w">    </span>J1<span class="w"> </span>--&gt;<span class="w"> </span>K[&quot;MetricResult<span class="w"> </span>List<span class="nt">&lt;br/&gt;&lt;em&gt;</span>Complete<span class="ni">&amp;nbsp;</span>performance<span class="ni">&amp;nbsp;</span>analysis<span class="nt">&lt;/em&gt;</span>&quot;]
+<span class="w">    </span>J2<span class="w"> </span>--&gt;<span class="w"> </span>K
+<span class="w">    </span>J3<span class="w"> </span>--&gt;<span class="w"> </span>K
+
+<span class="w">    </span>%%<span class="w"> </span>Styling
+<span class="w">    </span>classDef<span class="w"> </span>input<span class="w"> </span>fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000000,font-weight:bold
+<span class="w">    </span>classDef<span class="w"> </span>distributed<span class="w"> </span>fill:#e8f5e8,stroke:#388e3c,stroke-width:2px,color:#000000,font-weight:bold
+<span class="w">    </span>classDef<span class="w"> </span>recordMetric<span class="w"> </span>fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000000,font-weight:bold
+<span class="w">    </span>classDef<span class="w"> </span>aggregateMetric<span class="w"> </span>fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000000,font-weight:bold
+<span class="w">    </span>classDef<span class="w"> </span>derivedMetric<span class="w"> </span>fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000000,font-weight:bold
+<span class="w">    </span>classDef<span class="w"> </span>transport<span class="w"> </span>fill:#e0f2f1,stroke:#00695c,stroke-width:2px,color:#000000,font-weight:bold
+<span class="w">    </span>classDef<span class="w"> </span>central<span class="w"> </span>fill:#ffebee,stroke:#d32f2f,stroke-width:2px,color:#000000,font-weight:bold
+<span class="w">    </span>classDef<span class="w"> </span>collection<span class="w"> </span>fill:#fff8e1,stroke:#ffa000,stroke-width:2px,color:#000000,font-weight:bold
+<span class="w">    </span>classDef<span class="w"> </span>statistics<span class="w"> </span>fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:#000000,font-weight:bold
+<span class="w">    </span>classDef<span class="w"> </span>output<span class="w"> </span>fill:#e8f5e8,stroke:#2e7d32,stroke-width:3px,color:#000000,font-weight:bold
+
+<span class="w">    </span>%%<span class="w"> </span>Apply<span class="w"> </span>styles
+<span class="w">    </span>class<span class="w"> </span>A<span class="w"> </span>input
+<span class="w">    </span>class<span class="w"> </span>B1,B2,B3<span class="w"> </span>distributed
+<span class="w">    </span>class<span class="w"> </span>C1,C2,C3,J1,H1<span class="w"> </span>recordMetric
+<span class="w">    </span>class<span class="w"> </span>D1,D2,D3,J2,H2<span class="w"> </span>aggregateMetric
+<span class="w">    </span>class<span class="w"> </span>J3<span class="w"> </span>derivedMetric
+<span class="w">    </span>class<span class="w"> </span>I2<span class="w"> </span>central
+<span class="w">    </span>class<span class="w"> </span>I1,G<span class="w"> </span>statistics
+<span class="w">    </span>class<span class="w"> </span>E1,E2,E3,F,L<span class="w"> </span>transport
+<span class="w">    </span>class<span class="w"> </span>K<span class="w"> </span>output
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.50899def.min.js"></script>
+      
+    
+  </body>
+</html>
