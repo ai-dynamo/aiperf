@@ -78,11 +78,14 @@ Several combinations are supported.
 
 
 ```bash
-echo '{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
+echo \
+'{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
 {"timestamp": 10535, "input_length": 672, "output_length": 26, "hash_ids": [46, 47]}
-{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}' > example_trace.jsonl
+{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}' \
+> example_trace.jsonl
 
-aiperf profile -m deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
+aiperf profile \
+    -m deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
 	--input-file example_trace.jsonl \
 	--custom-dataset-type mooncake_trace
 ```
