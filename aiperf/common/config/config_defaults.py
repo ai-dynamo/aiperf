@@ -128,9 +128,7 @@ class TokenizerDefaults:
 
 
 @dataclass(frozen=True)
-class OutputTokenDefaults:
-    MEAN = None
-    DETERMINISTIC = False
+class OutputTokensDefaults:
     STDDEV = 0
 
 

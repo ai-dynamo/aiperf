@@ -9,6 +9,7 @@ from pydantic import Field
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import (
     InputTokensDefaults,
+    OutputTokensDefaults,
     PrefixPromptDefaults,
     PromptDefaults,
 )
@@ -111,7 +112,7 @@ class OutputTokensConfig(BaseConfig):
             ),
             group=_CLI_GROUP,
         ),
-    ] = None
+    ] = OutputTokensDefaults.STDDEV
 
 
 class PrefixPromptConfig(BaseConfig):

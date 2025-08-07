@@ -34,8 +34,8 @@ class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
             "stream": model_endpoint.endpoint.streaming,
         }
 
-        if turn.max_tokens is not None:
-            payload["max_completion_tokens"] = turn.max_tokens
+        if turn.max_tokens:
+            payload["max_tokens"] = turn.max_tokens
 
         if extra:
             payload.update(extra)

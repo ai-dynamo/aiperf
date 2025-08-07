@@ -64,7 +64,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         output_config = self.config.input.prompt.output_tokens
         if output_config.mean is not None:
-            stddev = output_config.stddev or 0  # Default to 0 if stddev is None
+            stddev = output_config.stddev
             turn.max_tokens = utils.sample_positive_normal_integer(
                 output_config.mean, stddev
             )

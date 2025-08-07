@@ -5,6 +5,7 @@ from aiperf.common.config import (
     InputTokensConfig,
     InputTokensDefaults,
     OutputTokensConfig,
+    OutputTokensDefaults,
     PrefixPromptConfig,
     PrefixPromptDefaults,
     PromptConfig,
@@ -59,7 +60,7 @@ def test_output_tokens_config_defaults():
     """
     config = OutputTokensConfig()
     assert config.mean is None
-    assert config.stddev is None
+    assert config.stddev is OutputTokensDefaults.STDDEV
 
 
 def test_output_tokens_config_custom_values():
