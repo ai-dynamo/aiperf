@@ -4,6 +4,7 @@
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -15,7 +16,6 @@ from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_command,
-    on_init,
     on_pull_message,
     on_stop,
 )
@@ -29,11 +29,13 @@ from aiperf.common.messages import (
 from aiperf.common.messages.command_messages import (
     CommandAcknowledgedResponse,
     ProfileCancelCommand,
+    ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
+    ServiceProtocol,
 )
 from aiperf.timing.config import (
     TimingManagerConfig,
@@ -46,6 +48,7 @@ from aiperf.timing.credit_issuing_strategy import (
 from aiperf.timing.credit_manager import CreditPhaseMessagesMixin
 
 
+@implements_protocol(ServiceProtocol)
 @ServiceFactory.register(ServiceType.TIMING_MANAGER)
 class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMixin):
     """
@@ -66,6 +69,7 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
             pull_client_address=CommAddress.CREDIT_RETURN,
             pull_client_bind=True,
         )
+        self.debug("Timing manager __init__")
         self.config = TimingManagerConfig.from_user_config(self.user_config)
 
         self.dataset_request_client: RequestClientProtocol = (
@@ -82,15 +86,12 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
 
         self._credit_issuing_strategy: CreditIssuingStrategy | None = None
 
-    @on_init
-    async def _timing_manager_initialize(self) -> None:
-        """Initialize timing manager-specific components."""
-        self.debug("Initializing timing manager")
-        await self._configure()
-
-    async def _configure(self) -> None:
+    @on_command(CommandType.PROFILE_CONFIGURE)
+    async def _profile_configure_command(
+        self, message: ProfileConfigureCommand
+    ) -> None:
         """Configure the timing manager."""
-        self.debug("Configuring timing manager")
+        self.debug(f"Configuring credit issuing strategy for {self.service_id}")
 
         if self.config.timing_mode == TimingMode.FIXED_SCHEDULE:
             # This will block until the dataset is ready and the timing response is received
