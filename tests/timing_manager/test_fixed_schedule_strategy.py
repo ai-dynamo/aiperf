@@ -65,7 +65,6 @@ class TestFixedScheduleStrategy:
                 service_id="test-consumer",
                 phase=CreditPhase.PROFILING,
                 delayed_ns=None,
-                pre_inference_ns=None,
             )
             await fixed_schedule_strategy._on_credit_return(return_message)
 
