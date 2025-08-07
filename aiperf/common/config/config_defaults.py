@@ -90,13 +90,6 @@ class InputTokensDefaults:
 
 
 @dataclass(frozen=True)
-class OutputTokensDefaults:
-    MEAN = 0
-    DETERMINISTIC = False
-    STDDEV = 0
-
-
-@dataclass(frozen=True)
 class PrefixPromptDefaults:
     POOL_SIZE = 0
     LENGTH = 0

@@ -9,7 +9,6 @@ from pydantic import Field
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import (
     InputTokensDefaults,
-    OutputTokensDefaults,
     PrefixPromptDefaults,
     PromptDefaults,
 )
@@ -81,8 +80,9 @@ class OutputTokensConfig(BaseConfig):
     _CLI_GROUP = Groups.OUTPUT_SEQUENCE_LENGTH
 
     mean: Annotated[
-        int,
+        int | None,
         Field(
+            default=None,
             ge=0,
             description="The mean number of tokens in each output.",
         ),
@@ -94,30 +94,12 @@ class OutputTokensConfig(BaseConfig):
             ),
             group=_CLI_GROUP,
         ),
-    ] = OutputTokensDefaults.MEAN
-
-    deterministic: Annotated[
-        bool,
-        Field(
-            description=(
-                "This can be set to improve the precision of the mean by setting the\n"
-                "minimum number of tokens equal to the requested number of tokens.\n"
-                "This is currently supported with Triton."
-            ),
-        ),
-        Parameter(
-            name=(
-                "--prompt-output-tokens-deterministic",
-                "--output-tokens-mean-deterministic",  # GenAI-Perf
-                "--osl-deterministic",
-            ),
-            group=_CLI_GROUP,
-        ),
-    ] = OutputTokensDefaults.DETERMINISTIC
+    ] = None
 
     stddev: Annotated[
-        float,
+        float | None,
         Field(
+            default=None,
             ge=0,
             description="The standard deviation of the number of tokens in each output.",
         ),
@@ -129,7 +111,7 @@ class OutputTokensConfig(BaseConfig):
             ),
             group=_CLI_GROUP,
         ),
-    ] = OutputTokensDefaults.STDDEV
+    ] = None
 
 
 class PrefixPromptConfig(BaseConfig):

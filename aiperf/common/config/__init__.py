@@ -28,7 +28,6 @@ from aiperf.common.config.config_defaults import (
     MeasurementDefaults,
     OutputDefaults,
     OutputTokenDefaults,
-    OutputTokensDefaults,
     PrefixPromptDefaults,
     PromptDefaults,
     ServiceDefaults,

@@ -5,7 +5,6 @@ from aiperf.common.config import (
     InputTokensConfig,
     InputTokensDefaults,
     OutputTokensConfig,
-    OutputTokensDefaults,
     PrefixPromptConfig,
     PrefixPromptDefaults,
     PromptConfig,
@@ -59,9 +58,8 @@ def test_output_tokens_config_defaults():
     default values as defined in the OutputTokensDefaults class.
     """
     config = OutputTokensConfig()
-    assert config.mean == OutputTokensDefaults.MEAN
-    assert config.deterministic == OutputTokensDefaults.DETERMINISTIC
-    assert config.stddev == OutputTokensDefaults.STDDEV
+    assert config.mean is None
+    assert config.stddev is None
 
 
 def test_output_tokens_config_custom_values():
@@ -73,7 +71,6 @@ def test_output_tokens_config_custom_values():
     """
     custom_values = {
         "mean": 100,
-        "deterministic": True,
         "stddev": 10.0,
     }
     config = OutputTokensConfig(**custom_values)

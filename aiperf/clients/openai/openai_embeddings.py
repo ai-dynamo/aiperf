@@ -21,6 +21,9 @@ class OpenAIEmbeddingsRequestConverter(AIPerfLoggerMixin):
     ) -> dict[str, Any]:
         """Format payload for an embeddings request."""
 
+        if turn.max_tokens:
+            self.error("Max_tokens is provided but is not supported for embeddings.")
+
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]
