@@ -13,7 +13,7 @@ from pydantic import Field
 
 from aiperf.common.config.config_defaults import EndpointDefaults
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import EndpointType, Modality, ModelSelectionStrategy
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 from aiperf.common.models import AIPerfBaseModel
 
 
@@ -28,11 +28,6 @@ class ModelInfo(AIPerfBaseModel):
     version: str | None = Field(
         default=None,
         description="The version of the model.",
-    )
-    modality: Modality = Field(
-        default=Modality.TEXT,
-        description="The modality of the model. This is used to determine the type of request payload "
-        "to use for the endpoint. If CUSTOM, the model is not supported.",
     )
 
 

@@ -22,9 +22,7 @@ def test_endpoint_config_defaults():
     assert config.type == EndpointDefaults.TYPE
     assert config.custom_endpoint == EndpointDefaults.CUSTOM_ENDPOINT
     assert config.streaming == EndpointDefaults.STREAMING
-    assert config.server_metrics_urls == EndpointDefaults.SERVER_METRICS_URLS
     assert config.url == EndpointDefaults.URL
-    assert config.grpc_method == EndpointDefaults.GRPC_METHOD
 
 
 def test_endpoint_config_custom_values():
@@ -45,9 +43,7 @@ def test_endpoint_config_custom_values():
         "type": EndpointType.OPENAI_CHAT_COMPLETIONS,
         "custom_endpoint": "custom_endpoint",
         "streaming": True,
-        "server_metrics_urls": ["http://custom-metrics-url"],
         "url": "http://custom-url",
-        "grpc_method": "custom.package.Service/Method",
         "timeout_seconds": 10,
         "api_key": "custom_api_key",
     }
@@ -58,30 +54,6 @@ def test_endpoint_config_custom_values():
             config_value = config_value.value.lower()
 
         assert config_value == value
-
-
-def test_server_metrics_urls_validator():
-    """
-    Test the validation and assignment of the `server_metrics_urls` attribute
-    in the `EndpointConfig` class.
-    This test verifies the following scenarios:
-    1. When a single URL string is provided, it is correctly converted into a list
-    containing that URL.
-    2. When a list of URL strings is provided, it is correctly assigned without modification.
-    Assertions:
-    - Ensure that `server_metrics_urls` is correctly set as a list in both cases.
-    """
-
-    config = EndpointConfig(
-        server_metrics_urls=["http://metrics-url"], model_names=["gpt2"]
-    )
-    assert config.server_metrics_urls == ["http://metrics-url"]
-
-    config = EndpointConfig(
-        server_metrics_urls=["http://metrics-url1", "http://metrics-url2"],
-        model_names=["gpt2"],
-    )
-    assert config.server_metrics_urls == ["http://metrics-url1", "http://metrics-url2"]
 
 
 def test_streaming_validation():

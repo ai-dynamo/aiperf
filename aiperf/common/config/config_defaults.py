@@ -21,11 +21,6 @@ from aiperf.common.enums import (
 #
 # Config Defaults
 @dataclass(frozen=True)
-class UserDefaults:
-    MODEL_NAMES = None  # This must be set by the user
-
-
-@dataclass(frozen=True)
 class CLIDefaults:
     TEMPLATE_FILENAME = "aiperf_config.yaml"
 
@@ -172,31 +167,6 @@ class LoadGeneratorDefaults:
     CONCURRENCY_RAMP_UP_TIME = None
     REQUEST_RATE_MODE = RequestRateMode.POISSON
     TIMING_MODE = TimingMode.CONCURRENCY
-
-
-@dataclass(frozen=True)
-class MeasurementDefaults:
-    MEASUREMENT_INTERVAL = 10_000
-    STABILITY_PERCENTAGE = 0.95
-
-
-# TODO: Enable this when we implement the sweep command
-# @dataclass(frozen=True)
-# class SweepParamDefaults:
-#     VALUES = None
-#     ORDER = SweepParamOrder.ASCENDING
-#     COMPLETION_TRIGGER = SweepCompletionTrigger.COMPLETED_PROFILES
-#     START = None
-#     STEP = None
-#     END = None
-#     MAX_PROFILES = None
-
-
-# TODO: Enable this when we implement the sweep command
-# @dataclass(frozen=True)
-# class SweepDefaults:
-#     PARAMS = None
-#     ORDER = SweepMultiParamOrder.DEPTH_FIRST
 
 
 @dataclass(frozen=True)
