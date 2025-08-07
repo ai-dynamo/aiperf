@@ -77,7 +77,7 @@ aiperf profile \
 
 ```bash
 aiperf profile \
-  --model gpt-3.5-turbo \
+  --model Qwen/Qwen3-0.6B \
   --url http://localhost:8000 \
   --endpoint-type chat \
   --concurrency 10 \
