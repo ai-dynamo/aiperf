@@ -1,67 +1,57 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
 import pytest
 
+from aiperf.common.utils import close_enough
+from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
 
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_update_value_and_values(parsed_response_record_builder):
-    metric = RequestLatencyMetric()
-    metric.values = []
-    record = (
-        parsed_response_record_builder.with_request_start_time(100)
-        .add_response(perf_ns=150)
-        .build()
-    )
-    metric.update_value(record=record, metrics=None)
-    assert metric.values() == [50]
+class TestRequestLatencyMetric:
+    def test_request_latency_basic(self):
+        """Test basic request latency calculation"""
+        # Start at 100ns, response at 150ns = 50ns latency
+        record = create_record(start_ns=100, responses=[150])
 
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+        )
+        assert close_enough(metric_results[RequestLatencyMetric.tag], 50)
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_add_multiple_records(parsed_response_record_builder):
-    metric = RequestLatencyMetric()
-    metric.values = []
-    records = (
-        parsed_response_record_builder.with_request_start_time(10)
-        .add_response(perf_ns=15)
-        .add_response(perf_ns=25)
-        .new_record()
-        .with_request_start_time(20)
-        .add_response(perf_ns=25)
-        .add_response(perf_ns=35)
-        .new_record()
-        .with_request_start_time(30)
-        .add_response(perf_ns=40)
-        .add_response(perf_ns=50)
-        .build_all()
-    )
-    for record in records:
-        metric.update_value(record=record, metrics=None)
-    assert metric.values() == [15, 15, 20]
+    def test_request_latency_multiple_responses(self):
+        """Test latency with multiple responses uses final response timestamp"""
+        # Start at 10ns, responses at 15ns, 25ns, 35ns = 25ns latency (final - start)
+        record = create_record(start_ns=10, responses=[15, 25, 35])
 
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+        )
+        assert close_enough(metric_results[RequestLatencyMetric.tag], 25)
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_response_timestamp_less_than_request_raises(parsed_response_record_builder):
-    metric = RequestLatencyMetric()
-    metric.values = []
-    record = (
-        parsed_response_record_builder.with_request_start_time(100)
-        .add_response(perf_ns=90)
-        .build()
-    )
-    with pytest.raises(ValueError, match="Invalid Record"):
-        metric.update_value(record=record, metrics=None)
+    def test_request_latency_multiple_records(self):
+        """Test processing multiple records"""
+        records = [
+            create_record(start_ns=10, responses=[25]),  # 15ns latency
+            create_record(start_ns=20, responses=[35]),  # 15ns latency
+            create_record(start_ns=30, responses=[50]),  # 20ns latency
+        ]
 
+        metric_results = run_simple_metrics_pipeline(
+            records,
+            RequestLatencyMetric.tag,
+        )
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_metric_initialization_none(parsed_response_record_builder):
-    metric = RequestLatencyMetric()
-    assert metric.values() == []
-    record = (
-        parsed_response_record_builder.with_request_start_time(1)
-        .add_response(perf_ns=2)
-        .build()
-    )
-    metric.update_value(record=record, metrics=None)
-    assert metric.values() == [1]
+        assert close_enough(metric_results[RequestLatencyMetric.tag], [15, 15, 20])
+
+    def test_request_latency_invalid_timestamp(self):
+        """Test error when response timestamp is before request start"""
+        # Response at 90ns before request start at 100ns - should raise error
+        record = create_record(start_ns=100, responses=[90])
+
+        metric = RequestLatencyMetric()
+        with pytest.raises(ValueError, match="Invalid Record"):
+            metric.parse_record(record, MetricRecordDict())

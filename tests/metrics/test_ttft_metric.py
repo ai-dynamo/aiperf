@@ -1,62 +1,64 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-
 import pytest
 
-from aiperf.common.enums.metric_enums import MetricTimeUnit
+from aiperf.common.utils import close_enough
+from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.ttft_metric import TTFTMetric
+from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
 
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_single_record(parsed_response_record_builder):
-    metric = TTFTMetric()
-    metric.metric = []
-    record = (
-        parsed_response_record_builder.with_request_start_time(100)
-        .add_response(perf_ns=150)
-        .build()
-    )
+class TestTTFTMetric:
+    def test_ttft_basic(self):
+        """Test basic time to first token calculation"""
+        # Start at 100ns, first response at 110ns = 10ns TTFT
+        record = create_record(start_ns=100, responses=[110])
 
-    metric.update_value(record=record, metrics=None)
-    assert metric.values() == [50]
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            TTFTMetric.tag,
+        )
+        assert close_enough(metric_results[TTFTMetric.tag], 10)
 
+    def test_ttft_multiple_responses(self):
+        """Test TTFT with multiple responses uses first response only"""
+        # Start at 100ns, first response at 105ns, second at 115ns = 5ns TTFT
+        record = create_record(start_ns=100, responses=[105, 115])
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_add_multiple_records(parsed_response_record_builder):
-    metric = TTFTMetric()
-    metric.metric = []
-    records = (
-        parsed_response_record_builder.with_request_start_time(10)
-        .add_response(perf_ns=15)
-        .new_record()
-        .with_request_start_time(20)
-        .add_response(perf_ns=25)
-        .new_record()
-        .with_request_start_time(30)
-        .add_response(perf_ns=40)
-        .build_all()
-    )
-    for record in records:
-        metric.update_value(record=record, metrics=None)
-    assert metric.values() == [5, 5, 10]
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            TTFTMetric.tag,
+        )
+        assert close_enough(metric_results[TTFTMetric.tag], 5)
 
+    def test_ttft_multiple_records(self):
+        """Test processing multiple records"""
+        records = [
+            create_record(start_ns=100, responses=[105, 115]),  # 5ns TTFT
+            create_record(start_ns=200, responses=[205, 215]),  # 5ns TTFT
+            create_record(start_ns=300, responses=[310, 320]),  # 10ns TTFT
+        ]
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_convert_metrics(parsed_response_record_builder):
-    metric = TTFTMetric()
-    metric.metric = []
-    records = (
-        parsed_response_record_builder.with_request_start_time(10_000_000)
-        .add_response(perf_ns=15_000_000)
-        .new_record()
-        .with_request_start_time(20_000_000)
-        .add_response(perf_ns=25_000_000)
-        .new_record()
-        .with_request_start_time(30_000_000)
-        .add_response(perf_ns=40_000_000)
-        .build_all()
-    )
-    for record in records:
-        metric.update_value(record=record, metrics=None)
-    assert metric.get_converted_metrics(unit=MetricTimeUnit.MILLISECONDS) == [5, 5, 10]
+        metric_results = run_simple_metrics_pipeline(
+            records,
+            TTFTMetric.tag,
+        )
+        assert close_enough(metric_results[TTFTMetric.tag], [5, 5, 10])
+
+    def test_ttft_invalid_timestamp(self):
+        """Test error when first response timestamp is before request start"""
+        record = create_record(start_ns=100, responses=[90])
+
+        metric = TTFTMetric()
+        with pytest.raises(ValueError, match="Invalid Record"):
+            metric.parse_record(record, MetricRecordDict())
+
+    def test_ttft_no_responses(self):
+        """Test error when no responses are present"""
+        record = create_record(start_ns=100)
+        record.responses = []
+
+        metric = TTFTMetric()
+        with pytest.raises(ValueError, match="Invalid Record"):
+            metric.parse_record(record, MetricRecordDict())

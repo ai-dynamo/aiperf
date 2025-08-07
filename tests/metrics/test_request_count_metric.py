@@ -3,34 +3,28 @@
 
 import pytest
 
-from aiperf.metrics.types.request_count_metric import (
-    RequestCountMetric,
-)
+from aiperf.common.utils import close_enough
+from aiperf.metrics.types.request_count_metric import RequestCountMetric
+from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
 
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_request_count_with_multiple_valid_records(parsed_response_record_builder):
-    metric = RequestCountMetric()
-    records = (
-        parsed_response_record_builder.with_request_start_time(0)
-        .add_response(perf_ns=5)
-        .new_record()
-        .with_request_start_time(10)
-        .add_response(perf_ns=15)
-        .new_record()
-        .with_request_start_time(20)
-        .add_response(perf_ns=25)
-        .build_all()
-    )
+class TestRequestCountMetric:
+    def test_request_count_no_records(self):
+        """Test that no metric is returned when no records are provided (as opposed to a default value or None)"""
+        metric_results = run_simple_metrics_pipeline(
+            [],
+            RequestCountMetric.tag,
+        )
+        assert RequestCountMetric.tag not in metric_results
 
-    for record in records:
-        metric.update_value(record)
+    @pytest.mark.parametrize("num_records", [1, 3, 10, 100, 1_000, 10_000])
+    def test_request_count_multiple_records(self, num_records: int):
+        """Test request count aggregation across multiple records"""
+        records = [create_record(start_ns=100 * i) for i in range(num_records)]
 
-    assert metric.values() == 3
-
-
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_request_count_invalid_record_raises():
-    metric = RequestCountMetric()
-    with pytest.raises(ValueError, match="Invalid Record"):
-        metric.update_value(record=None)
+        metric_results = run_simple_metrics_pipeline(
+            records,
+            RequestCountMetric.tag,
+        )
+        # num_records total records, each contributing 1 to the count
+        assert close_enough(metric_results[RequestCountMetric.tag], num_records)

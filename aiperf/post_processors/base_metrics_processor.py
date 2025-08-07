@@ -58,7 +58,12 @@ class BaseMetricsProcessor(AIPerfLoggerMixin, ABC):
             disallowed_flags,
             *metric_types,
         )
-        ordered_tags = MetricRegistry.create_dependency_order_for(supported_tags)
+        ordered_tags = MetricRegistry.create_dependency_order_for(
+            supported_tags,
+            # We only want the order of the tags requested, because we do not want to include other metrics
+            # types that were not requested.
+            include_unlisted_dependencies=False,
+        )
         for metric_tag in ordered_tags:
             metrics.append(MetricRegistry.get_instance(metric_tag))
         return metrics

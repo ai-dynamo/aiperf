@@ -1,51 +1,46 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 import pytest
 
-from aiperf.common.models import (
-    ParsedResponseRecord,
-    RequestRecord,
-    ResponseData,
-)
-from aiperf.metrics.types.input_sequence_length_metric import (
-    InputSequenceLengthMetric,
-)
+from aiperf.common.utils import close_enough
+from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.metrics.types.input_sequence_length_metric import InputSequenceLengthMetric
+from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
 
 
-def make_record(input_token_count: int | None = None) -> ParsedResponseRecord:
-    request = RequestRecord(
-        request={},
-        start_perf_ns=1,
-        timestamp_ns=2,
-        end_perf_ns=3,
-    )
-    response = ResponseData(
-        perf_ns=2, raw_text=["test"], parsed_text=["test"], token_count=1, metadata={}
-    )
-    return ParsedResponseRecord(
-        worker_id="worker",
-        request=request,
-        responses=[response],
-        input_token_count=input_token_count,
-    )
+class TestInputSequenceLengthMetric:
+    def test_input_sequence_length_basic(self):
+        """Test basic input sequence length extraction"""
+        record = create_record(input_tokens=15)
 
+        metric = InputSequenceLengthMetric()
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == 15
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_isl_metric_with_multiple_records():
-    isl = InputSequenceLengthMetric()
-    record1 = make_record(5)
-    record2 = make_record(7)
+    def test_input_sequence_length_zero(self):
+        """Test handling of zero input tokens"""
+        record = create_record(input_tokens=0)
 
-    isl.update_value(record1)
-    isl.update_value(record2)
+        metric = InputSequenceLengthMetric()
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == 0
 
-    assert isl.values() == [5, 7]
+    def test_input_sequence_length_none(self):
+        """Test handling of None input tokens raises error"""
+        record = create_record(input_tokens=None)
 
+        metric = InputSequenceLengthMetric()
+        with pytest.raises(ValueError, match="Input Token Count is not available"):
+            metric.parse_record(record, MetricRecordDict())
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_isl_metric_missing_input_token_count():
-    record = make_record()
-    isl = InputSequenceLengthMetric()
-    with pytest.raises(ValueError, match="Input Token Count is not available"):
-        isl.update_value(record)
+    def test_input_sequence_length_multiple_records(self):
+        """Test processing multiple records with different token counts"""
+        isl_values = [5, 10, 20]
+        records = [create_record(input_tokens=isl) for isl in isl_values]
+
+        metric_results = run_simple_metrics_pipeline(
+            records,
+            InputSequenceLengthMetric.tag,
+        )
+        assert close_enough(metric_results[InputSequenceLengthMetric.tag], isl_values)

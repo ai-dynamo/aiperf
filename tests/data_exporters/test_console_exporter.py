@@ -25,7 +25,7 @@ def mock_endpoint_config():
 def sample_records():
     return [
         MetricResult(
-            tag="Time to First Token",
+            tag="ttft",
             header="Time to First Token",
             unit="ms",
             avg=120.5,
@@ -36,7 +36,7 @@ def sample_records():
             p75=122.0,
         ),
         MetricResult(
-            tag="Request Latency",
+            tag="request_latency",
             header="Request Latency",
             unit="ms",
             avg=15.3,
@@ -47,7 +47,7 @@ def sample_records():
             p75=16.2,
         ),
         MetricResult(
-            tag="Inter Token Latency",
+            tag="inter_token_latency",
             header="Inter Token Latency",
             unit="ms",
             avg=3.7,
@@ -58,9 +58,9 @@ def sample_records():
             p75=4.0,
         ),
         MetricResult(
-            tag="Request Throughput",
+            tag="request_throughput",
             header="Request Throughput",
-            unit="per sec",
+            unit="requests/sec",
             avg=95.0,
         ),
     ]
@@ -90,75 +90,89 @@ class TestConsoleExporter:
         assert "Time to First Token (ms)" in output
         assert "Request Latency (ms)" in output
         assert "Inter Token Latency (ms)" in output
-        assert "Request Throughput (per sec)" in output
+        assert "Request Throughput (requests/sec)" in output
 
-    @pytest.skip(
-        reason="TODO: Metric refactor work in progress", allow_module_level=True
-    )
     @pytest.mark.parametrize(
-        "enable_streaming, is_streaming_only_metric, should_skip",
+        "show_internal_metrics, is_hidden_metric, should_skip",
         [
-            (True, True, False),
-            (False, True, True),
-            (False, False, False),
-            (True, False, False),
+            (True, True, False),  # Show internal metrics, hidden metric -> don't skip
+            (False, True, True),  # Don't show internal metrics, hidden metric -> skip
+            (
+                False,
+                False,
+                False,
+            ),  # Don't show internal metrics, normal metric -> don't skip
+            (True, False, False),  # Show internal metrics, normal metric -> don't skip
         ],
     )
     def test_should_skip_logic(
         self,
-        mock_endpoint_config,
-        enable_streaming,
-        is_streaming_only_metric,
+        mock_endpoint_config: EndpointConfig,
+        show_internal_metrics,
+        is_hidden_metric,
         should_skip,
     ):
-        mock_endpoint_config.streaming = enable_streaming
-        input_config = UserConfig(endpoint=mock_endpoint_config)
-        config = ExporterConfig(
-            results=ProfileResults(
-                records=[],
-                start_ns=0,
-                end_ns=0,
-                completed=0,
-            ),
-            user_config=input_config,
-        )
-        exporter = ConsoleExporter(config)
-        record = MetricResult(
-            tag="ttft",
-            header="Time to First Token",
-            unit="ms",
-            avg=1.0,
-        )
-        assert exporter._should_skip(record) is should_skip
+        from unittest.mock import patch
 
-    @pytest.skip(
-        reason="TODO: Metric refactor work in progress", allow_module_level=True
-    )
+        # Mock the user config to control show_internal_metrics
+        input_config = UserConfig(endpoint=mock_endpoint_config)
+        with patch.object(
+            input_config.output, "show_internal_metrics", show_internal_metrics
+        ):
+            config = ExporterConfig(
+                results=ProfileResults(
+                    records=[],
+                    start_ns=0,
+                    end_ns=0,
+                    completed=0,
+                ),
+                user_config=input_config,
+            )
+            exporter = ConsoleExporter(config)
+
+            # Test with actual metric behavior: use hidden metrics vs normal metrics
+            if is_hidden_metric:
+                # Use a metric that has HIDDEN flags (like benchmark_duration which has HIDDEN flag)
+                record = MetricResult(
+                    tag="benchmark_duration",
+                    header="Benchmark Duration",
+                    unit="s",
+                    avg=1.0,
+                )
+            else:
+                # Use a normal metric without HIDDEN flags
+                record = MetricResult(
+                    tag="request_latency",
+                    header="Request Latency",
+                    unit="ms",
+                    avg=1.0,
+                )
+            assert exporter._should_skip(record) is should_skip
+
     def test_format_row_formats_values_correctly(self, mock_exporter_config):
         exporter = ConsoleExporter(mock_exporter_config)
+        # Request latency metric expects values in nanoseconds (native unit)
+        # but displays in milliseconds. 10.123 ms = 10,123,000 ns
         record = MetricResult(
-            tag="Request Latency",
+            tag="request_latency",
             header="Request Latency",
-            unit="ms",
-            avg=10.123,
+            unit="ms",  # This should match display unit for test clarity
+            avg=10_123_000,  # 10.123 ms in nanoseconds
             min=None,
-            max=20.0,
+            max=20_000_000,  # 20.0 ms in nanoseconds
             p99=None,
-            p90=15.5,
-            p75=12.3,
+            p90=15_500_000,  # 15.5 ms in nanoseconds
+            p75=12_300_000,  # 12.3 ms in nanoseconds
         )
         row = exporter._format_row(record)
         assert row[0] == "Request Latency (ms)"
-        assert row[1] == "10.12"
-        assert row[2] == "[dim]N/A[/dim]"
-        assert row[3] == "20.00"
-        assert row[4] == "[dim]N/A[/dim]"
-        assert row[5] == "15.50"
-        assert row[6] == "12.30"
+        assert row[1] == "10.12"  # Should display in ms after conversion
+        assert row[2] == "[dim]N/A[/dim]"  # min is None
+        assert row[3] == "20.00"  # max in ms
+        assert row[4] == "[dim]N/A[/dim]"  # p99 is None
+        assert row[5] == "15.50"  # p90 in ms
+        assert row[6] == "12.30"  # p75 in ms
 
-    @pytest.skip(
-        reason="TODO: Metric refactor work in progress", allow_module_level=True
-    )
     def test_get_title_returns_expected_string(self, mock_exporter_config):
         exporter = ConsoleExporter(mock_exporter_config)
         assert exporter._get_title() == "NVIDIA AIPerf | LLM Metrics"

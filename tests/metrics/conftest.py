@@ -5,137 +5,113 @@ Shared fixtures for testing AIPerf metrics.
 
 """
 
-import logging
-
-import pytest
-
+from aiperf.common.enums.metric_enums import MetricType
 from aiperf.common.models import (
+    ErrorDetails,
     ParsedResponseRecord,
     RequestRecord,
     ResponseData,
 )
+from aiperf.common.types import MetricTagT
+from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
+from aiperf.metrics.metric_registry import MetricRegistry
 
-logging.basicConfig(level=logging.DEBUG)
 
-
-class ParsedResponseRecordBuilder:
-    """Builder class for creating ParsedResponseRecord instances with flexible configuration.
-
-    Supports building single or multiple ParsedResponseRecord instances with custom
-    requests and responses for comprehensive testing scenarios.
+def create_record(
+    start_ns: int = 100,
+    responses: list[int] | None = None,
+    input_tokens: int | None = None,
+    output_tokens_per_response: int = 1,
+    error: ErrorDetails | None = None,
+) -> ParsedResponseRecord:
     """
+    Simple helper to create test records with sensible defaults.
 
-    def __init__(self):
-        self.reset()
+    If no responses are provided, a single response is created with a latency of 50ns.
+    If output tokens per response are provided, each response will have that many tokens,
+        meaning that the total output token count will be the number of responses times
+        the output tokens per response.
+    The end_perf_ns is the last response timestamp, or the start_ns if no responses are provided.
+    """
+    responses = responses or [start_ns + 50]  # Single response 50ns later
 
-    def reset(self):
-        """Reset the builder to default values."""
-        self._records = []  # List of record configurations
-        self._current_record = self._new_record_config()
-        return self
+    request = RequestRecord(
+        conversation_id="test-conversation",
+        turn_index=0,
+        model_name="test-model",
+        start_perf_ns=start_ns,
+        timestamp_ns=start_ns,
+        end_perf_ns=responses[-1] if responses else start_ns,
+        error=error,
+    )
 
-    def _new_record_config(self):
-        """Create a new record configuration with default values."""
-        return {
-            "worker_id": "worker_1",
-            "request_start_perf_ns": 100,
-            "request_kwargs": {},
-            "responses": [],
-        }
-
-    def with_worker_id(self, worker_id: str):
-        """Set the worker ID for the current record."""
-        self._current_record["worker_id"] = worker_id
-        return self
-
-    def with_request_start_time(self, start_perf_ns: int):
-        """Set the request start time for the current record."""
-        self._current_record["request_start_perf_ns"] = start_perf_ns
-        return self
-
-    def with_request_kwargs(self, **kwargs):
-        """Add additional kwargs to the RequestRecord for the current record."""
-        self._current_record["request_kwargs"].update(kwargs)
-        return self
-
-    def add_response(
-        self,
-        perf_ns: int,
-        raw_text: list[str] = None,
-        parsed_text: list[str] = None,
-        **kwargs,
-    ):
-        """Add a response to the current record."""
-        if raw_text is None:
-            raw_text = []
-        if parsed_text is None:
-            parsed_text = []
-
-        response_data = ResponseData(
-            perf_ns=perf_ns, raw_text=raw_text, parsed_text=parsed_text, **kwargs
+    response_data = []
+    for perf_ns in responses:
+        response_data.append(
+            ResponseData(
+                perf_ns=perf_ns,
+                raw_text=["test"],
+                parsed_text=["test"],
+                token_count=output_tokens_per_response,
+            )
         )
-        self._current_record["responses"].append(response_data)
-        return self
 
-    def add_responses(self, *response_configs):
-        """Add multiple responses to the current record. Each config should be a dict with response parameters."""
-        for config in response_configs:
-            self.add_response(**config)
-        return self
-
-    def new_record(self):
-        """Finish the current record and start a new one. Returns self for chaining."""
-        self._records.append(self._current_record.copy())
-        self._current_record = self._new_record_config()
-        return self
-
-    def add_request(
-        self, worker_id: str = None, start_perf_ns: int = None, **request_kwargs
-    ):
-        """Add a new request record. Automatically starts a new record."""
-        self.new_record()
-
-        if worker_id is not None:
-            self.with_worker_id(worker_id)
-        if start_perf_ns is not None:
-            self.with_request_start_time(start_perf_ns)
-        if request_kwargs:
-            self.with_request_kwargs(**request_kwargs)
-
-        return self
-
-    def build(self) -> ParsedResponseRecord:
-        """Build and return a single ParsedResponseRecord (for backward compatibility)."""
-        records = self.build_all()
-        return records[0]
-
-    def build_all(self) -> list[ParsedResponseRecord]:
-        """Build and return all configured ParsedResponseRecord instances."""
-        # Add the current record if it has content
-        all_records = self._records.copy()
-        all_records.append(self._current_record)
-
-        parsed_records = []
-        for record_config in all_records:
-            request = RequestRecord(
-                conversation_id="test-conversation",
-                turn_index=0,
-                model_name="test-model",
-                start_perf_ns=record_config["request_start_perf_ns"],
-                **record_config["request_kwargs"],
-            )
-
-            parsed_record = ParsedResponseRecord(
-                worker_id=record_config["worker_id"],
-                request=request,
-                responses=record_config["responses"].copy(),
-            )
-            parsed_records.append(parsed_record)
-
-        return parsed_records
+    return ParsedResponseRecord(
+        request=request,
+        responses=response_data,
+        input_token_count=input_tokens,
+        output_token_count=len(responses) * output_tokens_per_response,
+    )
 
 
-@pytest.fixture
-def parsed_response_record_builder():
-    """Fixture that provides a builder for creating ParsedResponseRecord instances."""
-    return ParsedResponseRecordBuilder()
+def run_simple_metrics_pipeline(
+    records: list[ParsedResponseRecord], *metrics_to_test: MetricTagT
+) -> MetricResultsDict:
+    """Run a simple metrics triple stage pipeline for a list of records and return the results.
+
+    This function will:
+    - Determine all of the metrics that are needed to compute the metrics to test
+    - Sort all of the metrics by dependency order and create an instance of each
+    - Parse the input metrics for each record
+    - Aggregate the values of the aggregate metrics
+    - Compute the derived metrics
+
+    Returns:
+        MetricResultsDict: A dictionary of the results
+    """
+    # first, sort the metrics by dependency order, and create an instance of each
+    metrics = [
+        MetricRegistry.get_class(tag)()
+        for tag in MetricRegistry.create_dependency_order_for(
+            metrics_to_test,
+            # We need to include unlisted dependencies because we are passing in a subset of metrics to test,
+            # and we want to ensure that all of the dependencies are included. This allows the unit tests to
+            # be simpler and more readable.
+            include_unlisted_dependencies=True,
+        )
+    ]
+
+    metric_results = MetricResultsDict()
+    for record in records:
+        # STAGE 1: Parse the metrics for each record, and store the values in a dict
+        metric_dict = MetricRecordDict()
+        for metric in metrics:
+            if metric.type in [MetricType.RECORD, MetricType.AGGREGATE]:
+                metric_dict[metric.tag] = metric.parse_record(record, metric_dict)
+
+        # STAGE 2: Aggregate the values of the aggregate metrics, and append new values for record metrics
+        for metric in metrics:
+            if metric.type == MetricType.AGGREGATE:
+                metric.aggregate_value(metric_dict[metric.tag])
+                metric_results[metric.tag] = metric.current_value
+            elif metric.type == MetricType.RECORD:
+                metric_results.setdefault(metric.tag, []).append(
+                    metric_dict[metric.tag]
+                )
+
+    # STAGE 3: Compute all of the derived metrics
+    for metric in metrics:
+        if metric.type == MetricType.DERIVED:
+            metric_results[metric.tag] = metric.derive_value(metric_results)
+
+    return metric_results

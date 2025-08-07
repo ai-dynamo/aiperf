@@ -107,6 +107,31 @@ async def yield_to_event_loop() -> None:
     await asyncio.sleep(0)
 
 
+def close_enough(a: Any, b: Any, epsilon: float = 1e-9) -> bool:
+    """Check if two objects are close enough to each other to be considered equal."""
+    # If they are both numerical, compare them with a small epsilon
+    if isinstance(a, float | int) and isinstance(b, float | int):
+        return abs(a - b) < epsilon
+
+    a_is_list = isinstance(a, list | tuple)
+    b_is_list = isinstance(b, list | tuple)
+
+    # If they are both lists, compare each element pairwise
+    if a_is_list and b_is_list:
+        if len(a) != len(b):
+            raise ValueError(f"Lists must have the same length to compare: {a} and {b}")
+        return all(close_enough(a, b, epsilon) for a, b in zip(a, b, strict=True))
+
+    # If one is a list, compare each element of the list with the other object
+    if a_is_list:
+        return all(close_enough(a, b, epsilon) for a in a)
+    if b_is_list:
+        return all(close_enough(a, b, epsilon) for b in b)
+
+    # Otherwise, try and compare them as objects
+    return a == b
+
+
 # This is used to identify the source file of the call_all_functions function
 # in the AIPerfLogger class to skip it when determining the caller.
 # NOTE: Using similar logic to logging._srcfile
