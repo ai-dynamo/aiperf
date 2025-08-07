@@ -122,14 +122,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Handle a conversation request."""
         self.debug(lambda: f"Handling conversation request: {message}")
 
-        # Wait for the dataset to be configured if it is not already
-        if not self.dataset_configured.is_set():
-            self.debug(
-                "Dataset not configured. Waiting for dataset to be configured..."
-            )
-            await asyncio.wait_for(
-                self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
-            )
+        await self._wait_for_dataset_configuration()
 
         if not self.dataset:
             raise self._service_error(
@@ -224,6 +217,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             lambda: f"Handling dataset timing request: {message}",
             "Handling dataset timing request",
         )
+
+        await self._wait_for_dataset_configuration()
+
         if not self.dataset:
             raise self._service_error(
                 "Dataset is empty and must be configured before handling timing requests.",
@@ -239,6 +235,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             request_id=message.request_id,
             timing_data=timing_dataset,
         )
+
+    async def _wait_for_dataset_configuration(self) -> None:
+        """Wait for the dataset to be configured if it is not already."""
+        if not self.dataset_configured.is_set():
+            self.debug(
+                "Dataset not configured. Waiting for dataset to be configured..."
+            )
+            await asyncio.wait_for(
+                self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
+            )
 
 
 def main() -> None:
