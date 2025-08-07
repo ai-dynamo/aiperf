@@ -37,7 +37,10 @@ Features
 
 - Scalable via multiprocess or Kubernetes (coming soon) support 
 - Modular design for easy user modification
-- Several benchmarking modes: concurrency, request-rate, trace replay
+- Several benchmarking modes: 
+  - concurrency
+  - request-rate
+  - [trace replay](docs/benchmark_modes/trace_replay.md)
 
 </br>
 
@@ -108,5 +111,6 @@ NVIDIA AIPerf | LLM Metrics
 ```
 </div>
 
+Review the [Development](docs/Development.md) Guide for more information.
 </br>
 
