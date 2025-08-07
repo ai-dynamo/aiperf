@@ -91,10 +91,6 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
         self, message: ProfileConfigureCommand
     ) -> None:
         """Configure the timing manager."""
-        await self._configure()
-
-    async def _configure(self) -> None:
-        """Configure the timing manager."""
         self.debug(f"Configuring credit issuing strategy for {self.service_id}")
 
         if self.config.timing_mode == TimingMode.FIXED_SCHEDULE:
