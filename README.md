@@ -20,7 +20,7 @@ limitations under the License.
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 
-AIPerf is a comprehensive benchmarking tool for measuring the performance of generative AI models served your preferred inference solution. 
+AIPerf is a comprehensive benchmarking tool for measuring the performance of generative AI models served by your preferred inference solution. 
 It provides detailed metrics via a command line display as well as extensive benchmark performance reports.
 
 AIPerf provides multiprocess and kubernetes support (coming soon) out of the box for a single scalable solution.
@@ -68,18 +68,18 @@ Run a simple benchmark against a model:
 
 ```bash
 aiperf profile \
-  --model-names your_model_name \
+  --model your_model_name \
   --url http://localhost:8000 \
-  --endpoint-type openai
+  --endpoint-type chat
 ```
 
 ### Example with Custom Configuration
 
 ```bash
 aiperf profile \
-  --model-names gpt-3.5-turbo \
+  --model gpt-3.5-turbo \
   --url http://localhost:8000 \
-  --endpoint-type openai \
+  --endpoint-type chat \
   --concurrency 10 \
   --request-count 100 \
   --streaming
@@ -89,7 +89,7 @@ Example output:
 <div align="center">
 
 ```
-                              NVIDIA AIPerf | LLM Metrics
+NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
 ┃                         Statistic ┃    avg ┃    min ┃    max ┃    p99 ┃    p90 ┃    p75 ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
