@@ -55,6 +55,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
+        self._session_ids_cache: list[str] = []
+        self._conversation_query_random = random.Random(
+            self.user_config.input.random_seed
+        )
         self.dataset_configured = asyncio.Event()
 
     @on_command(CommandType.PROFILE_CONFIGURE)
@@ -102,6 +106,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         conversations = composer.create_dataset()
         self.dataset = {conv.session_id: conv for conv in conversations}
+        self._session_ids_cache = list(self.dataset.keys())
 
         self.dataset_configured.set()
         await self.publish(
@@ -147,7 +152,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Return any conversation from the dataset based on the user specified method."""
 
         # TODO: Implement the user specified method (random, round robin, etc.)
-        conversation = random.choice(list(self.dataset.values()))
+        session_id = self._conversation_query_random.choice(self._session_ids_cache)
+        conversation = self.dataset[session_id]
         self.trace_or_debug(
             lambda: f"Sending random conversation response: {conversation}",
             lambda: f"Sending random conversation response with id: {conversation.session_id}",
