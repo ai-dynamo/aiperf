@@ -4,16 +4,16 @@
 import zmq
 from zmq import SocketType
 
-from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.comms.zmq.zmq_proxy_base import (
-    BaseZMQProxy,
-    ProxyEndType,
-    ProxySocketClient,
-)
 from aiperf.common.config.zmq_config import BaseZMQProxyConfig
 from aiperf.common.enums import ZMQProxyType
 from aiperf.common.factories import ZMQProxyFactory
 from aiperf.common.hooks import on_init
+from aiperf.zmq.zmq_base_client import BaseZMQClient
+from aiperf.zmq.zmq_proxy_base import (
+    BaseZMQProxy,
+    ProxyEndType,
+    ProxySocketClient,
+)
 
 ################################################################################
 # Proxy Sockets
