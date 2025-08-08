@@ -3,7 +3,7 @@
 
 from typing import Protocol, runtime_checkable
 
-from aiperf.base_comms import PubClientProtocol
+from aiperf.common.base_comms import PubClientProtocol
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import (
     CreditPhaseCompleteMessage,
