@@ -9,15 +9,14 @@ from pathlib import Path
 import zmq.asyncio
 
 from aiperf.common.base_comms import BaseCommunication
-from aiperf.common.config import BaseZMQCommunicationConfig
-from aiperf.common.config.zmq_config import ZMQIPCConfig, ZMQTCPConfig
+from aiperf.common.config import BaseZMQCommunicationConfig, ZMQIPCConfig, ZMQTCPConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
     CommClientType,
     CommunicationBackend,
+    LifecycleState,
 )
-from aiperf.common.enums.service_enums import LifecycleState
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.factories import CommunicationClientFactory, CommunicationFactory
 from aiperf.common.hooks import on_stop
