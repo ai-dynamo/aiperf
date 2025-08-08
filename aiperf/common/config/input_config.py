@@ -181,7 +181,7 @@ class InputConfig(BaseConfig):
         Field(
             ge=0,
             description="Specifies the offset in milliseconds to end the fixed schedule at. By default, the schedule "
-            "ends at the last timestamp in the trace dataset, but this option can be used to only run a subset of the trace."
+            "ends at the last timestamp in the trace dataset, but this option can be used to only run a subset of the trace. "
             "The schedule will include any requests at the end offset.",
         ),
         Parameter(
