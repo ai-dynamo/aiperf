@@ -1,65 +1,52 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import pytest
 
-from aiperf.common.models import (
-    ParsedResponseRecord,
-    RequestRecord,
-    ResponseData,
-)
+import pytest
+from pytest import approx
+
+from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
 )
+from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
 
 
-def make_record(output_tokens_count: list[int] | None = None):
-    responses = []
-    if output_tokens_count:
-        responses = [
-            ResponseData(
-                perf_ns=100,
-                raw_text=["test"],
-                parsed_text=["test"],
-                token_count=count,
-                metadata={},
-            )
-            for count in output_tokens_count
+class TestOutputSequenceLengthMetric:
+    def test_output_sequence_length_basic(self):
+        """Test basic output sequence length extraction"""
+        record = create_record(output_tokens_per_response=10)
+
+        metric = OutputSequenceLengthMetric()
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == 10
+
+    def test_output_sequence_length_zero(self):
+        """Test handling of zero output tokens"""
+        record = create_record(output_tokens_per_response=0)
+
+        metric = OutputSequenceLengthMetric()
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == 0
+
+    def test_output_sequence_length_none(self):
+        """Test handling of None output tokens raises error"""
+        record = create_record()
+        record.output_token_count = None
+
+        metric = OutputSequenceLengthMetric()
+        with pytest.raises(ValueError, match="Output token count is missing"):
+            metric.parse_record(record, MetricRecordDict())
+
+    def test_output_sequence_length_multiple_records(self):
+        """Test processing multiple records with different token counts"""
+        records = [
+            create_record(output_tokens_per_response=5),
+            create_record(output_tokens_per_response=10),
+            create_record(output_tokens_per_response=15),
         ]
+        metric_results = run_simple_metrics_pipeline(
+            records,
+            OutputSequenceLengthMetric.tag,
+        )
 
-    request = RequestRecord(
-        start_perf_ns=1,
-        end_perf_ns=200,
-        timestamp_ns=100000,
-    )
-
-    return ParsedResponseRecord(
-        request=request,
-        responses=responses,
-        input_token_count=1,
-        output_token_count=sum(output_tokens_count) if output_tokens_count else None,
-    )
-
-
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_osl_metric_with_multiple_records():
-    osl_metric = OutputSequenceLengthMetric()
-    record1 = make_record([3, 5])
-    osl_metric.update_value(record=record1)
-    record2 = make_record([7])
-    osl_metric.update_value(record=record2)
-    assert osl_metric.values() == [8, 7]
-
-
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_osl_metric_invalid_record():
-    osl_metric = OutputSequenceLengthMetric()
-    with pytest.raises(ValueError):
-        osl_metric.update_value(record=None)
-
-
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_osl_metric_missing_output_token_count():
-    record = make_record()
-    osl = OutputSequenceLengthMetric()
-    with pytest.raises(ValueError, match="Invalid Record"):
-        osl.update_value(record)
+        assert metric_results[OutputSequenceLengthMetric.tag] == approx([5, 10, 15])
