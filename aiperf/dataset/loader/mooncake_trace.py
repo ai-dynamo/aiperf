@@ -63,13 +63,7 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
 
                 trace_data = MooncakeTrace.model_validate_json(line)
 
-                if (
-                    self._start_offset is not None
-                    and trace_data.timestamp < self._start_offset
-                ) or (
-                    self._end_offset is not None
-                    and trace_data.timestamp > self._end_offset
-                ):
+                if not self._timestamp_within_offsets(trace_data.timestamp):
                     self._skipped_traces += 1
                     continue  # Skip traces before or after the fixed schedule offset
 
@@ -83,6 +77,11 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
         self.debug(lambda: f"Loaded {len(data):,} traces from {self.filename}")
 
         return data
+
+    def _timestamp_within_offsets(self, timestamp: int) -> bool:
+        return (self._start_offset is None or timestamp >= self._start_offset) and (
+            self._end_offset is None or timestamp <= self._end_offset
+        )
 
     def convert_to_conversations(
         self, data: dict[str, list[MooncakeTrace]]
