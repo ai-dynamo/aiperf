@@ -44,13 +44,6 @@ class CreditReturnMessage(BaseServiceMessage):
         description="The number of nanoseconds the credit drop was delayed by, or None if the credit was sent on time. "
         "NOTE: This is only applicable if the original credit_drop_ns was not None.",
     )
-    # TODO: Does it make more sense for this to be part of the RequestRecord?
-    pre_inference_ns: int | None = Field(
-        default=None,
-        description="The latency of the credit in nanoseconds from when it was first received to when the inference request was sent. "
-        "This can be used to trace the latency in order to identify bottlenecks or other issues.",
-        ge=0,
-    )
 
     @property
     def delayed(self) -> bool:

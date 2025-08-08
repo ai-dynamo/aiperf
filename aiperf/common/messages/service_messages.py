@@ -3,15 +3,12 @@
 import time
 
 from pydantic import (
-    BaseModel,
     Field,
-    SerializeAsAny,
 )
 
 from aiperf.common.enums import (
     LifecycleState,
     MessageType,
-    NotificationType,
 )
 from aiperf.common.messages.base_messages import Message
 from aiperf.common.models.error_models import ErrorDetails
@@ -71,22 +68,6 @@ class HeartbeatMessage(BaseStatusMessage):
     """
 
     message_type: MessageTypeT = MessageType.HEARTBEAT
-
-
-class NotificationMessage(BaseServiceMessage):
-    """Message containing a notification from a service. This is used to notify other services of events."""
-
-    message_type: MessageTypeT = MessageType.NOTIFICATION
-
-    notification_type: NotificationType = Field(
-        ...,
-        description="The type of notification",
-    )
-
-    data: SerializeAsAny[BaseModel | None] = Field(
-        default=None,
-        description="Data to send with the notification",
-    )
 
 
 class BaseServiceErrorMessage(BaseServiceMessage):

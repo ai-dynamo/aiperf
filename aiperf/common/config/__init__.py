@@ -25,7 +25,6 @@ from aiperf.common.config.config_defaults import (
     InputDefaults,
     InputTokensDefaults,
     LoadGeneratorDefaults,
-    MeasurementDefaults,
     OutputDefaults,
     OutputTokensDefaults,
     PrefixPromptDefaults,
@@ -34,7 +33,6 @@ from aiperf.common.config.config_defaults import (
     TokenizerDefaults,
     TurnDefaults,
     TurnDelayDefaults,
-    UserDefaults,
     WorkersDefaults,
 )
 from aiperf.common.config.config_validators import (
@@ -74,9 +72,6 @@ from aiperf.common.config.loader import (
 from aiperf.common.config.loadgen_config import (
     LoadGeneratorConfig,
 )
-from aiperf.common.config.measurement_config import (
-    MeasurementConfig,
-)
 from aiperf.common.config.output_config import (
     OutputConfig,
 )
@@ -88,10 +83,6 @@ from aiperf.common.config.prompt_config import (
 )
 from aiperf.common.config.service_config import (
     ServiceConfig,
-)
-from aiperf.common.config.sweep_config import (
-    SweepConfig,
-    SweepParam,
 )
 from aiperf.common.config.tokenizer_config import (
     TokenizerConfig,
@@ -135,8 +126,6 @@ __all__ = [
     "InputTokensDefaults",
     "LoadGeneratorConfig",
     "LoadGeneratorDefaults",
-    "MeasurementConfig",
-    "MeasurementDefaults",
     "OutputConfig",
     "OutputDefaults",
     "OutputTokensDefaults",
@@ -147,8 +136,6 @@ __all__ = [
     "PromptDefaults",
     "ServiceConfig",
     "ServiceDefaults",
-    "SweepConfig",
-    "SweepParam",
     "TokenizerConfig",
     "TokenizerDefaults",
     "TurnConfig",
@@ -156,7 +143,6 @@ __all__ = [
     "TurnDelayConfig",
     "TurnDelayDefaults",
     "UserConfig",
-    "UserDefaults",
     "WorkersConfig",
     "WorkersDefaults",
     "ZMQIPCConfig",
