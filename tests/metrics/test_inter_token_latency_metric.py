@@ -6,6 +6,11 @@ from pytest import approx
 
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
+from aiperf.metrics.types.output_sequence_length_metric import (
+    OutputSequenceLengthMetric,
+)
+from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from aiperf.metrics.types.ttft_metric import TTFTMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
 
 
@@ -19,6 +24,9 @@ class TestInterTokenLatencyMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
             InterTokenLatencyMetric.tag,
         )
 
@@ -35,6 +43,9 @@ class TestInterTokenLatencyMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
             InterTokenLatencyMetric.tag,
         )
 
@@ -53,6 +64,9 @@ class TestInterTokenLatencyMetric:
         ):
             run_simple_metrics_pipeline(
                 [record],
+                RequestLatencyMetric.tag,
+                OutputSequenceLengthMetric.tag,
+                TTFTMetric.tag,
                 InterTokenLatencyMetric.tag,
             )
 

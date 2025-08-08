@@ -82,13 +82,7 @@ def run_simple_metrics_pipeline(
     # first, sort the metrics by dependency order, and create an instance of each
     metrics = [
         MetricRegistry.get_class(tag)()
-        for tag in MetricRegistry.create_dependency_order_for(
-            metrics_to_test,
-            # We need to include unlisted dependencies because we are passing in a subset of metrics to test,
-            # and we want to ensure that all of the dependencies are included. This allows the unit tests to
-            # be simpler and more readable.
-            include_unlisted_dependencies=True,
-        )
+        for tag in MetricRegistry.create_dependency_order_for(metrics_to_test)
     ]
 
     metric_results = MetricResultsDict()

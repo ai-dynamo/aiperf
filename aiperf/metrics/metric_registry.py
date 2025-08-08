@@ -247,35 +247,24 @@ class MetricRegistry:
     def create_dependency_order_for(
         cls,
         tags: Iterable[MetricTagT] | None = None,
-        include_unlisted_dependencies: bool = False,
     ) -> list[MetricTagT]:
         """
         Create a dependency order for the given metrics using topological sort.
 
         This ensures that all dependencies are computed before their dependents.
-        Note that this will only sort and return the tags that were requested. If a tag
-        has a dependency that is not in the list of tags, it will not be included in the order.
-        This is useful for cases where we want to sort a subset of metrics that have dependencies
-        on other metrics that we know are already computed such as is the case for derived metrics
-        that are always computed after all the other metrics.
+        If `tags` is provided, only the tags present in `tags` will be included in the order.
 
         Arguments:
             tags: The tags of the metrics to compute the dependency order for. If not provided, all metrics will be included.
-            include_unlisted_dependencies: If True, the dependency order will include metrics that are not in the list of tags,
-                but are dependencies of the metrics in the list. This allows us to pass in a single metric and get the full
-                dependency order recursively sorted for all of the metrics that are required to compute that metric.
 
         Returns:
-            List of metric tags in dependency order (dependencies first). Will only
-            include tags that were in the requested list, unless include_unlisted_dependencies is True.
+            List of metric tags in dependency order (dependencies first).
 
         Raises:
             MetricTypeError: If there are unregistered dependencies or circular dependencies.
         """
         if tags is None:
             tags = cls._metrics_map.keys()
-        elif include_unlisted_dependencies:
-            tags = cls._get_all_required_tags(tags)
 
         # Build the dependency graph
         sorter = graphlib.TopologicalSorter()
@@ -288,13 +277,10 @@ class MetricRegistry:
             # Get the dependency order
             order = list(sorter.static_order())
 
-            # If we are including unlisted dependencies, we can return the order immediately
-            if include_unlisted_dependencies:
-                return order
-
-            # Otherwise, we need to make sure we only return the tags that were requested
+            # Make sure we only return the tags that were requested
             tags_set = set(tags)
             return [tag for tag in order if tag in tags_set]
+
         except graphlib.CycleError as e:
             raise MetricTypeError(
                 f"Circular dependency detected among metrics: {e}"
