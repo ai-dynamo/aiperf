@@ -20,14 +20,12 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.messages import (
+    CommandAcknowledgedResponse,
     CommandMessage,
     CreditDropMessage,
     CreditReturnMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
-)
-from aiperf.common.messages.command_messages import (
-    CommandAcknowledgedResponse,
     ProfileCancelCommand,
     ProfileConfigureCommand,
 )

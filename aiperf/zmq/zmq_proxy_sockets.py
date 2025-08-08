@@ -4,7 +4,7 @@
 import zmq
 from zmq import SocketType
 
-from aiperf.common.config.zmq_config import BaseZMQProxyConfig
+from aiperf.common.config import BaseZMQProxyConfig
 from aiperf.common.enums import ZMQProxyType
 from aiperf.common.factories import ZMQProxyFactory
 from aiperf.common.hooks import on_init

@@ -7,6 +7,7 @@ from aiperf.common.config import (
     AudioConfig,
     AudioLengthConfig,
     ConversationConfig,
+    EndpointConfig,
     ImageConfig,
     ImageHeightConfig,
     ImageWidthConfig,
@@ -18,7 +19,6 @@ from aiperf.common.config import (
     TurnDelayConfig,
     UserConfig,
 )
-from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.enums import CustomDatasetType
 
 

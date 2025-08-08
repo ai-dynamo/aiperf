@@ -13,7 +13,6 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
-    parse_goodput,
     parse_str_or_dict,
 )
 from aiperf.common.config.conversation_config import ConversationConfig
@@ -56,24 +55,6 @@ class InputConfig(BaseConfig):
         ),
         BeforeValidator(parse_str_or_dict),
     ] = InputDefaults.EXTRA
-
-    goodput: Annotated[
-        dict[str, Any],
-        Field(
-            description="An option to provide constraints in order to compute goodput.\n"
-            "Specify goodput constraints as 'key:value' pairs,\n"
-            "where the key is a valid metric name, and the value is a number representing\n"
-            "either milliseconds or a throughput value per second.\n"
-            "For example: request_latency:300,output_token_throughput_per_user:600",
-        ),
-        Parameter(
-            name=(
-                "--goodput",  # GenAI-Perf
-            ),
-            group=_CLI_GROUP,
-        ),
-        BeforeValidator(parse_goodput),
-    ] = InputDefaults.GOODPUT
 
     headers: Annotated[
         dict[str, str] | None,

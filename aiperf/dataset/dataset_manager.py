@@ -7,8 +7,13 @@ import time
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import CommAddress, ComposerType, MessageType, ServiceType
-from aiperf.common.enums.command_enums import CommandType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    ComposerType,
+    MessageType,
+    ServiceType,
+)
 from aiperf.common.factories import ComposerFactory, ServiceFactory
 from aiperf.common.hooks import on_command, on_request
 from aiperf.common.messages import (

@@ -11,7 +11,7 @@ from aiperf.common.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
-from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
+from aiperf.common.mixins import MessageBusClientMixin
 from aiperf.common.protocols import AIPerfLoggerProtocol, PubClientProtocol
 
 

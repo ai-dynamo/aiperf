@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.cli_utils import exit_on_error
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums.metric_enums import (
+from aiperf.common.enums import (
     MetricFlags,
     MetricType,
 )

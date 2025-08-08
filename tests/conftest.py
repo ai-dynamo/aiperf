@@ -15,10 +15,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.common.aiperf_logger import _TRACE
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import ServiceRunType
-from aiperf.common.enums.communication_enums import CommunicationBackend
+from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
+from aiperf.common.enums import CommunicationBackend, ServiceRunType
 from aiperf.common.messages import Message
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT

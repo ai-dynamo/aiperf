@@ -3,8 +3,8 @@
 
 from abc import ABC
 
-from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums.metric_enums import MetricFlags, MetricType
+from aiperf.common.config import UserConfig
+from aiperf.common.enums import MetricFlags, MetricType
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.metric_registry import MetricRegistry

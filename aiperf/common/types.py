@@ -23,12 +23,9 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-    from aiperf.common.messages.base_messages import Message
-    from aiperf.common.messages.command_messages import CommandMessage
-    from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
-    from aiperf.common.mixins.hooks_mixin import HooksMixin
-    from aiperf.common.models.base_models import AIPerfBaseModel
-    from aiperf.common.models.dataset_models import Media
+    from aiperf.common.messages import CommandMessage, Message
+    from aiperf.common.mixins import AIPerfLifecycleMixin, HooksMixin
+    from aiperf.common.models import AIPerfBaseModel, Media
     from aiperf.common.protocols import ServiceProtocol
 
 

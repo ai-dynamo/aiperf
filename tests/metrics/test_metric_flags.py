@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.enums.metric_enums import MetricFlags
+from aiperf.common.enums import MetricFlags
 
 
 class TestMetricFlags:

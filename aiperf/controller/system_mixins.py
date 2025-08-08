@@ -4,7 +4,7 @@ import asyncio
 import signal
 from collections.abc import Callable, Coroutine
 
-from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
+from aiperf.common.mixins import AIPerfLoggerMixin
 
 
 class SignalHandlerMixin(AIPerfLoggerMixin):
