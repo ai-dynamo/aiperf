@@ -112,6 +112,9 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
 
         finally:
             record.credit_phase = message.phase
+            # Calculate the latency of the credit drop (from when the credit drop was first received to when the request was sent)
+            record.credit_drop_latency = record.start_perf_ns - drop_perf_ns
+
             msg = InferenceResultsMessage(
                 service_id=self.service_id,
                 record=record,
@@ -129,13 +132,10 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
                 # If we fail to push the record, log the error and continue
                 self.exception(f"Error pushing request record: {e}")
             finally:
-                # Calculate the latency of the credit drop (from when the credit was dropped to when the request was sent)
-                pre_inference_ns = record.start_perf_ns - drop_perf_ns
                 # Always return the credits
                 return_message = CreditReturnMessage(
                     service_id=self.service_id,
                     delayed_ns=record.delayed_ns,
-                    pre_inference_ns=pre_inference_ns,
                     phase=message.phase,
                 )
                 self.trace(lambda: f"Returning credit {return_message}")
