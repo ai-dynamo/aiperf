@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import approx
 
-from aiperf.common.utils import close_enough
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
@@ -25,7 +25,7 @@ class TestInterTokenLatencyMetric:
         # start=100, first_response=120 (ttft=20), last_response=200 (request_latency=100)
         # 2 responses, 3 tokens per response, 6 total tokens
         # ITL = (100 - 20) / (6 - 1) = 16.0
-        assert close_enough(metric_results[InterTokenLatencyMetric.tag], 16.0)
+        assert metric_results[InterTokenLatencyMetric.tag] == approx([16.0])
 
     def test_inter_token_latency_streaming_scenario(self):
         """Test ITL with multi-response streaming scenario"""
@@ -42,7 +42,7 @@ class TestInterTokenLatencyMetric:
         # 3 responses, 3 tokens per response, 9 total tokens
         # TTFT=40, total latency=120, output=9 tokens
         # ITL = (120 - 40) / (9 - 1) = 10.0
-        assert close_enough(metric_results[InterTokenLatencyMetric.tag], 10.0)
+        assert metric_results[InterTokenLatencyMetric.tag] == approx([10.0])
 
     def test_inter_token_latency_insufficient_tokens(self):
         """Test that ITL raises error when output tokens < 2"""

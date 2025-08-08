@@ -3,7 +3,6 @@
 
 import pytest
 
-from aiperf.common.utils import close_enough
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.ttft_metric import TTFTMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
@@ -19,7 +18,7 @@ class TestTTFTMetric:
             [record],
             TTFTMetric.tag,
         )
-        assert close_enough(metric_results[TTFTMetric.tag], 10)
+        assert metric_results[TTFTMetric.tag] == [10]
 
     def test_ttft_multiple_responses(self):
         """Test TTFT with multiple responses uses first response only"""
@@ -30,7 +29,7 @@ class TestTTFTMetric:
             [record],
             TTFTMetric.tag,
         )
-        assert close_enough(metric_results[TTFTMetric.tag], 5)
+        assert metric_results[TTFTMetric.tag] == [5]
 
     def test_ttft_multiple_records(self):
         """Test processing multiple records"""
@@ -44,7 +43,7 @@ class TestTTFTMetric:
             records,
             TTFTMetric.tag,
         )
-        assert close_enough(metric_results[TTFTMetric.tag], [5, 5, 10])
+        assert metric_results[TTFTMetric.tag] == [5, 5, 10]
 
     def test_ttft_invalid_timestamp(self):
         """Test error when first response timestamp is before request start"""

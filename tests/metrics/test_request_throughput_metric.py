@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.utils import close_enough
+import pytest
+from pytest import approx
+
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
@@ -21,7 +23,7 @@ class TestRequestThroughputMetric:
 
         result = metric.derive_value(metric_results)
         expected = 100 / 5.0  # 20 requests per second
-        assert close_enough(result, expected)
+        assert result == approx(expected)
 
     def test_derive_value_with_zero_duration_raises(self):
         metric = RequestThroughputMetric()
@@ -30,11 +32,11 @@ class TestRequestThroughputMetric:
         metric_results[RequestCountMetric.tag] = 100
         metric_results[BenchmarkDurationMetric.tag] = 0
 
-        try:
+        with pytest.raises(
+            ValueError,
+            match="Benchmark duration is required and must be greater than 0",
+        ):
             metric.derive_value(metric_results)
-            raise AssertionError("Should have raised ValueError")
-        except ValueError as e:
-            assert "Benchmark duration is required and must be greater than 0" in str(e)
 
     def test_derive_value_with_none_duration_raises(self):
         metric = RequestThroughputMetric()
@@ -43,8 +45,8 @@ class TestRequestThroughputMetric:
         metric_results[RequestCountMetric.tag] = 100
         metric_results[BenchmarkDurationMetric.tag] = None
 
-        try:
+        with pytest.raises(
+            ValueError,
+            match="Benchmark duration is required and must be greater than 0",
+        ):
             metric.derive_value(metric_results)
-            raise AssertionError("Should have raised ValueError")
-        except ValueError as e:
-            assert "Benchmark duration is required and must be greater than 0" in str(e)

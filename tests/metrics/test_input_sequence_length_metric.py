@@ -3,7 +3,6 @@
 
 import pytest
 
-from aiperf.common.utils import close_enough
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.input_sequence_length_metric import InputSequenceLengthMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
@@ -43,4 +42,4 @@ class TestInputSequenceLengthMetric:
             records,
             InputSequenceLengthMetric.tag,
         )
-        assert close_enough(metric_results[InputSequenceLengthMetric.tag], isl_values)
+        assert metric_results[InputSequenceLengthMetric.tag] == isl_values

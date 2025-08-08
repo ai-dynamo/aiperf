@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.utils import close_enough
+from pytest import approx
+
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
@@ -27,7 +28,7 @@ class TestMaxResponseTimestampMetric:
 
         result = max_response_metric.parse_record(record, metrics_dict)
         expected = 100 + 50  # start_ns + latency = timestamp_ns + latency
-        assert close_enough(result, expected)
+        assert result == approx(expected)
 
     def test_max_response_aggregation(self):
         """Test aggregation finds maximum response timestamp"""
@@ -56,7 +57,7 @@ class TestMaxResponseTimestampMetric:
             max_response_metric.aggregate_value(value)
 
         # Should have the maximum final response timestamp
-        assert close_enough(max_response_metric.current_value, 350)
+        assert max_response_metric.current_value == approx(350)
 
     def test_max_response_default_value(self):
         """Test that default value is zero"""

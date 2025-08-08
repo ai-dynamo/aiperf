@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import approx
 
-from aiperf.common.utils import close_enough
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
 
@@ -27,4 +27,4 @@ class TestRequestCountMetric:
             RequestCountMetric.tag,
         )
         # num_records total records, each contributing 1 to the count
-        assert close_enough(metric_results[RequestCountMetric.tag], num_records)
+        assert metric_results[RequestCountMetric.tag] == approx(num_records)

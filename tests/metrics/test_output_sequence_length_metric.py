@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import approx
 
-from aiperf.common.utils import close_enough
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
@@ -49,4 +49,4 @@ class TestOutputSequenceLengthMetric:
             OutputSequenceLengthMetric.tag,
         )
 
-        assert close_enough(metric_results[OutputSequenceLengthMetric.tag], [5, 10, 15])
+        assert metric_results[OutputSequenceLengthMetric.tag] == approx([5, 10, 15])

@@ -3,7 +3,6 @@
 
 import pytest
 
-from aiperf.common.utils import close_enough
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.ttst_metric import TTSTMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
@@ -19,7 +18,7 @@ class TestTTSTMetric:
             [record],
             TTSTMetric.tag,
         )
-        assert close_enough(metric_results[TTSTMetric.tag], 10)
+        assert metric_results[TTSTMetric.tag] == [10]
 
     def test_ttst_multiple_responses(self):
         """Test TTST with multiple responses uses first and second only"""
@@ -30,7 +29,7 @@ class TestTTSTMetric:
             [record],
             TTSTMetric.tag,
         )
-        assert close_enough(metric_results[TTSTMetric.tag], 5)
+        assert metric_results[TTSTMetric.tag] == [5]
 
     def test_ttst_multiple_records(self):
         """Test processing multiple records"""
@@ -44,7 +43,7 @@ class TestTTSTMetric:
             records,
             TTSTMetric.tag,
         )
-        assert close_enough(metric_results[TTSTMetric.tag], [5, 5, 15])
+        assert metric_results[TTSTMetric.tag] == [5, 5, 15]
 
     def test_ttst_invalid_order(self):
         """Test error when second response is before first response"""

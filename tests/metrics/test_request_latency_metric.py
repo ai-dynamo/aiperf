@@ -3,7 +3,6 @@
 
 import pytest
 
-from aiperf.common.utils import close_enough
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
@@ -19,7 +18,7 @@ class TestRequestLatencyMetric:
             [record],
             RequestLatencyMetric.tag,
         )
-        assert close_enough(metric_results[RequestLatencyMetric.tag], 50)
+        assert metric_results[RequestLatencyMetric.tag] == [50]
 
     def test_request_latency_multiple_responses(self):
         """Test latency with multiple responses uses final response timestamp"""
@@ -30,7 +29,7 @@ class TestRequestLatencyMetric:
             [record],
             RequestLatencyMetric.tag,
         )
-        assert close_enough(metric_results[RequestLatencyMetric.tag], 25)
+        assert metric_results[RequestLatencyMetric.tag] == [25]
 
     def test_request_latency_multiple_records(self):
         """Test processing multiple records"""
@@ -45,7 +44,7 @@ class TestRequestLatencyMetric:
             RequestLatencyMetric.tag,
         )
 
-        assert close_enough(metric_results[RequestLatencyMetric.tag], [15, 15, 20])
+        assert metric_results[RequestLatencyMetric.tag] == [15, 15, 20]
 
     def test_request_latency_invalid_timestamp(self):
         """Test error when response timestamp is before request start"""
