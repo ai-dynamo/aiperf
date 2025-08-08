@@ -9,7 +9,6 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-from aiperf.common.config.measurement_config import MeasurementConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 
@@ -53,10 +52,3 @@ class UserConfig(BaseConfig):
             description="Load Generator configuration",
         ),
     ] = LoadGeneratorConfig()
-
-    measurement: Annotated[
-        MeasurementConfig,
-        Field(
-            description="Measurement configuration",
-        ),
-    ] = MeasurementConfig()

@@ -26,7 +26,6 @@ from aiperf.common.messages import (
     CommandResponse,
     CreditsCompleteMessage,
     HeartbeatMessage,
-    NotificationMessage,
     ProcessRecordsResultMessage,
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
@@ -276,11 +275,6 @@ class SystemController(SignalHandlerMixin, BaseService):
         service_info.state = message.state
 
         self.debug(f"Updated state for {service_id} to {message.state}")
-
-    @on_message(MessageType.NOTIFICATION)
-    async def _process_notification_message(self, message: NotificationMessage) -> None:
-        """Process a notification message."""
-        self.info(f"Received notification message: {message}")
 
     @on_message(MessageType.COMMAND_RESPONSE)
     async def _process_command_response_message(self, message: CommandResponse) -> None:

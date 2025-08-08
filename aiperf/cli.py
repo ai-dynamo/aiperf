@@ -9,14 +9,11 @@
 ################################################################################
 
 import sys
-from typing import Annotated
 
-from cyclopts import App, Parameter
-from pydantic import Field
+from cyclopts import App
 
-from aiperf.cli_utils import exit_on_error, warn_command_not_implemented
+from aiperf.cli_utils import exit_on_error
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.config_defaults import CLIDefaults
 
 app = App(name="aiperf", help="NVIDIA AIPerf")
 
@@ -39,46 +36,6 @@ def profile(
         service_config = service_config or load_service_config()
 
         run_system_controller(user_config, service_config)
-
-
-@app.command(name="analyze")
-def analyze(
-    user_config: UserConfig,
-    service_config: ServiceConfig | None = None,
-) -> None:
-    """Sweep through one or more parameters."""
-    # TODO: Implement this
-
-    warn_command_not_implemented("analyze")
-
-
-@app.command(name="create-template")
-def create_template(
-    template_filename: Annotated[
-        str,
-        Field(
-            description=f"Path to the template file. Defaults to {CLIDefaults.TEMPLATE_FILENAME}."
-        ),
-        Parameter(
-            name=("--template-filename", "-t"),
-        ),
-    ] = CLIDefaults.TEMPLATE_FILENAME,
-) -> None:
-    """Create a template configuration file."""
-    # TODO: Implement this
-
-    warn_command_not_implemented("create-template")
-
-
-@app.command(name="validate-config")
-def validate_config(
-    user_config: UserConfig | None = None,
-    service_config: ServiceConfig | None = None,
-) -> None:
-    """Validate the configuration file."""
-    # TODO: Implement this
-
-    warn_command_not_implemented("validate-config")
 
 
 if __name__ == "__main__":

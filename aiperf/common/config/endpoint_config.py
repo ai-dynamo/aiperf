@@ -36,7 +36,7 @@ class EndpointConfig(BaseConfig):
     model_names: Annotated[
         list[str],
         Field(
-            ...,
+            ...,  # This must be set by the user
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
         ),
         BeforeValidator(parse_str_or_list),
@@ -105,23 +105,6 @@ class EndpointConfig(BaseConfig):
         ),
     ] = EndpointDefaults.STREAMING
 
-    server_metrics_urls: Annotated[
-        list[str],
-        Field(
-            description="The list of Triton server metrics URLs.\n"
-            "These are used for Telemetry metric reporting with Triton.",
-        ),
-        BeforeValidator(parse_str_or_list),
-        Parameter(
-            name=(
-                "--server-metrics-urls",  # GenAI-Perf
-                "--server-metrics-url",  # GenAI-Perf
-            ),
-            parse=False,  # TODO: Not yet supported
-            group=_CLI_GROUP,
-        ),
-    ] = EndpointDefaults.SERVER_METRICS_URLS
-
     url: Annotated[
         str,
         Field(
@@ -135,23 +118,6 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.URL
-
-    grpc_method: Annotated[
-        str,
-        Field(
-            description="A fully-qualified gRPC method name in "
-            "'<package>.<service>/<method>' format.\n"
-            "The option is only supported by dynamic gRPC service kind and is\n"
-            "required to identify the RPC to use when sending requests to the server.",
-        ),
-        Parameter(
-            name=(
-                "--grpc-method",  # GenAI-Perf
-            ),
-            parse=False,  # TODO: Not yet supported
-            group=_CLI_GROUP,
-        ),
-    ] = EndpointDefaults.GRPC_METHOD
 
     # NEW AIPerf Option
     timeout_seconds: Annotated[

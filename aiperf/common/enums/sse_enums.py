@@ -12,10 +12,3 @@ class SSEFieldType(CaseInsensitiveStrEnum):
     ID = "id"
     RETRY = "retry"
     COMMENT = "comment"
-
-
-class SSEEventType(CaseInsensitiveStrEnum):
-    """Event types in an SSE message. Many of these are custom and not defined by the SSE spec."""
-
-    ERROR = "error"
-    LLM_METRICS = "llm_metrics"

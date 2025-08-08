@@ -32,9 +32,9 @@ class CreditPhase(CaseInsensitiveStrEnum):
     benchmark the credit is being used in, for tracking and reporting purposes."""
 
     WARMUP = "warmup"
-    """The credit phase is the warmup phase. This is used to warm up the model
-    before the benchmark starts."""
+    """The credit phase while the warmup is active. This is used to warm up the model and
+    ensure that the model is ready to be profiled."""
 
     PROFILING = "profiling"
-    """The credit phase is the steady state phase. This is the primary phase of the
+    """The credit phase while profiling is active. This is the primary phase of the
     benchmark, and what is used to calculate the final results."""

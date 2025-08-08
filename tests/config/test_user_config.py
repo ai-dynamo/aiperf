@@ -6,6 +6,7 @@ from aiperf.common.config import (
     EndpointConfig,
     EndpointDefaults,
     InputConfig,
+    LoadGeneratorConfig,
     OutputConfig,
     TokenizerConfig,
     UserConfig,
@@ -37,7 +38,6 @@ def test_user_config_serialization_to_file():
             custom_endpoint="custom_endpoint",
             streaming=True,
             url="http://custom-url",
-            grpc_method="custom.package.Service/Method",
         ),
     )
 
@@ -82,7 +82,6 @@ def test_user_config_defaults():
     assert config.endpoint.model_names == ["model1", "model2"]
     assert config.endpoint.streaming == EndpointDefaults.STREAMING
     assert config.endpoint.url == EndpointDefaults.URL
-    assert config.endpoint.grpc_method == EndpointDefaults.GRPC_METHOD
     assert isinstance(config.endpoint, EndpointConfig)
     assert isinstance(config.input, InputConfig)
     assert isinstance(config.output, OutputConfig)
@@ -108,15 +107,14 @@ def test_user_config_custom_values():
             model_names=["model1", "model2"],
             streaming=True,
             url="http://custom-url",
-            grpc_method="custom.package.Service/Method",
         ),
     }
     config = UserConfig(**custom_values)
     assert config.endpoint.model_names == ["model1", "model2"]
     assert config.endpoint.streaming is True
     assert config.endpoint.url == "http://custom-url"
-    assert config.endpoint.grpc_method == "custom.package.Service/Method"
     assert isinstance(config.endpoint, EndpointConfig)
     assert isinstance(config.input, InputConfig)
     assert isinstance(config.output, OutputConfig)
     assert isinstance(config.tokenizer, TokenizerConfig)
+    assert isinstance(config.loadgen, LoadGeneratorConfig)

@@ -37,22 +37,6 @@ class ProfileProgressMessage(BaseServiceMessage):
     )
 
 
-class SweepProgressMessage(BaseServiceMessage):
-    """Message for sweep progress."""
-
-    # TODO: add profile information
-
-    message_type: MessageTypeT = MessageType.SWEEP_PROGRESS
-
-    sweep_id: str = Field(..., description="The ID of the current sweep")
-    sweep_start_ns: int = Field(
-        ..., description="The start time of the sweep in nanoseconds"
-    )
-    end_ns: int | None = Field(
-        default=None, description="The end time of the profile run in nanoseconds"
-    )
-
-
 class ProcessingStatsMessage(BaseServiceMessage):
     """Message for processing stats. Sent by the records manager to the system controller to report the stats of the profile run."""
 
