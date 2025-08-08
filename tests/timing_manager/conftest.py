@@ -101,7 +101,7 @@ class MockCreditManager(AIPerfLoggerMixin):
         )
 
     async def publish_phase_sending_complete(
-        self, phase: CreditPhase, sent_end_ns: int
+        self, phase: CreditPhase, sent_end_ns: int, sent: int
     ) -> None:
         """Mock publish_phase_sending_complete method."""
         self.phase_sending_complete_calls.append(
@@ -109,6 +109,7 @@ class MockCreditManager(AIPerfLoggerMixin):
                 phase=phase,
                 sent_end_ns=sent_end_ns,
                 service_id="test-service",
+                sent=sent,
             )
         )
 

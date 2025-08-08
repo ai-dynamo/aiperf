@@ -122,7 +122,7 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
             phase_stats.sent_end_ns = time.time_ns()
             self.execute_async(
                 self.credit_manager.publish_phase_sending_complete(
-                    phase_config.type, phase_stats.sent_end_ns
+                    phase_config.type, phase_stats.sent_end_ns, phase_stats.sent
                 )
             )
 
@@ -153,7 +153,7 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
             and phase_stats.completed >= phase_stats.total_expected_requests  # type: ignore[operator]
         ):
             phase_stats.end_ns = time.time_ns()
-            self.info(lambda: f"Phase completed: {phase_stats}")
+            self.notice(lambda: f"Phase completed: {phase_stats}")
 
             self.execute_async(
                 self.credit_manager.publish_phase_complete(
@@ -166,9 +166,6 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
                 self.all_phases_complete_event.set()
 
             # We don't need to keep track of the phase stats anymore
-            self.notice(
-                lambda: f"Phase {message.phase} completed, removing phase stats"
-            )
             self.phase_stats.pop(message.phase)
 
     async def _progress_report_loop(self) -> None:
