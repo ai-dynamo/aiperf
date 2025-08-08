@@ -194,6 +194,4 @@ class TestFixedScheduleStrategy:
 
         assert phase_stats.sent == 3
         expected_zero_ms = first_timestamp_ms if auto_offset else 0
-        assert strategy._schedule_zero_ms == expected_zero_ms, (
-            f"Expected schedule zero ms to be {expected_zero_ms}, got {strategy._schedule_zero_ms}"
         assert strategy._schedule_zero_ms == expected_zero_ms
