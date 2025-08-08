@@ -5,6 +5,7 @@ import pytest
 
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.user_config import UserConfig
+from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProfileResults
@@ -144,7 +145,7 @@ class TestConsoleExporter:
                 record = MetricResult(
                     tag="request_latency",
                     header="Request Latency",
-                    unit="ms",
+                    unit="ns",
                     avg=1.0,
                 )
             assert exporter._should_skip(record) is should_skip
@@ -152,26 +153,27 @@ class TestConsoleExporter:
     def test_format_row_formats_values_correctly(self, mock_exporter_config):
         exporter = ConsoleExporter(mock_exporter_config)
         # Request latency metric expects values in nanoseconds (native unit)
-        # but displays in milliseconds. 10.123 ms = 10,123,000 ns
+        # but displays in milliseconds.
         record = MetricResult(
             tag="request_latency",
             header="Request Latency",
-            unit="ms",  # This should match display unit for test clarity
-            avg=10_123_000,  # 10.123 ms in nanoseconds
+            unit="ns",
+            avg=10.123 * NANOS_PER_MILLIS,
             min=None,
-            max=20_000_000,  # 20.0 ms in nanoseconds
+            max=20.0 * NANOS_PER_MILLIS,
             p99=None,
-            p90=15_500_000,  # 15.5 ms in nanoseconds
-            p75=12_300_000,  # 12.3 ms in nanoseconds
+            p90=15.5 * NANOS_PER_MILLIS,
+            p75=12.3 * NANOS_PER_MILLIS,
         )
         row = exporter._format_row(record)
+        # This asserts that the display is unit converted correctly
         assert row[0] == "Request Latency (ms)"
-        assert row[1] == "10.12"  # Should display in ms after conversion
-        assert row[2] == "[dim]N/A[/dim]"  # min is None
-        assert row[3] == "20.00"  # max in ms
-        assert row[4] == "[dim]N/A[/dim]"  # p99 is None
-        assert row[5] == "15.50"  # p90 in ms
-        assert row[6] == "12.30"  # p75 in ms
+        assert row[1] == "10.12"
+        assert row[2] == "[dim]N/A[/dim]"
+        assert row[3] == "20.00"
+        assert row[4] == "[dim]N/A[/dim]"
+        assert row[5] == "15.50"
+        assert row[6] == "12.30"
 
     def test_get_title_returns_expected_string(self, mock_exporter_config):
         exporter = ConsoleExporter(mock_exporter_config)
