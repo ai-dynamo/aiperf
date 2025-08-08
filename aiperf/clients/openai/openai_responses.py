@@ -32,10 +32,10 @@ class OpenAIResponsesRequestConverter(AIPerfLoggerMixin):
         payload = {
             "input": prompts,
             "model": model_endpoint.primary_model_name,
-            # TODO: How do we handle max_output_tokens? Should be provided by OSL logic
-            "max_output_tokens": extra.pop("max_output_tokens", None),
             "stream": model_endpoint.endpoint.streaming,
         }
+        if turn.max_tokens:
+            payload["max_output_tokens"] = turn.max_tokens
 
         if extra:
             payload.update(extra)

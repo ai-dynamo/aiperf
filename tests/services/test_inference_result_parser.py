@@ -27,8 +27,8 @@ def sample_turn():
     return Turn(
         role="user",
         texts=[
-            Text(contents=["Hello world", "Test case"]),
-            Text(contents=["Another input", "Final message"]),
+            Text(contents=["Hello world", " Test case"]),
+            Text(contents=["Another input", " Final message"]),
         ],
     )
 
@@ -69,6 +69,5 @@ async def test_compute_input_token_count(parser, sample_request_record, mock_tok
     result = await parser.compute_input_token_count(
         sample_request_record, mock_tokenizer
     )
-
     assert result == 8  # 4 strings × 2 words each
-    assert mock_tokenizer.encode.call_count == 4
+    assert mock_tokenizer.encode.call_count == 2

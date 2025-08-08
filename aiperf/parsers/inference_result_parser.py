@@ -164,11 +164,14 @@ class InferenceResultParser(CommunicationMixin):
         input_token_count = await self.compute_input_token_count(
             request_record, tokenizer
         )
-        output_token_count = sum(
-            response.token_count
+        output_text = "".join(
+            t
             for response in resp
-            if response.token_count is not None
+            if response.parsed_text
+            for t in response.parsed_text
+            if t
         )
+        output_token_count = len(tokenizer.encode(output_text))
 
         return ParsedResponseRecord(
             request=request_record,
@@ -201,8 +204,7 @@ class InferenceResultParser(CommunicationMixin):
             return None
 
         turn = turn_response.turn
-        return sum(
-            len(tokenizer.encode(content))
-            for text in turn.texts
-            for content in text.contents
-        )
+        input_token_count = 0
+        for text in turn.texts:
+            input_token_count += len(tokenizer.encode("".join(text.contents)))
+        return input_token_count
