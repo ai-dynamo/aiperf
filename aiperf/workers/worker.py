@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.comms.base_comms import (
+from aiperf.base_comms import (
     PushClientProtocol,
     RequestClientProtocol,
 )
+from aiperf.clients.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,

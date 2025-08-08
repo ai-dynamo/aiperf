@@ -8,7 +8,7 @@ from pathlib import Path
 
 import zmq.asyncio
 
-from aiperf.common.comms.base_comms import (
+from aiperf.base_comms import (
     BaseCommunication,
     CommunicationClientProtocol,
 )
