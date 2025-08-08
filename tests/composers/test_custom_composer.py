@@ -37,7 +37,7 @@ class TestInitialization:
 
 
 MOCK_TRACE_CONTENT = """{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
-{"timestamp": 10535, "input_length": 672, "output_length": 26, "hash_ids": [46, 47]}
+{"timestamp": 10535, "input_length": 672, "output_length": 52, "hash_ids": [46, 47]}
 {"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
 """
 
@@ -74,6 +74,41 @@ class TestCoreFunctionality:
         assert all(isinstance(c, Conversation) for c in conversations)
         assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
         assert all(len(turn.texts) == 1 for c in conversations for turn in c.turns)
+
+    @patch("aiperf.dataset.composer.custom.utils.check_file_exists")
+    @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
+    def test_max_tokens_config(self, mock_check_file, trace_config, mock_tokenizer):
+        trace_config.input.prompt.output_tokens.mean = 120
+        trace_config.input.prompt.output_tokens.stddev = 8.0
+
+        composer = CustomDatasetComposer(trace_config, mock_tokenizer)
+
+        with patch(
+            "aiperf.dataset.utils.sample_positive_normal_integer", return_value=20
+        ):
+            conversations = composer.create_dataset()
+
+        assert len(conversations) > 0
+        for conversation in conversations:
+            for turn in conversation.turns:
+                assert turn.max_tokens == 20
+
+    @patch("aiperf.dataset.composer.custom.utils.check_file_exists")
+    @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
+    @patch("pathlib.Path.iterdir", return_value=[])
+    def test_max_tokens_mooncake(
+        self, mock_iterdir, mock_check_file, custom_config, mock_tokenizer
+    ):
+        """Test that max_tokens can be set from the custom file"""
+        mock_check_file.return_value = None
+        custom_config.input.custom_dataset_type = CustomDatasetType.MOONCAKE_TRACE
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conversation in conversations:
+            for turn in conversation.turns:
+                assert turn.max_tokens == 52
 
 
 class TestErrorHandling:

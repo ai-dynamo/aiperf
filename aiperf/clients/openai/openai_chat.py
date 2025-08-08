@@ -31,6 +31,9 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
             "stream": model_endpoint.endpoint.streaming,
         }
 
+        if turn.max_tokens is not None:
+            payload["max_completion_tokens"] = turn.max_tokens
+
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
@@ -40,19 +43,29 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
     def _create_messages(self, turn: Turn) -> list[dict[str, Any]]:
         message = {
             "role": turn.role or DEFAULT_ROLE,
-            "content": [],
         }
+
+        if len(turn.texts) == 1 and len(turn.images) == 0 and len(turn.audios) == 0:
+            # Hotfix for Dynamo API which does not yet support a list of messages
+            message["name"] = turn.texts[0].name
+            message["content"] = (
+                turn.texts[0].contents[0] if turn.texts[0].contents else ""
+            )
+            return [message]
+
+        message_content = []
+
         for text in turn.texts:
             for content in text.contents:
                 if not content:
                     continue
-                message["content"].append({"type": "text", "text": content})
+                message_content.append({"type": "text", "text": content})
 
         for image in turn.images:
             for content in image.contents:
                 if not content:
                     continue
-                message["content"].append(
+                message_content.append(
                     {"type": "image_url", "image_url": {"url": content}}
                 )
 
@@ -65,7 +78,7 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
                         "Audio content must be in the format 'format,b64_audio'."
                     )
                 format, b64_audio = content.split(",", 1)
-                message["content"].append(
+                message_content.append(
                     {
                         "type": "input_audio",
                         "input_audio": {
@@ -75,19 +88,6 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
                     }
                 )
 
-        # Hotfix for Dynamo API which does not yet support a list of messages
-        if (
-            len(message["content"]) == 1
-            and "text" in message["content"][0]
-            and len(turn.texts) == 1
-        ):
-            messages = [
-                {
-                    "role": message["role"],
-                    "name": turn.texts[0].name,
-                    "content": message["content"][0].get("text"),
-                }
-            ]
-        else:
-            messages = [message]
-        return messages
+            message["content"] = message_content
+
+        return [message]

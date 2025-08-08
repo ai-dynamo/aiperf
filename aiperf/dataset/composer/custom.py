@@ -30,7 +30,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
         self._create_loader_instance(self.config.input.custom_dataset_type)
         dataset = self.loader.load_dataset()
         conversations = self.loader.convert_to_conversations(dataset)
-        self._add_model_names_to_conversations(conversations)
+        self._finalize_conversations(conversations)
         return conversations
 
     def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
@@ -47,9 +47,8 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
         self.loader = CustomDatasetFactory.create_instance(dataset_type, **kwargs)
 
-    def _add_model_names_to_conversations(
-        self, conversations: list[Conversation]
-    ) -> None:
+    def _finalize_conversations(self, conversations: list[Conversation]) -> None:
+        """Finalize all turns in conversations by adding metadata."""
         for conversation in conversations:
             for turn in conversation.turns:
-                turn.model = self._select_model_name()
+                self._finalize_turn(turn)
