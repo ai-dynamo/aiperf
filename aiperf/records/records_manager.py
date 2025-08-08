@@ -119,7 +119,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self.processing_stats.processed += 1
         else:
             async with self.worker_stats_lock:
-                self.worker_stats[worker_id].errors += 1
+                self.worker_stats.setdefault(
+                    worker_id, PhaseProcessingStats()
+                ).errors += 1
             async with self.processing_status_lock:
                 self.processing_stats.errors += 1
             if message.error:
@@ -235,14 +237,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     async def _publish_processing_stats(self) -> None:
         """Publish the profile processing stats."""
-        async with self.processing_status_lock:
+        async with self.processing_status_lock, self.worker_stats_lock:
             message = RecordsProcessingStatsMessage(
                 service_id=self.service_id,
                 request_ns=time.time_ns(),
                 processing_stats=self.processing_stats,
                 worker_stats=self.worker_stats,
             )
-        await self.publish(message)
+            await self.publish(message)
 
     @on_command(CommandType.PROCESS_RECORDS)
     async def _on_process_records_command(
@@ -291,7 +293,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 completed=len(records_results),
                 start_ns=self.start_time_ns or time.time_ns(),
                 end_ns=self.end_time_ns or time.time_ns(),
-                error_summary=self.get_error_summary(),
+                error_summary=await self.get_error_summary(),
                 was_cancelled=cancelled,
             ),
             errors=error_results,
@@ -305,12 +307,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         return result
 
-    def get_error_summary(self) -> list[ErrorDetailsCount]:
+    async def get_error_summary(self) -> list[ErrorDetailsCount]:
         """Generate a summary of the error records."""
-        return [
-            ErrorDetailsCount(error_details=error_details, count=count)
-            for error_details, count in self.error_summary.items()
-        ]
+        async with self.error_summary_lock:
+            return [
+                ErrorDetailsCount(error_details=error_details, count=count)
+                for error_details, count in self.error_summary.items()
+            ]
 
 
 def main() -> None:
