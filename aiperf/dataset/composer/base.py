@@ -62,11 +62,11 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         Args:
             turn: The turn object to finalize.
         """
-        output_config = self.config.input.prompt.output_tokens
-        if output_config.mean is not None:
-            stddev = output_config.stddev
+        output_tokens_config = self.config.input.prompt.output_tokens
+        if output_tokens_config.mean is not None:
+            stddev = output_tokens_config.stddev
             turn.max_tokens = utils.sample_positive_normal_integer(
-                output_config.mean, stddev
+                output_tokens_config.mean, stddev
             )
 
     def _finalize_turn(self, turn: Turn) -> None:
