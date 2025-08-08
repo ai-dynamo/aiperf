@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import copy
 import time
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -140,6 +141,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self.final_request_count is not None
                 and self.processing_stats.total_records >= self.final_request_count
             ):
+                if self.processing_stats.total_records > self.final_request_count:
+                    self.warning(
+                        f"Processed {self.processing_stats.total_records:,} records, but only expected {self.final_request_count:,} records"
+                    )
+
                 all_records_received = True
                 if self.sent_all_records_received:
                     return
@@ -153,15 +159,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._publish_processing_stats()
 
             async with self.processing_status_lock:
-                # Send a message to the event bus to signal that we received all the records
-                await self.publish(
-                    AllRecordsReceivedMessage(
-                        service_id=self.service_id,
-                        request_ns=time.time_ns(),
-                        final_processing_stats=self.processing_stats,
-                    )
-                )
                 cancelled = self.profile_cancelled
+                proc_stats = copy.deepcopy(self.processing_stats)
+
+            # Send a message to the event bus to signal that we received all the records
+            await self.publish(
+                AllRecordsReceivedMessage(
+                    service_id=self.service_id,
+                    request_ns=time.time_ns(),
+                    final_processing_stats=proc_stats,
+                )
+            )
 
             self.debug("Received all records, processing now...")
             await self._process_results(cancelled=cancelled)
@@ -215,6 +223,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return
         async with self.processing_status_lock:
             if self.final_request_count is None:
+                # If for whatever reason the final request count was not set, use the number of completed requests.
+                # This would only happen if the credit phase sending complete message was not received by the service.
+                self.warning(
+                    f"Final request count was not set for profiling phase, using {message.completed:,} as the final request count"
+                )
                 self.final_request_count = message.completed
             self.end_time_ns = message.end_ns
             self.notice(
@@ -237,14 +250,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     async def _publish_processing_stats(self) -> None:
         """Publish the profile processing stats."""
+
         async with self.processing_status_lock, self.worker_stats_lock:
-            message = RecordsProcessingStatsMessage(
-                service_id=self.service_id,
-                request_ns=time.time_ns(),
-                processing_stats=self.processing_stats,
-                worker_stats=self.worker_stats,
-            )
-            await self.publish(message)
+            proc_stats = copy.deepcopy(self.processing_stats)
+            worker_stats = copy.deepcopy(self.worker_stats)
+
+        message = RecordsProcessingStatsMessage(
+            service_id=self.service_id,
+            request_ns=time.time_ns(),
+            processing_stats=proc_stats,
+            worker_stats=worker_stats,
+        )
+        await self.publish(message)
 
     @on_command(CommandType.PROCESS_RECORDS)
     async def _on_process_records_command(
