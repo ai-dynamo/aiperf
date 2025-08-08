@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel, Field
 
-from aiperf.common.comms.zmq import BaseZMQCommunication
 from aiperf.common.enums import MessageType
 from aiperf.common.messages import Message
+from aiperf.zmq import BaseZMQCommunication
 
 
 class MockCommunicationData(BaseModel):
