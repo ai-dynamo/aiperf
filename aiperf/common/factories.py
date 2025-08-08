@@ -46,12 +46,10 @@ if TYPE_CHECKING:
         CommunicationProtocol,
         DataExporterProtocol,
         InferenceClientProtocol,
-        RecordProcessorProtocol,  # noqa: F401
-        # noqa: F401
+        RecordProcessorProtocol,
         ResponseExtractorProtocol,
-        ResultsProcessorProtocol,  # noqa: F401
+        ResultsProcessorProtocol,
         ServiceManagerProtocol,
-        # noqa: F401
     )
     from aiperf.dataset import (
         CustomDatasetLoaderProtocol,
