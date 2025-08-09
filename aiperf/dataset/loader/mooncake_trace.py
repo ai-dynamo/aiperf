@@ -8,13 +8,7 @@ from aiperf.common.config.user_config import UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-<<<<<<< HEAD
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models import Conversation, Text, Turn
-||||||| parent of 7304c9b (move all dataset generation logic to processor)
-from aiperf.common.models import Conversation, Text, Turn
-=======
->>>>>>> 7304c9b (move all dataset generation logic to processor)
 from aiperf.dataset.generator import PromptGenerator
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.protocol import CustomDatasetLoaderProtocol

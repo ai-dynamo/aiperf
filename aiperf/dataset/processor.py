@@ -5,7 +5,6 @@ import random
 import uuid
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.comms.base_comms import PushClientProtocol
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,
@@ -21,6 +20,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
+from aiperf.common.protocols import PushClientProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset import AudioGenerator, ImageGenerator, PromptGenerator, utils
 from aiperf.dataset.loader import MediaConversionMixin  # TODO: move to common.mixins
@@ -258,11 +258,10 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
         Args:
             turn: The turn object to finalize.
         """
-        output_tokens_config = self.config.input.prompt.output_tokens
-        if output_tokens_config.mean is not None:
-            stddev = output_tokens_config.stddev
+        if self._prompt_config.output_tokens.mean is not None:
             turn.max_tokens = utils.sample_positive_normal_integer(
-                output_tokens_config.mean, stddev
+                mean=self._prompt_config.output_tokens.mean,
+                stddev=self._prompt_config.output_tokens.stddev,
             )
 
     def _finalize_turn(self, turn: Turn) -> None:
