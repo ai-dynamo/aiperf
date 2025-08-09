@@ -5,10 +5,10 @@ import uuid
 
 import zmq.asyncio
 
-from aiperf.common.comms.zmq.zmq_defaults import ZMQSocketDefaults
 from aiperf.common.exceptions import InitializationError, NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
-from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
+from aiperf.common.mixins import AIPerfLifecycleMixin
+from aiperf.zmq.zmq_defaults import ZMQSocketDefaults
 
 ################################################################################
 # Base ZMQ Client Class

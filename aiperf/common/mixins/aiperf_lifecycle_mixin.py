@@ -5,7 +5,7 @@ import asyncio
 import uuid
 
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums.service_enums import LifecycleState
+from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.hooks import (
     AIPerfHook,

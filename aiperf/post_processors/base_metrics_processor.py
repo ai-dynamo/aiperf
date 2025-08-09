@@ -3,8 +3,8 @@
 
 from abc import ABC
 
-from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums.metric_enums import MetricFlags, MetricType
+from aiperf.common.config import UserConfig
+from aiperf.common.enums import MetricFlags, MetricType
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.metric_registry import MetricRegistry
@@ -58,7 +58,9 @@ class BaseMetricsProcessor(AIPerfLoggerMixin, ABC):
             disallowed_flags,
             *metric_types,
         )
-        ordered_tags = MetricRegistry.create_dependency_order_for(supported_tags)
+        ordered_tags = MetricRegistry.create_dependency_order_for(
+            supported_tags,
+        )
         for metric_tag in ordered_tags:
             metrics.append(MetricRegistry.get_instance(metric_tag))
         return metrics

@@ -7,12 +7,6 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
-from aiperf.common.comms.zmq.zmq_defaults import (
-    TOPIC_DELIMITER,
-    TOPIC_END,
-    TOPIC_END_ENCODED,
-)
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType, MessageType
 from aiperf.common.exceptions import CommunicationError
@@ -22,6 +16,12 @@ from aiperf.common.messages import CommandMessage, CommandResponse, Message
 from aiperf.common.protocols import SubClientProtocol
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import call_all_functions, yield_to_event_loop
+from aiperf.zmq.zmq_base_client import BaseZMQClient
+from aiperf.zmq.zmq_defaults import (
+    TOPIC_DELIMITER,
+    TOPIC_END,
+    TOPIC_END_ENCODED,
+)
 
 
 @implements_protocol(SubClientProtocol)

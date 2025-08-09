@@ -42,10 +42,12 @@ class EndpointDefaults:
 class InputDefaults:
     BATCH_SIZE = 1
     EXTRA = {}
-    GOODPUT = {}
     HEADERS = {}
     FILE = None
     FIXED_SCHEDULE = False
+    FIXED_SCHEDULE_AUTO_OFFSET = False
+    FIXED_SCHEDULE_START_OFFSET = None
+    FIXED_SCHEDULE_END_OFFSET = None
     CUSTOM_DATASET_TYPE = CustomDatasetType.MOONCAKE_TRACE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
@@ -82,13 +84,6 @@ class InputTokensDefaults:
     MEAN = 550
     STDDEV = 0.0
     BLOCK_SIZE = 512
-
-
-@dataclass(frozen=True)
-class OutputTokensDefaults:
-    MEAN = 0
-    DETERMINISTIC = False
-    STDDEV = 0
 
 
 @dataclass(frozen=True)
@@ -130,9 +125,7 @@ class TokenizerDefaults:
 
 
 @dataclass(frozen=True)
-class OutputTokenDefaults:
-    MEAN = None
-    DETERMINISTIC = False
+class OutputTokensDefaults:
     STDDEV = 0
 
 

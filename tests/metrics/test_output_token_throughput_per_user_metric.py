@@ -3,25 +3,48 @@
 
 import pytest
 
+from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
 from aiperf.metrics.types.output_token_throughput_per_user_metric import (
     OutputTokenThroughputPerUserMetric,
 )
+from tests.metrics.conftest import create_record
 
 
-@pytest.fixture
-def mock_inter_token_latencies():
-    class MockInterTokenLatency:
-        tag = "inter_token_latency"
+class TestOutputTokenThroughputPerUserMetric:
+    def test_output_token_throughput_per_user_calculation(self):
+        """Test throughput per user calculation: 1 / ITL"""
+        record = create_record()  # Simple record, ITL value will be provided directly
 
-        def values(self):
-            return [500_000_000, 250_000_000]
+        metric = OutputTokenThroughputPerUserMetric()
 
-    return MockInterTokenLatency()
+        # Provide ITL value in nanoseconds (will be converted to seconds internally)
+        metric_dict = MetricRecordDict()
+        metric_dict[InterTokenLatencyMetric.tag] = (
+            100_000_000  # 0.1 seconds in nanoseconds
+        )
 
+        result = metric.parse_record(record, metric_dict)
+        assert result == 10.0  # 1 / 0.1 = 10 tokens/second
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_add_multiple_records(mock_inter_token_latencies):
-    metrics = {"inter_token_latency": mock_inter_token_latencies}
-    output_token_throughput_per_user_metric = OutputTokenThroughputPerUserMetric()
-    output_token_throughput_per_user_metric.update_value(record=None, metrics=metrics)
-    assert output_token_throughput_per_user_metric.values() == [2.0, 4.0]
+    def test_output_token_throughput_per_user_zero_itl_error(self):
+        """Test error when ITL is zero"""
+        record = create_record()
+
+        metric = OutputTokenThroughputPerUserMetric()
+        metric_dict = MetricRecordDict()
+        metric_dict[InterTokenLatencyMetric.tag] = 0.0
+
+        with pytest.raises(ValueError, match="Inter-token latency is 0"):
+            metric.parse_record(record, metric_dict)
+
+    def test_output_token_throughput_per_user_none_itl_error(self):
+        """Test error when ITL is None"""
+        record = create_record()
+
+        metric = OutputTokenThroughputPerUserMetric()
+        metric_dict = MetricRecordDict()
+        metric_dict[InterTokenLatencyMetric.tag] = None
+
+        with pytest.raises(ValueError, match="Inter-token latency is 0"):
+            metric.parse_record(record, metric_dict)

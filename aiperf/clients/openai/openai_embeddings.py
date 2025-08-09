@@ -6,7 +6,7 @@ from typing import Any
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import EndpointType
 from aiperf.common.factories import RequestConverterFactory
-from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Turn
 
 
@@ -20,6 +20,9 @@ class OpenAIEmbeddingsRequestConverter(AIPerfLoggerMixin):
         turn: Turn,
     ) -> dict[str, Any]:
         """Format payload for an embeddings request."""
+
+        if turn.max_tokens:
+            self.error("Max_tokens is provided but is not supported for embeddings.")
 
         prompts = [
             content for text in turn.texts for content in text.contents if content

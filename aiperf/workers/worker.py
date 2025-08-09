@@ -4,18 +4,14 @@
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.comms.base_comms import (
-    PushClientProtocol,
-    RequestClientProtocol,
-)
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,
+    CommandType,
     CreditPhase,
     MessageType,
     ServiceType,
 )
-from aiperf.common.enums.command_enums import CommandType
 from aiperf.common.factories import (
     InferenceClientFactory,
     RequestConverterFactory,
@@ -23,16 +19,18 @@ from aiperf.common.factories import (
 )
 from aiperf.common.hooks import background_task, on_command, on_pull_message, on_stop
 from aiperf.common.messages import (
+    CommandAcknowledgedResponse,
     CreditDropMessage,
     CreditReturnMessage,
-    WorkerHealthMessage,
-)
-from aiperf.common.messages.command_messages import (
-    CommandAcknowledgedResponse,
     ProfileCancelCommand,
+    WorkerHealthMessage,
 )
 from aiperf.common.mixins import ProcessHealthMixin, PullClientMixin
 from aiperf.common.models import WorkerPhaseTaskStats
+from aiperf.common.protocols import (
+    PushClientProtocol,
+    RequestClientProtocol,
+)
 from aiperf.workers.credit_processor_mixin import CreditProcessorMixin
 
 

@@ -4,7 +4,7 @@
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.enums.endpoints_enums import EndpointType, EndpointTypeInfo
+from aiperf.common.enums import EndpointType, EndpointTypeInfo
 
 
 class TestEndpointInfo:

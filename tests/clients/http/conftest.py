@@ -9,8 +9,7 @@ import pytest
 
 from aiperf.clients.http.aiohttp_client import AioHttpClientMixin, create_tcp_connector
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.config.endpoint_config import EndpointConfig
-from aiperf.common.config.user_config import UserConfig
+from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import (
     RequestRecord,

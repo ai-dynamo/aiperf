@@ -30,7 +30,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
         self._create_loader_instance(self.config.input.custom_dataset_type)
         dataset = self.loader.load_dataset()
         conversations = self.loader.convert_to_conversations(dataset)
-        self._add_model_names_to_conversations(conversations)
+        self._finalize_conversations(conversations)
         return conversations
 
     def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
@@ -42,14 +42,14 @@ class CustomDatasetComposer(BaseDatasetComposer):
         kwargs = {"filename": self.config.input.file}
         if dataset_type == CustomDatasetType.MOONCAKE_TRACE:
             kwargs["prompt_generator"] = self.prompt_generator
+            kwargs["user_config"] = self.config
         elif dataset_type == CustomDatasetType.RANDOM_POOL:
             kwargs["num_conversations"] = self.config.input.conversation.num
 
         self.loader = CustomDatasetFactory.create_instance(dataset_type, **kwargs)
 
-    def _add_model_names_to_conversations(
-        self, conversations: list[Conversation]
-    ) -> None:
+    def _finalize_conversations(self, conversations: list[Conversation]) -> None:
+        """Finalize all turns in conversations by adding metadata."""
         for conversation in conversations:
             for turn in conversation.turns:
-                turn.model = self._select_model_name()
+                self._finalize_turn(turn)

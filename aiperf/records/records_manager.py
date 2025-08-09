@@ -35,11 +35,11 @@ from aiperf.common.messages.credit_messages import CreditPhaseSendingCompleteMes
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     ErrorDetails,
+    ErrorDetailsCount,
     PhaseProcessingStats,
     ProcessRecordsResult,
     ProfileResults,
 )
-from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.protocols import ResultsProcessorProtocol, ServiceProtocol
 from aiperf.common.types import MetricTagT
 

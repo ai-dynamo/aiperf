@@ -26,7 +26,6 @@ from aiperf.common.config.config_defaults import (
     InputTokensDefaults,
     LoadGeneratorDefaults,
     OutputDefaults,
-    OutputTokenDefaults,
     OutputTokensDefaults,
     PrefixPromptDefaults,
     PromptDefaults,
@@ -38,7 +37,6 @@ from aiperf.common.config.config_defaults import (
 )
 from aiperf.common.config.config_validators import (
     parse_file,
-    parse_goodput,
     parse_service_types,
     parse_str_or_csv_list,
     parse_str_or_dict,
@@ -129,7 +127,6 @@ __all__ = [
     "LoadGeneratorDefaults",
     "OutputConfig",
     "OutputDefaults",
-    "OutputTokenDefaults",
     "OutputTokensConfig",
     "OutputTokensDefaults",
     "PrefixPromptConfig",
@@ -155,7 +152,6 @@ __all__ = [
     "load_user_config",
     "logger",
     "parse_file",
-    "parse_goodput",
     "parse_service_types",
     "parse_str_or_csv_list",
     "parse_str_or_dict",
