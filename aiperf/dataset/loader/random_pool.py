@@ -1,15 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import random
-import uuid
 from collections import defaultdict
 from pathlib import Path
 from typing import TypeAlias
 
-from aiperf.common.enums import CustomDatasetType, MediaType
+from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
 
@@ -131,62 +128,3 @@ class RandomPoolDatasetLoader(MediaConversionMixin):
                 data[file_path.name].extend(dataset_pool)
 
         return data
-
-    def convert_to_conversations(
-        self, data: dict[Filename, list[RandomPool]]
-    ) -> list[Conversation]:
-        """Convert random pool data to conversation objects.
-
-        Each RandomPool entry becomes a single-turn conversation with a unique session ID.
-
-        Args:
-            data: A dictionary mapping filename to list of RandomPool objects.
-
-        Returns:
-            A list of conversations.
-        """
-        conversations = [
-            Conversation(session_id=str(uuid.uuid4()))
-            for _ in range(self.num_conversations)
-        ]
-
-        # F x N (F: num of files, N: num of conversations)
-        sampled_dataset: dict[Filename, list[Turn]] = {}
-
-        # Randomly sample (with replacement) from each dataset pool
-        for filename, dataset_pool in data.items():
-            samples = random.choices(dataset_pool, k=self.num_conversations)
-            turns: list[Turn] = []
-            for sample in samples:
-                media = self.convert_to_media_objects(sample, name=Path(filename).stem)
-                turns.append(
-                    Turn(
-                        texts=media[MediaType.TEXT],
-                        images=media[MediaType.IMAGE],
-                        audios=media[MediaType.AUDIO],
-                    )
-                )
-            sampled_dataset[filename] = turns
-
-        # Merge turns for each conversation
-        for i, batched_turns in enumerate(zip(*sampled_dataset.values(), strict=False)):
-            turn = self._merge_turns(batched_turns)
-            conversations[i].turns.append(turn)
-
-        return conversations
-
-    def _merge_turns(self, turns: list[Turn]) -> Turn:
-        """Merge turns into a single turn.
-
-        Args:
-            turns: A list of turns.
-
-        Returns:
-            A single turn.
-        """
-        merged_turn = Turn(
-            texts=[text for turn in turns for text in turn.texts],
-            images=[image for turn in turns for image in turn.images],
-            audios=[audio for turn in turns for audio in turn.audios],
-        )
-        return merged_turn

@@ -14,8 +14,5 @@ from aiperf.dataset.composer.base import (
 from aiperf.dataset.composer.custom import (
     CustomDatasetComposer,
 )
-from aiperf.dataset.composer.synthetic import (
-    SyntheticDatasetComposer,
-)
 
-__all__ = ["BaseDatasetComposer", "CustomDatasetComposer", "SyntheticDatasetComposer"]
+__all__ = ["BaseDatasetComposer", "CustomDatasetComposer"]

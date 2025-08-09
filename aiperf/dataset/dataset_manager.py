@@ -23,13 +23,11 @@ from aiperf.common.messages import (
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
     DatasetConfiguredNotification,
-    DatasetJobInfo,
-    DatasetJobMessage,
-    DatasetResultMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
+    ProcessDatasetResponseMessage,
+    ProcessSyntheticDatasetMessage,
     ProfileConfigureCommand,
-    ShutdownDatasetProcessorsCommand,
     SpawnDatasetProcessorsCommand,
 )
 from aiperf.common.mixins import PullClientMixin, ReplyClientMixin
@@ -75,14 +73,12 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         self.dataset_configured = asyncio.Event()
 
         self.jobs_push_client = self.comms.create_push_client(CommAddress.DATASET_JOB)
-        self.job_id_to_conversation_id: dict[str, str] = {}
-
         self.cpu_count = multiprocessing.cpu_count()
-        self.debug(lambda: f"Detected {self.cpu_count} CPU cores/threads")
         self.num_processors = self.service_config.dataset_processor_service_count
         if self.num_processors is None:
-            self.num_processors = self.cpu_count - 1
-        self.debug(lambda: f"Using {self.num_processors} dataset processors")
+            self.num_processors = min(
+                self.cpu_count - 1, self.user_config.input.conversation.num
+            )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -90,8 +86,6 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
     ) -> None:
         """Configure the dataset."""
         self.info(lambda: f"Configuring dataset for {self.service_id}")
-        begin = time.perf_counter()
-
         await self.send_command_and_wait_for_response(
             SpawnDatasetProcessorsCommand(
                 service_id=self.service_id,
@@ -100,118 +94,75 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
             )
         )
 
+        begin = time.perf_counter()
         await self._configure_dataset()
 
-        await self.publish(
-            ShutdownDatasetProcessorsCommand(
-                service_id=self.service_id,
-                all_processors=True,
-                target_service_type=ServiceType.SYSTEM_CONTROLLER,
+        # TODO: use dedicated function
+        # Wait for the dataset to be configured if it is not already
+        if not self.dataset_configured.is_set():
+            self.debug(
+                "Dataset not configured. Waiting for dataset to be configured..."
             )
-        )
+            await asyncio.wait_for(
+                self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
+            )
+
+        # TODO: needed?
+        # await self.publish(
+        #    ShutdownDatasetProcessorsCommand(
+        #        service_id=self.service_id,
+        #        all_processors=True,
+        #        target_service_type=ServiceType.SYSTEM_CONTROLLER,
+        #    )
+        # )
 
         duration = time.perf_counter() - begin
-        self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
-
-    #async def _configure_dataset(self) -> None:
-    #    if self.user_config is None:
-    #        raise self._service_error("User config is required for dataset manager")
-
-    #    self.dataset_configured.clear()
-    #    if self.user_config.input.file:
-    #        composer_type = ComposerType.CUSTOM
-    #        self.debug(
-    #            lambda: f"Detected input file '{self.user_config.input.file}'. Setting the composer type to {ComposerType.CUSTOM}."
-    #        )
-    #    else:
-    #        composer_type = ComposerType.SYNTHETIC
-    #        self.debug(
-    #            lambda: f"No input file detected. Setting the composer type to {ComposerType.SYNTHETIC}."
-    #        )
-
-    #    tokenizer_name = self.user_config.tokenizer.name
-    #    if tokenizer_name is None:
-    #        # TODO: What do we do if there are multiple models?
-    #        # How will we know which tokenizer to use?
-    #        tokenizer_name = self.user_config.endpoint.model_names[0]
-
-    #    tokenizer = Tokenizer.from_pretrained(
-    #        tokenizer_name,
-    #        trust_remote_code=self.user_config.tokenizer.trust_remote_code,
-    #        revision=self.user_config.tokenizer.revision,
-    #    )
-    #    composer = ComposerFactory.create_instance(
-    #        composer_type,
-    #        config=self.user_config,
-    #        tokenizer=tokenizer,
-    #    )
-    #    conversations = composer.create_dataset()
-    #    self.dataset = {conv.session_id: conv for conv in conversations}
-    #    self._session_ids_cache = list(self.dataset.keys())
-
-    #    self.dataset_configured.set()
-    #    await self.publish(
-    #        DatasetConfiguredNotification(
-    #            service_id=self.service_id,
-    #        ),
-    #    )
+        self.info(
+            lambda: f"Dataset configured in {duration:.2f} seconds with {len(self.dataset)} conversations"
+        )
 
     async def _configure_dataset(self) -> None:
-        """TODO
-        1. generate random specs (IF SPECIFIED)
-          - num of turns
-          - delays
-          - num of tokens (per turn)
-          - generation params
-        2. send job to dataset processors
-        3. wait for results
-        4. add results to dataset
-        5. notify other services that the dataset is configured
+        # TODO: uncomment
+        # composer_type = ComposerType.SYNTHETIC  # default
+        # if self.user_config.input.file:
+        #    composer_type = ComposerType.CUSTOM
+        #    self.debug(
+        #        lambda: f"Detected input file '{self.user_config.input.file}'. Setting the composer type to {ComposerType.CUSTOM}."
+        #    )
 
-        """
-        if self.user_config is None:
-            raise self._service_error("User config is required for dataset manager")
+        # TODO: enable custom composer
+        # composer = ComposerFactory.create_instance(
+        #    composer_type,
+        #    config=self.user_config,
+        #    tokenizer=self.tokenizer,
+        # )
+        # conversations = composer.create_dataset()
+        # self.dataset = {conv.session_id: conv for conv in conversations}
 
-        self.dataset_configured.clear()
-        if self.user_config.input.file:
-            composer_type = ComposerType.CUSTOM
-            self.debug(
-                lambda: f"Detected input file '{self.user_config.input.file}'. Setting the composer type to {ComposerType.CUSTOM}."
-            )
-        else:
-            composer_type = ComposerType.SYNTHETIC
-            self.debug(
-                lambda: f"No input file detected. Setting the composer type to {ComposerType.SYNTHETIC}."
-            )
+        conversations_per_processor = (
+            self.user_config.input.conversation.num // self.num_processors
+        )
+        self.debug(
+            lambda: f"Distributing {self.user_config.input.conversation.num} conversations across {self.num_processors} processors with {conversations_per_processor} conversations per processor"
+        )
 
-        if composer_type == ComposerType.CUSTOM:
-            composer = ComposerFactory.create_instance(
-                ComposerType.CUSTOM,
-                config=self.user_config,
-                tokenizer=self.tokenizer,
-            )
-            conversations = composer.create_dataset()
-            self.dataset = {conv.session_id: conv for conv in conversations}
-        else:
-            num_processors = self.service_config.dataset_processor_service_count
-            conversations_per_processor = (
-                self.user_config.input.conversation.num + num_processors - 1
-            ) // num_processors
-            for _ in range(num_processors):
-                await self.jobs_push_client.push(
-                    message=DatasetJobMessage(
-                        info=DatasetJobInfo(
-                            num_turns=conversations_per_processor,
-                            tokens_per_turn=100,
-                            conversation_id=None,
-                            generation_params={},
-                        ),
-                    )
+        for _ in range(self.num_processors):
+            await self.jobs_push_client.push(
+                message=ProcessSyntheticDatasetMessage(
+                    service_id=self.service_id,
+                    num_conversations=conversations_per_processor,
                 )
-
-            self.debug(
-                f"Sent {num_processors} dataset generation jobs with {conversations_per_processor} conversations each"
             )
+
+    @on_pull_message(MessageType.DATASET_RESULT)
+    async def _on_result(self, message: ProcessDatasetResponseMessage) -> None:
+        """Handle a dataset job result."""
+        self.info(f"Received dataset result from {message.service_id}")
+
+        for conversation in message.generated_data:
+            self.dataset[conversation.session_id] = conversation
+
+        self._session_ids_cache = list(self.dataset.keys())
 
         self.dataset_configured.set()
         await self.publish(
@@ -219,20 +170,6 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
                 service_id=self.service_id,
             ),
         )
-
-    @on_pull_message(MessageType.DATASET_RESULT)
-    async def _on_result(self, message: DatasetResultMessage) -> None:
-        """Handle a dataset job result."""
-        self.debug(f"Received dataset job result: {message.job_result.job_id}")
-        # TODO: fix
-        # self.dataset[message.conversation.session_id] = message.conversation
-        if len(self.dataset) >= self.user_config.input.conversation.num:
-            self.dataset_configured.set()
-            await self.publish(
-                DatasetConfiguredNotification(
-                    service_id=self.service_id,
-                ),
-            )
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(

@@ -4,9 +4,8 @@
 import uuid
 from collections import defaultdict
 
-from aiperf.common.enums import CustomDatasetType, MediaType
+from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import MultiTurn
 
@@ -114,35 +113,3 @@ class MultiTurnDatasetLoader(MediaConversionMixin):
                 data[session_id].append(multi_turn_data)
 
         return data
-
-    def convert_to_conversations(
-        self, data: dict[str, list[MultiTurn]]
-    ) -> list[Conversation]:
-        """Convert multi-turn data to conversation objects.
-
-        Args:
-            data: A dictionary mapping session_id to list of MultiTurn objects.
-
-        Returns:
-            A list of conversations.
-        """
-        conversations = []
-        for session_id, multi_turns in data.items():
-            conversation = Conversation(session_id=session_id)
-
-            # Process all MultiTurn objects for this session
-            for multi_turn in multi_turns:
-                for single_turn in multi_turn.turns:
-                    media = self.convert_to_media_objects(single_turn)
-                    conversation.turns.append(
-                        Turn(
-                            texts=media[MediaType.TEXT],
-                            images=media[MediaType.IMAGE],
-                            audios=media[MediaType.AUDIO],
-                            timestamp=single_turn.timestamp,
-                            delay=single_turn.delay,
-                            role=single_turn.role,
-                        )
-                    )
-            conversations.append(conversation)
-        return conversations

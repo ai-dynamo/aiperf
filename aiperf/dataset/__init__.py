@@ -11,7 +11,6 @@ __ignore__ = ["main"]
 from aiperf.dataset.composer import (
     BaseDatasetComposer,
     CustomDatasetComposer,
-    SyntheticDatasetComposer,
 )
 from aiperf.dataset.dataset_manager import (
     DATASET_CONFIGURATION_TIMEOUT,
@@ -76,7 +75,6 @@ __all__ = [
     "SUPPORTED_BIT_DEPTHS",
     "SingleTurn",
     "SingleTurnDatasetLoader",
-    "SyntheticDatasetComposer",
     "check_file_exists",
     "encode_image",
     "load_json_str",
