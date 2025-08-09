@@ -65,14 +65,12 @@ from aiperf.common.messages.progress_messages import (
     ProfileProgressMessage,
     ProfileResultsMessage,
     RecordsProcessingStatsMessage,
-    SweepProgressMessage,
 )
 from aiperf.common.messages.service_messages import (
     BaseServiceErrorMessage,
     BaseServiceMessage,
     BaseStatusMessage,
     HeartbeatMessage,
-    NotificationMessage,
     RegistrationMessage,
     StatusMessage,
 )
@@ -108,7 +106,6 @@ __all__ = [
     "InferenceResultsMessage",
     "Message",
     "MetricRecordsMessage",
-    "NotificationMessage",
     "ParsedInferenceResultsMessage",
     "ProcessRecordsCommand",
     "ProcessRecordsResponse",
@@ -127,7 +124,6 @@ __all__ = [
     "ShutdownWorkersCommand",
     "SpawnWorkersCommand",
     "StatusMessage",
-    "SweepProgressMessage",
     "TargetedServiceMessage",
     "WorkerHealthMessage",
 ]

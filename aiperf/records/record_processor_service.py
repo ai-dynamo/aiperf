@@ -4,10 +4,6 @@ import asyncio
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.comms.base_comms import (
-    PushClientProtocol,
-    RequestClientProtocol,
-)
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
 from aiperf.common.enums import CommAddress, CommandType, MessageType, ServiceType
@@ -28,7 +24,11 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.protocols import RecordProcessorProtocol
+from aiperf.common.protocols import (
+    PushClientProtocol,
+    RecordProcessorProtocol,
+    RequestClientProtocol,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.parsers.inference_result_parser import InferenceResultParser

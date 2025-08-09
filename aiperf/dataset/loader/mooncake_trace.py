@@ -106,6 +106,7 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
                 turn = Turn(
                     timestamp=trace.timestamp,
                     texts=[Text(name="text", contents=[prompt])],
+                    max_tokens=trace.output_length,
                 )
                 conversation.turns.append(turn)
             conversations.append(conversation)

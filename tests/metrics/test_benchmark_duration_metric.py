@@ -1,34 +1,43 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
-
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
+from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
 
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_add_multiple_records(parsed_response_record_builder):
-    metrics = {}
-    metrics["min_request_timestamp"] = MinRequestTimestampMetric()
-    metrics["max_response_timestamp"] = MaxResponseTimestampMetric()
-    records = (
-        parsed_response_record_builder.with_request_start_time(10)
-        .add_response(perf_ns=15)
-        .new_record()
-        .with_request_start_time(20)
-        .add_response(perf_ns=25)
-        .new_record()
-        .with_request_start_time(30)
-        .add_response(perf_ns=40)
-        .build_all()
-    )
+class TestBenchmarkDurationMetric:
+    def test_benchmark_duration_calculation(self):
+        """Test benchmark duration: max_response_time - min_request_time"""
+        records = [
+            create_record(start_ns=10, responses=[15]),  # min request is 10
+            create_record(start_ns=20, responses=[25]),
+            create_record(start_ns=30, responses=[40]),  # max response is 40
+        ]
 
-    for record in records:
-        for metric in metrics.values():
-            metric.update_value(record=record, metrics=None)
+        metric_results = run_simple_metrics_pipeline(
+            records,
+            RequestLatencyMetric.tag,
+            MinRequestTimestampMetric.tag,
+            MaxResponseTimestampMetric.tag,
+            BenchmarkDurationMetric.tag,
+        )
 
-    benchmark_duration_metric = BenchmarkDurationMetric()
-    benchmark_duration_metric.update_value(record=None, metrics=metrics)
-    assert benchmark_duration_metric.values() == 30.0  # 40 - 10
+        # benchmark duration is 40 - 10 = 30
+        assert metric_results[BenchmarkDurationMetric.tag] == 30
+
+    def test_benchmark_duration_single_record(self):
+        """Test benchmark duration with single record"""
+        record = create_record(start_ns=100, responses=[150])
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            MinRequestTimestampMetric.tag,
+            MaxResponseTimestampMetric.tag,
+            BenchmarkDurationMetric.tag,
+        )
+
+        # benchmark duration is 150 - 100 = 50
+        assert metric_results[BenchmarkDurationMetric.tag] == 50

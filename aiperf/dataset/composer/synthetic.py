@@ -88,7 +88,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 "setting the mean to a positive value."
             )
 
-        turn.model = self._select_model_name()
+        self._finalize_turn(turn)
 
         return turn
 

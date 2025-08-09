@@ -7,7 +7,6 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.comms.zmq.zmq_base_client import BaseZMQClient
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
 from aiperf.common.factories import CommunicationClientFactory
@@ -16,6 +15,7 @@ from aiperf.common.messages import Message
 from aiperf.common.protocols import PullClientProtocol
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
+from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 
 @implements_protocol(PullClientProtocol)

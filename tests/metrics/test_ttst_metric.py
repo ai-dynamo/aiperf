@@ -1,73 +1,70 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
 import pytest
 
+from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.ttst_metric import TTSTMetric
+from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
 
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_ttst_metric_update_value_and_values(parsed_response_record_builder):
-    metric = TTSTMetric()
-    metric.metric = []
-    record = (
-        parsed_response_record_builder.with_request_start_time(100)
-        .add_response(perf_ns=150)
-        .add_response(perf_ns=180)
-        .build()
-    )
+class TestTTSTMetric:
+    def test_ttst_basic(self):
+        """Test basic time to second token calculation"""
+        # Start at 100ns, first response at 110ns, second response at 120ns = 10ns TTST
+        record = create_record(start_ns=100, responses=[110, 120])
 
-    metric.update_value(record=record, metrics=None)
-    assert metric.values() == [30]  # 180 - 150
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            TTSTMetric.tag,
+        )
+        assert metric_results[TTSTMetric.tag] == [10]
 
+    def test_ttst_multiple_responses(self):
+        """Test TTST with multiple responses uses first and second only"""
+        # Start at 100ns, responses at 105ns, 110ns, 130ns = 5ns TTST (110 - 105)
+        record = create_record(start_ns=100, responses=[105, 110, 130])
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_ttst_metric_add_multiple_records(parsed_response_record_builder):
-    metric = TTSTMetric()
-    metric.metric = []
-    records = (
-        parsed_response_record_builder.with_request_start_time(10)
-        .add_response(perf_ns=15)
-        .add_response(perf_ns=20)
-        .new_record()
-        .with_request_start_time(20)
-        .add_response(perf_ns=25)
-        .add_response(perf_ns=35)
-        .new_record()
-        .with_request_start_time(30)
-        .add_response(perf_ns=40)
-        .add_response(perf_ns=50)
-        .build_all()
-    )
-    for record in records:
-        metric.update_value(record=record, metrics=None)
-    assert metric.values() == [5, 10, 10]
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            TTSTMetric.tag,
+        )
+        assert metric_results[TTSTMetric.tag] == [5]
 
+    def test_ttst_multiple_records(self):
+        """Test processing multiple records"""
+        records = [
+            create_record(start_ns=100, responses=[105, 110]),  # 5ns TTST
+            create_record(start_ns=200, responses=[205, 210]),  # 5ns TTST
+            create_record(start_ns=300, responses=[310, 325]),  # 15ns TTST
+        ]
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_ttst_metric_with_one_response_raises(parsed_response_record_builder):
-    metric = TTSTMetric()
-    metric.metric = []
-    record = (
-        parsed_response_record_builder.with_request_start_time(10)
-        .add_response(perf_ns=15)
-        .build()
-    )
-    with pytest.raises(ValueError, match="at least two responses"):
-        metric.update_value(record=record, metrics=None)
+        metric_results = run_simple_metrics_pipeline(
+            records,
+            TTSTMetric.tag,
+        )
+        assert metric_results[TTSTMetric.tag] == [5, 5, 15]
 
+    def test_ttst_invalid_order(self):
+        """Test error when second response is before first response"""
+        record = create_record(
+            start_ns=100, responses=[120, 110]
+        )  # Second before first
 
-@pytest.skip(reason="TODO: Metric refactor work in progress", allow_module_level=True)
-def test_ttst_metric_response_timestamp_order_raises(parsed_response_record_builder):
-    metric = TTSTMetric()
-    metric.metric = []
-    record = (
-        parsed_response_record_builder.with_request_start_time(100)
-        .add_response(perf_ns=150)
-        .add_response(perf_ns=140)
-        .build()
-    )
-    with pytest.raises(
-        ValueError,
-        match="Second response timestamp must be greater than or equal to the first response timestamp.",
-    ):
-        metric.update_value(record=record, metrics=None)
+        metric = TTSTMetric()
+        with pytest.raises(
+            ValueError,
+            match="Second response timestamp must be greater than or equal to the first response timestamp",
+        ):
+            metric.parse_record(record, MetricRecordDict())
+
+    def test_ttst_insufficient_responses(self):
+        """Test error when less than two responses"""
+        record = create_record(start_ns=100, responses=[110])  # Only one response
+
+        metric = TTSTMetric()
+        with pytest.raises(
+            ValueError,
+            match="Record must have at least two responses to calculate TTST",
+        ):
+            metric.parse_record(record, MetricRecordDict())

@@ -224,6 +224,17 @@ class MetricRegistry:
                     )
 
     @classmethod
+    def _get_all_required_tags(cls, tags: Iterable[MetricTagT]) -> set[MetricTagT]:
+        """Get all of the required tags, recursively, for a given list of metric tags."""
+        required_tags = set(tags)
+        for metric_class in cls.classes_for(tags):
+            for required_tag in metric_class.required_metrics or set():
+                if required_tag not in required_tags:
+                    required_tags.add(required_tag)
+                    required_tags.update(cls._get_all_required_tags([required_tag]))
+        return required_tags
+
+    @classmethod
     def create_dependency_order(cls) -> list[MetricTagT]:
         """
         Create a dependency order for all available metrics using topological sort.
@@ -234,21 +245,20 @@ class MetricRegistry:
 
     @classmethod
     def create_dependency_order_for(
-        cls, tags: Iterable[MetricTagT] | None = None
+        cls,
+        tags: Iterable[MetricTagT] | None = None,
     ) -> list[MetricTagT]:
         """
         Create a dependency order for the given metrics using topological sort.
 
         This ensures that all dependencies are computed before their dependents.
-        Note that this will only sort and return the tags that were requested. If a tag
-        has a dependency that is not in the list of tags, it will not be included in the order.
-        This is useful for cases where we want to sort a subset of metrics that have dependencies
-        on other metrics that we know are already computed such as is the case for derived metrics
-        that are always computed after all the other metrics.
+        If `tags` is provided, only the tags present in `tags` will be included in the order.
+
+        Arguments:
+            tags: The tags of the metrics to compute the dependency order for. If not provided, all metrics will be included.
 
         Returns:
-            List of metric tags in dependency order (dependencies first). Will only
-            include tags that were in the requested list.
+            List of metric tags in dependency order (dependencies first).
 
         Raises:
             MetricTypeError: If there are unregistered dependencies or circular dependencies.
@@ -270,6 +280,7 @@ class MetricRegistry:
             # Make sure we only return the tags that were requested
             tags_set = set(tags)
             return [tag for tag in order if tag in tags_set]
+
         except graphlib.CycleError as e:
             raise MetricTypeError(
                 f"Circular dependency detected among metrics: {e}"

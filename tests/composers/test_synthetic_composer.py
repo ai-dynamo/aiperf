@@ -568,3 +568,33 @@ class TestSyntheticDatasetComposer:
             for j, turn in enumerate(conversation.turns):
                 expected_model = "test-model-1" if (i + j) % 2 == 0 else "test-model-2"
                 assert turn.model == expected_model
+
+    # ============================================================================
+    # Max Token Tests
+    # ============================================================================
+
+    def test_max_tokens_integration_with_mean(self, custom_config, mock_tokenizer):
+        custom_config.input.prompt.output_tokens.mean = 100
+        custom_config.input.prompt.output_tokens.stddev = 5.0
+
+        composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
+
+        with patch(
+            "aiperf.dataset.utils.sample_positive_normal_integer", return_value=98
+        ):
+            conversations = composer.create_dataset()
+
+        for conversation in conversations:
+            for turn in conversation.turns:
+                assert turn.max_tokens == 98
+
+    def test_max_tokens_not_set_when_mean_none(self, custom_config, mock_tokenizer):
+        custom_config.input.prompt.output_tokens.mean = None
+        custom_config.input.prompt.output_tokens.stddev = None
+
+        composer = SyntheticDatasetComposer(custom_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conversation in conversations:
+            for turn in conversation.turns:
+                assert turn.max_tokens is None

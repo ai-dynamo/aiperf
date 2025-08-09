@@ -92,15 +92,3 @@ class LoadGeneratorConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = LoadGeneratorDefaults.WARMUP_REQUEST_COUNT
-
-    # # TODO: Not implemented yet
-    # # TODO: Technically this ramp should be considered as a warmup phase. We are handling
-    # #       this via the CreditPhase concept.
-    # concurrency_ramp_up_time: Annotated[
-    #     float | None,
-    #     Field(
-    #         gt=0,
-    #         description="The time it takes to ramp up the concurrency from 0 to the target concurrency. Unit: seconds",
-    #     ),
-    #     Parameter(name=("--concurrency-ramp-up-time")),
-    # ] = LoadGeneratorDefaults.CONCURRENCY_RAMP_UP_TIME

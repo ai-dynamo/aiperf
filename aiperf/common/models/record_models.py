@@ -213,6 +213,12 @@ class RequestRecord(AIPerfBaseModel):
         default=CreditPhase.PROFILING,
         description="The type of credit phase (either warmup or profiling)",
     )
+    credit_drop_latency: int | None = Field(
+        default=None,
+        description="The latency of the credit drop in nanoseconds from when it was first received by a Worker to when the inference request was actually sent. "
+        "This can be used to trace internal latency in order to identify bottlenecks or other issues.",
+        ge=0,
+    )
 
     @property
     def delayed(self) -> bool:
