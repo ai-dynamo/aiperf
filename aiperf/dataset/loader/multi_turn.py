@@ -4,14 +4,16 @@
 import uuid
 from collections import defaultdict
 
+from aiperf.common.config import UserConfig
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import MultiTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.MULTI_TURN)
-class MultiTurnDatasetLoader(MediaConversionMixin):
+class MultiTurnDatasetLoader(AIPerfLoggerMixin, MediaConversionMixin):
     """A dataset loader that loads multi-turn data from a file.
 
     The multi-turn type
@@ -89,8 +91,10 @@ class MultiTurnDatasetLoader(MediaConversionMixin):
     ```
     """
 
-    def __init__(self, filename: str):
-        self.filename = filename
+    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+        super().__init__(user_config=user_config, **kwargs)
+        self.debug("MultiTurnDatasetLoader __init__")
+        self.filename = user_config.input.file
 
     def load_dataset(self) -> dict[str, list[MultiTurn]]:
         """Load multi-turn data from a JSONL file.

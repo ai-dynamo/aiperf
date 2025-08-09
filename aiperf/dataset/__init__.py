@@ -10,7 +10,6 @@ __ignore__ = ["main"]
 ########################################################################
 from aiperf.dataset.composer import (
     BaseDatasetComposer,
-    CustomDatasetComposer,
 )
 from aiperf.dataset.dataset_manager import (
     DATASET_CONFIGURATION_TIMEOUT,
@@ -55,7 +54,6 @@ __all__ = [
     "AudioGenerator",
     "BaseDatasetComposer",
     "BaseGenerator",
-    "CustomDatasetComposer",
     "CustomDatasetLoaderProtocol",
     "CustomDatasetT",
     "DATASET_CONFIGURATION_TIMEOUT",

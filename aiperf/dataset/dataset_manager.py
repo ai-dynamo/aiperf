@@ -11,11 +11,13 @@ from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
-    ComposerType,
     MessageType,
     ServiceType,
 )
-from aiperf.common.factories import ComposerFactory, ServiceFactory
+from aiperf.common.factories import (
+    CustomDatasetFactory,
+    ServiceFactory,
+)
 from aiperf.common.hooks import on_command, on_pull_message, on_request
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -122,22 +124,21 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         )
 
     async def _configure_dataset(self) -> None:
-        # TODO: uncomment
-        # composer_type = ComposerType.SYNTHETIC  # default
-        # if self.user_config.input.file:
-        #    composer_type = ComposerType.CUSTOM
-        #    self.debug(
-        #        lambda: f"Detected input file '{self.user_config.input.file}'. Setting the composer type to {ComposerType.CUSTOM}."
-        #    )
+        if self.user_config.input.file:
+            self.debug(lambda: f"Detected input file '{self.user_config.input.file}'")
+            loader = CustomDatasetFactory.create_instance(
+                self.user_config.input.custom_dataset_type,
+                user_config=self.user_config,
+            )
+            _dataset = loader.load_dataset()
+            self.info(
+                f"Loaded {len(_dataset)} conversations from {self.user_config.input.file}"
+            )
 
-        # TODO: enable custom composer
-        # composer = ComposerFactory.create_instance(
-        #    composer_type,
-        #    config=self.user_config,
-        #    tokenizer=self.tokenizer,
-        # )
-        # conversations = composer.create_dataset()
-        # self.dataset = {conv.session_id: conv for conv in conversations}
+            # TODO: prepare processor message to handle custom dataset
+            import sys
+
+            sys.exit(0)
 
         conversations_per_processor = (
             self.user_config.input.conversation.num // self.num_processors

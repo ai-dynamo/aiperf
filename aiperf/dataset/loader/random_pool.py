@@ -5,8 +5,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TypeAlias
 
+from aiperf.common.config import UserConfig
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
 
@@ -15,7 +17,7 @@ Filename: TypeAlias = str
 
 
 @CustomDatasetFactory.register(CustomDatasetType.RANDOM_POOL)
-class RandomPoolDatasetLoader(MediaConversionMixin):
+class RandomPoolDatasetLoader(AIPerfLoggerMixin, MediaConversionMixin):
     """A dataset loader that loads data from a single file or a directory.
 
     Each line in the file represents single-turn conversation data,
@@ -66,9 +68,10 @@ class RandomPoolDatasetLoader(MediaConversionMixin):
     and loader will later sample from these two pools to create conversations.
     """
 
-    def __init__(self, filename: str, num_conversations: int = 1):
-        self.filename = filename
-        self.num_conversations = num_conversations
+    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+        super().__init__(user_config=user_config, **kwargs)
+        self.debug("RandomPoolDatasetLoader __init__")
+        self.filename = user_config.input.file
 
     def load_dataset(self) -> dict[Filename, list[RandomPool]]:
         """Load random pool data from a file or directory.

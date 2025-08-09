@@ -9,7 +9,6 @@ from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.dataset.generator import PromptGenerator
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.protocol import CustomDatasetLoaderProtocol
 
@@ -32,20 +31,13 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
     ```
     """
 
-    def __init__(
-        self,
-        filename: str,
-        prompt_generator: PromptGenerator,
-        user_config: UserConfig,
-        **kwargs,
-    ):
-        self.filename = filename
-        self.prompt_generator = prompt_generator
-        self.user_config = user_config
-        self._skipped_traces = 0
+    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+        super().__init__(user_config=user_config, **kwargs)
+        self.debug("MooncakeTraceDatasetLoader __init__")
+        self.filename = user_config.input.file
         self._start_offset = user_config.input.fixed_schedule_start_offset
         self._end_offset = user_config.input.fixed_schedule_end_offset
-        super().__init__(user_config=user_config, **kwargs)
+        self._skipped_traces = 0
 
     def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
         """Load Mooncake trace data from a file.

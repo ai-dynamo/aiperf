@@ -11,8 +11,5 @@ __ignore__ = []
 from aiperf.dataset.composer.base import (
     BaseDatasetComposer,
 )
-from aiperf.dataset.composer.custom import (
-    CustomDatasetComposer,
-)
 
-__all__ = ["BaseDatasetComposer", "CustomDatasetComposer"]
+__all__ = ["BaseDatasetComposer"]

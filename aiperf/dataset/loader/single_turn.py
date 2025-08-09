@@ -4,14 +4,16 @@
 import uuid
 from collections import defaultdict
 
+from aiperf.common.config import UserConfig
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import SingleTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.SINGLE_TURN)
-class SingleTurnDatasetLoader(MediaConversionMixin):
+class SingleTurnDatasetLoader(AIPerfLoggerMixin, MediaConversionMixin):
     """A dataset loader that loads single turn data from a file.
 
     The single turn type
@@ -63,8 +65,10 @@ class SingleTurnDatasetLoader(MediaConversionMixin):
     ```
     """
 
-    def __init__(self, filename: str):
-        self.filename = filename
+    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+        super().__init__(user_config=user_config, **kwargs)
+        self.debug("SingleTurnDatasetLoader __init__")
+        self.filename = user_config.input.file
 
     def load_dataset(self) -> dict[str, list[SingleTurn]]:
         """Load single-turn data from a JSONL file.
