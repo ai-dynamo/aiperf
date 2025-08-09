@@ -101,7 +101,7 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
                 )
             )
             self.debug(
-                lambda: f"TM: Received dataset timing response: {dataset_timing_response}"
+                lambda: f"Received dataset timing response: {dataset_timing_response}"
             )
             self.info("Using fixed schedule strategy")
             self._credit_issuing_strategy = (

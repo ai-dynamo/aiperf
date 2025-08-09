@@ -31,7 +31,7 @@ from aiperf.common.models import Conversation
 from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
 
-DATASET_CONFIGURATION_TIMEOUT = 30.0
+DATASET_CONFIGURATION_TIMEOUT = 300.0
 
 
 @implements_protocol(ServiceProtocol)
