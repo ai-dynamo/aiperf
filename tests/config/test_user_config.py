@@ -118,3 +118,22 @@ def test_user_config_custom_values():
     assert isinstance(config.output, OutputConfig)
     assert isinstance(config.tokenizer, TokenizerConfig)
     assert isinstance(config.loadgen, LoadGeneratorConfig)
+
+
+def test_user_config_exclude_unset_fields():
+    """
+    Test that the UserConfig class correctly excludes unset fields when serializing to JSON.
+    """
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["model1", "model2"],
+            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            custom_endpoint="custom_endpoint",
+            streaming=True,
+            url="http://custom-url",
+        ),
+    )
+    assert config.model_dump_json(exclude_unset=True) != config.model_dump_json()  # fmt: skip
+    assert config.model_dump_json(exclude_defaults=True) != config.model_dump_json()  # fmt: skip
+    assert config.model_dump_json(exclude_unset=True, exclude_defaults=True) != config.model_dump_json()  # fmt: skip
+    assert config.model_dump_json(exclude_none=True) != config.model_dump_json()  # fmt: skip
