@@ -5,9 +5,13 @@ Time traveler for use in tests.
 """
 
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
+from typing import Any
 from unittest.mock import patch
 
 import pytest
+from pytest import approx
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from tests.conftest import real_sleep
@@ -83,6 +87,27 @@ class TimeTraveler:
 
     async def yield_to_event_loop(self) -> None:
         await self._real_sleep(0)
+
+    @contextmanager
+    def sleeps_for(
+        self, expected_seconds: float, tolerance: float = 0.001
+    ) -> Generator[None, Any, None]:
+        """Assert that the code block sleeps for the expected duration.
+
+        Args:
+            expected_seconds: Expected sleep duration in seconds
+            tolerance: Tolerance for pytest.approx comparison (default: 0.001 seconds)
+
+        Usage:
+            with time_traveler.sleeps_for(0.2):
+                await some_async_operation()
+        """
+        start_time = self.perf_counter()
+        yield
+        actual_sleep_duration = self.perf_counter() - start_time
+        assert actual_sleep_duration == approx(expected_seconds, abs=tolerance), (
+            f"Expected code to sleep for {expected_seconds} seconds, got {actual_sleep_duration} seconds"
+        )
 
 
 @pytest.fixture

@@ -1,7 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.config.config_defaults import LoadGeneratorDefaults, ServiceDefaults
+from aiperf.common.config.config_defaults import (
+    InputDefaults,
+    LoadGeneratorDefaults,
+    ServiceDefaults,
+)
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import RequestRateMode, TimingMode
 from aiperf.common.models import AIPerfBaseModel
@@ -18,11 +22,15 @@ class TimingManagerConfig(AIPerfBaseModel):
     warmup_request_count: int = LoadGeneratorDefaults.WARMUP_REQUEST_COUNT
     random_seed: int | None = None
     progress_report_interval_sec: float = ServiceDefaults.PROGRESS_REPORT_INTERVAL
+    auto_offset_timestamps: bool = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
+    fixed_schedule_start_offset: int | None = InputDefaults.FIXED_SCHEDULE_START_OFFSET
+    fixed_schedule_end_offset: int | None = InputDefaults.FIXED_SCHEDULE_END_OFFSET
 
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> "TimingManagerConfig":
         """Create a TimingManagerConfig from a UserConfig."""
 
+        # TODO: Should this logic be moved as pydantic validators?
         if user_config.input.fixed_schedule:
             timing_mode = TimingMode.FIXED_SCHEDULE
         elif user_config.loadgen.request_rate is not None:
@@ -39,4 +47,7 @@ class TimingManagerConfig(AIPerfBaseModel):
             request_count=user_config.loadgen.request_count,
             warmup_request_count=user_config.loadgen.warmup_request_count,
             random_seed=user_config.input.random_seed,
+            auto_offset_timestamps=user_config.input.fixed_schedule_auto_offset,
+            fixed_schedule_start_offset=user_config.input.fixed_schedule_start_offset,
+            fixed_schedule_end_offset=user_config.input.fixed_schedule_end_offset,
         )
