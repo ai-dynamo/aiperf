@@ -42,7 +42,6 @@ class EndpointDefaults:
 class InputDefaults:
     BATCH_SIZE = 1
     EXTRA = {}
-    GOODPUT = {}
     HEADERS = {}
     FILE = None
     FIXED_SCHEDULE = False

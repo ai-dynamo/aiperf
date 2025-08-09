@@ -5,7 +5,7 @@ Shared fixtures for testing AIPerf metrics.
 
 """
 
-from aiperf.common.enums.metric_enums import MetricType
+from aiperf.common.enums import MetricType
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponseRecord,

@@ -6,16 +6,12 @@ from typing import Any
 
 import pandas as pd
 
-from aiperf.common.config.user_config import UserConfig
+from aiperf.common.config import UserConfig
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ResultsProcessorType
-from aiperf.common.enums.metric_enums import (
-    MetricDictValueTypeT,
-    MetricType,
-    MetricValueTypeT,
-)
+from aiperf.common.enums import MetricType, ResultsProcessorType
+from aiperf.common.enums.metric_enums import MetricDictValueTypeT, MetricValueTypeT
 from aiperf.common.factories import ResultsProcessorFactory
-from aiperf.common.models.record_models import MetricResult
+from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol
 from aiperf.common.types import MetricTagT
 from aiperf.metrics import BaseAggregateMetric

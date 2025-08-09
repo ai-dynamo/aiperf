@@ -10,17 +10,11 @@ from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import MessageType, ServiceType
 from aiperf.common.factories import ServiceFactory
-from aiperf.common.hooks import (
-    on_message,
-    on_start,
-    on_stop,
-)
+from aiperf.common.hooks import on_message, on_start, on_stop
 from aiperf.common.messages import (
-    WorkerHealthMessage,
-)
-from aiperf.common.messages.command_messages import (
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
+    WorkerHealthMessage,
 )
 from aiperf.common.models import AIPerfBaseModel
 

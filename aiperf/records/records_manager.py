@@ -33,11 +33,11 @@ from aiperf.common.messages import (
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     ErrorDetails,
+    ErrorDetailsCount,
     PhaseProcessingStats,
     ProcessRecordsResult,
     ProfileResults,
 )
-from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.protocols import ResultsProcessorProtocol, ServiceProtocol
 from aiperf.common.types import MetricTagT
 

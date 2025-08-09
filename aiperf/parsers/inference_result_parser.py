@@ -4,13 +4,10 @@ import asyncio
 import time
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.config import ServiceConfig
-from aiperf.common.config.user_config import UserConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommAddress
 from aiperf.common.factories import ResponseExtractorFactory
-from aiperf.common.hooks import (
-    on_init,
-)
+from aiperf.common.hooks import on_init
 from aiperf.common.messages import (
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,

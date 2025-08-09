@@ -3,14 +3,11 @@
 
 import pytest
 
-from aiperf.common.config.endpoint_config import EndpointConfig
-from aiperf.common.config.user_config import UserConfig
+from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
-from aiperf.common.models import MetricResult
-from aiperf.common.models.record_models import ProfileResults
-from aiperf.exporters import ConsoleExporter
-from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.exporters import ConsoleExporter, ExporterConfig
 
 
 @pytest.fixture

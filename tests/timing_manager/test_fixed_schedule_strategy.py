@@ -9,9 +9,8 @@ import time
 import pytest
 
 from aiperf.common.constants import MILLIS_PER_SECOND
-from aiperf.common.enums import TimingMode
-from aiperf.common.enums.timing_enums import CreditPhase
-from aiperf.common.models.credit_models import CreditPhaseStats
+from aiperf.common.enums import CreditPhase, TimingMode
+from aiperf.common.models import CreditPhaseStats
 from aiperf.timing import FixedScheduleStrategy, TimingManagerConfig
 from tests.timing_manager.conftest import MockCreditManager
 from tests.utils.time_traveler import TimeTraveler

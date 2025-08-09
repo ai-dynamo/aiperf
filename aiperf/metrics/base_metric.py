@@ -5,14 +5,14 @@ import inspect
 from abc import ABC
 from typing import ClassVar, Generic, get_args, get_origin
 
-from aiperf.common.enums.metric_enums import (
+from aiperf.common.enums import (
     MetricFlags,
     MetricType,
-    MetricUnitT,
     MetricValueType,
     MetricValueTypeVarT,
 )
-from aiperf.common.models.record_models import ParsedResponseRecord
+from aiperf.common.enums.metric_enums import MetricUnitT
+from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import (
     MetricRecordDict,

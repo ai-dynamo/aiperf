@@ -6,10 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.config import EndpointConfig, OutputConfig, UserConfig
-from aiperf.common.enums import EndpointType
-from aiperf.common.enums.data_exporter_enums import DataExporterType
-from aiperf.common.models import MetricResult
-from aiperf.common.models.record_models import ProfileResults
+from aiperf.common.enums import DataExporterType, EndpointType
+from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters.exporter_manager import ExporterManager
 
 

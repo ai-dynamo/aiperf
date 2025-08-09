@@ -5,10 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config.endpoint_config import EndpointConfig
-from aiperf.common.config.input_config import InputConfig
-from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.config.user_config import UserConfig
+from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
 from aiperf.common.messages import ConversationTurnResponseMessage
 from aiperf.common.models import RequestRecord, Text, Turn
 from aiperf.common.tokenizer import Tokenizer

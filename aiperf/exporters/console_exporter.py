@@ -8,11 +8,10 @@ from rich.console import Console
 from rich.table import Table
 
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import DataExporterType
-from aiperf.common.enums.metric_enums import MetricFlags
+from aiperf.common.enums import DataExporterType, MetricFlags
 from aiperf.common.exceptions import MetricUnitError
 from aiperf.common.factories import DataExporterFactory
-from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.exporter_config import ExporterConfig

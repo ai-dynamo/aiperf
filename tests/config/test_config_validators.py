@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.config.config_validators import (
+from aiperf.common.config import (
     parse_str_or_dict,
     parse_str_or_list_of_positive_values,
 )

@@ -11,8 +11,7 @@ from typing import Any
 
 from pydantic import Field
 
-from aiperf.common.config.config_defaults import EndpointDefaults
-from aiperf.common.config.user_config import UserConfig
+from aiperf.common.config import EndpointDefaults, UserConfig
 from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 from aiperf.common.models import AIPerfBaseModel
 

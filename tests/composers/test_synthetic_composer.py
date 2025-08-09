@@ -11,6 +11,7 @@ from aiperf.common.config import (
     AudioConfig,
     AudioLengthConfig,
     ConversationConfig,
+    EndpointConfig,
     ImageConfig,
     ImageHeightConfig,
     ImageWidthConfig,
@@ -20,8 +21,8 @@ from aiperf.common.config import (
     PromptConfig,
     TurnConfig,
     TurnDelayConfig,
+    UserConfig,
 )
-from aiperf.common.config.user_config import EndpointConfig, UserConfig
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
 

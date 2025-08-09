@@ -23,21 +23,19 @@ from aiperf.common.factories import ServiceFactory, ServiceManagerFactory
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
 from aiperf.common.logging import get_global_log_queue
 from aiperf.common.messages import (
+    CommandErrorResponse,
     CommandResponse,
     CreditsCompleteMessage,
     HeartbeatMessage,
     ProcessRecordsResultMessage,
-    ShutdownWorkersCommand,
-    SpawnWorkersCommand,
-    StatusMessage,
-)
-from aiperf.common.messages.command_messages import (
-    CommandErrorResponse,
     ProfileCancelCommand,
     ProfileConfigureCommand,
     ProfileStartCommand,
     RegisterServiceCommand,
     ShutdownCommand,
+    ShutdownWorkersCommand,
+    SpawnWorkersCommand,
+    StatusMessage,
 )
 from aiperf.common.models import ServiceRunInfo
 from aiperf.common.protocols import ServiceManagerProtocol

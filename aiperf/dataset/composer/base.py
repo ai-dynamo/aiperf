@@ -4,8 +4,8 @@
 import random
 from abc import ABC, abstractmethod
 
-from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums.model_enums import ModelSelectionStrategy
+from aiperf.common.config import UserConfig
+from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.tokenizer import Tokenizer

@@ -7,11 +7,11 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,
+    CommandType,
     CreditPhase,
     MessageType,
     ServiceType,
 )
-from aiperf.common.enums.command_enums import CommandType
 from aiperf.common.factories import (
     InferenceClientFactory,
     RequestConverterFactory,
@@ -19,13 +19,11 @@ from aiperf.common.factories import (
 )
 from aiperf.common.hooks import background_task, on_command, on_pull_message, on_stop
 from aiperf.common.messages import (
+    CommandAcknowledgedResponse,
     CreditDropMessage,
     CreditReturnMessage,
-    WorkerHealthMessage,
-)
-from aiperf.common.messages.command_messages import (
-    CommandAcknowledgedResponse,
     ProfileCancelCommand,
+    WorkerHealthMessage,
 )
 from aiperf.common.mixins import ProcessHealthMixin, PullClientMixin
 from aiperf.common.models import WorkerPhaseTaskStats
