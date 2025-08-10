@@ -11,24 +11,12 @@ class SystemState(CaseInsensitiveStrEnum):
     determine what actions to take when a signal is received.
     """
 
+    CREATED = "created"
     INITIALIZING = "initializing"
-    """The system is initializing. This is the initial state."""
-
-    CONFIGURING = "configuring"
-    """The system is configuring services."""
-
-    READY = "ready"
-    """The system is ready to start profiling. This is a temporary state that should be
-    followed by PROFILING."""
-
+    STARTING_SERVICES = "starting_services"
+    CONFIGURING_SERVICES = "configuring_services"
     PROFILING = "profiling"
-    """The system is running a profiling run."""
-
-    PROCESSING = "processing"
-    """The system is processing results."""
-
+    PROCESSING_RESULTS = "processing_results"
+    EXPORTING_DATA = "exporting_data"
     STOPPING = "stopping"
-    """The system is stopping."""
-
     SHUTDOWN = "shutdown"
-    """The system is shutting down. This is the final state."""

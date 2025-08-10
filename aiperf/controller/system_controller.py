@@ -22,6 +22,7 @@ from aiperf.common.enums import (
     ServiceRegistrationStatus,
     ServiceType,
 )
+from aiperf.common.enums.system_enums import SystemState
 from aiperf.common.factories import (
     AIPerfUIFactory,
     ServiceFactory,
@@ -48,9 +49,8 @@ from aiperf.common.models import ProcessRecordsResult, ServiceRunInfo
 from aiperf.common.protocols import AIPerfUIProtocol, ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.proxy_manager import ProxyManager
-from aiperf.controller.system_mixins import (
-    SignalHandlerMixin,
-)
+from aiperf.controller.system_mixins import SignalHandlerMixin
+from aiperf.controller.system_utils import display_command_errors, extract_errors
 from aiperf.exporters.exporter_manager import ExporterManager
 
 
@@ -75,6 +75,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         )
         self.debug("Creating System Controller")
         self._was_cancelled = False
+        self._system_state = SystemState.CREATED
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
         self.required_services: dict[ServiceTypeT, int] = {
@@ -114,10 +115,24 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._profile_results: ProcessRecordsResult | None = None
         self.debug("System Controller created")
 
+    @property
+    def system_state(self) -> SystemState:
+        """Get the current state of the system."""
+        return self._system_state
+
+    @system_state.setter
+    def system_state(self, state: SystemState) -> None:
+        """Set the current state of the system."""
+        if state == self._system_state:
+            return
+        self.info(f"AIPerf System is {state.name}")
+        self._system_state = state
+
     async def initialize(self) -> None:
         """We need to override the initialize method to run the proxy manager before the base service initialize.
         This is because the proxies need to be running before we can subscribe to the message bus.
         """
+        self.system_state = SystemState.INITIALIZING
         self.debug("Running ZMQ Proxy Manager Before Initialize")
         await self.proxy_manager.initialize_and_start()
         # Once the proxies are running, call the original initialize method
@@ -141,19 +156,22 @@ class SystemController(SignalHandlerMixin, BaseService):
         - Start all required services
         """
         self.debug("System Controller is bootstrapping services")
+        self.system_state = SystemState.STARTING_SERVICES
         # Start all required services
         await self.service_manager.start()
+        # Wait for all services to be registered
         await self.service_manager.wait_for_all_services_registration(
             stop_event=self._stop_requested_event,
         )
 
-        self.info("AIPerf System is CONFIGURING")
-        await self._profile_configure_all_services()
-        self.info("AIPerf System is CONFIGURED")
-        await self._start_profiling_all_services()
-        self.info("AIPerf System is PROFILING")
+        self.system_state = SystemState.CONFIGURING_SERVICES
+        if not await self._profile_configure_all_services():
+            return
+        self.system_state = SystemState.PROFILING
+        if not await self._start_profiling_all_services():
+            return
 
-    async def _profile_configure_all_services(self) -> None:
+    async def _profile_configure_all_services(self) -> bool:
         """Configure all services to start profiling.
 
         This is a blocking call that will wait for all services to be configured before returning. This way
@@ -161,7 +179,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         """
         self.info("Configuring all services to start profiling")
         begin = time.perf_counter()
-        await self.send_command_and_wait_for_all_responses(
+        responses = await self.send_command_and_wait_for_all_responses(
             ProfileConfigureCommand(
                 service_id=self.service_id,
                 config=self.user_config,
@@ -171,11 +189,17 @@ class SystemController(SignalHandlerMixin, BaseService):
         )
         duration = time.perf_counter() - begin
         self.info(f"All services configured in {duration:.2f} seconds")
+        errors = extract_errors(responses)
+        if errors:
+            display_command_errors("Failed to configure all services", errors)
+            await asyncio.shield(self.stop())
+            return False
+        return True
 
-    async def _start_profiling_all_services(self) -> None:
+    async def _start_profiling_all_services(self) -> bool:
         """Tell all services to start profiling."""
         self.debug("Sending PROFILE_START command to all services")
-        await self.send_command_and_wait_for_all_responses(
+        responses = await self.send_command_and_wait_for_all_responses(
             ProfileStartCommand(
                 service_id=self.service_id,
             ),
@@ -183,6 +207,12 @@ class SystemController(SignalHandlerMixin, BaseService):
             timeout=DEFAULT_PROFILE_START_TIMEOUT,
         )
         self.info("All services started profiling successfully")
+        errors = extract_errors(responses)
+        if errors:
+            display_command_errors("Failed to start profiling all services", errors)
+            await asyncio.shield(self.stop())
+            return False
+        return True
 
     @on_command(CommandType.REGISTER_SERVICE)
     async def _handle_register_service_command(
@@ -257,6 +287,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         """
         service_id = message.service_id
         self.info(f"Received credits complete from {service_id}")
+        self.system_state = SystemState.PROCESSING_RESULTS
 
     @on_message(MessageType.STATUS)
     async def _process_status_message(self, message: StatusMessage) -> None:
@@ -343,6 +374,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         # This data will also be displayed by the console error exporter
         self.debug(lambda: f"Error summary: {message.results.results.error_summary}")
+        self.system_state = SystemState.EXPORTING_DATA
 
         self._profile_results = message.results
 
@@ -389,6 +421,7 @@ class SystemController(SignalHandlerMixin, BaseService):
     @on_stop
     async def _stop_system_controller(self) -> None:
         """Stop the system controller and all running services."""
+        self.system_state = SystemState.STOPPING
         # Broadcast a shutdown command to all services
         await self.publish(ShutdownCommand(service_id=self.service_id))
 
