@@ -157,8 +157,8 @@ async def chat_completions(request: ChatCompletionRequest):
             detail="Model Not Found",
         ) from e
 
-    if request.max_tokens is not None:
-        tokens = tokens[: request.max_tokens]
+    if request.max_completion_tokens is not None:
+        tokens = tokens[: request.max_completion_tokens]
 
     if request.stream:
         # Return streaming response
