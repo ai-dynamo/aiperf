@@ -297,6 +297,15 @@ class MessageBusClientProtocol(PubClientProtocol, SubClientProtocol, Protocol):
 
 
 @runtime_checkable
+class AIPerfUIProtocol(AIPerfLifecycleProtocol, Protocol):
+    """Protocol interface definition for AIPerf UI implementations.
+
+    Basically a UI can be any class that implements the AIPerfLifecycleProtocol. However, in order to provide
+    progress tracking and worker tracking, the simplest way would be to inherit from the :class:`aiperf.ui.base_ui.BaseAIPerfUI`.
+    """
+
+
+@runtime_checkable
 class ConsoleExporterProtocol(Protocol):
     """Protocol for console exporters.
     Any class implementing this protocol will be provided an ExporterConfig and must provide an

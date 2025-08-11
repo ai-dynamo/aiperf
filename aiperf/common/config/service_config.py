@@ -11,6 +11,7 @@ from aiperf.common.config.base_config import ADD_TO_TEMPLATE
 from aiperf.common.config.config_defaults import ServiceDefaults
 from aiperf.common.config.config_validators import parse_service_types
 from aiperf.common.config.groups import Groups
+from aiperf.common.config.ui_config import UIConfig
 from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
@@ -21,8 +22,8 @@ from aiperf.common.enums import (
     AIPerfLogLevel,
     CommunicationBackend,
     ServiceRunType,
+    ServiceType,
 )
-from aiperf.common.enums.service_enums import ServiceType
 
 
 class ServiceConfig(BaseSettings):
@@ -57,6 +58,13 @@ class ServiceConfig(BaseSettings):
             else:
                 raise ValueError(f"Invalid communication backend: {self.comm_backend}")
         return self
+
+    ui: Annotated[
+        UIConfig,
+        Field(
+            description="UI configuration",
+        ),
+    ] = UIConfig()
 
     service_run_type: Annotated[
         ServiceRunType,
@@ -176,17 +184,6 @@ class ServiceConfig(BaseSettings):
             group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.EXTRA_VERBOSE
-
-    disable_ui: Annotated[
-        bool,
-        Field(
-            description="Disable the UI (prints progress to the console as log messages). This is equivalent to --ui-type none.",
-        ),
-        Parameter(
-            name=("--disable-ui"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.DISABLE_UI
 
     enable_uvloop: Annotated[
         bool,

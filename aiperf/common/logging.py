@@ -84,13 +84,13 @@ def setup_child_process_logging(
     for existing_handler in root_logger.handlers[:]:
         root_logger.removeHandler(existing_handler)
 
-    if log_queue is not None:
+    if log_queue is not None and service_config and service_config.ui.type.is_dashboard:
         # Set up handler for child process
         queue_handler = MultiProcessLogHandler(log_queue, service_id)
         queue_handler.setLevel(level)
         root_logger.addHandler(queue_handler)
 
-    if service_config:
+    if service_config and not service_config.ui.type.is_dashboard:
         # Set up rich logging to the console
         rich_handler = RichHandler(
             rich_tracebacks=True,

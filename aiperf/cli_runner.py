@@ -13,13 +13,16 @@ def run_system_controller(
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.common.logging import get_global_log_queue
     from aiperf.controller import SystemController
     from aiperf.module_loader import ensure_modules_loaded
 
     logger = AIPerfLogger(__name__)
 
     log_queue = None
-    if service_config.disable_ui:
+    if service_config.ui.type.is_dashboard:
+        log_queue = get_global_log_queue()
+    else:
         from aiperf.common.logging import setup_rich_logging
 
         setup_rich_logging(user_config, service_config)

@@ -88,9 +88,15 @@ from aiperf.common.enums.timing_enums import (
     RequestRateMode,
     TimingMode,
 )
+from aiperf.common.enums.ui_enums import (
+    AIPerfUIInfo,
+    AIPerfUIType,
+)
 
 __all__ = [
     "AIPerfLogLevel",
+    "AIPerfUIInfo",
+    "AIPerfUIType",
     "AudioFormat",
     "BaseMetricUnit",
     "BaseMetricUnitInfo",

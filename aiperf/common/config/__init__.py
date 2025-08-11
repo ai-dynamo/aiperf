@@ -33,6 +33,7 @@ from aiperf.common.config.config_defaults import (
     TokenizerDefaults,
     TurnDefaults,
     TurnDelayDefaults,
+    UIDefaults,
     WorkersDefaults,
 )
 from aiperf.common.config.config_validators import (
@@ -85,6 +86,9 @@ from aiperf.common.config.service_config import (
 )
 from aiperf.common.config.tokenizer_config import (
     TokenizerConfig,
+)
+from aiperf.common.config.ui_config import (
+    UIConfig,
 )
 from aiperf.common.config.user_config import (
     UserConfig,
@@ -141,6 +145,8 @@ __all__ = [
     "TurnDefaults",
     "TurnDelayConfig",
     "TurnDelayDefaults",
+    "UIConfig",
+    "UIDefaults",
     "UserConfig",
     "WorkersConfig",
     "WorkersDefaults",

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aiperf.common.enums import (
     AIPerfLogLevel,
+    AIPerfUIType,
     AudioFormat,
     CommunicationBackend,
     CustomDatasetType,
@@ -142,7 +143,6 @@ class ServiceDefaults:
     VERBOSE = False
     EXTRA_VERBOSE = False
     LOG_PATH = None
-    DISABLE_UI = True  # TODO: Make this False by default once we have a UI
     ENABLE_UVLOOP = True
     RECORD_PROCESSOR_SERVICE_COUNT = None
     ENABLE_YAPPI = False
@@ -167,3 +167,9 @@ class WorkersDefaults:
     MIN = None
     MAX = None
     HEALTH_CHECK_INTERVAL = 1.0
+
+
+@dataclass(frozen=True)
+class UIDefaults:
+    UI_TYPE = AIPerfUIType.NONE  # TODO: Change in UI PRs
+    MIN_UPDATE_PERCENT = 1.0
