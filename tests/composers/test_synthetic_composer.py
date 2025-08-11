@@ -182,12 +182,12 @@ class TestSyntheticDatasetComposer:
         for conversation in conversations:
             for turn in conversation.turns:
                 # Test correct batch sizes for all modalities
-                assert len(turn.texts) == 1  # single text field per turn
-                assert len(turn.texts[0].contents) == 2  # batch_size = 2
-                assert len(turn.images) == 1  # single image field per turn
-                assert len(turn.images[0].contents) == 2  # batch_size = 2
-                assert len(turn.audios) == 1  # single audio field per turn
-                assert len(turn.audios[0].contents) == 2  # batch_size = 2
+                assert len(turn.texts) == 2  # two text fields per turn (batch size)
+                assert len(turn.texts[0].contents) == 1
+                assert len(turn.images) == 2  # two image fields per turn (batch size)
+                assert len(turn.images[0].contents) == 1
+                assert len(turn.audios) == 2  # two audio fields per turn (batch size)
+                assert len(turn.audios[0].contents) == 1
 
     @patch("aiperf.dataset.composer.synthetic.utils.sample_positive_normal_integer")
     @patch("aiperf.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt")
@@ -269,12 +269,12 @@ class TestSyntheticDatasetComposer:
         turn = composer._create_turn(is_first=True)
 
         assert isinstance(turn, Turn)
-        assert len(turn.texts) == 1  # single text field per turn
-        assert len(turn.texts[0].contents) == 2  # batch_size = 2
-        assert len(turn.images) == 1  # single image field per turn
-        assert len(turn.images[0].contents) == 2  # batch_size = 2
-        assert len(turn.audios) == 1  # single audio field per turn
-        assert len(turn.audios[0].contents) == 2  # batch_size = 2
+        assert len(turn.texts) == 2  # two text fields per turn (batch size)
+        assert len(turn.texts[0].contents) == 1  # one content
+        assert len(turn.images) == 2  # two image fields per turn (batch size)
+        assert len(turn.images[0].contents) == 1  # one content
+        assert len(turn.audios) == 2  # two audio fields per turn (batch size)
+        assert len(turn.audios[0].contents) == 1  # one content
         assert turn.delay is None  # first turn has no delay
 
         # Test subsequent turn creation
@@ -298,8 +298,8 @@ class TestSyntheticDatasetComposer:
 
         # Test text payload generation
         turn = Turn()
-        text = composer._generate_text_payloads(is_first=True)
-        turn.texts.append(text)
+        texts = composer._generate_text_payloads(is_first=True)
+        turn.texts.extend(texts)
 
         # Test correct number of text payloads based on batch_size
         assert len(turn.texts) == 1  # batch_size = 1
@@ -323,8 +323,8 @@ class TestSyntheticDatasetComposer:
 
         # Test prefix prompt is added to first turn
         turn = Turn()
-        text = composer._generate_text_payloads(is_first=True)
-        turn.texts.append(text)
+        texts = composer._generate_text_payloads(is_first=True)
+        turn.texts.extend(texts)
 
         text_payload = turn.texts[0]
         # Test prefix prompt format ("prefix prompt")
@@ -341,8 +341,8 @@ class TestSyntheticDatasetComposer:
 
         # Test no prefix prompt is added to subsequent turns
         turn = Turn()
-        text = composer._generate_text_payloads(is_first=False)
-        turn.texts.append(text)
+        texts = composer._generate_text_payloads(is_first=False)
+        turn.texts.extend(texts)
 
         text_payload = turn.texts[0]
         assert text_payload.contents == ["User message"]  # No prefix
@@ -359,19 +359,13 @@ class TestSyntheticDatasetComposer:
 
         # Test multiple text payloads are generated per turn
         turn = Turn()
-        text = composer._generate_text_payloads(is_first=True)
-        turn.texts.append(text)
+        texts = composer._generate_text_payloads(is_first=True)
+        turn.texts.extend(texts)
 
-        assert len(turn.texts) == 1  # single text field per turn
-        assert len(turn.texts[0].contents) == 3  # batch_size = 3
+        assert len(turn.texts) == 3  # three text fields per turn (batch size)
+        assert len(turn.texts[0].contents) == 1
 
-        # Batched text payloads
-        text_payload = turn.texts[0]
-        assert text_payload.contents == [
-            "Generated text",
-            "Generated text",
-            "Generated text",
-        ]
+        assert all(text.contents == ["Generated text"] for text in turn.texts)
 
     @patch("aiperf.dataset.generator.image.ImageGenerator.generate")
     def test_generate_image_payloads(self, mock_generate, image_config, mock_tokenizer):
@@ -382,8 +376,8 @@ class TestSyntheticDatasetComposer:
 
         # Test image payload generation
         turn = Turn()
-        image = composer._generate_image_payloads()
-        turn.images.append(image)
+        images = composer._generate_image_payloads()
+        turn.images.extend(images)
 
         # Test correct number of image payloads based on batch_size
         assert len(turn.images) == 1  # batch_size = 1
@@ -403,8 +397,8 @@ class TestSyntheticDatasetComposer:
 
         # Test audio payload generation
         turn = Turn()
-        audio = composer._generate_audio_payloads()
-        turn.audios.append(audio)
+        audios = composer._generate_audio_payloads()
+        turn.audios.extend(audios)
 
         # Test correct number of audio payloads based on batch_size
         assert len(turn.audios) == 1  # batch_size = 1
@@ -484,10 +478,10 @@ class TestSyntheticDatasetComposer:
 
         # Parametrized test for different batch_size values
         turn = conversations[0].turns[0]
-        assert len(turn.texts) == 1  # single text field per turn
+        assert len(turn.texts) == batch_size  # batch_size is respected
 
         text_payload = turn.texts[0]
-        assert len(text_payload.contents) == batch_size
+        assert len(text_payload.contents) == 1
 
     # ============================================================================
     # Miscellaneous Tests

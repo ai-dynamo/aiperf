@@ -88,6 +88,5 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
                     }
                 )
 
-            message["content"] = message_content
-
+        message["content"] = message_content
         return [message]

@@ -168,7 +168,7 @@ class InferenceResultParser(CommunicationMixin):
             for t in response.parsed_text
             if t
         )
-        output_token_count = len(tokenizer.encode(output_text))
+        output_token_count = len(tokenizer.encode(output_text)) if output_text else 0
 
         return ParsedResponseRecord(
             request=request_record,

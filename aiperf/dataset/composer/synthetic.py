@@ -68,11 +68,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn = Turn()
 
         if self.include_prompt:
-            turn.texts.append(self._generate_text_payloads(is_first))
+            turn.texts.extend(self._generate_text_payloads(is_first))
         if self.include_image:
-            turn.images.append(self._generate_image_payloads())
+            turn.images.extend(self._generate_image_payloads())
         if self.include_audio:
-            turn.audios.append(self._generate_audio_payloads())
+            turn.audios.extend(self._generate_audio_payloads())
 
         # Add randomized delays between each turn. Skip if first turn.
         if not is_first:
@@ -92,8 +92,14 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         return turn
 
-    def _generate_text_payloads(self, is_first: bool) -> Text:
-        """Generate synthetic text payloads.
+    def _generate_text_payloads(self, is_first: bool) -> list[Text]:
+        texts = []
+        for _ in range(self.config.input.prompt.batch_size):
+            texts.append(self._generate_text_payload(is_first))
+        return texts
+
+    def _generate_text_payload(self, is_first: bool) -> Text:
+        """Generate synthetic text payload.
 
         If the turn is the first turn in the conversation, it could add a prefix prompt
         to the prompt.
@@ -105,21 +111,25 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Text: A text payload object.
         """
         text = Text(name="text")
-        for _ in range(self.config.input.prompt.batch_size):
-            prompt = self.prompt_generator.generate(
-                mean=self.config.input.prompt.input_tokens.mean,
-                stddev=self.config.input.prompt.input_tokens.stddev,
-            )
+        prompt = self.prompt_generator.generate(
+            mean=self.config.input.prompt.input_tokens.mean,
+            stddev=self.config.input.prompt.input_tokens.stddev,
+        )
 
-            if self.prefix_prompt_enabled and is_first:
-                # TODO: Rename
-                prefix_prompt = self.prompt_generator.get_random_prefix_prompt()
-                prompt = f"{prefix_prompt} {prompt}"
+        if self.prefix_prompt_enabled and is_first:
+            prefix_prompt = self.prompt_generator.get_random_prefix_prompt()
+            prompt = f"{prefix_prompt} {prompt}"
 
-            text.contents.append(prompt)
+        text.contents.append(prompt)
         return text
 
-    def _generate_image_payloads(self) -> Image:
+    def _generate_image_payloads(self) -> list[Image]:
+        images = []
+        for _ in range(self.config.input.image.batch_size):
+            images.append(self._generate_image_payload())
+        return images
+
+    def _generate_image_payload(self) -> Image:
         """
         Generate synthetic images if the image width and height are specified.
 
@@ -127,12 +137,17 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Image: An image payload object.
         """
         image = Image(name="image_url")
-        for _ in range(self.config.input.image.batch_size):
-            data = self.image_generator.generate()
-            image.contents.append(data)
+        data = self.image_generator.generate()
+        image.contents.append(data)
         return image
 
-    def _generate_audio_payloads(self) -> Audio:
+    def _generate_audio_payloads(self) -> list[Audio]:
+        audios = []
+        for _ in range(self.config.input.audio.batch_size):
+            audios.append(self._generate_audio_payload())
+        return audios
+
+    def _generate_audio_payload(self) -> Audio:
         """
         Generate synthetic audios if the audio length is specified.
 
@@ -140,9 +155,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Audio: An audio payload object.
         """
         audio = Audio(name="input_audio")
-        for _ in range(self.config.input.audio.batch_size):
-            data = self.audio_generator.generate()
-            audio.contents.append(data)
+        data = self.audio_generator.generate()
+        audio.contents.append(data)
         return audio
 
     @property
