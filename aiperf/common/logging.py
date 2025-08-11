@@ -85,13 +85,13 @@ def setup_child_process_logging(
         root_logger.removeHandler(existing_handler)
 
     if log_queue is not None and service_config and service_config.ui.type.is_dashboard:
-        # Set up handler for child process
+        # For dashboard UI, we want to log to the queue, so it can be displayed in the UI
+        # log viewer, instead of the console directly.
         queue_handler = MultiProcessLogHandler(log_queue, service_id)
         queue_handler.setLevel(level)
         root_logger.addHandler(queue_handler)
-
-    if service_config and not service_config.ui.type.is_dashboard:
-        # Set up rich logging to the console
+    else:
+        # For all other cases, set up rich logging to the console
         rich_handler = RichHandler(
             rich_tracebacks=True,
             show_path=True,
