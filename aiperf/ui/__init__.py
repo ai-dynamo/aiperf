@@ -15,5 +15,9 @@ from aiperf.ui.base_ui import (
 from aiperf.ui.no_ui import (
     NoUI,
 )
+from aiperf.ui.tqdm_ui import (
+    ProgressBar,
+    TQDMProgressUI,
+)
 
-__all__ = ["BaseAIPerfUI", "NoUI"]
+__all__ = ["BaseAIPerfUI", "NoUI", "ProgressBar", "TQDMProgressUI"]
