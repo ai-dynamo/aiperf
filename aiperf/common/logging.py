@@ -12,6 +12,7 @@ from rich.logging import RichHandler
 from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
 from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
 from aiperf.common.enums import ServiceType
+from aiperf.common.enums.ui_enums import AIPerfUIType
 from aiperf.common.factories import ServiceFactory
 
 LOG_QUEUE_MAXSIZE = 1000
@@ -84,7 +85,11 @@ def setup_child_process_logging(
     for existing_handler in root_logger.handlers[:]:
         root_logger.removeHandler(existing_handler)
 
-    if log_queue is not None and service_config and service_config.ui.type.is_dashboard:
+    if (
+        log_queue is not None
+        and service_config
+        and service_config.ui_type == AIPerfUIType.DASHBOARD
+    ):
         # For dashboard UI, we want to log to the queue, so it can be displayed in the UI
         # log viewer, instead of the console directly.
         queue_handler = MultiProcessLogHandler(log_queue, service_id)

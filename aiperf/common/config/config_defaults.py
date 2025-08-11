@@ -149,6 +149,7 @@ class ServiceDefaults:
     DEBUG_SERVICES = None
     TRACE_SERVICES = None
     PROGRESS_REPORT_INTERVAL = 1.0
+    UI_TYPE = AIPerfUIType.NONE
 
 
 @dataclass(frozen=True)
@@ -167,9 +168,3 @@ class WorkersDefaults:
     MIN = None
     MAX = None
     HEALTH_CHECK_INTERVAL = 1.0
-
-
-@dataclass(frozen=True)
-class UIDefaults:
-    UI_TYPE = AIPerfUIType.NONE  # TODO: Change in UI PRs
-    MIN_UPDATE_PERCENT = 1.0

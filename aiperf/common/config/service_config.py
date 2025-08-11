@@ -11,7 +11,6 @@ from aiperf.common.config.base_config import ADD_TO_TEMPLATE
 from aiperf.common.config.config_defaults import ServiceDefaults
 from aiperf.common.config.config_validators import parse_service_types
 from aiperf.common.config.groups import Groups
-from aiperf.common.config.ui_config import UIConfig
 from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
@@ -24,6 +23,7 @@ from aiperf.common.enums import (
     ServiceRunType,
     ServiceType,
 )
+from aiperf.common.enums.ui_enums import AIPerfUIType
 
 
 class ServiceConfig(BaseSettings):
@@ -58,13 +58,6 @@ class ServiceConfig(BaseSettings):
             else:
                 raise ValueError(f"Invalid communication backend: {self.comm_backend}")
         return self
-
-    ui: Annotated[
-        UIConfig,
-        Field(
-            description="UI configuration",
-        ),
-    ] = UIConfig()
 
     service_run_type: Annotated[
         ServiceRunType,
@@ -261,3 +254,14 @@ class ServiceConfig(BaseSettings):
         ),
         BeforeValidator(parse_service_types),
     ] = ServiceDefaults.TRACE_SERVICES
+
+    ui_type: Annotated[
+        AIPerfUIType,
+        Field(
+            description="Type of UI to use",
+        ),
+        Parameter(
+            name=("--ui-type", "--ui"),
+            group=_CLI_GROUP,
+        ),
+    ] = ServiceDefaults.UI_TYPE

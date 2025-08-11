@@ -53,3 +53,6 @@ DEFAULT_MAX_REGISTRATION_ATTEMPTS = 10
 
 DEFAULT_REGISTRATION_INTERVAL = 1.0
 """Default interval between registration attempts in seconds for component services."""
+
+DEFAULT_UI_MIN_UPDATE_PERCENT = 1.0
+"""Default minimum percentage difference from the last update to trigger a UI update (for non-dashboard UIs)."""

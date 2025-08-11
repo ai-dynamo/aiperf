@@ -104,7 +104,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
         )
         self.ui: AIPerfUIProtocol = AIPerfUIFactory.create_instance(
-            self.service_config.ui.type,
+            self.service_config.ui_type,
             service_config=self.service_config,
             user_config=self.user_config,
             log_queue=get_global_log_queue(),
