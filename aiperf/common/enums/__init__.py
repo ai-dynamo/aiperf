@@ -24,6 +24,7 @@ from aiperf.common.enums.communication_enums import (
     ZMQProxyType,
 )
 from aiperf.common.enums.data_exporter_enums import (
+    ConsoleExporterType,
     DataExporterType,
 )
 from aiperf.common.enums.dataset_enums import (
@@ -102,6 +103,7 @@ __all__ = [
     "CommandType",
     "CommunicationBackend",
     "ComposerType",
+    "ConsoleExporterType",
     "CreditPhase",
     "CustomDatasetType",
     "DataExporterType",

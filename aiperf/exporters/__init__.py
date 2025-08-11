@@ -11,8 +11,8 @@ __ignore__ = []
 from aiperf.exporters.console_error_exporter import (
     ConsoleErrorExporter,
 )
-from aiperf.exporters.console_exporter import (
-    ConsoleExporter,
+from aiperf.exporters.console_metrics_exporter import (
+    ConsoleMetricsExporter,
 )
 from aiperf.exporters.exporter_config import (
     ExporterConfig,
@@ -27,7 +27,7 @@ from aiperf.exporters.json_exporter import (
 
 __all__ = [
     "ConsoleErrorExporter",
-    "ConsoleExporter",
+    "ConsoleMetricsExporter",
     "ExporterConfig",
     "ExporterManager",
     "JsonExportData",

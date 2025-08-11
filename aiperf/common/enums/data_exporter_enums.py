@@ -4,7 +4,10 @@
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
+class ConsoleExporterType(CaseInsensitiveStrEnum):
+    METRICS = "metrics"
+    ERRORS = "errors"
+
+
 class DataExporterType(CaseInsensitiveStrEnum):
-    CONSOLE = "console"
-    CONSOLE_ERROR = "console_error"
     JSON = "json"
