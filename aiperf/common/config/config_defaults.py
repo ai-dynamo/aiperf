@@ -42,10 +42,12 @@ class EndpointDefaults:
 class InputDefaults:
     BATCH_SIZE = 1
     EXTRA = {}
-    GOODPUT = {}
     HEADERS = {}
     FILE = None
     FIXED_SCHEDULE = False
+    FIXED_SCHEDULE_AUTO_OFFSET = False
+    FIXED_SCHEDULE_START_OFFSET = None
+    FIXED_SCHEDULE_END_OFFSET = None
     CUSTOM_DATASET_TYPE = CustomDatasetType.MOONCAKE_TRACE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100

@@ -4,7 +4,7 @@
 from dataclasses import dataclass
 
 from aiperf.common.config import UserConfig
-from aiperf.common.models.record_models import ProfileResults
+from aiperf.common.models import ProfileResults
 
 
 @dataclass

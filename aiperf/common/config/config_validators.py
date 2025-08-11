@@ -173,36 +173,6 @@ def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
     return output
 
 
-def parse_goodput(goodputs: dict[str, Any]) -> dict[str, float]:
-    """
-    Parses and validates a dictionary of goodput values, ensuring that all values
-    are non-negative integers or floats, and converts them to floats.
-    Args:
-        goodputs (Dict[str, Any]): A dictionary where keys are target metric names
-            (strings) and values are the corresponding goodput values.
-    Returns:
-        Dict[str, float]: A dictionary with the same keys as the input, but with
-            all values converted to floats.
-    Raises:
-        ValueError: If any value in the input dictionary is not an integer or float,
-            or if any value is negative.
-    """
-
-    constraints = {}
-    for target_metric, target_value in goodputs.items():
-        if isinstance(target_value, (int | float)):
-            if target_value < 0:
-                raise ValueError(
-                    f"User Config: Goodput values must be non-negative ({target_metric}: {target_value})"
-                )
-
-            constraints[target_metric] = float(target_value)
-        else:
-            raise ValueError("User Config: Goodput values must be integers or floats")
-
-    return constraints
-
-
 def parse_file(value: str | None) -> Path | None:
     """
     Parses the given string value and returns a Path object if the value represents

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import copy
 import time
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -30,14 +31,15 @@ from aiperf.common.messages import (
     ProfileCancelCommand,
     RecordsProcessingStatsMessage,
 )
+from aiperf.common.messages.credit_messages import CreditPhaseSendingCompleteMessage
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     ErrorDetails,
+    ErrorDetailsCount,
     PhaseProcessingStats,
     ProcessRecordsResult,
     ProfileResults,
 )
-from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.protocols import ResultsProcessorProtocol, ServiceProtocol
 from aiperf.common.types import MetricTagT
 
@@ -64,15 +66,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             pull_client_bind=True,
             pull_client_max_concurrency=DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
         )
-        self._profile_cancelled = False
 
+        #########################################################
+        # Protected by processing_status_lock
+        self.processing_status_lock: asyncio.Lock = asyncio.Lock()
         self.start_time_ns: int | None = None
         self.processing_stats: PhaseProcessingStats = PhaseProcessingStats()
         self.final_request_count: int | None = None
         self.end_time_ns: int | None = None
+        self.sent_all_records_received: bool = False
+        self.profile_cancelled: bool = False
+        #########################################################
+
         self.error_summary: dict[ErrorDetails, int] = {}
+        self.error_summary_lock: asyncio.Lock = asyncio.Lock()
         # Track per-worker statistics
         self.worker_stats: dict[str, PhaseProcessingStats] = {}
+        self.worker_stats_lock: asyncio.Lock = asyncio.Lock()
 
         self._results_processors: list[ResultsProcessorProtocol] = []
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
@@ -90,50 +100,79 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     @on_pull_message(MessageType.METRIC_RECORDS)
     async def _on_metric_records(self, message: MetricRecordsMessage) -> None:
         """Handle a metric records message."""
-        self.trace(lambda: f"Received metric records: {message}")
+        if self.is_trace_enabled:
+            self.trace(f"Received metric records: {message}")
 
         if message.credit_phase != CreditPhase.PROFILING:
             self.debug(lambda: f"Skipping non-profiling record: {message.credit_phase}")
             return
 
-        worker_id = message.worker_id
-        if worker_id not in self.worker_stats:
-            self.worker_stats[worker_id] = PhaseProcessingStats()
-
-        if message.valid:
-            self.worker_stats[worker_id].processed += 1
-            self.processing_stats.processed += 1
-        else:
-            self.worker_stats[worker_id].errors += 1
-            self.processing_stats.errors += 1
-            if message.error:
-                self.error_summary[message.error] = (
-                    self.error_summary.get(message.error, 0) + 1
-                )
-
         await self._send_results_to_results_processors(message.results)
 
-        if (
-            self.final_request_count is not None
-            and self.processing_stats.total_records >= self.final_request_count
-        ):
+        worker_id = message.worker_id
+
+        if message.valid:
+            async with self.worker_stats_lock:
+                self.worker_stats.setdefault(
+                    worker_id, PhaseProcessingStats()
+                ).processed += 1
+            async with self.processing_status_lock:
+                self.processing_stats.processed += 1
+        else:
+            async with self.worker_stats_lock:
+                self.worker_stats.setdefault(
+                    worker_id, PhaseProcessingStats()
+                ).errors += 1
+            async with self.processing_status_lock:
+                self.processing_stats.errors += 1
+            if message.error:
+                async with self.error_summary_lock:
+                    self.error_summary[message.error] = (
+                        self.error_summary.get(message.error, 0) + 1
+                    )
+
+        await self._check_if_all_records_received()
+
+    async def _check_if_all_records_received(self) -> None:
+        """Check if all records have been received, and if so, publish a message and process the records."""
+        all_records_received = False
+        async with self.processing_status_lock:
+            if (
+                self.final_request_count is not None
+                and self.processing_stats.total_records >= self.final_request_count
+            ):
+                if self.processing_stats.total_records > self.final_request_count:
+                    self.warning(
+                        f"Processed {self.processing_stats.total_records:,} records, but only expected {self.final_request_count:,} records"
+                    )
+
+                all_records_received = True
+                if self.sent_all_records_received:
+                    return
+                self.sent_all_records_received = True
+
+        if all_records_received:
             self.info(
                 lambda: f"Processed {self.processing_stats.processed} valid requests and {self.processing_stats.errors} errors ({self.processing_stats.total_records} total)."
             )
             # Make sure everyone knows the final stats, including the worker stats
             await self._publish_processing_stats()
 
+            async with self.processing_status_lock:
+                cancelled = self.profile_cancelled
+                proc_stats = copy.deepcopy(self.processing_stats)
+
             # Send a message to the event bus to signal that we received all the records
             await self.publish(
                 AllRecordsReceivedMessage(
                     service_id=self.service_id,
                     request_ns=time.time_ns(),
-                    final_processing_stats=self.processing_stats,
+                    final_processing_stats=proc_stats,
                 )
             )
 
-            self.debug(lambda: f"Received all records: {message}, processing now...")
-            await self._process_records(cancelled=self._profile_cancelled)
+            self.debug("Received all records, processing now...")
+            await self._process_results(cancelled=cancelled)
 
     async def _send_results_to_results_processors(
         self, results: list[dict[MetricTagT, MetricValueTypeT]]
@@ -152,29 +191,52 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, phase_start_msg: CreditPhaseStartMessage
     ) -> None:
         """Handle a credit phase start message in order to track the total number of expected requests."""
-        if phase_start_msg.phase == CreditPhase.PROFILING:
-            self.start_time_ns = phase_start_msg.start_ns or time.time_ns()
+        if phase_start_msg.phase != CreditPhase.PROFILING:
+            return
+        async with self.processing_status_lock:
+            self.start_time_ns = phase_start_msg.start_ns
             self.processing_stats.total_expected_requests = (
                 phase_start_msg.total_expected_requests
             )
 
-    @on_message(MessageType.CREDIT_PHASE_COMPLETE)
-    async def _on_credit_phase_complete(
-        self, phase_complete_msg: CreditPhaseCompleteMessage
+    @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
+    async def _on_credit_phase_sending_complete(
+        self, message: CreditPhaseSendingCompleteMessage
     ) -> None:
-        """Handle a credit phase complete message in order to track the final request count."""
-        if phase_complete_msg.phase != CreditPhase.PROFILING:
+        """Handle a credit phase sending complete message in order to track the final request count."""
+        if message.phase != CreditPhase.PROFILING:
             return
         # This will equate to how many records we expect to receive,
         # and once we receive that many records, we know to stop.
-        self.final_request_count = phase_complete_msg.completed
-        self.end_time_ns = phase_complete_msg.end_ns or time.time_ns()
-        self.info(f"Updating final request count to {self.final_request_count}")
-        self.notice(
-            f"All requests have completed, please wait for the results to be processed (currently {self.processing_stats.total_records} of {self.final_request_count} records processed)..."
-        )
-        if self.final_request_count == self.processing_stats.total_records:
-            await self._process_records(cancelled=False)
+        async with self.processing_status_lock:
+            self.final_request_count = message.sent
+            self.info(
+                f"Sent {self.final_request_count:,} requests. Waiting for completion..."
+            )
+
+    @on_message(MessageType.CREDIT_PHASE_COMPLETE)
+    async def _on_credit_phase_complete(
+        self, message: CreditPhaseCompleteMessage
+    ) -> None:
+        """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
+        if message.phase != CreditPhase.PROFILING:
+            return
+        async with self.processing_status_lock:
+            if self.final_request_count is None:
+                # If for whatever reason the final request count was not set, use the number of completed requests.
+                # This would only happen if the credit phase sending complete message was not received by the service.
+                self.warning(
+                    f"Final request count was not set for profiling phase, using {message.completed:,} as the final request count"
+                )
+                self.final_request_count = message.completed
+            self.end_time_ns = message.end_ns
+            self.notice(
+                f"All requests have completed, please wait for the results to be processed "
+                f"(currently {self.processing_stats.total_records:,} of {self.final_request_count:,} records processed)..."
+            )
+        # This check is to prevent a race condition where the timing manager processes
+        # all records before we have the final request count set.
+        await self._check_if_all_records_received()
 
     @background_task(
         interval=lambda self: self.service_config.progress_report_interval,
@@ -188,14 +250,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     async def _publish_processing_stats(self) -> None:
         """Publish the profile processing stats."""
-        await self.publish(
-            RecordsProcessingStatsMessage(
-                service_id=self.service_id,
-                request_ns=time.time_ns(),
-                processing_stats=self.processing_stats,
-                worker_stats=self.worker_stats,
-            ),
+
+        async with self.processing_status_lock, self.worker_stats_lock:
+            proc_stats = copy.deepcopy(self.processing_stats)
+            worker_stats = copy.deepcopy(self.worker_stats)
+
+        message = RecordsProcessingStatsMessage(
+            service_id=self.service_id,
+            request_ns=time.time_ns(),
+            processing_stats=proc_stats,
+            worker_stats=worker_stats,
         )
+        await self.publish(message)
 
     @on_command(CommandType.PROCESS_RECORDS)
     async def _on_process_records_command(
@@ -203,7 +269,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> ProcessRecordsResult:
         """Handle the process records command by forwarding it to all of the results processors, and returning the results."""
         self.debug(lambda: f"Received process records command: {message}")
-        return await self._process_records(cancelled=message.cancelled)
+        return await self._process_results(cancelled=message.cancelled)
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _on_profile_cancel_command(
@@ -211,11 +277,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> ProcessRecordsResult:
         """Handle the profile cancel command by cancelling the streaming post processors."""
         self.debug(lambda: f"Received profile cancel command: {message}")
-        self._profile_cancelled = True
-        return await self._process_records(cancelled=True)
+        async with self.processing_status_lock:
+            self.profile_cancelled = True
+        return await self._process_results(cancelled=True)
 
-    async def _process_records(self, cancelled: bool) -> ProcessRecordsResult:
-        """Process the records."""
+    async def _process_results(self, cancelled: bool) -> ProcessRecordsResult:
+        """Process the results."""
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
 
         self.info("Processing records results...")
@@ -243,7 +310,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 completed=len(records_results),
                 start_ns=self.start_time_ns or time.time_ns(),
                 end_ns=self.end_time_ns or time.time_ns(),
-                error_summary=self.get_error_summary(),
+                error_summary=await self.get_error_summary(),
                 was_cancelled=cancelled,
             ),
             errors=error_results,
@@ -257,12 +324,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         return result
 
-    def get_error_summary(self) -> list[ErrorDetailsCount]:
+    async def get_error_summary(self) -> list[ErrorDetailsCount]:
         """Generate a summary of the error records."""
-        return [
-            ErrorDetailsCount(error_details=error_details, count=count)
-            for error_details, count in self.error_summary.items()
-        ]
+        async with self.error_summary_lock:
+            return [
+                ErrorDetailsCount(error_details=error_details, count=count)
+                for error_details, count in self.error_summary.items()
+            ]
 
 
 def main() -> None:

@@ -10,13 +10,13 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.messages.inference_messages import ParsedInferenceResultsMessage
-from aiperf.common.messages.progress_messages import (
+from aiperf.common.messages import (
     AllRecordsReceivedMessage,
-    PhaseProcessingStats,
+    ParsedInferenceResultsMessage,
 )
 from aiperf.common.models import (
     ParsedResponseRecord,
+    PhaseProcessingStats,
     RequestRecord,
     ResponseData,
     SSEField,

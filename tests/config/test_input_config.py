@@ -28,7 +28,6 @@ def test_input_config_defaults():
 
     config = InputConfig()
     assert config.extra == InputDefaults.EXTRA
-    assert config.goodput == InputDefaults.GOODPUT
     assert config.headers == InputDefaults.HEADERS
     assert config.file == InputDefaults.FILE
     assert config.random_seed == InputDefaults.RANDOM_SEED
@@ -48,30 +47,16 @@ def test_input_config_custom_values():
     """
     config = InputConfig(
         extra={"key": "value"},
-        goodput={"request_latency": 200},
         headers={"Authorization": "Bearer token"},
         random_seed=42,
         custom_dataset_type=CustomDatasetType.MULTI_TURN,
     )
 
     assert config.extra == {"key": "value"}
-    assert config.goodput == {"request_latency": 200}
     assert config.headers == {"Authorization": "Bearer token"}
     assert config.file is None
     assert config.random_seed == 42
     assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
-
-
-def test_input_config_goodput_validation():
-    """
-    Test InputConfig goodput field with valid and invalid values.
-    """
-    valid_goodput = {"request_latency": 300, "output_token_throughput_per_user": 600}
-    config = InputConfig(goodput=valid_goodput)
-    assert config.goodput == valid_goodput
-
-    with pytest.raises(ValidationError):
-        InputConfig(goodput={"invalid_metric": "not_a_number"})  # Invalid goodput
 
 
 def test_input_config_file_validation():

@@ -3,15 +3,14 @@
 import asyncio
 from abc import ABC, abstractmethod
 
-from aiperf.common.config import ServiceConfig
-from aiperf.common.config.user_config import UserConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
 )
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.hooks import on_start, on_stop
-from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
+from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ServiceRunInfo
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT

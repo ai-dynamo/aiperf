@@ -76,9 +76,14 @@ class CreditPhaseProgressMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.CREDIT_PHASE_PROGRESS
     phase: CreditPhase = Field(..., description="The type of credit phase")
-    sent: int = Field(default=0, description="The number of sent credits")
+    sent: int = Field(
+        ...,
+        ge=0,
+        description="The number of sent credits",
+    )
     completed: int = Field(
-        default=0,
+        ...,
+        ge=0,
         description="The number of completed credits (returned from the workers)",
     )
 
@@ -88,9 +93,15 @@ class CreditPhaseSendingCompleteMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.CREDIT_PHASE_SENDING_COMPLETE
     phase: CreditPhase = Field(..., description="The type of credit phase")
-    sent_end_ns: int | None = Field(
-        default=None,
-        description="The time of the last sent credit in nanoseconds. If None, the phase has not sent all credits.",
+    sent_end_ns: int = Field(
+        ...,
+        ge=1,
+        description="The time of the last sent credit in nanoseconds.",
+    )
+    sent: int = Field(
+        ...,
+        ge=0,
+        description="The final number of sent credits.",
     )
 
 
@@ -101,12 +112,13 @@ class CreditPhaseCompleteMessage(BaseServiceMessage):
     phase: CreditPhase = Field(..., description="The type of credit phase")
     completed: int = Field(
         ...,
+        ge=0,
         description="The number of completed credits (returned from the workers). This is the final count of completed credits.",
     )
-    end_ns: int | None = Field(
-        default=None,
+    end_ns: int = Field(
+        ...,
         ge=1,
-        description="The time in which the last credit was returned from the workers in nanoseconds. If None, the phase has not completed.",
+        description="The time in which the last credit was returned from the workers in nanoseconds",
     )
 
 

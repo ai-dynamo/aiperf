@@ -13,16 +13,17 @@ from aiperf.common.messages import (
     CreditPhaseStartMessage,
     CreditReturnMessage,
     CreditsCompleteMessage,
+    Message,
 )
-from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.timing import CreditIssuingStrategy
 
 
-class MockCreditManager(AIPerfLoggerMixin):
+class MockCreditManager(AIPerfLifecycleMixin):
     """Mock implementation of CreditManagerProtocol for testing."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.dropped_timestamps = []
         self.dropped_credits = []
         self.progress_calls = []
@@ -32,6 +33,11 @@ class MockCreditManager(AIPerfLoggerMixin):
         self.phase_sending_complete_calls = []
         self.credit_strategy: CreditIssuingStrategy | None = None
         self.auto_credit_return = False
+        self.publish_calls = []
+
+    async def publish(self, message: Message) -> None:
+        """Mock publish method."""
+        self.publish_calls.append(message)
 
     async def drop_credit(
         self,
@@ -101,7 +107,7 @@ class MockCreditManager(AIPerfLoggerMixin):
         )
 
     async def publish_phase_sending_complete(
-        self, phase: CreditPhase, sent_end_ns: int
+        self, phase: CreditPhase, sent_end_ns: int, sent: int
     ) -> None:
         """Mock publish_phase_sending_complete method."""
         self.phase_sending_complete_calls.append(
@@ -109,6 +115,7 @@ class MockCreditManager(AIPerfLoggerMixin):
                 phase=phase,
                 sent_end_ns=sent_end_ns,
                 service_id="test-service",
+                sent=sent,
             )
         )
 

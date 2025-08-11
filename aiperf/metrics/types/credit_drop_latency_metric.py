@@ -2,8 +2,7 @@
 #  SPDX-License-Identifier: Apache-2.0
 
 
-from aiperf.common.enums import MetricFlags
-from aiperf.common.enums.metric_enums import MetricTimeUnit
+from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict

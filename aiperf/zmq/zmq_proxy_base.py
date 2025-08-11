@@ -9,7 +9,7 @@ import zmq
 import zmq.asyncio
 from zmq import SocketType
 
-from aiperf.common.config.zmq_config import BaseZMQProxyConfig
+from aiperf.common.config import BaseZMQProxyConfig
 from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.hooks import background_task, on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin

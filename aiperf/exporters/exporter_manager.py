@@ -5,8 +5,8 @@ import asyncio
 
 from aiperf.common.config import UserConfig
 from aiperf.common.factories import DataExporterFactory
-from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
-from aiperf.common.models.record_models import ProfileResults
+from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.models import ProfileResults
 from aiperf.exporters.exporter_config import ExporterConfig
 
 

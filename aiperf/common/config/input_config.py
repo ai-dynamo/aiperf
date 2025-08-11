@@ -13,7 +13,6 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
-    parse_goodput,
     parse_str_or_dict,
 )
 from aiperf.common.config.conversation_config import ConversationConfig
@@ -42,6 +41,31 @@ class InputConfig(BaseConfig):
             logger.debug("Fixed schedule is enabled because file is provided")
         return self
 
+    @model_validator(mode="after")
+    def validate_fixed_schedule_start_offset(self) -> Self:
+        """Validate the fixed schedule start offset configuration."""
+        if (
+            self.fixed_schedule_start_offset is not None
+            and self.fixed_schedule_auto_offset
+        ):
+            raise ValueError(
+                "The --fixed-schedule-start-offset and --fixed-schedule-auto-offset options cannot be used together"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_fixed_schedule_start_and_end_offset(self) -> Self:
+        """Validate the fixed schedule start and end offset configuration."""
+        if (
+            self.fixed_schedule_start_offset is not None
+            and self.fixed_schedule_end_offset is not None
+            and self.fixed_schedule_start_offset > self.fixed_schedule_end_offset
+        ):
+            raise ValueError(
+                "The --fixed-schedule-start-offset must be less than or equal to the --fixed-schedule-end-offset"
+            )
+        return self
+
     extra: Annotated[
         dict[str, Any] | None,
         Field(
@@ -56,24 +80,6 @@ class InputConfig(BaseConfig):
         ),
         BeforeValidator(parse_str_or_dict),
     ] = InputDefaults.EXTRA
-
-    goodput: Annotated[
-        dict[str, Any],
-        Field(
-            description="An option to provide constraints in order to compute goodput.\n"
-            "Specify goodput constraints as 'key:value' pairs,\n"
-            "where the key is a valid metric name, and the value is a number representing\n"
-            "either milliseconds or a throughput value per second.\n"
-            "For example: request_latency:300,output_token_throughput_per_user:600",
-        ),
-        Parameter(
-            name=(
-                "--goodput",  # GenAI-Perf
-            ),
-            group=_CLI_GROUP,
-        ),
-        BeforeValidator(parse_goodput),
-    ] = InputDefaults.GOODPUT
 
     headers: Annotated[
         dict[str, str] | None,
@@ -119,6 +125,51 @@ class InputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.FIXED_SCHEDULE
+
+    # NEW AIPerf Option
+    fixed_schedule_auto_offset: Annotated[
+        bool,
+        Field(
+            description="Specifies to automatically offset the timestamps in the fixed schedule, such that the first "
+            "timestamp is considered 0, and the rest are shifted accordingly. If disabled, the timestamps will be "
+            "assumed to be relative to 0."
+        ),
+        Parameter(
+            name=("--fixed-schedule-auto-offset",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
+
+    # NEW AIPerf Option
+    fixed_schedule_start_offset: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            description="Specifies the offset in milliseconds to start the fixed schedule at. By default, the schedule "
+            "starts at 0, but this option can be used to start at a reference point further in the schedule. This "
+            "option cannot be used in conjunction with the --fixed-schedule-auto-offset. The schedule will include "
+            "any requests at the start offset.",
+        ),
+        Parameter(
+            name=("--fixed-schedule-start-offset",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.FIXED_SCHEDULE_START_OFFSET
+
+    # NEW AIPerf Option
+    fixed_schedule_end_offset: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            description="Specifies the offset in milliseconds to end the fixed schedule at. By default, the schedule "
+            "ends at the last timestamp in the trace dataset, but this option can be used to only run a subset of the trace. "
+            "The schedule will include any requests at the end offset.",
+        ),
+        Parameter(
+            name=("--fixed-schedule-end-offset",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.FIXED_SCHEDULE_END_OFFSET
 
     # NEW AIPerf Option
     custom_dataset_type: Annotated[

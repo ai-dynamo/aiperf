@@ -11,7 +11,7 @@ from aiperf.common.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
-from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
+from aiperf.common.mixins import MessageBusClientMixin
 from aiperf.common.protocols import AIPerfLoggerProtocol, PubClientProtocol
 
 
@@ -45,7 +45,7 @@ class CreditManagerProtocol(PubClientProtocol, Protocol):
     ) -> None: ...
 
     async def publish_phase_sending_complete(
-        self, phase: CreditPhase, sent_end_ns: int
+        self, phase: CreditPhase, sent_end_ns: int, sent: int
     ) -> None: ...
 
     async def publish_phase_complete(
@@ -99,7 +99,7 @@ class CreditPhaseMessagesMixin(MessageBusClientMixin, CreditPhaseMessagesRequire
         )
 
     async def publish_phase_sending_complete(
-        self, phase: CreditPhase, sent_end_ns: int
+        self, phase: CreditPhase, sent_end_ns: int, sent: int
     ) -> None:
         """Publish the phase sending complete message."""
         self.execute_async(
@@ -108,6 +108,7 @@ class CreditPhaseMessagesMixin(MessageBusClientMixin, CreditPhaseMessagesRequire
                     service_id=self.service_id,
                     phase=phase,
                     sent_end_ns=sent_end_ns,
+                    sent=sent,
                 )
             )
         )
