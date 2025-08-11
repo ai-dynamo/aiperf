@@ -416,7 +416,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             ):
                 warn_cancelled_early()
         else:
-            self.error("No profile results to export")
+            self.warning("No profile results to export")
 
         # Exit the process in a more explicit way, to ensure that it stops
         os._exit(0)
