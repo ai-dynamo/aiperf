@@ -45,7 +45,12 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
             "role": turn.role or DEFAULT_ROLE,
         }
 
-        if len(turn.texts) == 1 and len(turn.images) == 0 and len(turn.audios) == 0:
+        if (
+            len(turn.texts) == 1
+            and len(turn.texts[0].contents) == 1
+            and len(turn.images) == 0
+            and len(turn.audios) == 0
+        ):
             # Hotfix for Dynamo API which does not yet support a list of messages
             message["name"] = turn.texts[0].name
             message["content"] = (
@@ -88,6 +93,6 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
                     }
                 )
 
-            message["content"] = message_content
+        message["content"] = message_content
 
         return [message]
