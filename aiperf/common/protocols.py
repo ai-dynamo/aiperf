@@ -81,6 +81,8 @@ class TaskManagerProtocol(AIPerfLoggerProtocol, Protocol):
 
     async def cancel_all_tasks(self, timeout: float) -> None: ...
 
+    async def wait_for_tasks(self) -> list[BaseException | None]: ...
+
     def start_background_task(
         self,
         method: Callable,

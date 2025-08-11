@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
 import asyncio
 import os
 import sys
@@ -23,7 +22,11 @@ from aiperf.common.enums import (
     ServiceRegistrationStatus,
     ServiceType,
 )
-from aiperf.common.factories import ServiceFactory, ServiceManagerFactory
+from aiperf.common.factories import (
+    AIPerfUIFactory,
+    ServiceFactory,
+    ServiceManagerFactory,
+)
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
 from aiperf.common.logging import get_global_log_queue
 from aiperf.common.messages import (
@@ -41,9 +44,8 @@ from aiperf.common.messages import (
     SpawnWorkersCommand,
     StatusMessage,
 )
-from aiperf.common.models import ServiceRunInfo
-from aiperf.common.models.record_models import ProcessRecordsResult
-from aiperf.common.protocols import ServiceManagerProtocol
+from aiperf.common.models import ProcessRecordsResult, ServiceRunInfo
+from aiperf.common.protocols import AIPerfUIProtocol, ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.system_mixins import (
@@ -101,6 +103,13 @@ class SystemController(SignalHandlerMixin, BaseService):
                 log_queue=get_global_log_queue(),
             )
         )
+        self.ui: AIPerfUIProtocol = AIPerfUIFactory.create_instance(
+            self.service_config.ui.type,
+            service_config=self.service_config,
+            user_config=self.user_config,
+            log_queue=get_global_log_queue(),
+        )
+        self.attach_child_lifecycle(self.ui)
         self._stop_tasks: set[asyncio.Task] = set()
         self._profile_results: ProcessRecordsResult | None = None
         self.debug("System Controller created")
@@ -390,6 +399,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.comms.stop()
         await self.proxy_manager.stop()
 
+        # Wait for the UI to stop before exporting any results to the console
+        await self.ui.stop()
+        await self.ui.wait_for_tasks()
+
         if self._profile_results:
             await ExporterManager(
                 results=self._profile_results.results,
@@ -403,7 +416,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             ):
                 warn_cancelled_early()
         else:
-            self.warning("No profile results to export")
+            self.error("No profile results to export")
 
         # Exit the process in a more explicit way, to ensure that it stops
         os._exit(0)
