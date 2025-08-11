@@ -7,13 +7,12 @@ from pydantic import Field
 from aiperf.common.models.base_models import AIPerfBaseModel
 
 
-class WorkerPhaseTaskStats(AIPerfBaseModel):
-    """Stats for the tasks that have been sent to the worker for a given credit phase."""
+class WorkerTaskStats(AIPerfBaseModel):
+    """Stats for the tasks that have been sent to the worker."""
 
     total: int = Field(
         default=0,
-        description="The total number of tasks that have been sent to the worker. "
-        "Not all tasks will be completed.",
+        description="The total number of tasks that have been sent to the worker (not all tasks will be completed)",
     )
     failed: int = Field(
         default=0,

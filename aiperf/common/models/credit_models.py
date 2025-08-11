@@ -151,3 +151,7 @@ class PhaseProcessingStats(AIPerfBaseModel):
     def total_records(self) -> int:
         """The total number of records processed successfully or in error."""
         return self.processed + self.errors
+
+    @property
+    def is_complete(self) -> bool:
+        return self.total_records == self.total_expected_requests
