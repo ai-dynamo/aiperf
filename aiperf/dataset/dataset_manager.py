@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import multiprocessing
 import random
 import time
 
@@ -37,7 +36,6 @@ from aiperf.common.messages import (
     ProcessSingleTurnDatasetMessage,
     ProcessSyntheticDatasetMessage,
     ProfileConfigureCommand,
-    SpawnDatasetProcessorsCommand,
 )
 from aiperf.common.mixins import PullClientMixin, ReplyClientMixin
 from aiperf.common.models import Conversation
@@ -82,12 +80,7 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         self.dataset_configured = asyncio.Event()
 
         self.jobs_push_client = self.comms.create_push_client(CommAddress.DATASET_JOB)
-        self.cpu_count = multiprocessing.cpu_count()
         self.num_processors = self.service_config.dataset_processor_service_count
-        if self.num_processors is None:
-            self.num_processors = min(
-                self.cpu_count - 1, self.user_config.input.conversation.num
-            )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -95,14 +88,6 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
     ) -> None:
         """Configure the dataset."""
         self.info(lambda: f"Configuring dataset for {self.service_id}")
-        await self.send_command_and_wait_for_response(
-            SpawnDatasetProcessorsCommand(
-                service_id=self.service_id,
-                num_processors=self.num_processors,
-                target_service_type=ServiceType.SYSTEM_CONTROLLER,
-            )
-        )
-
         begin = time.perf_counter()
 
         if self.user_config.input.dataset_type == DatasetType.SYNTHETIC:
@@ -114,25 +99,7 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
                 f"Dataset type {self.user_config.input.dataset_type} is not supported yet."
             )
 
-        # TODO: use dedicated function
-        # Wait for the dataset to be configured if it is not already
-        if not self.dataset_configured.is_set():
-            self.debug(
-                "Dataset not configured. Waiting for dataset to be configured..."
-            )
-            await asyncio.wait_for(
-                self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
-            )
-
-        # TODO: needed?
-        # await self.publish(
-        #    ShutdownDatasetProcessorsCommand(
-        #        service_id=self.service_id,
-        #        all_processors=True,
-        #        target_service_type=ServiceType.SYSTEM_CONTROLLER,
-        #    )
-        # )
-
+        await self._wait_for_dataset_configuration()
         duration = time.perf_counter() - begin
         self.info(
             lambda: f"Dataset configured in {duration:.2f} seconds with {len(self.dataset)} conversations"

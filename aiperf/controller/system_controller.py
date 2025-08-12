@@ -46,8 +46,6 @@ from aiperf.common.messages import (
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
     StatusMessage,
-    ShutdownDatasetProcessorsCommand,
-    SpawnDatasetProcessorsCommand,
 )
 from aiperf.common.models import ProcessRecordsResult, ServiceRunInfo
 from aiperf.common.protocols import AIPerfUIProtocol, ServiceManagerProtocol
@@ -93,6 +91,11 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.scale_record_processors_with_workers = False
         else:
             self.scale_record_processors_with_workers = True
+
+        if self.service_config.dataset_processor_service_count is not None:
+            self.required_services[ServiceType.DATASET_PROCESSOR] = (
+                self.service_config.dataset_processor_service_count
+            )
 
         self.proxy_manager: ProxyManager = ProxyManager(
             service_config=self.service_config
@@ -342,24 +345,6 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.service_manager.stop_service(ServiceType.WORKER)
         if self.scale_record_processors_with_workers:
             await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
-
-    @on_command(CommandType.SPAWN_DATASET_PROCESSORS)
-    async def _handle_spawn_dataset_processors_command(
-        self, message: SpawnDatasetProcessorsCommand
-    ) -> None:
-        """Handle a spawn dataset processors command."""
-        self.debug(lambda: f"Received spawn dataset processors command: {message}")
-        await self.service_manager.run_service(
-            ServiceType.DATASET_PROCESSOR, message.num_processors
-        )
-
-    @on_command(CommandType.SHUTDOWN_DATASET_PROCESSORS)
-    async def _handle_shutdown_dataset_processors_command(
-        self, message: ShutdownDatasetProcessorsCommand
-    ) -> None:
-        """Handle a shutdown dataset processors command."""
-        self.debug(lambda: f"Received shutdown dataset processors command: {message}")
-        await self.service_manager.stop_service(ServiceType.DATASET_PROCESSOR)
 
     @on_message(MessageType.PROCESS_RECORDS_RESULT)
     async def _on_process_records_result_message(
