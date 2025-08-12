@@ -19,7 +19,7 @@ from aiperf.common.config.conversation_config import ConversationConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, DatasetType
 
 logger = AIPerfLogger(__name__)
 
@@ -64,6 +64,24 @@ class InputConfig(BaseConfig):
             raise ValueError(
                 "The --fixed-schedule-start-offset must be less than or equal to the --fixed-schedule-end-offset"
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_dataset_type(self) -> Self:
+        """Validate the dataset type configuration."""
+        if self.dataset_type == DatasetType.SYNTHETIC and self.file is not None:
+            self.dataset_type = DatasetType.CUSTOM
+            logger.warning(
+                "Dataset type is set to CUSTOM because a file or custom dataset type is "
+                "provided for synthetic dataset"
+            )
+        if self.dataset_type == DatasetType.CUSTOM:
+            if self.custom_dataset_type is None:
+                raise ValueError(
+                    "A custom dataset type requires a custom dataset type to be provided"
+                )
+            if self.file is None:
+                raise ValueError("A custom dataset type requires a file to be provided")
         return self
 
     extra: Annotated[
@@ -174,6 +192,15 @@ class InputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.FIXED_SCHEDULE_END_OFFSET
+
+    dataset_type: Annotated[
+        DatasetType,
+        Field(description="The type of dataset to generate for the requests."),
+        Parameter(
+            name=("--dataset-type",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.DATASET_TYPE
 
     # NEW AIPerf Option
     custom_dataset_type: Annotated[

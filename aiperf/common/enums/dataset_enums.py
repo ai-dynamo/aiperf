@@ -4,10 +4,10 @@
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
-class ComposerType(CaseInsensitiveStrEnum):
+class DatasetType(CaseInsensitiveStrEnum):
     SYNTHETIC = "synthetic"
     CUSTOM = "custom"
-    PUBLIC_DATASET = "public_dataset"
+    PUBLIC = "public"
 
 
 class CustomDatasetType(CaseInsensitiveStrEnum):
