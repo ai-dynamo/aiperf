@@ -149,7 +149,7 @@ class ServiceDefaults:
     DEBUG_SERVICES = None
     TRACE_SERVICES = None
     PROGRESS_REPORT_INTERVAL = 1.0
-    UI_TYPE = AIPerfUIType.NONE
+    UI_TYPE = AIPerfUIType.DASHBOARD
 
 
 @dataclass(frozen=True)

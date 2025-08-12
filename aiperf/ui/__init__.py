@@ -12,8 +12,41 @@ __ignore__ = []
 from aiperf.ui.base_ui import (
     BaseAIPerfUI,
 )
+from aiperf.ui.dashboard import (
+    AIPERF_THEME,
+    WORKER_STATUS_STYLES,
+    AIPerfDashboardUI,
+    AIPerfTextualApp,
+    CustomHeader,
+    LogConsumer,
+    NonFocusableDataTable,
+    ProgressDashboard,
+    RichLogViewer,
+    WorkerDashboard,
+    WorkerStatusTable,
+)
 from aiperf.ui.no_ui import (
     NoUI,
 )
+from aiperf.ui.utils import (
+    format_bytes,
+    format_duration,
+)
 
-__all__ = ["BaseAIPerfUI", "NoUI"]
+__all__ = [
+    "AIPERF_THEME",
+    "AIPerfDashboardUI",
+    "AIPerfTextualApp",
+    "BaseAIPerfUI",
+    "CustomHeader",
+    "LogConsumer",
+    "NoUI",
+    "NonFocusableDataTable",
+    "ProgressDashboard",
+    "RichLogViewer",
+    "WORKER_STATUS_STYLES",
+    "WorkerDashboard",
+    "WorkerStatusTable",
+    "format_bytes",
+    "format_duration",
+]
