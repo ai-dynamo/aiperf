@@ -8,7 +8,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 source $HOME/.local/bin/env
 
-uv venv
+uv venv --python 3.12
 
 source .venv/bin/activate
 
