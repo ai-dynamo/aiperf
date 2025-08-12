@@ -79,7 +79,10 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         )
         self.dataset_configured = asyncio.Event()
 
-        self.jobs_push_client = self.comms.create_push_client(CommAddress.DATASET_JOB)
+        self.jobs_push_client = self.comms.create_push_client(
+            address=CommAddress.DATASET_JOB,
+            bind=True,
+        )
         self.num_processors = self.service_config.dataset_processor_service_count
 
     @on_command(CommandType.PROFILE_CONFIGURE)
@@ -155,6 +158,12 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
 
         process_message = process_messages[self.user_config.input.custom_dataset_type]
         per_processor, extra = divmod(len(dataset_list), self.num_processors)
+
+        # TODO: change to debug log
+        self.info(
+            lambda: f"#### Distributing {len(dataset_list)} conversations "
+            f"across {self.num_processors} processors with {per_processor} conversations per processor"
+        )
 
         # TODO: what happens if chunk count < num processors? some processors will get jobs more than once.
         for i in range(self.num_processors):

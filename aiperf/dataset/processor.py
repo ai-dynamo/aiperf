@@ -44,7 +44,7 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
             user_config=user_config,
             service_id=service_id,
             pull_client_address=CommAddress.DATASET_JOB,
-            pull_client_bind=True,
+            pull_client_bind=False,
         )
         self.debug("Dataset processor __init__")
         self.results_push_client: PushClientProtocol = self.comms.create_push_client(
@@ -289,7 +289,7 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
 
         # TODO: change to debug log
         self.info(
-            lambda: f"#### Received mooncake trace dataset generation job from {message.service_id}"
+            lambda: f"#### ({self.service_id}) Received mooncake trace dataset generation job from {message.service_id}"
         )
 
         if message.random_seed is not None:
