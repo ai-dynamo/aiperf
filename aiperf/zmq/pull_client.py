@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import os
 from collections.abc import Callable, Coroutine
 from typing import Any
 
 import zmq.asyncio
 
+from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
 from aiperf.common.factories import CommunicationClientFactory
@@ -78,7 +78,7 @@ class ZMQPullClient(BaseZMQClient):
             self.semaphore = asyncio.Semaphore(value=max_pull_concurrency)
         else:
             self.semaphore = asyncio.Semaphore(
-                value=int(os.getenv("AIPERF_WORKER_CONCURRENT_REQUESTS", 500))
+                value=DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
             )
 
     @background_task(immediate=True, interval=None)

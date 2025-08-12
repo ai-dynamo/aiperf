@@ -90,6 +90,10 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
             self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
 
+            # Set high water mark
+            self.socket.setsockopt(zmq.SNDHWM, ZMQSocketDefaults.SNDHWM)
+            self.socket.setsockopt(zmq.RCVHWM, ZMQSocketDefaults.RCVHWM)
+
             # Set performance-oriented socket options
             self.socket.setsockopt(zmq.TCP_KEEPALIVE, ZMQSocketDefaults.TCP_KEEPALIVE)
             self.socket.setsockopt(
