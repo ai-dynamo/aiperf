@@ -6,7 +6,7 @@ from pydantic import Field
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.base_messages import RequiresRequestNSMixin
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import PhaseProcessingStats
+from aiperf.common.models import ProcessingStats
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
 from aiperf.common.types import MessageTypeT
 
@@ -62,10 +62,10 @@ class RecordsProcessingStatsMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.PROCESSING_STATS
 
-    processing_stats: PhaseProcessingStats = Field(
+    processing_stats: ProcessingStats = Field(
         ..., description="The stats for the credit phase"
     )
-    worker_stats: dict[str, PhaseProcessingStats] = Field(
+    worker_stats: dict[str, ProcessingStats] = Field(
         default_factory=dict,
         description="The stats for each worker how many requests were processed and how many errors were "
         "encountered, keyed by worker service_id",
@@ -84,7 +84,7 @@ class AllRecordsReceivedMessage(BaseServiceMessage, RequiresRequestNSMixin):
     """This is sent by the RecordsManager to signal that all parsed records have been received, and the final processing stats are available."""
 
     message_type: MessageTypeT = MessageType.ALL_RECORDS_RECEIVED
-    final_processing_stats: PhaseProcessingStats = Field(
+    final_processing_stats: ProcessingStats = Field(
         ..., description="The final processing stats for the profile run"
     )
 

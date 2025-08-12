@@ -91,6 +91,9 @@ from aiperf.common.enums.timing_enums import (
 from aiperf.common.enums.ui_enums import (
     AIPerfUIType,
 )
+from aiperf.common.enums.worker_enums import (
+    WorkerStatus,
+)
 
 __all__ = [
     "AIPerfLogLevel",
@@ -141,5 +144,6 @@ __all__ = [
     "ServiceType",
     "SystemState",
     "TimingMode",
+    "WorkerStatus",
     "ZMQProxyType",
 ]

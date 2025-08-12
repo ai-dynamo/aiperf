@@ -407,7 +407,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             await ExporterManager(
                 results=self._profile_results.results,
                 input_config=self.user_config,
-            ).export_console(console=Console(), width=None)
+            ).export_console(console=Console())
 
             if (
                 self._was_cancelled
