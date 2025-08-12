@@ -84,6 +84,7 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
             bind=True,
         )
         self.num_processors = self.service_config.dataset_processor_service_count
+        self.total_dataset_size: int | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -114,24 +115,33 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         This will generate a synthetic dataset and distribute the work across the
         dataset processors.
         """
-        # TODO: change to debug log
-        self.info(
-            lambda: f"#### Configuring synthetic dataset with {self.user_config.input.conversation.num} conversations"
-        )
-        conversations_per_processor = (
-            self.user_config.input.conversation.num // self.num_processors
-        )
+        self.total_dataset_size = self.user_config.input.conversation.num
+        chunk_size, extra = divmod(self.total_dataset_size, self.num_processors)
+        if chunk_size == 0:
+            self.num_processors = min(self.num_processors, self.total_dataset_size)
+            chunk_size, extra = 1, 0
+
         # TODO: change to debug log
         self.info(
             lambda: f"#### Distributing {self.user_config.input.conversation.num} conversations "
-            f"across {self.num_processors} processors with {conversations_per_processor} conversations per processor"
+            f"across {self.num_processors} processors "
+            f"with {chunk_size} conversations per processor "
+            f"and {extra} conversations left over"
         )
 
         for _ in range(self.num_processors):
             await self.jobs_push_client.push(
                 message=ProcessSyntheticDatasetMessage(
                     service_id=self.service_id,
-                    num_conversations=conversations_per_processor,
+                    num_conversations=chunk_size,
+                )
+            )
+
+        if extra > 0:
+            await self.jobs_push_client.push(
+                message=ProcessSyntheticDatasetMessage(
+                    service_id=self.service_id,
+                    num_conversations=extra,
                 )
             )
 
@@ -141,13 +151,12 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         This will load a custom dataset from a file and distribute the work across the
         dataset processors.
         """
-        # TODO: change to debug log
-        self.info(lambda: f"#### Detected input file '{self.user_config.input.file}'")
         loader = CustomDatasetFactory.create_instance(
             self.user_config.input.custom_dataset_type,
             user_config=self.user_config,
         )
         dataset_list = list(loader.load_dataset().items())
+        self.total_dataset_size = len(dataset_list)
 
         process_messages: dict[CustomDatasetType, type[ProcessDatasetMessage]] = {
             CustomDatasetType.MOONCAKE_TRACE: ProcessMooncakeTraceDatasetMessage,
@@ -155,19 +164,26 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
             CustomDatasetType.SINGLE_TURN: ProcessSingleTurnDatasetMessage,
             CustomDatasetType.RANDOM_POOL: ProcessRandomPoolDatasetMessage,
         }
-
         process_message = process_messages[self.user_config.input.custom_dataset_type]
+
+        # TODO: better way to handle this?
+        # when total number of dataset processors is greater than the number of dataset items,
+        # we need to adjust the number of processors to the number of dataset items
+        # otherwise, some processors will get same job more than once.
         per_processor, extra = divmod(len(dataset_list), self.num_processors)
+        if per_processor == 0:
+            self.num_processors = min(self.num_processors, len(dataset_list))
+            per_processor, extra = 1, 0
 
         # TODO: change to debug log
         self.info(
             lambda: f"#### Distributing {len(dataset_list)} conversations "
-            f"across {self.num_processors} processors with {per_processor} conversations per processor"
+            f"across {self.num_processors} processors "
+            f"with {per_processor} conversations per processor "
+            f"and {extra} conversations left over"
         )
 
-        # TODO: what happens if chunk count < num processors? some processors will get jobs more than once.
         for i in range(self.num_processors):
-            # self.info(lambda: f"#### Pushing dataset to processor {i}")
             await self.jobs_push_client.push(
                 message=process_message(
                     service_id=self.service_id,
@@ -194,12 +210,13 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
 
         self._session_ids_cache = list(self.dataset.keys())
 
-        self.dataset_configured.set()
-        await self.publish(
-            DatasetConfiguredNotification(
-                service_id=self.service_id,
-            ),
-        )
+        if len(self.dataset) == self.total_dataset_size:
+            self.dataset_configured.set()
+            await self.publish(
+                DatasetConfiguredNotification(
+                    service_id=self.service_id,
+                ),
+            )
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(

@@ -79,7 +79,7 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
     @on_init
     async def _initialize(self) -> None:
         """Initialize dataset processor service-specific components."""
-        self.info("#### Initializing dataset processor service")
+        self.debug("Initializing dataset processor service")
         tokenizer_name = self.user_config.tokenizer.name
         if tokenizer_name is None:
             tokenizer_name = self._endpoint_config.model_names[0]
@@ -286,15 +286,11 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
         message: ProcessMooncakeTraceDatasetMessage,
     ) -> None:
         """Handle a mooncake trace dataset generation job."""
-
-        # TODO: change to debug log
-        self.info(
-            lambda: f"#### ({self.service_id}) Received mooncake trace dataset generation job from {message.service_id}"
-        )
+        self.debug(lambda: "Received mooncake trace dataset generation job")
 
         if message.random_seed is not None:
             random.seed(message.random_seed)
-            self.info(lambda: f"Setting random seed to {message.random_seed}")
+            self.info(f"{self.service_id} setting random seed to {message.random_seed}")
 
         # TODO: implement model selection strategy
         self.model_selection_counter = 0
@@ -314,8 +310,6 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
                 )
                 conversation.turns.append(turn)
             conversations.append(conversation)
-
-        self.info(lambda: f"#### Pushing dataset result to {message.service_id}")
 
         await self.results_push_client.push(
             ProcessDatasetResponseMessage(
