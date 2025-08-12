@@ -38,3 +38,12 @@ class ZMQSocketDefaults:
     TCP_KEEPALIVE_CNT = 3
     IMMEDIATE = 1  # Don't queue messages
     LINGER = 0  # Don't wait on close
+
+    # High Water Mark
+    # TODO: Investigate better ways to handle this
+    # https://zeromq.org/socket-api/#high-water-mark
+    # NOTE: We set these to 0 to allow for unlimited messages to be queued. This is important to
+    #       ensure that the system does not lose messages. It does however mean that the system
+    #       could run out of memory if too many messages are queued.
+    SNDHWM = 0  # No send high water mark (unlimited)
+    RCVHWM = 0  # No receive high water mark (unlimited)
