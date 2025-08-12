@@ -32,34 +32,30 @@ class ProcessMooncakeTraceDatasetMessage(ProcessDatasetMessage):
     """Message for processing mooncake trace data."""
 
     message_type: MessageTypeT = MessageType.PROCESS_MOONCAKE_TRACE_DATASET
-    trace_dataset: dict[str, Any] = Field(..., description="The trace dataset")
+    dataset: list[tuple[str, Any]] = Field(
+        ..., description="The Mooncake trace dataset"
+    )
 
 
 class ProcessMultiTurnDatasetMessage(ProcessDatasetMessage):
     """Message for processing multi-turn data."""
 
     message_type: MessageTypeT = MessageType.PROCESS_MULTI_TURN_DATASET
-    multi_turn_dataset: dict[str, Any] = Field(
-        ..., description="The multi-turn dataset"
-    )
+    dataset: list[tuple[str, Any]] = Field(..., description="The multi-turn dataset")
 
 
 class ProcessSingleTurnDatasetMessage(ProcessDatasetMessage):
     """Message for processing single-turn data."""
 
     message_type: MessageTypeT = MessageType.PROCESS_SINGLE_TURN_DATASET
-    single_turn_dataset: dict[str, Any] = Field(
-        ..., description="The single-turn dataset"
-    )
+    dataset: list[tuple[str, Any]] = Field(..., description="The single-turn dataset")
 
 
 class ProcessRandomPoolDatasetMessage(ProcessDatasetMessage):
     """Message for processing random pool data."""
 
     message_type: MessageTypeT = MessageType.PROCESS_RANDOM_POOL_DATASET
-    random_pool_dataset: dict[str, Any] = Field(
-        ..., description="The random pool dataset"
-    )
+    dataset: list[tuple[str, Any]] = Field(..., description="The random pool dataset")
 
 
 class ProcessDatasetResponseMessage(ProcessDatasetMessage):

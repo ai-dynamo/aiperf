@@ -105,7 +105,7 @@ class MultiTurnDatasetLoader(AIPerfLoggerMixin, MediaConversionMixin):
         Returns:
             A dictionary mapping session_id to list of MultiTurn objects.
         """
-        data: dict[str, list[MultiTurn]] = defaultdict(list)
+        dataset: dict[str, list[MultiTurn]] = defaultdict(list)
 
         with open(self.filename) as f:
             for line in f:
@@ -114,6 +114,37 @@ class MultiTurnDatasetLoader(AIPerfLoggerMixin, MediaConversionMixin):
 
                 multi_turn_data = MultiTurn.model_validate_json(line)
                 session_id = multi_turn_data.session_id or str(uuid.uuid4())
-                data[session_id].append(multi_turn_data)
+                dataset[session_id].append(multi_turn_data)
 
-        return data
+        return self._post_process_dataset(dataset)
+
+    def _post_process_dataset(
+        self, dataset: dict[str, list[MultiTurn]]
+    ) -> dict[str, list[MultiTurn]]:
+        """Post-process the dataset to ensure it is valid.
+
+        Returns:
+            The post-processed dataset.
+        """
+        # TODO: implement this
+
+        # merge and change to list
+        # merged_dataset = []
+        # for session_id, multi_turns in dataset.items():
+        #    for multi_turn in multi_turns:
+        #        for turn in multi_turn.turns:
+        #            if turn.texts:
+        #                turn.texts = [Text(name=text.name, contents=text.contents) for text in turn.texts]
+        #            if turn.images:
+        #                turn.images = [Image(name=image.name, contents=image.contents) for image in turn.images]
+        #            if turn.audios:
+        #                turn.audios = [Audio(name=audio.name, contents=audio.contents) for audio in turn.audios]
+        #            if turn.delay:
+        #                turn.delay = Delay(delay=turn.delay)
+        #            if turn.timestamp:
+        #                turn.timestamp = Timestamp(timestamp=turn.timestamp)
+        #            if turn.session_id:
+        #                turn.session_id = session_id
+        #    dataset[session_id] = [MultiTurn(session_id=session_id, turns=turns) for turns in multi_turns]
+
+        return dataset

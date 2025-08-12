@@ -11,6 +11,8 @@ from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
+    CustomDatasetType,
+    DatasetType,
     MessageType,
     ServiceType,
 )
@@ -27,7 +29,12 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
     DatasetTimingRequest,
     DatasetTimingResponse,
+    ProcessDatasetMessage,
     ProcessDatasetResponseMessage,
+    ProcessMooncakeTraceDatasetMessage,
+    ProcessMultiTurnDatasetMessage,
+    ProcessRandomPoolDatasetMessage,
+    ProcessSingleTurnDatasetMessage,
     ProcessSyntheticDatasetMessage,
     ProfileConfigureCommand,
     SpawnDatasetProcessorsCommand,
@@ -97,7 +104,15 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         )
 
         begin = time.perf_counter()
-        await self._configure_dataset()
+
+        if self.user_config.input.dataset_type == DatasetType.SYNTHETIC:
+            await self._configure_synthetic_dataset()
+        elif self.user_config.input.dataset_type == DatasetType.CUSTOM:
+            await self._configure_custom_dataset()
+        else:
+            raise NotImplementedError(
+                f"Dataset type {self.user_config.input.dataset_type} is not supported yet."
+            )
 
         # TODO: use dedicated function
         # Wait for the dataset to be configured if it is not already
@@ -123,28 +138,23 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
             lambda: f"Dataset configured in {duration:.2f} seconds with {len(self.dataset)} conversations"
         )
 
-    async def _configure_dataset(self) -> None:
-        if self.user_config.input.file:
-            self.debug(lambda: f"Detected input file '{self.user_config.input.file}'")
-            loader = CustomDatasetFactory.create_instance(
-                self.user_config.input.custom_dataset_type,
-                user_config=self.user_config,
-            )
-            _dataset = loader.load_dataset()
-            self.info(
-                f"Loaded {len(_dataset)} conversations from {self.user_config.input.file}"
-            )
+    async def _configure_synthetic_dataset(self) -> None:
+        """Configure a synthetic dataset.
 
-            # TODO: prepare processor message to handle custom dataset
-            import sys
-
-            sys.exit(0)
-
+        This will generate a synthetic dataset and distribute the work across the
+        dataset processors.
+        """
+        # TODO: change to debug log
+        self.info(
+            lambda: f"#### Configuring synthetic dataset with {self.user_config.input.conversation.num} conversations"
+        )
         conversations_per_processor = (
             self.user_config.input.conversation.num // self.num_processors
         )
-        self.debug(
-            lambda: f"Distributing {self.user_config.input.conversation.num} conversations across {self.num_processors} processors with {conversations_per_processor} conversations per processor"
+        # TODO: change to debug log
+        self.info(
+            lambda: f"#### Distributing {self.user_config.input.conversation.num} conversations "
+            f"across {self.num_processors} processors with {conversations_per_processor} conversations per processor"
         )
 
         for _ in range(self.num_processors):
@@ -155,10 +165,53 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
                 )
             )
 
+    async def _configure_custom_dataset(self) -> None:
+        """Configure a custom dataset.
+
+        This will load a custom dataset from a file and distribute the work across the
+        dataset processors.
+        """
+        # TODO: change to debug log
+        self.info(lambda: f"#### Detected input file '{self.user_config.input.file}'")
+        loader = CustomDatasetFactory.create_instance(
+            self.user_config.input.custom_dataset_type,
+            user_config=self.user_config,
+        )
+        dataset_list = list(loader.load_dataset().items())
+
+        process_messages: dict[CustomDatasetType, type[ProcessDatasetMessage]] = {
+            CustomDatasetType.MOONCAKE_TRACE: ProcessMooncakeTraceDatasetMessage,
+            CustomDatasetType.MULTI_TURN: ProcessMultiTurnDatasetMessage,
+            CustomDatasetType.SINGLE_TURN: ProcessSingleTurnDatasetMessage,
+            CustomDatasetType.RANDOM_POOL: ProcessRandomPoolDatasetMessage,
+        }
+
+        process_message = process_messages[self.user_config.input.custom_dataset_type]
+        per_processor, extra = divmod(len(dataset_list), self.num_processors)
+
+        # TODO: what happens if chunk count < num processors? some processors will get jobs more than once.
+        for i in range(self.num_processors):
+            # self.info(lambda: f"#### Pushing dataset to processor {i}")
+            await self.jobs_push_client.push(
+                message=process_message(
+                    service_id=self.service_id,
+                    dataset=dataset_list[per_processor * i : per_processor * (i + 1)],
+                )
+            )
+
+        if extra > 0:
+            await self.jobs_push_client.push(
+                message=process_message(
+                    service_id=self.service_id,
+                    dataset=dataset_list[per_processor * self.num_processors :],
+                )
+            )
+
     @on_pull_message(MessageType.DATASET_RESULT)
     async def _on_result(self, message: ProcessDatasetResponseMessage) -> None:
         """Handle a dataset job result."""
-        self.info(f"Received dataset result from {message.service_id}")
+        #  TODO: change to debug log
+        self.info(f"#### Received dataset result from {message.service_id}")
 
         for conversation in message.generated_data:
             self.dataset[conversation.session_id] = conversation

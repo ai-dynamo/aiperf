@@ -16,6 +16,7 @@ from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_init, on_pull_message
 from aiperf.common.messages import (
     ProcessDatasetResponseMessage,
+    ProcessMooncakeTraceDatasetMessage,
     ProcessSyntheticDatasetMessage,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -99,8 +100,9 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
         message: ProcessSyntheticDatasetMessage,
     ) -> None:
         """Handle a dataset generation job."""
-        self.debug(
-            lambda: f"Received synthetic dataset generation job to process {message.num_conversations} conversations"
+        # TODO: change to debug log
+        self.info(
+            lambda: f"#### ({self.service_id}) Received synthetic dataset generation job to process {message.num_conversations} conversations"
         )
 
         if message.random_seed is not None:
@@ -278,41 +280,50 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
         turn.model = self._select_model_name()
         self._set_max_tokens(turn)
 
-    # @on_pull_message(MessageType.PROCESS_MOONCAKE_TRACE_DATASET)
-    # async def _on_process_mooncake_trace_dataset(
-    #    self, message: ProcessMooncakeTraceDatasetMessage,
-    # ) -> None:
-    #    """Handle a mooncake trace dataset generation job."""
-    #    self.debug(lambda: f"Received mooncake trace dataset generation job: {message}")
-    #
-    #    if message.random_seed is not None:
-    #        random.seed(message.random_seed)
-    #        self.debug(lambda: f"Setting random seed to {message.random_seed}")
-    #
-    #    self.model_selection_counter = 0
-    #
-    #    conversations = []
-    #    for session_id, traces in message.data.items():
-    #        conversation = Conversation(session_id=session_id)
-    #        for trace in traces:
-    #            prompt = self.prompt_generator.generate(
-    #                mean=trace.input_length,
-    #                stddev=0,
-    #                hash_ids=trace.hash_ids,
-    #            )
-    #            turn = Turn(
-    #                timestamp=trace.timestamp,
-    #                texts=[Text(name="text", contents=[prompt])],
-    #            )
-    #            conversation.turns.append(turn)
-    #        conversations.append(conversation)
+    @on_pull_message(MessageType.PROCESS_MOONCAKE_TRACE_DATASET)
+    async def _on_process_mooncake_trace_dataset(
+        self,
+        message: ProcessMooncakeTraceDatasetMessage,
+    ) -> None:
+        """Handle a mooncake trace dataset generation job."""
 
-    #    await self.results_push_client.push(
-    #        DatasetResultMessage(
-    #            service_id=self.service_id,
-    #            generated_data=conversations,
-    #        )
-    #    )
+        # TODO: change to debug log
+        self.info(
+            lambda: f"#### Received mooncake trace dataset generation job from {message.service_id}"
+        )
+
+        if message.random_seed is not None:
+            random.seed(message.random_seed)
+            self.info(lambda: f"Setting random seed to {message.random_seed}")
+
+        # TODO: implement model selection strategy
+        self.model_selection_counter = 0
+
+        conversations = []
+        for session_id, traces in message.dataset:
+            conversation = Conversation(session_id=session_id)
+            for trace in traces:
+                prompt = self.prompt_generator.generate(
+                    mean=trace["input_length"],
+                    stddev=0,
+                    hash_ids=trace["hash_ids"],
+                )
+                turn = Turn(
+                    timestamp=trace["timestamp"],
+                    texts=[Text(name="text", contents=[prompt])],
+                )
+                conversation.turns.append(turn)
+            conversations.append(conversation)
+
+        self.info(lambda: f"#### Pushing dataset result to {message.service_id}")
+
+        await self.results_push_client.push(
+            ProcessDatasetResponseMessage(
+                service_id=self.service_id,
+                generated_data=conversations,
+            )
+        )
+
     #
     # @on_pull_message(MessageType.PROCESS_MULTI_TURN_DATASET)
     # async def _on_process_multi_turn_dataset(
@@ -325,6 +336,7 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
     #        random.seed(message.random_seed)
     #        self.debug(lambda: f"Setting random seed to {message.random_seed}")
     #
+    #    # TODO: implement model selection strategy
     #    self.model_selection_counter = 0
     #
     #    conversations = []
@@ -364,6 +376,7 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
     #        random.seed(message.random_seed)
     #        self.debug(lambda: f"Setting random seed to {message.random_seed}")
     #
+    #    # TODO: implement model selection strategy
     #    self.model_selection_counter = 0
     #
     #    conversations = []
@@ -404,6 +417,7 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
     #         random.seed(message.random_seed)
     #         self.debug(lambda: f"Setting random seed to {seed}")
 
+    #     # TODO: implement model selection strategy
     #     self.model_selection_counter = 0
 
     #     # TODO: add random pool dataset
