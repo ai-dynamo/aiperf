@@ -81,6 +81,8 @@ class TaskManagerProtocol(AIPerfLoggerProtocol, Protocol):
 
     async def cancel_all_tasks(self, timeout: float) -> None: ...
 
+    async def wait_for_tasks(self) -> list[BaseException | None]: ...
+
     def start_background_task(
         self,
         method: Callable,
@@ -294,6 +296,15 @@ class MessageBusClientProtocol(PubClientProtocol, SubClientProtocol, Protocol):
 ################################################################################
 # General Protocols (sorted alphabetically)
 ################################################################################
+
+
+@runtime_checkable
+class AIPerfUIProtocol(AIPerfLifecycleProtocol, Protocol):
+    """Protocol interface definition for AIPerf UI implementations.
+
+    Basically a UI can be any class that implements the AIPerfLifecycleProtocol. However, in order to provide
+    progress tracking and worker tracking, the simplest way would be to inherit from the :class:`aiperf.ui.base_ui.BaseAIPerfUI`.
+    """
 
 
 @runtime_checkable
