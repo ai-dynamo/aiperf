@@ -31,10 +31,8 @@ class EndpointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
     CUSTOM_ENDPOINT = None
     TYPE = EndpointType.OPENAI_CHAT_COMPLETIONS
-    STREAMING = True
-    SERVER_METRICS_URLS = ["http://localhost:8002/metrics"]
+    STREAMING = False
     URL = "localhost:8080"
-    GRPC_METHOD = ""
     TIMEOUT = 600.0
     API_KEY = None
 
