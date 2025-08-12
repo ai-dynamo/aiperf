@@ -71,10 +71,6 @@ from aiperf.common.messages.service_messages import (
     RegistrationMessage,
     StatusMessage,
 )
-from aiperf.common.messages.worker_messages import (
-    WorkerHealthMessage,
-    WorkerStatusSummaryMessage,
-)
 
 __all__ = [
     "AllRecordsReceivedMessage",
@@ -126,6 +122,4 @@ __all__ = [
     "SpawnWorkersCommand",
     "StatusMessage",
     "TargetedServiceMessage",
-    "WorkerHealthMessage",
-    "WorkerStatusSummaryMessage",
 ]
