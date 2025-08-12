@@ -14,6 +14,11 @@ from aiperf.exporters.console_error_exporter import (
 from aiperf.exporters.console_metrics_exporter import (
     ConsoleMetricsExporter,
 )
+from aiperf.exporters.display_units_utils import (
+    STAT_KEYS,
+    convert_all_metrics_to_display_units,
+    to_display_unit,
+)
 from aiperf.exporters.exporter_config import (
     ExporterConfig,
 )
@@ -32,4 +37,7 @@ __all__ = [
     "ExporterManager",
     "JsonExportData",
     "JsonExporter",
+    "STAT_KEYS",
+    "convert_all_metrics_to_display_units",
+    "to_display_unit",
 ]
