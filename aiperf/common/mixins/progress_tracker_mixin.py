@@ -16,11 +16,10 @@ from aiperf.common.messages import (
     CreditPhaseStartMessage,
     ProfileResultsMessage,
     RecordsProcessingStatsMessage,
-    WorkerHealthMessage,
 )
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models.progress_models import (
-    CreditPhaseProgress,
+    FullPhaseProgress,
     RecordsStats,
     RequestsStats,
     StatsProtocol,
@@ -28,13 +27,17 @@ from aiperf.common.models.progress_models import (
 )
 
 
-@provides_hooks(AIPerfHook.ON_RECORDS_PROGRESS, AIPerfHook.ON_REQUESTS_PHASE_PROGRESS)
+@provides_hooks(
+    AIPerfHook.ON_RECORDS_PROGRESS,
+    AIPerfHook.ON_PROFILING_PROGRESS,
+    AIPerfHook.ON_WARMUP_PROGRESS,
+)
 class ProgressTrackerMixin(MessageBusClientMixin):
     """A progress tracker that tracks the progress of the entire benchmark suite."""
 
     def __init__(self, service_config: ServiceConfig, **kwargs):
         super().__init__(service_config=service_config, **kwargs)
-        self._phase_progress_map: dict[CreditPhase, CreditPhaseProgress] = {}
+        self._phase_progress_map: dict[CreditPhase, FullPhaseProgress] = {}
         self._active_phase: CreditPhase | None = None
         self._phase_progress_lock = asyncio.Lock()
         self._workers_stats: dict[str, WorkerStats] = {}
@@ -48,7 +51,7 @@ class ProgressTrackerMixin(MessageBusClientMixin):
                 self.warning(f"Phase stats already started for {message.phase}")
                 return
             self._active_phase = message.phase
-            phase_progress = CreditPhaseProgress(
+            phase_progress = FullPhaseProgress(
                 requests=RequestsStats(
                     type=message.phase,
                     start_ns=message.start_ns,
@@ -63,7 +66,9 @@ class ProgressTrackerMixin(MessageBusClientMixin):
                 ),
             )
             self._phase_progress_map[message.phase] = phase_progress
-            await self._update_requests_stats(phase_progress, message.start_ns)
+            await self._update_requests_stats(
+                message.phase, phase_progress, message.start_ns
+            )
             if message.phase == CreditPhase.PROFILING:
                 await self._update_records_stats(phase_progress, message.start_ns)
 
@@ -73,7 +78,9 @@ class ProgressTrackerMixin(MessageBusClientMixin):
         async with self.phase_progress_context(message.phase) as phase_progress:
             phase_progress.requests.sent = message.sent
             phase_progress.requests.completed = message.completed
-            await self._update_requests_stats(phase_progress, message.request_ns)
+            await self._update_requests_stats(
+                message.phase, phase_progress, message.request_ns
+            )
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
     async def _on_credit_phase_sending_complete(
@@ -83,7 +90,9 @@ class ProgressTrackerMixin(MessageBusClientMixin):
         async with self.phase_progress_context(message.phase) as phase_progress:
             phase_progress.requests.sent_end_ns = message.sent_end_ns
             phase_progress.requests.sent = message.sent
-            await self._update_requests_stats(phase_progress, message.request_ns)
+            await self._update_requests_stats(
+                message.phase, phase_progress, message.request_ns
+            )
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
     async def _on_credit_phase_complete(self, message: CreditPhaseCompleteMessage):
@@ -92,7 +101,9 @@ class ProgressTrackerMixin(MessageBusClientMixin):
             phase_progress.requests.end_ns = message.end_ns
             # Just in case we did not get a progress report for the last credit (timing issues due to network)
             phase_progress.requests.completed = phase_progress.requests.sent
-            await self._update_requests_stats(phase_progress, message.request_ns)
+            await self._update_requests_stats(
+                message.phase, phase_progress, message.request_ns
+            )
 
     @on_message(MessageType.PROCESSING_STATS)
     async def _on_phase_processing_stats(self, message: RecordsProcessingStatsMessage):
@@ -100,25 +111,17 @@ class ProgressTrackerMixin(MessageBusClientMixin):
         async with self.phase_progress_context(CreditPhase.PROFILING) as phase_progress:
             phase_progress.records.processed = message.processing_stats.processed
             phase_progress.records.errors = message.processing_stats.errors
-            phase_progress.records.update_ns = time.time_ns()
+            phase_progress.records.last_update_ns = time.time_ns()
 
             for worker_id, processing_stats in message.worker_stats.items():
                 async with self._workers_stats_lock:
                     if worker_id not in self._workers_stats:
-                        self._workers_stats[worker_id] = WorkerStats()
-                    self._workers_stats[worker_id].processing = processing_stats
+                        self._workers_stats[worker_id] = WorkerStats(
+                            worker_id=worker_id
+                        )
+                    self._workers_stats[worker_id].processing_stats = processing_stats
 
             await self._update_records_stats(phase_progress, message.request_ns)
-
-    @on_message(MessageType.WORKER_HEALTH)
-    async def _on_worker_health(self, message: WorkerHealthMessage):
-        """Update the progress from a worker health message."""
-        worker_id = message.service_id
-        async with self._workers_stats_lock:
-            if worker_id not in self._workers_stats:
-                self._workers_stats[worker_id] = WorkerStats()
-            self._workers_stats[worker_id].health = message.process
-            self._workers_stats[worker_id].tasks = message.tasks
 
     @on_message(MessageType.PROFILE_RESULTS)
     async def _on_profile_results(self, message: ProfileResultsMessage):
@@ -126,23 +129,34 @@ class ProgressTrackerMixin(MessageBusClientMixin):
         self.profile_results = message
 
     async def _update_requests_stats(
-        self, phase_progress: CreditPhaseProgress, request_ns: int | None
+        self,
+        phase: CreditPhase,
+        phase_progress: FullPhaseProgress,
+        request_ns: int | None,
     ):
         """Update the requests stats based on the TimingManager stats."""
         if self.is_debug_enabled:
             self.debug(
-                f"Updating requests stats for phase '{phase_progress.phase.title()}': sent: {phase_progress.requests.sent}, "
+                f"Updating requests stats for phase '{phase.title()}': sent: {phase_progress.requests.sent}, "
                 f"completed: {phase_progress.requests.completed}, total_expected: {phase_progress.requests.total_expected_requests}"
             )
         self._update_computed_stats(request_ns, phase_progress.requests)
-        await self.run_hooks(
-            AIPerfHook.ON_REQUESTS_PHASE_PROGRESS,
-            phase=phase_progress.phase,
-            requests_stats=phase_progress.requests,
-        )
+
+        if phase == CreditPhase.WARMUP:
+            await self.run_hooks(
+                AIPerfHook.ON_WARMUP_PROGRESS,
+                warmup_stats=phase_progress.requests,
+            )
+        elif phase == CreditPhase.PROFILING:
+            await self.run_hooks(
+                AIPerfHook.ON_PROFILING_PROGRESS,
+                profiling_stats=phase_progress.requests,
+            )
+        else:
+            raise ValueError(f"Invalid phase: {phase}")
 
     async def _update_records_stats(
-        self, phase_progress: CreditPhaseProgress, request_ns: int | None
+        self, phase_progress: FullPhaseProgress, request_ns: int | None
     ):
         """Update the records stats based on the RecordsManager stats."""
         if self.is_debug_enabled:
@@ -171,7 +185,7 @@ class ProgressTrackerMixin(MessageBusClientMixin):
             start_ns: The start time of the requests
         """
         dur_ns = (request_ns or time.time_ns()) - (stats.start_ns or time.time_ns())
-        stats.update_ns = request_ns or time.time_ns()
+        stats.last_update_ns = request_ns or time.time_ns()
         if dur_ns <= 0:
             stats.per_second = None
             stats.eta = None
@@ -190,7 +204,7 @@ class ProgressTrackerMixin(MessageBusClientMixin):
     @asynccontextmanager
     async def phase_progress_context(
         self, phase: CreditPhase
-    ) -> AsyncGenerator[CreditPhaseProgress, None]:
+    ) -> AsyncGenerator[FullPhaseProgress, None]:
         """Context manager for safely accessing phase progress info with warning."""
         async with self._phase_progress_lock:
             phase_progress = self._phase_progress_map.get(phase)

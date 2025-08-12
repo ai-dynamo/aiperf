@@ -1,13 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import (
-    Field,
-)
+from pydantic import Field
 
-from aiperf.common.enums import (
-    MessageType,
-)
+from aiperf.common.enums import MessageType
+from aiperf.common.enums.worker_enums import WorkerStatus
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
 from aiperf.common.types import MessageTypeT
@@ -18,10 +15,10 @@ class WorkerHealthMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.WORKER_HEALTH
 
-    process: ProcessHealth = Field(..., description="The health of the worker process")
+    health: ProcessHealth = Field(..., description="The health of the worker process")
 
     # Worker specific fields
-    tasks: WorkerTaskStats = Field(
+    task_stats: WorkerTaskStats = Field(
         ...,
         description="Stats for the tasks that have been sent to the worker",
     )
@@ -29,6 +26,17 @@ class WorkerHealthMessage(BaseServiceMessage):
     @property
     def error_rate(self) -> float:
         """The error rate of the worker."""
-        if self.tasks.total == 0:
+        if self.task_stats.total == 0:
             return 0
-        return self.tasks.failed / self.tasks.total
+        return self.task_stats.failed / self.task_stats.total
+
+
+class WorkerStatusSummaryMessage(BaseServiceMessage):
+    """Message for a worker status summary."""
+
+    message_type: MessageTypeT = MessageType.WORKER_STATUS_SUMMARY
+
+    worker_statuses: dict[str, WorkerStatus] = Field(
+        ...,
+        description="A mapping of worker IDs to their status",
+    )

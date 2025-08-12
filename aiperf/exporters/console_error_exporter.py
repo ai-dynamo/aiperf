@@ -20,11 +20,11 @@ class ConsoleErrorExporter:
     def __init__(self, exporter_config: ExporterConfig, **kwargs):
         self._results = exporter_config.results
 
-    async def export(self, console: Console, width: int | None = None) -> None:
+    async def export(self, console: Console) -> None:
         if not self._results.error_summary:
             return
 
-        table = Table(title=self._get_title(), width=width)
+        table = Table(title=self._get_title())
         table.add_column("Code", justify="right", style="yellow")
         table.add_column("Type", justify="right", style="yellow")
         table.add_column("Message", justify="left", style="yellow")

@@ -132,7 +132,7 @@ class CreditPhaseStats(CreditPhaseConfig):
         )
 
 
-class PhaseProcessingStats(AIPerfBaseModel):
+class ProcessingStats(AIPerfBaseModel):
     """Model for phase processing stats. How many requests were processed and
     how many errors were encountered."""
 

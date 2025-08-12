@@ -15,7 +15,7 @@ from aiperf.common.models.base_models import (
 from aiperf.common.models.credit_models import (
     CreditPhaseConfig,
     CreditPhaseStats,
-    PhaseProcessingStats,
+    ProcessingStats,
 )
 from aiperf.common.models.dataset_models import (
     Audio,
@@ -37,7 +37,7 @@ from aiperf.common.models.health_models import (
 )
 from aiperf.common.models.progress_models import (
     ComputedStats,
-    CreditPhaseProgress,
+    FullPhaseProgress,
     RecordsStats,
     RequestsStats,
     StatsProtocol,
@@ -69,20 +69,20 @@ __all__ = [
     "ComputedStats",
     "Conversation",
     "CreditPhaseConfig",
-    "CreditPhaseProgress",
     "CreditPhaseStats",
     "CtxSwitches",
     "ErrorDetails",
     "ErrorDetailsCount",
+    "FullPhaseProgress",
     "IOCounters",
     "Image",
     "InferenceServerResponse",
     "Media",
     "MetricResult",
     "ParsedResponseRecord",
-    "PhaseProcessingStats",
     "ProcessHealth",
     "ProcessRecordsResult",
+    "ProcessingStats",
     "ProfileResults",
     "RecordsStats",
     "RequestRecord",

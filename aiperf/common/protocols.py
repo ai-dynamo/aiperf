@@ -311,12 +311,12 @@ class AIPerfUIProtocol(AIPerfLifecycleProtocol, Protocol):
 class ConsoleExporterProtocol(Protocol):
     """Protocol for console exporters.
     Any class implementing this protocol will be provided an ExporterConfig and must provide an
-    `export` method that takes a rich Console and a width and handles exporting them appropriately.
+    `export` method that takes a rich Console and handles exporting them appropriately.
     """
 
     def __init__(self, exporter_config: "ExporterConfig") -> None: ...
 
-    async def export(self, console: "Console", width: int | None = None) -> None: ...
+    async def export(self, console: "Console") -> None: ...
 
 
 @runtime_checkable

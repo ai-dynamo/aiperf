@@ -132,8 +132,8 @@ class Worker(
     def create_health_message(self) -> WorkerHealthMessage:
         return WorkerHealthMessage(
             service_id=self.service_id,
-            process=self.get_process_health(),
-            tasks=self.task_stats,
+            health=self.get_process_health(),
+            task_stats=self.task_stats,
         )
 
     @on_command(CommandType.PROFILE_CANCEL)
