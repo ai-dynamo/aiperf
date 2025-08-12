@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
 import asyncio
+import os
 import sys
 import time
 from typing import cast
+
+from rich.console import Console
 
 from aiperf.cli_utils import warn_cancelled_early
 from aiperf.common.base_service import BaseService
@@ -38,6 +42,7 @@ from aiperf.common.messages import (
     StatusMessage,
 )
 from aiperf.common.models import ServiceRunInfo
+from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.proxy_manager import ProxyManager
@@ -97,6 +102,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
         )
         self._stop_tasks: set[asyncio.Task] = set()
+        self._profile_results: ProcessRecordsResult | None = None
         self.debug("System Controller created")
 
     async def initialize(self) -> None:
@@ -326,21 +332,20 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"Received process records result message with errors: {message.results.errors}"
             )
 
-        # This will be displayed by the console error exporter
+        # This data will also be displayed by the console error exporter
         self.debug(lambda: f"Error summary: {message.results.results.error_summary}")
+
+        self._profile_results = message.results
 
         if message.results.results:
             await ExporterManager(
                 results=message.results.results,
                 input_config=self.user_config,
-            ).export_all()
+            ).export_data()
         else:
             self.error(
                 f"Received process records result message with no records: {message.results.results}"
             )
-
-        if self._was_cancelled:
-            warn_cancelled_early()
 
         # TODO: HACK: Stop the system controller after exporting the records
         self.debug("Stopping system controller after exporting records")
@@ -384,6 +389,24 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.service_manager.shutdown_all_services()
         await self.comms.stop()
         await self.proxy_manager.stop()
+
+        if self._profile_results:
+            await ExporterManager(
+                results=self._profile_results.results,
+                input_config=self.user_config,
+            ).export_console(console=Console(), width=None)
+
+            if (
+                self._was_cancelled
+                and self._profile_results.results
+                and self._profile_results.results.records
+            ):
+                warn_cancelled_early()
+        else:
+            self.warning("No profile results to export")
+
+        # Exit the process in a more explicit way, to ensure that it stops
+        os._exit(0)
 
     async def _kill(self):
         """Kill the system controller."""

@@ -4,20 +4,23 @@
 from rich.console import Console
 from rich.table import Table
 
-from aiperf.common.enums import DataExporterType
-from aiperf.common.factories import DataExporterFactory
+from aiperf.common.decorators import implements_protocol
+from aiperf.common.enums import ConsoleExporterType
+from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.models import ErrorDetailsCount
+from aiperf.common.protocols import ConsoleExporterProtocol
 from aiperf.exporters.exporter_config import ExporterConfig
 
 
-@DataExporterFactory.register(DataExporterType.CONSOLE_ERROR)
+@implements_protocol(ConsoleExporterProtocol)
+@ConsoleExporterFactory.register(ConsoleExporterType.ERRORS)
 class ConsoleErrorExporter:
     """A class that exports error data to the console"""
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs):
         self._results = exporter_config.results
 
-    async def export(self, width: int | None = None) -> None:
+    async def export(self, console: Console, width: int | None = None) -> None:
         if not self._results.error_summary:
             return
 
@@ -28,7 +31,6 @@ class ConsoleErrorExporter:
         table.add_column("Count", justify="right", style="yellow")
         self._construct_table(table, self._results.error_summary)
 
-        console = Console()
         console.print("\n")
         console.print(table)
         console.file.flush()

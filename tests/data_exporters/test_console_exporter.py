@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from rich.console import Console
 
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult, ProfileResults
-from aiperf.exporters import ConsoleExporter, ExporterConfig
+from aiperf.exporters import ExporterConfig
+from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
 
 
 @pytest.fixture
@@ -81,8 +83,8 @@ def mock_exporter_config(sample_records, mock_endpoint_config):
 class TestConsoleExporter:
     @pytest.mark.asyncio
     async def test_export_prints_expected_table(self, mock_exporter_config, capsys):
-        exporter = ConsoleExporter(mock_exporter_config)
-        await exporter.export(width=100)
+        exporter = ConsoleMetricsExporter(mock_exporter_config)
+        await exporter.export(Console(), width=100)
         output = capsys.readouterr().out
         assert "NVIDIA AIPerf | LLM Metrics" in output
         assert "Time to First Token (ms)" in output
@@ -126,7 +128,7 @@ class TestConsoleExporter:
                 ),
                 user_config=input_config,
             )
-            exporter = ConsoleExporter(config)
+            exporter = ConsoleMetricsExporter(config)
 
             # Test with actual metric behavior: use hidden metrics vs normal metrics
             if is_hidden_metric:
@@ -148,7 +150,7 @@ class TestConsoleExporter:
             assert exporter._should_skip(record) is should_skip
 
     def test_format_row_formats_values_correctly(self, mock_exporter_config):
-        exporter = ConsoleExporter(mock_exporter_config)
+        exporter = ConsoleMetricsExporter(mock_exporter_config)
         # Request latency metric expects values in nanoseconds (native unit)
         # but displays in milliseconds.
         record = MetricResult(
@@ -173,5 +175,5 @@ class TestConsoleExporter:
         assert row[6] == "12.30"
 
     def test_get_title_returns_expected_string(self, mock_exporter_config):
-        exporter = ConsoleExporter(mock_exporter_config)
+        exporter = ConsoleMetricsExporter(mock_exporter_config)
         assert exporter._get_title() == "NVIDIA AIPerf | LLM Metrics"
