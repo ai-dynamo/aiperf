@@ -35,7 +35,6 @@ class ProgressBar:
             position=position,
             leave=False,
             dynamic_ncols=False,
-            unit=" pct",
             bar_format="{desc}: {n:,.0f}/{total:,} |{bar}| {percentage:3.0f}% [{elapsed}<{remaining}]",
             **kwargs,
         )
