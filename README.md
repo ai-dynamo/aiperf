@@ -18,6 +18,9 @@ limitations under the License.
 
 [![PyPI version](https://img.shields.io/pypi/v/AIPerf)](https://pypi.org/project/aiperf/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Discord](https://dcbadge.limes.pink/api/server/D92uqZRjCZ?style=flat)](https://discord.gg/D92uqZRjCZ)
+
+| **[Roadmap](https://github.com/ai-dynamo/dynamo/issues/762)** | **[Documentation](https://docs.nvidia.com/dynamo/latest/index.html)** | **[Design Proposals](https://github.com/ai-dynamo/enhancements)** |
 
 
 AIPerf is a comprehensive benchmarking tool for measuring the performance of generative AI models served by your preferred inference solution. 
