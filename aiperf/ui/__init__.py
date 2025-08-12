@@ -28,6 +28,10 @@ from aiperf.ui.dashboard import (
 from aiperf.ui.no_ui import (
     NoUI,
 )
+from aiperf.ui.tqdm_ui import (
+    ProgressBar,
+    TQDMProgressUI,
+)
 from aiperf.ui.utils import (
     format_bytes,
     format_duration,
@@ -42,8 +46,10 @@ __all__ = [
     "LogConsumer",
     "NoUI",
     "NonFocusableDataTable",
+    "ProgressBar",
     "ProgressDashboard",
     "RichLogViewer",
+    "TQDMProgressUI",
     "WORKER_STATUS_STYLES",
     "WorkerDashboard",
     "WorkerStatusTable",
