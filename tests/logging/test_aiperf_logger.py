@@ -22,6 +22,7 @@ from aiperf.common.aiperf_logger import (
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import RequestRecord, TextResponse
+from aiperf.common.models.dataset_models import Text, Turn
 from tests.utils.time_traveler import TimeTraveler
 
 
@@ -48,14 +49,10 @@ def standard_logger():
 @pytest.fixture
 def large_message():
     return RequestRecord(
-        request={
-            "id": "123",
-            "url": "http://localhost:8080",
-            "method": "GET",
-            "headers": {
-                "Content-Type": "application/json",
-            },
-        },
+        turn=Turn(
+            role="user",
+            texts=[Text(contents=["Hello, world!"] * 100)],
+        ),
         timestamp_ns=time.time_ns(),
         start_perf_ns=time.perf_counter_ns(),
         end_perf_ns=time.perf_counter_ns() + (1_000_000_000 * 101),

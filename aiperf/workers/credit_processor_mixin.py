@@ -175,6 +175,7 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
         record.model_name = self.model_endpoint.primary_model_name
         record.conversation_id = conversation_response.conversation.session_id
         record.turn_index = 0
+        record.turn = conversation_response.conversation.turns[record.turn_index]
         return record
 
     async def _call_inference_api_internal(
@@ -232,7 +233,6 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
                 f"Error calling inference server API at {self.model_endpoint.url}: {e}"
             )
             return RequestRecord(
-                request=formatted_payload,
                 timestamp_ns=timestamp_ns or time.time_ns(),
                 # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
                 start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),

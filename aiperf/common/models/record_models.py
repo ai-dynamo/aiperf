@@ -14,6 +14,7 @@ from pydantic import (
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, SSEFieldType
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.types import MetricTagT
 
@@ -150,9 +151,9 @@ class SSEMessage(InferenceServerResponse):
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
 
-    request: Any | None = Field(
+    turn: Turn | None = Field(
         default=None,
-        description="The request payload formatted for the inference API.",
+        description="The turn associated with the request (if applicable).",
     )
     conversation_id: str | None = Field(
         default=None,

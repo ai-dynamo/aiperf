@@ -19,6 +19,7 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
 )
+from aiperf.common.models.dataset_models import Turn
 from aiperf.common.protocols import RequestClientProtocol, ResponseExtractorProtocol
 from aiperf.common.tokenizer import Tokenizer
 
@@ -31,10 +32,12 @@ class InferenceResultParser(CommunicationMixin):
         self,
         service_config: ServiceConfig,
         user_config: UserConfig,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config,
             user_config=user_config,
+            **kwargs,
         )
         self.conversation_request_client: RequestClientProtocol = (
             self.comms.create_request_client(
@@ -181,6 +184,9 @@ class InferenceResultParser(CommunicationMixin):
         self, request_record: RequestRecord, tokenizer: Tokenizer
     ) -> int | None:
         """Compute the number of tokens in the input for a given request record."""
+        if request_record.turn is not None:
+            return _get_input_token_count_from_turn(request_record.turn, tokenizer)
+
         if request_record.conversation_id is None or request_record.turn_index is None:
             self.warning(
                 lambda: f"Conversation ID or turn index is None: {request_record.conversation_id=} {request_record.turn_index=}"
@@ -200,8 +206,12 @@ class InferenceResultParser(CommunicationMixin):
             self.error(lambda: f"Error getting turn response: {turn_response}")
             return None
 
-        turn = turn_response.turn
-        input_token_count = 0
-        for text in turn.texts:
-            input_token_count += len(tokenizer.encode("".join(text.contents)))
-        return input_token_count
+        return _get_input_token_count_from_turn(turn_response.turn, tokenizer)
+
+
+def _get_input_token_count_from_turn(turn: Turn, tokenizer: Tokenizer) -> int:
+    """Get the number of tokens in the input for a given turn."""
+    input_token_count = 0
+    for text in turn.texts:
+        input_token_count += len(tokenizer.encode("".join(text.contents)))
+    return input_token_count
