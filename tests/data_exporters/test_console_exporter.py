@@ -84,7 +84,7 @@ class TestConsoleExporter:
     @pytest.mark.asyncio
     async def test_export_prints_expected_table(self, mock_exporter_config, capsys):
         exporter = ConsoleMetricsExporter(mock_exporter_config)
-        await exporter.export(Console(), width=100)
+        await exporter.export(Console(width=100))
         output = capsys.readouterr().out
         assert "NVIDIA AIPerf | LLM Metrics" in output
         assert "Time to First Token (ms)" in output

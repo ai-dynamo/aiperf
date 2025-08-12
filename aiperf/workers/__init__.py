@@ -18,7 +18,7 @@ from aiperf.workers.worker import (
 )
 from aiperf.workers.worker_manager import (
     WorkerManager,
-    WorkerProcessInfo,
+    WorkerStatusInfo,
 )
 
 __all__ = [
@@ -27,5 +27,5 @@ __all__ = [
     "CreditProcessorProtocol",
     "Worker",
     "WorkerManager",
-    "WorkerProcessInfo",
+    "WorkerStatusInfo",
 ]
