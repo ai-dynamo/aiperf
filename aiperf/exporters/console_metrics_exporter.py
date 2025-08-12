@@ -10,11 +10,11 @@ from rich.table import Table
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import MetricFlags
 from aiperf.common.enums.data_exporter_enums import ConsoleExporterType
-from aiperf.common.exceptions import MetricUnitError
 from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ConsoleExporterProtocol
+from aiperf.exporters.display_units_utils import to_display_unit
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.metric_registry import MetricRegistry
 
@@ -51,7 +51,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
 
     def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
         records = sorted(
-            records,
+            (to_display_unit(r, MetricRegistry()) for r in records),
             key=lambda x: MetricRegistry.get_class(x.tag).display_order or sys.maxsize,
         )
         for record in records:
@@ -77,13 +77,6 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
             if value is None:
                 row.append("[dim]N/A[/dim]")
                 continue
-
-            # Count should never be unit-converted (it's always just the number of records)
-            if display_unit != metric_class.unit and stat != "count":
-                try:
-                    value = metric_class.unit.convert_to(display_unit, value)
-                except MetricUnitError as e:
-                    self.warning(f"Error during unit conversion: {e}")
 
             if isinstance(value, datetime):
                 value = value.strftime("%Y-%m-%d %H:%M:%S")
