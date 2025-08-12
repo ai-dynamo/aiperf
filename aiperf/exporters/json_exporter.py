@@ -44,7 +44,7 @@ class JsonExporter(AIPerfLoggerMixin):
         self._results = exporter_config.results
         self._output_directory = exporter_config.user_config.output.artifact_directory
         self._input_config = exporter_config.user_config
-        self._metric_registry = MetricRegistry()
+        self._metric_registry = MetricRegistry
 
     async def export(self) -> None:
         filename = self._output_directory / "profile_export_aiperf.json"

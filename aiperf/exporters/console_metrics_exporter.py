@@ -51,7 +51,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
 
     def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
         records = sorted(
-            (to_display_unit(r, MetricRegistry()) for r in records),
+            (to_display_unit(r, MetricRegistry) for r in records),
             key=lambda x: MetricRegistry.get_class(x.tag).display_order or sys.maxsize,
         )
         for record in records:

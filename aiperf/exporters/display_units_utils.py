@@ -31,14 +31,14 @@ def to_display_unit(result: MetricResult, registry: MetricRegistry) -> MetricRes
     Return a new MetricResult converted to its display unit (if different).
     """
     metric_cls = registry.get_class(result.tag)
-    if result.unit != metric_cls.unit:
+    if result.unit and result.unit != metric_cls.unit.value:
         _logger.error(
-            f"Metric {result.tag} has a unit ({result.unit}) that does not match the expected unit ({metric_cls.unit.value})."
+            f"Metric {result.tag} has a unit ({result.unit}) that does not match the expected unit ({metric_cls.unit.value}). "
+            f"({metric_cls.unit.value}) will be used for conversion."
         )
 
     display_unit = metric_cls.display_unit or metric_cls.unit
 
-    # Counts do not need to be converted
     if display_unit == metric_cls.unit:
         return result
 
@@ -49,18 +49,16 @@ def to_display_unit(result: MetricResult, registry: MetricRegistry) -> MetricRes
         val = getattr(record, stat, None)
         if val is None:
             continue
-        # Only convert numerics
+        # Only convert numeric values
         if isinstance(val, int | float):
             try:
-                setattr(
-                    record,
-                    stat,
-                    metric_cls.unit.convert_to(display_unit, val),
-                )
+                new_value = metric_cls.unit.convert_to(display_unit, val)
             except MetricUnitError as e:
                 _logger.warning(
                     f"Error converting {stat} for {result.tag} from {metric_cls.unit.value} to {display_unit.value}: {e}"
                 )
+                continue
+            setattr(record, stat, new_value)
     return record
 
 
