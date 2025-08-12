@@ -35,6 +35,7 @@ from aiperf.common.enums.dataset_enums import (
     PromptSource,
 )
 from aiperf.common.enums.endpoints_enums import (
+    EndpointServiceKind,
     EndpointType,
     EndpointTypeInfo,
 )
@@ -114,6 +115,7 @@ __all__ = [
     "CreditPhase",
     "CustomDatasetType",
     "DataExporterType",
+    "EndpointServiceKind",
     "EndpointType",
     "EndpointTypeInfo",
     "GenericMetricUnit",
