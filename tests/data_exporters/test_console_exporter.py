@@ -4,12 +4,12 @@
 import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
+from aiperf.common.config.dev_config import DeveloperConfig
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult, ProfileResults
-from aiperf.exporters import ExporterConfig
-from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
+from aiperf.exporters import ConsoleMetricsExporter, ExporterConfig
 
 
 @pytest.fixture
@@ -77,6 +77,7 @@ def mock_exporter_config(sample_records, mock_endpoint_config):
             completed=0,
         ),
         user_config=input_config,
+        service_config=ServiceConfig(),
     )
 
 
@@ -111,14 +112,18 @@ class TestConsoleExporter:
         show_internal_metrics,
         is_hidden_metric,
         should_skip,
+        monkeypatch,
     ):
-        from unittest.mock import patch
-
-        # Mock the user config to control show_internal_metrics
-        input_config = UserConfig(endpoint=mock_endpoint_config)
-        with patch.object(
-            input_config.output, "show_internal_metrics", show_internal_metrics
-        ):
+        # Mock the configs to control show_internal_metrics
+        user_config = UserConfig(endpoint=mock_endpoint_config)
+        service_config = ServiceConfig(
+            developer=DeveloperConfig(show_internal_metrics=show_internal_metrics)
+        )
+        with monkeypatch.context() as m:
+            m.setattr(
+                "aiperf.exporters.console_metrics_exporter.AIPERF_DEV_MODE",
+                show_internal_metrics,
+            )
             config = ExporterConfig(
                 results=ProfileResults(
                     records=[],
@@ -126,7 +131,8 @@ class TestConsoleExporter:
                     end_ns=0,
                     completed=0,
                 ),
-                user_config=input_config,
+                user_config=user_config,
+                service_config=service_config,
             )
             exporter = ConsoleMetricsExporter(config)
 

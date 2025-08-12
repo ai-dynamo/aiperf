@@ -49,7 +49,7 @@ def bootstrap_and_run_service(
         user_config = load_user_config()
 
     async def _run_service():
-        if service_config.enable_yappi:
+        if service_config.developer.enable_yappi:
             _start_yappi_profiling()
 
         service = service_class(
@@ -81,11 +81,11 @@ def bootstrap_and_run_service(
         except Exception as e:
             service.exception(f"Unhandled exception in service: {e}")
 
-        if service_config.enable_yappi:
+        if service_config.developer.enable_yappi:
             _stop_yappi_profiling(service.service_id, user_config)
 
     with contextlib.suppress(asyncio.CancelledError):
-        if service_config.enable_uvloop:
+        if not service_config.developer.disable_uvloop:
             import uvloop
 
             uvloop.run(_run_service())

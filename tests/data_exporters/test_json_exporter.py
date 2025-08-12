@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -84,6 +84,7 @@ class TestJsonExporter:
             exporter_config = ExporterConfig(
                 results=mock_results,
                 user_config=mock_user_config,
+                service_config=ServiceConfig(),
             )
 
             exporter = JsonExporter(exporter_config)

@@ -12,6 +12,7 @@ from aiperf.cli_utils import warn_cancelled_early
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
+    AIPERF_DEV_MODE,
     DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
     DEFAULT_PROFILE_START_TIMEOUT,
 )
@@ -48,9 +49,7 @@ from aiperf.common.models import ProcessRecordsResult, ServiceRunInfo
 from aiperf.common.protocols import AIPerfUIProtocol, ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.proxy_manager import ProxyManager
-from aiperf.controller.system_mixins import (
-    SignalHandlerMixin,
-)
+from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.exporters.exporter_manager import ExporterManager
 
 
@@ -350,6 +349,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             await ExporterManager(
                 results=message.results.results,
                 input_config=self.user_config,
+                service_config=self.service_config,
             ).export_data()
         else:
             self.error(
@@ -407,6 +407,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             await ExporterManager(
                 results=self._profile_results.results,
                 input_config=self.user_config,
+                service_config=self.service_config,
             ).export_console(console=Console())
 
             if (
@@ -417,6 +418,12 @@ class SystemController(SignalHandlerMixin, BaseService):
                 warn_cancelled_early()
         else:
             self.warning("No profile results to export")
+
+        if AIPERF_DEV_MODE:
+            from aiperf.common.config.dev_config import print_developer_mode_warning
+
+            # Print a warning message to the console if developer mode is enabled, on exit after results
+            print_developer_mode_warning()
 
         # Exit the process in a more explicit way, to ensure that it stops
         os._exit(0)
