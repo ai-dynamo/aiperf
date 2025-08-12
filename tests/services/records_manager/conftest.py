@@ -16,7 +16,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.models import (
     ParsedResponseRecord,
-    PhaseProcessingStats,
+    ProcessingStats,
     RequestRecord,
     ResponseData,
     SSEField,
@@ -71,8 +71,8 @@ def sample_record(
 
 
 @pytest.fixture
-def sample_final_phase_processing_stats() -> PhaseProcessingStats:
-    return PhaseProcessingStats(
+def sample_final_phase_processing_stats() -> ProcessingStats:
+    return ProcessingStats(
         total_expected_requests=10,
         processed=10,
         errors=0,
@@ -82,7 +82,7 @@ def sample_final_phase_processing_stats() -> PhaseProcessingStats:
 @pytest.fixture
 def sample_all_records_received_message(
     records_manager: RecordsManager,
-    sample_final_phase_processing_stats: PhaseProcessingStats,
+    sample_final_phase_processing_stats: ProcessingStats,
 ) -> AllRecordsReceivedMessage:
     return AllRecordsReceivedMessage(
         service_id=records_manager.service_id,

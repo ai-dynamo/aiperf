@@ -36,7 +36,7 @@ from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     ErrorDetails,
     ErrorDetailsCount,
-    PhaseProcessingStats,
+    ProcessingStats,
     ProcessRecordsResult,
     ProfileResults,
 )
@@ -71,7 +71,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Protected by processing_status_lock
         self.processing_status_lock: asyncio.Lock = asyncio.Lock()
         self.start_time_ns: int | None = None
-        self.processing_stats: PhaseProcessingStats = PhaseProcessingStats()
+        self.processing_stats: ProcessingStats = ProcessingStats()
         self.final_request_count: int | None = None
         self.end_time_ns: int | None = None
         self.sent_all_records_received: bool = False
@@ -81,7 +81,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.error_summary: dict[ErrorDetails, int] = {}
         self.error_summary_lock: asyncio.Lock = asyncio.Lock()
         # Track per-worker statistics
-        self.worker_stats: dict[str, PhaseProcessingStats] = {}
+        self.worker_stats: dict[str, ProcessingStats] = {}
         self.worker_stats_lock: asyncio.Lock = asyncio.Lock()
 
         self._results_processors: list[ResultsProcessorProtocol] = []
@@ -114,15 +114,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if message.valid:
             async with self.worker_stats_lock:
                 self.worker_stats.setdefault(
-                    worker_id, PhaseProcessingStats()
+                    worker_id, ProcessingStats()
                 ).processed += 1
             async with self.processing_status_lock:
                 self.processing_stats.processed += 1
         else:
             async with self.worker_stats_lock:
-                self.worker_stats.setdefault(
-                    worker_id, PhaseProcessingStats()
-                ).errors += 1
+                self.worker_stats.setdefault(worker_id, ProcessingStats()).errors += 1
             async with self.processing_status_lock:
                 self.processing_stats.errors += 1
             if message.error:

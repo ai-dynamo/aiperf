@@ -132,7 +132,7 @@ class CreditPhaseStats(CreditPhaseConfig):
         )
 
 
-class PhaseProcessingStats(AIPerfBaseModel):
+class ProcessingStats(AIPerfBaseModel):
     """Model for phase processing stats. How many requests were processed and
     how many errors were encountered."""
 
@@ -151,3 +151,7 @@ class PhaseProcessingStats(AIPerfBaseModel):
     def total_records(self) -> int:
         """The total number of records processed successfully or in error."""
         return self.processed + self.errors
+
+    @property
+    def is_complete(self) -> bool:
+        return self.total_records == self.total_expected_requests

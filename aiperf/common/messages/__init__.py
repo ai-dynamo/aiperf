@@ -50,9 +50,6 @@ from aiperf.common.messages.dataset_messages import (
     DatasetTimingRequest,
     DatasetTimingResponse,
 )
-from aiperf.common.messages.health_messages import (
-    WorkerHealthMessage,
-)
 from aiperf.common.messages.inference_messages import (
     InferenceResultsMessage,
     MetricRecordsMessage,
@@ -73,6 +70,10 @@ from aiperf.common.messages.service_messages import (
     HeartbeatMessage,
     RegistrationMessage,
     StatusMessage,
+)
+from aiperf.common.messages.worker_messages import (
+    WorkerHealthMessage,
+    WorkerStatusSummaryMessage,
 )
 
 __all__ = [
@@ -126,4 +127,5 @@ __all__ = [
     "StatusMessage",
     "TargetedServiceMessage",
     "WorkerHealthMessage",
+    "WorkerStatusSummaryMessage",
 ]

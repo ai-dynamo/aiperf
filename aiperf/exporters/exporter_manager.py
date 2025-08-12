@@ -49,9 +49,10 @@ class ExporterManager(AIPerfLoggerMixin):
             task.add_done_callback(self._task_done_callback)
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
         self.debug("Exporting all records completed")
 
-    async def export_console(self, console: Console, width: int | None = None) -> None:
+    async def export_console(self, console: Console) -> None:
         self.info("Exporting console data")
 
         for exporter_type in ConsoleExporterFactory.get_all_class_types():
@@ -59,9 +60,10 @@ class ExporterManager(AIPerfLoggerMixin):
                 exporter_type, exporter_config=self._exporter_config
             )
             self.debug(f"Creating task for exporter: {exporter_type}")
-            task = asyncio.create_task(exporter.export(console=console, width=width))
+            task = asyncio.create_task(exporter.export(console=console))
             self._tasks.add(task)
             task.add_done_callback(self._task_done_callback)
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
         self.debug("Exporting console data completed")

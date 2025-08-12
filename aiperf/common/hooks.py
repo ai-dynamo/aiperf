@@ -43,11 +43,16 @@ class AIPerfHook(CaseInsensitiveStrEnum):
     ON_COMMAND = "@on_command"
     ON_INIT = "@on_init"
     ON_MESSAGE = "@on_message"
+    ON_PROFILING_PROGRESS = "@on_profiling_progress"
     ON_PULL_MESSAGE = "@on_pull_message"
+    ON_RECORDS_PROGRESS = "@on_records_progress"
     ON_START = "@on_start"
     ON_STATE_CHANGE = "@on_state_change"
     ON_STOP = "@on_stop"
     ON_REQUEST = "@on_request"
+    ON_WARMUP_PROGRESS = "@on_warmup_progress"
+    ON_WORKER_STATUS_SUMMARY = "@on_worker_status_summary"
+    ON_WORKER_UPDATE = "@on_worker_update"
 
 
 HookType = AIPerfHook | str
@@ -350,6 +355,46 @@ def on_pull_message(
     return _hook_decorator_with_params(AIPerfHook.ON_PULL_MESSAGE, message_types)
 
 
+def on_profiling_progress(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when a profiling progress update is received.
+    See :func:`aiperf.common.hooks._hook_decorator`.
+
+    Example:
+    ```python
+    class MyPlugin(ProgressTrackerMixin):
+        @on_profiling_progress
+        def _on_profiling_progress(self, profiling_stats: RequestsStats) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._on_profiling_progress.__aiperf_hook_type__ = AIPerfHook.ON_PROFILING_PROGRESS
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_PROFILING_PROGRESS, func)
+
+
+def on_records_progress(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when a records progress update is received.
+    See :func:`aiperf.common.hooks._hook_decorator`.
+
+    Example:
+    ```python
+    class MyPlugin(ProgressTrackerMixin):
+        @on_records_progress
+        def _on_records_progress(self, progress: RecordsStats) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._on_records_progress.__aiperf_hook_type__ = AIPerfHook.ON_RECORDS_PROGRESS
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_RECORDS_PROGRESS, func)
+
+
 def on_request(
     *message_types: MessageTypeT | Callable[[SelfT], Iterable[MessageTypeT]],
 ) -> Callable:
@@ -400,3 +445,64 @@ def on_command(
     ```
     """
     return _hook_decorator_with_params(AIPerfHook.ON_COMMAND, command_types)
+
+
+def on_warmup_progress(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when a warmup progress update is received.
+    See :func:`aiperf.common.hooks._hook_decorator`.
+
+    Example:
+    ```python
+    class MyPlugin(ProgressTrackerMixin):
+        @on_warmup_progress
+        def _on_warmup_progress(self, warmup_stats: RequestsStats) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._on_warmup_progress.__aiperf_hook_type__ = AIPerfHook.ON_WARMUP_PROGRESS
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_WARMUP_PROGRESS, func)
+
+
+def on_worker_status_summary(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when a worker status summary is received
+    from the WorkerManager.
+    See :func:`aiperf.common.hooks._hook_decorator`.
+
+    Example:
+    ```python
+    class MyPlugin(WorkerTrackerMixin):
+        @on_worker_status_summary
+        def _on_worker_status_summary(self, worker_statuses: dict[str, WorkerStatus]) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._on_worker_status_summary.__aiperf_hook_type__ = AIPerfHook.ON_WORKER_STATUS_SUMMARY
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_WORKER_STATUS_SUMMARY, func)
+
+
+def on_worker_update(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when a worker update is received.
+    See :func:`aiperf.common.hooks._hook_decorator`.
+
+    Example:
+    ```python
+    class MyPlugin(WorkerTrackerMixin):
+        @on_worker_update
+        def _on_worker_update(self, worker_id: str, worker_stats: WorkerStats) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._on_worker_update.__aiperf_hook_type__ = AIPerfHook.ON_WORKER_UPDATE
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_WORKER_UPDATE, func)

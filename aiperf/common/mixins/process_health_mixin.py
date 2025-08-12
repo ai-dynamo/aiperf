@@ -4,7 +4,6 @@ import time
 
 import psutil
 
-from aiperf.common.constants import BYTES_PER_MIB
 from aiperf.common.mixins.base_mixin import BaseMixin
 from aiperf.common.models import CPUTimes, CtxSwitches, ProcessHealth
 
@@ -40,7 +39,7 @@ class ProcessHealthMixin(BaseMixin):
             create_time=self.create_time,
             uptime=time.time() - self.create_time,
             cpu_usage=self.process.cpu_percent(),
-            memory_usage=self.process.memory_info().rss / BYTES_PER_MIB,
+            memory_usage=self.process.memory_info().rss,
             io_counters=self.process.io_counters(),
             cpu_times=cpu_times,
             num_ctx_switches=CtxSwitches(*self.process.num_ctx_switches()),

@@ -8,7 +8,6 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
-    CreditPhase,
     MessageType,
     ServiceType,
 )
@@ -26,7 +25,7 @@ from aiperf.common.messages import (
     WorkerHealthMessage,
 )
 from aiperf.common.mixins import ProcessHealthMixin, PullClientMixin
-from aiperf.common.models import WorkerPhaseTaskStats
+from aiperf.common.models import WorkerTaskStats
 from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
@@ -62,7 +61,7 @@ class Worker(
 
         self.health_check_interval = self.service_config.workers.health_check_interval
 
-        self.task_stats: dict[CreditPhase, WorkerPhaseTaskStats] = {}
+        self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
         self.credit_return_push_client: PushClientProtocol = (
             self.comms.create_push_client(
@@ -133,7 +132,7 @@ class Worker(
     def create_health_message(self) -> WorkerHealthMessage:
         return WorkerHealthMessage(
             service_id=self.service_id,
-            process=self.get_process_health(),
+            health=self.get_process_health(),
             task_stats=self.task_stats,
         )
 

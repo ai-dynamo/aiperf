@@ -43,3 +43,4 @@ class MessageType(CaseInsensitiveStrEnum):
     SERVICE_ERROR = "service_error"
     STATUS = "status"
     WORKER_HEALTH = "worker_health"
+    WORKER_STATUS_SUMMARY = "worker_status_summary"

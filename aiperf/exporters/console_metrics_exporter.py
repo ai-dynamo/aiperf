@@ -34,12 +34,12 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
             exporter_config.user_config.output.show_internal_metrics
         )
 
-    async def export(self, console: Console, width: int | None = None) -> None:
+    async def export(self, console: Console) -> None:
         if not self._results.records:
             self.warning("No records to export")
             return
 
-        table = Table(title=self._get_title(), width=width)
+        table = Table(title=self._get_title())
         table.add_column("Metric", justify="right", style="cyan")
         for key in self.STAT_COLUMN_KEYS:
             table.add_column(key, justify="right", style="green")

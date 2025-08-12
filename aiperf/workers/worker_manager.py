@@ -1,31 +1,47 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import multiprocessing
-from typing import Any
+import time
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.constants import (
+    DEFAULT_WORKER_CHECK_INTERVAL,
+    DEFAULT_WORKER_ERROR_RECOVERY_TIME,
+    DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE,
+    DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME,
+    DEFAULT_WORKER_STALE_TIME,
+    DEFAULT_WORKER_STATUS_SUMMARY_INTERVAL,
+    NANOS_PER_SECOND,
+)
 from aiperf.common.enums import MessageType, ServiceType
+from aiperf.common.enums.worker_enums import WorkerStatus
 from aiperf.common.factories import ServiceFactory
-from aiperf.common.hooks import on_message, on_start, on_stop
+from aiperf.common.hooks import background_task, on_message, on_start, on_stop
 from aiperf.common.messages import (
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
     WorkerHealthMessage,
 )
-from aiperf.common.models import AIPerfBaseModel
+from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
+from aiperf.common.models.progress_models import WorkerStats
 
 
-class WorkerProcessInfo(AIPerfBaseModel):
-    """Information about a worker process."""
+class WorkerStatusInfo(WorkerStats):
+    """Information about a worker's status."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    worker_id: str = Field(..., description="ID of the worker process")
-    process: Any = Field(None, description="Process object or task")
+    worker_id: str = Field(..., description="The ID of the worker")
+    last_error_ns: int | None = Field(
+        default=None,
+        description="The last time the worker had an error",
+    )
+    last_high_load_ns: int | None = Field(
+        default=None,
+        description="The last time the worker was in high load",
+    )
 
 
 @ServiceFactory.register(ServiceType.WORKER_MANAGER)
@@ -51,8 +67,7 @@ class WorkerManager(BaseComponentService):
         )
 
         self.trace("WorkerManager.__init__")
-        self.workers: dict[str, WorkerProcessInfo] = {}
-        self.worker_health: dict[str, WorkerHealthMessage] = {}
+        self.worker_infos: dict[str, WorkerStatusInfo] = {}
 
         self.cpu_count = multiprocessing.cpu_count()
         self.debug(lambda: f"Detected {self.cpu_count} CPU cores/threads")
@@ -107,8 +122,69 @@ class WorkerManager(BaseComponentService):
 
     @on_message(MessageType.WORKER_HEALTH)
     async def _on_worker_health(self, message: WorkerHealthMessage) -> None:
-        self.debug(lambda: f"Received worker health message: {message}")
-        self.worker_health[message.service_id] = message
+        worker_id = message.service_id
+        info = self.worker_infos.get(worker_id)
+        if not info:
+            info = WorkerStatusInfo(
+                worker_id=worker_id,
+                last_update_ns=time.time_ns(),
+                status=WorkerStatus.HEALTHY,
+                health=message.health,
+                task_stats=message.task_stats,
+            )
+            self.worker_infos[worker_id] = info
+        self._update_worker_status(info, message)
+
+    def _update_worker_status(
+        self, info: WorkerStatusInfo, message: WorkerHealthMessage
+    ) -> None:
+        """Check the status of a worker."""
+        info.last_update_ns = time.time_ns()
+        # Error Status
+        if message.task_stats.failed > info.task_stats.failed:
+            info.last_error_ns = time.time_ns()
+            info.status = WorkerStatus.ERROR
+        elif (time.time_ns() - (info.last_error_ns or 0)) / NANOS_PER_SECOND < DEFAULT_WORKER_ERROR_RECOVERY_TIME:  # fmt: skip
+            info.status = WorkerStatus.ERROR
+
+        # High Load Status
+        elif message.health.cpu_usage > DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE:
+            info.last_high_load_ns = time.time_ns()
+            info.status = WorkerStatus.HIGH_LOAD
+        elif (time.time_ns() - (info.last_high_load_ns or 0)) / NANOS_PER_SECOND < DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME:  # fmt: skip
+            info.status = WorkerStatus.HIGH_LOAD
+
+        # Idle Status
+        elif message.task_stats.total == 0 or message.task_stats.in_progress == 0:
+            info.status = WorkerStatus.IDLE
+
+        # Healthy Status
+        else:
+            info.status = WorkerStatus.HEALTHY
+
+        info.health = message.health
+        info.task_stats = message.task_stats
+
+    @background_task(immediate=False, interval=DEFAULT_WORKER_CHECK_INTERVAL)
+    async def _worker_status_loop(self) -> None:
+        """Check the status of all workers."""
+        self.debug("Checking worker status")
+
+        for _, info in self.worker_infos.items():
+            if (time.time_ns() - (info.last_update_ns or 0)) / NANOS_PER_SECOND > DEFAULT_WORKER_STALE_TIME:  # fmt: skip
+                info.status = WorkerStatus.STALE
+
+    @background_task(immediate=False, interval=DEFAULT_WORKER_STATUS_SUMMARY_INTERVAL)
+    async def _worker_summary_loop(self) -> None:
+        """Generate a summary of the worker status."""
+        summary = WorkerStatusSummaryMessage(
+            service_id=self.service_id,
+            worker_statuses={
+                worker_id: info.status for worker_id, info in self.worker_infos.items()
+            },
+        )
+        self.debug(lambda: f"Publishing worker status summary: {summary}")
+        await self.publish(summary)
 
 
 def main() -> None:

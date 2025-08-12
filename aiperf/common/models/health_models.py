@@ -41,8 +41,8 @@ class ProcessHealth(AIPerfBaseModel):
     cpu_usage: float = Field(
         ..., description="The current CPU usage of the process in %"
     )
-    memory_usage: float = Field(
-        ..., description="The current memory usage of the process in MiB (rss)"
+    memory_usage: int = Field(
+        ..., description="The current memory usage of the process in bytes (rss)"
     )
     io_counters: IOCounters | tuple | None = Field(
         default=None,
