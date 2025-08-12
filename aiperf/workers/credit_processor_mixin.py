@@ -7,7 +7,6 @@ from typing import Protocol, runtime_checkable
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -17,7 +16,7 @@ from aiperf.common.messages import (
     ErrorMessage,
     InferenceResultsMessage,
 )
-from aiperf.common.models import ErrorDetails, RequestRecord, Turn, WorkerPhaseTaskStats
+from aiperf.common.models import ErrorDetails, RequestRecord, Turn, WorkerTaskStats
 from aiperf.common.protocols import (
     AIPerfLoggerProtocol,
     InferenceClientProtocol,
@@ -48,7 +47,7 @@ class CreditProcessorMixinRequirements(AIPerfLoggerProtocol, Protocol):
     inference_results_push_client: PushClientProtocol
     request_converter: RequestConverterProtocol
     model_endpoint: ModelEndpointInfo
-    task_stats: dict[CreditPhase, WorkerPhaseTaskStats]
+    task_stats: WorkerTaskStats
 
     async def _process_credit_drop_internal(
         self, message: CreditDropMessage
@@ -97,9 +96,7 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
         self.trace(lambda: f"Processing credit drop: {message}")
         drop_perf_ns = time.perf_counter_ns()  # The time the credit was received
 
-        if message.phase not in self.task_stats:
-            self.task_stats[message.phase] = WorkerPhaseTaskStats()
-        self.task_stats[message.phase].total += 1
+        self.task_stats.total += 1
 
         record: RequestRecord = RequestRecord()
         try:
@@ -122,9 +119,9 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
 
             # Note that we already ensured that the phase exists in the task_stats dict in the above code.
             if not record.valid:
-                self.task_stats[message.phase].failed += 1
+                self.task_stats.failed += 1
             else:
-                self.task_stats[message.phase].completed += 1
+                self.task_stats.completed += 1
 
             try:
                 await self.inference_results_push_client.push(msg)

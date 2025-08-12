@@ -21,8 +21,9 @@ from aiperf.common.enums import (
     AIPerfLogLevel,
     CommunicationBackend,
     ServiceRunType,
+    ServiceType,
 )
-from aiperf.common.enums.service_enums import ServiceType
+from aiperf.common.enums.ui_enums import AIPerfUIType
 
 
 class ServiceConfig(BaseSettings):
@@ -177,17 +178,6 @@ class ServiceConfig(BaseSettings):
         ),
     ] = ServiceDefaults.EXTRA_VERBOSE
 
-    disable_ui: Annotated[
-        bool,
-        Field(
-            description="Disable the UI (prints progress to the console as log messages). This is equivalent to --ui-type none.",
-        ),
-        Parameter(
-            name=("--disable-ui"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.DISABLE_UI
-
     enable_uvloop: Annotated[
         bool,
         Field(
@@ -264,3 +254,14 @@ class ServiceConfig(BaseSettings):
         ),
         BeforeValidator(parse_service_types),
     ] = ServiceDefaults.TRACE_SERVICES
+
+    ui_type: Annotated[
+        AIPerfUIType,
+        Field(
+            description="Type of UI to use",
+        ),
+        Parameter(
+            name=("--ui-type", "--ui"),
+            group=_CLI_GROUP,
+        ),
+    ] = ServiceDefaults.UI_TYPE

@@ -81,6 +81,8 @@ class TaskManagerProtocol(AIPerfLoggerProtocol, Protocol):
 
     async def cancel_all_tasks(self, timeout: float) -> None: ...
 
+    async def wait_for_tasks(self) -> list[BaseException | None]: ...
+
     def start_background_task(
         self,
         method: Callable,
@@ -297,15 +299,24 @@ class MessageBusClientProtocol(PubClientProtocol, SubClientProtocol, Protocol):
 
 
 @runtime_checkable
+class AIPerfUIProtocol(AIPerfLifecycleProtocol, Protocol):
+    """Protocol interface definition for AIPerf UI implementations.
+
+    Basically a UI can be any class that implements the AIPerfLifecycleProtocol. However, in order to provide
+    progress tracking and worker tracking, the simplest way would be to inherit from the :class:`aiperf.ui.base_ui.BaseAIPerfUI`.
+    """
+
+
+@runtime_checkable
 class ConsoleExporterProtocol(Protocol):
     """Protocol for console exporters.
     Any class implementing this protocol will be provided an ExporterConfig and must provide an
-    `export` method that takes a rich Console and a width and handles exporting them appropriately.
+    `export` method that takes a rich Console and handles exporting them appropriately.
     """
 
     def __init__(self, exporter_config: "ExporterConfig") -> None: ...
 
-    async def export(self, console: "Console", width: int | None = None) -> None: ...
+    async def export(self, console: "Console") -> None: ...
 
 
 @runtime_checkable

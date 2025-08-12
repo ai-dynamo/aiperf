@@ -15,7 +15,7 @@ from aiperf.common.models.base_models import (
 from aiperf.common.models.credit_models import (
     CreditPhaseConfig,
     CreditPhaseStats,
-    PhaseProcessingStats,
+    ProcessingStats,
 )
 from aiperf.common.models.dataset_models import (
     Audio,
@@ -35,6 +35,14 @@ from aiperf.common.models.health_models import (
     IOCounters,
     ProcessHealth,
 )
+from aiperf.common.models.progress_models import (
+    ComputedStats,
+    FullPhaseProgress,
+    RecordsStats,
+    RequestsStats,
+    StatsProtocol,
+    WorkerStats,
+)
 from aiperf.common.models.record_models import (
     InferenceServerResponse,
     MetricResult,
@@ -51,37 +59,43 @@ from aiperf.common.models.service_models import (
     ServiceRunInfo,
 )
 from aiperf.common.models.worker_models import (
-    WorkerPhaseTaskStats,
+    WorkerTaskStats,
 )
 
 __all__ = [
     "AIPerfBaseModel",
     "Audio",
     "CPUTimes",
+    "ComputedStats",
     "Conversation",
     "CreditPhaseConfig",
     "CreditPhaseStats",
     "CtxSwitches",
     "ErrorDetails",
     "ErrorDetailsCount",
+    "FullPhaseProgress",
     "IOCounters",
     "Image",
     "InferenceServerResponse",
     "Media",
     "MetricResult",
     "ParsedResponseRecord",
-    "PhaseProcessingStats",
     "ProcessHealth",
     "ProcessRecordsResult",
+    "ProcessingStats",
     "ProfileResults",
+    "RecordsStats",
     "RequestRecord",
+    "RequestsStats",
     "ResponseData",
     "SSEField",
     "SSEMessage",
     "ServiceRunInfo",
+    "StatsProtocol",
     "Text",
     "TextResponse",
     "Turn",
-    "WorkerPhaseTaskStats",
+    "WorkerStats",
+    "WorkerTaskStats",
     "exclude_if_none",
 ]

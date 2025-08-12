@@ -88,9 +88,16 @@ from aiperf.common.enums.timing_enums import (
     RequestRateMode,
     TimingMode,
 )
+from aiperf.common.enums.ui_enums import (
+    AIPerfUIType,
+)
+from aiperf.common.enums.worker_enums import (
+    WorkerStatus,
+)
 
 __all__ = [
     "AIPerfLogLevel",
+    "AIPerfUIType",
     "AudioFormat",
     "BaseMetricUnit",
     "BaseMetricUnitInfo",
@@ -137,5 +144,6 @@ __all__ = [
     "ServiceType",
     "SystemState",
     "TimingMode",
+    "WorkerStatus",
     "ZMQProxyType",
 ]

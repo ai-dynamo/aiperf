@@ -3,6 +3,7 @@
 
 from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.enums.ui_enums import AIPerfUIType
 
 
 def run_system_controller(
@@ -13,13 +14,16 @@ def run_system_controller(
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.common.logging import get_global_log_queue
     from aiperf.controller import SystemController
     from aiperf.module_loader import ensure_modules_loaded
 
     logger = AIPerfLogger(__name__)
 
     log_queue = None
-    if service_config.disable_ui:
+    if service_config.ui_type == AIPerfUIType.DASHBOARD:
+        log_queue = get_global_log_queue()
+    else:
         from aiperf.common.logging import setup_rich_logging
 
         setup_rich_logging(user_config, service_config)
