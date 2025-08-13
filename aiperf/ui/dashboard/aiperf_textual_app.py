@@ -10,6 +10,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer, TabbedContent, TabPane
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.enums import WorkerStatus
 from aiperf.common.models import RecordsStats, RequestsStats, WorkerStats
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
@@ -60,18 +61,21 @@ class AIPerfTextualApp(App):
         ("1", "switch_tab('overview')", "Overview"),
         ("2", "switch_tab('progress')", "Progress"),
         ("3", "switch_tab('workers')", "Workers"),
-        ("s", "toggle_log_auto_scroll", "Toggle Log Auto Scroll"),
         ("l", "toggle_hide_log_viewer", "Toggle Logs"),
     ]
 
     def __init__(self) -> None:
         super().__init__()
+
+        self.title = "NVIDIA AIPerf"
+        if AIPERF_DEV_MODE:
+            self.title = "NVIDIA AIPerf (Developer Mode)"
+
         self.log_viewer: RichLogViewer | None = None
         self.overview_progress: ProgressDashboard | None = None
         self.overview_workers: WorkerDashboard | None = None
         self.progress_dashboard: ProgressDashboard | None = None
         self.worker_dashboard: WorkerDashboard | None = None
-        self.title = "NVIDIA AIPerf"
         self.profile_results: list[RenderableType] = []
         self.logs_hidden = False
 
@@ -153,12 +157,6 @@ class AIPerfTextualApp(App):
         self.exit(return_code=0)
         # Forward the signal to the main process
         os.kill(os.getpid(), signal.SIGINT)
-
-    async def action_toggle_log_auto_scroll(self) -> None:
-        """Toggle the auto scroll of the log viewer."""
-        if self.log_viewer is None:
-            return
-        self.log_viewer.auto_scroll = not self.log_viewer.auto_scroll
 
     async def action_toggle_hide_log_viewer(self) -> None:
         """Toggle the visibility of the log viewer section."""
