@@ -40,9 +40,9 @@ class ProcessHealthMixin(BaseMixin):
             uptime=time.time() - self.create_time,
             cpu_usage=self.process.cpu_percent(),
             memory_usage=self.process.memory_info().rss,
-            io_counters=self.process.io_counters(),
+            io_counters=self.process.io_counters() if hasattr(self.process, "io_counters") else None,
             cpu_times=cpu_times,
             num_ctx_switches=CtxSwitches(*self.process.num_ctx_switches()),
             num_threads=self.process.num_threads(),
-        )
+        )  # fmt: skip
         return self.process_health

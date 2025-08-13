@@ -31,6 +31,9 @@ class AIPerfTextualApp(App):
     ENABLE_COMMAND_PALETTE = False
     """Disable the command palette that is enabled by default in Textual."""
 
+    ALLOW_IN_MAXIMIZED_VIEW = "CustomHeader, Footer"
+    """Allow the custom header and footer to be displayed when a panel is maximized."""
+
     CSS = """
     #main-container {
         height: 100%;
