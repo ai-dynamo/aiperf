@@ -84,6 +84,7 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
             bind=True,
         )
         self.num_processors = self.service_config.dataset_processor_service_count
+        self._custom_dataset_type = self.user_config.input.custom_dataset_type
         self.total_dataset_size: int | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
@@ -116,20 +117,14 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         dataset processors.
         """
         self.total_dataset_size = self.user_config.input.conversation.num
-        chunk_size, extra = divmod(self.total_dataset_size, self.num_processors)
-        if chunk_size == 0:
-            self.num_processors = min(self.num_processors, self.total_dataset_size)
-            chunk_size, extra = 1, 0
-
-        # TODO: change to debug log
         self.info(
-            lambda: f"#### Distributing {self.user_config.input.conversation.num} conversations "
+            f"Distributing {self.total_dataset_size} conversations "
             f"across {self.num_processors} processors "
-            f"with {chunk_size} conversations per processor "
-            f"and {extra} conversations left over"
         )
 
-        for _ in range(self.num_processors):
+        remaining_dataset_size = self.total_dataset_size
+        chunk_size = max(self.total_dataset_size // self.num_processors, 1)
+        while remaining_dataset_size > 0:
             await self.jobs_push_client.push(
                 message=ProcessSyntheticDatasetMessage(
                     service_id=self.service_id,
@@ -137,13 +132,9 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
                 )
             )
 
-        if extra > 0:
-            await self.jobs_push_client.push(
-                message=ProcessSyntheticDatasetMessage(
-                    service_id=self.service_id,
-                    num_conversations=extra,
-                )
-            )
+            remaining_dataset_size -= chunk_size
+            if remaining_dataset_size < chunk_size:
+                chunk_size = remaining_dataset_size
 
     async def _configure_custom_dataset(self) -> None:
         """Configure a custom dataset.
@@ -151,59 +142,47 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         This will load a custom dataset from a file and distribute the work across the
         dataset processors.
         """
-        loader = CustomDatasetFactory.create_instance(
-            self.user_config.input.custom_dataset_type,
-            user_config=self.user_config,
-        )
-        dataset_list = list(loader.load_dataset().items())
-        self.total_dataset_size = len(dataset_list)
-
         process_messages: dict[CustomDatasetType, type[ProcessDatasetMessage]] = {
             CustomDatasetType.MOONCAKE_TRACE: ProcessMooncakeTraceDatasetMessage,
             CustomDatasetType.MULTI_TURN: ProcessMultiTurnDatasetMessage,
             CustomDatasetType.SINGLE_TURN: ProcessSingleTurnDatasetMessage,
             CustomDatasetType.RANDOM_POOL: ProcessRandomPoolDatasetMessage,
         }
-        process_message = process_messages[self.user_config.input.custom_dataset_type]
+        process_message = process_messages[self._custom_dataset_type]
 
-        # TODO: better way to handle this?
-        # when total number of dataset processors is greater than the number of dataset items,
-        # we need to adjust the number of processors to the number of dataset items
-        # otherwise, some processors will get same job more than once.
-        per_processor, extra = divmod(len(dataset_list), self.num_processors)
-        if per_processor == 0:
-            self.num_processors = min(self.num_processors, len(dataset_list))
-            per_processor, extra = 1, 0
+        loader = CustomDatasetFactory.create_instance(
+            self._custom_dataset_type,
+            user_config=self.user_config,
+        )
+        dataset_list = list(loader.load_dataset().items())
+        self.total_dataset_size = len(dataset_list)
 
-        # TODO: change to debug log
         self.info(
-            lambda: f"#### Distributing {len(dataset_list)} conversations "
-            f"across {self.num_processors} processors "
-            f"with {per_processor} conversations per processor "
-            f"and {extra} conversations left over"
+            f"Distributing {self.total_dataset_size} dataset items "
+            f"across {self.num_processors} processors"
         )
 
-        for i in range(self.num_processors):
+        remaining_dataset_size = self.total_dataset_size
+        chunk_size = max(self.total_dataset_size // self.num_processors, 1)
+        start = 0
+        while remaining_dataset_size > 0:
             await self.jobs_push_client.push(
                 message=process_message(
                     service_id=self.service_id,
-                    dataset=dataset_list[per_processor * i : per_processor * (i + 1)],
+                    dataset=dataset_list[start : start + chunk_size],
                 )
             )
-
-        if extra > 0:
-            await self.jobs_push_client.push(
-                message=process_message(
-                    service_id=self.service_id,
-                    dataset=dataset_list[per_processor * self.num_processors :],
-                )
-            )
+            start += chunk_size
+            remaining_dataset_size -= chunk_size
+            if remaining_dataset_size < chunk_size:
+                chunk_size = remaining_dataset_size
 
     @on_pull_message(MessageType.DATASET_RESULT)
     async def _on_result(self, message: ProcessDatasetResponseMessage) -> None:
         """Handle a dataset job result."""
-        #  TODO: change to debug log
-        self.info(f"#### Received dataset result from {message.service_id}")
+        self.debug(
+            lambda: f"Received processed dataset response from {message.service_id}"
+        )
 
         for conversation in message.generated_data:
             self.dataset[conversation.session_id] = conversation
@@ -211,6 +190,9 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         self._session_ids_cache = list(self.dataset.keys())
 
         if len(self.dataset) == self.total_dataset_size:
+            self.debug(
+                lambda: f"Dataset configured with {len(self.dataset)} conversations"
+            )
             self.dataset_configured.set()
             await self.publish(
                 DatasetConfiguredNotification(
