@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from cyclopts.token import Token
 
 from aiperf.common.enums import ServiceType
 
@@ -195,3 +198,10 @@ def parse_file(value: str | None) -> Path | None:
             return path
         else:
             raise ValueError(f"'{value}' is not a valid file or directory")
+
+
+def custom_enum_converter(type_: Any, value: Sequence[Token]) -> Any:
+    """This is a custom converter for cyclopts that allows us to use our custom enum types"""
+    if len(value) != 1:
+        raise ValueError(f"Expected 1 value, but got {len(value)}")
+    return type_(value[0].value)
