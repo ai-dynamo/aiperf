@@ -11,6 +11,7 @@ from rich.console import Console
 from aiperf.cli_utils import warn_cancelled_early
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config.dev_config import print_developer_mode_warning
 from aiperf.common.constants import (
     AIPERF_DEV_MODE,
     DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
@@ -67,6 +68,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         service_config: ServiceConfig,
         service_id: str | None = None,
     ) -> None:
+        if AIPERF_DEV_MODE:
+            # Print a warning message to the console if developer mode is enabled, once at load time
+            print_developer_mode_warning()
+
         super().__init__(
             service_config=service_config,
             user_config=user_config,
@@ -420,8 +425,6 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.warning("No profile results to export")
 
         if AIPERF_DEV_MODE:
-            from aiperf.common.config.dev_config import print_developer_mode_warning
-
             # Print a warning message to the console if developer mode is enabled, on exit after results
             print_developer_mode_warning()
 

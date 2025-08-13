@@ -34,11 +34,6 @@ def print_developer_mode_warning() -> None:
     console.print(panel)
 
 
-if AIPERF_DEV_MODE:
-    # Print a warning message to the console if developer mode is enabled, once at load time
-    print_developer_mode_warning()
-
-
 class DeveloperConfig(BaseConfig):
     """
     A configuration class for defining developer related settings.
