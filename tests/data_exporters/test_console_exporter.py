@@ -9,7 +9,10 @@ from aiperf.common.config.dev_config import DeveloperConfig
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult, ProfileResults
-from aiperf.exporters import ConsoleMetricsExporter, ExporterConfig
+from aiperf.exporters import ExporterConfig
+from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
+from aiperf.exporters.display_units_utils import to_display_unit
+from aiperf.metrics.metric_registry import MetricRegistry
 
 
 @pytest.fixture
@@ -170,6 +173,7 @@ class TestConsoleExporter:
             p90=15.5 * NANOS_PER_MILLIS,
             p75=12.3 * NANOS_PER_MILLIS,
         )
+        record = to_display_unit(record, MetricRegistry())
         row = exporter._format_row(record)
         # This asserts that the display is unit converted correctly
         assert row[0] == "Request Latency (ms)"

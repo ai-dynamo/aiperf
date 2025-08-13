@@ -52,6 +52,10 @@ def bootstrap_and_run_service(
         if service_config.developer.enable_yappi:
             _start_yappi_profiling()
 
+        from aiperf.module_loader import ensure_modules_loaded
+
+        ensure_modules_loaded()
+
         service = service_class(
             service_config=service_config,
             user_config=user_config,
