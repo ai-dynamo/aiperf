@@ -17,11 +17,17 @@ from aiperf.ui.dashboard.aiperf_textual_app import (
 from aiperf.ui.dashboard.aiperf_theme import (
     AIPERF_THEME,
 )
-from aiperf.ui.dashboard.custom_header import (
-    CustomHeader,
+from aiperf.ui.dashboard.custom_widgets import (
+    MaximizableWidget,
+    NonFocusableDataTable,
+    ProgressHeader,
 )
 from aiperf.ui.dashboard.progress_dashboard import (
     ProgressDashboard,
+)
+from aiperf.ui.dashboard.realtime_metrics_dashboard import (
+    RealtimeMetricsDashboard,
+    RealtimeMetricsTable,
 )
 from aiperf.ui.dashboard.rich_log_viewer import (
     LogConsumer,
@@ -32,7 +38,6 @@ from aiperf.ui.dashboard.worker_dashboard import (
 )
 from aiperf.ui.dashboard.worker_status_table import (
     WORKER_STATUS_STYLES,
-    NonFocusableDataTable,
     WorkerStatusTable,
 )
 
@@ -40,10 +45,13 @@ __all__ = [
     "AIPERF_THEME",
     "AIPerfDashboardUI",
     "AIPerfTextualApp",
-    "CustomHeader",
     "LogConsumer",
+    "MaximizableWidget",
     "NonFocusableDataTable",
     "ProgressDashboard",
+    "ProgressHeader",
+    "RealtimeMetricsDashboard",
+    "RealtimeMetricsTable",
     "RichLogViewer",
     "WORKER_STATUS_STYLES",
     "WorkerDashboard",

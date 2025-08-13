@@ -57,7 +57,7 @@ class Worker(
             **kwargs,
         )
 
-        self.debug(lambda: f"Worker process __init__ (pid: {self.process.pid})")
+        self.debug(lambda: f"Worker process __init__ (pid: {self._process.pid})")
 
         self.health_check_interval = self.service_config.workers.health_check_interval
 

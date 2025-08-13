@@ -19,6 +19,8 @@ class InputThroughputMetric(BaseRecordMetric[float]):
 
     tag = "input_throughput"
     header = "Input Throughput"
+    short_header = "Input TPS"
+    short_header_hide_unit = True
     unit = MetricOverTimeUnit.TOKENS_PER_SECOND
     flags = (
         MetricFlags.STREAMING_TOKENS_ONLY

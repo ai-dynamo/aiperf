@@ -40,6 +40,7 @@ from aiperf.common.messages import (
     ProfileCancelCommand,
     ProfileConfigureCommand,
     ProfileStartCommand,
+    RealtimeMetricsCommand,
     RegisterServiceCommand,
     ShutdownCommand,
     ShutdownWorkersCommand,
@@ -108,11 +109,21 @@ class SystemController(SignalHandlerMixin, BaseService):
             service_config=self.service_config,
             user_config=self.user_config,
             log_queue=get_global_log_queue(),
+            controller=self,
         )
         self.attach_child_lifecycle(self.ui)
         self._stop_tasks: set[asyncio.Task] = set()
         self._profile_results: ProcessRecordsResult | None = None
         self.debug("System Controller created")
+
+    async def request_realtime_metrics(self) -> None:
+        """Request real-time metrics from the RecordsManager."""
+        await self.send_command_and_wait_for_response(
+            RealtimeMetricsCommand(
+                service_id=self.service_id,
+                target_service_type=ServiceType.RECORDS_MANAGER,
+            )
+        )
 
     async def initialize(self) -> None:
         """We need to override the initialize method to run the proxy manager before the base service initialize.

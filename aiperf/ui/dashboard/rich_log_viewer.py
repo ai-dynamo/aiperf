@@ -20,7 +20,10 @@ if TYPE_CHECKING:
 class RichLogViewer(RichLog):
     """RichLogViewer is a widget that displays log records in a rich format."""
 
+    # NOTE: MaximizableWidget is not used here because the RichLog widget is not compatible with it.
     ALLOW_MAXIMIZE = True
+    """Allow the widget to be maximized."""
+
     DEFAULT_CSS = """
     RichLogViewer {
         border: round $primary;

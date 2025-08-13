@@ -3,12 +3,14 @@
 
 import multiprocessing
 
-from aiperf.common.config import UserConfig
+from aiperf.common.config import ServiceConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import AIPerfUIType, WorkerStatus
 from aiperf.common.factories import AIPerfUIFactory
 from aiperf.common.hooks import (
     on_profiling_progress,
+    on_realtime_metrics,
     on_records_progress,
     on_start,
     on_stop,
@@ -17,11 +19,13 @@ from aiperf.common.hooks import (
     on_worker_update,
 )
 from aiperf.common.models import (
+    MetricResult,
     RecordsStats,
     RequestsStats,
     WorkerStats,
 )
 from aiperf.common.protocols import AIPerfUIProtocol
+from aiperf.controller.system_controller import SystemController
 from aiperf.ui.base_ui import BaseAIPerfUI
 from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
 from aiperf.ui.dashboard.rich_log_viewer import LogConsumer
@@ -46,12 +50,22 @@ class AIPerfDashboardUI(BaseAIPerfUI):
     def __init__(
         self,
         log_queue: multiprocessing.Queue,
+        service_config: ServiceConfig,
         user_config: UserConfig,
+        controller: SystemController,
         **kwargs,
     ) -> None:
-        super().__init__(user_config=user_config, **kwargs)
-        self.user_config = user_config
-        self.app: AIPerfTextualApp = AIPerfTextualApp()
+        super().__init__(
+            service_config=service_config,
+            user_config=user_config,
+            controller=controller,
+            **kwargs,
+        )
+        self.controller = controller
+        self.service_config = service_config
+        self.app: AIPerfTextualApp = AIPerfTextualApp(
+            service_config=service_config, controller=controller
+        )
         # Setup the log consumer to consume log records from the shared log queue
         self.log_consumer: LogConsumer = LogConsumer(log_queue=log_queue, app=self.app)
         self.attach_child_lifecycle(self.log_consumer)  # type: ignore
@@ -74,6 +88,11 @@ class AIPerfDashboardUI(BaseAIPerfUI):
         """Forward records progress updates to the Textual App."""
         if self.app.progress_dashboard:
             self.app.progress_dashboard.on_records_progress(records_stats)
+        if self.app.progress_header:
+            self.app.progress_header.update_progress(
+                progress=records_stats.finished,
+                total=records_stats.total_expected_requests,
+            )
 
     @on_profiling_progress
     async def _on_profiling_progress(self, profiling_stats: RequestsStats) -> None:
@@ -98,3 +117,9 @@ class AIPerfDashboardUI(BaseAIPerfUI):
         """Forward worker status summary updates to the Textual App."""
         if self.app.worker_dashboard:
             self.app.worker_dashboard.on_worker_status_summary(worker_status_summary)
+
+    @on_realtime_metrics
+    async def _on_realtime_metrics(self, metrics: list[MetricResult]) -> None:
+        """Forward real-time metrics updates to the Textual App."""
+        if self.app.realtime_metrics_dashboard:
+            self.app.realtime_metrics_dashboard.on_realtime_metrics(metrics)

@@ -4,12 +4,12 @@
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
-from textual.widgets import DataTable
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import WorkerStatus
 from aiperf.common.models import WorkerStats
+from aiperf.ui.dashboard.custom_widgets import NonFocusableDataTable
 from aiperf.ui.utils import format_bytes
 
 _logger = AIPerfLogger(__name__)
@@ -22,11 +22,6 @@ WORKER_STATUS_STYLES = {
     WorkerStatus.IDLE: "dim",
     WorkerStatus.STALE: "dim white",
 }
-
-
-class NonFocusableDataTable(DataTable, can_focus=False):
-    """DataTable that cannot receive focus.
-    This is done to prevent the table from focusing when the user clicks on it, which would cause the table to darken its background."""
 
 
 class WorkerStatusTable(Widget):
@@ -49,7 +44,9 @@ class WorkerStatusTable(Widget):
         self._column_keys: dict[str, ColumnKey] = {}
 
     def compose(self) -> ComposeResult:
-        self.data_table = NonFocusableDataTable(cursor_type="row", show_cursor=False)
+        self.data_table = NonFocusableDataTable(
+            cursor_type="row", show_cursor=False, zebra_stripes=True
+        )
         yield self.data_table
 
     def on_mount(self) -> None:

@@ -6,14 +6,18 @@ import signal
 
 from rich.console import RenderableType
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.constants import AIPERF_DEV_MODE
+from aiperf.controller.system_controller import SystemController
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
-from aiperf.ui.dashboard.custom_header import CustomHeader
+from aiperf.ui.dashboard.custom_widgets import ProgressHeader
 from aiperf.ui.dashboard.progress_dashboard import ProgressDashboard
+from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsDashboard
 from aiperf.ui.dashboard.rich_log_viewer import RichLogViewer
 from aiperf.ui.dashboard.worker_dashboard import WorkerDashboard
 
@@ -31,7 +35,7 @@ class AIPerfTextualApp(App):
     ENABLE_COMMAND_PALETTE = False
     """Disable the command palette that is enabled by default in Textual."""
 
-    ALLOW_IN_MAXIMIZED_VIEW = "CustomHeader, Footer"
+    ALLOW_IN_MAXIMIZED_VIEW = "ProgressHeader, Footer"
     """Allow the custom header and footer to be displayed when a panel is maximized."""
 
     CSS = """
@@ -46,11 +50,17 @@ class AIPerfTextualApp(App):
         height: 2fr;
         max-height: 16;
     }
-    #logs-section.hidden {
-        display: none;
-    }
     #dashboard-section.logs-hidden {
         height: 1fr;
+    }
+    #progress-section {
+        width: 1fr;
+    }
+    #metrics-section {
+        width: 2fr;
+    }
+    .hidden {
+        display: none;
     }
     """
 
@@ -58,13 +68,16 @@ class AIPerfTextualApp(App):
         ("ctrl+c", "quit", "Quit"),
         ("1", "minimize_all_panels", "Overview"),
         ("2", "toggle_maximize('progress')", "Progress"),
-        ("3", "toggle_maximize('workers')", "Workers"),
-        ("4", "toggle_maximize('logs')", "Logs"),
+        ("3", "toggle_maximize('metrics')", "Metrics"),
+        ("4", "toggle_maximize('workers')", "Workers"),
+        ("5", "toggle_maximize('logs')", "Logs"),
         ("escape", "restore_all_panels", "Restore View"),
-        ("l", "toggle_hide_log_viewer", "Toggle Logs"),
+        Binding("l", "toggle_hide_log_viewer", "Toggle Logs", show=False),
     ]
 
-    def __init__(self) -> None:
+    def __init__(
+        self, service_config: ServiceConfig, controller: SystemController
+    ) -> None:
         super().__init__()
 
         self.title = "NVIDIA AIPerf"
@@ -73,9 +86,13 @@ class AIPerfTextualApp(App):
 
         self.log_viewer: RichLogViewer | None = None
         self.progress_dashboard: ProgressDashboard | None = None
+        self.progress_header: ProgressHeader | None = None
         self.worker_dashboard: WorkerDashboard | None = None
+        self.realtime_metrics_dashboard: RealtimeMetricsDashboard | None = None
         self.profile_results: list[RenderableType] = []
         self.logs_hidden = False
+        self.service_config = service_config
+        self.controller: SystemController = controller
 
     def on_mount(self) -> None:
         self.register_theme(AIPERF_THEME)
@@ -83,20 +100,30 @@ class AIPerfTextualApp(App):
 
     def compose(self) -> ComposeResult:
         """Compose the full application layout."""
-        yield CustomHeader()
+        self.progress_header = ProgressHeader(title=self.title, id="progress-header")
+        yield self.progress_header
 
         # NOTE: SIM117 is disabled because nested with statements are recommended for textual ui layouts
         with Vertical(id="main-container"):
             with Container(id="dashboard-section"):  # noqa: SIM117
                 with Horizontal(id="overview-section"):
-                    self.progress_dashboard = ProgressDashboard(id="progress")
-                    yield self.progress_dashboard
-                    self.worker_dashboard = WorkerDashboard(id="workers")
-                    yield self.worker_dashboard
+                    with Container(id="progress-section"):
+                        self.progress_dashboard = ProgressDashboard(id="progress")
+                        yield self.progress_dashboard
+
+                    with Container(id="metrics-section"):
+                        self.realtime_metrics_dashboard = RealtimeMetricsDashboard(
+                            service_config=self.service_config, id="metrics"
+                        )
+                        yield self.realtime_metrics_dashboard
 
             with Container(id="logs-section"):
                 self.log_viewer = RichLogViewer(id="logs")
                 yield self.log_viewer
+
+            with Container(id="workers-section", classes="hidden"):
+                self.worker_dashboard = WorkerDashboard(id="workers")
+                yield self.worker_dashboard
 
         yield Footer()
 

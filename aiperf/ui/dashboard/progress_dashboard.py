@@ -3,33 +3,28 @@
 
 from rich.progress import (
     BarColumn,
-    MofNCompleteColumn,
     Progress,
     SpinnerColumn,
     TaskID,
     TaskProgressColumn,
     TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
 )
 from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.events import Click
 from textual.timer import Timer
 from textual.visual import VisualType
 from textual.widgets import Static
 
 from aiperf.common.models import RecordsStats, RequestsStats
 from aiperf.common.models.progress_models import StatsProtocol
+from aiperf.ui.dashboard.custom_widgets import MaximizableWidget
 from aiperf.ui.utils import format_duration
 
 
-class ProgressDashboard(Container):
+class ProgressDashboard(Container, MaximizableWidget):
     """Textual widget that displays Rich progress bars for profile execution."""
-
-    ALLOW_MAXIMIZE = True
 
     DEFAULT_CSS = """
     ProgressDashboard {
@@ -53,7 +48,7 @@ class ProgressDashboard(Container):
     #stats-display.no-stats {
         height: 1fr;
         content-align: center middle;
-        color: $warning 50%;
+        color: $warning;
         text-style: italic;
     }
     """
@@ -69,9 +64,9 @@ class ProgressDashboard(Container):
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            TimeRemainingColumn(),
+            # MofNCompleteColumn(),
+            # TimeElapsedColumn(),
+            # TimeRemainingColumn(),
             expand=False,
         )
 
@@ -231,16 +226,3 @@ class ProgressDashboard(Container):
                 )
 
         return stats_table
-
-    def on_click(self, event: Click) -> None:
-        """Handle click events to toggle the maximize state of the widget."""
-        if event.chain == 2:
-            event.stop()
-            self.toggle_maximize()
-
-    def toggle_maximize(self) -> None:
-        """Toggle the maximize state of the widget."""
-        if not self.is_maximized:
-            self.screen.maximize(self)
-        else:
-            self.screen.minimize()
