@@ -7,6 +7,7 @@ from collections import Counter
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches, WrongType
+from textual.events import Click
 from textual.widgets import Label
 
 from aiperf.common.enums import WorkerStatus
@@ -45,8 +46,10 @@ class WorkerDashboard(Container):
     }
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    ALLOW_MAXIMIZE = True
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
         self.worker_stats: dict[str, WorkerStats] = {}
         self.table_widget: WorkerStatusTable | None = None
         self.border_title = "Worker Status"
@@ -86,3 +89,16 @@ class WorkerDashboard(Container):
                 self.query_one(
                     f"#{status.replace('_', '-').lower()}-count", Label
                 ).update(f"{summary[status]} {status.replace('_', ' ')}")
+
+    def on_click(self, event: Click) -> None:
+        """Handle click events to toggle the maximize state of the widget."""
+        if event.chain == 2:
+            event.stop()
+            self.toggle_maximize()
+
+    def toggle_maximize(self) -> None:
+        """Toggle the maximize state of the widget."""
+        if not self.is_maximized:
+            self.screen.maximize(self)
+        else:
+            self.screen.minimize()

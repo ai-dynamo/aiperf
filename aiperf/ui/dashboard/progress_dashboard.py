@@ -16,6 +16,7 @@ from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container
+from textual.events import Click
 from textual.timer import Timer
 from textual.visual import VisualType
 from textual.widgets import Static
@@ -27,6 +28,8 @@ from aiperf.ui.utils import format_duration
 
 class ProgressDashboard(Container):
     """Textual widget that displays Rich progress bars for profile execution."""
+
+    ALLOW_MAXIMIZE = True
 
     DEFAULT_CSS = """
     ProgressDashboard {
@@ -57,8 +60,8 @@ class ProgressDashboard(Container):
 
     SPINNER_REFRESH_RATE = 0.1  # 10 FPS
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
         self.border_title = "Profile Progress"
 
         self.progress = Progress(
@@ -228,3 +231,16 @@ class ProgressDashboard(Container):
                 )
 
         return stats_table
+
+    def on_click(self, event: Click) -> None:
+        """Handle click events to toggle the maximize state of the widget."""
+        if event.chain == 2:
+            event.stop()
+            self.toggle_maximize()
+
+    def toggle_maximize(self) -> None:
+        """Toggle the maximize state of the widget."""
+        if not self.is_maximized:
+            self.screen.maximize(self)
+        else:
+            self.screen.minimize()

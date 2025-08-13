@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from rich.highlighter import Highlighter, ReprHighlighter
 from rich.text import Text
+from textual.events import Click
 from textual.widgets import RichLog
 
 from aiperf.common.hooks import background_task
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 class RichLogViewer(RichLog):
     """RichLogViewer is a widget that displays log records in a rich format."""
 
+    ALLOW_MAXIMIZE = True
     DEFAULT_CSS = """
     RichLogViewer {
         border: round $primary;
@@ -73,6 +75,19 @@ class RichLogViewer(RichLog):
             ),
         )
         self.write(formatted_log)
+
+    def on_click(self, event: Click) -> None:
+        """Handle click events to toggle the maximize state of the widget."""
+        if event.chain == 2:
+            event.stop()
+            self.toggle_maximize()
+
+    def toggle_maximize(self) -> None:
+        """Toggle the maximize state of the widget."""
+        if not self.is_maximized:
+            self.screen.maximize(self)
+        else:
+            self.screen.minimize()
 
 
 class LogConsumer(AIPerfLifecycleMixin):
