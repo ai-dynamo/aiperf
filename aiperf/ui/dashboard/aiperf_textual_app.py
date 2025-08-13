@@ -11,8 +11,6 @@ from textual.widgets import Footer
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import AIPERF_DEV_MODE
-from aiperf.common.enums import WorkerStatus
-from aiperf.common.models import RecordsStats, RequestsStats, WorkerStats
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
 from aiperf.ui.dashboard.custom_header import CustomHeader
 from aiperf.ui.dashboard.progress_dashboard import ProgressDashboard
@@ -40,9 +38,6 @@ class AIPerfTextualApp(App):
     #dashboard-section {
         height: 3fr;
         min-height: 14;
-    }
-    Tab {
-        text-style: bold;
     }
     #logs-section {
         height: 2fr;
@@ -101,33 +96,6 @@ class AIPerfTextualApp(App):
                 yield self.log_viewer
 
         yield Footer()
-
-    async def on_profiling_progress(self, profiling_stats: RequestsStats) -> None:
-        """Update the overview and progress dashboard with the profiling progress."""
-        if self.progress_dashboard:
-            self.progress_dashboard.on_profiling_progress(profiling_stats)
-
-    async def on_warmup_progress(self, warmup_stats: RequestsStats) -> None:
-        """Update the overview and progress dashboard with the warmup progress."""
-        if self.progress_dashboard:
-            self.progress_dashboard.on_warmup_progress(warmup_stats)
-
-    async def on_records_progress(self, records_stats: RecordsStats) -> None:
-        """Update the overview and progress dashboard with the records progress."""
-        if self.progress_dashboard:
-            self.progress_dashboard.on_records_progress(records_stats)
-
-    async def on_worker_status_summary(
-        self, worker_status_summary: dict[str, WorkerStatus]
-    ) -> None:
-        """Update the overview and worker dashboard with the worker status summary."""
-        if self.worker_dashboard:
-            self.worker_dashboard.on_worker_status_summary(worker_status_summary)
-
-    async def on_worker_update(self, worker_id: str, worker_stats: WorkerStats) -> None:
-        """Update the overview and worker dashboard with the worker update."""
-        if self.worker_dashboard:
-            self.worker_dashboard.on_worker_stats_update(worker_id, worker_stats)
 
     async def action_quit(self) -> None:
         """Stop the UI and forward the signal to the main process."""

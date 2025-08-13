@@ -71,7 +71,7 @@ class WorkerDashboard(Container):
                 self.table_widget = WorkerStatusTable()
                 yield self.table_widget
 
-    def on_worker_stats_update(self, worker_id: str, worker_stats: WorkerStats) -> None:
+    def on_worker_update(self, worker_id: str, worker_stats: WorkerStats) -> None:
         """Handle individual worker updates."""
         self.worker_stats[worker_id] = worker_stats
         if self.table_widget:
