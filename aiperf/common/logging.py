@@ -69,12 +69,12 @@ def setup_child_process_logging(
 
         if service_id:
             # If the service is in the trace or debug services, set the level to trace or debug
-            if service_config.trace_services and _is_service_in_types(
-                service_id, service_config.trace_services
+            if service_config.developer.trace_services and _is_service_in_types(
+                service_id, service_config.developer.trace_services
             ):
                 level = _TRACE
-            elif service_config.debug_services and _is_service_in_types(
-                service_id, service_config.debug_services
+            elif service_config.developer.debug_services and _is_service_in_types(
+                service_id, service_config.developer.debug_services
             ):
                 level = _DEBUG
 

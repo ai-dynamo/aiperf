@@ -3,13 +3,13 @@
 from typing import Annotated
 
 from cyclopts import Parameter
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
 from aiperf.common.config.base_config import ADD_TO_TEMPLATE
 from aiperf.common.config.config_defaults import ServiceDefaults
-from aiperf.common.config.config_validators import parse_service_types
+from aiperf.common.config.dev_config import DeveloperConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
@@ -21,7 +21,6 @@ from aiperf.common.enums import (
     AIPerfLogLevel,
     CommunicationBackend,
     ServiceRunType,
-    ServiceType,
 )
 from aiperf.common.enums.ui_enums import AIPerfUIType
 
@@ -178,17 +177,6 @@ class ServiceConfig(BaseSettings):
         ),
     ] = ServiceDefaults.EXTRA_VERBOSE
 
-    enable_uvloop: Annotated[
-        bool,
-        Field(
-            description="Enable the use of uvloop instead of the default asyncio event loop",
-        ),
-        Parameter(
-            name=("--enable-uvloop"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.ENABLE_UVLOOP
-
     # TODO: Potentially auto-scale this in the future.
     record_processor_service_count: Annotated[
         int | None,
@@ -215,46 +203,6 @@ class ServiceConfig(BaseSettings):
         ),
     ] = ServiceDefaults.PROGRESS_REPORT_INTERVAL
 
-    enable_yappi: Annotated[
-        bool,
-        Field(
-            description="*[Developer use only]* Enable yappi profiling (Yet Another Python Profiler) to profile AIPerf's internal python code. "
-            "This can be used in the development of AIPerf in order to find performance bottlenecks across the various services. "
-            "The output '.prof' files can be viewed with snakeviz. Requires yappi and snakeviz to be installed. "
-            "Run 'pip install yappi snakeviz' to install them.",
-        ),
-        Parameter(
-            name=("--enable-yappi-profiling"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.ENABLE_YAPPI
-
-    debug_services: Annotated[
-        set[ServiceType] | None,
-        Field(
-            description="List of services to enable debug logging for. Can be a comma-separated list, a single service type, "
-            "or the cli flag can be used multiple times.",
-        ),
-        Parameter(
-            name=("--debug-service", "--debug-services"),
-            group=_CLI_GROUP,
-        ),
-        BeforeValidator(parse_service_types),
-    ] = ServiceDefaults.DEBUG_SERVICES
-
-    trace_services: Annotated[
-        set[ServiceType] | None,
-        Field(
-            description="List of services to enable trace logging for. Can be a comma-separated list, a single service type, "
-            "or the cli flag can be used multiple times.",
-        ),
-        Parameter(
-            name=("--trace-service", "--trace-services"),
-            group=_CLI_GROUP,
-        ),
-        BeforeValidator(parse_service_types),
-    ] = ServiceDefaults.TRACE_SERVICES
-
     ui_type: Annotated[
         AIPerfUIType,
         Field(
@@ -265,3 +213,5 @@ class ServiceConfig(BaseSettings):
             group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.UI_TYPE
+
+    developer: DeveloperConfig = DeveloperConfig()

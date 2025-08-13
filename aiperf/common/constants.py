@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import os
+
 NANOS_PER_SECOND = 1_000_000_000
 NANOS_PER_MILLIS = 1_000_000
 MILLIS_PER_SECOND = 1000
@@ -53,6 +55,8 @@ DEFAULT_MAX_REGISTRATION_ATTEMPTS = 10
 
 DEFAULT_REGISTRATION_INTERVAL = 1.0
 """Default interval between registration attempts in seconds for component services."""
+
+AIPERF_DEV_MODE = os.getenv("AIPERF_DEV_MODE", "false").lower() in ("true", "1")
 
 DEFAULT_UI_MIN_UPDATE_PERCENT = 1.0
 """Default minimum percentage difference from the last update to trigger a UI update (for non-dashboard UIs)."""

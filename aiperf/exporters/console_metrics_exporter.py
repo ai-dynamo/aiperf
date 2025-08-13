@@ -7,6 +7,7 @@ from datetime import datetime
 from rich.console import Console
 from rich.table import Table
 
+from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import MetricFlags
 from aiperf.common.enums.data_exporter_enums import ConsoleExporterType
@@ -30,8 +31,8 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         self._results = exporter_config.results
         self._endpoint_type = exporter_config.user_config.endpoint.type
-        self._show_internal_metrics = (
-            exporter_config.user_config.output.show_internal_metrics
+        self._show_internal_metrics = AIPERF_DEV_MODE and (
+            exporter_config.service_config.developer.show_internal_metrics
         )
 
     async def export(self, console: Console) -> None:
