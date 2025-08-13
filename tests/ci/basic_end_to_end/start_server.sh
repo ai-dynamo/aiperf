@@ -18,4 +18,4 @@ curl -O https://raw.githubusercontent.com/ai-dynamo/dynamo/${DYNAMO_REPO_TAG}/co
 
 chmod +x run.sh
 
-./run.sh --image ${DYNAMO_PREBUILT_IMAGE_TAG} -- /bin/bash -c "python3 -m dynamo.frontend & python3 -m dynamo.vllm --model ${MODEL} --enforce-eager --no-enable-prefix-caching" > server.log 2>&1 &
+./run.sh --image ${DYNAMO_PREBUILT_IMAGE_TAG} -- /bin/bash -c "python3 -m dynamo.frontend & python3 -m dynamo.vllm --model ${MODEL} --enforce-eager --no-enable-prefix-caching" > ${AIPERF_SOURCE_DIR}/server.log 2>&1 &
