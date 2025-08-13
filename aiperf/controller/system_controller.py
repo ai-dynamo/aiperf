@@ -68,10 +68,6 @@ class SystemController(SignalHandlerMixin, BaseService):
         service_config: ServiceConfig,
         service_id: str | None = None,
     ) -> None:
-        if AIPERF_DEV_MODE:
-            # Print a warning message to the console if developer mode is enabled, once at load time
-            print_developer_mode_warning()
-
         super().__init__(
             service_config=service_config,
             user_config=user_config,
