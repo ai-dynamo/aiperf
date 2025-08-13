@@ -41,8 +41,8 @@ class EndpointDefaults:
 @dataclass(frozen=True)
 class InputDefaults:
     BATCH_SIZE = 1
-    EXTRA = {}
-    HEADERS = {}
+    EXTRA = []
+    HEADERS = []
     FILE = None
     FIXED_SCHEDULE = False
     FIXED_SCHEDULE_AUTO_OFFSET = False

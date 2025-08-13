@@ -13,7 +13,7 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
-    parse_str_or_dict,
+    parse_str_or_dict_as_tuple_list,
 )
 from aiperf.common.config.conversation_config import ConversationConfig
 from aiperf.common.config.groups import Groups
@@ -67,32 +67,36 @@ class InputConfig(BaseConfig):
         return self
 
     extra: Annotated[
-        dict[str, Any] | None,
+        Any,
         Field(
             description="Provide additional inputs to include with every request.\n"
-            "Inputs should be in an 'input_name:value' format.",
+            "Inputs should be in an 'input_name:value' format.\n"
+            "Alternatively, a string representing a json formatted dict can be provided.",
         ),
         Parameter(
             name=(
                 "--extra-inputs",  # GenAI-Perf
             ),
+            consume_multiple=True,
             group=_CLI_GROUP,
         ),
-        BeforeValidator(parse_str_or_dict),
+        BeforeValidator(parse_str_or_dict_as_tuple_list),
     ] = InputDefaults.EXTRA
 
     headers: Annotated[
-        dict[str, str] | None,
+        Any,
         Field(
             description="Adds a custom header to the requests.\n"
-            "Headers must be specified as 'Header:Value' pairs.",
+            "Headers must be specified as 'Header:Value' pairs.\n"
+            "Alternatively, a string representing a json formatted dict can be provided.",
         ),
-        BeforeValidator(parse_str_or_dict),
+        BeforeValidator(parse_str_or_dict_as_tuple_list),
         Parameter(
             name=(
                 "--header",  # GenAI-Perf
                 "-H",  # GenAI-Perf
             ),
+            consume_multiple=True,
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.HEADERS

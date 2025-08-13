@@ -1,12 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import json
+from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import orjson
+from cyclopts.token import Token
+
 from aiperf.common.enums import ServiceType
+from aiperf.common.utils import load_json_str
 
 """
 This module provides utility functions for validating and parsing configuration inputs.
@@ -82,54 +86,53 @@ def parse_service_types(input: Any | None) -> set[ServiceType] | None:
     }
 
 
-def parse_str_or_dict(input: Any | None) -> dict[str, Any] | None:
+def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] | None:
     """
-    Parses the input to ensure it is a dictionary.
+    Parses the input to ensure it is a list of tuples. (key, value) pairs.
 
     - If the input is a string:
         - If the string starts with a '{', it is parsed as a JSON string.
         - Otherwise, it splits the string by commas and then for each item, it splits the item by colons
         into key and value, trims any whitespace.
-    - If the input is already a dictionary, it is returned as-is.
-    - If the input is a list, it is converted to a dictionary by splitting each string by colons
-    into key and value, trims any whitespace.
+    - If the input is a dictionary, it is converted to a list of tuples by key and value pairs.
+    - If the input is a list, it recursively calls this function on each item, and aggregates the results.
     - Otherwise, a ValueError is raised.
 
     Args:
         input (Any): The input to be parsed. Expected to be a string, list, or dictionary.
     Returns:
-        dict[str, Any]: A dictionary derived from the input.
+        list[tuple[str, Any]]: A list of tuples derived from the input.
     Raises:
         ValueError: If the input is neither a string, list, nor dictionary, or if the parsing fails.
     """
-
     if input is None:
         return None
 
-    if isinstance(input, dict):
-        return input
+    if isinstance(input, list | tuple | set):
+        output = []
+        for item in input:
+            res = parse_str_or_dict_as_tuple_list(item)
+            if res is not None:
+                output.extend(res)
+        return output
 
-    if isinstance(input, list):
-        return {
-            key.strip(): value.strip()
-            for item in input
-            for key, value in [item.split(":")]
-        }
+    if isinstance(input, dict):
+        return [(key, value) for key, value in input.items()]
 
     if isinstance(input, str):
         if input.startswith("{"):
             try:
-                return json.loads(input)
-            except json.JSONDecodeError as e:
+                return [(key, value) for key, value in load_json_str(input).items()]
+            except orjson.JSONDecodeError as e:
                 raise ValueError(
                     f"User Config: {input} - must be a valid JSON string"
                 ) from e
         else:
-            return {
-                key.strip(): value.strip()
+            return [
+                (key.strip(), value.strip())
                 for item in input.split(",")
                 for key, value in [item.split(":")]
-            }
+            ]
 
     raise ValueError(f"User Config: {input} - must be a valid string, list, or dict")
 
@@ -195,3 +198,10 @@ def parse_file(value: str | None) -> Path | None:
             return path
         else:
             raise ValueError(f"'{value}' is not a valid file or directory")
+
+
+def custom_enum_converter(type_: Any, value: Sequence[Token]) -> Any:
+    """This is a custom converter for cyclopts that allows us to use our custom enum types"""
+    if len(value) != 1:
+        raise ValueError(f"Expected 1 value, but got {len(value)}")
+    return type_(value[0].value)
