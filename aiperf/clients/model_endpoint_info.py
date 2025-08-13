@@ -76,7 +76,7 @@ class EndpointInfo(AIPerfBaseModel):
         default=False,
         description="Whether the endpoint supports streaming.",
     )
-    headers: dict[str, str] | None = Field(
+    headers: list[tuple[str, str]] | None = Field(
         default=None,
         description="Custom URL headers to use for the endpoint.",
     )
@@ -92,7 +92,7 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.TIMEOUT,
         description="The timeout in seconds for each request to the endpoint.",
     )
-    extra: dict[str, Any] | None = Field(
+    extra: list[tuple[str, Any]] | None = Field(
         default=None,
         description="Additional inputs to include with every request. "
         "You can repeat this flag for multiple inputs. Inputs should be in an 'input_name:value' format. "
