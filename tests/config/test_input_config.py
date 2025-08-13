@@ -52,8 +52,8 @@ def test_input_config_custom_values():
         custom_dataset_type=CustomDatasetType.MULTI_TURN,
     )
 
-    assert config.extra == {"key": "value"}
-    assert config.headers == {"Authorization": "Bearer token"}
+    assert config.extra == [("key", "value")]
+    assert config.headers == [("Authorization", "Bearer token")]
     assert config.file is None
     assert config.random_seed == 42
     assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
