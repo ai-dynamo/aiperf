@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 
-from aiperf.common.config import UserConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.models import ProfileResults
 
 
@@ -11,3 +11,4 @@ from aiperf.common.models import ProfileResults
 class ExporterConfig:
     results: ProfileResults
     user_config: UserConfig
+    service_config: ServiceConfig

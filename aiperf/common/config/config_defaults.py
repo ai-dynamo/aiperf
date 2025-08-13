@@ -4,6 +4,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.enums import (
     AIPerfLogLevel,
     AIPerfUIType,
@@ -31,10 +32,8 @@ class EndpointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
     CUSTOM_ENDPOINT = None
     TYPE = EndpointType.OPENAI_CHAT_COMPLETIONS
-    STREAMING = True
-    SERVER_METRICS_URLS = ["http://localhost:8002/metrics"]
+    STREAMING = False
     URL = "localhost:8080"
-    GRPC_METHOD = ""
     TIMEOUT = 600.0
     API_KEY = None
 
@@ -115,7 +114,6 @@ class TurnDelayDefaults:
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
     PROFILE_EXPORT_FILE = Path("profile_export.json")
-    SHOW_INTERNAL_METRICS = False
 
 
 @dataclass(frozen=True)
@@ -143,11 +141,7 @@ class ServiceDefaults:
     VERBOSE = False
     EXTRA_VERBOSE = False
     LOG_PATH = None
-    ENABLE_UVLOOP = True
     RECORD_PROCESSOR_SERVICE_COUNT = None
-    ENABLE_YAPPI = False
-    DEBUG_SERVICES = None
-    TRACE_SERVICES = None
     PROGRESS_REPORT_INTERVAL = 1.0
     UI_TYPE = AIPerfUIType.DASHBOARD
 
@@ -168,3 +162,19 @@ class WorkersDefaults:
     MIN = None
     MAX = None
     HEALTH_CHECK_INTERVAL = 1.0
+
+
+@dataclass(frozen=True)
+class DevDefaults:
+    if AIPERF_DEV_MODE:
+        ENABLE_YAPPI = False
+        DEBUG_SERVICES = None
+        TRACE_SERVICES = None
+        SHOW_INTERNAL_METRICS = True
+        DISABLE_UVLOOP = False
+    else:
+        ENABLE_YAPPI = False
+        DEBUG_SERVICES = None
+        TRACE_SERVICES = None
+        SHOW_INTERNAL_METRICS = False
+        DISABLE_UVLOOP = False

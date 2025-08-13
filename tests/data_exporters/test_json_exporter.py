@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
+from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -21,19 +22,19 @@ class TestJsonExporter:
             MetricResult(
                 tag="ttft",
                 header="Time to First Token",
-                unit="ms",
-                avg=123.0,
-                min=100.0,
-                max=150.0,
-                p1=101.0,
-                p5=105.0,
-                p25=110.0,
-                p50=120.0,
-                p75=130.0,
-                p90=140.0,
+                unit="ns",
+                avg=123.0 * NANOS_PER_MILLIS,
+                min=100.0 * NANOS_PER_MILLIS,
+                max=150.0 * NANOS_PER_MILLIS,
+                p1=101.0 * NANOS_PER_MILLIS,
+                p5=105.0 * NANOS_PER_MILLIS,
+                p25=110.0 * NANOS_PER_MILLIS,
+                p50=120.0 * NANOS_PER_MILLIS,
+                p75=130.0 * NANOS_PER_MILLIS,
+                p90=140.0 * NANOS_PER_MILLIS,
                 p95=None,
-                p99=149.0,
-                std=10.0,
+                p99=149.0 * NANOS_PER_MILLIS,
+                std=10.0 * NANOS_PER_MILLIS,
             )
         ]
 
@@ -84,6 +85,7 @@ class TestJsonExporter:
             exporter_config = ExporterConfig(
                 results=mock_results,
                 user_config=mock_user_config,
+                service_config=ServiceConfig(),
             )
 
             exporter = JsonExporter(exporter_config)
@@ -102,6 +104,7 @@ class TestJsonExporter:
             assert "ttft" in records
             assert records["ttft"]["unit"] == "ms"
             assert records["ttft"]["avg"] == 123.0
+            assert records["ttft"]["p1"] == 101.0
 
             assert "input_config" in data
             assert isinstance(data["input_config"], dict)
