@@ -36,7 +36,7 @@ class CsvExporter(AIPerfLoggerMixin):
         self.debug(lambda: f"Initializing CsvExporter with config: {exporter_config}")
         self._results = exporter_config.results
         self._output_directory = exporter_config.user_config.output.artifact_directory
-        self._metric_registry = MetricRegistry()
+        self._metric_registry = MetricRegistry
         self._percentile_keys = _percentile_keys_from(STAT_KEYS)
 
     async def export(self) -> None:
