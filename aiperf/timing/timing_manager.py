@@ -68,7 +68,9 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
             pull_client_bind=True,
         )
         self.debug("Timing manager __init__")
-        self.config = TimingManagerConfig.from_user_config(self.user_config)
+        self.config = TimingManagerConfig.from_user_and_service_config(
+            self.user_config, self.service_config
+        )
 
         self.dataset_request_client: RequestClientProtocol = (
             self.comms.create_request_client(

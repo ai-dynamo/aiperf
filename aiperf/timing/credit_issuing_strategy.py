@@ -30,6 +30,9 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         # This event is set when all phases are complete
         self.all_phases_complete_event = asyncio.Event()
 
+        # This event is set when a single phase is complete
+        self.phase_complete_event = asyncio.Event()
+
         # The running stats for each phase, keyed by phase type.
         self.phase_stats: dict[CreditPhase, CreditPhaseStats] = {}
 
@@ -103,6 +106,8 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
             phase_stats.start_ns = time.time_ns()
             self.phase_stats[phase_config.type] = phase_stats
 
+            self.phase_complete_event.clear()
+
             self.execute_async(
                 self.credit_manager.publish_phase_start(
                     phase_config.type,
@@ -116,15 +121,21 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
             # This is implemented in subclasses
             await self._execute_single_phase(phase_stats)
 
-            # We have sent all the credits for this phase. We must continue to the next
-            # phase even though not all the credits have been returned. This is because
-            # we do not want a gap in the credit issuing.
             phase_stats.sent_end_ns = time.time_ns()
             self.execute_async(
                 self.credit_manager.publish_phase_sending_complete(
                     phase_config.type, phase_stats.sent_end_ns, phase_stats.sent
                 )
             )
+
+            if self.config.seamless_phase_transitions:
+                # We have sent all the credits for this phase. We must continue to the next
+                # phase even though not all the credits have been returned. This is because
+                # we do not want a gap in the credit issuing.
+                continue
+            else:
+                # Wait for the phase to complete before continuing to the next phase
+                await self.phase_complete_event.wait()
 
     @abstractmethod
     async def _execute_single_phase(self, phase_stats: CreditPhaseStats) -> None:
@@ -139,9 +150,9 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         """This is called by the credit manager when a credit is returned. It can be
         overridden in subclasses to handle the credit return."""
         if message.phase not in self.phase_stats:
-            # self.warning(
-            #     lambda: f"Credit return message received for phase {message.phase} but no phase stats found"
-            # )
+            self.warning(
+                lambda: f"Credit return message received for phase {message.phase} but no phase stats found"
+            )
             return
 
         phase_stats = self.phase_stats[message.phase]
@@ -160,6 +171,8 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
                     message.phase, phase_stats.completed, phase_stats.end_ns
                 )
             )
+
+            self.phase_complete_event.set()
 
             if phase_stats.type == CreditPhase.PROFILING:
                 self.execute_async(self.credit_manager.publish_credits_complete())

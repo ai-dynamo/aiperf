@@ -114,3 +114,16 @@ class DeveloperConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = DevDefaults.DISABLE_UVLOOP
+
+    seamless_phase_transitions: Annotated[
+        bool,
+        Field(
+            description="*[Developer use only]* Whether to start the next credit issuing phase immediately after the current phase has sent all credits, "
+            "instead of waiting for all credits to be returned.",
+        ),
+        Parameter(
+            name=("--seamless-phase-transitions"),
+            parse=AIPERF_DEV_MODE,  # Only show this flag if developer mode is enabled
+            group=_CLI_GROUP,
+        ),
+    ] = DevDefaults.SEAMLESS_PHASE_TRANSITIONS

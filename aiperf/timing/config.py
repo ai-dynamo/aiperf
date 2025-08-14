@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config import (
+    DevDefaults,
     InputDefaults,
     LoadGeneratorDefaults,
+    ServiceConfig,
     ServiceDefaults,
     UserConfig,
 )
@@ -25,9 +27,12 @@ class TimingManagerConfig(AIPerfBaseModel):
     auto_offset_timestamps: bool = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
     fixed_schedule_start_offset: int | None = InputDefaults.FIXED_SCHEDULE_START_OFFSET
     fixed_schedule_end_offset: int | None = InputDefaults.FIXED_SCHEDULE_END_OFFSET
+    seamless_phase_transitions: bool = DevDefaults.SEAMLESS_PHASE_TRANSITIONS
 
     @classmethod
-    def from_user_config(cls, user_config: UserConfig) -> "TimingManagerConfig":
+    def from_user_and_service_config(
+        cls, user_config: UserConfig, service_config: ServiceConfig
+    ) -> "TimingManagerConfig":
         """Create a TimingManagerConfig from a UserConfig."""
 
         # TODO: Should this logic be moved as pydantic validators?
@@ -50,4 +55,5 @@ class TimingManagerConfig(AIPerfBaseModel):
             auto_offset_timestamps=user_config.input.fixed_schedule_auto_offset,
             fixed_schedule_start_offset=user_config.input.fixed_schedule_start_offset,
             fixed_schedule_end_offset=user_config.input.fixed_schedule_end_offset,
+            seamless_phase_transitions=service_config.developer.seamless_phase_transitions,
         )

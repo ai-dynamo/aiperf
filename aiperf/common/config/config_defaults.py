@@ -172,9 +172,11 @@ class DevDefaults:
         TRACE_SERVICES = None
         SHOW_INTERNAL_METRICS = True
         DISABLE_UVLOOP = False
+        SEAMLESS_PHASE_TRANSITIONS = False
     else:
         ENABLE_YAPPI = False
         DEBUG_SERVICES = None
         TRACE_SERVICES = None
         SHOW_INTERNAL_METRICS = False
         DISABLE_UVLOOP = False
+        SEAMLESS_PHASE_TRANSITIONS = False
