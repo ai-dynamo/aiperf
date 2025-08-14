@@ -19,6 +19,7 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.enums.metric_enums import MetricValueTypeT
+from aiperf.common.enums.ui_enums import AIPerfUIType
 from aiperf.common.factories import (
     ResultsProcessorFactory,
     ServiceFactory,
@@ -290,8 +291,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         immediate=False,
     )
     async def _report_realtime_metrics_task(self) -> None:
-        """Report the real-time metrics at a regular interval."""
-        await self._report_realtime_metrics()
+        """Report the real-time metrics at a regular interval (only if the UI type is dashboard)."""
+        if self.service_config.ui_type == AIPerfUIType.DASHBOARD:
+            await self._report_realtime_metrics()
 
     @on_command(CommandType.REALTIME_METRICS)
     async def _on_realtime_metrics_command(

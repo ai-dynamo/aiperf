@@ -50,10 +50,7 @@ class ProgressHeader(Widget):
         color: $primary;
         background: $secondary;
     }
-    .bar--bar {
-        color: $primary;
-        background: $primary;
-    }
+
     .bar--complete {
         color: $error;
     }
@@ -67,27 +64,43 @@ class ProgressHeader(Widget):
         width: 1fr;
     }
     #progress-bar {
-        width: 1fr;
+        width: auto;
         background: $footer-background;
         align: right middle;
-        padding-right: 2;
-        color: $primary;
+        padding-right: 1;
     }
     #header-title {
         width: 1fr;
         content-align: center middle;
         color: $primary;
     }
+    #progress-name {
+        width: auto;
+        content-align: right middle;
+        color: $primary;
+        padding-right: 1;
+    }
+    #progress-name.warmup, #progress-bar.warmup {
+        color: $warning;
+    }
+    #progress-name.profiling, #progress-bar.profiling {
+        color: $primary;
+    }
+    #progress-name.records, #progress-bar.records {
+        color: $success;
+    }
     """
 
     def __init__(self, title: str, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.title = title
+        self.progress_name = ""
 
     def compose(self):
         with Horizontal():
             yield Static(id="padding")
             yield Static(self.title, id="header-title")
+            yield Static(id="progress-name")
             yield ProgressBar(
                 id="progress-bar",
                 total=100,
@@ -95,9 +108,18 @@ class ProgressHeader(Widget):
                 show_percentage=True,
             )
 
-    def update_progress(self, progress: float, total: float | None = None) -> None:
+    def update_progress(
+        self, header: str, progress: float, total: float | None = None
+    ) -> None:
         """Update the progress of the progress bar."""
         with contextlib.suppress(Exception):
             bar = self.query_one(ProgressBar)
+            if self.progress_name != header:
+                self.query_one("#progress-name", Static).remove_class(
+                    "warmup", "profiling", "records"
+                ).add_class(header.lower()).update(header)
+                bar.remove_class("warmup", "profiling", "records")
+                bar.add_class(header.lower())
+                self.progress_name = header
             bar.update(progress=progress, total=total)
             self.refresh()

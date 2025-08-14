@@ -6,23 +6,12 @@ import multiprocessing
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import AIPerfUIType, WorkerStatus
+from aiperf.common.enums import AIPerfUIType
 from aiperf.common.factories import AIPerfUIFactory
 from aiperf.common.hooks import (
-    on_profiling_progress,
-    on_realtime_metrics,
-    on_records_progress,
+    AIPerfHook,
     on_start,
     on_stop,
-    on_warmup_progress,
-    on_worker_status_summary,
-    on_worker_update,
-)
-from aiperf.common.models import (
-    MetricResult,
-    RecordsStats,
-    RequestsStats,
-    WorkerStats,
 )
 from aiperf.common.protocols import AIPerfUIProtocol
 from aiperf.controller.system_controller import SystemController
@@ -70,6 +59,18 @@ class AIPerfDashboardUI(BaseAIPerfUI):
         self.log_consumer: LogConsumer = LogConsumer(log_queue=log_queue, app=self.app)
         self.attach_child_lifecycle(self.log_consumer)  # type: ignore
 
+        # Attach the hooks directly to the function on the app, to avoid the extra function call overhead
+        self.attach_hook(AIPerfHook.ON_RECORDS_PROGRESS, self.app.on_records_progress)
+        self.attach_hook(
+            AIPerfHook.ON_PROFILING_PROGRESS, self.app.on_profiling_progress
+        )
+        self.attach_hook(AIPerfHook.ON_WARMUP_PROGRESS, self.app.on_warmup_progress)
+        self.attach_hook(AIPerfHook.ON_WORKER_UPDATE, self.app.on_worker_update)
+        self.attach_hook(
+            AIPerfHook.ON_WORKER_STATUS_SUMMARY, self.app.on_worker_status_summary
+        )
+        self.attach_hook(AIPerfHook.ON_REALTIME_METRICS, self.app.on_realtime_metrics)
+
     @on_start
     async def _run_app(self) -> None:
         """Run the enhanced Dashboard application."""
@@ -82,52 +83,3 @@ class AIPerfDashboardUI(BaseAIPerfUI):
         """Stop the Dashboard application gracefully."""
         self.debug("Shutting down Dashboard UI")
         self.app.exit(return_code=0)
-
-    @on_records_progress
-    async def _on_records_progress(self, records_stats: RecordsStats) -> None:
-        """Forward records progress updates to the Textual App."""
-        with self.app.batch_update():
-            if self.app.progress_dashboard:
-                self.app.progress_dashboard.on_records_progress(records_stats)
-            if self.app.progress_header:
-                self.app.progress_header.update_progress(
-                    progress=records_stats.finished,
-                    total=records_stats.total_expected_requests,
-                )
-
-    @on_profiling_progress
-    async def _on_profiling_progress(self, profiling_stats: RequestsStats) -> None:
-        """Forward requests phase progress updates to the Textual App."""
-        with self.app.batch_update():
-            if self.app.progress_dashboard:
-                self.app.progress_dashboard.on_profiling_progress(profiling_stats)
-
-    @on_warmup_progress
-    async def _on_warmup_progress(self, warmup_stats: RequestsStats) -> None:
-        """Forward warmup progress updates to the Textual App."""
-        with self.app.batch_update():
-            if self.app.progress_dashboard:
-                self.app.progress_dashboard.on_warmup_progress(warmup_stats)
-
-    @on_worker_update
-    async def _on_worker_update(self, worker_id: str, worker_stats: WorkerStats):
-        """Forward worker updates to the Textual App."""
-        with self.app.batch_update():
-            if self.app.worker_dashboard:
-                self.app.worker_dashboard.on_worker_update(worker_id, worker_stats)
-
-    @on_worker_status_summary
-    async def _on_worker_status_summary(self, worker_status_summary: dict[str, WorkerStatus]) -> None:  # fmt: skip
-        """Forward worker status summary updates to the Textual App."""
-        with self.app.batch_update():
-            if self.app.worker_dashboard:
-                self.app.worker_dashboard.on_worker_status_summary(
-                    worker_status_summary
-                )
-
-    @on_realtime_metrics
-    async def _on_realtime_metrics(self, metrics: list[MetricResult]) -> None:
-        """Forward real-time metrics updates to the Textual App."""
-        with self.app.batch_update():
-            if self.app.realtime_metrics_dashboard:
-                self.app.realtime_metrics_dashboard.on_realtime_metrics(metrics)

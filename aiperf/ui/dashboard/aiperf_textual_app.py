@@ -13,6 +13,8 @@ from textual.widgets import Footer
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.constants import AIPERF_DEV_MODE
+from aiperf.common.enums import WorkerStatus
+from aiperf.common.models import MetricResult, RecordsStats, RequestsStats, WorkerStats
 from aiperf.controller.system_controller import SystemController
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
 from aiperf.ui.dashboard.custom_widgets import ProgressHeader
@@ -94,6 +96,10 @@ class AIPerfTextualApp(App):
         self.profile_results: list[RenderableType] = []
         self.service_config = service_config
         self.controller: SystemController = controller
+        self._warmup_stats: RequestsStats | None = None
+        self._profiling_stats: RequestsStats | None = None
+        self._records_stats: RecordsStats | None = None
+        self._metrics: list[MetricResult] | None = None
 
     def on_mount(self) -> None:
         self.register_theme(AIPERF_THEME)
@@ -112,7 +118,7 @@ class AIPerfTextualApp(App):
                         self.progress_dashboard = ProgressDashboard(id="progress")
                         yield self.progress_dashboard
 
-                    with Container(id="metrics-section"):
+                    with Container(id="metrics-section", classes="hidden"):
                         self.realtime_metrics_dashboard = RealtimeMetricsDashboard(
                             service_config=self.service_config, id="metrics"
                         )
@@ -156,3 +162,72 @@ class AIPerfTextualApp(App):
             self.screen.minimize()
         else:
             self.screen.maximize(panel)
+
+    async def on_warmup_progress(self, warmup_stats: RequestsStats) -> None:
+        """Forward warmup progress updates to the Textual App."""
+        if not self._warmup_stats:
+            self.query_one("#progress-section").remove_class("hidden")
+        self._warmup_stats = warmup_stats
+        if self.progress_dashboard:
+            async with self.progress_dashboard.batch():
+                self.progress_dashboard.on_warmup_progress(warmup_stats)
+        if self.progress_header:
+            self.progress_header.update_progress(
+                header="Warmup",
+                progress=warmup_stats.finished,
+                total=warmup_stats.total_expected_requests,
+            )
+
+    async def on_profiling_progress(self, profiling_stats: RequestsStats) -> None:
+        """Forward requests phase progress updates to the Textual App."""
+        if not self._profiling_stats:
+            self.query_one("#progress-section").remove_class("hidden")
+        self._profiling_stats = profiling_stats
+        if self.progress_dashboard:
+            async with self.progress_dashboard.batch():
+                self.progress_dashboard.on_profiling_progress(profiling_stats)
+        if self.progress_header:
+            self.progress_header.update_progress(
+                header="Profiling",
+                progress=profiling_stats.finished,
+                total=profiling_stats.total_expected_requests,
+            )
+
+    async def on_records_progress(self, records_stats: RecordsStats) -> None:
+        """Forward records progress updates to the Textual App."""
+        self._records_stats = records_stats
+        if self.progress_dashboard:
+            async with self.progress_dashboard.batch():
+                self.progress_dashboard.on_records_progress(records_stats)
+
+        if (
+            self._profiling_stats
+            and self._profiling_stats.is_complete
+            and self.progress_header
+        ):
+            self.progress_header.update_progress(
+                header="Records",
+                progress=self._profiling_stats.finished,
+                total=self._profiling_stats.total_expected_requests,
+            )
+
+    async def on_worker_update(self, worker_id: str, worker_stats: WorkerStats):
+        """Forward worker updates to the Textual App."""
+        if self.worker_dashboard:
+            async with self.worker_dashboard.batch():
+                self.worker_dashboard.on_worker_update(worker_id, worker_stats)
+
+    async def on_worker_status_summary(self, worker_status_summary: dict[str, WorkerStatus]) -> None:  # fmt: skip
+        """Forward worker status summary updates to the Textual App."""
+        if self.worker_dashboard:
+            async with self.worker_dashboard.batch():
+                self.worker_dashboard.on_worker_status_summary(worker_status_summary)
+
+    async def on_realtime_metrics(self, metrics: list[MetricResult]) -> None:
+        """Forward real-time metrics updates to the Textual App."""
+        if not self._metrics:
+            self.query_one("#metrics-section").remove_class("hidden")
+        self._metrics = metrics
+        if self.realtime_metrics_dashboard:
+            async with self.realtime_metrics_dashboard.batch():
+                self.realtime_metrics_dashboard.on_realtime_metrics(metrics)
