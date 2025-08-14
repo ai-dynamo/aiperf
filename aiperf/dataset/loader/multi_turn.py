@@ -105,7 +105,7 @@ class MultiTurnDatasetLoader(AIPerfLoggerMixin, MediaConversionMixin):
         Returns:
             A dictionary mapping session_id to list of MultiTurn objects.
         """
-        dataset: dict[str, list[MultiTurn]] = defaultdict(list)
+        data: dict[str, list[MultiTurn]] = defaultdict(list)
 
         with open(self.filename) as f:
             for line in f:
@@ -114,6 +114,6 @@ class MultiTurnDatasetLoader(AIPerfLoggerMixin, MediaConversionMixin):
 
                 multi_turn_data = MultiTurn.model_validate_json(line)
                 session_id = multi_turn_data.session_id or str(uuid.uuid4())
-                dataset[session_id].append(multi_turn_data)
+                data[session_id].append(multi_turn_data)
 
-        return dataset
+        return data
