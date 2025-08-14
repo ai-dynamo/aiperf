@@ -3,11 +3,13 @@
 
 import random
 import uuid
+from pathlib import Path
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,
+    MediaType,
     MessageType,
     ModelSelectionStrategy,
     ServiceType,
@@ -15,8 +17,12 @@ from aiperf.common.enums import (
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_init, on_pull_message
 from aiperf.common.messages import (
+    ProcessDatasetMessage,
     ProcessDatasetResponseMessage,
     ProcessMooncakeTraceDatasetMessage,
+    ProcessMultiTurnDatasetMessage,
+    ProcessRandomPoolDatasetMessage,
+    ProcessSingleTurnDatasetMessage,
     ProcessSyntheticDatasetMessage,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -94,6 +100,14 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
         self.image_generator = ImageGenerator(self._image_config)
         self.audio_generator = AudioGenerator(self._audio_config)
 
+    async def _reset_states(self, message: ProcessDatasetMessage) -> None:
+        """Reset the states of the dataset processor."""
+        if message.random_seed is not None:
+            random.seed(message.random_seed)
+            self.debug(lambda: f"Setting random seed to {message.random_seed}")
+
+        self.model_selection_counter = 0
+
     @on_pull_message(MessageType.PROCESS_SYNTHETIC_DATASET)
     async def _on_process_synthetic_dataset(
         self,
@@ -104,12 +118,7 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
         self.info(
             lambda: f"#### ({self.service_id}) Received synthetic dataset generation job to process {message.num_conversations} conversations"
         )
-
-        if message.random_seed is not None:
-            random.seed(message.random_seed)
-            self.debug(lambda: f"Setting random seed to {message.random_seed}")
-
-        self.model_selection_counter = 0
+        await self._reset_states(message)
 
         conversations = []
         for _ in range(message.num_conversations):
@@ -287,13 +296,7 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
     ) -> None:
         """Handle a mooncake trace dataset generation job."""
         self.debug(lambda: "Received mooncake trace dataset generation job")
-
-        if message.random_seed is not None:
-            random.seed(message.random_seed)
-            self.info(f"{self.service_id} setting random seed to {message.random_seed}")
-
-        # TODO: implement model selection strategy
-        self.model_selection_counter = 0
+        await self._reset_states(message)
 
         conversations = []
         for session_id, traces in message.dataset:
@@ -308,6 +311,7 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
                     timestamp=trace["timestamp"],
                     texts=[Text(name="text", contents=[prompt])],
                 )
+                self._finalize_turn(turn)
                 conversation.turns.append(turn)
             conversations.append(conversation)
 
@@ -318,155 +322,133 @@ class DatasetProcessor(PullClientMixin, BaseComponentService, MediaConversionMix
             )
         )
 
-    #
-    # @on_pull_message(MessageType.PROCESS_MULTI_TURN_DATASET)
-    # async def _on_process_multi_turn_dataset(
-    #    self, message: ProcessMultiTurnDatasetMessage,
-    # ) -> None:
-    #    """Handle a multi-turn dataset generation job."""
-    #    self.debug(lambda: f"Received multi-turn dataset generation job: {message}")
-    #
-    #    if message.random_seed is not None:
-    #        random.seed(message.random_seed)
-    #        self.debug(lambda: f"Setting random seed to {message.random_seed}")
-    #
-    #    # TODO: implement model selection strategy
-    #    self.model_selection_counter = 0
-    #
-    #    conversations = []
-    #    for session_id, multi_turns in message.data.items():
-    #        conversation = Conversation(session_id=session_id)
-    #        for multi_turn in multi_turns:
-    #            for single_turn in multi_turn.turns:
-    #                media = self.convert_to_media_objects(single_turn)
-    #                conversation.turns.append(
-    #                    Turn(
-    #                        texts=media[MediaType.TEXT],
-    #                        images=media[MediaType.IMAGE],
-    #                        audios=media[MediaType.AUDIO],
-    #                        timestamp=single_turn.timestamp,
-    #                        delay=single_turn.delay,
-    #                        role=single_turn.role,
-    #                    )
-    #                )
-    #        conversations.append(conversation)
+    @on_pull_message(MessageType.PROCESS_MULTI_TURN_DATASET)
+    async def _on_process_multi_turn_dataset(
+        self,
+        message: ProcessMultiTurnDatasetMessage,
+    ) -> None:
+        """Handle a multi-turn dataset generation job."""
+        self.debug(lambda: "Received multi-turn dataset generation job")
+        await self._reset_states(message)
 
-    #    await self.results_push_client.push(
-    #        DatasetResultMessage(
-    #            service_id=self.service_id,
-    #            success=True,
-    #            generated_data=conversations,
-    #        )
-    #    )
-    #
-    # @on_pull_message(MessageType.PROCESS_SINGLE_TURN_DATASET)
-    # async def _on_process_single_turn_dataset(
-    #    self, message: ProcessSingleTurnDatasetMessage,
-    # ) -> None:
-    #    """Handle a single-turn dataset generation job."""
-    #    self.debug(lambda: f"Received single-turn dataset generation job: {message}")
-    #
-    #    if message.random_seed is not None:
-    #        random.seed(message.random_seed)
-    #        self.debug(lambda: f"Setting random seed to {message.random_seed}")
-    #
-    #    # TODO: implement model selection strategy
-    #    self.model_selection_counter = 0
-    #
-    #    conversations = []
-    #    for session_id, single_turns in message.data.items():
-    #        conversation = Conversation(session_id=session_id)
-    #        for single_turn in single_turns:
-    #            media = self.convert_to_media_objects(single_turn)
-    #            conversation.turns.append(
-    #                Turn(
-    #                    texts=media[MediaType.TEXT],
-    #                    images=media[MediaType.IMAGE],
-    #                    audios=media[MediaType.AUDIO],
-    #                    timestamp=single_turn.timestamp,
-    #                    delay=single_turn.delay,
-    #                    role=single_turn.role,
-    #                )
-    #            )
-    #        conversations.append(conversation)
-    #
-    #    await self.results_push_client.push(
-    #        DatasetResultMessage(
-    #            service_id=self.service_id,
-    #            job_id=message.job_id,
-    #            success=True,
-    #            generated_data=conversations,
-    #        )
-    #    )
-    #
-    # @on_pull_message(MessageType.PROCESS_RANDOM_POOL_DATASET)
-    # async def _on_process_random_pool_dataset(
-    #     self,
-    #     message: ProcessRandomPoolDatasetMessage,
-    # ) -> None:
-    #     """Handle a random pool dataset generation job."""
-    #     self.debug(lambda: f"Received random pool dataset generation job: {message}")
+        conversations = []
+        for session_id, multi_turns in message.dataset:
+            conversation = Conversation(session_id=session_id)
+            for multi_turn in multi_turns:
+                for single_turn in multi_turn.turns:
+                    media = self.convert_to_media_objects(single_turn)
+                    turn = Turn(
+                        texts=media[MediaType.TEXT],
+                        images=media[MediaType.IMAGE],
+                        audios=media[MediaType.AUDIO],
+                        timestamp=single_turn["timestamp"],
+                        delay=single_turn["delay"],
+                        role=single_turn["role"],
+                    )
+                    self._finalize_turn(turn)
+                    conversation.turns.append(turn)
+            conversations.append(conversation)
 
-    #     if message.random_seed is not None:
-    #         random.seed(message.random_seed)
-    #         self.debug(lambda: f"Setting random seed to {seed}")
+        await self.results_push_client.push(
+            ProcessDatasetResponseMessage(
+                service_id=self.service_id,
+                generated_data=conversations,
+            )
+        )
 
-    #     # TODO: implement model selection strategy
-    #     self.model_selection_counter = 0
+    @on_pull_message(MessageType.PROCESS_SINGLE_TURN_DATASET)
+    async def _on_process_single_turn_dataset(
+        self,
+        message: ProcessSingleTurnDatasetMessage,
+    ) -> None:
+        """Handle a single-turn dataset generation job."""
+        self.debug(lambda: "Received single-turn dataset generation job")
+        await self._reset_states(message)
 
-    #     # TODO: add random pool dataset
-    #     conversations = [
-    #         Conversation(session_id=str(uuid.uuid4()))
-    #         for _ in range(self.num_conversations)
-    #     ]
+        conversations = []
+        for session_id, single_turns in message.dataset:
+            conversation = Conversation(session_id=session_id)
+            for single_turn in single_turns:
+                media = self.convert_to_media_objects(single_turn)
+                turn = Turn(
+                    texts=media[MediaType.TEXT],
+                    images=media[MediaType.IMAGE],
+                    audios=media[MediaType.AUDIO],
+                    timestamp=single_turn["timestamp"],
+                    delay=single_turn["delay"],
+                    role=single_turn["role"],
+                )
+                self._finalize_turn(turn)
+                conversation.turns.append(turn)
+            conversations.append(conversation)
 
-    #     # F x N (F: num of files, N: num of conversations)
-    #     sampled_dataset: dict[Filename, list[Turn]] = {}
+        await self.results_push_client.push(
+            ProcessDatasetResponseMessage(
+                service_id=self.service_id,
+                generated_data=conversations,
+            )
+        )
 
-    #     # Randomly sample (with replacement) from each dataset pool
-    #     for filename, dataset_pool in data.items():
-    #         samples = random.choices(dataset_pool, k=self.num_conversations)
-    #         turns: list[Turn] = []
-    #         for sample in samples:
-    #             media = self.convert_to_media_objects(sample, name=Path(filename).stem)
-    #             turns.append(
-    #                 Turn(
-    #                     texts=media[MediaType.TEXT],
-    #                     images=media[MediaType.IMAGE],
-    #                     audios=media[MediaType.AUDIO],
-    #                 )
-    #             )
-    #         sampled_dataset[filename] = turns
+    @on_pull_message(MessageType.PROCESS_RANDOM_POOL_DATASET)
+    async def _on_process_random_pool_dataset(
+        self,
+        message: ProcessRandomPoolDatasetMessage,
+    ) -> None:
+        """Handle a random pool dataset generation job."""
+        self.debug(lambda: "Received random pool dataset generation job")
+        await self._reset_states(message)
 
-    #     # Merge turns for each conversation
-    #     for i, batched_turns in enumerate(zip(*sampled_dataset.values(), strict=False)):
-    #         turn = self._merge_turns(batched_turns)
-    #         conversations[i].turns.append(turn)
+        conversations = [
+            Conversation(session_id=str(uuid.uuid4()))
+            for _ in range(message.num_conversations)
+        ]
 
-    #     await self.results_push_client.push(
-    #         ProcessDatasetResponseMessage(
-    #             service_id=self.service_id,
-    #             job_id=message.job_id,
-    #             success=True,
-    #             generated_data=conversations,
-    #         )
-    #     )
+        # F x N (F: num of files, N: num of conversations)
+        sampled_dataset: dict[str, list[Turn]] = {}
 
-    # def _merge_turns(self, turns: list[Turn]) -> Turn:
-    #     """Merge turns into a single turn.
+        # Randomly sample (with replacement) from each dataset pool
+        for filename, dataset_pool in message.dataset:
+            samples = random.choices(dataset_pool, k=message.num_conversations)
+            turns: list[Turn] = []
+            for sample in samples:
+                media = self.convert_to_media_objects(sample, name=Path(filename).stem)
+                turns.append(
+                    Turn(
+                        texts=media[MediaType.TEXT],
+                        images=media[MediaType.IMAGE],
+                        audios=media[MediaType.AUDIO],
+                    )
+                )
+            sampled_dataset[filename] = turns
 
-    #     Args:
-    #         turns: A list of turns.
+        # Merge turns for each conversation
+        for i, batched_turns in enumerate(zip(*sampled_dataset.values(), strict=False)):
+            turn = self._merge_turns(batched_turns)
+            self._finalize_turn(turn)
+            conversations[i].turns.append(turn)
 
-    #     Returns:
-    #         A single turn.
-    #     """
-    #     merged_turn = Turn(
-    #         texts=[text for turn in turns for text in turn.texts],
-    #         images=[image for turn in turns for image in turn.images],
-    #         audios=[audio for turn in turns for audio in turn.audios],
-    #     )
-    #     return merged_turn
+        await self.results_push_client.push(
+            ProcessDatasetResponseMessage(
+                service_id=self.service_id,
+                generated_data=conversations,
+            )
+        )
+
+    def _merge_turns(self, turns: list[Turn]) -> Turn:
+        """Merge turns into a single turn.
+
+        Args:
+            turns: A list of turns.
+
+        Returns:
+            A single turn.
+        """
+        merged_turn = Turn(
+            texts=[text for turn in turns for text in turn.texts],
+            images=[image for turn in turns for image in turn.images],
+            audios=[audio for turn in turns for audio in turn.audios],
+        )
+        return merged_turn
 
 
 def main() -> None:

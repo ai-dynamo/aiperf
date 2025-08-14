@@ -56,6 +56,9 @@ class ProcessRandomPoolDatasetMessage(ProcessDatasetMessage):
 
     message_type: MessageTypeT = MessageType.PROCESS_RANDOM_POOL_DATASET
     dataset: list[tuple[str, Any]] = Field(..., description="The random pool dataset")
+    num_conversations: int = Field(
+        ..., description="Number of conversations to generate"
+    )
 
 
 class ProcessDatasetResponseMessage(ProcessDatasetMessage):

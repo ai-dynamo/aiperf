@@ -105,6 +105,7 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
             )
 
         await self._wait_for_dataset_configuration()
+        self._session_ids_cache = list(self.dataset.keys())
         duration = time.perf_counter() - begin
         self.info(
             lambda: f"Dataset configured in {duration:.2f} seconds with {len(self.dataset)} conversations"
@@ -150,6 +151,10 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
         }
         process_message = process_messages[self._custom_dataset_type]
 
+        custom_kwargs = {}
+        if self._custom_dataset_type == CustomDatasetType.RANDOM_POOL:
+            custom_kwargs["num_conversations"] = self.user_config.input.conversation.num
+
         loader = CustomDatasetFactory.create_instance(
             self._custom_dataset_type,
             user_config=self.user_config,
@@ -170,6 +175,7 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
                 message=process_message(
                     service_id=self.service_id,
                     dataset=dataset_list[start : start + chunk_size],
+                    **custom_kwargs,
                 )
             )
             start += chunk_size
@@ -186,8 +192,6 @@ class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
 
         for conversation in message.generated_data:
             self.dataset[conversation.session_id] = conversation
-
-        self._session_ids_cache = list(self.dataset.keys())
 
         if len(self.dataset) == self.total_dataset_size:
             self.debug(
