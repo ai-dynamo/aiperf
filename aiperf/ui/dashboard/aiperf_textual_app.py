@@ -136,6 +136,12 @@ class AIPerfTextualApp(App):
     async def action_quit(self) -> None:
         """Stop the UI and forward the signal to the main process."""
         self.exit(return_code=0)
+        # Clear the references to the widgets to ensure they do not get updated after the app is stopped
+        self.worker_dashboard = None
+        self.progress_dashboard = None
+        self.progress_header = None
+        self.realtime_metrics_dashboard = None
+        self.log_viewer = None
         # Forward the signal to the main process
         os.kill(os.getpid(), signal.SIGINT)
 

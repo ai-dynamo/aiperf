@@ -78,7 +78,9 @@ class ProgressHeader(Widget):
                 total=100,
                 show_eta=False,
                 show_percentage=True,
+                classes="hidden",
             )
+            yield Static(id="padding")
 
     def update_progress(
         self, header: str, progress: float, total: float | None = None
@@ -87,6 +89,8 @@ class ProgressHeader(Widget):
         with contextlib.suppress(Exception):
             bar = self.query_one(ProgressBar)
             if self.progress_name != header:
+                bar.remove_class("hidden")
+                self.query_one("#padding").add_class("hidden")
                 self.query_one("#progress-name", Static).remove_class(
                     "warmup", "profiling", "records"
                 ).add_class(header.lower()).update(header)
