@@ -87,7 +87,8 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 else:
                     raise ValueError(f"Metric '{tag}' is not a valid metric type")
             except Exception as e:
-                self.warning(f"Error processing metric '{tag}': {e}")
+                if self.is_debug_enabled:
+                    self.debug(f"Error processing metric '{tag}': {e!r}")
 
         if self.is_trace_enabled:
             self.trace(f"Results after processing incoming metrics: {self._results}")

@@ -62,5 +62,6 @@ class MetricRecordProcessor(BaseMetricsProcessor):
             try:
                 record_metrics[tag] = parse_func(record, record_metrics)
             except Exception as e:
-                self.warning(f"Error parsing record for metric '{tag}': {e}")
+                if self.is_debug_enabled:
+                    self.debug(f"Error parsing record for metric '{tag}': {e!r}")
         return record_metrics
