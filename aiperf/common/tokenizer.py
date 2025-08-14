@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from transformers import BatchEncoding
 
-from aiperf.common.exceptions import InitializationError, NotInitializedError
+from aiperf.common.exceptions import (
+    InitializationError,
+    NotInitializedError,
+    TokenizerError,
+)
 
 # Silence tokenizer warning on import and first use
 with (
@@ -137,7 +141,9 @@ class Tokenizer:
             return self.bos_token_id
         if self.eos_token_id:
             return self.eos_token_id
-        return self._tokenizer.all_special_ids[0]
+        if self._tokenizer.all_special_ids:
+            return self._tokenizer.all_special_ids[0]
+        raise TokenizerError("No special token ID found")
 
     def __repr__(self) -> str:
         """
