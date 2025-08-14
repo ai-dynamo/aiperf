@@ -53,14 +53,6 @@ Several combinations are supported.
 ```json
 {
     "timestamp": 0, 
-    "input_length": 655,
-    "hash_ids": [46, 47]
-}
-```
-
-```json
-{
-    "timestamp": 0, 
     "text": "Hello, My name is"
 }
 ```
