@@ -1,14 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from collections import deque
 from collections.abc import Callable
 from datetime import datetime
 from enum import Flag
 from functools import cached_property
-from typing import Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
-import pandas as pd
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
@@ -19,9 +17,14 @@ from aiperf.common.enums.base_enums import (
 )
 from aiperf.common.exceptions import MetricUnitError
 
+if TYPE_CHECKING:
+    from aiperf.metrics.metric_dicts import MetricArray
+
 MetricValueTypeT: TypeAlias = int | float | list[float] | list[int]
 MetricValueTypeVarT = TypeVar("MetricValueTypeVarT", bound=MetricValueTypeT)
-MetricDictValueTypeT: TypeAlias = MetricValueTypeT | deque[MetricValueTypeT] | pd.Series
+MetricDictValueTypeT: TypeAlias = (
+    "MetricValueTypeT | list[MetricValueTypeT] | MetricArray"
+)
 
 
 class BaseMetricUnitInfo(BasePydanticEnumInfo):

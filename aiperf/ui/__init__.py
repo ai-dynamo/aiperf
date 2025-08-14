@@ -12,6 +12,22 @@ __ignore__ = []
 from aiperf.ui.base_ui import (
     BaseAIPerfUI,
 )
+from aiperf.ui.dashboard import (
+    AIPERF_THEME,
+    WORKER_STATUS_STYLES,
+    AIPerfDashboardUI,
+    AIPerfTextualApp,
+    LogConsumer,
+    MaximizableWidget,
+    NonFocusableDataTable,
+    ProgressDashboard,
+    ProgressHeader,
+    RealtimeMetricsDashboard,
+    RealtimeMetricsTable,
+    RichLogViewer,
+    WorkerDashboard,
+    WorkerStatusTable,
+)
 from aiperf.ui.no_ui import (
     NoUI,
 )
@@ -19,5 +35,32 @@ from aiperf.ui.tqdm_ui import (
     ProgressBar,
     TQDMProgressUI,
 )
+from aiperf.ui.utils import (
+    format_bytes,
+    format_elapsed_time,
+    format_eta,
+)
 
-__all__ = ["BaseAIPerfUI", "NoUI", "ProgressBar", "TQDMProgressUI"]
+__all__ = [
+    "AIPERF_THEME",
+    "AIPerfDashboardUI",
+    "AIPerfTextualApp",
+    "BaseAIPerfUI",
+    "LogConsumer",
+    "MaximizableWidget",
+    "NoUI",
+    "NonFocusableDataTable",
+    "ProgressBar",
+    "ProgressDashboard",
+    "ProgressHeader",
+    "RealtimeMetricsDashboard",
+    "RealtimeMetricsTable",
+    "RichLogViewer",
+    "TQDMProgressUI",
+    "WORKER_STATUS_STYLES",
+    "WorkerDashboard",
+    "WorkerStatusTable",
+    "format_bytes",
+    "format_elapsed_time",
+    "format_eta",
+]

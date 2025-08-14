@@ -143,7 +143,7 @@ class ServiceDefaults:
     LOG_PATH = None
     RECORD_PROCESSOR_SERVICE_COUNT = None
     PROGRESS_REPORT_INTERVAL = 1.0
-    UI_TYPE = AIPerfUIType.SIMPLE
+    UI_TYPE = AIPerfUIType.DASHBOARD
 
 
 @dataclass(frozen=True)
