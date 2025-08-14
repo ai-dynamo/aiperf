@@ -32,6 +32,7 @@ class ProgressDashboard(Container, MaximizableWidget):
         border: round $primary;
         border-title-color: $primary;
         border-title-style: bold;
+        border-title-align: center;
         padding: 0 1 0 1;
     }
     #status-display {

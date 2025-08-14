@@ -29,6 +29,7 @@ class RichLogViewer(RichLog):
         border: round $primary;
         border-title-color: $primary;
         border-title-style: bold;
+        border-title-align: center;
         layout: vertical;
         scrollbar-gutter: stable;
         &:focus {
@@ -60,7 +61,7 @@ class RichLogViewer(RichLog):
             max_lines=self.MAX_LOG_LINES,
             **kwargs,
         )
-        self.border_title = "System Logs"
+        self.border_title = "Application Logs"
         self.highlighter: Highlighter = ReprHighlighter()
 
     def display_log_record(self, log_data: dict) -> None:

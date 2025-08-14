@@ -17,8 +17,8 @@ from aiperf.common.enums import WorkerStatus
 from aiperf.common.models import MetricResult, RecordsStats, RequestsStats, WorkerStats
 from aiperf.controller.system_controller import SystemController
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
-from aiperf.ui.dashboard.custom_widgets import ProgressHeader
 from aiperf.ui.dashboard.progress_dashboard import ProgressDashboard
+from aiperf.ui.dashboard.progress_header import ProgressHeader
 from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsDashboard
 from aiperf.ui.dashboard.rich_log_viewer import RichLogViewer
 from aiperf.ui.dashboard.worker_dashboard import WorkerDashboard
@@ -99,7 +99,6 @@ class AIPerfTextualApp(App):
         self._warmup_stats: RequestsStats | None = None
         self._profiling_stats: RequestsStats | None = None
         self._records_stats: RecordsStats | None = None
-        self._metrics: list[MetricResult] | None = None
 
     def on_mount(self) -> None:
         self.register_theme(AIPERF_THEME)
@@ -118,7 +117,7 @@ class AIPerfTextualApp(App):
                         self.progress_dashboard = ProgressDashboard(id="progress")
                         yield self.progress_dashboard
 
-                    with Container(id="metrics-section", classes="hidden"):
+                    with Container(id="metrics-section"):
                         self.realtime_metrics_dashboard = RealtimeMetricsDashboard(
                             service_config=self.service_config, id="metrics"
                         )
@@ -225,9 +224,6 @@ class AIPerfTextualApp(App):
 
     async def on_realtime_metrics(self, metrics: list[MetricResult]) -> None:
         """Forward real-time metrics updates to the Textual App."""
-        if not self._metrics:
-            self.query_one("#metrics-section").remove_class("hidden")
-        self._metrics = metrics
         if self.realtime_metrics_dashboard:
             async with self.realtime_metrics_dashboard.batch():
                 self.realtime_metrics_dashboard.on_realtime_metrics(metrics)

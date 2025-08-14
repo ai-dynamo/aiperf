@@ -177,6 +177,7 @@ class RealtimeMetricsDashboard(Container, MaximizableWidget):
         border: round $primary;
         border-title-color: $primary;
         border-title-style: bold;
+        border-title-align: center;
         height: 1fr;
         layout: vertical;
         margin: 0 0 0 0;

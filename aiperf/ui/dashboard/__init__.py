@@ -20,10 +20,12 @@ from aiperf.ui.dashboard.aiperf_theme import (
 from aiperf.ui.dashboard.custom_widgets import (
     MaximizableWidget,
     NonFocusableDataTable,
-    ProgressHeader,
 )
 from aiperf.ui.dashboard.progress_dashboard import (
     ProgressDashboard,
+)
+from aiperf.ui.dashboard.progress_header import (
+    ProgressHeader,
 )
 from aiperf.ui.dashboard.realtime_metrics_dashboard import (
     RealtimeMetricsDashboard,
