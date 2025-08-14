@@ -22,6 +22,7 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
 
     tag = "inter_token_latency"
     header = "Inter Token Latency"
+    short_header = "ITL"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 400

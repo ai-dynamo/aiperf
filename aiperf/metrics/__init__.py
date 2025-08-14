@@ -21,6 +21,7 @@ from aiperf.metrics.base_record_metric import (
     BaseRecordMetric,
 )
 from aiperf.metrics.metric_dicts import (
+    MetricArray,
     MetricRecordDict,
     MetricResultsDict,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "BaseDerivedMetric",
     "BaseMetric",
     "BaseRecordMetric",
+    "MetricArray",
     "MetricRecordDict",
     "MetricRegistry",
     "MetricResultsDict",

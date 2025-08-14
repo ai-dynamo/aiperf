@@ -17,6 +17,7 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
 
     tag = "output_sequence_length"
     header = "Output Sequence Length"
+    short_header = "OSL"
     unit = GenericMetricUnit.TOKENS
     display_order = 600
     flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER

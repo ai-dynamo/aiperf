@@ -23,6 +23,7 @@ class CreditDropLatencyMetric(BaseRecordMetric[int]):
 
     tag = "credit_drop_latency"
     header = "Credit Drop Latency"
+    short_header = "Credit Latency"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     flags = MetricFlags.INTERNAL

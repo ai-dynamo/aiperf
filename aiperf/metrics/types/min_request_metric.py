@@ -18,6 +18,8 @@ class MinRequestTimestampMetric(BaseAggregateMetric[int]):
 
     tag = "min_request_timestamp"
     header = "Minimum Request Timestamp"
+    short_header = "Min Req"
+    short_header_hide_unit = True
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricDateTimeUnit.DATE_TIME
     flags = MetricFlags.HIDDEN

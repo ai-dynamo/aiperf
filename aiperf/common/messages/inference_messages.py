@@ -13,6 +13,7 @@ from aiperf.common.enums import (
 from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetails, ParsedResponseRecord, RequestRecord
+from aiperf.common.models.record_models import MetricResult
 from aiperf.common.types import MessageTypeT, MetricTagT
 
 
@@ -62,3 +63,13 @@ class MetricRecordsMessage(BaseServiceMessage):
     def valid(self) -> bool:
         """Whether the request was valid."""
         return self.error is None
+
+
+class RealtimeMetricsMessage(BaseServiceMessage):
+    """Message from the records manager to show real-time metrics for the profile run."""
+
+    message_type: MessageTypeT = MessageType.REALTIME_METRICS
+
+    metrics: list[MetricResult] = Field(
+        ..., description="The current real-time metrics."
+    )

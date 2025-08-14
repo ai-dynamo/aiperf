@@ -38,6 +38,9 @@ from aiperf.common.mixins.progress_tracker_mixin import (
 from aiperf.common.mixins.pull_client_mixin import (
     PullClientMixin,
 )
+from aiperf.common.mixins.realtime_metrics_mixin import (
+    RealtimeMetricsMixin,
+)
 from aiperf.common.mixins.reply_client_mixin import (
     ReplyClientMixin,
 )
@@ -59,6 +62,7 @@ __all__ = [
     "ProcessHealthMixin",
     "ProgressTrackerMixin",
     "PullClientMixin",
+    "RealtimeMetricsMixin",
     "ReplyClientMixin",
     "TaskManagerMixin",
     "WorkerTrackerMixin",

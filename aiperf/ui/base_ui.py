@@ -1,18 +1,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.mixins.progress_tracker_mixin import ProgressTrackerMixin
-from aiperf.common.mixins.worker_tracker_mixin import WorkerTrackerMixin
+from aiperf.common.mixins import (
+    ProgressTrackerMixin,
+    RealtimeMetricsMixin,
+    WorkerTrackerMixin,
+)
 
 
-class BaseAIPerfUI(ProgressTrackerMixin, WorkerTrackerMixin):
+class BaseAIPerfUI(ProgressTrackerMixin, WorkerTrackerMixin, RealtimeMetricsMixin):
     """Base class for AIPerf UI implementations.
 
     This class provides a simple starting point for a UI for AIPerf components.
-    It inherits from the :class:`ProgressTrackerMixin` and :class:`WorkerTrackerMixin`
+    It inherits from the :class:`ProgressTrackerMixin`, :class:`WorkerTrackerMixin`, and :class:`RealtimeMetricsMixin`
     to provide a simple starting point for a UI for AIPerf components.
 
-    Now, you can use the various hooks defined in the :class:`ProgressTrackerMixin` and :class:`WorkerTrackerMixin`
+    Now, you can use the various hooks defined in the :class:`ProgressTrackerMixin`, :class:`WorkerTrackerMixin`, and :class:`RealtimeMetricsMixin`
     to create a UI for AIPerf components.
 
     Example:
@@ -35,6 +38,11 @@ class BaseAIPerfUI(ProgressTrackerMixin, WorkerTrackerMixin):
         @on_worker_update
         def _on_worker_update(self, worker_id: str, worker_stats: WorkerStats):
             '''Callback for worker updates.'''
+            pass
+
+        @on_realtime_metrics
+        def _on_realtime_metrics(self, metrics: list[MetricResult]):
+            '''Callback for real-time metrics updates.'''
             pass
     ```
     """

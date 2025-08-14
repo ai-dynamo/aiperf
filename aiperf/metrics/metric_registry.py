@@ -43,6 +43,11 @@ class MetricRegistry:
     _instances_map: dict[MetricTagT, "BaseMetric"] = {}
     _instance_lock = Lock()
 
+    def __init__(self) -> None:
+        raise TypeError(
+            "MetricRegistry is a singleton and cannot be instantiated directly"
+        )
+
     @classmethod
     def _discover_metrics(cls) -> None:
         """

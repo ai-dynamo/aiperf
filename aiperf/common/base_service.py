@@ -14,10 +14,11 @@ from aiperf.common.hooks import on_command
 from aiperf.common.messages import CommandMessage
 from aiperf.common.messages.command_messages import CommandAcknowledgedResponse
 from aiperf.common.mixins import CommandHandlerMixin
+from aiperf.common.mixins.process_health_mixin import ProcessHealthMixin
 from aiperf.common.types import ServiceTypeT
 
 
-class BaseService(CommandHandlerMixin, ABC):
+class BaseService(CommandHandlerMixin, ProcessHealthMixin, ABC):
     """Base class for all AIPerf services, providing common functionality for
     communication, state management, and lifecycle operations.
     This class inherits from the MessageBusClientMixin, which provides the

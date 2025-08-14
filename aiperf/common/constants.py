@@ -78,3 +78,6 @@ DEFAULT_WORKER_STALE_TIME = 10.0
 
 DEFAULT_WORKER_STATUS_SUMMARY_INTERVAL = 0.5
 """Default interval in seconds between worker status summary messages."""
+
+DEFAULT_REALTIME_METRICS_INTERVAL = 1.0
+"""Default interval in seconds between real-time metrics messages."""

@@ -17,6 +17,8 @@ class RequestCountMetric(BaseAggregateMetric[int]):
 
     tag = "request_count"
     header = "Request Count"
+    short_header = "Requests"
+    short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
     display_order = 1000
     flags = MetricFlags.LARGER_IS_BETTER

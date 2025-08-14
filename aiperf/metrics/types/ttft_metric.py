@@ -16,6 +16,7 @@ class TTFTMetric(BaseRecordMetric[int]):
 
     tag = "ttft"
     header = "Time to First Token"
+    short_header = "TTFT"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 100

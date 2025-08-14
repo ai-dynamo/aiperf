@@ -16,6 +16,7 @@ class TTSTMetric(BaseRecordMetric[int]):
 
     tag = "ttst"
     header = "Time to Second Token"
+    short_header = "TTST"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 200

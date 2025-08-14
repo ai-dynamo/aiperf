@@ -10,7 +10,7 @@ from aiperf.common.exceptions import AIPerfMultiError, UnsupportedHookError
 from aiperf.common.hooks import Hook, HookAttrs, HookType
 from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
 from aiperf.common.protocols import HooksProtocol
-from aiperf.common.types import AnyT
+from aiperf.common.types import AnyT, HookParamsT, SelfT
 
 
 @implements_protocol(HooksProtocol)
@@ -59,14 +59,7 @@ class HooksMixin(AIPerfLoggerMixin):
                 # If the method has the AIPERF_HOOK_TYPE attribute, it is a hook.
                 if hasattr(method, HookAttrs.HOOK_TYPE):
                     method_hook_type = getattr(method, HookAttrs.HOOK_TYPE)
-                    # If the hook type is not provided by any base class, it is an error.
-                    # This is to ensure that the hook is only registered if it is provided by a base class.
-                    # This is to avoid the case where a developer accidentally uses a hook that is not provided by a base class.
-                    if method_hook_type not in self._provided_hook_types:
-                        raise UnsupportedHookError(
-                            f"Hook {method_hook_type} is not provided by any base class of {self.__class__.__name__}. "
-                            f"(Provided Hooks: {[f'{hook_type}' for hook_type in self._provided_hook_types]})"
-                        )
+                    self._check_hook_type_is_provided(method_hook_type)
 
                     # Bind the method to the instance ("self"), extract the hook parameters,
                     # and add it to the hooks dictionary.
@@ -81,6 +74,44 @@ class HooksMixin(AIPerfLoggerMixin):
         self.debug(
             lambda: f"Provided hook types: {self._provided_hook_types} for {self.__class__.__name__}"
         )
+
+    def _check_hook_type_is_provided(self, hook_type: HookType) -> None:
+        """Check if the hook type is provided by any base class of the class.
+
+        Args:
+            hook_type: The hook type to check.
+
+        Raises:
+            UnsupportedHookError: If the hook type is not provided by any base class of the class.
+        """
+        # If the hook type is not provided by any base class, it is an error.
+        # This is to ensure that the hook is only registered if it is provided by a base class.
+        # This is to avoid the case where a developer accidentally uses a hook that is not provided by a base class.
+        if hook_type not in self._provided_hook_types:
+            raise UnsupportedHookError(
+                f"Hook {hook_type} is not provided by any base class of {self.__class__.__name__}. "
+                f"(Provided Hooks: {[f'{hook_type}' for hook_type in self._provided_hook_types]})"
+            )
+
+    def attach_hook(
+        self,
+        hook_type: HookType,
+        func: Callable,
+        params: HookParamsT | Callable[[SelfT], HookParamsT] | None = None,
+    ) -> None:
+        """Attach a hook to this class. This is useful for attaching hooks to a class directly,
+        without having to inherit from this class, or use a decorator.
+
+        Args:
+            hook_type: The hook type to attach the hook to.
+            func: The function to attach the hook to.
+            params: The parameters to attach to the hook.
+        """
+        if not callable(func):
+            raise ValueError(f"Invalid hook function: {func}")
+
+        self._check_hook_type_is_provided(hook_type)
+        self._hooks.setdefault(hook_type, []).append(Hook(func=func, params=params))
 
     def get_hooks(self, *hook_types: HookType, reverse: bool = False) -> list[Hook]:
         """Get the hooks that are defined by the class for the given hook type(s), optionally reversed.

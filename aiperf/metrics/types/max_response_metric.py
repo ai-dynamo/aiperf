@@ -18,6 +18,8 @@ class MaxResponseTimestampMetric(BaseAggregateMetric[int]):
 
     tag = "max_response_timestamp"
     header = "Maximum Response Timestamp"
+    short_header = "Max Resp"
+    short_header_hide_unit = True
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricDateTimeUnit.DATE_TIME
     flags = MetricFlags.HIDDEN

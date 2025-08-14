@@ -18,6 +18,8 @@ class BenchmarkDurationMetric(BaseDerivedMetric[int]):
 
     tag = "benchmark_duration"
     header = "Benchmark Duration"
+    short_header = "Duration"
+    short_header_hide_unit = True
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.SECONDS
     flags = MetricFlags.HIDDEN
