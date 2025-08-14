@@ -64,9 +64,6 @@ class ProgressDashboard(Container, MaximizableWidget):
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
-            # MofNCompleteColumn(),
-            # TimeElapsedColumn(),
-            # TimeRemainingColumn(),
             expand=False,
         )
 
