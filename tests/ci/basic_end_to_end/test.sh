@@ -4,7 +4,7 @@
 
 # TODO: switch to the commented code when dynamo 0.4.1 is released
 # timeout 5m /bin/bash -c 'while ! curl -s localhost:8080/v1/models | jq -en "input | (.data // []) | length > 0" > /dev/null 2>&1; do sleep 1; done'
-timeout 5m /bin/bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d '"'"'{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"a"}],"max_completion_tokens":1}'"'"')" != 200 ]; do sleep 1; done'
+timeout 5m /bin/bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d '"'"'{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"a"}],"max_completion_tokens":1}'"'"')" != "200" ]; do sleep 1; done'
 
 if [ $? -eq 124 ]; then
   echo -e "\033[0;36m╔════════════════════════════════════════╗\033[0m"
