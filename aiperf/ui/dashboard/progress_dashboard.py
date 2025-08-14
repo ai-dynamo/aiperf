@@ -20,7 +20,7 @@ from textual.widgets import Static
 from aiperf.common.models import RecordsStats, RequestsStats
 from aiperf.common.models.progress_models import StatsProtocol
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget
-from aiperf.ui.utils import format_duration
+from aiperf.ui.utils import format_elapsed_time, format_eta
 
 
 class ProgressDashboard(Container, MaximizableWidget):
@@ -208,21 +208,19 @@ class ProgressDashboard(Container, MaximizableWidget):
             # Display request stats while profiling
             if self.profiling_stats.start_ns:
                 stats_table.add_row(
-                    "Elapsed:", format_duration(self.profiling_stats.elapsed_time)
+                    "Elapsed:", format_elapsed_time(self.profiling_stats.elapsed_time)
                 )
             if self.profiling_stats.eta:
                 stats_table.add_row(
-                    "Profiling ETA:", format_duration(self.profiling_stats.eta)
+                    "Profiling ETA:", format_eta(self.profiling_stats.eta)
                 )
         else:
             # Display record processing stats after profiling
             if self.records_stats.start_ns:
                 stats_table.add_row(
-                    "Elapsed:", format_duration(self.records_stats.elapsed_time)
+                    "Elapsed:", format_elapsed_time(self.records_stats.elapsed_time)
                 )
             if self.records_stats.eta:
-                stats_table.add_row(
-                    "Records ETA:", format_duration(self.records_stats.eta)
-                )
+                stats_table.add_row("Records ETA:", format_eta(self.records_stats.eta))
 
         return stats_table

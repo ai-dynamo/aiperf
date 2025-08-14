@@ -37,7 +37,8 @@ from aiperf.ui.tqdm_ui import (
 )
 from aiperf.ui.utils import (
     format_bytes,
-    format_duration,
+    format_elapsed_time,
+    format_eta,
 )
 
 __all__ = [
@@ -60,5 +61,6 @@ __all__ = [
     "WorkerDashboard",
     "WorkerStatusTable",
     "format_bytes",
-    "format_duration",
+    "format_elapsed_time",
+    "format_eta",
 ]

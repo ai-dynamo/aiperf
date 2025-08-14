@@ -3,6 +3,7 @@
 
 import os
 import signal
+from contextlib import suppress
 
 from rich.console import RenderableType
 from textual.app import App, ComposeResult
@@ -10,7 +11,6 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer
 
-from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.controller.system_controller import SystemController
@@ -20,8 +20,6 @@ from aiperf.ui.dashboard.progress_dashboard import ProgressDashboard
 from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsDashboard
 from aiperf.ui.dashboard.rich_log_viewer import RichLogViewer
 from aiperf.ui.dashboard.worker_dashboard import WorkerDashboard
-
-_logger = AIPerfLogger(__name__)
 
 
 class AIPerfTextualApp(App):
@@ -38,6 +36,9 @@ class AIPerfTextualApp(App):
     ALLOW_IN_MAXIMIZED_VIEW = "ProgressHeader, Footer"
     """Allow the custom header and footer to be displayed when a panel is maximized."""
 
+    NOTIFICATION_TIMEOUT = 3
+    """The timeout for notifications in seconds."""
+
     CSS = """
     #main-container {
         height: 100%;
@@ -50,8 +51,8 @@ class AIPerfTextualApp(App):
         height: 2fr;
         max-height: 16;
     }
-    #dashboard-section.logs-hidden {
-        height: 1fr;
+    #workers-section {
+        height: 3;
     }
     #progress-section {
         width: 1fr;
@@ -72,6 +73,7 @@ class AIPerfTextualApp(App):
         ("4", "toggle_maximize('workers')", "Workers"),
         ("5", "toggle_maximize('logs')", "Logs"),
         ("escape", "restore_all_panels", "Restore View"),
+        Binding("ctrl+s", "screenshot", "Save Screenshot", show=False),
         Binding("l", "toggle_hide_log_viewer", "Toggle Logs", show=False),
     ]
 
@@ -90,7 +92,6 @@ class AIPerfTextualApp(App):
         self.worker_dashboard: WorkerDashboard | None = None
         self.realtime_metrics_dashboard: RealtimeMetricsDashboard | None = None
         self.profile_results: list[RenderableType] = []
-        self.logs_hidden = False
         self.service_config = service_config
         self.controller: SystemController = controller
 
@@ -117,13 +118,13 @@ class AIPerfTextualApp(App):
                         )
                         yield self.realtime_metrics_dashboard
 
-            with Container(id="logs-section"):
-                self.log_viewer = RichLogViewer(id="logs")
-                yield self.log_viewer
-
             with Container(id="workers-section", classes="hidden"):
                 self.worker_dashboard = WorkerDashboard(id="workers")
                 yield self.worker_dashboard
+
+            with Container(id="logs-section"):
+                self.log_viewer = RichLogViewer(id="logs")
+                yield self.log_viewer
 
         yield Footer()
 
@@ -135,25 +136,14 @@ class AIPerfTextualApp(App):
 
     async def action_toggle_hide_log_viewer(self) -> None:
         """Toggle the visibility of the log viewer section."""
-        try:
-            if self.logs_hidden:
-                self.query_one("#logs-section").remove_class("hidden")
-                self.query_one("#dashboard-section").remove_class("logs-hidden")
-            else:
-                self.query_one("#logs-section").add_class("hidden")
-                self.query_one("#dashboard-section").add_class("logs-hidden")
-            self.logs_hidden = not self.logs_hidden
-
-            _logger.debug(f"Logs {'hidden' if self.logs_hidden else 'shown'}")
-        except Exception as e:
-            _logger.error(f"Error toggling log viewer: {e!r}")
+        with suppress(Exception):
+            self.query_one("#logs-section").toggle_class("hidden")
 
     async def action_restore_all_panels(self) -> None:
         """Restore all panels."""
         self.screen.minimize()
-        if self.logs_hidden:
-            _logger.info("Restoring log viewer")
-            await self.action_toggle_hide_log_viewer()
+        with suppress(Exception):
+            self.query_one("#logs-section").remove_class("hidden")
 
     async def action_minimize_all_panels(self) -> None:
         """Minimize all panels."""
