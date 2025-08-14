@@ -8,12 +8,11 @@ from aiperf.common.config import UserConfig
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import SingleTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.SINGLE_TURN)
-class SingleTurnDatasetLoader(AIPerfLoggerMixin, MediaConversionMixin):
+class SingleTurnDatasetLoader(AIPerfLoggerMixin):
     """A dataset loader that loads single turn data from a file.
 
     The single turn type

@@ -8,12 +8,11 @@ from aiperf.common.config import UserConfig
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import MultiTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.MULTI_TURN)
-class MultiTurnDatasetLoader(AIPerfLoggerMixin, MediaConversionMixin):
+class MultiTurnDatasetLoader(AIPerfLoggerMixin):
     """A dataset loader that loads multi-turn data from a file.
 
     The multi-turn type

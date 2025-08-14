@@ -9,7 +9,6 @@ from aiperf.common.config import UserConfig
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
 
 # Type aliases
@@ -17,7 +16,7 @@ Filename: TypeAlias = str
 
 
 @CustomDatasetFactory.register(CustomDatasetType.RANDOM_POOL)
-class RandomPoolDatasetLoader(AIPerfLoggerMixin, MediaConversionMixin):
+class RandomPoolDatasetLoader(AIPerfLoggerMixin):
     """A dataset loader that loads data from a single file or a directory.
 
     Each line in the file represents single-turn conversation data,
