@@ -8,7 +8,7 @@ NANOS_PER_MILLIS = 1_000_000
 MILLIS_PER_SECOND = 1000
 BYTES_PER_MIB = 1024 * 1024
 
-GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+GRACEFUL_SHUTDOWN_TIMEOUT = 5.0
 """Default timeout for shutting down services in seconds."""
 
 DEFAULT_SHUTDOWN_ACK_TIMEOUT = 5.0
@@ -19,9 +19,6 @@ DEFAULT_PROFILE_CANCEL_TIMEOUT = 10.0
 
 TASK_CANCEL_TIMEOUT_SHORT = 2.0
 """Maximum time to wait for simple tasks to complete when cancelling them."""
-
-TASK_CANCEL_TIMEOUT_LONG = 5.0
-"""Maximum time to wait for complex tasks to complete when cancelling them (like parent tasks)."""
 
 DEFAULT_COMMS_REQUEST_TIMEOUT = 90.0
 """Default timeout for requests from req_clients to rep_clients in seconds."""
@@ -56,6 +53,9 @@ DEFAULT_MAX_REGISTRATION_ATTEMPTS = 10
 DEFAULT_REGISTRATION_INTERVAL = 1.0
 """Default interval between registration attempts in seconds for component services."""
 
+DEFAULT_HEARTBEAT_INTERVAL = 5.0
+"""Default interval between heartbeat messages in seconds for component services."""
+
 AIPERF_DEV_MODE = os.getenv("AIPERF_DEV_MODE", "false").lower() in ("true", "1")
 
 DEFAULT_UI_MIN_UPDATE_PERCENT = 1.0
@@ -78,3 +78,12 @@ DEFAULT_WORKER_STALE_TIME = 10.0
 
 DEFAULT_WORKER_STATUS_SUMMARY_INTERVAL = 0.5
 """Default interval in seconds between worker status summary messages."""
+
+DEFAULT_CREDIT_PROGRESS_REPORT_INTERVAL = 1.0
+"""Default interval in seconds between credit progress report messages."""
+
+DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL = 1.0
+"""Default interval in seconds between records progress report messages."""
+
+DEFAULT_WORKER_HEALTH_CHECK_INTERVAL = 1.0
+"""Default interval in seconds between worker health check messages."""

@@ -133,16 +133,11 @@ class ServiceDefaults:
     SERVICE_RUN_TYPE = ServiceRunType.MULTIPROCESSING
     COMM_BACKEND = CommunicationBackend.ZMQ_IPC
     COMM_CONFIG = None
-    HEARTBEAT_TIMEOUT = 60.0
-    REGISTRATION_TIMEOUT = 60.0
-    COMMAND_TIMEOUT = 10.0
-    HEARTBEAT_INTERVAL_SECONDS = 5.0
     LOG_LEVEL = AIPerfLogLevel.INFO
     VERBOSE = False
     EXTRA_VERBOSE = False
     LOG_PATH = None
     RECORD_PROCESSOR_SERVICE_COUNT = None
-    PROGRESS_REPORT_INTERVAL = 1.0
     UI_TYPE = AIPerfUIType.SIMPLE
 
 
@@ -161,7 +156,6 @@ class LoadGeneratorDefaults:
 class WorkersDefaults:
     MIN = None
     MAX = None
-    HEALTH_CHECK_INTERVAL = 1.0
 
 
 @dataclass(frozen=True)

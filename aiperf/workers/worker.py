@@ -5,6 +5,7 @@
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.constants import DEFAULT_WORKER_HEALTH_CHECK_INTERVAL
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -59,7 +60,7 @@ class Worker(
 
         self.debug(lambda: f"Worker process __init__ (pid: {self.process.pid})")
 
-        self.health_check_interval = self.service_config.workers.health_check_interval
+        self.health_check_interval = DEFAULT_WORKER_HEALTH_CHECK_INTERVAL
 
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
