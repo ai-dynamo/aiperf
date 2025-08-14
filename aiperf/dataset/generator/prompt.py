@@ -172,9 +172,7 @@ class PromptGenerator(BaseGenerator):
                 # To ensure that the prompt doesn't merge chunks, we insert a special token
                 # at the beginning. Length is maintained and the prompt generates the expected
                 # number of tokens.
-                prompt_tokens = [
-                    self.tokenizer.bos_token_id or self.tokenizer.eos_token_id
-                ]
+                prompt_tokens = [self.tokenizer.special_token_id]
                 prompt_tokens += self._sample_tokens(current_block_size - 1)
                 self._cache[hash_id] = prompt_tokens  # store to cache
 

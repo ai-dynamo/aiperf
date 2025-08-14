@@ -125,6 +125,20 @@ class Tokenizer:
             raise NotInitializedError("Tokenizer is not initialized.")
         return self._tokenizer.eos_token_id
 
+    @property
+    def special_token_id(self) -> int:
+        """
+        Returns BOS, EOS, or the first available special token ID.
+        """
+        if self._tokenizer is None:
+            raise NotInitializedError("Tokenizer is not initialized.")
+
+        if self.bos_token_id:
+            return self.bos_token_id
+        if self.eos_token_id:
+            return self.eos_token_id
+        return self._tokenizer.all_special_ids[0]
+
     def __repr__(self) -> str:
         """
         Return a string representation of the underlying tokenizer.
