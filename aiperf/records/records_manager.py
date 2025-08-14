@@ -91,6 +91,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.worker_stats: dict[str, ProcessingStats] = {}
         self.worker_stats_lock: asyncio.Lock = asyncio.Lock()
 
+        self._previous_realtime_records: int | None = None
+
         self._results_processors: list[ResultsProcessorProtocol] = []
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
             results_processor = ResultsProcessorFactory.create_instance(
@@ -286,13 +288,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self.profile_cancelled = True
         return await self._process_results(cancelled=True)
 
-    @background_task(
-        interval=DEFAULT_REALTIME_METRICS_INTERVAL,
-        immediate=False,
-    )
+    @background_task(interval=None, immediate=True)
     async def _report_realtime_metrics_task(self) -> None:
         """Report the real-time metrics at a regular interval (only if the UI type is dashboard)."""
-        if self.service_config.ui_type == AIPerfUIType.DASHBOARD:
+        if self.service_config.ui_type != AIPerfUIType.DASHBOARD:
+            return
+        while not self.stop_requested:
+            await asyncio.sleep(DEFAULT_REALTIME_METRICS_INTERVAL)
+            async with self.processing_status_lock:
+                if (
+                    self.processing_stats.total_records
+                    == self._previous_realtime_records
+                ):
+                    continue  # No new records have been processed, so no need to update the metrics
+                self._previous_realtime_records = self.processing_stats.processed
             await self._report_realtime_metrics()
 
     @on_command(CommandType.REALTIME_METRICS)
