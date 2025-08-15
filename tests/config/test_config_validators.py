@@ -1,12 +1,50 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
+
 import pytest
 
 from aiperf.common.config import (
+    coerce_value,
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list_of_positive_values,
 )
+
+
+class TestCoerceValue:
+    """Test suite for the coerce_value function."""
+
+    @pytest.mark.parametrize(
+        "input,expected",
+        [
+            ("1", 1),
+            ("1.0", 1.0),
+            ("true", True),
+            ("false", False),
+            ("none", None),
+            ("null", None),
+            ("0", 0),
+            (".5", 0.5),
+            ("-1", -1),
+            ("-1.0", -1.0),
+            ("-1.5", -1.5),
+            ("Hello", "Hello"),
+            ("", ""),
+            ("NONE", None),
+            ("NULL", None),
+            ("True", True),
+            ("False", False),
+            ("0.0", 0.0),
+            ("-0.0", 0.0),
+            ("-5s", "-5s"),
+            ("-5.0s", "-5.0s"),
+            ("127.0.0.1", "127.0.0.1"),
+            ("127.0.0.1:8080", "127.0.0.1:8080"),
+        ],
+    )
+    def test_coerce_value(self, input: Any, expected: Any) -> None:
+        assert coerce_value(input) == expected
 
 
 class TestParseStrOrDictAsTupleList:
@@ -20,8 +58,11 @@ class TestParseStrOrDictAsTupleList:
     @pytest.mark.parametrize(
         "input_list,expected",
         [
-            (["key1:value1", "key2:value2"], [("key1", "value1"), ("key2", "value2")]),
-            (["name:John", "age:30"], [("name", "John"), ("age", "30")]),
+            (
+                ["key1:value1", "key2:value2", "key3:false"],
+                [("key1", "value1"), ("key2", "value2"), ("key3", False)],
+            ),
+            (["name:John", "age:30"], [("name", "John"), ("age", 30)]),
             (
                 ["  key1  :  value1  ", "key2:value2"],
                 [("key1", "value1"), ("key2", "value2")],
@@ -61,7 +102,7 @@ class TestParseStrOrDictAsTupleList:
         "comma_separated_string,expected",
         [
             ("key1:value1,key2:value2", [("key1", "value1"), ("key2", "value2")]),
-            ("name:John,age:30", [("name", "John"), ("age", "30")]),
+            ("name:John,age:30", [("name", "John"), ("age", 30)]),
             (
                 "  key1  :  value1  ,  key2  :  value2  ",
                 [("key1", "value1"), ("key2", "value2")],
