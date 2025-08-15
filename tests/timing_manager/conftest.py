@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import time
+from collections import deque
+from typing import Any, TypeVar
 
 import pytest
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import (
     CreditDropMessage,
@@ -11,18 +15,66 @@ from aiperf.common.messages import (
     CreditPhaseProgressMessage,
     CreditPhaseSendingCompleteMessage,
     CreditPhaseStartMessage,
-    CreditReturnMessage,
     CreditsCompleteMessage,
     Message,
 )
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
+from aiperf.common.models.credit_models import CreditPhaseStats
 from aiperf.timing import CreditIssuingStrategy
+from aiperf.timing.config import TimingManagerConfig
+from tests.utils.time_traveler import TimeTraveler
+
+T = TypeVar("T", bound=CreditIssuingStrategy)
+
+
+_logger = AIPerfLogger(__name__)
+
+
+class MockSemaphore:
+    """Mock implementation of Semaphore for testing, with auto-return delay.
+
+    This is a simple mock implementation of a semaphore that can be used to test the behavior of the
+    CreditIssuingStrategy. It works by keeping track of the number of credits that are available
+    and the number of credits that are being acquired and released.
+
+    Args:
+        value: The initial value of the semaphore.
+        interval: The interval at which the semaphore is released. (simulating credit returns)
+    """
+
+    def __init__(self, value: int, interval: float) -> None:
+        self.interval = interval
+        self.value = value
+        self.wait_count = 0
+        self.acquire_count = 0
+        self.release_count = 0
+        self.next_release = deque()
+
+    async def acquire(self):
+        if self.locked():
+            assert len(self.next_release) > 0
+            release_time = self.next_release.popleft()
+            if release_time > time.perf_counter():
+                await asyncio.sleep(release_time - time.perf_counter())
+                self.wait_count += 1
+
+        self.value -= 1
+        self.acquire_count += 1
+        if self.interval is not None:
+            self.next_release.append(time.perf_counter() + self.interval)
+
+    def release(self):
+        self.value += 1
+        self.release_count += 1
+
+    def locked(self):
+        return self.value <= 0
 
 
 class MockCreditManager(AIPerfLifecycleMixin):
     """Mock implementation of CreditManagerProtocol for testing."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, time_traveler: TimeTraveler, **kwargs):
         super().__init__(**kwargs)
         self.dropped_timestamps = []
         self.dropped_credits = []
@@ -32,8 +84,23 @@ class MockCreditManager(AIPerfLifecycleMixin):
         self.phase_complete_calls = []
         self.phase_sending_complete_calls = []
         self.credit_strategy: CreditIssuingStrategy | None = None
-        self.auto_credit_return = False
+        self.time_traveler = time_traveler
         self.publish_calls = []
+
+    def create_strategy(
+        self,
+        config: TimingManagerConfig,
+        strategy_type: type[T],
+        auto_return_delay: float | None = None,
+    ) -> Any:
+        """Create a credit issuing strategy."""
+        self.credit_strategy = strategy_type(config, self)  # type: ignore
+        if config.concurrency is not None:
+            self.credit_strategy._semaphore = MockSemaphore(  # type: ignore
+                config.concurrency, auto_return_delay
+            )
+            return self.credit_strategy, self.credit_strategy._semaphore  # type: ignore
+        return self.credit_strategy
 
     async def publish(self, message: Message) -> None:
         """Mock publish method."""
@@ -46,26 +113,14 @@ class MockCreditManager(AIPerfLifecycleMixin):
         credit_drop_ns: int | None = None,
     ) -> None:
         """Mock drop_credit method."""
-        self.dropped_timestamps.append(time.time_ns())
+        drop_time_ns = self.time_traveler.time_ns()
+        self.dropped_timestamps.append(drop_time_ns)
         self.dropped_credits.append(
             CreditDropMessage(
                 service_id="test-service",
                 phase=credit_phase,
                 conversation_id=conversation_id,
                 credit_drop_ns=credit_drop_ns,
-            )
-        )
-        if not self.auto_credit_return:
-            return
-
-        if self.credit_strategy is None:
-            self.logger.warning("Credit strategy not set, skipping credit return")
-            return
-
-        await self.credit_strategy._on_credit_return(
-            CreditReturnMessage(
-                service_id="test-service",
-                phase=credit_phase,
             )
         )
 
@@ -132,8 +187,23 @@ class MockCreditManager(AIPerfLifecycleMixin):
             )
         )
 
+    async def run_strategy(self, strategy: CreditIssuingStrategy):
+        """Run the full credit issuing strategy."""
+        self.credit_strategy = strategy
+        await self.credit_strategy.start()
+        await self.wait_for_tasks()
+
 
 @pytest.fixture
-def mock_credit_manager():
+def mock_credit_manager(time_traveler: TimeTraveler):
     """Fixture providing a mock credit manager."""
-    return MockCreditManager()
+    return MockCreditManager(time_traveler=time_traveler)
+
+
+def profiling_phase_stats_from_config(config: TimingManagerConfig) -> CreditPhaseStats:
+    """Create a phase stats object from a config."""
+    return CreditPhaseStats(
+        type=CreditPhase.PROFILING,
+        start_ns=time.time_ns(),
+        total_expected_requests=config.request_count,
+    )
