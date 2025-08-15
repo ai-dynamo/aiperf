@@ -265,9 +265,10 @@ class TestPromptGeneratorComprehensive:
         )
 
         assert len(generator._cache[1]) == cache_size
-        assert (
-            generator._cache[1][0] == tokenizer.bos_token_id or tokenizer.eos_token_id
-        )
+        assert generator._cache[1][0] in [
+            tokenizer.bos_token_id,
+            tokenizer.eos_token_id,
+        ]
 
     def test_cache_reuse_across_calls(self, basic_config):
         """Test that cache is reused across multiple calls."""

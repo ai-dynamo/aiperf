@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 from aiperf.common.exceptions import (
     InitializationError,
     NotInitializedError,
-    TokenizerError,
 )
 
 # Silence tokenizer warning on import and first use
@@ -130,20 +129,18 @@ class Tokenizer:
         return self._tokenizer.eos_token_id
 
     @property
-    def special_token_id(self) -> int:
+    def block_separation_token_id(self) -> int | None:
         """
-        Returns BOS, EOS, or the first available special token ID.
+        Returns BOS, EOS, or None if none areavailable.
         """
         if self._tokenizer is None:
             raise NotInitializedError("Tokenizer is not initialized.")
 
-        if self.bos_token_id:
+        if self.bos_token_id is not None:
             return self.bos_token_id
-        if self.eos_token_id:
+        if self.eos_token_id is not None:
             return self.eos_token_id
-        if self._tokenizer.all_special_ids:
-            return self._tokenizer.all_special_ids[0]
-        raise TokenizerError("No special token ID found")
+        return None
 
     def __repr__(self) -> str:
         """
