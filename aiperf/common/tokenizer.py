@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from transformers import BatchEncoding
 
-from aiperf.common.exceptions import InitializationError, NotInitializedError
+from aiperf.common.exceptions import (
+    InitializationError,
+    NotInitializedError,
+)
 
 # Silence tokenizer warning on import and first use
 with (
@@ -115,6 +118,29 @@ class Tokenizer:
         if self._tokenizer is None:
             raise NotInitializedError("Tokenizer is not initialized.")
         return self._tokenizer.bos_token_id
+
+    @property
+    def eos_token_id(self) -> int:
+        """
+        Return the end-of-sequence (EOS) token ID.
+        """
+        if self._tokenizer is None:
+            raise NotInitializedError("Tokenizer is not initialized.")
+        return self._tokenizer.eos_token_id
+
+    @property
+    def block_separation_token_id(self) -> int | None:
+        """
+        Returns BOS, EOS, or None if none areavailable.
+        """
+        if self._tokenizer is None:
+            raise NotInitializedError("Tokenizer is not initialized.")
+
+        if self.bos_token_id is not None:
+            return self.bos_token_id
+        if self.eos_token_id is not None:
+            return self.eos_token_id
+        return None
 
     def __repr__(self) -> str:
         """

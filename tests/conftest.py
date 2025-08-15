@@ -159,6 +159,7 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
             # Create a mock tokenizer around HF AutoTokenizer
             mock_tokenizer = MagicMock()
             mock_tokenizer.bos_token_id = 1
+            mock_tokenizer.eos_token_id = 2
             return cls(mock_tokenizer)
 
         def __call__(self, text, **kwargs):
