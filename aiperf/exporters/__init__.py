@@ -14,6 +14,9 @@ from aiperf.exporters.console_error_exporter import (
 from aiperf.exporters.console_metrics_exporter import (
     ConsoleMetricsExporter,
 )
+from aiperf.exporters.csv_exporter import (
+    CsvExporter,
+)
 from aiperf.exporters.display_units_utils import (
     STAT_KEYS,
     convert_all_metrics_to_display_units,
@@ -33,6 +36,7 @@ from aiperf.exporters.json_exporter import (
 __all__ = [
     "ConsoleErrorExporter",
     "ConsoleMetricsExporter",
+    "CsvExporter",
     "ExporterConfig",
     "ExporterManager",
     "JsonExportData",

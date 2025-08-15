@@ -11,3 +11,4 @@ class ConsoleExporterType(CaseInsensitiveStrEnum):
 
 class DataExporterType(CaseInsensitiveStrEnum):
     JSON = "json"
+    CSV = "csv"
