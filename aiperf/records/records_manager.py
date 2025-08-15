@@ -6,7 +6,10 @@ import time
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
+from aiperf.common.constants import (
+    DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
+    DEFAULT_REALTIME_METRICS_INTERVAL,
+)
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
@@ -16,6 +19,7 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.enums.metric_enums import MetricValueTypeT
+from aiperf.common.enums.ui_enums import AIPerfUIType
 from aiperf.common.factories import (
     ResultsProcessorFactory,
     ServiceFactory,
@@ -29,8 +33,10 @@ from aiperf.common.messages import (
     ProcessRecordsCommand,
     ProcessRecordsResultMessage,
     ProfileCancelCommand,
+    RealtimeMetricsMessage,
     RecordsProcessingStatsMessage,
 )
+from aiperf.common.messages.command_messages import RealtimeMetricsCommand
 from aiperf.common.messages.credit_messages import CreditPhaseSendingCompleteMessage
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
@@ -40,6 +46,7 @@ from aiperf.common.models import (
     ProcessRecordsResult,
     ProfileResults,
 )
+from aiperf.common.models.record_models import MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol, ServiceProtocol
 from aiperf.common.types import MetricTagT
 
@@ -83,6 +90,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Track per-worker statistics
         self.worker_stats: dict[str, ProcessingStats] = {}
         self.worker_stats_lock: asyncio.Lock = asyncio.Lock()
+
+        self._previous_realtime_records: int | None = None
 
         self._results_processors: list[ResultsProcessorProtocol] = []
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
@@ -278,6 +287,58 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         async with self.processing_status_lock:
             self.profile_cancelled = True
         return await self._process_results(cancelled=True)
+
+    @background_task(interval=None, immediate=True)
+    async def _report_realtime_metrics_task(self) -> None:
+        """Report the real-time metrics at a regular interval (only if the UI type is dashboard)."""
+        if self.service_config.ui_type != AIPerfUIType.DASHBOARD:
+            return
+        while not self.stop_requested:
+            await asyncio.sleep(DEFAULT_REALTIME_METRICS_INTERVAL)
+            async with self.processing_status_lock:
+                if (
+                    self.processing_stats.total_records
+                    == self._previous_realtime_records
+                ):
+                    continue  # No new records have been processed, so no need to update the metrics
+                self._previous_realtime_records = self.processing_stats.processed
+            await self._report_realtime_metrics()
+
+    @on_command(CommandType.REALTIME_METRICS)
+    async def _on_realtime_metrics_command(
+        self, message: RealtimeMetricsCommand
+    ) -> None:
+        """Handle a real-time metrics command."""
+        await self._report_realtime_metrics()
+
+    async def _report_realtime_metrics(self) -> None:
+        """Report the real-time metrics."""
+        metrics = await self._generate_realtime_metrics()
+        if not metrics:
+            return
+        await self.publish(
+            RealtimeMetricsMessage(
+                service_id=self.service_id,
+                metrics=metrics,
+            )
+        )
+
+    async def _generate_realtime_metrics(self) -> list[MetricResult]:
+        """Generate the real-time metrics for the profile run."""
+        results = await asyncio.gather(
+            *[
+                results_processor.summarize()
+                for results_processor in self._results_processors
+            ],
+            return_exceptions=True,
+        )
+        return [
+            res
+            for result in results
+            if isinstance(result, list)
+            for res in result
+            if isinstance(res, MetricResult)
+        ]
 
     async def _process_results(self, cancelled: bool) -> ProcessRecordsResult:
         """Process the results."""

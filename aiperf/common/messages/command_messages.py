@@ -238,6 +238,10 @@ class CommandUnhandledResponse(CommandResponse):
         )
 
 
+class RealtimeMetricsCommand(CommandMessage):
+    command: CommandTypeT = CommandType.REALTIME_METRICS
+
+
 class SpawnWorkersCommand(CommandMessage):
     command: CommandTypeT = CommandType.SPAWN_WORKERS
 

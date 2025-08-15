@@ -4,7 +4,7 @@
 import sys
 from datetime import datetime
 
-from rich.console import Console
+from rich.console import Console, RenderableType
 from rich.table import Table
 
 from aiperf.common.constants import AIPERF_DEV_MODE
@@ -40,15 +40,19 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
             self.warning("No records to export")
             return
 
-        table = Table(title=self._get_title())
-        table.add_column("Metric", justify="right", style="cyan")
-        for key in self.STAT_COLUMN_KEYS:
-            table.add_column(key, justify="right", style="green")
-        self._construct_table(table, self._results.records)
+        table = self.get_renderable(self._results.records)
 
         console.print("\n")
         console.print(table)
         console.file.flush()
+
+    def get_renderable(self, records: list[MetricResult]) -> RenderableType:
+        table = Table(title=self._get_title())
+        table.add_column("Metric", justify="right", style="cyan")
+        for key in self.STAT_COLUMN_KEYS:
+            table.add_column(key, justify="right", style="green")
+        self._construct_table(table, records)
+        return table
 
     def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
         records = sorted(

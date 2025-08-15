@@ -21,6 +21,8 @@ class BenchmarkTokenCountMetric(BaseAggregateMetric[int]):
 
     tag = "benchmark_token_count"
     header = "Benchmark Token Count"
+    short_header = "Tokens"
+    short_header_hide_unit = True
     unit = GenericMetricUnit.TOKENS
     flags = (
         MetricFlags.PRODUCES_TOKENS_ONLY
