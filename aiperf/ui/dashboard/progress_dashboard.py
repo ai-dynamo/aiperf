@@ -124,7 +124,7 @@ class ProgressDashboard(Container, MaximizableWidget):
             self.query_one("#stats-display").remove_class("no-stats")
         self.warmup_stats = warmup_stats
         self.create_or_update_progress("Warmup", warmup_stats)
-        self.update_display(CreditPhase.WARMUP, warmup_stats)
+        self.update_display(CreditPhase.WARMUP, self.warmup_stats)
 
     def on_profiling_progress(self, profiling_stats: RequestsStats) -> None:
         """Callback for profiling progress updates."""
@@ -132,7 +132,7 @@ class ProgressDashboard(Container, MaximizableWidget):
             self.query_one("#stats-display").remove_class("no-stats")
         self.profiling_stats = profiling_stats
         self.create_or_update_progress("Profiling", profiling_stats)
-        self.update_display(CreditPhase.PROFILING, profiling_stats)
+        self.update_display(CreditPhase.PROFILING, self.profiling_stats)
 
     def on_records_progress(self, records_stats: RecordsStats) -> None:
         """Callback for records progress updates."""
@@ -140,7 +140,8 @@ class ProgressDashboard(Container, MaximizableWidget):
             self.query_one("#stats-display").remove_class("no-stats")
         self.records_stats = records_stats
         self.create_or_update_progress("Records", records_stats)
-        self.update_display(CreditPhase.PROFILING, records_stats)
+        # NOTE: Send the profiling stats to the display, not the records stats
+        self.update_display(CreditPhase.PROFILING, self.profiling_stats)
 
     def update_display(
         self, phase: CreditPhase, stats: StatsProtocol | None = None
@@ -151,15 +152,15 @@ class ProgressDashboard(Container, MaximizableWidget):
         if self.stats_widget:
             self.stats_widget.update(self.create_stats_table(phase, stats))
 
-    def _get_status(
-        self, phase: CreditPhase, stats: StatsProtocol | None = None
-    ) -> Text:
+    def _get_status(self) -> Text:
         """Get the status of the profile."""
-        if phase == CreditPhase.PROFILING and stats and stats.is_complete:
+        if self.records_stats and self.records_stats.is_complete:
             return Text("Complete", style="bold green")
-        elif phase == CreditPhase.PROFILING:
+        elif self.profiling_stats and self.profiling_stats.is_complete:
+            return Text("Processing", style="bold green")
+        elif self.profiling_stats:
             return Text("Profiling", style="bold yellow")
-        elif phase == CreditPhase.WARMUP:
+        elif self.warmup_stats:
             return Text("Warmup", style="bold yellow")
         else:
             return Text("Waiting for profile data...", style="dim")
@@ -175,7 +176,7 @@ class ProgressDashboard(Container, MaximizableWidget):
         if not stats:
             return stats_table
 
-        stats_table.add_row("Status:", self._get_status(phase, stats))
+        stats_table.add_row("Status:", self._get_status())
 
         if stats.total_expected_requests:
             stats_table.add_row(
