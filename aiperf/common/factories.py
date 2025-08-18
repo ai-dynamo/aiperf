@@ -10,7 +10,6 @@ from aiperf.common.enums import (
     AIPerfUIType,
     CommClientType,
     CommunicationBackend,
-    ComposerType,
     ConsoleExporterType,
     CustomDatasetType,
     DataExporterType,
@@ -58,7 +57,6 @@ if TYPE_CHECKING:
     from aiperf.dataset import (
         CustomDatasetLoaderProtocol,
     )
-    from aiperf.dataset.composer.base import BaseDatasetComposer
     from aiperf.exporters.exporter_config import ExporterConfig
     from aiperf.zmq.zmq_proxy_base import BaseZMQProxy
 
@@ -375,20 +373,6 @@ class CommunicationFactory(
         **kwargs,
     ) -> "CommunicationProtocol":
         return super().create_instance(class_type, config=config, **kwargs)
-
-
-class ComposerFactory(AIPerfFactory[ComposerType, "BaseDatasetComposer"]):
-    """Factory for registering and creating BaseDatasetComposer instances based on the specified composer type.
-    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
-    """
-
-    @classmethod
-    def create_instance(  # type: ignore[override]
-        cls,
-        class_type: ComposerType | str,
-        **kwargs,
-    ) -> "BaseDatasetComposer":
-        return super().create_instance(class_type, **kwargs)
 
 
 class ConsoleExporterFactory(

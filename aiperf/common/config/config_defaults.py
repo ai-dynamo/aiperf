@@ -11,6 +11,7 @@ from aiperf.common.enums import (
     AudioFormat,
     CommunicationBackend,
     CustomDatasetType,
+    DatasetType,
     EndpointType,
     ImageFormat,
     ModelSelectionStrategy,
@@ -48,6 +49,7 @@ class InputDefaults:
     FIXED_SCHEDULE_AUTO_OFFSET = False
     FIXED_SCHEDULE_START_OFFSET = None
     FIXED_SCHEDULE_END_OFFSET = None
+    DATASET_TYPE = DatasetType.SYNTHETIC
     CUSTOM_DATASET_TYPE = CustomDatasetType.MOONCAKE_TRACE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
@@ -142,6 +144,7 @@ class ServiceDefaults:
     EXTRA_VERBOSE = False
     LOG_PATH = None
     RECORD_PROCESSOR_SERVICE_COUNT = None
+    DATASET_PROCESSOR_SERVICE_COUNT = 1
     PROGRESS_REPORT_INTERVAL = 1.0
     UI_TYPE = AIPerfUIType.DASHBOARD
 

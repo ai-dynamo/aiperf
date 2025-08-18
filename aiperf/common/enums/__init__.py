@@ -29,8 +29,8 @@ from aiperf.common.enums.data_exporter_enums import (
 )
 from aiperf.common.enums.dataset_enums import (
     AudioFormat,
-    ComposerType,
     CustomDatasetType,
+    DatasetType,
     ImageFormat,
     PromptSource,
 )
@@ -109,11 +109,11 @@ __all__ = [
     "CommandResponseStatus",
     "CommandType",
     "CommunicationBackend",
-    "ComposerType",
     "ConsoleExporterType",
     "CreditPhase",
     "CustomDatasetType",
     "DataExporterType",
+    "DatasetType",
     "EndpointType",
     "EndpointTypeInfo",
     "GenericMetricUnit",

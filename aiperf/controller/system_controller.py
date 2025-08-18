@@ -92,6 +92,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         else:
             self.scale_record_processors_with_workers = True
 
+        if self.service_config.dataset_processor_service_count is not None:
+            self.required_services[ServiceType.DATASET_PROCESSOR] = (
+                self.service_config.dataset_processor_service_count
+            )
+
         self.proxy_manager: ProxyManager = ProxyManager(
             service_config=self.service_config
         )

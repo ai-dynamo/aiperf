@@ -1,12 +1,80 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
+
 from pydantic import Field
 
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.types import MessageTypeT
+
+
+class ProcessDatasetMessage(BaseServiceMessage):
+    """Message for sending dataset processing requests to processors."""
+
+    random_seed: int | None = Field(
+        default=None, description="Random seed for the dataset generation"
+    )
+
+
+class ProcessSyntheticDatasetMessage(ProcessDatasetMessage):
+    """Message for processing synthetic data."""
+
+    message_type: MessageTypeT = MessageType.PROCESS_SYNTHETIC_DATASET
+    num_conversations: int = Field(
+        ..., description="Number of conversation to generate"
+    )
+
+
+class ProcessMooncakeTraceDatasetMessage(ProcessDatasetMessage):
+    """Message for processing mooncake trace data."""
+
+    message_type: MessageTypeT = MessageType.PROCESS_MOONCAKE_TRACE_DATASET
+    dataset: list[tuple[str, Any]] = Field(
+        ..., description="The Mooncake trace dataset"
+    )
+
+
+class ProcessMultiTurnDatasetMessage(ProcessDatasetMessage):
+    """Message for processing multi-turn data."""
+
+    message_type: MessageTypeT = MessageType.PROCESS_MULTI_TURN_DATASET
+    dataset: list[tuple[str, Any]] = Field(..., description="The multi-turn dataset")
+
+
+class ProcessSingleTurnDatasetMessage(ProcessDatasetMessage):
+    """Message for processing single-turn data."""
+
+    message_type: MessageTypeT = MessageType.PROCESS_SINGLE_TURN_DATASET
+    dataset: list[tuple[str, Any]] = Field(..., description="The single-turn dataset")
+
+
+class ProcessRandomPoolDatasetMessage(ProcessDatasetMessage):
+    """Message for processing random pool data."""
+
+    message_type: MessageTypeT = MessageType.PROCESS_RANDOM_POOL_DATASET
+    dataset: list[tuple[str, Any]] = Field(..., description="The random pool dataset")
+    num_conversations: int = Field(
+        ..., description="Number of conversations to generate"
+    )
+
+
+class ProcessDatasetResponseMessage(ProcessDatasetMessage):
+    """Message for returning dataset processing responses."""
+
+    message_type: MessageTypeT = MessageType.DATASET_RESULT
+
+    generated_data: list[Conversation] = Field(
+        default_factory=list, description="Generated conversations"
+    )
+    error_message: str | None = Field(
+        default=None, description="Error message if job failed"
+    )
+    processing_time_ms: float | None = Field(
+        default=None, description="Time taken to process the job in milliseconds"
+    )
 
 
 class ConversationRequestMessage(BaseServiceMessage):

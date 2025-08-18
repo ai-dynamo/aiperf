@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import random
 from io import BytesIO
 from unittest.mock import Mock, patch
 
@@ -164,7 +165,11 @@ class TestImageGenerator:
         mock_sample_image.return_value = test_image
 
         generator = ImageGenerator(base_config)
+
+        random.seed(123)
         image1 = generator.generate()
+
+        random.seed(234)
         image2 = generator.generate()
 
         assert image1 != image2

@@ -10,12 +10,16 @@ from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
-    ComposerType,
+    CustomDatasetType,
+    DatasetType,
     MessageType,
     ServiceType,
 )
-from aiperf.common.factories import ComposerFactory, ServiceFactory
-from aiperf.common.hooks import on_command, on_request
+from aiperf.common.factories import (
+    CustomDatasetFactory,
+    ServiceFactory,
+)
+from aiperf.common.hooks import on_command, on_pull_message, on_request
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
@@ -24,9 +28,16 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
     DatasetTimingRequest,
     DatasetTimingResponse,
+    ProcessDatasetMessage,
+    ProcessDatasetResponseMessage,
+    ProcessMooncakeTraceDatasetMessage,
+    ProcessMultiTurnDatasetMessage,
+    ProcessRandomPoolDatasetMessage,
+    ProcessSingleTurnDatasetMessage,
+    ProcessSyntheticDatasetMessage,
     ProfileConfigureCommand,
 )
-from aiperf.common.mixins import ReplyClientMixin
+from aiperf.common.mixins import PullClientMixin, ReplyClientMixin
 from aiperf.common.models import Conversation
 from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
@@ -36,7 +47,7 @@ DATASET_CONFIGURATION_TIMEOUT = 300.0
 
 @implements_protocol(ServiceProtocol)
 @ServiceFactory.register(ServiceType.DATASET_MANAGER)
-class DatasetManager(ReplyClientMixin, BaseComponentService):
+class DatasetManager(ReplyClientMixin, PullClientMixin, BaseComponentService):
     """
     The DatasetManager primary responsibility is to manage the data generation or acquisition.
     For synthetic generation, it contains the code to generate the prompts or tokens.
@@ -55,6 +66,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             service_id=service_id,
             reply_client_address=CommAddress.DATASET_MANAGER_PROXY_BACKEND,
             reply_client_bind=False,
+            pull_client_address=CommAddress.DATASET_RESULT,
+            pull_client_bind=True,
         )
         self.debug("Dataset manager __init__")
         self.user_config = user_config
@@ -66,6 +79,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         self.dataset_configured = asyncio.Event()
 
+        self.jobs_push_client = self.comms.create_push_client(
+            address=CommAddress.DATASET_JOB,
+            bind=True,
+        )
+        self.num_processors = self.service_config.dataset_processor_service_count
+        self._custom_dataset_type = self.user_config.input.custom_dataset_type
+        self.total_dataset_size: int | None = None
+
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
         self, message: ProfileConfigureCommand
@@ -73,52 +94,115 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Configure the dataset."""
         self.info(lambda: f"Configuring dataset for {self.service_id}")
         begin = time.perf_counter()
-        await self._configure_dataset()
-        duration = time.perf_counter() - begin
-        self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
 
-    async def _configure_dataset(self) -> None:
-        if self.user_config is None:
-            raise self._service_error("User config is required for dataset manager")
-
-        self.dataset_configured.clear()
-        if self.user_config.input.file:
-            composer_type = ComposerType.CUSTOM
-            self.debug(
-                lambda: f"Detected input file '{self.user_config.input.file}'. Setting the composer type to {ComposerType.CUSTOM}."
-            )
+        if self.user_config.input.dataset_type == DatasetType.SYNTHETIC:
+            await self._configure_synthetic_dataset()
+        elif self.user_config.input.dataset_type == DatasetType.CUSTOM:
+            await self._configure_custom_dataset()
         else:
-            composer_type = ComposerType.SYNTHETIC
-            self.debug(
-                lambda: f"No input file detected. Setting the composer type to {ComposerType.SYNTHETIC}."
+            raise NotImplementedError(
+                f"Dataset type {self.user_config.input.dataset_type} is not supported yet."
             )
 
-        tokenizer_name = self.user_config.tokenizer.name
-        if tokenizer_name is None:
-            # TODO: What do we do if there are multiple models?
-            # How will we know which tokenizer to use?
-            tokenizer_name = self.user_config.endpoint.model_names[0]
-
-        tokenizer = Tokenizer.from_pretrained(
-            tokenizer_name,
-            trust_remote_code=self.user_config.tokenizer.trust_remote_code,
-            revision=self.user_config.tokenizer.revision,
-        )
-        composer = ComposerFactory.create_instance(
-            composer_type,
-            config=self.user_config,
-            tokenizer=tokenizer,
-        )
-        conversations = composer.create_dataset()
-        self.dataset = {conv.session_id: conv for conv in conversations}
+        await self._wait_for_dataset_configuration()
         self._session_ids_cache = list(self.dataset.keys())
-
-        self.dataset_configured.set()
-        await self.publish(
-            DatasetConfiguredNotification(
-                service_id=self.service_id,
-            ),
+        duration = time.perf_counter() - begin
+        self.info(
+            lambda: f"Dataset configured in {duration:.2f} seconds with {len(self.dataset)} conversations"
         )
+
+    async def _configure_synthetic_dataset(self) -> None:
+        """Configure a synthetic dataset.
+
+        This will generate a synthetic dataset and distribute the work across the
+        dataset processors.
+        """
+        self.total_dataset_size = self.user_config.input.conversation.num
+        self.info(
+            f"Distributing {self.total_dataset_size} conversations "
+            f"across {self.num_processors} processors "
+        )
+
+        remaining_dataset_size = self.total_dataset_size
+        chunk_size = max(self.total_dataset_size // self.num_processors, 1)
+        while remaining_dataset_size > 0:
+            await self.jobs_push_client.push(
+                message=ProcessSyntheticDatasetMessage(
+                    service_id=self.service_id,
+                    num_conversations=chunk_size,
+                )
+            )
+
+            remaining_dataset_size -= chunk_size
+            if remaining_dataset_size < chunk_size:
+                chunk_size = remaining_dataset_size
+
+    async def _configure_custom_dataset(self) -> None:
+        """Configure a custom dataset.
+
+        This will load a custom dataset from a file and distribute the work across the
+        dataset processors.
+        """
+        process_messages: dict[CustomDatasetType, type[ProcessDatasetMessage]] = {
+            CustomDatasetType.MOONCAKE_TRACE: ProcessMooncakeTraceDatasetMessage,
+            CustomDatasetType.MULTI_TURN: ProcessMultiTurnDatasetMessage,
+            CustomDatasetType.SINGLE_TURN: ProcessSingleTurnDatasetMessage,
+            CustomDatasetType.RANDOM_POOL: ProcessRandomPoolDatasetMessage,
+        }
+        process_message = process_messages[self._custom_dataset_type]
+
+        custom_kwargs = {}
+        if self._custom_dataset_type == CustomDatasetType.RANDOM_POOL:
+            custom_kwargs["num_conversations"] = self.user_config.input.conversation.num
+
+        loader = CustomDatasetFactory.create_instance(
+            self._custom_dataset_type,
+            user_config=self.user_config,
+        )
+        dataset_list = list(loader.load_dataset().items())
+        self.total_dataset_size = len(dataset_list)
+
+        self.info(
+            f"Distributing {self.total_dataset_size} dataset items "
+            f"across {self.num_processors} processors"
+        )
+
+        remaining_dataset_size = self.total_dataset_size
+        chunk_size = max(self.total_dataset_size // self.num_processors, 1)
+        start = 0
+        while remaining_dataset_size > 0:
+            await self.jobs_push_client.push(
+                message=process_message(
+                    service_id=self.service_id,
+                    dataset=dataset_list[start : start + chunk_size],
+                    **custom_kwargs,
+                )
+            )
+            start += chunk_size
+            remaining_dataset_size -= chunk_size
+            if remaining_dataset_size < chunk_size:
+                chunk_size = remaining_dataset_size
+
+    @on_pull_message(MessageType.DATASET_RESULT)
+    async def _on_result(self, message: ProcessDatasetResponseMessage) -> None:
+        """Handle a dataset job result."""
+        self.debug(
+            lambda: f"Received processed dataset response from {message.service_id}"
+        )
+
+        for conversation in message.generated_data:
+            self.dataset[conversation.session_id] = conversation
+
+        if len(self.dataset) == self.total_dataset_size:
+            self.debug(
+                lambda: f"Dataset configured with {len(self.dataset)} conversations"
+            )
+            self.dataset_configured.set()
+            await self.publish(
+                DatasetConfiguredNotification(
+                    service_id=self.service_id,
+                ),
+            )
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(

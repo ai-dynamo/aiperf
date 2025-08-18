@@ -9,8 +9,6 @@ from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models import Conversation, Text, Turn
-from aiperf.dataset.generator import PromptGenerator
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.protocol import CustomDatasetLoaderProtocol
 
@@ -33,20 +31,13 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
     ```
     """
 
-    def __init__(
-        self,
-        filename: str,
-        prompt_generator: PromptGenerator,
-        user_config: UserConfig,
-        **kwargs,
-    ):
-        self.filename = filename
-        self.prompt_generator = prompt_generator
-        self.user_config = user_config
-        self._skipped_traces = 0
+    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+        super().__init__(user_config=user_config, **kwargs)
+        self.debug("MooncakeTraceDatasetLoader __init__")
+        self.filename = user_config.input.file
         self._start_offset = user_config.input.fixed_schedule_start_offset
         self._end_offset = user_config.input.fixed_schedule_end_offset
-        super().__init__(user_config=user_config, **kwargs)
+        self._skipped_traces = 0
 
     def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
         """Load Mooncake trace data from a file.
@@ -82,32 +73,3 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
         return (self._start_offset is None or timestamp >= self._start_offset) and (
             self._end_offset is None or timestamp <= self._end_offset
         )
-
-    def convert_to_conversations(
-        self, data: dict[str, list[MooncakeTrace]]
-    ) -> list[Conversation]:
-        """Convert all the Mooncake trace data to conversation objects.
-
-        Args:
-            data: A dictionary of session_id and list of Mooncake trace data.
-
-        Returns:
-            A list of conversations.
-        """
-        conversations = []
-        for session_id, traces in data.items():
-            conversation = Conversation(session_id=session_id)
-            for trace in traces:
-                prompt = self.prompt_generator.generate(
-                    mean=trace.input_length,
-                    stddev=0,
-                    hash_ids=trace.hash_ids,
-                )
-                turn = Turn(
-                    timestamp=trace.timestamp,
-                    texts=[Text(name="text", contents=[prompt])],
-                    max_tokens=trace.output_length,
-                )
-                conversation.turns.append(turn)
-            conversations.append(conversation)
-        return conversations

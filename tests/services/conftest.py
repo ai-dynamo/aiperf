@@ -3,12 +3,29 @@
 
 import pytest
 
+from aiperf.common.config import (
+    ConversationConfig,
+    EndpointConfig,
+    InputConfig,
+    InputTokensConfig,
+    PromptConfig,
+    UserConfig,
+)
 from aiperf.common.messages import (
     ConversationRequestMessage,
     DatasetTimingRequest,
 )
 from aiperf.common.models import Conversation, Text, Turn
 from tests.utils.async_test_utils import async_fixture
+
+
+@pytest.fixture
+def mock_tokenizer(mock_tokenizer_cls):
+    """Mock tokenizer class."""
+    return mock_tokenizer_cls.from_pretrained(
+        "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+    )
+
 
 # ============================================================================
 # Dataset Manager Test Fixtures
@@ -62,3 +79,23 @@ async def populated_dataset_manager(initialized_service, sample_conversations):
     manager = await async_fixture(initialized_service)
     manager.dataset = {conv.session_id: conv for conv in sample_conversations}
     return manager
+
+
+# ============================================================================
+# Dataset Processor Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def synthetic_user_config() -> UserConfig:
+    """Basic synthetic configuration for testing."""
+    config = UserConfig(
+        endpoint=EndpointConfig(model_names=["test-model"]),
+        input=InputConfig(
+            conversation=ConversationConfig(num=5),
+            prompt=PromptConfig(
+                input_tokens=InputTokensConfig(mean=10, stddev=2),
+            ),
+        ),
+    )
+    return config
