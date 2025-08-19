@@ -112,20 +112,11 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
                     schedule=dataset_timing_response.timing_data,
                 )
             )
-        elif self.config.timing_mode == TimingMode.CONCURRENCY:
-            self.info("Using concurrency strategy")
+        else:
+            self.info(f"Using {self.config.timing_mode.title()} strategy")
             self._credit_issuing_strategy = (
                 CreditIssuingStrategyFactory.create_instance(
-                    TimingMode.CONCURRENCY,
-                    config=self.config,
-                    credit_manager=self,
-                )
-            )
-        elif self.config.timing_mode == TimingMode.REQUEST_RATE:
-            self.info("Using request rate strategy")
-            self._credit_issuing_strategy = (
-                CreditIssuingStrategyFactory.create_instance(
-                    TimingMode.REQUEST_RATE,
+                    self.config.timing_mode,
                     config=self.config,
                     credit_manager=self,
                 )
