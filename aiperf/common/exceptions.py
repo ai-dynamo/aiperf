@@ -116,3 +116,7 @@ class UnsupportedHookError(AIPerfError):
 
 class ValidationError(AIPerfError):
     """Exception raised when something fails validation."""
+
+
+class TokenizerError(AIPerfError):
+    """Exception raised when a tokenizer encounters an error."""
