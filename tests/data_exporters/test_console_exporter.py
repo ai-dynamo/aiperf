@@ -173,7 +173,7 @@ class TestConsoleExporter:
             p90=15.5 * NANOS_PER_MILLIS,
             p75=12.3 * NANOS_PER_MILLIS,
         )
-        record = to_display_unit(record, MetricRegistry())
+        record = to_display_unit(record, MetricRegistry)
         row = exporter._format_row(record)
         # This asserts that the display is unit converted correctly
         assert row[0] == "Request Latency (ms)"

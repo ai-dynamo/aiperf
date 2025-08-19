@@ -138,7 +138,7 @@ class ServiceDefaults:
     EXTRA_VERBOSE = False
     LOG_PATH = None
     RECORD_PROCESSOR_SERVICE_COUNT = None
-    UI_TYPE = AIPerfUIType.SIMPLE
+    UI_TYPE = AIPerfUIType.DASHBOARD
 
 
 @dataclass(frozen=True)

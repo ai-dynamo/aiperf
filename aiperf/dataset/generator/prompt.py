@@ -169,12 +169,16 @@ class PromptGenerator(BaseGenerator):
                 current_block_size = final_block_size
 
             if hash_id not in self._cache:
-                # To ensure that the prompt doesn't merge chunks, we pop the last token
-                # and insert the bos token at the beginning. Length is maintained and
-                # the prompt generates the expected number of tokens.
-                prompt_tokens: list[int] = self._sample_tokens(current_block_size)
-                prompt_tokens.pop(0)
-                prompt_tokens.insert(0, self.tokenizer.bos_token_id)
+                # To ensure that the prompt doesn't merge chunks, we insert a BOS or EOS token
+                # at the beginning. Length is maintained and the prompt generates the expected
+                # number of tokens. If no BOS or EOS token is available, we don't insert one.
+                prompt_tokens: list[int] = []
+                if self.tokenizer.block_separation_token_id is not None:
+                    prompt_tokens += [self.tokenizer.block_separation_token_id]
+                    prompt_tokens += self._sample_tokens(current_block_size - 1)
+                else:
+                    prompt_tokens += self._sample_tokens(current_block_size)
+
                 self._cache[hash_id] = prompt_tokens  # store to cache
 
             final_prompt.extend(self._cache[hash_id])

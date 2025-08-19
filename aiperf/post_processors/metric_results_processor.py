@@ -1,10 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from typing import Any
-
-import pandas as pd
 
 from aiperf.common.config import UserConfig
 from aiperf.common.decorators import implements_protocol
@@ -16,7 +13,7 @@ from aiperf.common.protocols import ResultsProcessorProtocol
 from aiperf.common.types import MetricTagT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
-from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
@@ -76,7 +73,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 metric_type = self._tags_to_types[tag]
                 if metric_type == MetricType.RECORD:
                     if tag not in self._results:
-                        self._results[tag] = deque()
+                        self._results[tag] = MetricArray()
                     self._results[tag].append(value)  # type: ignore
 
                 elif metric_type == MetricType.AGGREGATE:
@@ -114,6 +111,9 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         metric_class = self._instances_map[tag]
 
+        if isinstance(values, MetricArray):
+            return values.to_result(tag, metric_class.header, str(metric_class.unit))
+
         if isinstance(values, int | float):
             return MetricResult(
                 tag=metric_class.tag,
@@ -121,30 +121,6 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 unit=str(metric_class.unit),
                 avg=values,
                 count=1,
-            )
-
-        if isinstance(values, Iterable):
-            series = pd.Series(values, dtype=metric_class.value_type.dtype)
-            quantiles = series.quantile(
-                [0.01, 0.05, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]
-            )
-            return MetricResult(
-                tag=metric_class.tag,
-                header=metric_class.header,
-                unit=str(metric_class.unit),
-                avg=series.mean(),
-                min=series.min(),
-                max=series.max(),
-                p1=quantiles[0.01],
-                p5=quantiles[0.05],
-                p25=quantiles[0.25],
-                p50=quantiles[0.50],
-                p75=quantiles[0.75],
-                p90=quantiles[0.90],
-                p95=quantiles[0.95],
-                p99=quantiles[0.99],
-                std=series.std(),
-                count=len(series),
             )
 
         raise ValueError(f"Unexpected values type: {type(values)}")
