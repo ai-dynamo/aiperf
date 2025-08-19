@@ -16,7 +16,7 @@ limitations under the License.
 -->
 # Trace Replay
 
-This turorial takes you through an example trace replay profile. Trace Replay benchmarking helps reproduce performance benchmarking results for validation or testing your system under a specific load pattern.
+This tutorial takes you through an example trace replay profile. Trace Replay benchmarking helps reproduce performance benchmarking results for validation or testing your system under a specific load pattern.
 
 ## Table of Contents
 
@@ -25,45 +25,27 @@ This turorial takes you through an example trace replay profile. Trace Replay be
 
 ## MoonCake Traces
 
-Mooncake provides a specification and sample datasets for [traces](https://github.com/kvcache-ai/Mooncake?tab=readme-ov-file#-open-source-trace) that can be replayed for performance benchmarking. 
+Mooncake provides a specification and sample datasets for [traces](https://github.com/kvcache-ai/Mooncake?tab=readme-ov-file#-open-source-trace) that can be replayed for performance benchmarking.
 
-In AIPerf, the trace must be defined in a jsonl file. 
+In AIPerf, the trace must be defined in a jsonl file.
 
-5 keys are available:
+4 keys are available:
 - "timestamp": the timing of request arrivals
 - "input_length": the number of input tokens
 - "output_length": the number of output tokens
 - "hash_ids": [list of block hashes]
-- "text": the text prompt tokenize for your input
 
-
-
-Several combinations are supported.
 
 
 ```json
 {
-    "timestamp": 0, 
+    "timestamp": 0,
     "input_length": 655,
     "output_length": 52,
     "hash_ids": [46, 47]
 }
 ```
 
-```json
-{
-    "timestamp": 0, 
-    "text": "Hello, My name is"
-}
-```
-
-```json
-{
-    "timestamp": 0, 
-    "output_length": 52,
-    "text": "Hello, My name is"
-}
-```
 
 
 ## Profiling using a MoonCake Trace

@@ -23,7 +23,7 @@ limitations under the License.
 | **[Roadmap](https://github.com/ai-dynamo/dynamo/issues/762)** | **[Documentation](https://docs.nvidia.com/dynamo/latest/index.html)** | **[Design Proposals](https://github.com/ai-dynamo/enhancements)** |
 
 
-AIPerf is a comprehensive benchmarking tool for measuring the performance of generative AI models served by your preferred inference solution. 
+AIPerf is a comprehensive benchmarking tool for measuring the performance of generative AI models served by your preferred inference solution.
 It provides detailed metrics via a command line display as well as extensive benchmark performance reports.
 
 AIPerf provides multiprocess and kubernetes support (coming soon) out of the box for a single scalable solution.
@@ -38,9 +38,9 @@ Features
 
 ## Features
 
-- Scalable via multiprocess or Kubernetes (coming soon) support 
+- Scalable via multiprocess or Kubernetes (coming soon) support
 - Modular design for easy user modification
-- Several benchmarking modes: 
+- Several benchmarking modes:
   - concurrency
   - request-rate
   - [trace replay](docs/benchmark_modes/trace_replay.md)
@@ -77,6 +77,7 @@ aiperf profile \
   --model your_model_name \
   --url http://localhost:8000 \
   --endpoint-type chat
+  --streaming
 ```
 
 ### Example with Custom Configuration
@@ -95,7 +96,7 @@ Example output:
 <div align="center">
 
 ```
-NVIDIA AIPerf | LLM Metrics                                       
+NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┓
 ┃                               Metric ┃       avg ┃    min ┃    max ┃    p99 ┃    p90 ┃    p75 ┃   std ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━┩
