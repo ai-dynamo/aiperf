@@ -94,7 +94,13 @@ def coerce_value(value: Any) -> Any:
         return value.lower() == "true"
     if value.lower() in ("none", "null"):
         return None
-    if value.isdigit() or (value.startswith("-") and value[1:].isdigit()):
+    if value.isdigit() and (not value.startswith("0") or value == "0"):
+        return int(value)
+    if (
+        value.startswith("-")
+        and value[1:].isdigit()
+        and (not value.startswith("-0") or value == "-0")
+    ):
         return int(value)
     if value.count(".") == 1 and (
         value.replace(".", "").isdigit()

@@ -49,6 +49,10 @@ class TestCoerceValue:
             ("-.5", -0.5),
             ("-0.5", -0.5),
             ("32.b", "32.b"),
+            ("-0", 0),
+            ("0123", "0123"),
+            ("-0123", "-0123"),
+            ("0.0123", 0.0123),
         ],
     )
     def test_coerce_value(self, input: Any, expected: Any) -> None:
