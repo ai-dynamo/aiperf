@@ -53,7 +53,12 @@ class RequestRateStrategy(CreditIssuingStrategy):
                     self.trace(f"Acquired credit drop semaphore: {self._semaphore!r}")
                 if not phase_stats.should_send():
                     # Check one last time to see if we should still send a credit in case the
-                    # time-based phase has expired while waiting for the semaphore.
+                    # time-based phase expired while we were waiting for the semaphore.
+                    self._semaphore.release()
+                    if self.is_trace_enabled:
+                        self.trace(
+                            f"Released semaphore after should_send returned False: {self._semaphore!r}"
+                        )
                     break
 
             self.execute_async(
