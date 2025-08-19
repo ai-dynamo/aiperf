@@ -86,6 +86,30 @@ def parse_service_types(input: Any | None) -> set[ServiceType] | None:
     }
 
 
+def coerce_value(value: Any) -> Any:
+    """Coerce the value to the correct type."""
+    if not isinstance(value, str):
+        return value
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    if value.lower() in ("none", "null"):
+        return None
+    if value.isdigit() and (not value.startswith("0") or value == "0"):
+        return int(value)
+    if (
+        value.startswith("-")
+        and value[1:].isdigit()
+        and (not value.startswith("-0") or value == "-0")
+    ):
+        return int(value)
+    if value.count(".") == 1 and (
+        value.replace(".", "").isdigit()
+        or (value.startswith("-") and value[1:].replace(".", "").isdigit())
+    ):
+        return float(value)
+    return value
+
+
 def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] | None:
     """
     Parses the input to ensure it is a list of tuples. (key, value) pairs.
@@ -93,7 +117,7 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
     - If the input is a string:
         - If the string starts with a '{', it is parsed as a JSON string.
         - Otherwise, it splits the string by commas and then for each item, it splits the item by colons
-        into key and value, trims any whitespace.
+        into key and value, trims any whitespace, and coerces the value to the correct type.
     - If the input is a dictionary, it is converted to a list of tuples by key and value pairs.
     - If the input is a list, it recursively calls this function on each item, and aggregates the results.
     - Otherwise, a ValueError is raised.
@@ -117,7 +141,7 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
         return output
 
     if isinstance(input, dict):
-        return [(key, value) for key, value in input.items()]
+        return [(key, coerce_value(value)) for key, value in input.items()]
 
     if isinstance(input, str):
         if input.startswith("{"):
@@ -129,7 +153,7 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
                 ) from e
         else:
             return [
-                (key.strip(), value.strip())
+                (key.strip(), coerce_value(value.strip()))
                 for item in input.split(",")
                 for key, value in [item.split(":")]
             ]
