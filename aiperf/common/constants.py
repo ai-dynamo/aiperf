@@ -79,14 +79,14 @@ DEFAULT_WORKER_STALE_TIME = 10.0
 DEFAULT_WORKER_STATUS_SUMMARY_INTERVAL = 0.5
 """Default interval in seconds between worker status summary messages."""
 
-DEFAULT_REALTIME_METRICS_INTERVAL = 1.0
+DEFAULT_REALTIME_METRICS_INTERVAL = 5.0
 """Default interval in seconds between real-time metrics messages."""
 
-DEFAULT_CREDIT_PROGRESS_REPORT_INTERVAL = 1.0
+DEFAULT_CREDIT_PROGRESS_REPORT_INTERVAL = 2.0
 """Default interval in seconds between credit progress report messages."""
 
-DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL = 1.0
+DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL = 2.0
 """Default interval in seconds between records progress report messages."""
 
-DEFAULT_WORKER_HEALTH_CHECK_INTERVAL = 1.0
+DEFAULT_WORKER_HEALTH_CHECK_INTERVAL = 2.0
 """Default interval in seconds between worker health check messages."""
