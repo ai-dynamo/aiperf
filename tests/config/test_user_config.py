@@ -12,6 +12,10 @@ from aiperf.common.config import (
     UserConfig,
 )
 from aiperf.common.enums import EndpointType
+import pytest
+from pathlib import Path
+from aiperf.common.enums.endpoints_enums import EndpointServiceKind
+from aiperf.common.enums.timing_enums import TimingMode
 
 
 def test_user_config_serialization_to_file():
@@ -137,3 +141,61 @@ def test_user_config_exclude_unset_fields():
     assert config.model_dump_json(exclude_defaults=True) != config.model_dump_json()  # fmt: skip
     assert config.model_dump_json(exclude_unset=True, exclude_defaults=True) != config.model_dump_json()  # fmt: skip
     assert config.model_dump_json(exclude_none=True) != config.model_dump_json()  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "model_names,endpoint_type,timing_mode,streaming,expected_dir",
+    [
+        (
+            ["hf/model"],  # model name with slash
+            EndpointType.OPENAI_CHAT_COMPLETIONS,
+            TimingMode.CONCURRENCY,
+            True,
+            "/tmp/artifacts/hf_model-openai-chat-concurrency5",
+        ),
+        (
+            ["model1", "model2"],  # multi-model
+            EndpointType.OPENAI_COMPLETIONS,
+            TimingMode.REQUEST_RATE,
+            True,
+            "/tmp/artifacts/model1_multi-openai-completions-request_rate10.0",
+        ),
+        (
+            ["singlemodel"],  # single model
+            EndpointType.OPENAI_EMBEDDINGS,
+            TimingMode.FIXED_SCHEDULE,
+            False,
+            "/tmp/artifacts/singlemodel-openai-embeddings-fixed_schedule",
+        ),
+    ],
+)
+def test_compute_artifact_directory(
+    monkeypatch, model_names, endpoint_type, timing_mode, streaming, expected_dir
+):
+    endpoint = EndpointConfig(
+        model_names=model_names,
+        type=endpoint_type,
+        custom_endpoint="custom_endpoint",
+        streaming=streaming,
+        url="http://custom-url",
+    )
+    output = OutputConfig(artifact_directory=Path("/tmp/artifacts"))
+    loadgen = LoadGeneratorConfig(concurrency=5, request_rate=10)
+
+    monkeypatch.setattr("pathlib.Path.is_file", lambda self: True)
+    input_cfg = InputConfig(
+        fixed_schedule=(timing_mode == TimingMode.FIXED_SCHEDULE),
+        file="/tmp/dummy_input.txt",
+    )
+    config = UserConfig(
+        endpoint=endpoint,
+        output=output,
+        loadgen=loadgen,
+        input=input_cfg,
+    )
+
+    # Patch timing_mode property to return the desired timing_mode
+    monkeypatch.setattr(UserConfig, "timing_mode", property(lambda self: timing_mode))
+
+    artifact_dir = config._compute_artifact_directory()
+    assert artifact_dir == Path(expected_dir)
