@@ -138,4 +138,4 @@ class UserConfig(BaseConfig):
             case TimingMode.FIXED_SCHEDULE:
                 return "fixed_schedule"
             case _:
-                raise ValueError(f"Unknown timing mode '{self.timing_mode}'.")
+                raise ValueError(f"Unknown timing mode '{self._timing_mode}'.")
