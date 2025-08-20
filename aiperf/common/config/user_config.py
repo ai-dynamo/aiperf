@@ -100,7 +100,7 @@ class UserConfig(BaseConfig):
             self._get_artifact_service_kind(),
             self._get_artifact_stimulus(),
         ]
-        return self.output.artifact_directory / Path("-".join(names))
+        return self.output.artifact_directory / "-".join(names)
 
     def _get_artifact_model_name(self) -> str:
         """Get the artifact model name based on the user selected options."""
