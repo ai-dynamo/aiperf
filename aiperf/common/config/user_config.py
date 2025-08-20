@@ -133,8 +133,6 @@ class UserConfig(BaseConfig):
     def _get_artifact_stimulus(self) -> str:
         """Get the stimulus name based on the timing mode."""
         match self._timing_mode:
-            case TimingMode.CONCURRENCY:
-                return f"concurrency{self.loadgen.concurrency}"
             case TimingMode.REQUEST_RATE:
                 return f"request_rate{self.loadgen.request_rate}"
             case TimingMode.FIXED_SCHEDULE:

@@ -149,9 +149,9 @@ def test_user_config_exclude_unset_fields():
         (
             ["hf/model"],  # model name with slash
             EndpointType.OPENAI_CHAT_COMPLETIONS,
-            TimingMode.CONCURRENCY,
+            TimingMode.REQUEST_RATE,
             True,
-            "/tmp/artifacts/hf_model-openai-chat-concurrency5",
+            "/tmp/artifacts/hf_model-openai-chat-request_rate10.0",
         ),
         (
             ["model1", "model2"],  # multi-model
@@ -195,7 +195,7 @@ def test_compute_artifact_directory(
     )
 
     # Patch timing_mode property to return the desired timing_mode
-    monkeypatch.setattr(UserConfig, "timing_mode", property(lambda self: timing_mode))
+    monkeypatch.setattr(UserConfig, "_timing_mode", property(lambda self: timing_mode))
 
     artifact_dir = config._compute_artifact_directory()
     assert artifact_dir == Path(expected_dir)
