@@ -14,7 +14,7 @@ class TimingManagerConfig(AIPerfBaseModel):
     """Configuration for the timing manager."""
 
     timing_mode: TimingMode = LoadGeneratorDefaults.TIMING_MODE
-    concurrency: int = LoadGeneratorDefaults.CONCURRENCY
+    concurrency: int | None = LoadGeneratorDefaults.CONCURRENCY
     request_rate: float | None = LoadGeneratorDefaults.REQUEST_RATE
     request_rate_mode: RequestRateMode = LoadGeneratorDefaults.REQUEST_RATE_MODE
     request_count: int = LoadGeneratorDefaults.REQUEST_COUNT
@@ -28,17 +28,8 @@ class TimingManagerConfig(AIPerfBaseModel):
     def from_user_config(cls, user_config: UserConfig) -> "TimingManagerConfig":
         """Create a TimingManagerConfig from a UserConfig."""
 
-        # TODO: Should this logic be moved as pydantic validators?
-        if user_config.input.fixed_schedule:
-            timing_mode = TimingMode.FIXED_SCHEDULE
-        elif user_config.loadgen.request_rate is not None:
-            timing_mode = TimingMode.REQUEST_RATE
-        else:
-            # Default to concurrency mode if no request rate or schedule is provided
-            timing_mode = TimingMode.CONCURRENCY
-
         return cls(
-            timing_mode=timing_mode,
+            timing_mode=user_config.timing_mode,
             concurrency=user_config.loadgen.concurrency,
             request_rate=user_config.loadgen.request_rate,
             request_rate_mode=user_config.loadgen.request_rate_mode,

@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from aiperf.common.models.record_models import MetricResult
     from aiperf.exporters.exporter_config import ExporterConfig
     from aiperf.metrics.metric_dicts import MetricRecordDict
+    from aiperf.timing.config import TimingManagerConfig
 
 
 ################################################################################
@@ -492,3 +493,12 @@ class ResultsProcessorProtocol(Protocol):
     ) -> None: ...
 
     async def summarize(self) -> list["MetricResult"]: ...
+
+
+@runtime_checkable
+class RequestRateGeneratorProtocol(Protocol):
+    """Protocol for a request rate generator that generates the next interval for a request rate."""
+
+    def __init__(self, config: "TimingManagerConfig") -> None: ...
+
+    def next_interval(self) -> float: ...

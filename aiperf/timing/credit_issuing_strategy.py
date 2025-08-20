@@ -146,9 +146,9 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         """This is called by the credit manager when a credit is returned. It can be
         overridden in subclasses to handle the credit return."""
         if message.phase not in self.phase_stats:
-            # self.warning(
-            #     lambda: f"Credit return message received for phase {message.phase} but no phase stats found"
-            # )
+            self.warning(
+                lambda: f"Credit return message received for phase {message.phase} but no phase stats found"
+            )
             return
 
         phase_stats = self.phase_stats[message.phase]
@@ -160,7 +160,7 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
             and phase_stats.completed >= phase_stats.total_expected_requests  # type: ignore[operator]
         ):
             phase_stats.end_ns = time.time_ns()
-            self.notice(lambda: f"Phase completed: {phase_stats}")
+            self.notice(f"Phase completed: {phase_stats}")
 
             self.execute_async(
                 self.credit_manager.publish_phase_complete(

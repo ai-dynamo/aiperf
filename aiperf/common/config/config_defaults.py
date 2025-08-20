@@ -143,13 +143,12 @@ class ServiceDefaults:
 
 @dataclass(frozen=True)
 class LoadGeneratorDefaults:
-    CONCURRENCY = 1
+    CONCURRENCY = None
     REQUEST_RATE = None
     REQUEST_COUNT = 10
     WARMUP_REQUEST_COUNT = 0
-    CONCURRENCY_RAMP_UP_TIME = None
     REQUEST_RATE_MODE = RequestRateMode.POISSON
-    TIMING_MODE = TimingMode.CONCURRENCY
+    TIMING_MODE = TimingMode.REQUEST_RATE
 
 
 @dataclass(frozen=True)

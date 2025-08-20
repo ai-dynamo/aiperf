@@ -35,3 +35,6 @@ ENV/
 Dockerfile
 docker-compose*.yml
 .devcontainer/
+
+artifacts/
+*.jsonl

@@ -78,10 +78,10 @@ class WorkerManager(BaseComponentService):
             # Default to the number of CPU cores - 1
             self.max_workers = self.cpu_count - 1
 
-        # Cap the worker count to the max concurrency + 1, but only if the user is in concurrency mode.
-        if self.max_concurrency > 1:
+        # Cap the worker count to the max concurrency, but only if the user is in concurrency mode.
+        if self.max_concurrency:
             self.max_workers = min(
-                self.max_concurrency + 1,
+                self.max_concurrency,
                 self.max_workers,
             )
 
