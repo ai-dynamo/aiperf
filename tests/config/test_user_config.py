@@ -151,14 +151,14 @@ def test_user_config_exclude_unset_fields():
             EndpointType.OPENAI_CHAT_COMPLETIONS,
             TimingMode.REQUEST_RATE,
             True,
-            "/tmp/artifacts/hf_model-openai-chat-request_rate10.0",
+            "/tmp/artifacts/hf_model-openai-chat-concurrency5-request_rate10.0",
         ),
         (
             ["model1", "model2"],  # multi-model
             EndpointType.OPENAI_COMPLETIONS,
             TimingMode.REQUEST_RATE,
             True,
-            "/tmp/artifacts/model1_multi-openai-completions-request_rate10.0",
+            "/tmp/artifacts/model1_multi-openai-completions-concurrency5-request_rate10.0",
         ),
         (
             ["singlemodel"],  # single model
