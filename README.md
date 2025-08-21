@@ -43,6 +43,7 @@ Features
 - Several benchmarking modes:
   - concurrency
   - request-rate
+  - request-rate with a maximum concurrency
   - [trace replay](docs/benchmark_modes/trace_replay.md)
 
 </br>
