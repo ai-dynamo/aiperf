@@ -28,6 +28,9 @@ from aiperf.exporters.exporter_config import (
 from aiperf.exporters.exporter_manager import (
     ExporterManager,
 )
+from aiperf.exporters.internal_metrics_console_exporter import (
+    ConsoleInternalMetricsExporter,
+)
 from aiperf.exporters.json_exporter import (
     JsonExportData,
     JsonExporter,
@@ -35,6 +38,7 @@ from aiperf.exporters.json_exporter import (
 
 __all__ = [
     "ConsoleErrorExporter",
+    "ConsoleInternalMetricsExporter",
     "ConsoleMetricsExporter",
     "CsvExporter",
     "ExporterConfig",

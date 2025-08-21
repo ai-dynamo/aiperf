@@ -193,6 +193,7 @@ class GenericMetricUnit(BaseMetricUnit):
     COUNT = _unit("count")
     REQUESTS = _unit("requests")
     TOKENS = _unit("tokens")
+    RATIO = _unit("ratio")
     USER = _unit("user")
 
 
@@ -417,6 +418,13 @@ class MetricFlags(Flag):
 
     SUPPORTS_IMAGE_ONLY = 1 << 7
     """Metrics that are only applicable to image-based endpoints."""
+
+    SUPPORTS_REASONING = 1 << 8
+    """Metrics that are only applicable to reasoning-based models and endpoints."""
+
+    EXPERIMENTAL = (1 << 9) | HIDDEN
+    """Metrics that are experimental and are not yet ready for production use, and may be subject to change.
+    This inherently means that the metric is HIDDEN as well."""
 
     STREAMING_TOKENS_ONLY = STREAMING_ONLY | PRODUCES_TOKENS_ONLY
     """Metrics that are only applicable to streamed responses and token-based endpoints.

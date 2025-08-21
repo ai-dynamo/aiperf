@@ -7,6 +7,7 @@ from functools import cached_property
 from typing import Any
 
 from pydantic import (
+    BaseModel,
     Field,
     SerializeAsAny,
 )
@@ -132,19 +133,20 @@ class SSEMessage(InferenceServerResponse):
         description="The fields contained in the message.",
     )
 
-    def extract_data_content(self) -> list[str]:
+    def extract_data_content(self) -> str:
         """Extract the data contents from the SSE message as a list of strings. Note that the SSE spec specifies
-        that each data content should be combined and delimited by a single \n. We have left
-        it as a list to allow the caller to decide how to handle the data.
+        that each data content should be combined and delimited by a single \n.
 
         Returns:
             list[str]: A list of strings containing the data contents of the SSE message.
         """
-        return [
-            packet.value
-            for packet in self.packets
-            if packet.name == SSEFieldType.DATA and packet.value is not None
-        ]
+        return "\n".join(
+            [
+                packet.value
+                for packet in self.packets
+                if packet.name == SSEFieldType.DATA and packet.value
+            ]
+        )
 
 
 class RequestRecord(AIPerfBaseModel):
@@ -318,35 +320,64 @@ class RequestRecord(AIPerfBaseModel):
         )
 
 
-class ResponseData(AIPerfBaseModel):
+class BaseResponseData(BaseModel):
     """Base class for all response data."""
 
+    def get_text(self) -> str:
+        """Get the text of the response."""
+        return ""
+
+
+class TextResponseData(BaseResponseData):
+    """Parsed text response data."""
+
+    text: str = Field(..., description="The parsed text of the response.")
+
+    def get_text(self) -> str:
+        """Get the text of the response."""
+        return self.text
+
+
+class ReasoningResponseData(BaseResponseData):
+    """Parsed reasoning response data."""
+
+    content: str | None = Field(
+        default=None, description="The parsed content of the response."
+    )
+    reasoning: str | None = Field(
+        default=None, description="The parsed reasoning of the response."
+    )
+
+    def get_text(self) -> str:
+        """Get the text of the response."""
+        return "".join([self.content or "", self.reasoning or ""])
+
+
+class ParsedResponse(AIPerfBaseModel):
+    """Parsed response from a inference client."""
+
     perf_ns: int = Field(description="The performance timestamp of the response.")
-    raw_text: list[str] = Field(description="The raw text of the response.")
-    parsed_text: list[str | None] = Field(
-        description="The parsed text of the response."
-    )
-    token_count: int | None = Field(
-        default=None,
-        description="The total number of tokens in the response from the parsed text.",
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict, description="The metadata of the response."
-    )
+    data: SerializeAsAny[
+        ReasoningResponseData | TextResponseData | BaseResponseData
+    ] = Field(..., description="The parsed response data.")
 
 
 class ParsedResponseRecord(AIPerfBaseModel):
     """Record of a request and its associated responses, already parsed and ready for metrics."""
 
     request: RequestRecord = Field(description="The original request record")
-    responses: list[ResponseData] = Field(description="The parsed response data.")
+    responses: list[ParsedResponse] = Field(description="The parsed responses.")
     input_token_count: int | None = Field(
         default=None,
         description="The number of tokens in the input. If None, the number of tokens could not be calculated.",
     )
     output_token_count: int | None = Field(
         default=None,
-        description="The number of tokens across all responses. If None, the number of tokens could not be calculated.",
+        description="The number of output tokens across all responses. If None, the number of tokens could not be calculated.",
+    )
+    reasoning_token_count: int | None = Field(
+        default=None,
+        description="The number of reasoning tokens across all responses. If None, the number of tokens could not be calculated, or the model does not support reasoning.",
     )
 
     @cached_property

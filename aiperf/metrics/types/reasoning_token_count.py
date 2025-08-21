@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.models import ParsedResponseRecord
+from aiperf.metrics import BaseRecordMetric
+from aiperf.metrics.metric_dicts import MetricRecordDict
+
+
+class ReasoningTokenCountMetric(BaseRecordMetric[int]):
+    """
+    Post-processor for calculating Reasoning Token Count metrics from records.
+
+    Formula:
+        Reasoning Token Count = Sum(Reasoning Tokens)
+    """
+
+    tag = "reasoning_token_count"
+    header = "Reasoning Token Count"
+    short_header = "Reasoning Tokens"
+    short_header_hide_unit = True
+    unit = GenericMetricUnit.TOKENS
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.LARGER_IS_BETTER
+        | MetricFlags.SUPPORTS_REASONING
+        | MetricFlags.EXPERIMENTAL
+    )
+    required_metrics = None
+
+    def _parse_record(
+        self,
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> int:
+        """
+        This method extracts the reasoning token count from the record and returns it.
+
+        Raises:
+            ValueError: If the record does not have a reasoning token count.
+        """
+        if record.reasoning_token_count is None:
+            raise ValueError("Reasoning token count is missing in the record.")
+
+        return record.reasoning_token_count

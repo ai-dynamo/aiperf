@@ -34,7 +34,9 @@ class TestOutputSequenceLengthMetric:
         record.output_token_count = None
 
         metric = OutputSequenceLengthMetric()
-        with pytest.raises(ValueError, match="Output token count is missing"):
+        with pytest.raises(
+            ValueError, match="Output or reasoning token count is missing"
+        ):
             metric.parse_record(record, MetricRecordDict())
 
     def test_output_sequence_length_multiple_records(self):

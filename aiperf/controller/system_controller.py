@@ -415,12 +415,16 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.ui.stop()
         await self.ui.wait_for_tasks()
 
+        console = Console()
+        if console.width < 100:
+            console.width = 100
+
         if self._profile_results:
             await ExporterManager(
                 results=self._profile_results.results,
                 input_config=self.user_config,
                 service_config=self.service_config,
-            ).export_console(console=Console())
+            ).export_console(console=console)
 
             if (
                 self._was_cancelled
@@ -430,6 +434,8 @@ class SystemController(SignalHandlerMixin, BaseService):
                 warn_cancelled_early()
         else:
             self.warning("No profile results to export")
+
+        console.print(f"[italic]{self.user_config.cli_command}[/italic]")
 
         if AIPERF_DEV_MODE:
             # Print a warning message to the console if developer mode is enabled, on exit after results

@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.models import ParsedResponseRecord
+from aiperf.metrics import BaseRecordMetric
+from aiperf.metrics.metric_dicts import MetricRecordDict
+
+
+class OutputTokenCountMetric(BaseRecordMetric[int]):
+    """
+    Post-processor for calculating Output Token Count metrics from records.
+
+    Formula:
+        Output Token Count = Sum(Output Token Counts)
+    """
+
+    tag = "output_token_count"
+    header = "Output Token Count"
+    short_header = "Output Tokens"
+    short_header_hide_unit = True
+    unit = GenericMetricUnit.TOKENS
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.LARGER_IS_BETTER
+        | MetricFlags.HIDDEN
+    )
+    required_metrics = None
+
+    def _parse_record(
+        self,
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> int:
+        """
+        This method extracts the output token count from the record and returns it.
+
+        Raises:
+            ValueError: If the record does not have an output token count.
+        """
+        if record.output_token_count is None:
+            raise ValueError("Output token count is missing in the record.")
+
+        return record.output_token_count

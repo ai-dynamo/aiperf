@@ -32,8 +32,8 @@ class BenchmarkDurationMetric(BaseDerivedMetric[int]):
         self,
         metric_results: MetricResultsDict,
     ) -> int:
-        min_req_time = metric_results[MinRequestTimestampMetric.tag]
-        max_res_time = metric_results[MaxResponseTimestampMetric.tag]
+        min_req_time = metric_results.get(MinRequestTimestampMetric.tag)
+        max_res_time = metric_results.get(MaxResponseTimestampMetric.tag)
 
         if min_req_time is None or max_res_time is None:
             raise ValueError(

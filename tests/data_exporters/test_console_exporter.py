@@ -10,8 +10,8 @@ from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters import ExporterConfig
-from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
 from aiperf.exporters.display_units_utils import to_display_unit
+from aiperf.exporters.internal_metrics_console_exporter import ConsoleMetricsExporter
 from aiperf.metrics.metric_registry import MetricRegistry
 
 
@@ -97,66 +97,53 @@ class TestConsoleExporter:
         assert "Request Throughput (requests/sec)" in output
 
     @pytest.mark.parametrize(
-        "show_internal_metrics, is_hidden_metric, should_skip",
+        "is_hidden_metric, should_skip",
         [
-            (True, True, False),  # Show internal metrics, hidden metric -> don't skip
-            (False, True, True),  # Don't show internal metrics, hidden metric -> skip
-            (
-                False,
-                False,
-                False,
-            ),  # Don't show internal metrics, normal metric -> don't skip
-            (True, False, False),  # Show internal metrics, normal metric -> don't skip
+            (True, True),  # Hidden metric -> skip
+            (False, False),  # Normal metric -> don't skip
         ],
     )
     def test_should_skip_logic(
         self,
         mock_endpoint_config: EndpointConfig,
-        show_internal_metrics,
         is_hidden_metric,
         should_skip,
-        monkeypatch,
     ):
         # Mock the configs to control show_internal_metrics
         user_config = UserConfig(endpoint=mock_endpoint_config)
         service_config = ServiceConfig(
-            developer=DeveloperConfig(show_internal_metrics=show_internal_metrics)
+            developer=DeveloperConfig(show_internal_metrics=False)
         )
-        with monkeypatch.context() as m:
-            m.setattr(
-                "aiperf.exporters.console_metrics_exporter.AIPERF_DEV_MODE",
-                show_internal_metrics,
-            )
-            config = ExporterConfig(
-                results=ProfileResults(
-                    records=[],
-                    start_ns=0,
-                    end_ns=0,
-                    completed=0,
-                ),
-                user_config=user_config,
-                service_config=service_config,
-            )
-            exporter = ConsoleMetricsExporter(config)
+        config = ExporterConfig(
+            results=ProfileResults(
+                records=[],
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+            ),
+            user_config=user_config,
+            service_config=service_config,
+        )
+        exporter = ConsoleMetricsExporter(config)
 
-            # Test with actual metric behavior: use hidden metrics vs normal metrics
-            if is_hidden_metric:
-                # Use a metric that has HIDDEN flags (like benchmark_duration which has HIDDEN flag)
-                record = MetricResult(
-                    tag="benchmark_duration",
-                    header="Benchmark Duration",
-                    unit="s",
-                    avg=1.0,
-                )
-            else:
-                # Use a normal metric without HIDDEN flags
-                record = MetricResult(
-                    tag="request_latency",
-                    header="Request Latency",
-                    unit="ns",
-                    avg=1.0,
-                )
-            assert exporter._should_skip(record) is should_skip
+        # Test with actual metric behavior: use hidden metrics vs normal metrics
+        if is_hidden_metric:
+            # Use a metric that has HIDDEN flags (like benchmark_duration which has HIDDEN flag)
+            record = MetricResult(
+                tag="benchmark_duration",
+                header="Benchmark Duration",
+                unit="s",
+                avg=1.0,
+            )
+        else:
+            # Use a normal metric without HIDDEN flags
+            record = MetricResult(
+                tag="request_latency",
+                header="Request Latency",
+                unit="ns",
+                avg=1.0,
+            )
+        assert exporter._should_skip(record) is should_skip
 
     def test_format_row_formats_values_correctly(self, mock_exporter_config):
         exporter = ConsoleMetricsExporter(mock_exporter_config)

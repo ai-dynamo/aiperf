@@ -25,7 +25,7 @@ class InputThroughputMetric(BaseRecordMetric[float]):
     flags = (
         MetricFlags.STREAMING_TOKENS_ONLY
         | MetricFlags.LARGER_IS_BETTER
-        | MetricFlags.HIDDEN  # Hidden for now, as it is new and not yet validated
+        | MetricFlags.EXPERIMENTAL
     )
     required_metrics = {
         InputSequenceLengthMetric.tag,

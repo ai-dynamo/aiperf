@@ -19,6 +19,7 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
 )
+from aiperf.common.models.record_models import ReasoningResponseData
 from aiperf.common.protocols import RequestClientProtocol, ResponseExtractorProtocol
 from aiperf.common.tokenizer import Tokenizer
 
@@ -117,7 +118,8 @@ class InferenceResultParser(CommunicationMixin):
             try:
                 record = await self.process_valid_record(request_record)
                 self.debug(
-                    lambda: f"Received {len(record.request.responses)} responses, input_token_count: {record.input_token_count}, output_token_count: {record.output_token_count}"
+                    lambda: f"Received {len(record.request.responses)} responses, input_token_count: {record.input_token_count}, "
+                    f"output_token_count: {record.output_token_count}, reasoning_token_count: {record.reasoning_token_count}"
                 )
                 return record
             except Exception as e:
@@ -157,24 +159,35 @@ class InferenceResultParser(CommunicationMixin):
             )
 
         tokenizer = await self.get_tokenizer(request_record.model_name)
-        resp = await self.extractor.extract_response_data(request_record, tokenizer)
+        resp = await self.extractor.extract_response_data(request_record)
         input_token_count = await self.compute_input_token_count(
             request_record, tokenizer
         )
-        output_text = "".join(
-            t
-            for response in resp
-            if response.parsed_text
-            for t in response.parsed_text
-            if t
+
+        output_texts: list[str] = []
+        reasoning_texts: list[str] = []
+        for response in resp:
+            if isinstance(response.data, ReasoningResponseData):
+                if response.data.reasoning:
+                    reasoning_texts.append(response.data.reasoning)
+                if response.data.content:
+                    output_texts.append(response.data.content)
+            else:
+                output_texts.append(response.data.get_text())
+
+        output_token_count = (
+            len(tokenizer.encode("".join(output_texts))) if output_texts else None
         )
-        output_token_count = len(tokenizer.encode(output_text))
+        reasoning_token_count = (
+            len(tokenizer.encode("".join(reasoning_texts))) if reasoning_texts else None
+        )
 
         return ParsedResponseRecord(
             request=request_record,
             responses=resp,
             input_token_count=input_token_count,
             output_token_count=output_token_count,
+            reasoning_token_count=reasoning_token_count,
         )
 
     async def compute_input_token_count(

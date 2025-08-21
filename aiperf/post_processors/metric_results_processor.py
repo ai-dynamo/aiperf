@@ -84,25 +84,36 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 else:
                     raise ValueError(f"Metric '{tag}' is not a valid metric type")
             except Exception as e:
-                self.warning(f"Error processing metric '{tag}': {e}")
+                self.warning(f"Error processing metric '{tag}': {e!r}")
 
         if self.is_trace_enabled:
             self.trace(f"Results after processing incoming metrics: {self._results}")
+
+    async def update_derived_metrics(self) -> None:
+        """Computes the values for the derived metrics, and stores them in the results dict."""
+        for tag, derive_func in self.derive_funcs.items():
+            try:
+                self._results[tag] = derive_func(self._results)
+            except Exception as e:
+                self.warning(f"Error deriving metric '{tag}': {e!r}")
 
     async def summarize(self) -> list[MetricResult]:
         """Summarize the results.
 
         This will compute the values for the derived metrics, and then create the MetricResult objects for each metric.
         """
-        # Compute the values for the derived metrics, and store them in the results dict.
-        for tag, derive_func in self.derive_funcs.items():
-            self._results[tag] = derive_func(self._results)
+        await self.update_derived_metrics()
 
         # Compute and return the metric results.
         return [
             self._create_metric_result(tag, values)
             for tag, values in self._results.items()
         ]
+
+    async def full_metrics(self) -> MetricResultsDict:
+        """Returns the full metrics dict, including the derived metrics."""
+        await self.update_derived_metrics()
+        return self._results
 
     def _create_metric_result(
         self, tag: MetricTagT, values: MetricDictValueTypeT

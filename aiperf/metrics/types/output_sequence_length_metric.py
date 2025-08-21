@@ -12,7 +12,7 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
     Post-processor for calculating Output Sequence Length (OSL) metrics from records.
 
     Formula:
-        Output Sequence Length = Sum(Output Token Counts)
+        Output Sequence Length = Sum(Output Token Counts + Reasoning Token Counts)
     """
 
     tag = "output_sequence_length"
@@ -29,12 +29,14 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
         record_metrics: MetricRecordDict,
     ) -> int:
         """
-        This method extracts the output token count from the record and returns it.
+        This method extracts the output and reasoning token counts from the record and returns the sum.
 
         Raises:
-            ValueError: If the record does not have an output token count.
+            ValueError: If the record does not have a output or reasoning token count.
         """
-        if record.output_token_count is None:
-            raise ValueError("Output token count is missing in the record.")
+        if record.output_token_count is None and record.reasoning_token_count is None:
+            raise ValueError(
+                "Output or reasoning token count is missing in the record."
+            )
 
-        return record.output_token_count
+        return (record.output_token_count or 0) + (record.reasoning_token_count or 0)

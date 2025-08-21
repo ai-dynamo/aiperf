@@ -17,13 +17,13 @@ from aiperf.common.enums import (
 )
 from aiperf.common.hooks import Hook, HookType
 from aiperf.common.models import (
+    BaseResponseData,
+    ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
-    ResponseData,
     ServiceRunInfo,
     Turn,
 )
-from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import (
     CommAddressType,
     MessageCallbackMapT,
@@ -390,14 +390,23 @@ class InferenceClientProtocol(Protocol):
 
 
 @runtime_checkable
+class OpenAIObjectParserProtocol(Protocol):
+    """Protocol for an OpenAI object parser that parses a raw OpenAI object into a BaseResponseData object."""
+
+    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
+        """Parse the raw text of an OpenAI object into a BaseResponseData object."""
+        ...
+
+
+@runtime_checkable
 class ResponseExtractorProtocol(Protocol):
     """Protocol for a response extractor that extracts the response data from a raw inference server
-    response and converts it to a list of ResponseData objects."""
+    response and converts it to a list of ParsedResponse objects."""
 
     async def extract_response_data(
-        self, record: RequestRecord, tokenizer: Tokenizer | None
-    ) -> list[ResponseData]:
-        """Extract the response data from a raw inference server response and convert it to a list of ResponseData objects."""
+        self, record: RequestRecord
+    ) -> list[ParsedResponse]:
+        """Extract the response data from a raw inference server response and convert it to a list of ParsedResponse objects."""
         ...
 
 
