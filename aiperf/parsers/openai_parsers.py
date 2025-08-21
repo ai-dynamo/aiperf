@@ -109,7 +109,7 @@ class OpenAIResponseExtractor:
         """Parse a TextResponse into a ResponseData object."""
         raw = response.text
         parsed = self._parse_text(raw)
-        if parsed is None:
+        if not parsed:
             return None
 
         return ResponseData(
@@ -123,7 +123,7 @@ class OpenAIResponseExtractor:
         """Parse a SSEMessage into a ResponseData object."""
         raw = response.extract_data_content()
         parsed = self._parse_sse(raw)
-        if parsed is None or len(parsed) == 0:
+        if not parsed:
             return None
 
         return ResponseData(
@@ -147,7 +147,7 @@ class OpenAIResponseExtractor:
         results = []
         for response in record.responses:
             response_data = self._parse_response(response)
-            if response_data is None:
+            if not response_data:
                 continue
 
             if tokenizer is not None:
@@ -180,7 +180,9 @@ class OpenAIResponseExtractor:
 
         for obj_type, extractor in type_to_extractor.items():
             if isinstance(obj, obj_type):
-                return extractor(obj)
+                content = extractor(obj)
+                # skip empty content
+                return content if content else None
 
         raise ValueError(f"Invalid OpenAI object: {raw_text}")
 
@@ -189,7 +191,7 @@ class OpenAIResponseExtractor:
         result = []
         for sse in raw_sse:
             parsed = self._parse_text(sse)
-            if parsed is None:
+            if not parsed:
                 continue
             result.append(parsed)
         return result
