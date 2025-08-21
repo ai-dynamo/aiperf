@@ -21,12 +21,12 @@ This tutorial will demonstrate how you can use AIPerf to measure the performance
 models using various inference solutions.
 
 ### Table of Contents
-- [Profile GPT-OSS-20B using Dynamo](#dynamo-gpt-oss-20B)
+- [Profile Qwen3-0.6B using Dynamo](#dynamo-qwen3-0.6B)
 - [Profile Qwen3-0.6B using vllm](#vllm-qwen3-0.6B)
 
 </br>
 
-## Profile GPT-OSS-20B using Dynamo <a id="dynamo-gpt-oss-20B">
+## Profile Qwen3-0.6B using Dynamo <a id="dynamo-qwen3-0.6B">
 
 [!Note] The most up to date installation instructions for Dynamo are available on [Github](https://github.com/ai-dynamo/dynamo?tab=readme-ov-file#1-initial-setup)
 
@@ -34,7 +34,7 @@ models using various inference solutions.
 # set environment variables
 export AIPERF_REPO_TAG="main"
 export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.4.0"
-export MODEL="openai/gpt-oss-20b"
+export MODEL="Qwen/Qwen3-0.6B"
 
 # Download the Dyanmo container
 docker pull ${DYNAMO_PREBUILT_IMAGE_TAG}
@@ -85,7 +85,7 @@ while [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/v1/chat/complet
 
 # Profile the model
 aiperf profile \
-    --model openai/gpt-oss-20b \
+    --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --streaming \
@@ -97,7 +97,6 @@ aiperf profile \
     --extra-inputs max_tokens:2000 \
     --extra-inputs min_tokens:2000 \
     --extra-inputs ignore_eos:true \
-    --extra-inputs "{\"nvext\":{\"ignore_eos\":true}}" \
     --concurrency 2048 \
     --request-count 6144 \
     --warmup-request-count 1000 \
