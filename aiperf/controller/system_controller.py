@@ -326,7 +326,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         # If we are scaling the record processor service count with the number of workers, spawn the record processors
         if self.scale_record_processors_with_workers:
             await self.service_manager.run_service(
-                ServiceType.RECORD_PROCESSOR, message.num_workers
+                ServiceType.RECORD_PROCESSOR, max(1, message.num_workers // 2)
             )
 
     @on_command(CommandType.SHUTDOWN_WORKERS)
