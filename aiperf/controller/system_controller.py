@@ -8,7 +8,6 @@ from typing import cast
 
 from rich.console import Console
 
-from aiperf.cli_utils import warn_cancelled_early
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.dev_config import print_developer_mode_warning
@@ -446,7 +445,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._print_benchmark_duration(console)
         self._print_exported_file_infos(exporter_manager, console)
         if self._was_cancelled:
-            warn_cancelled_early(console)
+            console.print(
+                "[italic yellow]The profile run was cancelled early. Results shown may be incomplete or inaccurate.[/italic yellow]"
+            )
 
         console.print()
         console.file.flush()
