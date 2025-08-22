@@ -10,10 +10,12 @@ from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 
 class BenchmarkDurationMetric(BaseDerivedMetric[int]):
     """
-    Post-processor for calculating the Benchmark Duration metric.
+    This is the duration of the benchmark, from the first request to the last response.
 
     Formula:
+        ```
         Benchmark Duration = Maximum Response Timestamp - Minimum Request Timestamp
+        ```
     """
 
     tag = "benchmark_duration"
@@ -32,13 +34,8 @@ class BenchmarkDurationMetric(BaseDerivedMetric[int]):
         self,
         metric_results: MetricResultsDict,
     ) -> int:
-        min_req_time = metric_results.get(MinRequestTimestampMetric.tag)
-        max_res_time = metric_results.get(MaxResponseTimestampMetric.tag)
-
-        if min_req_time is None or max_res_time is None:
-            raise ValueError(
-                "Min request and max response are required to calculate benchmark duration."
-            )
+        min_req_time = metric_results.get_or_raise(MinRequestTimestampMetric)
+        max_res_time = metric_results.get_or_raise(MaxResponseTimestampMetric)
 
         if min_req_time >= max_res_time:  # type: ignore
             raise ValueError(

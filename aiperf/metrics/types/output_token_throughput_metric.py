@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
-from aiperf.metrics.types.benchmark_token_count import BenchmarkTokenCountMetric
+from aiperf.metrics.types.output_sequence_length_metric import BenchmarkTokenCountMetric
 
 
 class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
@@ -32,10 +33,13 @@ class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
         self,
         metric_results: MetricResultsDict,
     ) -> float:
-        benchmark_token_count = metric_results[BenchmarkTokenCountMetric.tag]
-        benchmark_duration = metric_results[BenchmarkDurationMetric.tag]
-        if benchmark_duration is None or benchmark_duration == 0:
-            raise ValueError("Benchmark duration is not available.")
+        benchmark_duration = metric_results.get(BenchmarkDurationMetric.tag)
+        if not benchmark_duration:
+            raise NoMetricValue("Benchmark duration is not available.")
+
+        benchmark_token_count = metric_results.get(BenchmarkTokenCountMetric.tag)
+        if not benchmark_token_count:
+            raise NoMetricValue("Benchmark token count is not available.")
 
         benchmark_duration_converted = metric_results.get_converted(  # type: ignore
             BenchmarkDurationMetric,

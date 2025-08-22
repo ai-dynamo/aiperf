@@ -7,6 +7,7 @@ from aiperf.common.config import UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import MetricType, ResultsProcessorType
 from aiperf.common.enums.metric_enums import MetricDictValueTypeT, MetricValueTypeT
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol
@@ -83,6 +84,8 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
                 else:
                     raise ValueError(f"Metric '{tag}' is not a valid metric type")
+            except NoMetricValue as e:
+                self.debug(f"No metric value for metric '{tag}': {e!r}")
             except Exception as e:
                 self.warning(f"Error processing metric '{tag}': {e!r}")
 
@@ -94,6 +97,8 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         for tag, derive_func in self.derive_funcs.items():
             try:
                 self._results[tag] = derive_func(self._results)
+            except NoMetricValue as e:
+                self.debug(f"No metric value for derived metric '{tag}': {e!r}")
             except Exception as e:
                 self.warning(f"Error deriving metric '{tag}': {e!r}")
 

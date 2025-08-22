@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
@@ -32,15 +33,15 @@ class RequestThroughputMetric(BaseDerivedMetric[float]):
         self,
         metric_results: MetricResultsDict,
     ) -> float:
-        benchmark_duration = metric_results[BenchmarkDurationMetric.tag]
-        if benchmark_duration is None or benchmark_duration == 0:
-            raise ValueError(
+        benchmark_duration = metric_results.get(BenchmarkDurationMetric.tag)
+        if not benchmark_duration:
+            raise NoMetricValue(
                 "Benchmark duration is required and must be greater than 0 to calculate request throughput."
             )
 
-        request_count = metric_results[RequestCountMetric.tag]
-        if request_count is None:
-            raise ValueError(
+        request_count = metric_results.get(RequestCountMetric.tag)
+        if not request_count:
+            raise NoMetricValue(
                 "Request count is required to calculate request throughput."
             )
 

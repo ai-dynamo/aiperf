@@ -49,11 +49,10 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         self, records: list[MetricResult], console: Console
     ) -> RenderableType:
         table = Table(title=self._get_title())
-        table.add_column("Metric", justify="right", style="cyan", width=40)
+        table.add_column("Metric", justify="right", style="cyan")
         for key in self.STAT_COLUMN_KEYS:
-            table.add_column(key, justify="right", style="green", width=15)
+            table.add_column(key, justify="right", style="green")
         self._construct_table(table, records)
-        table.width = console.width
         return table
 
     def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
@@ -74,7 +73,8 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
     def _format_row(self, record: MetricResult) -> list[str]:
         metric_class = MetricRegistry.get_class(record.tag)
         display_unit = metric_class.display_unit or metric_class.unit
-        row = [f"{record.header} ({display_unit})"]
+        delimiter = "\n" if len(record.header) > 30 else " "
+        row = [f"{record.header}{delimiter}({display_unit})"]
         for stat in self.STAT_COLUMN_KEYS:
             value = getattr(record, stat, None)
             if value is None:

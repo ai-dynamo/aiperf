@@ -56,9 +56,11 @@ class JsonExporter(AIPerfLoggerMixin):
     def _should_export(self, metric: MetricResult) -> bool:
         """Check if a metric should be exported."""
         metric_class = MetricRegistry.get_class(metric.tag)
-        return metric_class.missing_flags(
+        res = metric_class.missing_flags(
             MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
         )
+        self.debug(lambda: f"Metric '{metric.tag}' should be exported: {res}")
+        return res
 
     async def export(self) -> None:
         self._output_directory.mkdir(parents=True, exist_ok=True)

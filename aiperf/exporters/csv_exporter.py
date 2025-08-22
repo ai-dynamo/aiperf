@@ -3,13 +3,13 @@
 
 import csv
 import io
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 
 import aiofiles
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DataExporterType
-from aiperf.common.enums.metric_enums import MetricFlags
+from aiperf.common.enums.metric_enums import MetricFlags, MetricType
 from aiperf.common.factories import DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
@@ -20,11 +20,6 @@ from aiperf.exporters.display_units_utils import (
 )
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.metrics.metric_registry import MetricRegistry
-
-
-def _percentile_keys_from(stat_keys: Iterable[str]) -> list[str]:
-    # e.g., ["avg","min","max","p50","p90","p95","p99"] -> ["p50","p90","p95","p99"]
-    return [k for k in stat_keys if len(k) >= 2 and k[0] == "p" and k[1:].isdigit()]
 
 
 @DataExporterFactory.register(DataExporterType.CSV)
@@ -38,7 +33,6 @@ class CsvExporter(AIPerfLoggerMixin):
         self._results = exporter_config.results
         self._output_directory = exporter_config.user_config.output.artifact_directory
         self._metric_registry = MetricRegistry
-        self._percentile_keys = _percentile_keys_from(STAT_KEYS)
         self._file_path = self._output_directory / "profile_export_aiperf.csv"
 
     def get_export_info(self) -> FileExportInfo:
@@ -94,19 +88,17 @@ class CsvExporter(AIPerfLoggerMixin):
         system_metrics: dict[str, MetricResult] = {}
 
         for tag, metric in records.items():
-            if self._has_percentiles(metric):
+            if self._is_request_metric(metric):
                 request_metrics[tag] = metric
             else:
                 system_metrics[tag] = metric
 
         return request_metrics, system_metrics
 
-    def _has_percentiles(self, metric: MetricResult) -> bool:
-        """Check if a metric has any percentile data."""
-        return any(getattr(metric, k, None) is not None for k in self._percentile_keys)
-
     def _write_request_metrics(
-        self, writer: csv.writer, records: Mapping[str, MetricResult]
+        self,
+        writer: csv.writer,
+        records: Mapping[str, MetricResult],  # type: ignore
     ) -> None:
         header = ["Metric"] + list(STAT_KEYS)
         writer.writerow(header)
@@ -120,18 +112,28 @@ class CsvExporter(AIPerfLoggerMixin):
                 row.append(self._format_number(value))
             writer.writerow(row)
 
+    def _is_request_metric(self, metric: MetricResult) -> bool:
+        """Check if a metric is a request (record) metric."""
+        return MetricRegistry.get_class(metric.tag).type == MetricType.RECORD
+
     def _should_export(self, metric: MetricResult) -> bool:
         """Check if a metric should be exported."""
         metric_class = MetricRegistry.get_class(metric.tag)
-        return metric_class.missing_flags(
+        res = metric_class.missing_flags(
             MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
         )
+        self.debug(lambda: f"Metric '{metric.tag}' should be exported: {res}")
+        return res
 
     def _write_system_metrics(
-        self, writer: csv.writer, records: Mapping[str, MetricResult]
+        self,
+        writer: csv.writer,
+        records: Mapping[str, MetricResult],  # type: ignore
     ) -> None:
         writer.writerow(["Metric", "Value"])
         for _, metric in sorted(records.items(), key=lambda kv: kv[0]):
+            if not self._should_export(metric):
+                continue
             writer.writerow(
                 [self._format_metric_name(metric), self._format_number(metric.avg)]
             )

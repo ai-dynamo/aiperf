@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -42,6 +43,12 @@ class StreamPrefillLatencyMetric(BaseRecordMetric[int]):
     ) -> int:
         """This method calculates the stream prefill latency by subtracting the stream setup latency from the TTFT."""
 
-        stream_setup_latency = record_metrics[StreamSetupLatencyMetric.tag]
-        ttft = record_metrics[TTFTMetric.tag]
+        stream_setup_latency = record_metrics.get(StreamSetupLatencyMetric.tag)
+        if not stream_setup_latency:
+            raise NoMetricValue("Stream setup latency is not available for the record.")
+
+        ttft = record_metrics.get(TTFTMetric.tag)
+        if not ttft:
+            raise NoMetricValue("Time to first token is not available for the record.")
+
         return ttft - stream_setup_latency  # type: ignore

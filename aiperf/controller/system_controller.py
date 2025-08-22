@@ -380,7 +380,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         """
         if self.stop_requested:
             # If we are already in a stopping state, we need to kill the process to be safe.
-            self.warning(lambda: f"Received signal {sig}, killing")
+            self.warning(f"Received signal {sig}, killing")
             await self._kill()
             return
 
@@ -430,7 +430,9 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.warning("No profile results to export")
             return
 
-        console = Console(width=115)
+        console = Console()
+        if console.width < 100:
+            console.width = 100
 
         exporter_manager = ExporterManager(
             results=self._profile_results.results,

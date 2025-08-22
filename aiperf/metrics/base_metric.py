@@ -65,7 +65,9 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
         super().__init_subclass__(**kwargs)
 
         # Only register concrete classes (not abstract ones)
-        if inspect.isabstract(cls):
+        if inspect.isabstract(cls) or (
+            hasattr(cls, "__is_abstract__") and cls.__is_abstract__
+        ):
             return
 
         # Verify that the class is a valid metric type

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -33,12 +34,12 @@ class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):
         record_metrics: MetricRecordDict,
     ) -> float:
         """This method calculates the output token throughput per user by computing the inverse of the inter-token latency."""
-        itl = record_metrics[InterTokenLatencyMetric.tag]
-        if itl is None or itl == 0:
-            raise ValueError(
-                "Inter-token latency is 0, cannot compute output token throughput per user."
+        itl = record_metrics.get(InterTokenLatencyMetric.tag)
+        if not itl:
+            raise NoMetricValue(
+                "Inter-token latency is not available, cannot compute output token throughput per user."
             )
-        converted_itl = record_metrics.get_converted(
+        converted_itl = record_metrics.get_converted_or_raise(
             InterTokenLatencyMetric,
             self.unit.time_unit,  # type: ignore
         )

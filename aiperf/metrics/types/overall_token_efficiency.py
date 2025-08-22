@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
-from aiperf.metrics.types.total_output_tokens import TotalOutputTokensMetric
-from aiperf.metrics.types.total_reasoning_tokens import TotalReasoningTokensMetric
+from aiperf.metrics.types.output_token_count import TotalOutputTokensMetric
+from aiperf.metrics.types.reasoning_token_count import TotalReasoningTokensMetric
 
 
 class OverallTokenEfficiencyMetric(BaseDerivedMetric[float]):
@@ -52,10 +53,10 @@ class OverallTokenEfficiencyMetric(BaseDerivedMetric[float]):
     ) -> float:
         total_output_tokens = metric_results.get(TotalOutputTokensMetric.tag)
         if not total_output_tokens:
-            raise ValueError("Total output tokens is missing in the metrics.")
+            raise NoMetricValue("Total output tokens is missing in the metrics.")
 
         total_reasoning_tokens = metric_results.get(TotalReasoningTokensMetric.tag)
         if not total_reasoning_tokens:
-            raise ValueError("Total reasoning tokens is missing in the metrics.")
+            raise NoMetricValue("Total reasoning tokens is missing in the metrics.")
 
         return total_reasoning_tokens / total_output_tokens  # type: ignore

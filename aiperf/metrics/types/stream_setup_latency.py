@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -37,7 +38,7 @@ class StreamSetupLatencyMetric(BaseRecordMetric[int]):
         """This method extracts the request and receive start timestamps, and calculates the stream setup time."""
 
         if record.request.recv_start_perf_ns is None:
-            raise ValueError(
+            raise NoMetricValue(
                 "Stream setup latency metric requires a recv_start_perf_ns"
             )
 

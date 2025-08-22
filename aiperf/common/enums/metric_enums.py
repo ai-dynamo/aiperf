@@ -292,6 +292,10 @@ class MetricType(CaseInsensitiveStrEnum):
     These metrics can be tracked over time and compared to each other.
     Examples: request latency, ISL, ITL, OSL, etc."""
 
+    SUM_AGGREGATE = "sum_aggregate"
+    """Metrics that are assigned as the sum aggregator for a specific metric.
+    Examples: total request count, benchmark duration, etc."""
+
     AGGREGATE = "aggregate"
     """Metrics that keep track of one or more values over time, that are updated for each request, such as total counts, min/max values, etc.
     These metrics may or may not change each request, and are affected by other requests.

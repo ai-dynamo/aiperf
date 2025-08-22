@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -47,10 +48,10 @@ class TokenEfficiencyMetric(BaseRecordMetric[float]):
     ) -> float:
         reasoning_token_count = record_metrics.get(ReasoningTokenCountMetric.tag)
         if not reasoning_token_count:
-            raise ValueError("Reasoning token count is missing in the record.")
+            raise NoMetricValue("Reasoning token count is missing in the record.")
 
         output_token_count = record_metrics.get(OutputTokenCountMetric.tag)
         if not output_token_count:
-            raise ValueError("Output token count is missing in the record.")
+            raise NoMetricValue("Output token count is missing in the record.")
 
         return reasoning_token_count / output_token_count  # type: ignore

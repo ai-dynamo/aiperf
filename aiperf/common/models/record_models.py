@@ -368,7 +368,7 @@ class ReasoningResponseData(BaseResponseData):
 
     def get_text(self) -> str:
         """Get the text of the response."""
-        return "".join([self.content or "", self.reasoning or ""])
+        return "".join([self.reasoning or "", self.content or ""])
 
 
 class ParsedResponse(AIPerfBaseModel):
