@@ -146,7 +146,7 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         overridden in subclasses to handle the credit return."""
         if message.phase not in self.phase_stats:
             self.warning(
-                lambda: f"Credit return message received for phase {message.phase} but no phase stats found"
+                f"Credit return message received for phase {message.phase} but no phase stats found"
             )
             return
 

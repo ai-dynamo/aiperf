@@ -97,22 +97,16 @@ class Worker(
     async def _credit_drop_callback(self, message: CreditDropMessage) -> None:
         """Handle an incoming credit drop message from the timing manager. Every credit must be returned after processing."""
 
-        # Create a default credit return message in case of an exception
-        credit_return_message = CreditReturnMessage(
-            service_id=self.service_id,
-            phase=message.phase,
-        )
-
         try:
             # NOTE: This must be awaited to ensure that the max concurrency is respected
-            credit_return_message = await self._process_credit_drop_internal(message)
+            await self._process_credit_drop_internal(message)
         except Exception as e:
-            self.exception(f"Error processing credit drop: {e}")
-        finally:
-            # It is fine to execute the push asynchronously here because the worker is technically
-            # ready to process the next credit drop.
-            self.execute_async(
-                self.credit_return_push_client.push(credit_return_message)
+            self.error(f"Error processing credit drop: {e!r}")
+            await self.credit_return_push_client.push(
+                CreditReturnMessage(
+                    service_id=self.service_id,
+                    phase=message.phase,
+                )
             )
 
     @on_stop

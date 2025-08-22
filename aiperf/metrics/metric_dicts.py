@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
 
@@ -9,7 +9,9 @@ from aiperf.common.enums.metric_enums import (
     MetricDictValueTypeT,
     MetricUnitT,
     MetricValueTypeT,
+    MetricValueTypeVarT,
 )
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.types import MetricTagT
 
@@ -17,7 +19,31 @@ if TYPE_CHECKING:
     from aiperf.metrics.base_metric import BaseMetric
 
 
-class MetricRecordDict(dict[MetricTagT, MetricValueTypeT]):
+MetricDictValueTypeVarT = TypeVar(
+    "MetricDictValueTypeVarT", bound="MetricValueTypeT | MetricDictValueTypeT"
+)
+
+
+class BaseMetricDict(
+    Generic[MetricDictValueTypeVarT], dict[MetricTagT, MetricDictValueTypeVarT]
+):
+    """Base class for all metric dicts."""
+
+    def get_or_raise(self, metric: type["BaseMetric"]) -> MetricDictValueTypeT:
+        """Get the value of a metric, or raise NoMetricValue if it is not available."""
+        value = self.get(metric.tag)
+        if not value:
+            raise NoMetricValue(f"Metric {metric.tag} is not available for the record.")
+        return value
+
+    def get_converted_or_raise(
+        self, metric: type["BaseMetric"], other_unit: MetricUnitT
+    ) -> float:
+        """Get the value of a metric, but converted to a different unit, or raise NoMetricValue if it is not available."""
+        return metric.unit.convert_to(other_unit, self.get_or_raise(metric))  # type: ignore
+
+
+class MetricRecordDict(BaseMetricDict[MetricValueTypeT]):
     """
     A dict of metrics for a single record. This is used to store the current values
     of all metrics that have been computed for a single record.
@@ -28,45 +54,45 @@ class MetricRecordDict(dict[MetricTagT, MetricValueTypeT]):
     - No `BaseDerivedMetric`s will be included.
     """
 
-    def get_converted(
-        self, metric: type["BaseMetric"], other_unit: MetricUnitT
-    ) -> float:
-        """Get the value of a metric, but converted to a different unit."""
-        return metric.unit.convert_to(other_unit, self[metric.tag])  # type: ignore
+    pass  # Everything is handled by the BaseMetricDict class.
 
 
-class MetricResultsDict(dict[MetricTagT, MetricDictValueTypeT]):
+class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     """
     A dict of metrics over an entire run. This is used to store the final values
     of all metrics that have been computed for an entire run.
 
     This will include:
-    - All `BaseRecordMetric`s as a deque of their values.
+    - All `BaseRecordMetric`s as a MetricArray of their values.
     - The most recent value of each `BaseAggregateMetric`.
     - The value of any `BaseDerivedMetric` that has already been computed.
     """
 
-    def get_converted(
+    def get_converted_or_raise(
         self, metric: type["BaseMetric"], other_unit: MetricUnitT
     ) -> float:
-        """Get the value of a metric, but converted to a different unit."""
+        """Get the value of a metric, but converted to a different unit, or raise NoMetricValue if it is not available."""
         if metric.type == MetricType.RECORD:
-            # Record metrics are a deque of values, so we can't convert them directly.
+            # Record metrics are a MetricArray of values, so we can't convert them directly.
             raise ValueError(
                 f"Cannot convert a record metric to a different unit: {metric.tag}"
             )
-        return metric.unit.convert_to(other_unit, self[metric.tag])  # type: ignore
+        return super().get_converted_or_raise(metric, other_unit)
 
 
-class MetricArray:
-    """NumPy backed array for metric data."""
+class MetricArray(Generic[MetricValueTypeVarT]):
+    """NumPy backed array for metric data.
+
+    This is used to store the values of a metric over time.
+    """
 
     def __init__(self, initial_capacity: int = 10000):
         self._capacity = initial_capacity
         self._data = np.empty(self._capacity)
         self._size = 0
+        self._sum: MetricValueTypeVarT = 0  # type: ignore
 
-    def append(self, value) -> None:
+    def append(self, value: MetricValueTypeVarT) -> None:
         """Append a value to the array."""
         if self._size >= self._capacity:
             # Double capacity when full
@@ -77,6 +103,12 @@ class MetricArray:
 
         self._data[self._size] = value
         self._size += 1
+        self._sum += value  # type: ignore
+
+    @property
+    def sum(self) -> MetricValueTypeVarT:
+        """Get the sum of the array."""
+        return self._sum
 
     @property
     def data(self) -> np.ndarray:

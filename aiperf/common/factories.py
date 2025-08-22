@@ -15,6 +15,7 @@ from aiperf.common.enums import (
     CustomDatasetType,
     DataExporterType,
     EndpointType,
+    OpenAIObjectType,
     RecordProcessorType,
     RequestRateMode,
     ResultsProcessorType,
@@ -461,6 +462,14 @@ class InferenceClientFactory(AIPerfFactory[EndpointType, "InferenceClientProtoco
         return super().create_instance(
             class_type, model_endpoint=model_endpoint, **kwargs
         )
+
+
+class OpenAIObjectParserFactory(
+    AIPerfSingletonFactory[OpenAIObjectType, "OpenAIObjectParserProtocol"]
+):
+    """Factory for registering and creating OpenAIObjectParserProtocol instances based on the specified object type.
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
 
 
 class RequestConverterFactory(

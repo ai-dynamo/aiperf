@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -33,11 +34,12 @@ class TTFTMetric(BaseRecordMetric[int]):
         RequestRecord object, computes the difference (TTFT), and returns the result.
 
         Raises:
-            ValueError: If the record does not have at least one response.
+            NoMetricValue: If the record does not have at least one response
+            ValueError: If the first response is before the request start timestamp.
         """
 
         if len(record.responses) < 1:
-            raise ValueError(
+            raise NoMetricValue(
                 "Record must have at least one response to calculate TTFT."
             )
 

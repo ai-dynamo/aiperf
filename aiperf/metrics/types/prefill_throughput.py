@@ -9,23 +9,23 @@ from aiperf.metrics.types.input_sequence_length_metric import InputSequenceLengt
 from aiperf.metrics.types.ttft_metric import TTFTMetric
 
 
-class InputThroughputMetric(BaseRecordMetric[float]):
+class PrefillThroughputMetric(BaseRecordMetric[float]):
     """
-    Post-processor for calculating Input Throughput metrics from records. This is only applicable to streaming responses.
+    Post-processor for calculating Prefill Throughput metrics from records. This is only applicable to streaming responses.
 
     Formula:
-        Input Throughput = Input Sequence Length / Time to First Token (seconds)
+        Prefill Throughput = Prefill Sequence Length / Time to First Token (seconds)
     """
 
-    tag = "input_throughput"
-    header = "Input Throughput"
-    short_header = "Input TPS"
+    tag = "prefill_throughput"
+    header = "Prefill Throughput"
+    short_header = "Prefill TPS"
     short_header_hide_unit = True
     unit = MetricOverTimeUnit.TOKENS_PER_SECOND
     flags = (
         MetricFlags.STREAMING_TOKENS_ONLY
         | MetricFlags.LARGER_IS_BETTER
-        | MetricFlags.HIDDEN  # Hidden for now, as it is new and not yet validated
+        | MetricFlags.EXPERIMENTAL
     )
     required_metrics = {
         InputSequenceLengthMetric.tag,
@@ -37,11 +37,11 @@ class InputThroughputMetric(BaseRecordMetric[float]):
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
-        """This method calculates the input throughput by dividing the input sequence length by the TTFT."""
+        """This method calculates the prefill throughput by dividing the input sequence length by the TTFT."""
 
-        isl = record_metrics[InputSequenceLengthMetric.tag]
-        ttft = record_metrics[TTFTMetric.tag]
-        if ttft is None or ttft == 0:
-            raise ValueError("Time to first token is not available for the record.")
-        converted_ttft = record_metrics.get_converted(TTFTMetric, self.unit.time_unit)  # type: ignore
+        isl = record_metrics.get_or_raise(InputSequenceLengthMetric)
+        converted_ttft = record_metrics.get_converted_or_raise(
+            TTFTMetric,
+            self.unit.time_unit,  # type: ignore
+        )
         return isl / converted_ttft  # type: ignore

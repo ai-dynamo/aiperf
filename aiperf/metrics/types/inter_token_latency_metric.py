@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -41,11 +42,11 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
         """
         Calculates the Inter Token Latency (ITL) metric.
         """
-        osl = record_metrics[OutputSequenceLengthMetric.tag]
-        if osl is None or osl < 2:
-            raise ValueError(f"Output sequence length must be at least 2, got {osl}")
+        osl = record_metrics.get_or_raise(OutputSequenceLengthMetric)
+        if osl < 2:  # type: ignore
+            raise NoMetricValue(f"Output sequence length must be at least 2, got {osl}")
 
-        ttft = record_metrics[TTFTMetric.tag]
-        request_latency = record_metrics[RequestLatencyMetric.tag]
+        ttft = record_metrics.get_or_raise(TTFTMetric)
+        request_latency = record_metrics.get_or_raise(RequestLatencyMetric)
 
         return (request_latency - ttft) / (osl - 1)  # type: ignore

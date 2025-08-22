@@ -4,6 +4,7 @@
 import pytest
 from pytest import approx
 
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
@@ -32,10 +33,7 @@ class TestRequestThroughputMetric:
         metric_results[RequestCountMetric.tag] = 100
         metric_results[BenchmarkDurationMetric.tag] = 0
 
-        with pytest.raises(
-            ValueError,
-            match="Benchmark duration is required and must be greater than 0",
-        ):
+        with pytest.raises(NoMetricValue):
             metric.derive_value(metric_results)
 
     def test_derive_value_with_none_duration_raises(self):
@@ -45,8 +43,5 @@ class TestRequestThroughputMetric:
         metric_results[RequestCountMetric.tag] = 100
         metric_results[BenchmarkDurationMetric.tag] = None
 
-        with pytest.raises(
-            ValueError,
-            match="Benchmark duration is required and must be greater than 0",
-        ):
+        with pytest.raises(NoMetricValue):
             metric.derive_value(metric_results)

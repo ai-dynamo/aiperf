@@ -38,7 +38,7 @@ class MaxResponseTimestampMetric(BaseAggregateMetric[int]):
         # Compute the final response timestamp by adding the request latency to the request timestamp.
         # We do this because we want wall-clock timestamps, and the only one we have that is wall-clock
         # time is the timestamp_ns for the start of the request, so we need to use that and work from there.
-        request_latency: int = record_metrics[RequestLatencyMetric.tag]  # type: ignore
+        request_latency: int = record_metrics.get_or_raise(RequestLatencyMetric)  # type: ignore
         final_response_ts = record.timestamp_ns + request_latency
         return final_response_ts
 

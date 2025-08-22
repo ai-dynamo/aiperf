@@ -19,6 +19,8 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
 )
+from aiperf.common.models.dataset_models import Turn
+from aiperf.common.models.record_models import ReasoningResponseData
 from aiperf.common.protocols import RequestClientProtocol, ResponseExtractorProtocol
 from aiperf.common.tokenizer import Tokenizer
 
@@ -117,7 +119,8 @@ class InferenceResultParser(CommunicationMixin):
             try:
                 record = await self.process_valid_record(request_record)
                 self.debug(
-                    lambda: f"Received {len(record.request.responses)} responses, input_token_count: {record.input_token_count}, output_token_count: {record.output_token_count}"
+                    lambda: f"Received {len(record.request.responses)} responses, input_token_count: {record.input_token_count}, "
+                    f"output_token_count: {record.output_token_count}, reasoning_token_count: {record.reasoning_token_count}"
                 )
                 return record
             except Exception as e:
@@ -157,30 +160,42 @@ class InferenceResultParser(CommunicationMixin):
             )
 
         tokenizer = await self.get_tokenizer(request_record.model_name)
-        resp = await self.extractor.extract_response_data(request_record, tokenizer)
+        resp = await self.extractor.extract_response_data(request_record)
         input_token_count = await self.compute_input_token_count(
             request_record, tokenizer
         )
-        output_text = "".join(
-            t
-            for response in resp
-            if response.parsed_text
-            for t in response.parsed_text
-            if t
+
+        output_texts: list[str] = []
+        reasoning_texts: list[str] = []
+        for response in resp:
+            if isinstance(response.data, ReasoningResponseData):
+                if response.data.reasoning:
+                    reasoning_texts.append(response.data.reasoning)
+                if response.data.content:
+                    output_texts.append(response.data.content)
+            else:
+                output_texts.append(response.data.get_text())
+
+        output_token_count = (
+            len(tokenizer.encode("".join(output_texts))) if output_texts else None
         )
-        output_token_count = len(tokenizer.encode(output_text))
+        reasoning_token_count = (
+            len(tokenizer.encode("".join(reasoning_texts))) if reasoning_texts else None
+        )
 
         return ParsedResponseRecord(
             request=request_record,
             responses=resp,
             input_token_count=input_token_count,
             output_token_count=output_token_count,
+            reasoning_token_count=reasoning_token_count,
         )
 
-    async def compute_input_token_count(
-        self, request_record: RequestRecord, tokenizer: Tokenizer
-    ) -> int | None:
-        """Compute the number of tokens in the input for a given request record."""
+    async def get_turn(self, request_record: RequestRecord) -> Turn | None:
+        """Get the turn for a given request record."""
+        if request_record.turn is not None:
+            return request_record.turn
+
         if request_record.conversation_id is None or request_record.turn_index is None:
             self.warning(
                 lambda: f"Conversation ID or turn index is None: {request_record.conversation_id=} {request_record.turn_index=}"
@@ -200,7 +215,16 @@ class InferenceResultParser(CommunicationMixin):
             self.error(lambda: f"Error getting turn response: {turn_response}")
             return None
 
-        turn = turn_response.turn
+        return turn_response.turn
+
+    async def compute_input_token_count(
+        self, request_record: RequestRecord, tokenizer: Tokenizer
+    ) -> int | None:
+        """Compute the number of tokens in the input for a given request record."""
+        turn = await self.get_turn(request_record)
+        if turn is None:
+            return None
+
         input_token_count = 0
         for text in turn.texts:
             input_token_count += len(tokenizer.encode("".join(text.contents)))

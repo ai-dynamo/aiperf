@@ -61,9 +61,7 @@ class RequestRateStrategy(CreditIssuingStrategy):
                         )
                     break
 
-            self.execute_async(
-                self.credit_manager.drop_credit(credit_phase=phase_stats.type)
-            )
+            await self.credit_manager.drop_credit(credit_phase=phase_stats.type)
             phase_stats.sent += 1
 
             next_interval = self._request_rate_generator.next_interval()

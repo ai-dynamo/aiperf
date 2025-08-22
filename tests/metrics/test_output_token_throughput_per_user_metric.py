@@ -3,9 +3,10 @@
 
 import pytest
 
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
-from aiperf.metrics.types.output_token_throughput_per_user_metric import (
+from aiperf.metrics.types.output_token_throughput_metrics import (
     OutputTokenThroughputPerUserMetric,
 )
 from tests.metrics.conftest import create_record
@@ -35,7 +36,7 @@ class TestOutputTokenThroughputPerUserMetric:
         metric_dict = MetricRecordDict()
         metric_dict[InterTokenLatencyMetric.tag] = 0.0
 
-        with pytest.raises(ValueError, match="Inter-token latency is 0"):
+        with pytest.raises(NoMetricValue):
             metric.parse_record(record, metric_dict)
 
     def test_output_token_throughput_per_user_none_itl_error(self):
@@ -46,5 +47,5 @@ class TestOutputTokenThroughputPerUserMetric:
         metric_dict = MetricRecordDict()
         metric_dict[InterTokenLatencyMetric.tag] = None
 
-        with pytest.raises(ValueError, match="Inter-token latency is 0"):
+        with pytest.raises(NoMetricValue):
             metric.parse_record(record, metric_dict)

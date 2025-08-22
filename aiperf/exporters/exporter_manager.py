@@ -9,7 +9,7 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.factories import ConsoleExporterFactory, DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ProfileResults
-from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
 
 class ExporterManager(AIPerfLoggerMixin):
@@ -59,6 +59,16 @@ class ExporterManager(AIPerfLoggerMixin):
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
         self.debug("Exporting all records completed")
+
+    def get_exported_file_infos(self) -> list[FileExportInfo]:
+        """Get the file infos for all exported files."""
+        file_infos = []
+        for exporter_type in DataExporterFactory.get_all_class_types():
+            exporter = DataExporterFactory.create_instance(
+                exporter_type, exporter_config=self._exporter_config
+            )
+            file_infos.append(exporter.get_export_info())
+        return file_infos
 
     async def export_console(self, console: Console) -> None:
         self.info("Exporting console data")

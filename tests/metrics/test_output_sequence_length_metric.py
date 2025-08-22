@@ -4,6 +4,7 @@
 import pytest
 from pytest import approx
 
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
@@ -34,7 +35,7 @@ class TestOutputSequenceLengthMetric:
         record.output_token_count = None
 
         metric = OutputSequenceLengthMetric()
-        with pytest.raises(ValueError, match="Output token count is missing"):
+        with pytest.raises(NoMetricValue):
             metric.parse_record(record, MetricRecordDict())
 
     def test_output_sequence_length_multiple_records(self):

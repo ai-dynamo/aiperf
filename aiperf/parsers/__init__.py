@@ -12,8 +12,22 @@ from aiperf.parsers.inference_result_parser import (
     InferenceResultParser,
 )
 from aiperf.parsers.openai_parsers import (
-    OpenAIObject,
+    ChatCompletionChunkParser,
+    ChatCompletionParser,
+    CompletionParser,
+    ListParser,
     OpenAIResponseExtractor,
+    ResponseParser,
+    TextCompletionParser,
 )
 
-__all__ = ["InferenceResultParser", "OpenAIObject", "OpenAIResponseExtractor"]
+__all__ = [
+    "ChatCompletionChunkParser",
+    "ChatCompletionParser",
+    "CompletionParser",
+    "InferenceResultParser",
+    "ListParser",
+    "OpenAIResponseExtractor",
+    "ResponseParser",
+    "TextCompletionParser",
+]

@@ -8,7 +8,6 @@ from typing import cast
 
 from rich.console import Console
 
-from aiperf.cli_utils import warn_cancelled_early
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.dev_config import print_developer_mode_warning
@@ -327,7 +326,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         # If we are scaling the record processor service count with the number of workers, spawn the record processors
         if self.scale_record_processors_with_workers:
             await self.service_manager.run_service(
-                ServiceType.RECORD_PROCESSOR, message.num_workers
+                ServiceType.RECORD_PROCESSOR, max(1, message.num_workers // 2)
             )
 
     @on_command(CommandType.SHUTDOWN_WORKERS)
@@ -380,7 +379,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         """
         if self.stop_requested:
             # If we are already in a stopping state, we need to kill the process to be safe.
-            self.warning(lambda: f"Received signal {sig}, killing")
+            self.warning(f"Received signal {sig}, killing")
             await self._kill()
             return
 
@@ -415,21 +414,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.ui.stop()
         await self.ui.wait_for_tasks()
 
-        if self._profile_results:
-            await ExporterManager(
-                results=self._profile_results.results,
-                input_config=self.user_config,
-                service_config=self.service_config,
-            ).export_console(console=Console())
-
-            if (
-                self._was_cancelled
-                and self._profile_results.results
-                and self._profile_results.results.records
-            ):
-                warn_cancelled_early()
-        else:
-            self.warning("No profile results to export")
+        await self._print_post_benchmark_info_and_metrics()
 
         if AIPERF_DEV_MODE:
             # Print a warning message to the console if developer mode is enabled, on exit after results
@@ -437,6 +422,66 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         # Exit the process in a more explicit way, to ensure that it stops
         os._exit(0)
+
+    async def _print_post_benchmark_info_and_metrics(self) -> None:
+        """Print post benchmark info and metrics to the console."""
+        if not self._profile_results or not self._profile_results.results.records:
+            self.warning("No profile results to export")
+            return
+
+        console = Console()
+        if console.width < 100:
+            console.width = 100
+
+        exporter_manager = ExporterManager(
+            results=self._profile_results.results,
+            input_config=self.user_config,
+            service_config=self.service_config,
+        )
+        await exporter_manager.export_console(console=console)
+
+        console.print()
+        self._print_cli_command(console)
+        self._print_benchmark_duration(console)
+        self._print_exported_file_infos(exporter_manager, console)
+        if self._was_cancelled:
+            console.print(
+                "[italic yellow]The profile run was cancelled early. Results shown may be incomplete or inaccurate.[/italic yellow]"
+            )
+
+        console.print()
+        console.file.flush()
+
+    def _print_exported_file_infos(
+        self, exporter_manager: ExporterManager, console: Console
+    ) -> None:
+        """Print the exported file infos."""
+        file_infos = exporter_manager.get_exported_file_infos()
+
+        for file_info in file_infos:
+            console.print(
+                f"[bold green]{file_info.export_type}[/bold green]: [cyan]{file_info.file_path.resolve()}[/cyan]"
+            )
+
+    def _print_cli_command(self, console: Console) -> None:
+        """Print the CLI command that was used to run the benchmark."""
+        console.print(
+            f"[bold green]CLI Command:[/bold green] [italic]{self.user_config.cli_command}[/italic]"
+        )
+
+    def _print_benchmark_duration(self, console: Console) -> None:
+        """Print the duration of the benchmark."""
+        from aiperf.metrics.types.benchmark_duration_metric import (
+            BenchmarkDurationMetric,
+        )
+
+        duration = self._profile_results.get(BenchmarkDurationMetric.tag)
+        if duration:
+            duration = duration.to_display_unit()
+            duration_str = f"[bold green]{BenchmarkDurationMetric.header}[/bold green]: {duration.avg:.2f} {duration.unit}"
+            if self._was_cancelled:
+                duration_str += " [italic yellow](cancelled early)[/italic yellow]"
+            console.print(duration_str)
 
     async def _kill(self):
         """Kill the system controller."""

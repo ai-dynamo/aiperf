@@ -2,35 +2,24 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import GenericMetricUnit, MetricFlags
-from aiperf.common.models import ParsedResponseRecord
-from aiperf.metrics import BaseAggregateMetric
-from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.metrics.base_aggregate_counter_metric import BaseAggregateCounterMetric
 
 
-class ErrorRequestCountMetric(BaseAggregateMetric[int]):
+class ErrorRequestCountMetric(BaseAggregateCounterMetric[int]):
     """
-    Post-processor for counting the number of error requests.
-
-    This metric is only applicable to error records.
+    This is the total number of error requests processed by the benchmark.
+    It is incremented for each error request.
 
     Formula:
+        ```
         Error Request Count = Sum(Error Requests)
+        ```
     """
 
     tag = "error_request_count"
     header = "Error Request Count"
+    short_header = "Error Count"
+    short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
     flags = MetricFlags.ERROR_ONLY
     required_metrics = None
-
-    def _parse_record(
-        self,
-        record: ParsedResponseRecord,
-        record_metrics: MetricRecordDict,
-    ) -> int:
-        # We are guaranteed that the record is an error record, so we can return 1.
-        return 1
-
-    def _aggregate_value(self, value: int) -> None:
-        """Aggregate the metric value. For this metric, we just sum the values from the different processes."""
-        self._value += value
