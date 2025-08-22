@@ -19,6 +19,7 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
 )
+from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.record_models import ReasoningResponseData
 from aiperf.common.protocols import RequestClientProtocol, ResponseExtractorProtocol
 from aiperf.common.tokenizer import Tokenizer
@@ -190,10 +191,11 @@ class InferenceResultParser(CommunicationMixin):
             reasoning_token_count=reasoning_token_count,
         )
 
-    async def compute_input_token_count(
-        self, request_record: RequestRecord, tokenizer: Tokenizer
-    ) -> int | None:
-        """Compute the number of tokens in the input for a given request record."""
+    async def get_turn(self, request_record: RequestRecord) -> Turn | None:
+        """Get the turn for a given request record."""
+        if request_record.turn is not None:
+            return request_record.turn
+
         if request_record.conversation_id is None or request_record.turn_index is None:
             self.warning(
                 lambda: f"Conversation ID or turn index is None: {request_record.conversation_id=} {request_record.turn_index=}"
@@ -213,7 +215,16 @@ class InferenceResultParser(CommunicationMixin):
             self.error(lambda: f"Error getting turn response: {turn_response}")
             return None
 
-        turn = turn_response.turn
+        return turn_response.turn
+
+    async def compute_input_token_count(
+        self, request_record: RequestRecord, tokenizer: Tokenizer
+    ) -> int | None:
+        """Compute the number of tokens in the input for a given request record."""
+        turn = await self.get_turn(request_record)
+        if turn is None:
+            return None
+
         input_token_count = 0
         for text in turn.texts:
             input_token_count += len(tokenizer.encode("".join(text.contents)))

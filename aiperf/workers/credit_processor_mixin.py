@@ -158,11 +158,13 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
         )
         self.trace(lambda: f"Received response message: {conversation_response}")
 
+        turn_index = 0
+
         if isinstance(conversation_response, ErrorMessage):
             return RequestRecord(
                 model_name=self.model_endpoint.primary_model_name,
                 conversation_id=message.conversation_id,
-                turn_index=0,
+                turn_index=turn_index,
                 timestamp_ns=time.time_ns(),
                 start_perf_ns=time.perf_counter_ns(),
                 end_perf_ns=time.perf_counter_ns(),
@@ -170,11 +172,11 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
             )
 
         record = await self._call_inference_api_internal(
-            message, conversation_response.conversation.turns[0]
+            message, conversation_response.conversation.turns[turn_index]
         )
         record.model_name = self.model_endpoint.primary_model_name
         record.conversation_id = conversation_response.conversation.session_id
-        record.turn_index = 0
+        record.turn_index = turn_index
         return record
 
     async def _call_inference_api_internal(
@@ -225,6 +227,7 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
             )
 
             result.delayed_ns = delayed_ns
+            result.turn = turn
             return result
 
         except Exception as e:
@@ -232,7 +235,7 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
                 f"Error calling inference server API at {self.model_endpoint.url}: {e}"
             )
             return RequestRecord(
-                request=formatted_payload,
+                turn=turn,
                 timestamp_ns=timestamp_ns or time.time_ns(),
                 # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
                 start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),
