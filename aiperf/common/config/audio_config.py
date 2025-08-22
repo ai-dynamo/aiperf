@@ -3,10 +3,10 @@
 
 from typing import Annotated
 
-from cyclopts import Parameter
 from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import AudioDefaults
 from aiperf.common.config.config_validators import parse_str_or_list_of_positive_values
 from aiperf.common.config.groups import Groups
@@ -26,7 +26,7 @@ class AudioLengthConfig(BaseConfig):
             ge=0,
             description="The mean length of the audio in seconds.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--audio-length-mean",  # GenAI-Perf
             ),
@@ -40,7 +40,7 @@ class AudioLengthConfig(BaseConfig):
             ge=0,
             description="The standard deviation of the length of the audio in seconds.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--audio-length-stddev",  # GenAI-Perf
             ),
@@ -63,7 +63,7 @@ class AudioConfig(BaseConfig):
             description="The batch size of audio requests AIPerf should send.\n"
             "This is currently supported with the OpenAI `chat` endpoint type",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--audio-batch-size",
                 "--batch-size-audio",  # GenAI-Perf
@@ -79,7 +79,7 @@ class AudioConfig(BaseConfig):
         Field(
             description="The format of the audio files (wav or mp3).",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--audio-format",  # GenAI-Perf
             ),
@@ -94,7 +94,7 @@ class AudioConfig(BaseConfig):
             description="A list of audio bit depths to randomly select from in bits.",
         ),
         BeforeValidator(parse_str_or_list_of_positive_values),
-        Parameter(
+        CLIParameter(
             name=(
                 "--audio-depths",  # GenAI-Perf
             ),
@@ -110,7 +110,7 @@ class AudioConfig(BaseConfig):
             "Common sample rates are 16, 44.1, 48, 96, etc.",
         ),
         BeforeValidator(parse_str_or_list_of_positive_values),
-        Parameter(
+        CLIParameter(
             name=(
                 "--audio-sample-rates",  # GenAI-Perf
             ),
@@ -125,7 +125,7 @@ class AudioConfig(BaseConfig):
             le=2,
             description="The number of audio channels to use for the audio data generation.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--audio-num-channels",  # GenAI-Perf
             ),

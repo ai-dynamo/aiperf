@@ -3,12 +3,12 @@
 
 from typing import Annotated
 
-from cyclopts import Parameter
 from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import EndpointDefaults
 from aiperf.common.config.config_validators import (
     custom_enum_converter,
@@ -43,7 +43,7 @@ class EndpointConfig(BaseConfig):
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
         ),
         BeforeValidator(parse_str_or_list),
-        Parameter(
+        CLIParameter(
             name=(
                 "--model-names",
                 "--model",  # GenAI-Perf
@@ -60,7 +60,7 @@ class EndpointConfig(BaseConfig):
             "round_robin: nth prompt in the list gets assigned to n-mod len(models).\n"
             "random: assignment is uniformly random",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--model-selection-strategy",  # GenAI-Perf
             ),
@@ -73,7 +73,7 @@ class EndpointConfig(BaseConfig):
         Field(
             description="Set a custom endpoint that differs from the OpenAI defaults.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--custom-endpoint",
                 "--endpoint",  # GenAI-Perf
@@ -85,9 +85,9 @@ class EndpointConfig(BaseConfig):
     type: Annotated[
         EndpointType,
         Field(
-            description="The type to send requests to on the server.",
+            description="The endpoint type to send requests to on the server.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--endpoint-type",  # GenAI-Perf
             ),
@@ -101,7 +101,7 @@ class EndpointConfig(BaseConfig):
         Field(
             description="An option to enable the use of the streaming API.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--streaming",  # GenAI-Perf
             ),
@@ -114,7 +114,7 @@ class EndpointConfig(BaseConfig):
         Field(
             description="URL of the endpoint to target for benchmarking.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--url",  # GenAI-Perf
                 "-u",  # GenAI-Perf
@@ -129,7 +129,7 @@ class EndpointConfig(BaseConfig):
         Field(
             description="The timeout in floating points seconds for each request to the endpoint.",
         ),
-        Parameter(
+        CLIParameter(
             name=("--request-timeout-seconds"),
             group=_CLI_GROUP,
         ),
@@ -142,7 +142,7 @@ class EndpointConfig(BaseConfig):
             description="The API key to use for the endpoint. If provided, it will be sent with every request as "
             "a header: `Authorization: Bearer <api_key>`.",
         ),
-        Parameter(
+        CLIParameter(
             name=("--api-key"),
             group=_CLI_GROUP,
         ),

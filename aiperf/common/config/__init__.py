@@ -16,6 +16,11 @@ from aiperf.common.config.base_config import (
     ADD_TO_TEMPLATE,
     BaseConfig,
 )
+from aiperf.common.config.cli_parameter import (
+    CLIParameter,
+    DeveloperOnlyCLI,
+    DisableCLI,
+)
 from aiperf.common.config.config_defaults import (
     AudioDefaults,
     CLIDefaults,
@@ -117,10 +122,13 @@ __all__ = [
     "BaseZMQCommunicationConfig",
     "BaseZMQProxyConfig",
     "CLIDefaults",
+    "CLIParameter",
     "ConversationConfig",
     "ConversationDefaults",
     "DevDefaults",
     "DeveloperConfig",
+    "DeveloperOnlyCLI",
+    "DisableCLI",
     "EndpointConfig",
     "EndpointDefaults",
     "Groups",

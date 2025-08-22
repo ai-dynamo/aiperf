@@ -8,6 +8,7 @@ from pydantic import Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.cli_parameter import DisableCLI
 from aiperf.common.config.config_validators import coerce_value
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.input_config import InputConfig
@@ -101,6 +102,7 @@ class UserConfig(BaseConfig):
             default=None,
             description="The CLI command for the user config.",
         ),
+        DisableCLI(reason="This is automatically set by the CLI"),
     ] = None
 
     @property

@@ -9,6 +9,7 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
     DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
     DEFAULT_REALTIME_METRICS_INTERVAL,
+    DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL,
 )
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
@@ -245,10 +246,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # all records before we have the final request count set.
         await self._check_if_all_records_received()
 
-    @background_task(
-        interval=lambda self: self.service_config.progress_report_interval,
-        immediate=False,
-    )
+    @background_task(interval=DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL, immediate=False)
     async def _report_records_task(self) -> None:
         """Report the records processing stats."""
         if self.processing_stats.processed > 0 or self.processing_stats.errors > 0:
