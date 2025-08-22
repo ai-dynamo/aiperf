@@ -3,9 +3,10 @@
 
 import pytest
 
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
-from aiperf.metrics.types.benchmark_token_count import BenchmarkTokenCountMetric
+from aiperf.metrics.types.output_sequence_length_metric import BenchmarkTokenCountMetric
 from aiperf.metrics.types.output_token_throughput_metrics import (
     OutputTokenThroughputMetric,
 )
@@ -48,7 +49,7 @@ class TestOutputTokenThroughputMetric:
         metric_results[BenchmarkTokenCountMetric.tag] = 1000
         metric_results[BenchmarkDurationMetric.tag] = 0.0
 
-        with pytest.raises(ValueError, match="Benchmark duration is not available"):
+        with pytest.raises(NoMetricValue):
             metric.derive_value(metric_results)
 
     def test_output_token_throughput_none_duration_error(self):
@@ -59,5 +60,5 @@ class TestOutputTokenThroughputMetric:
         metric_results[BenchmarkTokenCountMetric.tag] = 1000
         metric_results[BenchmarkDurationMetric.tag] = None
 
-        with pytest.raises(ValueError, match="Benchmark duration is not available"):
+        with pytest.raises(NoMetricValue):
             metric.derive_value(metric_results)

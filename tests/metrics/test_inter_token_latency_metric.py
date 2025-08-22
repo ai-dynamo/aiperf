@@ -4,6 +4,7 @@
 import pytest
 from pytest import approx
 
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
 from aiperf.metrics.types.output_sequence_length_metric import (
@@ -59,9 +60,7 @@ class TestInterTokenLatencyMetric:
         """Test that ITL raises error when output tokens < 2"""
         record = create_record(output_tokens_per_response=1)
 
-        with pytest.raises(
-            ValueError, match="Output sequence length must be at least 2"
-        ):
+        with pytest.raises(NoMetricValue):
             run_simple_metrics_pipeline(
                 [record],
                 RequestLatencyMetric.tag,
@@ -75,5 +74,5 @@ class TestInterTokenLatencyMetric:
         record = create_record()
         empty_metrics = MetricRecordDict()
 
-        with pytest.raises(ValueError, match="Missing required metric"):
+        with pytest.raises(NoMetricValue):
             InterTokenLatencyMetric().parse_record(record, empty_metrics)
