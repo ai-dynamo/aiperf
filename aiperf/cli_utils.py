@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from rich.align import AlignMethod
-    from rich.console import RenderableType
+    from rich.console import Console, RenderableType
     from rich.style import StyleType
 
 
@@ -21,10 +21,10 @@ def warn_command_not_implemented(command: str) -> None:
 
 def raise_startup_error_and_exit(
     message: "RenderableType",
-    text_color: "StyleType" = "bold red",
+    text_color: "StyleType | None" = None,
     title: str = "Error",
     exit_code: int = 1,
-    border_style: "StyleType" = "red",
+    border_style: "StyleType" = "bold red",
     title_align: "AlignMethod" = "left",
 ) -> None:
     """Raise a startup error and exit the program.
@@ -73,12 +73,12 @@ class exit_on_error(AbstractContextManager):
         self,
         *exceptions: type[BaseException],
         message: "RenderableType" = "{e}",
-        text_color: "StyleType" = "bold red",
+        text_color: "StyleType | None" = None,
         title: str = "Error",
         exit_code: int = 1,
     ):
         self.message: RenderableType = message
-        self.text_color: StyleType = text_color
+        self.text_color: StyleType | None = text_color
         self.title: str = title
         self.exit_code: int = exit_code
         self.exceptions: tuple[type[BaseException], ...] = exceptions
@@ -94,6 +94,16 @@ class exit_on_error(AbstractContextManager):
             not self.exceptions
             and not isinstance(exc_value, (SystemExit | KeyboardInterrupt))
         ) or issubclass(exc_type, self.exceptions):
+            from rich.console import Console
+
+            console = Console()
+            console.print_exception(
+                show_locals=True,
+                max_frames=10,
+                word_wrap=True,
+                width=console.width,
+            )
+            console.file.flush()
             message = (
                 self.message.format(e=exc_value)
                 if isinstance(self.message, str)
@@ -107,13 +117,11 @@ class exit_on_error(AbstractContextManager):
             )
 
 
-def warn_cancelled_early() -> None:
+def warn_cancelled_early(console: "Console") -> None:
     """Warn the user that the profile run was cancelled early."""
-    from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
 
-    console = Console()
     console.print("\n")
     console.print(
         Panel(

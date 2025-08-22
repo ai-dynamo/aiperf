@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import Field, model_validator
-from pyparsing import Any
 from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig

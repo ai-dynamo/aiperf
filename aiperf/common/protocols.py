@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from aiperf.common.config import ServiceConfig, UserConfig
     from aiperf.common.enums.metric_enums import MetricValueTypeT
     from aiperf.common.models.record_models import MetricResult
-    from aiperf.exporters.exporter_config import ExporterConfig
+    from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
     from aiperf.metrics.metric_dicts import MetricRecordDict
     from aiperf.timing.config import TimingManagerConfig
 
@@ -329,6 +329,8 @@ class DataExporterProtocol(Protocol):
     """
 
     def __init__(self, exporter_config: "ExporterConfig") -> None: ...
+
+    def get_export_info(self) -> "FileExportInfo": ...
 
     async def export(self) -> None: ...
 

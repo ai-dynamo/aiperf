@@ -46,6 +46,13 @@ class MetricResult(AIPerfBaseModel):
         description="The total number of records used to calculate the metric",
     )
 
+    def to_display_unit(self) -> "MetricResult":
+        """Convert the metric result to its display unit."""
+        from aiperf.exporters.display_units_utils import to_display_unit
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        return to_display_unit(self, MetricRegistry)
+
 
 class ProfileResults(AIPerfBaseModel):
     records: list[MetricResult] | None = Field(
@@ -73,6 +80,13 @@ class ProfileResults(AIPerfBaseModel):
         description="A list of the unique error details and their counts",
     )
 
+    def get(self, tag: MetricTagT) -> MetricResult | None:
+        """Get a metric result by tag, if it exists."""
+        for record in self.records or []:
+            if record.tag == tag:
+                return record
+        return None
+
 
 class ProcessRecordsResult(AIPerfBaseModel):
     """Result of the process records command."""
@@ -82,6 +96,10 @@ class ProcessRecordsResult(AIPerfBaseModel):
         default_factory=list,
         description="Any error that occurred while processing the profile results",
     )
+
+    def get(self, tag: MetricTagT) -> MetricResult | None:
+        """Get a metric result by tag, if it exists."""
+        return self.results.get(tag)
 
 
 ################################################################################

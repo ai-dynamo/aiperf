@@ -24,6 +24,7 @@ from aiperf.exporters.display_units_utils import (
 )
 from aiperf.exporters.exporter_config import (
     ExporterConfig,
+    FileExportInfo,
 )
 from aiperf.exporters.exporter_manager import (
     ExporterManager,
@@ -43,6 +44,7 @@ __all__ = [
     "CsvExporter",
     "ExporterConfig",
     "ExporterManager",
+    "FileExportInfo",
     "JsonExportData",
     "JsonExporter",
     "STAT_KEYS",

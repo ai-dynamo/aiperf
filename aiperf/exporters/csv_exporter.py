@@ -17,7 +17,7 @@ from aiperf.exporters.display_units_utils import (
     STAT_KEYS,
     convert_all_metrics_to_display_units,
 )
-from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.metrics.metric_registry import MetricRegistry
 
 
@@ -38,12 +38,18 @@ class CsvExporter(AIPerfLoggerMixin):
         self._output_directory = exporter_config.user_config.output.artifact_directory
         self._metric_registry = MetricRegistry
         self._percentile_keys = _percentile_keys_from(STAT_KEYS)
+        self._file_path = self._output_directory / "profile_export_aiperf.csv"
+
+    def get_export_info(self) -> FileExportInfo:
+        return FileExportInfo(
+            export_type="CSV Export",
+            file_path=self._file_path,
+        )
 
     async def export(self) -> None:
-        filename = self._output_directory / "profile_export_aiperf.csv"
         self._output_directory.mkdir(parents=True, exist_ok=True)
 
-        self.debug(lambda: f"Exporting data to CSV file: {filename}")
+        self.debug(lambda: f"Exporting data to CSV file: {self._file_path}")
 
         try:
             records: Mapping[str, MetricResult] = {}
@@ -54,11 +60,13 @@ class CsvExporter(AIPerfLoggerMixin):
 
             csv_content = self._generate_csv_content(records)
 
-            async with aiofiles.open(filename, "w", newline="", encoding="utf-8") as f:
+            async with aiofiles.open(
+                self._file_path, "w", newline="", encoding="utf-8"
+            ) as f:
                 await f.write(csv_content)
 
         except Exception as e:
-            self.error(f"Failed to export CSV to {filename}: {e}")
+            self.error(f"Failed to export CSV to {self._file_path}: {e}")
             raise
 
     def _generate_csv_content(self, records: Mapping[str, MetricResult]) -> str:

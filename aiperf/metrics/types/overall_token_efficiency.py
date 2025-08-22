@@ -1,14 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import GenericMetricUnit, MetricFlags
 from aiperf.metrics import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.total_output_tokens import TotalOutputTokensMetric
 from aiperf.metrics.types.total_reasoning_tokens import TotalReasoningTokensMetric
-
-_logger = AIPerfLogger(__name__)
 
 
 class OverallTokenEfficiencyMetric(BaseDerivedMetric[float]):
@@ -38,10 +35,6 @@ class OverallTokenEfficiencyMetric(BaseDerivedMetric[float]):
         self,
         metric_results: MetricResultsDict,
     ) -> float:
-        _logger.warning(
-            f"Deriving overall token efficiency from metrics: {metric_results}"
-        )
-
         total_output_tokens = metric_results.get(TotalOutputTokensMetric.tag)
         if not total_output_tokens:
             raise ValueError("Total output tokens is missing in the metrics.")
