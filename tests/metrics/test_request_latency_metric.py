@@ -3,6 +3,7 @@
 
 import pytest
 
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
@@ -52,5 +53,5 @@ class TestRequestLatencyMetric:
         record = create_record(start_ns=100, responses=[90])
 
         metric = RequestLatencyMetric()
-        with pytest.raises(ValueError, match="Invalid Record"):
+        with pytest.raises(NoMetricValue, match="Invalid Record"):
             metric.parse_record(record, MetricRecordDict())

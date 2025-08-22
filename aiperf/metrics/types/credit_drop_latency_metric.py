@@ -3,6 +3,7 @@
 
 
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -40,7 +41,7 @@ class CreditDropLatencyMetric(BaseRecordMetric[int]):
         Raises:
             ValueError: If the record does not include a credit drop latency.
         """
-        if record.request.credit_drop_latency is None:
-            raise ValueError("Credit Drop Latency is not included in the record.")
+        if not record.request.credit_drop_latency:
+            raise NoMetricValue("Credit Drop Latency is not included in the record.")
 
         return record.request.credit_drop_latency

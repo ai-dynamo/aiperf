@@ -3,10 +3,10 @@
 
 from typing import Annotated
 
-from cyclopts import Parameter
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import (
     InputTokensDefaults,
     OutputTokensDefaults,
@@ -29,7 +29,7 @@ class InputTokensConfig(BaseConfig):
             ge=0,
             description="The mean of number of tokens in the generated prompts when using synthetic data.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--prompt-input-tokens-mean",
                 "--synthetic-input-tokens-mean",  # GenAI-Perf
@@ -45,7 +45,7 @@ class InputTokensConfig(BaseConfig):
             ge=0,
             description="The standard deviation of number of tokens in the generated prompts when using synthetic data.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--prompt-input-tokens-stddev",
                 "--synthetic-input-tokens-stddev",  # GenAI-Perf
@@ -62,7 +62,7 @@ class InputTokensConfig(BaseConfig):
             default=512,
             description="The block size of the prompt.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--prompt-input-tokens-block-size",
                 "--synthetic-input-tokens-block-size",
@@ -87,7 +87,7 @@ class OutputTokensConfig(BaseConfig):
             ge=0,
             description="The mean number of tokens in each output.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--prompt-output-tokens-mean",
                 "--output-tokens-mean",  # GenAI-Perf
@@ -104,7 +104,7 @@ class OutputTokensConfig(BaseConfig):
             ge=0,
             description="The standard deviation of the number of tokens in each output.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--prompt-output-tokens-stddev",
                 "--output-tokens-stddev",  # GenAI-Perf
@@ -132,7 +132,7 @@ class PrefixPromptConfig(BaseConfig):
                 "This is useful for benchmarking models that use a K-V cache."
             ),
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--prompt-prefix-pool-size",
                 "--prefix-prompt-pool-size",
@@ -153,7 +153,7 @@ class PrefixPromptConfig(BaseConfig):
                 "the number of tokens in the final prompt may be off by one."
             ),
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--prompt-prefix-length",
                 "--prefix-prompt-length",  # GenAI-Perf
@@ -176,7 +176,7 @@ class PromptConfig(BaseConfig):
             description="The batch size of text requests AIPerf should send.\n"
             "This is currently supported with the embeddings and rankings endpoint types",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--prompt-batch-size",
                 "--batch-size-text",  # GenAI-Perf

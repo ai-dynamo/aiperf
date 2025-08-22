@@ -3,10 +3,10 @@
 
 from typing import Annotated
 
-from cyclopts import Parameter
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import ImageDefaults
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import ImageFormat
@@ -25,7 +25,7 @@ class ImageHeightConfig(BaseConfig):
             ge=0,
             description="The mean height of images when generating synthetic image data.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--image-height-mean",  # GenAI-Perf
             ),
@@ -39,7 +39,7 @@ class ImageHeightConfig(BaseConfig):
             ge=0,
             description="The standard deviation of height of images when generating synthetic image data.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--image-height-stddev",  # GenAI-Perf
             ),
@@ -61,7 +61,7 @@ class ImageWidthConfig(BaseConfig):
             ge=0,
             description="The mean width of images when generating synthetic image data.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--image-width-mean",  # GenAI-Perf
             ),
@@ -75,7 +75,7 @@ class ImageWidthConfig(BaseConfig):
             ge=0,
             description="The standard deviation of width of images when generating synthetic image data.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--image-width-stddev",  # GenAI-Perf
             ),
@@ -100,7 +100,7 @@ class ImageConfig(BaseConfig):
             description="The image batch size of the requests AIPerf should send.\n"
             "This is currently supported with the image retrieval endpoint type.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--image-batch-size",
                 "--batch-size-image",  # GenAI-Perf
@@ -114,7 +114,7 @@ class ImageConfig(BaseConfig):
         Field(
             description="The compression format of the images.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--image-format",  # GenAI-Perf
             ),

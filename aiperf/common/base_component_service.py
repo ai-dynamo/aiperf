@@ -7,6 +7,7 @@ import uuid
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
+    DEFAULT_HEARTBEAT_INTERVAL,
     DEFAULT_MAX_REGISTRATION_ATTEMPTS,
     DEFAULT_REGISTRATION_INTERVAL,
 )
@@ -56,10 +57,7 @@ class BaseComponentService(BaseService):
             **kwargs,
         )
 
-    @background_task(
-        interval=lambda self: self.service_config.heartbeat_interval_seconds,
-        immediate=False,
-    )
+    @background_task(interval=DEFAULT_HEARTBEAT_INTERVAL, immediate=False)
     async def _heartbeat_task(self) -> None:
         """Send a heartbeat notification to the system controller."""
         await self.publish(

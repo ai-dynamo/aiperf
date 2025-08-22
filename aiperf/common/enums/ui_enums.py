@@ -9,5 +9,4 @@ class AIPerfUIType(CaseInsensitiveStrEnum):
 
     DASHBOARD = "dashboard"
     SIMPLE = "simple"
-    LOG = "log"
     NONE = "none"
