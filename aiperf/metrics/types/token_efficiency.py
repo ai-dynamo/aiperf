@@ -15,6 +15,15 @@ class TokenEfficiencyMetric(BaseRecordMetric[float]):
 
     Formula:
         Token Efficiency = Total Reasoning Tokens / Total Output Tokens
+
+    References:
+        @misc{lrm_token_economy_2025,
+            title={Measuring Thinking Efficiency in Reasoning Models: The Missing Benchmark},
+            author={TSB},
+            year={2025},
+            month={August},
+            url={https://github.com/cpldcpu/LRMTokenEconomy}
+        }
     """
 
     tag = "token_efficiency"

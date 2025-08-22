@@ -12,8 +12,23 @@ class OverallTokenEfficiencyMetric(BaseDerivedMetric[float]):
     """
     Post-processor for calculating Overall Token Efficiency metrics from records.
 
+    This is the ratio of the total reasoning tokens to the total output tokens
+    across all records. This is different from the individual token efficiency
+    metric in that it will take into account the actual amount for each record.
+
     Formula:
+        ```
         Overall Token Efficiency = Total Reasoning Tokens / Total Output Tokens
+        ```
+
+    References:
+        @misc{lrm_token_economy_2025,
+            title={Measuring Thinking Efficiency in Reasoning Models: The Missing Benchmark},
+            author={TSB},
+            year={2025},
+            month={August},
+            url={https://github.com/cpldcpu/LRMTokenEconomy}
+        }
     """
 
     tag = "overall_token_efficiency"
