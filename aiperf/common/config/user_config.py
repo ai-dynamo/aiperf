@@ -160,7 +160,12 @@ class UserConfig(BaseConfig):
         """Get the stimulus name based on the timing mode."""
         match self._timing_mode:
             case TimingMode.REQUEST_RATE:
-                return f"concurrency{self.loadgen.concurrency}-request_rate{self.loadgen.request_rate}"
+                stimulus = []
+                if self.loadgen.concurrency is not None:
+                    stimulus.append(f"concurrency{self.loadgen.concurrency}")
+                if self.loadgen.request_rate is not None:
+                    stimulus.append(f"request_rate{self.loadgen.request_rate}")
+                return "-".join(stimulus)
             case TimingMode.FIXED_SCHEDULE:
                 return "fixed_schedule"
             case _:
