@@ -22,11 +22,18 @@ from aiperf.exporters.display_units_utils import (
     convert_all_metrics_to_display_units,
     to_display_unit,
 )
+from aiperf.exporters.experimental_metrics_console_exporter import (
+    ConsoleExperimentalMetricsExporter,
+)
 from aiperf.exporters.exporter_config import (
     ExporterConfig,
+    FileExportInfo,
 )
 from aiperf.exporters.exporter_manager import (
     ExporterManager,
+)
+from aiperf.exporters.internal_metrics_console_exporter import (
+    ConsoleInternalMetricsExporter,
 )
 from aiperf.exporters.json_exporter import (
     JsonExportData,
@@ -35,10 +42,13 @@ from aiperf.exporters.json_exporter import (
 
 __all__ = [
     "ConsoleErrorExporter",
+    "ConsoleExperimentalMetricsExporter",
+    "ConsoleInternalMetricsExporter",
     "ConsoleMetricsExporter",
     "CsvExporter",
     "ExporterConfig",
     "ExporterManager",
+    "FileExportInfo",
     "JsonExportData",
     "JsonExporter",
     "STAT_KEYS",

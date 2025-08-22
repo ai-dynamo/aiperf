@@ -7,7 +7,6 @@ from datetime import datetime
 from rich.console import Console, RenderableType
 from rich.table import Table
 
-from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import MetricFlags
 from aiperf.common.enums.data_exporter_enums import ConsoleExporterType
@@ -31,22 +30,24 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         self._results = exporter_config.results
         self._endpoint_type = exporter_config.user_config.endpoint.type
-        self._show_internal_metrics = AIPERF_DEV_MODE and (
-            exporter_config.service_config.developer.show_internal_metrics
-        )
 
     async def export(self, console: Console) -> None:
         if not self._results.records:
             self.warning("No records to export")
             return
 
-        table = self.get_renderable(self._results.records)
+        self._print_renderable(
+            console, self.get_renderable(self._results.records, console)
+        )
 
+    def _print_renderable(self, console: Console, renderable: RenderableType) -> None:
         console.print("\n")
-        console.print(table)
+        console.print(renderable)
         console.file.flush()
 
-    def get_renderable(self, records: list[MetricResult]) -> RenderableType:
+    def get_renderable(
+        self, records: list[MetricResult], console: Console
+    ) -> RenderableType:
         table = Table(title=self._get_title())
         table.add_column("Metric", justify="right", style="cyan")
         for key in self.STAT_COLUMN_KEYS:
@@ -60,23 +61,20 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
             key=lambda x: MetricRegistry.get_class(x.tag).display_order or sys.maxsize,
         )
         for record in records:
-            if self._should_skip(record):
+            if not self._should_show(record):
                 continue
             table.add_row(*self._format_row(record))
 
-    def _should_skip(self, record: MetricResult) -> bool:
+    def _should_show(self, record: MetricResult) -> bool:
+        # Only show metrics that are not error-only or hidden
         metric_class = MetricRegistry.get_class(record.tag)
-        if metric_class.has_flags(MetricFlags.ERROR_ONLY):
-            return True
-        return (
-            metric_class.has_flags(MetricFlags.HIDDEN)
-            and not self._show_internal_metrics
-        )
+        return metric_class.missing_flags(MetricFlags.ERROR_ONLY | MetricFlags.HIDDEN)
 
     def _format_row(self, record: MetricResult) -> list[str]:
         metric_class = MetricRegistry.get_class(record.tag)
         display_unit = metric_class.display_unit or metric_class.unit
-        row = [f"{record.header} ({display_unit})"]
+        delimiter = "\n" if len(record.header) > 30 else " "
+        row = [f"{record.header}{delimiter}({display_unit})"]
         for stat in self.STAT_COLUMN_KEYS:
             value = getattr(record, stat, None)
             if value is None:

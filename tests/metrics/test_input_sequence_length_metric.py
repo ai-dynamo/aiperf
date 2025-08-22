@@ -3,6 +3,7 @@
 
 import pytest
 
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.input_sequence_length_metric import InputSequenceLengthMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
@@ -30,7 +31,7 @@ class TestInputSequenceLengthMetric:
         record = create_record(input_tokens=None)
 
         metric = InputSequenceLengthMetric()
-        with pytest.raises(ValueError, match="Input Token Count is not available"):
+        with pytest.raises(NoMetricValue):
             metric.parse_record(record, MetricRecordDict())
 
     def test_input_sequence_length_multiple_records(self):

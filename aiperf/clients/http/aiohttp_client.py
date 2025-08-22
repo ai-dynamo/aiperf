@@ -121,7 +121,7 @@ class AioHttpClientMixin(AIPerfLoggerMixin):
 
         except Exception as e:
             record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Error in aiohttp request: {e}")
+            self.error(f"Error in aiohttp request: {e!r}")
             record.error = ErrorDetails(type=e.__class__.__name__, message=str(e))
 
         return record

@@ -12,6 +12,7 @@ from aiperf.common.enums import (
     MetricValueTypeVarT,
 )
 from aiperf.common.enums.metric_enums import MetricUnitT
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import (
@@ -65,7 +66,9 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
         super().__init_subclass__(**kwargs)
 
         # Only register concrete classes (not abstract ones)
-        if inspect.isabstract(cls):
+        if inspect.isabstract(cls) or (
+            hasattr(cls, "__is_abstract__") and cls.__is_abstract__
+        ):
             return
 
         # Verify that the class is a valid metric type
@@ -130,7 +133,7 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
         if (not record or not record.valid) and not self.has_flags(
             MetricFlags.ERROR_ONLY
         ):
-            raise ValueError("Invalid Record")
+            raise NoMetricValue("Invalid Record")
 
     def _check_metrics(self, metrics: MetricRecordDict | MetricResultsDict) -> None:
         """Check that the required metrics are available."""
@@ -138,12 +141,17 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
             return
         for tag in self.required_metrics:
             if tag not in metrics:
-                raise ValueError(f"Missing required metric: '{tag}'")
+                raise NoMetricValue(f"Missing required metric: '{tag}'")
 
     @classmethod
     def has_flags(cls, flags: MetricFlags) -> bool:
         """Return True if the metric has the given flag(s) (regardless of other flags)."""
         return cls.flags.has_flags(flags)
+
+    @classmethod
+    def has_any_flags(cls, flags: MetricFlags) -> bool:
+        """Return True if the metric has ANY of the given flag(s) (regardless of other flags)."""
+        return cls.flags.has_any_flags(flags)
 
     @classmethod
     def missing_flags(cls, flags: MetricFlags) -> bool:

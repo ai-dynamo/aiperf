@@ -122,13 +122,16 @@ class ConversationConfig(BaseConfig):
             ge=1,
             description="The total number of unique conversations to generate.\n"
             "Each conversation represents a single request session between client and server.\n"
-            "Supported on synthetic mode only and conversations will be reused until benchmarking is complete.",
+            "Supported on synthetic mode and the custom random_pool dataset. The number of conversations \n"
+            "will be used to determine the number of entries in both the custom random_pool and synthetic \n"
+            "datasets and will be reused until benchmarking is complete.",
         ),
         CLIParameter(
             name=(
                 "--conversation-num",
                 "--num-conversations",
                 "--num-sessions",  # GenAI-Perf
+                "--num-dataset-entries",  # GenAI-Perf
             ),
             group=_CLI_GROUP,
         ),

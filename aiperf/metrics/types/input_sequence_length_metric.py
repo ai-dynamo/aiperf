@@ -3,6 +3,7 @@
 
 
 from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -36,6 +37,6 @@ class InputSequenceLengthMetric(BaseRecordMetric[int]):
             ValueError: If the record does not have an input token count.
         """
         if record.input_token_count is None:
-            raise ValueError("Input Token Count is not available for the record.")
+            raise NoMetricValue("Input Token Count is not available for the record.")
 
         return record.input_token_count

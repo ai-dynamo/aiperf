@@ -67,6 +67,9 @@ from aiperf.common.enums.metric_enums import (
 from aiperf.common.enums.model_enums import (
     ModelSelectionStrategy,
 )
+from aiperf.common.enums.openai_enums import (
+    OpenAIObjectType,
+)
 from aiperf.common.enums.post_processor_enums import (
     RecordProcessorType,
     ResultsProcessorType,
@@ -134,6 +137,7 @@ __all__ = [
     "MetricValueTypeInfo",
     "MetricValueTypeVarT",
     "ModelSelectionStrategy",
+    "OpenAIObjectType",
     "PromptSource",
     "RecordProcessorType",
     "RequestRateMode",
