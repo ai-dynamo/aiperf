@@ -9,9 +9,7 @@ from aiperf.common.config.dev_config import DeveloperConfig
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult, ProfileResults
-from aiperf.exporters import ExporterConfig
-from aiperf.exporters.display_units_utils import to_display_unit
-from aiperf.exporters.internal_metrics_console_exporter import ConsoleMetricsExporter
+from aiperf.exporters import ConsoleMetricsExporter, ExporterConfig, to_display_unit
 from aiperf.metrics.metric_registry import MetricRegistry
 
 
@@ -88,7 +86,7 @@ class TestConsoleExporter:
     @pytest.mark.asyncio
     async def test_export_prints_expected_table(self, mock_exporter_config, capsys):
         exporter = ConsoleMetricsExporter(mock_exporter_config)
-        await exporter.export(Console(width=100))
+        await exporter.export(Console(width=115))
         output = capsys.readouterr().out
         assert "NVIDIA AIPerf | LLM Metrics" in output
         assert "Time to First Token (ms)" in output
@@ -97,17 +95,17 @@ class TestConsoleExporter:
         assert "Request Throughput (requests/sec)" in output
 
     @pytest.mark.parametrize(
-        "is_hidden_metric, should_skip",
+        "is_hidden_metric, should_show",
         [
-            (True, True),  # Hidden metric -> skip
-            (False, False),  # Normal metric -> don't skip
+            (True, False),  # Hidden metric -> don't show
+            (False, True),  # Normal metric -> show
         ],
     )
     def test_should_skip_logic(
         self,
         mock_endpoint_config: EndpointConfig,
         is_hidden_metric,
-        should_skip,
+        should_show,
     ):
         # Mock the configs to control show_internal_metrics
         user_config = UserConfig(endpoint=mock_endpoint_config)
@@ -143,7 +141,7 @@ class TestConsoleExporter:
                 unit="ns",
                 avg=1.0,
             )
-        assert exporter._should_skip(record) is should_skip
+        assert exporter._should_show(record) is should_show
 
     def test_format_row_formats_values_correctly(self, mock_exporter_config):
         exporter = ConsoleMetricsExporter(mock_exporter_config)

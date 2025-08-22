@@ -53,4 +53,4 @@ class ConsoleErrorExporter:
         ]
 
     def _get_title(self) -> str:
-        return "[bold][red]NVIDIA AIPerf | Error Summary[/red][/bold]"
+        return "[red]NVIDIA AIPerf | Error Summary[/red]"

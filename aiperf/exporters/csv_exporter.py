@@ -9,6 +9,7 @@ import aiofiles
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DataExporterType
+from aiperf.common.enums.metric_enums import MetricFlags
 from aiperf.common.factories import DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
@@ -111,11 +112,20 @@ class CsvExporter(AIPerfLoggerMixin):
         writer.writerow(header)
 
         for _, metric in sorted(records.items(), key=lambda kv: kv[0]):
+            if not self._should_export(metric):
+                continue
             row = [self._format_metric_name(metric)]
             for stat_name in STAT_KEYS:
                 value = getattr(metric, stat_name, None)
                 row.append(self._format_number(value))
             writer.writerow(row)
+
+    def _should_export(self, metric: MetricResult) -> bool:
+        """Check if a metric should be exported."""
+        metric_class = MetricRegistry.get_class(metric.tag)
+        return metric_class.missing_flags(
+            MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
+        )
 
     def _write_system_metrics(
         self, writer: csv.writer, records: Mapping[str, MetricResult]

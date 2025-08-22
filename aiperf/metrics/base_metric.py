@@ -146,6 +146,11 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
         return cls.flags.has_flags(flags)
 
     @classmethod
+    def has_any_flags(cls, flags: MetricFlags) -> bool:
+        """Return True if the metric has ANY of the given flag(s) (regardless of other flags)."""
+        return cls.flags.has_any_flags(flags)
+
+    @classmethod
     def missing_flags(cls, flags: MetricFlags) -> bool:
         """Return True if the metric does not have the given flag(s) (regardless of other flags). It will
         return False if the metric has ANY of the given flags."""

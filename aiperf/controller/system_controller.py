@@ -430,9 +430,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.warning("No profile results to export")
             return
 
-        console = Console()
-        if console.width < 100:
-            console.width = 100
+        console = Console(width=115)
 
         exporter_manager = ExporterManager(
             results=self._profile_results.results,

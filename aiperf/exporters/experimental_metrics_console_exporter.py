@@ -17,30 +17,34 @@ from aiperf.metrics.metric_registry import MetricRegistry
 
 
 @implements_protocol(ConsoleExporterProtocol)
-@ConsoleExporterFactory.register(ConsoleExporterType.INTERNAL_METRICS)
-class ConsoleInternalMetricsExporter(ConsoleMetricsExporter):
-    """A class that exports internal metrics to the console.
+@ConsoleExporterFactory.register(ConsoleExporterType.EXPERIMENTAL_METRICS)
+class ConsoleExperimentalMetricsExporter(ConsoleMetricsExporter):
+    """A class that exports experimental metrics to the console.
 
-    This is a special exporter that is used to export internal metrics to the console.
-    It is only applicable to internal metrics and is not applicable to user-facing metrics.
+    This is a special exporter that is used to export experimental metrics to the console.
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config=exporter_config, **kwargs)
-        self._show_internal_metrics = AIPERF_DEV_MODE and (
+        self._show_experimental_metrics = AIPERF_DEV_MODE and (
             exporter_config.service_config.developer.show_internal_metrics
         )
 
     async def export(self, console: Console) -> None:
-        if not self._show_internal_metrics:
-            self.debug("Internal metrics are not enabled, skipping export")
+        if not self._show_experimental_metrics:
+            self.debug("Experimental metrics are not enabled, skipping export")
             return
+
         await super().export(console)
 
     def _should_show(self, record: MetricResult) -> bool:
         metric_class = MetricRegistry.get_class(record.tag)
-        # Only show internal metrics
-        return metric_class.has_flags(MetricFlags.INTERNAL)
+        # Only show experimental or hidden metrics that are not internal
+        return (
+            metric_class.has_flags(MetricFlags.EXPERIMENTAL)
+            or metric_class.has_flags(MetricFlags.HIDDEN)
+            and metric_class.missing_flags(MetricFlags.INTERNAL)
+        )
 
     def _get_title(self) -> str:
-        return "[yellow]NVIDIA AIPerf | Internal Metrics[/yellow]"
+        return "[yellow]NVIDIA AIPerf | Experimental Metrics[/yellow]"

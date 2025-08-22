@@ -36,18 +36,24 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
             self.warning("No records to export")
             return
 
-        table = self.get_renderable(self._results.records)
+        self._print_renderable(
+            console, self.get_renderable(self._results.records, console)
+        )
 
+    def _print_renderable(self, console: Console, renderable: RenderableType) -> None:
         console.print("\n")
-        console.print(table)
+        console.print(renderable)
         console.file.flush()
 
-    def get_renderable(self, records: list[MetricResult]) -> RenderableType:
+    def get_renderable(
+        self, records: list[MetricResult], console: Console
+    ) -> RenderableType:
         table = Table(title=self._get_title())
-        table.add_column("Metric", justify="right", style="cyan")
+        table.add_column("Metric", justify="right", style="cyan", width=40)
         for key in self.STAT_COLUMN_KEYS:
-            table.add_column(key, justify="right", style="green")
+            table.add_column(key, justify="right", style="green", width=15)
         self._construct_table(table, records)
+        table.width = console.width
         return table
 
     def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
@@ -56,15 +62,14 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
             key=lambda x: MetricRegistry.get_class(x.tag).display_order or sys.maxsize,
         )
         for record in records:
-            if self._should_skip(record):
+            if not self._should_show(record):
                 continue
             table.add_row(*self._format_row(record))
 
-    def _should_skip(self, record: MetricResult) -> bool:
+    def _should_show(self, record: MetricResult) -> bool:
+        # Only show metrics that are not error-only or hidden
         metric_class = MetricRegistry.get_class(record.tag)
-        return metric_class.has_flags(MetricFlags.ERROR_ONLY) or metric_class.has_flags(
-            MetricFlags.HIDDEN
-        )
+        return metric_class.missing_flags(MetricFlags.ERROR_ONLY | MetricFlags.HIDDEN)
 
     def _format_row(self, record: MetricResult) -> list[str]:
         metric_class = MetricRegistry.get_class(record.tag)

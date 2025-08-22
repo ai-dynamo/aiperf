@@ -14,6 +14,10 @@ class StreamSetupLatencyMetric(BaseRecordMetric[int]):
     This is the time it takes for the client to send the request and receive the 200 OK response from the server,
     before any SSE content is received. It measures the tcp/http connection time, request processing, and stream initialization time.
 
+    Note that not all servers will respond with a 200 OK response as soon as the stream is established.
+    For example, some servers will wait for the first token to be ready before sending the 200 OK response.
+    In these cases, the stream setup latency will not be meaningful.
+
     Formula:
         Stream Setup Latency = Stream Start Timestamp - Request Start Timestamp
     """

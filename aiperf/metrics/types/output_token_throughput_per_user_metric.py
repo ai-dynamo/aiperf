@@ -17,7 +17,7 @@ class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):
     """
 
     tag = "output_token_throughput_per_user"
-    header = "Output Token Throughput Per User\n"
+    header = "Output Token Throughput Per User"
     short_header = "Output TPS/User"
     short_header_hide_unit = True
     unit = MetricOverTimeUnit.TOKENS_PER_SECOND_PER_USER

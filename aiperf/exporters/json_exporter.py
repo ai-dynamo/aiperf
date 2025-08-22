@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import DataExporterType
+from aiperf.common.enums import DataExporterType, MetricFlags
 from aiperf.common.factories import DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ErrorDetailsCount, MetricResult
@@ -23,8 +23,8 @@ from aiperf.metrics.metric_registry import MetricRegistry
 class JsonExportData(BaseModel):
     """Data to be exported to a JSON file."""
 
-    input_config: UserConfig | None = None
     records: dict[MetricTagT, MetricResult] | None = None
+    input_config: UserConfig | None = None
     was_cancelled: bool | None = None
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None
@@ -53,6 +53,13 @@ class JsonExporter(AIPerfLoggerMixin):
             file_path=self._file_path,
         )
 
+    def _should_export(self, metric: MetricResult) -> bool:
+        """Check if a metric should be exported."""
+        metric_class = MetricRegistry.get_class(metric.tag)
+        return metric_class.missing_flags(
+            MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
+        )
+
     async def export(self) -> None:
         self._output_directory.mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +79,9 @@ class JsonExporter(AIPerfLoggerMixin):
             converted_records = convert_all_metrics_to_display_units(
                 self._results.records, self._metric_registry
             )
+            converted_records = {
+                k: v for k, v in converted_records.items() if self._should_export(v)
+            }
 
         export_data = JsonExportData(
             input_config=self._input_config,

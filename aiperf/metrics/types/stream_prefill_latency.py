@@ -19,7 +19,7 @@ class StreamPrefillLatencyMetric(BaseRecordMetric[int]):
 
     Note that not all servers will respond with a 200 OK response as soon as the stream is established.
     For example, some servers will wait for the first token to be ready before sending the 200 OK response.
-    This means that the stream prefill latency will be ~0 for these servers.
+    In these cases, the stream prefill latency will not be meaningful.
 
     Formula:
         Stream Prefill Latency = Time to First Token - Stream Setup Latency
