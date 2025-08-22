@@ -19,13 +19,13 @@ if TYPE_CHECKING:
     from aiperf.metrics.base_metric import BaseMetric
 
 
-MetricDictValueTypeT = TypeVar(
-    "MetricDictValueTypeT", bound=MetricValueTypeT | MetricDictValueTypeT
+MetricDictValueTypeVarT = TypeVar(
+    "MetricDictValueTypeVarT", bound="MetricValueTypeT | MetricDictValueTypeT"
 )
 
 
 class BaseMetricDict(
-    Generic[MetricDictValueTypeT], dict[MetricTagT, MetricDictValueTypeT]
+    Generic[MetricDictValueTypeVarT], dict[MetricTagT, MetricDictValueTypeVarT]
 ):
     """Base class for all metric dicts."""
 

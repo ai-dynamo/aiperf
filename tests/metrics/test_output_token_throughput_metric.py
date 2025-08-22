@@ -6,7 +6,7 @@ import pytest
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.benchmark_token_count import BenchmarkTokenCountMetric
-from aiperf.metrics.types.output_token_throughput_metric import (
+from aiperf.metrics.types.output_token_throughput_metrics import (
     OutputTokenThroughputMetric,
 )
 

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.derived_sum_metric import DerivedSumMetric
@@ -40,10 +41,10 @@ class OutputTokenCountMetric(BaseRecordMetric[int]):
         This method extracts the output token count from the record and returns it.
 
         Raises:
-            ValueError: If the record does not have an output token count.
+            NoMetricValue: If the record does not have an output token count.
         """
-        if record.output_token_count is None:
-            raise ValueError("Output token count is missing in the record.")
+        if not record.output_token_count:
+            raise NoMetricValue("Output token count is missing in the record.")
 
         return record.output_token_count
 

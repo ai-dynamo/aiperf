@@ -6,8 +6,47 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
-from aiperf.metrics.types.stream_setup_latency import StreamSetupLatencyMetric
 from aiperf.metrics.types.ttft_metric import TTFTMetric
+
+
+class StreamSetupLatencyMetric(BaseRecordMetric[int]):
+    """
+    Post-processor for calculating Stream Setup Latency metrics from records. This is only applicable to streaming responses.
+
+    This is the time it takes for the client to send the request and receive the 200 OK response from the server,
+    before any SSE content is received. It measures the tcp/http connection time, request processing, and stream initialization time.
+
+    Note that not all servers will respond with a 200 OK response as soon as the stream is established.
+    For example, some servers will wait for the first token to be ready before sending the 200 OK response.
+    In these cases, the stream setup latency will not be meaningful.
+
+    Formula:
+        Stream Setup Latency = Stream Start Timestamp - Request Start Timestamp
+    """
+
+    tag = "stream_setup_latency"
+    header = "Stream Setup Latency"
+    unit = MetricTimeUnit.NANOSECONDS
+    display_unit = MetricTimeUnit.MILLISECONDS
+    flags = MetricFlags.STREAMING_ONLY | MetricFlags.EXPERIMENTAL
+    required_metrics = None
+
+    def _parse_record(
+        self,
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> int:
+        """This method extracts the request and receive start timestamps, and calculates the stream setup time."""
+
+        if not record.request.recv_start_perf_ns or not record.start_perf_ns:
+            raise NoMetricValue(
+                "Stream setup latency metric requires a recv_start_perf_ns and start_perf_ns"
+            )
+
+        if record.request.recv_start_perf_ns < record.start_perf_ns:
+            raise ValueError("recv_start_perf_ns is less than start_perf_ns")
+
+        return record.request.recv_start_perf_ns - record.start_perf_ns
 
 
 class StreamPrefillLatencyMetric(BaseRecordMetric[int]):
@@ -43,12 +82,7 @@ class StreamPrefillLatencyMetric(BaseRecordMetric[int]):
     ) -> int:
         """This method calculates the stream prefill latency by subtracting the stream setup latency from the TTFT."""
 
-        stream_setup_latency = record_metrics.get(StreamSetupLatencyMetric.tag)
-        if not stream_setup_latency:
-            raise NoMetricValue("Stream setup latency is not available for the record.")
-
-        ttft = record_metrics.get(TTFTMetric.tag)
-        if not ttft:
-            raise NoMetricValue("Time to first token is not available for the record.")
+        stream_setup_latency = record_metrics.get_or_raise(StreamSetupLatencyMetric)
+        ttft = record_metrics.get_or_raise(TTFTMetric)
 
         return ttft - stream_setup_latency  # type: ignore

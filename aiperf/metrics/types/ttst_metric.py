@@ -42,11 +42,11 @@ class TTSTMetric(BaseRecordMetric[int]):
             raise NoMetricValue(
                 "Record must have at least two responses to calculate TTST."
             )
-        if record.responses[1].perf_ns < record.responses[0].perf_ns:
-            raise ValueError(
-                "Second response timestamp must be greater than or equal to the first response timestamp."
-            )
 
         first_response_ts: int = record.responses[0].perf_ns
         second_response_ts: int = record.responses[1].perf_ns
+        if second_response_ts < first_response_ts:
+            raise ValueError(
+                "Second response timestamp must be greater than or equal to the first response timestamp."
+            )
         return second_response_ts - first_response_ts

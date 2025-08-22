@@ -41,7 +41,7 @@ class CreditDropLatencyMetric(BaseRecordMetric[int]):
         Raises:
             ValueError: If the record does not include a credit drop latency.
         """
-        if record.request.credit_drop_latency is None:
+        if not record.request.credit_drop_latency:
             raise NoMetricValue("Credit Drop Latency is not included in the record.")
 
         return record.request.credit_drop_latency

@@ -41,6 +41,7 @@ class PrefillThroughputMetric(BaseRecordMetric[float]):
 
         isl = record_metrics.get_or_raise(InputSequenceLengthMetric)
         converted_ttft = record_metrics.get_converted_or_raise(
-            TTFTMetric, self.unit.time_unit
-        )  # type: ignore
+            TTFTMetric,
+            self.unit.time_unit,  # type: ignore
+        )
         return isl / converted_ttft  # type: ignore

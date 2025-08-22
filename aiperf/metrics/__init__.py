@@ -30,7 +30,7 @@ from aiperf.metrics.derived_sum_metric import (
 from aiperf.metrics.metric_dicts import (
     BaseMetricDict,
     MetricArray,
-    MetricDictValueTypeT,
+    MetricDictValueTypeVarT,
     MetricRecordDict,
     MetricResultsDict,
 )
@@ -47,7 +47,7 @@ __all__ = [
     "BaseRecordMetric",
     "DerivedSumMetric",
     "MetricArray",
-    "MetricDictValueTypeT",
+    "MetricDictValueTypeVarT",
     "MetricRecordDict",
     "MetricRegistry",
     "MetricResultsDict",

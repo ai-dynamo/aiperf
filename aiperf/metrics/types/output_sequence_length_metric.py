@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.derived_sum_metric import DerivedSumMetric
@@ -39,9 +40,9 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
         Raises:
             ValueError: If the record does not have a output or reasoning token count.
         """
-        if record.output_token_count is None and record.reasoning_token_count is None:
-            raise ValueError(
-                "Output or reasoning token count is missing in the record."
+        if not record.output_token_count and not record.reasoning_token_count:
+            raise NoMetricValue(
+                "Output and reasoning token counts are missing in the record."
             )
 
         return (record.output_token_count or 0) + (record.reasoning_token_count or 0)
