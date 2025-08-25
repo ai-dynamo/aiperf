@@ -9,10 +9,11 @@ from typing import cast
 from rich.console import Console
 
 from aiperf.common.base_service import BaseService
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config import ServiceConfig, SystemControllerConfig, UserConfig
 from aiperf.common.config.dev_config import print_developer_mode_warning
 from aiperf.common.constants import (
     AIPERF_DEV_MODE,
+    DEFAULT_NODE_CONTROLLER_REGISTRATION_TIMEOUT,
     DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
     DEFAULT_PROFILE_START_TIMEOUT,
 )
@@ -66,14 +67,18 @@ class SystemController(SignalHandlerMixin, BaseService):
         self,
         user_config: UserConfig,
         service_config: ServiceConfig,
+        system_config: SystemControllerConfig,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+            **kwargs,
         )
         self.debug("Creating System Controller")
+        self.system_config = system_config
         self._was_cancelled = False
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
@@ -83,6 +88,11 @@ class SystemController(SignalHandlerMixin, BaseService):
             ServiceType.WORKER_MANAGER: 1,
             ServiceType.RECORDS_MANAGER: 1,
         }
+
+        self.expected_node_controllers = system_config.node_controllers
+        self.node_controllers: list[ServiceRunInfo] = []
+        self._node_controllers_registered = asyncio.Event()
+
         if self.service_config.record_processor_service_count is not None:
             self.required_services[ServiceType.RECORD_PROCESSOR] = (
                 self.service_config.record_processor_service_count
@@ -101,6 +111,7 @@ class SystemController(SignalHandlerMixin, BaseService):
                 user_config=self.user_config,
                 service_config=self.service_config,
                 log_queue=get_global_log_queue(),
+                system_config=self.system_config,
             )
         )
         self.ui: AIPerfUIProtocol = AIPerfUIFactory.create_instance(
@@ -153,6 +164,18 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.debug("System Controller is bootstrapping services")
         # Start all required services
         await self.service_manager.start()
+        try:
+            await asyncio.wait_for(
+                self._node_controllers_registered.wait(),
+                timeout=DEFAULT_NODE_CONTROLLER_REGISTRATION_TIMEOUT,
+            )
+        except asyncio.TimeoutError as e:
+            raise self._service_error(
+                f"Node controllers did not register in time. Expected {self.expected_node_controllers} node controllers, but only {len(self.node_controllers)} registered."
+            ) from e
+
+        self.info("All node controllers registered")
+
         await self.service_manager.wait_for_all_services_registration(
             stop_event=self._stop_requested_event,
         )
@@ -218,6 +241,12 @@ class SystemController(SignalHandlerMixin, BaseService):
             state=message.state,
             last_seen=time.time_ns(),
         )
+
+        if message.service_type == ServiceType.NODE_CONTROLLER:
+            self.node_controllers.append(service_info)
+            if len(self.node_controllers) == self.expected_node_controllers:
+                self.info("All node controllers registered")
+                self._node_controllers_registered.set()
 
         self.service_manager.service_id_map[message.service_id] = service_info
         if message.service_type not in self.service_manager.service_map:

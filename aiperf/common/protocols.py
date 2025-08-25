@@ -40,7 +40,7 @@ from aiperf.common.types import (
 if TYPE_CHECKING:
     from rich.console import Console
 
-    from aiperf.common.config import ServiceConfig, UserConfig
+    from aiperf.common.config import ServiceConfig, SystemControllerConfig, UserConfig
     from aiperf.common.enums.metric_enums import MetricValueTypeT
     from aiperf.common.models.record_models import MetricResult
     from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
@@ -436,6 +436,7 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
         service_config: "ServiceConfig",
         user_config: "UserConfig",
         log_queue: "multiprocessing.Queue | None" = None,
+        system_config: "SystemControllerConfig | None" = None,
     ): ...
 
     required_services: dict[ServiceTypeT, int]

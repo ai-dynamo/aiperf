@@ -26,3 +26,4 @@ class Groups:
     WORKERS = Group.create_ordered("Workers")
     DEVELOPER = Group.create_ordered("Developer")
     NODE_CONTROLLER = Group.create_ordered("Node Controller")
+    SYSTEM_CONTROLLER = Group.create_ordered("System Controller")

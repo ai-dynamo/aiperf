@@ -2,11 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.cli_utils import raise_startup_error_and_exit
-from aiperf.common.config import NodeConfig, ServiceConfig, UserConfig
+from aiperf.common.config import (
+    NodeConfig,
+    ServiceConfig,
+    SystemControllerConfig,
+    UserConfig,
+)
 from aiperf.common.enums.ui_enums import AIPerfUIType
 
 
 def run_system_controller(
+    system_config: SystemControllerConfig,
     user_config: UserConfig,
     service_config: ServiceConfig,
 ) -> None:
@@ -46,6 +52,7 @@ def run_system_controller(
             service_config=service_config,
             user_config=user_config,
             log_queue=log_queue,
+            system_config=system_config,
         )
     except Exception:
         logger.exception("Error running AIPerf System")

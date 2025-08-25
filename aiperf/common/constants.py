@@ -90,3 +90,6 @@ DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL = 2.0
 
 DEFAULT_WORKER_HEALTH_CHECK_INTERVAL = 2.0
 """Default interval in seconds between worker health check messages."""
+
+DEFAULT_NODE_CONTROLLER_REGISTRATION_TIMEOUT = 90.0
+"""Default timeout for node controller registration in seconds."""

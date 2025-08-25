@@ -9,7 +9,7 @@ from multiprocessing.context import ForkProcess, SpawnProcess
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config import ServiceConfig, SystemControllerConfig, UserConfig
 from aiperf.common.constants import (
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
@@ -53,11 +53,16 @@ class MultiProcessServiceManager(BaseServiceManager):
         service_config: ServiceConfig,
         user_config: UserConfig,
         log_queue: "multiprocessing.Queue | None" = None,
+        system_config: SystemControllerConfig | None = None,
         **kwargs,
     ):
         super().__init__(required_services, service_config, user_config, **kwargs)
         self.multi_process_info: list[MultiProcessRunInfo] = []
         self.log_queue = log_queue
+        self.system_config = system_config
+        self.expected_node_controllers = (
+            system_config.node_controllers if system_config else 0
+        )
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1

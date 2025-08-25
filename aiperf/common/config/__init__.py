@@ -98,6 +98,9 @@ from aiperf.common.config.prompt_config import (
 from aiperf.common.config.service_config import (
     ServiceConfig,
 )
+from aiperf.common.config.system_controller_config import (
+    SystemControllerConfig,
+)
 from aiperf.common.config.tokenizer_config import (
     TokenizerConfig,
 )
@@ -156,6 +159,7 @@ __all__ = [
     "PromptDefaults",
     "ServiceConfig",
     "ServiceDefaults",
+    "SystemControllerConfig",
     "TokenizerConfig",
     "TokenizerDefaults",
     "TurnConfig",
