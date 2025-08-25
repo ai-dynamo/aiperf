@@ -129,6 +129,11 @@ class OutputTokensDefaults:
 
 
 @dataclass(frozen=True)
+class SystemDefaults:
+    NODE_CONTROLLERS = 0
+
+
+@dataclass(frozen=True)
 class ServiceDefaults:
     SERVICE_RUN_TYPE = ServiceRunType.MULTIPROCESSING
     COMM_BACKEND = CommunicationBackend.ZMQ_IPC

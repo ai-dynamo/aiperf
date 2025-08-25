@@ -23,13 +23,16 @@ from aiperf.common.messages import (
     CreditDropMessage,
     CreditReturnMessage,
     ProfileCancelCommand,
+    ProfileConfigureCommand,
     WorkerHealthMessage,
 )
 from aiperf.common.mixins import ProcessHealthMixin, PullClientMixin
 from aiperf.common.models import WorkerTaskStats
 from aiperf.common.protocols import (
+    InferenceClientProtocol,
     PushClientProtocol,
     RequestClientProtocol,
+    RequestConverterProtocol,
 )
 from aiperf.workers.credit_processor_mixin import CreditProcessorMixin
 
@@ -79,20 +82,10 @@ class Worker(
                 CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
             )
         )
-
-        self.model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
-
-        self.debug(
-            lambda: f"Creating inference client for {self.model_endpoint.endpoint.type}, "
-            f"class: {InferenceClientFactory.get_class_from_type(self.model_endpoint.endpoint.type).__name__}",
-        )
-        self.request_converter = RequestConverterFactory.create_instance(
-            self.model_endpoint.endpoint.type,
-        )
-        self.inference_client = InferenceClientFactory.create_instance(
-            self.model_endpoint.endpoint.type,
-            model_endpoint=self.model_endpoint,
-        )
+        self.user_config: UserConfig | None = None
+        self.model_endpoint: ModelEndpointInfo | None = None
+        self.request_converter: RequestConverterProtocol | None = None
+        self.inference_client: InferenceClientProtocol | None = None
 
     @on_pull_message(MessageType.CREDIT_DROP)
     async def _credit_drop_callback(self, message: CreditDropMessage) -> None:
@@ -129,6 +122,28 @@ class Worker(
             service_id=self.service_id,
             health=self.get_process_health(),
             task_stats=self.task_stats,
+        )
+
+    @on_command(CommandType.PROFILE_CONFIGURE)
+    async def _handle_profile_configure_command(
+        self, message: ProfileConfigureCommand
+    ) -> None:
+        self.debug(lambda: f"Received profile configure command: {message}")
+        self.user_config = UserConfig(**message.config)
+        self.model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
+        self.info(
+            lambda: f"Creating inference client for {self.model_endpoint.endpoint.type}, "
+            f"class: {InferenceClientFactory.get_class_from_type(self.model_endpoint.endpoint.type).__name__}",
+        )
+        self.request_converter = RequestConverterFactory.create_instance(
+            self.model_endpoint.endpoint.type,
+        )
+        self.inference_client = InferenceClientFactory.create_instance(
+            self.model_endpoint.endpoint.type,
+            model_endpoint=self.model_endpoint,
+        )
+        await self.publish(
+            CommandAcknowledgedResponse.from_command_message(message, self.service_id)
         )
 
     @on_command(CommandType.PROFILE_CANCEL)

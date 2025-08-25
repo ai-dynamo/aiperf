@@ -14,6 +14,7 @@ from cyclopts import App
 
 from aiperf.cli_utils import exit_on_error
 from aiperf.common.config import NodeConfig, ServiceConfig, UserConfig
+from aiperf.common.config.system_controller_config import SystemControllerConfig
 
 app = App(name="aiperf", help="NVIDIA AIPerf")
 
@@ -22,6 +23,7 @@ app = App(name="aiperf", help="NVIDIA AIPerf")
 def profile(
     user_config: UserConfig,
     service_config: ServiceConfig | None = None,
+    system_config: SystemControllerConfig | None = None,
 ) -> None:
     """Run the Profile subcommand.
 
@@ -35,7 +37,7 @@ def profile(
 
         service_config = service_config or load_service_config()
 
-        run_system_controller(user_config, service_config)
+        run_system_controller(user_config, service_config, system_config)
 
 
 @app.command(name="node")

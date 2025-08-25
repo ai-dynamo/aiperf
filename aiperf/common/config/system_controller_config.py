@@ -6,6 +6,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aiperf.common.config.cli_parameter import CLIParameter
+from aiperf.common.config.config_defaults import SystemDefaults
 from aiperf.common.config.groups import Groups
 
 
@@ -24,7 +25,6 @@ class SystemControllerConfig(BaseSettings):
     node_controllers: Annotated[
         int,
         Field(
-            default=0,
             ge=0,
             description="The number of node controllers to expect in the system. If not specified, the system will not expect any node controllers.",
         ),
@@ -32,4 +32,4 @@ class SystemControllerConfig(BaseSettings):
             name=("--node-controllers", "--nodes"),
             group=_CLI_GROUP,
         ),
-    ]
+    ] = SystemDefaults.NODE_CONTROLLERS

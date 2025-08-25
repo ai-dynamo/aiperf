@@ -12,9 +12,9 @@ from aiperf.common.enums.ui_enums import AIPerfUIType
 
 
 def run_system_controller(
-    system_config: SystemControllerConfig,
     user_config: UserConfig,
     service_config: ServiceConfig,
+    system_config: SystemControllerConfig | None = None,
 ) -> None:
     """Run the system controller with the given configuration."""
 
@@ -52,7 +52,7 @@ def run_system_controller(
             service_config=service_config,
             user_config=user_config,
             log_queue=log_queue,
-            system_config=system_config,
+            system_config=system_config or SystemControllerConfig(),
         )
     except Exception:
         logger.exception("Error running AIPerf System")
@@ -70,7 +70,7 @@ def run_node_controller(
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service
     from aiperf.common.config import EndpointConfig
-    from aiperf.controller import NodeController
+    from aiperf.controller.node_controller import NodeController
     from aiperf.module_loader import ensure_modules_loaded
 
     logger = AIPerfLogger(__name__)
@@ -99,6 +99,7 @@ def run_node_controller(
             service_id=f"node_controller_{node_config.node_id}",
             user_config=user_config,
             service_config=service_config,
+            node_config=node_config,
             log_queue=log_queue,
         )
     except Exception:

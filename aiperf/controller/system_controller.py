@@ -164,22 +164,27 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.debug("System Controller is bootstrapping services")
         # Start all required services
         await self.service_manager.start()
-        try:
-            await asyncio.wait_for(
-                self._node_controllers_registered.wait(),
-                timeout=DEFAULT_NODE_CONTROLLER_REGISTRATION_TIMEOUT,
-            )
-        except asyncio.TimeoutError as e:
-            raise self._service_error(
-                f"Node controllers did not register in time. Expected {self.expected_node_controllers} node controllers, but only {len(self.node_controllers)} registered."
-            ) from e
+        if self.expected_node_controllers > 0:
+            try:
+                self.info(
+                    f"Waiting for {self.expected_node_controllers} node controllers to register... (timeout: {DEFAULT_NODE_CONTROLLER_REGISTRATION_TIMEOUT} seconds)"
+                )
+                await asyncio.wait_for(
+                    self._node_controllers_registered.wait(),
+                    timeout=DEFAULT_NODE_CONTROLLER_REGISTRATION_TIMEOUT,
+                )
+            except asyncio.TimeoutError as e:
+                raise self._service_error(
+                    f"Node controllers did not register in time. Expected {self.expected_node_controllers} node controllers, but only {len(self.node_controllers)} registered."
+                ) from e
 
-        self.info("All node controllers registered")
+            self.info("All node controllers registered")
 
         await self.service_manager.wait_for_all_services_registration(
             stop_event=self._stop_requested_event,
         )
 
+        await asyncio.sleep(1)
         self.info("AIPerf System is CONFIGURING")
         await self._profile_configure_all_services()
         self.info("AIPerf System is CONFIGURED")

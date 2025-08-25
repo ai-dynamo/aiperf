@@ -3,8 +3,8 @@
 import asyncio
 import os
 
-from aiperf.common.base_service import BaseService
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.config import NodeConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommandType,
     ServiceType,
@@ -14,8 +14,7 @@ from aiperf.common.factories import (
     ServiceFactory,
     ServiceManagerFactory,
 )
-from aiperf.common.hooks import on_command, on_start, on_stop
-from aiperf.common.logging import get_global_log_queue
+from aiperf.common.hooks import on_command, on_init, on_start, on_stop
 from aiperf.common.messages import (
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
@@ -25,7 +24,7 @@ from aiperf.controller.system_mixins import SignalHandlerMixin
 
 
 @ServiceFactory.register(ServiceType.NODE_CONTROLLER)
-class NodeController(SignalHandlerMixin, BaseService):
+class NodeController(SignalHandlerMixin, BaseComponentService):
     """Node Controller service.
 
     This service is responsible for managing the lifecycle of all other services
@@ -36,15 +35,19 @@ class NodeController(SignalHandlerMixin, BaseService):
         self,
         user_config: UserConfig,
         service_config: ServiceConfig,
+        node_config: NodeConfig,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+            **kwargs,
         )
         self.debug("Creating Node Controller")
         self._system_state = SystemState.INITIALIZING
+        self.node_config = node_config
 
         self.service_manager: ServiceManagerProtocol = (
             ServiceManagerFactory.create_instance(
@@ -54,22 +57,25 @@ class NodeController(SignalHandlerMixin, BaseService):
                 },
                 user_config=self.user_config,
                 service_config=self.service_config,
-                log_queue=get_global_log_queue(),
+                log_queue=None,
             )
         )
 
         self._stop_tasks: set[asyncio.Task] = set()
-        self.debug("Node Controller created")
-        # self.execute_async(self._start_services())
+        self.info(f"Node Controller {self.service_id} created")
+
+    @on_init
+    async def _initialize_node_controller(self) -> None:
+        """Initialize the node controller."""
+        # Start all required services
+        self.info(f"Node Controller {self.service_id} is bootstrapping services")
+        await self.service_manager.initialize()
+        await self.service_manager.start()
 
     @on_start
     async def _start_services(self) -> None:
         """Bootstrap the node services."""
-        self.debug("System Controller is bootstrapping services")
         self.system_state = SystemState.CONFIGURING
-        # Start all required services
-        await self.service_manager.initialize()
-        await self.service_manager.start()
 
     @property
     def system_state(self) -> SystemState:
