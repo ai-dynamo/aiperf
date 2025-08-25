@@ -83,7 +83,7 @@ def test_streaming_validation():
 
     config = EndpointConfig(
         type=EndpointType.OPENAI_EMBEDDINGS,
-        streaming=True,
+        streaming=False,
         model_names=["gpt2"],
     )
-    assert config.streaming  # Streaming was set to True.
+    assert not config.streaming  # Streaming is not supported for embeddings

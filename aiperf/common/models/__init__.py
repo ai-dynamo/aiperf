@@ -45,6 +45,7 @@ from aiperf.common.models.progress_models import (
 )
 from aiperf.common.models.record_models import (
     BaseResponseData,
+    EmbeddingResponseData,
     InferenceServerResponse,
     MetricResult,
     ParsedResponse,
@@ -75,6 +76,7 @@ __all__ = [
     "CreditPhaseConfig",
     "CreditPhaseStats",
     "CtxSwitches",
+    "EmbeddingResponseData",
     "ErrorDetails",
     "ErrorDetailsCount",
     "FullPhaseProgress",

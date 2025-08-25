@@ -93,7 +93,7 @@ class TestEndpointType:
             (
                 EndpointType.OPENAI_EMBEDDINGS,
                 "embeddings",
-                True,
+                False,
                 False,
                 "/v1/embeddings",
             ),
