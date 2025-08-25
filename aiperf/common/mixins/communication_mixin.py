@@ -18,7 +18,7 @@ class CommunicationMixin(AIPerfLifecycleMixin, ABC):
         super().__init__(service_config=service_config, **kwargs)
         self.service_config = service_config
         self.comms: CommunicationProtocol = CommunicationFactory.get_or_create_instance(
-            self.service_config.comm_backend,
+            self.service_config.comm_config.comm_backend,
             config=self.service_config.comm_config,
         )
         self.attach_child_lifecycle(self.comms)

@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
 from pydantic import BaseModel, Field
 
-from aiperf.common.enums import CommAddress
+from aiperf.common.config.cli_parameter import CLIParameter
+from aiperf.common.config.groups import Groups
+from aiperf.common.enums import CommAddress, CommunicationBackend
 
 
 class BaseZMQProxyConfig(BaseModel, ABC):
@@ -35,6 +37,8 @@ class BaseZMQProxyConfig(BaseModel, ABC):
 
 class BaseZMQCommunicationConfig(BaseModel, ABC):
     """Configuration for ZMQ communication."""
+
+    comm_backend: ClassVar[CommunicationBackend]
 
     # Proxy config options to be overridden by subclasses
     event_bus_proxy_config: ClassVar[BaseZMQProxyConfig]
@@ -157,10 +161,19 @@ class ZMQIPCProxyConfig(BaseZMQProxyConfig):
 class ZMQTCPConfig(BaseZMQCommunicationConfig):
     """Configuration for TCP transport."""
 
-    host: str = Field(
-        default="0.0.0.0",
-        description="Host address for TCP connections",
-    )
+    _CLI_GROUP = Groups.ZMQ_COMMUNICATION
+    comm_backend: ClassVar[CommunicationBackend] = CommunicationBackend.ZMQ_TCP
+
+    host: Annotated[
+        str,
+        Field(
+            description="Host address for TCP connections",
+        ),
+        CLIParameter(
+            name=("--zmq-host"),
+            group=_CLI_GROUP,
+        ),
+    ] = "0.0.0.0"
     records_push_pull_port: int = Field(
         default=5557, description="Port for inference push/pull messages"
     )
@@ -211,7 +224,20 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
 class ZMQIPCConfig(BaseZMQCommunicationConfig):
     """Configuration for IPC transport."""
 
-    path: str = Field(default="/tmp/aiperf", description="Path for IPC sockets")
+    _CLI_GROUP = Groups.ZMQ_COMMUNICATION
+    comm_backend: ClassVar[CommunicationBackend] = CommunicationBackend.ZMQ_IPC
+
+    path: Annotated[
+        str,
+        Field(
+            description="Path for IPC sockets",
+        ),
+        CLIParameter(
+            name=("--zmq-ipc-path"),
+            group=_CLI_GROUP,
+        ),
+    ] = "/tmp/aiperf"
+
     dataset_manager_proxy_config: ZMQIPCProxyConfig = Field(  # type: ignore
         default=ZMQIPCProxyConfig(name="dataset_manager_proxy"),
         description="Configuration for the ZMQ Dealer Router Proxy. If provided, the proxy will be created and started.",

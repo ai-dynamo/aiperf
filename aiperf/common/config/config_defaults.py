@@ -9,7 +9,6 @@ from aiperf.common.enums import (
     AIPerfLogLevel,
     AIPerfUIType,
     AudioFormat,
-    CommunicationBackend,
     CustomDatasetType,
     EndpointType,
     ImageFormat,
@@ -136,8 +135,6 @@ class SystemDefaults:
 @dataclass(frozen=True)
 class ServiceDefaults:
     SERVICE_RUN_TYPE = ServiceRunType.MULTIPROCESSING
-    COMM_BACKEND = CommunicationBackend.ZMQ_IPC
-    COMM_CONFIG = None
     LOG_LEVEL = AIPerfLogLevel.INFO
     VERBOSE = False
     EXTRA_VERBOSE = False

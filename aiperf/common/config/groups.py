@@ -27,3 +27,4 @@ class Groups:
     DEVELOPER = Group.create_ordered("Developer")
     NODE_CONTROLLER = Group.create_ordered("Node Controller")
     SYSTEM_CONTROLLER = Group.create_ordered("System Controller")
+    ZMQ_COMMUNICATION = Group.create_ordered("ZMQ Communication")
