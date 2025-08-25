@@ -86,4 +86,4 @@ def test_streaming_validation():
         streaming=True,
         model_names=["gpt2"],
     )
-    assert not config.streaming  # Streaming is not supported for embeddings
+    assert config.streaming  # Streaming was set to True.

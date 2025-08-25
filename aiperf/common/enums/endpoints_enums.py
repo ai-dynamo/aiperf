@@ -63,7 +63,7 @@ class EndpointType(BasePydanticBackedStrEnum):
     OPENAI_EMBEDDINGS = EndpointTypeInfo(
         tag="embeddings",
         service_kind=EndpointServiceKind.OPENAI,
-        supports_streaming=False,
+        supports_streaming=True,
         produces_tokens=False,
         endpoint_path="/v1/embeddings",
         metrics_title="Embeddings Metrics",
