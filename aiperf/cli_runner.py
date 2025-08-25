@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.cli_utils import raise_startup_error_and_exit
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config import NodeConfig, ServiceConfig, UserConfig
 from aiperf.common.enums.ui_enums import AIPerfUIType
 
 
@@ -52,3 +52,50 @@ def run_system_controller(
         raise
     finally:
         logger.debug("AIPerf System exited")
+
+
+def run_node_controller(
+    service_config: ServiceConfig,
+    node_config: NodeConfig,
+) -> None:
+    """Run the node controller with the given configuration."""
+
+    from aiperf.common.aiperf_logger import AIPerfLogger
+    from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.common.config import EndpointConfig
+    from aiperf.controller import NodeController
+    from aiperf.module_loader import ensure_modules_loaded
+
+    logger = AIPerfLogger(__name__)
+
+    log_queue = None
+    from aiperf.common.logging import setup_rich_logging
+
+    user_config = UserConfig(endpoint=EndpointConfig(model_names=["gpt-oss"]))
+
+    setup_rich_logging(user_config, service_config)
+
+    # Create and start the node controller
+    logger.info(f"Starting AIPerf Node {node_config.node_id}")
+
+    try:
+        ensure_modules_loaded()
+    except Exception as e:
+        raise_startup_error_and_exit(
+            f"Error loading modules: {e}",
+            title="Error Loading Modules",
+        )
+
+    try:
+        bootstrap_and_run_service(
+            NodeController,
+            service_id=f"node_controller_{node_config.node_id}",
+            user_config=user_config,
+            service_config=service_config,
+            log_queue=log_queue,
+        )
+    except Exception:
+        logger.exception("Error running AIPerf Node")
+        raise
+    finally:
+        logger.debug("AIPerf Node exited")

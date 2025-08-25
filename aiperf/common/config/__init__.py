@@ -83,6 +83,9 @@ from aiperf.common.config.loader import (
 from aiperf.common.config.loadgen_config import (
     LoadGeneratorConfig,
 )
+from aiperf.common.config.node_config import (
+    NodeConfig,
+)
 from aiperf.common.config.output_config import (
     OutputConfig,
 )
@@ -142,6 +145,7 @@ __all__ = [
     "InputTokensDefaults",
     "LoadGeneratorConfig",
     "LoadGeneratorDefaults",
+    "NodeConfig",
     "OutputConfig",
     "OutputDefaults",
     "OutputTokensConfig",
