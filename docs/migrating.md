@@ -17,13 +17,15 @@ limitations under the License.
 
 # Migrating from GenAI-Perf
 
-AIPerf is designed to be a near drop in replacement for GenAI-Perf. There are only a few exceptions that will impact your installation and usage.
+AIPerf is designed to be a drop in replacement for GenAI-Perf. There are only a few options from GenAI-Perf that do not directly map to AIPerf options. These are noted below.
+Some options , mainly around the analyze subcommand, may not yet be supported but are coming in the near future.
 <br>
 
 ## Known Option Differences
 
-- --max-threads: AIPerf will auto scale to deliver the workload requested. Setting a max-thread option is no longer necessary.
-- "--": The passthrough args flag is no longer required. All options are now natively supported by AIPerf.
+- `--max-threads`: AIPerf will auto scale to deliver the workload requested. Setting a max-thread option is no longer necessary.
+`--workers-max` is an option available if controlling the worker count is preferred.
+- `--`: The passthrough args flag is no longer required. All options are now natively supported by AIPerf.
 
 Removing the above options should be all that is required to have your previous GenAI-Perf commands work in AIPerf.
 
