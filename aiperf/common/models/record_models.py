@@ -372,12 +372,40 @@ class ReasoningResponseData(BaseResponseData):
         return "".join([self.reasoning or "", self.content or ""])
 
 
+class EmbeddingResponseData(BaseResponseData):
+    """Parsed embedding response data."""
+
+    embeddings: list[list[float]] = Field(
+        ..., description="The embedding vectors from the response."
+    )
+
+    def get_text(self) -> str:
+        """Get the text of the response (empty for embeddings)."""
+        return ""
+
+
+class RankingResponseData(BaseResponseData):
+    """Parsed ranking response data."""
+
+    ranking: list[dict[str, Any]] = Field(
+        ..., description="The ranking results from the response."
+    )
+
+    def get_text(self) -> str:
+        """Get the text of the response (empty for ranking)."""
+        return ""
+
+
 class ParsedResponse(AIPerfBaseModel):
     """Parsed response from a inference client."""
 
     perf_ns: int = Field(description="The performance timestamp of the response.")
     data: SerializeAsAny[
-        ReasoningResponseData | TextResponseData | BaseResponseData
+        ReasoningResponseData
+        | TextResponseData
+        | EmbeddingResponseData
+        | RankingResponseData
+        | BaseResponseData
     ] = Field(..., description="The parsed response data.")
 
 

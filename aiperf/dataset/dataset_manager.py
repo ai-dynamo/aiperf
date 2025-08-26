@@ -7,13 +7,8 @@ import time
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import (
-    CommAddress,
-    CommandType,
-    ComposerType,
-    MessageType,
-    ServiceType,
-)
+from aiperf.common.enums import CommAddress, ComposerType, MessageType, ServiceType
+from aiperf.common.enums.command_enums import CommandType
 from aiperf.common.factories import ComposerFactory, ServiceFactory
 from aiperf.common.hooks import on_command, on_request
 from aiperf.common.messages import (
@@ -31,7 +26,7 @@ from aiperf.common.models import Conversation
 from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
 
-DATASET_CONFIGURATION_TIMEOUT = 300.0
+DATASET_CONFIGURATION_TIMEOUT = 30.0
 
 
 @implements_protocol(ServiceProtocol)
@@ -60,10 +55,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
-        self._session_ids_cache: list[str] = []
-        self._conversation_query_random = random.Random(
-            self.user_config.input.random_seed
-        )
         self.dataset_configured = asyncio.Event()
 
     @on_command(CommandType.PROFILE_CONFIGURE)
@@ -111,7 +102,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         conversations = composer.create_dataset()
         self.dataset = {conv.session_id: conv for conv in conversations}
-        self._session_ids_cache = list(self.dataset.keys())
 
         self.dataset_configured.set()
         await self.publish(
@@ -127,7 +117,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Handle a conversation request."""
         self.debug(lambda: f"Handling conversation request: {message}")
 
-        await self._wait_for_dataset_configuration()
+        # Wait for the dataset to be configured if it is not already
+        if not self.dataset_configured.is_set():
+            self.debug(
+                "Dataset not configured. Waiting for dataset to be configured..."
+            )
+            await asyncio.wait_for(
+                self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
+            )
 
         if not self.dataset:
             raise self._service_error(
@@ -150,8 +147,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Return any conversation from the dataset based on the user specified method."""
 
         # TODO: Implement the user specified method (random, round robin, etc.)
-        session_id = self._conversation_query_random.choice(self._session_ids_cache)
-        conversation = self.dataset[session_id]
+        conversation = random.choice(list(self.dataset.values()))
         self.trace_or_debug(
             lambda: f"Sending random conversation response: {conversation}",
             lambda: f"Sending random conversation response with id: {conversation.session_id}",
@@ -222,9 +218,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             lambda: f"Handling dataset timing request: {message}",
             "Handling dataset timing request",
         )
-
-        await self._wait_for_dataset_configuration()
-
         if not self.dataset:
             raise self._service_error(
                 "Dataset is empty and must be configured before handling timing requests.",
@@ -240,16 +233,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             request_id=message.request_id,
             timing_data=timing_dataset,
         )
-
-    async def _wait_for_dataset_configuration(self) -> None:
-        """Wait for the dataset to be configured if it is not already."""
-        if not self.dataset_configured.is_set():
-            self.debug(
-                "Dataset not configured. Waiting for dataset to be configured..."
-            )
-            await asyncio.wait_for(
-                self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
-            )
 
 
 def main() -> None:

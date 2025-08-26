@@ -174,7 +174,7 @@ class PromptConfig(BaseConfig):
         int,
         Field(
             description="The batch size of text requests AIPerf should send.\n"
-            "This is currently supported with the embeddings and rankings endpoint types",
+            "This is currently supported with the embeddings and ranking endpoint types",
         ),
         CLIParameter(
             name=(

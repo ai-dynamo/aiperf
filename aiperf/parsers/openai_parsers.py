@@ -15,8 +15,10 @@ from aiperf.common.factories import (
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     BaseResponseData,
+    EmbeddingResponseData,
     InferenceServerResponse,
     ParsedResponse,
+    RankingResponseData,
     ReasoningResponseData,
     RequestRecord,
     SSEMessage,
@@ -31,6 +33,7 @@ from aiperf.common.utils import load_json_str
     EndpointType.OPENAI_CHAT_COMPLETIONS,
     EndpointType.OPENAI_COMPLETIONS,
     EndpointType.OPENAI_EMBEDDINGS,
+    EndpointType.RANKING,
     EndpointType.OPENAI_RESPONSES,
 )
 class OpenAIResponseExtractor(AIPerfLoggerMixin):
@@ -85,28 +88,42 @@ class OpenAIResponseExtractor(AIPerfLoggerMixin):
 
         try:
             json_str = load_json_str(raw_text)
-            if "object" not in json_str:
-                self.warning(f"Invalid OpenAI object: {raw_text}")
+
+            # Try to determine object type from "object" field
+            if "object" in json_str:
+                try:
+                    object_type = OpenAIObjectType(json_str["object"])
+                except ValueError:
+                    self.warning(
+                        f"Unsupported OpenAI object type received: {json_str['object']}"
+                    )
+                    return None
+            else:
+                # For responses without "object" field, infer type from structure
+                object_type = self._infer_object_type(json_str)
+                if object_type is None:
+                    self.warning(f"Cannot determine response type: {raw_text}")
+                    return None
+
+            try:
+                parser = OpenAIObjectParserFactory.get_or_create_instance(object_type)
+                return parser.parse(json_str)
+            except FactoryCreationError:
+                self.warning(f"No parser found for object type: {object_type!r}")
                 return None
+
         except orjson.JSONDecodeError as e:
             self.warning(f"Invalid JSON: {raw_text} - {e!r}")
             return None
 
-        try:
-            object_type = OpenAIObjectType(json_str["object"])
-        except ValueError:
-            self.warning(
-                f"Unsupported OpenAI object type received: {json_str['object']}"
-            )
-            return None
+    def _infer_object_type(self, json_obj: dict[str, Any]) -> OpenAIObjectType | None:
+        """Infer the object type from the JSON structure for responses without explicit 'object' field."""
+        # Check for NIM ranking format
+        if "rankings" in json_obj:
+            return OpenAIObjectType.NIM_RANKING
 
-        try:
-            parser = OpenAIObjectParserFactory.get_or_create_instance(object_type)
-        except FactoryCreationError:
-            self.warning(f"No parser found for OpenAI object type: {object_type!r}")
-            return None
-
-        return parser.parse(json_str)
+        # Add other format detection as needed
+        return None
 
 
 def _parse_chat_common(sub_obj: dict[str, Any]) -> BaseResponseData | None:
@@ -161,9 +178,33 @@ class ListParser(OpenAIObjectParserProtocol):
             isinstance(item, dict) and item.get("object") == OpenAIObjectType.EMBEDDING
             for item in data
         ):
-            return None
+            return _make_embedding_response_data(data)
         else:
             raise ValueError(f"Received invalid list in response: {obj}")
+
+
+@OpenAIObjectParserFactory.register(OpenAIObjectType.RANKING)
+class RankingParser(OpenAIObjectParserProtocol):
+    """Parser for Ranking objects."""
+
+    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
+        """Parse a Ranking object."""
+        ranking = obj.get("data", [])
+        if not ranking:
+            return None
+        return RankingResponseData(ranking=ranking)
+
+
+@OpenAIObjectParserFactory.register(OpenAIObjectType.NIM_RANKING)
+class NimRankingParser(OpenAIObjectParserProtocol):
+    """Parser for NIM-style ranking objects with 'rankings' field."""
+
+    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
+        """Parse a NIM ranking object."""
+        ranking = obj.get("rankings", [])
+        if not ranking:
+            return None
+        return RankingResponseData(ranking=ranking)
 
 
 @OpenAIObjectParserFactory.register(OpenAIObjectType.RESPONSE)
@@ -187,3 +228,9 @@ class TextCompletionParser(OpenAIObjectParserProtocol):
 def _make_text_response_data(text: str | None) -> TextResponseData | None:
     """Make a TextResponseData object from a string or return None if the text is empty."""
     return TextResponseData(text=text) if text else None
+
+
+def _make_embedding_response_data(data: list[dict[str, Any]]) -> EmbeddingResponseData:
+    """Create an EmbeddingResponseData from embedding data."""
+    embeddings = [item.get("embedding", []) for item in data]
+    return EmbeddingResponseData(embeddings=embeddings)

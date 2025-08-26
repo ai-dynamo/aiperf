@@ -14,5 +14,7 @@ class OpenAIObjectType(CaseInsensitiveStrEnum):
     COMPLETION = "completion"
     EMBEDDING = "embedding"
     LIST = "list"
+    RANKING = "ranking"
+    NIM_RANKING = "nim_ranking"  # For NIM-style ranking responses with "rankings" field
     RESPONSE = "response"
     TEXT_COMPLETION = "text_completion"

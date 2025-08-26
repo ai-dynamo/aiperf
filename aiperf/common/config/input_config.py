@@ -36,9 +36,6 @@ class InputConfig(BaseConfig):
         """Validate the fixed schedule configuration."""
         if self.fixed_schedule and self.file is None:
             raise ValueError("Fixed schedule requires a file to be provided")
-        if self.file is not None:
-            self.fixed_schedule = True
-            logger.debug("Fixed schedule is enabled because file is provided")
         return self
 
     @model_validator(mode="after")

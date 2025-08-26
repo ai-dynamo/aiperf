@@ -16,7 +16,9 @@ from aiperf.parsers.openai_parsers import (
     ChatCompletionParser,
     CompletionParser,
     ListParser,
+    NimRankingParser,
     OpenAIResponseExtractor,
+    RankingParser,
     ResponseParser,
     TextCompletionParser,
 )
@@ -27,7 +29,9 @@ __all__ = [
     "CompletionParser",
     "InferenceResultParser",
     "ListParser",
+    "NimRankingParser",
     "OpenAIResponseExtractor",
+    "RankingParser",
     "ResponseParser",
     "TextCompletionParser",
 ]

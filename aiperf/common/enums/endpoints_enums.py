@@ -68,6 +68,14 @@ class EndpointType(BasePydanticBackedStrEnum):
         endpoint_path="/v1/embeddings",
         metrics_title="Embeddings Metrics",
     )
+    RANKING = EndpointTypeInfo(
+        tag="ranking",
+        service_kind=EndpointServiceKind.OPENAI,
+        supports_streaming=False,
+        produces_tokens=False,
+        endpoint_path="/v1/ranking",
+        metrics_title="Ranking Metrics",
+    )
     OPENAI_RESPONSES = EndpointTypeInfo(
         tag="responses",
         service_kind=EndpointServiceKind.OPENAI,

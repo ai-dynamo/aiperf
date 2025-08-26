@@ -18,6 +18,7 @@ from aiperf.common.models import ErrorDetails, RequestRecord
     EndpointType.OPENAI_CHAT_COMPLETIONS,
     EndpointType.OPENAI_COMPLETIONS,
     EndpointType.OPENAI_EMBEDDINGS,
+    EndpointType.RANKING,
     EndpointType.OPENAI_RESPONSES,
 )
 class OpenAIClientAioHttp(AioHttpClientMixin, AIPerfLoggerMixin, ABC):
