@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from aiperf.clients.http.aiohttp_client import AioHttpClientMixin
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation, RequestRecord
 
 AIPERF_DATASET_CACHE_DIR = Path(".cache/aiperf/datasets")
@@ -99,10 +100,10 @@ class BasePublicDatasetLoader(AioHttpClientMixin):
         """
         if not self.cache_filepath.exists():
             self.info(f"No local dataset cache found, downloading from {self.url}")
-            response: RequestRecord = await self.get_request(self.url, headers=headers)
+            record: RequestRecord = await self.get_request(self.url, headers=headers)
             await self.close()
 
-            dataset = response.responses[0].text
+            dataset = record.responses[0].text
             self._save_to_local(dataset)
             return dataset
 
@@ -115,10 +116,13 @@ class BasePublicDatasetLoader(AioHttpClientMixin):
         Args:
             dataset: The raw dataset payload downloaded from the URL.
         """
-        self.cache_filepath.parent.mkdir(parents=True, exist_ok=True)
         self.info(f"Saving {self.tag} dataset to local cache {self.cache_filepath}")
-        with open(self.cache_filepath, "w") as f:
-            f.write(dataset)
+        try:
+            self.cache_filepath.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.cache_filepath, "w") as f:
+                f.write(dataset)
+        except Exception as e:
+            raise DatasetLoaderError(f"Error saving dataset to local cache: {e}") from e
 
     def _load_from_local(self) -> str:
         """
@@ -132,8 +136,9 @@ class BasePublicDatasetLoader(AioHttpClientMixin):
             with open(self.cache_filepath) as f:
                 return f.read()
         except Exception as e:
-            self.error(f"Error loading dataset from local cache: {e}")
-            raise e
+            raise DatasetLoaderError(
+                f"Error loading dataset from local cache: {e}"
+            ) from e
 
     def is_valid_sequence(
         self,

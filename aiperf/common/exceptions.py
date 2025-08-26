@@ -58,6 +58,10 @@ class DatasetError(AIPerfError):
     """Generic dataset error."""
 
 
+class DatasetLoaderError(AIPerfError):
+    """Generic dataset loader error."""
+
+
 class DatasetGeneratorError(AIPerfError):
     """Generic dataset generator error."""
 

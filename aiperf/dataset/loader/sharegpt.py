@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import random
 import uuid
 from typing import Any
@@ -16,6 +15,7 @@ from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.common.utils import load_json_str
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 
 
@@ -68,7 +68,7 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         loaded_dataset = await self._load_dataset(
             headers={"Accept": "application/json"}
         )
-        return json.loads(loaded_dataset)
+        return load_json_str(loaded_dataset)
 
     # TODO: distribute this work across the processors
     async def convert_to_conversations(

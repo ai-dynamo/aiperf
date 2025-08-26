@@ -39,7 +39,6 @@ from aiperf.dataset.loader import (
 from aiperf.dataset.utils import (
     check_file_exists,
     encode_image,
-    load_json_str,
     open_image,
     sample_normal,
     sample_positive_normal,
@@ -75,7 +74,6 @@ __all__ = [
     "SyntheticDatasetComposer",
     "check_file_exists",
     "encode_image",
-    "load_json_str",
     "main",
     "open_image",
     "sample_normal",
