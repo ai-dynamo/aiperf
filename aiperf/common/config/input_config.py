@@ -3,13 +3,13 @@
 
 from typing import Annotated, Any
 
-from cyclopts import Parameter
 from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
@@ -73,7 +73,7 @@ class InputConfig(BaseConfig):
             "Inputs should be in an 'input_name:value' format.\n"
             "Alternatively, a string representing a json formatted dict can be provided.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--extra-inputs",  # GenAI-Perf
             ),
@@ -91,7 +91,7 @@ class InputConfig(BaseConfig):
             "Alternatively, a string representing a json formatted dict can be provided.",
         ),
         BeforeValidator(parse_str_or_dict_as_tuple_list),
-        Parameter(
+        CLIParameter(
             name=(
                 "--header",  # GenAI-Perf
                 "-H",  # GenAI-Perf
@@ -109,7 +109,7 @@ class InputConfig(BaseConfig):
             "to support different types of user provided datasets.",
         ),
         BeforeValidator(parse_file),
-        Parameter(
+        CLIParameter(
             name=(
                 "--input-file",  # GenAI-Perf,
             ),
@@ -122,7 +122,7 @@ class InputConfig(BaseConfig):
         Field(
             description="Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file parameter, but can be set manually here."
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--fixed-schedule",  # GenAI-Perf
             ),
@@ -138,7 +138,7 @@ class InputConfig(BaseConfig):
             "timestamp is considered 0, and the rest are shifted accordingly. If disabled, the timestamps will be "
             "assumed to be relative to 0."
         ),
-        Parameter(
+        CLIParameter(
             name=("--fixed-schedule-auto-offset",),
             group=_CLI_GROUP,
         ),
@@ -154,7 +154,7 @@ class InputConfig(BaseConfig):
             "option cannot be used in conjunction with the --fixed-schedule-auto-offset. The schedule will include "
             "any requests at the start offset.",
         ),
-        Parameter(
+        CLIParameter(
             name=("--fixed-schedule-start-offset",),
             group=_CLI_GROUP,
         ),
@@ -169,7 +169,7 @@ class InputConfig(BaseConfig):
             "ends at the last timestamp in the trace dataset, but this option can be used to only run a subset of the trace. "
             "The schedule will include any requests at the end offset.",
         ),
-        Parameter(
+        CLIParameter(
             name=("--fixed-schedule-end-offset",),
             group=_CLI_GROUP,
         ),
@@ -191,7 +191,7 @@ class InputConfig(BaseConfig):
             description="The type of custom dataset to use.\n"
             "This parameter is used in conjunction with the --file parameter.",
         ),
-        Parameter(
+        CLIParameter(
             name=("--custom-dataset-type"),
             group=_CLI_GROUP,
         ),
@@ -205,7 +205,7 @@ class InputConfig(BaseConfig):
             "Set to some value to make the synthetic data generation deterministic.\n"
             "It will use system default if not provided.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--random-seed",  # GenAI-Perf
             ),

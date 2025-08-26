@@ -106,6 +106,10 @@ class NotInitializedError(AIPerfError):
     """Exception raised when something that should be initialized is not."""
 
 
+class NoMetricValue(AIPerfError):
+    """Raised when a metric value is not available."""
+
+
 class ProxyError(AIPerfError):
     """Exception raised when a proxy encounters an error."""
 

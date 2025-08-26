@@ -101,13 +101,11 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
 
             # Drop credits asynchronously for all conversations at this timestamp
             for conversation_id in conversation_ids:
-                self.execute_async(
-                    self.credit_manager.drop_credit(
-                        credit_phase=CreditPhase.PROFILING,
-                        conversation_id=conversation_id,
-                        # We already waited, so it can be sent ASAP
-                        credit_drop_ns=None,
-                    )
+                await self.credit_manager.drop_credit(
+                    credit_phase=CreditPhase.PROFILING,
+                    conversation_id=conversation_id,
+                    # We already waited, so it can be sent ASAP
+                    credit_drop_ns=None,
                 )
                 phase_stats.sent += 1
 

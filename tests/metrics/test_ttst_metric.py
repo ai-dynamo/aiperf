@@ -3,6 +3,7 @@
 
 import pytest
 
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.ttst_metric import TTSTMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
@@ -64,7 +65,7 @@ class TestTTSTMetric:
 
         metric = TTSTMetric()
         with pytest.raises(
-            ValueError,
+            NoMetricValue,
             match="Record must have at least two responses to calculate TTST",
         ):
             metric.parse_record(record, MetricRecordDict())

@@ -1,18 +1,28 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated
+import sys
+from pathlib import Path
+from typing import Annotated, Any
 
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.cli_parameter import DisableCLI
+from aiperf.common.config.config_validators import coerce_value
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
-from aiperf.common.enums import RequestRateMode, TimingMode
+from aiperf.common.enums.endpoints_enums import EndpointServiceKind
+from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
+
+
+def _should_quote_arg(x: Any) -> bool:
+    """Determine if the value should be quoted in the CLI command."""
+    return isinstance(x, str) and not x.startswith("-") and x not in ("profile")
 
 
 class UserConfig(BaseConfig):
@@ -21,6 +31,15 @@ class UserConfig(BaseConfig):
     """
 
     _timing_mode: TimingMode = TimingMode.REQUEST_RATE
+
+    @model_validator(mode="after")
+    def validate_cli_args(self) -> Self:
+        """Set the CLI command based on the command line arguments, if it has not already been set."""
+        if not self.cli_command:
+            args = [coerce_value(x) for x in sys.argv[1:]]
+            args = [f'"{x}"' if _should_quote_arg(x) else str(x) for x in args]
+            self.cli_command = " ".join(["aiperf", *args])
+        return self
 
     @model_validator(mode="after")
     def validate_timing_mode(self) -> Self:
@@ -78,6 +97,79 @@ class UserConfig(BaseConfig):
             description="Load Generator configuration",
         ),
     ] = LoadGeneratorConfig()
+
+    cli_command: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="The CLI command for the user config.",
+        ),
+        DisableCLI(reason="This is automatically set by the CLI"),
+    ] = None
+
+    @model_validator(mode="after")
+    def _compute_config(self) -> Self:
+        """Compute additional configuration.
+
+        This method is automatically called after the model is validated to compute additional configuration.
+        """
+
+        if "artifact_directory" not in self.output.model_fields_set:
+            self.output.artifact_directory = self._compute_artifact_directory()
+
+        return self
+
+    def _compute_artifact_directory(self) -> Path:
+        """Compute the artifact directory based on the user selected options."""
+        names: list[str] = [
+            self._get_artifact_model_name(),
+            self._get_artifact_service_kind(),
+            self._get_artifact_stimulus(),
+        ]
+        return self.output.artifact_directory / "-".join(names)
+
+    def _get_artifact_model_name(self) -> str:
+        """Get the artifact model name based on the user selected options."""
+        model_name: str = self.endpoint.model_names[0]
+        if len(self.endpoint.model_names) > 1:
+            model_name = f"{model_name}_multi"
+
+        # Preprocess Huggingface model names that include '/' in their model name.
+        if "/" in model_name:
+            filtered_name = "_".join(model_name.split("/"))
+            from aiperf.common.logging import AIPerfLogger
+
+            _logger = AIPerfLogger(__name__)
+            _logger.info(
+                f"Model name '{model_name}' cannot be used to create artifact "
+                f"directory. Instead, '{filtered_name}' will be used."
+            )
+            model_name = filtered_name
+        return model_name
+
+    def _get_artifact_service_kind(self) -> str:
+        """Get the service kind name based on the endpoint config."""
+        if self.endpoint.type.service_kind == EndpointServiceKind.OPENAI:
+            return f"{self.endpoint.type.service_kind}-{self.endpoint.type}"
+        else:
+            raise ValueError(
+                f"Unknown service kind '{self.endpoint.type.service_kind}'."
+            )
+
+    def _get_artifact_stimulus(self) -> str:
+        """Get the stimulus name based on the timing mode."""
+        match self._timing_mode:
+            case TimingMode.REQUEST_RATE:
+                stimulus = []
+                if self.loadgen.concurrency is not None:
+                    stimulus.append(f"concurrency{self.loadgen.concurrency}")
+                if self.loadgen.request_rate is not None:
+                    stimulus.append(f"request_rate{self.loadgen.request_rate}")
+                return "-".join(stimulus)
+            case TimingMode.FIXED_SCHEDULE:
+                return "fixed_schedule"
+            case _:
+                raise ValueError(f"Unknown timing mode '{self._timing_mode}'.")
 
     @property
     def timing_mode(self) -> TimingMode:

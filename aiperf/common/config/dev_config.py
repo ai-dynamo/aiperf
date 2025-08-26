@@ -4,13 +4,12 @@
 
 from typing import Annotated
 
-from cyclopts import Parameter
 from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.cli_parameter import DeveloperOnlyCLI
 from aiperf.common.config.config_defaults import DevDefaults
 from aiperf.common.config.config_validators import parse_service_types
-from aiperf.common.config.groups import Groups
 from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.enums.service_enums import ServiceType
 
@@ -46,8 +45,6 @@ class DeveloperConfig(BaseConfig):
     NOTE: These settings are only available in developer mode.
     """
 
-    _CLI_GROUP = Groups.DEVELOPER
-
     enable_yappi: Annotated[
         bool,
         Field(
@@ -56,10 +53,8 @@ class DeveloperConfig(BaseConfig):
             "The output '.prof' files can be viewed with snakeviz. Requires yappi and snakeviz to be installed. "
             "Run 'pip install yappi snakeviz' to install them.",
         ),
-        Parameter(
+        DeveloperOnlyCLI(
             name=("--enable-yappi-profiling"),
-            parse=AIPERF_DEV_MODE,  # Only show this flag if developer mode is enabled
-            group=_CLI_GROUP,
         ),
     ] = DevDefaults.ENABLE_YAPPI
 
@@ -69,10 +64,8 @@ class DeveloperConfig(BaseConfig):
             description="*[Developer use only]* List of services to enable debug logging for. Can be a comma-separated list, a single service type, "
             "or the cli flag can be used multiple times.",
         ),
-        Parameter(
+        DeveloperOnlyCLI(
             name=("--debug-service", "--debug-services"),
-            parse=AIPERF_DEV_MODE,  # Only show this flag if developer mode is enabled
-            group=_CLI_GROUP,
         ),
         BeforeValidator(parse_service_types),
     ] = DevDefaults.DEBUG_SERVICES
@@ -83,10 +76,8 @@ class DeveloperConfig(BaseConfig):
             description="*[Developer use only]* List of services to enable trace logging for. Can be a comma-separated list, a single service type, "
             "or the cli flag can be used multiple times.",
         ),
-        Parameter(
+        DeveloperOnlyCLI(
             name=("--trace-service", "--trace-services"),
-            parse=AIPERF_DEV_MODE,  # Only show this flag if developer mode is enabled
-            group=_CLI_GROUP,
         ),
         BeforeValidator(parse_service_types),
     ] = DevDefaults.TRACE_SERVICES
@@ -96,10 +87,8 @@ class DeveloperConfig(BaseConfig):
         Field(
             description="*[Developer use only]* Whether to show internal and hidden metrics in the output",
         ),
-        Parameter(
+        DeveloperOnlyCLI(
             name=("--show-internal-metrics"),
-            parse=AIPERF_DEV_MODE,  # Only show this flag if developer mode is enabled
-            group=_CLI_GROUP,
         ),
     ] = DevDefaults.SHOW_INTERNAL_METRICS
 
@@ -108,9 +97,7 @@ class DeveloperConfig(BaseConfig):
         Field(
             description="*[Developer use only]* Disable the use of uvloop, and use the default asyncio event loop instead.",
         ),
-        Parameter(
+        DeveloperOnlyCLI(
             name=("--disable-uvloop"),
-            parse=AIPERF_DEV_MODE,  # Only show this flag if developer mode is enabled
-            group=_CLI_GROUP,
         ),
     ] = DevDefaults.DISABLE_UVLOOP

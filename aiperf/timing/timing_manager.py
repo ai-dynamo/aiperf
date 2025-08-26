@@ -167,7 +167,8 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
     @on_pull_message(MessageType.CREDIT_RETURN)
     async def _on_credit_return(self, message: CreditReturnMessage) -> None:
         """Handle the credit return message."""
-        self.debug(lambda: f"Timing manager received credit return message: {message}")
+        if self.is_debug_enabled:
+            self.debug(f"Timing manager received credit return message: {message}")
         if self._credit_issuing_strategy:
             await self._credit_issuing_strategy._on_credit_return(message)
 
