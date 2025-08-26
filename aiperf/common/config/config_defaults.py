@@ -10,7 +10,6 @@ from aiperf.common.enums import (
     AIPerfUIType,
     AudioFormat,
     CommunicationBackend,
-    CustomDatasetType,
     EndpointType,
     ImageFormat,
     ModelSelectionStrategy,
@@ -48,7 +47,8 @@ class InputDefaults:
     FIXED_SCHEDULE_AUTO_OFFSET = False
     FIXED_SCHEDULE_START_OFFSET = None
     FIXED_SCHEDULE_END_OFFSET = None
-    CUSTOM_DATASET_TYPE = CustomDatasetType.MOONCAKE_TRACE
+    PUBLIC_DATASET = None
+    CUSTOM_DATASET_TYPE = None
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
 

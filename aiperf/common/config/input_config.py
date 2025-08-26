@@ -19,7 +19,7 @@ from aiperf.common.config.conversation_config import ConversationConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, PublicDatasetType
 
 logger = AIPerfLogger(__name__)
 
@@ -175,9 +175,18 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.FIXED_SCHEDULE_END_OFFSET
 
+    public_dataset: Annotated[
+        PublicDatasetType | None,
+        Field(description="The public dataset to use for the requests."),
+        Parameter(
+            name=("--public-dataset"),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.PUBLIC_DATASET
+
     # NEW AIPerf Option
     custom_dataset_type: Annotated[
-        CustomDatasetType,
+        CustomDatasetType | None,
         Field(
             description="The type of custom dataset to use.\n"
             "This parameter is used in conjunction with the --file parameter.",

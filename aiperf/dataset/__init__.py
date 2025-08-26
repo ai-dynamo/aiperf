@@ -21,6 +21,8 @@ from aiperf.dataset.generator import (
     PromptGenerator,
 )
 from aiperf.dataset.loader import (
+    AIPERF_DATASET_CACHE_DIR,
+    BasePublicDatasetLoader,
     CustomDatasetLoaderProtocol,
     CustomDatasetT,
     MediaConversionMixin,
@@ -30,6 +32,7 @@ from aiperf.dataset.loader import (
     MultiTurnDatasetLoader,
     RandomPool,
     RandomPoolDatasetLoader,
+    ShareGPTLoader,
     SingleTurn,
     SingleTurnDatasetLoader,
 )
@@ -44,9 +47,11 @@ from aiperf.dataset.utils import (
 )
 
 __all__ = [
+    "AIPERF_DATASET_CACHE_DIR",
     "AudioGenerator",
     "BaseDatasetComposer",
     "BaseGenerator",
+    "BasePublicDatasetLoader",
     "CustomDatasetComposer",
     "CustomDatasetLoaderProtocol",
     "CustomDatasetT",
@@ -64,6 +69,7 @@ __all__ = [
     "RandomPool",
     "RandomPoolDatasetLoader",
     "SUPPORTED_BIT_DEPTHS",
+    "ShareGPTLoader",
     "SingleTurn",
     "SingleTurnDatasetLoader",
     "SyntheticDatasetComposer",

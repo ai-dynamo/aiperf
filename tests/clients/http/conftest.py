@@ -237,7 +237,16 @@ def setup_mock_session(
 ) -> AsyncMock:
     """Simplified helper to set up aiohttp session mocks with proper async context manager support."""
     if methods is None:
-        methods = ["get", "post", "put", "patch", "delete", "head", "options"]
+        methods = [
+            "request",
+            "get",
+            "post",
+            "put",
+            "patch",
+            "delete",
+            "head",
+            "options",
+        ]
 
     mock_session = AsyncMock()
 

@@ -33,6 +33,7 @@ from aiperf.common.enums.dataset_enums import (
     CustomDatasetType,
     ImageFormat,
     PromptSource,
+    PublicDatasetType,
 )
 from aiperf.common.enums.endpoints_enums import (
     EndpointType,
@@ -135,6 +136,7 @@ __all__ = [
     "MetricValueTypeVarT",
     "ModelSelectionStrategy",
     "PromptSource",
+    "PublicDatasetType",
     "RecordProcessorType",
     "RequestRateMode",
     "ResultsProcessorType",

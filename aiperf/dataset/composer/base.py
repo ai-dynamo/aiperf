@@ -27,7 +27,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         self.turn_count = 0
 
     @abstractmethod
-    def create_dataset(self) -> list[Conversation]:
+    async def create_dataset(self) -> list[Conversation]:
         """
         Create a set of conversation objects from the given configuration.
 
