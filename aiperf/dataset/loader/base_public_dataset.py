@@ -45,15 +45,14 @@ class BasePublicDatasetLoader(AioHttpClientMixin):
         super().__init__(**kwargs)
         self.cache_filepath = AIPERF_DATASET_CACHE_DIR / self.filename
 
-    async def load_dataset(self) -> list[Conversation]:
+    async def load_dataset(self) -> dict[str, Any]:
         """Load the dataset and convert it to AIPerf Conversation format.
 
         This is the main entry point for dataset loading. Subclasses must implement
         this method to define their specific loading logic.
 
         Returns:
-            list[Conversation]: A list of Conversation objects containing the loaded
-                dataset data, ready for use in AIPerf benchmarking.
+            dict[str, Any]: A dictionary containing the loaded dataset data.
 
         Raises:
             NotImplementedError: Always raised as this is an abstract method.
