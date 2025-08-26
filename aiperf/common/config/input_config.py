@@ -66,6 +66,15 @@ class InputConfig(BaseConfig):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_dataset_type(self) -> Self:
+        """Validate the different dataset type configuration."""
+        if self.public_dataset is not None and self.custom_dataset_type is not None:
+            raise ValueError(
+                "The --public-dataset and --custom-dataset-type options cannot be set together"
+            )
+        return self
+
     extra: Annotated[
         Any,
         Field(
@@ -178,7 +187,7 @@ class InputConfig(BaseConfig):
     public_dataset: Annotated[
         PublicDatasetType | None,
         Field(description="The public dataset to use for the requests."),
-        Parameter(
+        CLIParameter(
             name=("--public-dataset"),
             group=_CLI_GROUP,
         ),
