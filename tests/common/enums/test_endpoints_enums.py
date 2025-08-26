@@ -14,7 +14,7 @@ class TestEndpointInfo:
         "tag,supports_streaming,produces_tokens,endpoint_path,metrics_title",
         [
             ("chat", True, True, "/v1/chat/completions", "LLM Metrics"),
-            ("embeddings", True, True, "/v1/embeddings", "Embeddings Metrics"),
+            ("embeddings", False, False, "/v1/embeddings", "Embeddings Metrics"),
             ("custom", True, False, None, None),
             ("test", False, True, "/test", "Test Metrics"),
         ],
