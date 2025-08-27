@@ -78,6 +78,7 @@ from aiperf.common.config.input_config import (
     logger,
 )
 from aiperf.common.config.loader import (
+    load_node_config,
     load_service_config,
     load_user_config,
 )
@@ -177,6 +178,7 @@ __all__ = [
     "ZMQTCPProxyConfig",
     "coerce_value",
     "custom_enum_converter",
+    "load_node_config",
     "load_service_config",
     "load_user_config",
     "logger",

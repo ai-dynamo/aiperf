@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from aiperf.common.config.node_config import NodeConfig
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
 
@@ -14,3 +15,9 @@ def load_user_config() -> UserConfig:
     """Load the user configuration."""
     # TODO: implement
     raise NotImplementedError("User configuration is not implemented")
+
+
+def load_node_config() -> NodeConfig:
+    """Load the node configuration."""
+    # TODO: implement
+    return NodeConfig()

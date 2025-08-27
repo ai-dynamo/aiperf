@@ -42,7 +42,7 @@ def profile(
 
 @app.command(name="node")
 def node(
-    node_config: NodeConfig,
+    node_config: NodeConfig | None = None,
     service_config: ServiceConfig | None = None,
 ) -> None:
     """Start an AIPerf node with the given ID."""
@@ -51,6 +51,7 @@ def node(
         from aiperf.common.config import load_service_config
 
         service_config = service_config or load_service_config()
+        node_config = node_config or NodeConfig()
 
         run_node_controller(service_config, node_config)
 

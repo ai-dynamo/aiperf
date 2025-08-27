@@ -4,7 +4,8 @@
 from abc import ABC, abstractmethod
 from typing import Annotated, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from typing_extensions import Self
 
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.groups import Groups
@@ -83,8 +84,8 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
 class ZMQTCPProxyConfig(BaseZMQProxyConfig):
     """Configuration for TCP proxy."""
 
-    host: str = Field(
-        default="0.0.0.0",
+    host: str | None = Field(
+        default=None,
         description="Host address for TCP connections",
     )
     frontend_port: int = Field(
@@ -101,24 +102,37 @@ class ZMQTCPProxyConfig(BaseZMQProxyConfig):
     )
 
     @property
+    def host_address(self) -> str:
+        """Get the host address based on protocol configuration."""
+        return self.host or "0.0.0.0"
+
+    @property
     def frontend_address(self) -> str:
         """Get the frontend address based on protocol configuration."""
-        return f"tcp://{self.host}:{self.frontend_port}"
+        return f"tcp://{self.host_address}:{self.frontend_port}"
 
     @property
     def backend_address(self) -> str:
         """Get the backend address based on protocol configuration."""
-        return f"tcp://{self.host}:{self.backend_port}"
+        return f"tcp://{self.host_address}:{self.backend_port}"
 
     @property
     def control_address(self) -> str | None:
         """Get the control address based on protocol configuration."""
-        return f"tcp://{self.host}:{self.control_port}" if self.control_port else None
+        return (
+            f"tcp://{self.host_address}:{self.control_port}"
+            if self.control_port
+            else None
+        )
 
     @property
     def capture_address(self) -> str | None:
         """Get the capture address based on protocol configuration."""
-        return f"tcp://{self.host}:{self.capture_port}" if self.capture_port else None
+        return (
+            f"tcp://{self.host_address}:{self.capture_port}"
+            if self.capture_port
+            else None
+        )
 
 
 class ZMQIPCProxyConfig(BaseZMQProxyConfig):
@@ -163,6 +177,18 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
 
     _CLI_GROUP = Groups.ZMQ_COMMUNICATION
     comm_backend: ClassVar[CommunicationBackend] = CommunicationBackend.ZMQ_TCP
+
+    @model_validator(mode="after")
+    def validate_host(self) -> Self:
+        """Fill in the host address for the proxy configs if not provided."""
+        for proxy_config in [
+            self.dataset_manager_proxy_config,
+            self.event_bus_proxy_config,
+            self.raw_inference_proxy_config,
+        ]:
+            if proxy_config.host is None:
+                proxy_config.host = self.host
+        return self
 
     host: Annotated[
         str,

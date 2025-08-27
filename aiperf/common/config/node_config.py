@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import uuid
 from typing import Annotated
 
 from pydantic import Field
@@ -23,12 +24,11 @@ class NodeConfig(BaseSettings):
 
     node_id: Annotated[
         str,
-        Field(
-            ...,
-            description="The ID of the node. This is used to identify the node in the system.",
-        ),
         CLIParameter(
             name=("--node-id", "-n"),
             group=_CLI_GROUP,
         ),
-    ]
+    ] = Field(
+        default_factory=lambda: uuid.uuid4().hex[:8],
+        description="The ID of the node. This is used to identify the node in the system.",
+    )

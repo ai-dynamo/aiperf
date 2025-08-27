@@ -372,12 +372,19 @@ class ReasoningResponseData(BaseResponseData):
         return "".join([self.reasoning or "", self.content or ""])
 
 
+class EmbeddingResponseData(BaseResponseData):
+    """Parsed embedding response data."""
+
+
 class ParsedResponse(AIPerfBaseModel):
     """Parsed response from a inference client."""
 
     perf_ns: int = Field(description="The performance timestamp of the response.")
     data: SerializeAsAny[
-        ReasoningResponseData | TextResponseData | BaseResponseData
+        ReasoningResponseData
+        | TextResponseData
+        | EmbeddingResponseData
+        | BaseResponseData
     ] = Field(..., description="The parsed response data.")
 
 
