@@ -28,7 +28,8 @@ models using various inference solutions.
 
 ## Profile Qwen3-0.6B using Dynamo <a id="dynamo-qwen3-0.6B">
 
-[!Note] The most up to date installation instructions for Dynamo are available on [Github](https://github.com/ai-dynamo/dynamo?tab=readme-ov-file#1-initial-setup)
+> [!NOTE]
+> The most up to date installation instructions for Dynamo are available on [Github](https://github.com/ai-dynamo/dynamo?tab=readme-ov-file#1-initial-setup)
 
 ```bash
 # set environment variables
