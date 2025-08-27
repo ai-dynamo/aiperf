@@ -36,7 +36,7 @@ In AIPerf, the trace must be defined in a jsonl file.
 - "hash_ids": [list of block hashes]
 
 
-
+<!-- skip -->
 ```json
 {
     "timestamp": 0,
@@ -59,7 +59,7 @@ echo \
 > example_trace.jsonl
 
 aiperf profile \
-    -m deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
+    -m Qwen/Qwen3-0.6B \
 	--input-file example_trace.jsonl \
 	--custom-dataset-type mooncake_trace
 ```

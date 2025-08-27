@@ -6,28 +6,37 @@ set -x
 
 time docker pull ${DYNAMO_PREBUILT_IMAGE_TAG}
 
+DYNAMO_REPO_TAG=$(docker run --rm --entrypoint "" ${DYNAMO_PREBUILT_IMAGE_TAG} cat /workspace/version.txt | cut -d'+' -f2)
+
 curl -O https://raw.githubusercontent.com/ai-dynamo/dynamo/${DYNAMO_REPO_TAG}/deploy/docker-compose.yml
 
 docker compose -f docker-compose.yml down || true
-
 docker compose -f docker-compose.yml up -d
 
-time docker pull ${DYNAMO_PREBUILT_IMAGE_TAG}
+docker run \
+  --rm \
+  --gpus all \
+  --network host \
+  "${DYNAMO_PREBUILT_IMAGE_TAG}" \
+  /bin/bash -c "python3 -m dynamo.frontend --http-port 8000 & \
+                python3 -m dynamo.vllm --model Qwen/Qwen3-0.6B --enforce-eager --no-enable-prefix-caching" \
+  > server.log 2>&1 &
 
-curl -O https://raw.githubusercontent.com/ai-dynamo/dynamo/${DYNAMO_REPO_TAG}/container/run.sh
+sleep 2
 
-chmod +x run.sh
-
-./run.sh --image ${DYNAMO_PREBUILT_IMAGE_TAG} -- /bin/bash -c "python3 -m dynamo.frontend --port 8000& python3 -m dynamo.vllm --model ${MODEL} --port 8000 --enforce-eager --no-enable-prefix-caching" > server.log 2>&1 &
-
-timeout 5m /bin/bash -c 'while ! curl -s localhost:8000/v1/models | jq -en "input | (.data // []) | length > 0" > /dev/null 2>&1; do sleep 1; done'
+timeout 5m bash -c 'until curl -fsS localhost:8000/v1/models \
+  | jq -en "input | (.data // []) | length > 0" >/dev/null 2>&1; do sleep 1; done'
 
 if [ $? -eq 124 ]; then
+  echo -e "\033[0;36m╔════════════════════════════════════════╗\033[0m"
+  echo -e "\033[0;36m║           *** SERVER LOG ***           ║\033[0m"
+  echo -e "\033[0;36m╚════════════════════════════════════════╝\033[0m"
   cat server.log
   echo -e "\033[0;31m╔════════════════════════════════════════╗\033[0m"
   echo -e "\033[0;31m║         *** TIMEOUT ERROR ***          ║\033[0m"
-  echo -e "\033[0;31m║  Server did not start after 5 minutes  ║\033[0m"
+  echo -e "\033[0;31m║ Server did not start within 5 minutes  ║\033[0m"
   echo -e "\033[0;31m║          See server log above          ║\033[0m"
   echo -e "\033[0;31m╚════════════════════════════════════════╝\033[0m"
   exit 1
 fi
+

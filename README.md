@@ -75,6 +75,7 @@ QUICK START
 
 Run a simple benchmark against a model:
 
+<!-- skip -->
 ```bash
 aiperf profile \
   --model your_model_name \
