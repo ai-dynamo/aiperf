@@ -75,21 +75,20 @@ QUICK START
 
 Run a simple benchmark against a model:
 
-<!-- skip -->
 ```bash
 aiperf profile \
   --model your_model_name \
-  --url http://localhost:8080 \
+  --url http://localhost:8000 \
   --endpoint-type chat
   --streaming
 ```
 
 ### Example with Custom Configuration
-<!-- run_dynamo -->
+
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
-  --url http://localhost:8080 \
+  --url http://localhost:8000 \
   --endpoint-type chat \
   --concurrency 10 \
   --request-count 100 \

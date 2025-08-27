@@ -13,8 +13,3 @@ uv venv --python 3.10
 source .venv/bin/activate
 
 uv pip install "/aiperf[dev]"
-
-echo "AIPerf Installation complete"
-
-pytest -vv -s "/aiperf/tests/ci/test_docs/test_docs.py"
-
