@@ -17,27 +17,20 @@ limitations under the License.
 
 # Migrating from GenAI-Perf
 
-AIPerf is designed to be a drop in replacement for GenAI-Perf. There are only a few options from GenAI-Perf that do not directly map to AIPerf options. These are noted below.
-Some options , mainly around the analyze subcommand, may not yet be supported but are coming in the near future.
+AIPerf is designed to be a drop in replacement for [GenAI-Perf](https://github.com/triton-inference-server/perf_analyzer). There are only a few options from GenAI-Perf that do not directly map to AIPerf options. These are noted below.
+Some options, mainly around the analyze subcommand, may not yet be supported but are coming in the near future.
 <br>
 
-## Known Option Differences
+## Known CLI Argument Differences
 
-- `--max-threads`: AIPerf will auto scale to deliver the workload requested. Setting a max-thread option is no longer necessary.
-`--workers-max` is an option available if controlling the worker count is preferred.
+- `--max-threads`: Setting a max-thread option is no longer necessary. This was a global setting for GenAI-Perf controlling the total thread count.
+In AIPerf, for more fine grained control over the number of workers issuing requests to the endpoint, the option `--workers-max` is available.
 - `--`: The passthrough args flag is no longer required. All options are now natively supported by AIPerf.
 
 Removing the above options should be all that is required to have your previous GenAI-Perf commands work in AIPerf.
 
 <br>
 
-## Installation
-
-Installation is now a single pip command:
-```
-pip install git+https://github.com/ai-dynamo/aiperf.git
-```
-<br>
 
 ---
 
