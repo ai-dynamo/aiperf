@@ -1,95 +1,31 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 from typing import Any
 
-from openai.types.chat.chat_completion import ChatCompletion
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-from openai.types.completion import Completion
-from openai.types.create_embedding_response import CreateEmbeddingResponse
-from openai.types.responses.response import Response as ResponsesModel
-from pydantic import BaseModel
+import orjson
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.enums import CaseInsensitiveStrEnum, EndpointType
-from aiperf.common.factories import ResponseExtractorFactory
+from aiperf.common.enums import EndpointType, OpenAIObjectType
+from aiperf.common.factories import (
+    FactoryCreationError,
+    OpenAIObjectParserFactory,
+    ResponseExtractorFactory,
+)
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
+    BaseResponseData,
+    EmbeddingResponseData,
     InferenceServerResponse,
+    ParsedResponse,
+    ReasoningResponseData,
     RequestRecord,
-    ResponseData,
     SSEMessage,
     TextResponse,
+    TextResponseData,
 )
-from aiperf.common.tokenizer import Tokenizer
+from aiperf.common.protocols import OpenAIObjectParserProtocol
 from aiperf.common.utils import load_json_str
-
-
-class OpenAIObject(CaseInsensitiveStrEnum):
-    """Types of OpenAI objects."""
-
-    CHAT_COMPLETION = "chat.completion"
-    CHAT_COMPLETION_CHUNK = "chat.completion.chunk"
-    COMPLETION = "completion"
-    EMBEDDING = "embedding"
-    LIST = "list"
-    RESPONSE = "response"
-    TEXT_COMPLETION = "text_completion"
-
-    @classmethod
-    def parse(cls, text: str) -> BaseModel:
-        """Attempt to parse a string into an OpenAI object.
-
-        Raises:
-            ValueError: If the object is invalid.
-        """
-        try:
-            obj = load_json_str(text)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid OpenAI object: {text}") from e
-
-        # Mapping of OpenAI object types to their corresponding Pydantic models.
-        _object_mapping: dict[str, type[BaseModel]] = {
-            cls.CHAT_COMPLETION: ChatCompletion,
-            cls.CHAT_COMPLETION_CHUNK: ChatCompletionChunk,
-            cls.COMPLETION: Completion,
-            cls.RESPONSE: ResponsesModel,
-            cls.TEXT_COMPLETION: Completion,  # Alias for vLLM compatibility
-        }
-
-        obj_type = obj.get("object")
-        if obj_type is None:
-            raise ValueError(f"Invalid OpenAI object: {obj}")
-        if obj_type == cls.LIST:
-            return cls.parse_list(obj)
-        if obj_type not in _object_mapping:
-            raise ValueError(f"Invalid OpenAI object type: {obj_type}")
-        try:
-            # Hotfix: vLLM does not always include a finish_reason, which Pydantic requires.
-            # Without this code, model_validate will raise an objection due to the missing finish_reason.
-            if obj_type == cls.TEXT_COMPLETION:
-                for choice in obj.get("choices", []):
-                    if choice.get("finish_reason") is None:
-                        choice["finish_reason"] = "stop"
-            return _object_mapping[obj_type].model_validate(obj)
-        except Exception as e:
-            raise ValueError(f"Invalid OpenAI object: {text}") from e
-
-    @classmethod
-    def parse_list(cls, obj: Any) -> BaseModel:
-        """Attempt to parse a string into an OpenAI object from a list.
-
-        Raises:
-            ValueError: If the object is invalid.
-        """
-        data = obj.get("data", [])
-        if all(
-            isinstance(item, dict) and item.get("object") == cls.EMBEDDING
-            for item in data
-        ):
-            return CreateEmbeddingResponse.model_validate(obj)
-        else:
-            raise ValueError(f"Receive invalid list in response: {obj}")
 
 
 @ResponseExtractorFactory.register_all(
@@ -98,98 +34,173 @@ class OpenAIObject(CaseInsensitiveStrEnum):
     EndpointType.OPENAI_EMBEDDINGS,
     EndpointType.OPENAI_RESPONSES,
 )
-class OpenAIResponseExtractor:
+class OpenAIResponseExtractor(AIPerfLoggerMixin):
     """Extractor for OpenAI responses."""
 
     def __init__(self, model_endpoint: ModelEndpointInfo) -> None:
         """Create a new response extractor based on the provided configuration."""
+        super().__init__()
         self.model_endpoint = model_endpoint
 
-    def _parse_text_response(self, response: TextResponse) -> ResponseData | None:
-        """Parse a TextResponse into a ResponseData object."""
-        raw = response.text
-        parsed = self._parse_text(raw)
-        if parsed is None:
-            return None
-
-        return ResponseData(
-            perf_ns=response.perf_ns,
-            raw_text=[raw],
-            parsed_text=[parsed],
-            metadata={},
-        )
-
-    def _parse_sse_response(self, response: SSEMessage) -> ResponseData | None:
-        """Parse a SSEMessage into a ResponseData object."""
-        raw = response.extract_data_content()
-        parsed = self._parse_sse(raw)
-        if parsed is None or len(parsed) == 0:
-            return None
-
-        return ResponseData(
-            perf_ns=response.perf_ns,
-            raw_text=raw,
-            parsed_text=parsed,
-            metadata={},
-        )
-
-    def _parse_response(self, response: InferenceServerResponse) -> ResponseData | None:
-        """Parse a response into a ResponseData object."""
-        if isinstance(response, TextResponse):
-            return self._parse_text_response(response)
-        elif isinstance(response, SSEMessage):
-            return self._parse_sse_response(response)
-
     async def extract_response_data(
-        self, record: RequestRecord, tokenizer: Tokenizer | None
-    ) -> list[ResponseData]:
+        self, record: RequestRecord
+    ) -> list[ParsedResponse]:
         """Extract the text from a server response message."""
         results = []
         for response in record.responses:
             response_data = self._parse_response(response)
-            if response_data is None:
+            if not response_data:
                 continue
-
-            if tokenizer is not None:
-                response_data.token_count = sum(
-                    len(tokenizer.encode(text))
-                    for text in response_data.parsed_text
-                    if text is not None
-                )
             results.append(response_data)
         return results
 
-    def _parse_text(self, raw_text: str) -> Any | None:
-        """Parse the text of the response."""
+    def _parse_response(
+        self, response: InferenceServerResponse
+    ) -> ParsedResponse | None:
+        """Parse a response into a ParsedResponse object."""
+        parsed_data = None
+        # Note, this uses Python 3.10+ pattern matching, no new objects are created
+        match response:
+            case TextResponse():
+                parsed_data = self._parse_raw_text(response.text)
+            case SSEMessage():
+                parsed_data = self._parse_raw_text(response.extract_data_content())
+            case _:
+                self.warning(f"Unsupported response type: {type(response)}")
+        if not parsed_data:
+            return None
+
+        return ParsedResponse(
+            perf_ns=response.perf_ns,
+            data=parsed_data,
+        )
+
+    def _parse_raw_text(self, raw_text: str) -> BaseResponseData | None:
+        """Parse the raw text of the response using the appropriate parser from OpenAIObjectParserFactory.
+
+        Returns:
+            ParsedResponse | None: The parsed response, or None if the response is not a valid or supported OpenAI object.
+        """
         if raw_text in ("", None, "[DONE]"):
             return None
 
-        obj = OpenAIObject.parse(raw_text)
+        try:
+            json_str = load_json_str(raw_text)
+            if "object" not in json_str:
+                self.warning(f"Invalid OpenAI object: {raw_text}")
+                return None
+        except orjson.JSONDecodeError as e:
+            self.warning(f"Invalid JSON: {raw_text} - {e!r}")
+            return None
 
-        # Dictionary mapping object types to their value extraction functions
-        type_to_extractor = {
-            # TODO: how to support multiple choices?
-            ChatCompletion: lambda obj: obj.choices[0].message.content,
-            # TODO: how to support multiple choices?
-            ChatCompletionChunk: lambda obj: obj.choices[0].delta.content,
-            # TODO: how to support multiple choices?
-            Completion: lambda obj: obj.choices[0].text,
-            CreateEmbeddingResponse: lambda obj: "",  # Don't store embedding data
-            ResponsesModel: lambda obj: obj.output_text,
-        }
+        try:
+            object_type = OpenAIObjectType(json_str["object"])
+        except ValueError:
+            self.warning(
+                f"Unsupported OpenAI object type received: {json_str['object']}"
+            )
+            return None
 
-        for obj_type, extractor in type_to_extractor.items():
-            if isinstance(obj, obj_type):
-                return extractor(obj)
+        try:
+            parser = OpenAIObjectParserFactory.get_or_create_instance(object_type)
+        except FactoryCreationError:
+            self.warning(f"No parser found for OpenAI object type: {object_type!r}")
+            return None
 
-        raise ValueError(f"Invalid OpenAI object: {raw_text}")
+        return parser.parse(json_str)
 
-    def _parse_sse(self, raw_sse: list[str]) -> list[Any]:
-        """Parse the SSE of the response."""
-        result = []
-        for sse in raw_sse:
-            parsed = self._parse_text(sse)
-            if parsed is None:
-                continue
-            result.append(parsed)
-        return result
+
+def _parse_chat_common(sub_obj: dict[str, Any]) -> BaseResponseData | None:
+    """Parse the common ChatCompletion and ChatCompletionChunk objects into a ResponseData object."""
+    content = sub_obj.get("content")
+    reasoning = sub_obj.get("reasoning_content") or sub_obj.get("reasoning")
+    if not content and not reasoning:
+        return None
+    if not reasoning:
+        return _make_text_response_data(content)
+    return ReasoningResponseData(
+        content=content,
+        reasoning=reasoning,
+    )
+
+
+@OpenAIObjectParserFactory.register(OpenAIObjectType.CHAT_COMPLETION)
+class ChatCompletionParser(OpenAIObjectParserProtocol):
+    """Parser for ChatCompletion objects."""
+
+    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
+        """Parse a ChatCompletion into a ResponseData object."""
+        return _parse_chat_common(obj.get("choices", [{}])[0].get("message", {}))
+
+
+@OpenAIObjectParserFactory.register(OpenAIObjectType.CHAT_COMPLETION_CHUNK)
+class ChatCompletionChunkParser(OpenAIObjectParserProtocol):
+    """Parser for ChatCompletionChunk objects."""
+
+    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
+        """Parse a ChatCompletionChunk into a ResponseData object."""
+        return _parse_chat_common(obj.get("choices", [{}])[0].get("delta", {}))
+
+
+@OpenAIObjectParserFactory.register(OpenAIObjectType.COMPLETION)
+class CompletionParser(OpenAIObjectParserProtocol):
+    """Parser for Completion objects."""
+
+    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
+        """Parse a Completion object."""
+        return _make_text_response_data(obj.get("choices", [{}])[0].get("text"))
+
+
+@OpenAIObjectParserFactory.register(OpenAIObjectType.LIST)
+class ListParser(OpenAIObjectParserProtocol):
+    """Parser for List objects."""
+
+    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
+        """Parse a List object."""
+        data = obj.get("data", [])
+        if all(
+            isinstance(item, dict) and item.get("object") == OpenAIObjectType.EMBEDDING
+            for item in data
+        ):
+            return _make_embedding_response_data(data)
+        else:
+            raise ValueError(f"Received invalid list in response: {obj}")
+
+
+@OpenAIObjectParserFactory.register(OpenAIObjectType.RESPONSE)
+class ResponseParser(OpenAIObjectParserProtocol):
+    """Parser for OpenAI Responses objects."""
+
+    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
+        """Parse a Responses object."""
+        return _make_text_response_data(obj.get("output_text"))
+
+
+@OpenAIObjectParserFactory.register(OpenAIObjectType.TEXT_COMPLETION)
+class TextCompletionParser(OpenAIObjectParserProtocol):
+    """Parser for TextCompletion objects."""
+
+    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
+        """Parse a TextCompletion object."""
+        return _make_text_response_data(obj.get("choices", [{}])[0].get("text"))
+
+
+def _make_text_response_data(text: str | None) -> TextResponseData | None:
+    """Make a TextResponseData object from a string or return None if the text is empty."""
+    return TextResponseData(text=text) if text else None
+
+
+def _make_embedding_response_data(
+    data: list[dict[str, Any]],
+) -> EmbeddingResponseData | None:
+    """Make an EmbeddingResponseData object from a list of embedding dictionaries."""
+    if not data:
+        return None
+
+    embeddings = []
+    for item in data:
+        embedding = item.get("embedding", [])
+        if embedding:
+            embeddings.append(embedding)
+
+    return EmbeddingResponseData(embeddings=embeddings) if embeddings else None

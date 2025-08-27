@@ -3,6 +3,7 @@
 
 import pytest
 
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.ttft_metric import TTFTMetric
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
@@ -50,7 +51,7 @@ class TestTTFTMetric:
         record = create_record(start_ns=100, responses=[90])
 
         metric = TTFTMetric()
-        with pytest.raises(ValueError, match="Invalid Record"):
+        with pytest.raises(NoMetricValue, match="Invalid Record"):
             metric.parse_record(record, MetricRecordDict())
 
     def test_ttft_no_responses(self):
@@ -59,5 +60,5 @@ class TestTTFTMetric:
         record.responses = []
 
         metric = TTFTMetric()
-        with pytest.raises(ValueError, match="Invalid Record"):
+        with pytest.raises(NoMetricValue, match="Invalid Record"):
             metric.parse_record(record, MetricRecordDict())

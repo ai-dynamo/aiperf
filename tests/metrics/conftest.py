@@ -8,10 +8,11 @@ Shared fixtures for testing AIPerf metrics.
 from aiperf.common.enums import MetricType
 from aiperf.common.models import (
     ErrorDetails,
+    ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
-    ResponseData,
 )
+from aiperf.common.models.record_models import TextResponseData
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
@@ -48,11 +49,9 @@ def create_record(
     response_data = []
     for perf_ns in responses:
         response_data.append(
-            ResponseData(
+            ParsedResponse(
                 perf_ns=perf_ns,
-                raw_text=["test"],
-                parsed_text=["test"],
-                token_count=output_tokens_per_response,
+                data=TextResponseData(text="test"),
             )
         )
 

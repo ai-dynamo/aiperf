@@ -23,6 +23,13 @@ class WorkerTaskStats(AIPerfBaseModel):
         description="The number of tasks that were completed successfully",
     )
 
+    def task_finished(self, valid: bool) -> None:
+        """Increment the task stats based on success or failure."""
+        if not valid:
+            self.failed += 1
+        else:
+            self.completed += 1
+
     @property
     def in_progress(self) -> int:
         """The number of tasks that are currently in progress.

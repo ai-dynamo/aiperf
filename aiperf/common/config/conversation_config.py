@@ -3,10 +3,10 @@
 
 from typing import Annotated
 
-from cyclopts import Parameter
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import (
     ConversationDefaults,
     TurnDefaults,
@@ -28,7 +28,7 @@ class TurnDelayConfig(BaseConfig):
             ge=0,
             description="The mean delay between turns within a conversation in milliseconds.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--conversation-turn-delay-mean",
                 "--session-turn-delay-mean",  # GenAI-Perf
@@ -44,7 +44,7 @@ class TurnDelayConfig(BaseConfig):
             description="The standard deviation of the delay between turns \n"
             "within a conversation in milliseconds.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--conversation-turn-delay-stddev",
                 "--session-turn-delay-stddev",  # GenAI-Perf
@@ -59,7 +59,7 @@ class TurnDelayConfig(BaseConfig):
             ge=0,
             description="A ratio to scale multi-turn delays.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--conversation-turn-delay-ratio",
                 "--session-delay-ratio",  # GenAI-Perf
@@ -82,7 +82,7 @@ class TurnConfig(BaseConfig):
             ge=1,
             description="The mean number of turns within a conversation.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--conversation-turn-mean",
                 "--session-turns-mean",  # GenAI-Perf
@@ -97,7 +97,7 @@ class TurnConfig(BaseConfig):
             ge=0,
             description="The standard deviation of the number of turns within a conversation.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--conversation-turn-stddev",
                 "--session-turns-stddev",  # GenAI-Perf
@@ -122,13 +122,16 @@ class ConversationConfig(BaseConfig):
             ge=1,
             description="The total number of unique conversations to generate.\n"
             "Each conversation represents a single request session between client and server.\n"
-            "Supported on synthetic mode only and conversations will be reused until benchmarking is complete.",
+            "Supported on synthetic mode and the custom random_pool dataset. The number of conversations \n"
+            "will be used to determine the number of entries in both the custom random_pool and synthetic \n"
+            "datasets and will be reused until benchmarking is complete.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--conversation-num",
                 "--num-conversations",
                 "--num-sessions",  # GenAI-Perf
+                "--num-dataset-entries",  # GenAI-Perf
             ),
             group=_CLI_GROUP,
         ),

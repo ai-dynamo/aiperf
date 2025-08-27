@@ -34,4 +34,6 @@ class RequestLatencyMetric(BaseRecordMetric[int]):
         """
         request_ts: int = record.start_perf_ns
         final_response_ts: int = record.responses[-1].perf_ns
+        if final_response_ts < request_ts:
+            raise ValueError("Final response timestamp is less than request timestamp.")
         return final_response_ts - request_ts

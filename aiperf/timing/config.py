@@ -4,7 +4,6 @@
 from aiperf.common.config import (
     InputDefaults,
     LoadGeneratorDefaults,
-    ServiceDefaults,
     UserConfig,
 )
 from aiperf.common.enums import RequestRateMode, TimingMode
@@ -21,7 +20,6 @@ class TimingManagerConfig(AIPerfBaseModel):
     request_count: int = LoadGeneratorDefaults.REQUEST_COUNT
     warmup_request_count: int = LoadGeneratorDefaults.WARMUP_REQUEST_COUNT
     random_seed: int | None = None
-    progress_report_interval_sec: float = ServiceDefaults.PROGRESS_REPORT_INTERVAL
     auto_offset_timestamps: bool = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
     fixed_schedule_start_offset: int | None = InputDefaults.FIXED_SCHEDULE_START_OFFSET
     fixed_schedule_end_offset: int | None = InputDefaults.FIXED_SCHEDULE_END_OFFSET
