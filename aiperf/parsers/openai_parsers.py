@@ -15,6 +15,7 @@ from aiperf.common.factories import (
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     BaseResponseData,
+    EmbeddingResponseData,
     InferenceServerResponse,
     ParsedResponse,
     ReasoningResponseData,
@@ -161,7 +162,7 @@ class ListParser(OpenAIObjectParserProtocol):
             isinstance(item, dict) and item.get("object") == OpenAIObjectType.EMBEDDING
             for item in data
         ):
-            return None
+            return _make_embedding_response_data(data)
         else:
             raise ValueError(f"Received invalid list in response: {obj}")
 
@@ -187,3 +188,19 @@ class TextCompletionParser(OpenAIObjectParserProtocol):
 def _make_text_response_data(text: str | None) -> TextResponseData | None:
     """Make a TextResponseData object from a string or return None if the text is empty."""
     return TextResponseData(text=text) if text else None
+
+
+def _make_embedding_response_data(
+    data: list[dict[str, Any]],
+) -> EmbeddingResponseData | None:
+    """Make an EmbeddingResponseData object from a list of embedding dictionaries."""
+    if not data:
+        return None
+
+    embeddings = []
+    for item in data:
+        embedding = item.get("embedding", [])
+        if embedding:
+            embeddings.append(embedding)
+
+    return EmbeddingResponseData(embeddings=embeddings) if embeddings else None
