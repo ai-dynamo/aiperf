@@ -37,6 +37,11 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
+        # If max_completion_tokens is set, remove max_tokens since strict checking would
+        # fail the request
+        if payload.get("max_completion_tokens") is not None:
+            del payload["max_tokens"]
+
         self.debug(lambda: f"Formatted payload: {payload}")
         return payload
 
