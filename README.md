@@ -45,8 +45,10 @@ Features
   - request-rate
   - request-rate with a maximum concurrency
   - [trace replay](docs/benchmark_modes/trace_replay.md)
+- [Public dataset support](docs/benchmark_datasets.md)
 
 </br>
+
 
 <!--
 ======================
