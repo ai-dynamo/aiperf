@@ -229,8 +229,8 @@ class TestOpenAIResponseExtractor:
         assert results[2].perf_ns == 5
 
 
-class TestRankingParser(TestOpenAIResponseExtractor):
-    """Test cases for RankingParser."""
+class TestRankingsParser(TestOpenAIResponseExtractor):
+    """Test cases for RankingsParser."""
 
     @pytest.fixture
     def extractor(self):
@@ -238,27 +238,26 @@ class TestRankingParser(TestOpenAIResponseExtractor):
         mock_endpoint = MagicMock(spec=ModelEndpointInfo)
         return OpenAIResponseExtractor(mock_endpoint)
 
-    def ranking_response_json(self, ranking_data) -> str:
-        """Generate ranking response JSON with specified ranking data."""
+    def rankings_response_json(self, rankings_data) -> str:
+        """Generate rankings response JSON with specified rankings data."""
         response = {
-            "object": "ranking",
-            "data": ranking_data,
-            "model": "test-ranking-model",
+            "object": "rankings",
+            "data": rankings_data,
+            "model": "test-rankings-model",
             "usage": {"total_tokens": 50},
         }
         return json.dumps(response)
 
     @pytest.mark.asyncio
     async def test_ranking_response_parsing(self, extractor):
-        """Test parsing of ranking response."""
-        ranking_data = [
+        rankings_data = [
             {"index": 0, "relevance_score": 0.95},
             {"index": 1, "relevance_score": 0.87},
             {"index": 2, "relevance_score": 0.72},
         ]
 
         text_response = self.create_raw_text_response(
-            self.ranking_response_json(ranking_data)
+            self.rankings_response_json(rankings_data)
         )
         request = self.create_request_record(text_response)
 
@@ -267,27 +266,24 @@ class TestRankingParser(TestOpenAIResponseExtractor):
         assert len(results) == 1
         result = results[0]
 
-        # Should be RankingResponseData
-        assert hasattr(result.data, "ranking")
-        assert result.data.ranking == ranking_data
-        assert len(result.data.ranking) == 3
-        assert result.data.ranking[0]["relevance_score"] == 0.95
+        assert hasattr(result.data, "rankings")
+        assert result.data.rankings == rankings_data
+        assert len(result.data.rankings) == 3
+        assert result.data.rankings[0]["relevance_score"] == 0.95
 
     @pytest.mark.asyncio
     async def test_ranking_response_empty_data(self, extractor):
-        """Test parsing of ranking response with empty data."""
-        text_response = self.create_raw_text_response(self.ranking_response_json([]))
+        text_response = self.create_raw_text_response(self.rankings_response_json([]))
         request = self.create_request_record(text_response)
 
         results = await extractor.extract_response_data(request)
 
-        # Empty ranking should be filtered out, resulting in no results
+        # Empty rankings should be filtered out, resulting in no results
         assert len(results) == 0
 
     @pytest.mark.asyncio
-    async def test_ranking_response_with_metadata(self, extractor):
-        """Test parsing of ranking response with additional metadata."""
-        ranking_data = [
+    async def test_rankings_response_with_metadata(self, extractor):
+        rankings_data = [
             {
                 "index": 0,
                 "relevance_score": 0.95,
@@ -303,7 +299,7 @@ class TestRankingParser(TestOpenAIResponseExtractor):
         ]
 
         text_response = self.create_raw_text_response(
-            self.ranking_response_json(ranking_data)
+            self.rankings_response_json(rankings_data)
         )
         request = self.create_request_record(text_response)
 
@@ -312,95 +308,9 @@ class TestRankingParser(TestOpenAIResponseExtractor):
         assert len(results) == 1
         result = results[0]
 
-        assert result.data.ranking == ranking_data
-        assert result.data.ranking[0]["document_id"] == "doc1"
-        assert result.data.ranking[1]["snippet"] == "Another relevant passage"
-
-
-class TestNimRankingParser(TestOpenAIResponseExtractor):
-    """Test cases for NimRankingParser (NIM-style ranking format)."""
-
-    @pytest.fixture
-    def extractor(self):
-        """Create an OpenAIResponseExtractor instance."""
-        mock_endpoint = MagicMock(spec=ModelEndpointInfo)
-        return OpenAIResponseExtractor(mock_endpoint)
-
-    def nim_ranking_response_json(self, ranking_data) -> str:
-        """Generate NIM-style ranking response JSON with specified ranking data."""
-        response = {
-            "rankings": ranking_data,
-            "usage": {"total_tokens": 50},
-        }
-        return json.dumps(response)
-
-    @pytest.mark.asyncio
-    async def test_nim_ranking_response_parsing(self, extractor):
-        """Test parsing of NIM-style ranking response."""
-        ranking_data = [
-            {"index": 0, "logit": -1.2421875},
-            {"index": 1, "logit": -3.029296875},
-            {"index": 2, "logit": -5.41015625},
-        ]
-
-        text_response = self.create_raw_text_response(
-            self.nim_ranking_response_json(ranking_data)
-        )
-        request = self.create_request_record(text_response)
-
-        results = await extractor.extract_response_data(request)
-
-        assert len(results) == 1
-        result = results[0]
-
-        # Should be RankingResponseData
-        assert hasattr(result.data, "ranking")
-        assert result.data.ranking == ranking_data
-        assert len(result.data.ranking) == 3
-        assert result.data.ranking[0]["logit"] == -1.2421875
-
-    @pytest.mark.asyncio
-    async def test_nim_ranking_response_empty_data(self, extractor):
-        """Test parsing of NIM-style ranking response with empty data."""
-        text_response = self.create_raw_text_response(
-            self.nim_ranking_response_json([])
-        )
-        request = self.create_request_record(text_response)
-
-        results = await extractor.extract_response_data(request)
-
-        # Empty ranking should be filtered out, resulting in no results
-        assert len(results) == 0
-
-    @pytest.mark.asyncio
-    async def test_nim_ranking_response_with_usage(self, extractor):
-        """Test parsing of NIM-style ranking response with usage metadata."""
-        ranking_data = [
-            {"index": 0, "logit": -1.2421875},
-            {"index": 1, "logit": -3.029296875},
-        ]
-
-        # Include additional fields that should be preserved but not interfere with parsing
-        response_str = json.dumps(
-            {
-                "rankings": ranking_data,
-                "usage": {"prompt_tokens": 27, "total_tokens": 27},
-                "model": "nvidia/llama-3.2-nv-rerankqa-1b-v2",
-            }
-        )
-
-        text_response = self.create_raw_text_response(response_str)
-        request = self.create_request_record(text_response)
-
-        results = await extractor.extract_response_data(request)
-
-        assert len(results) == 1
-        result = results[0]
-
-        assert result.data.ranking == ranking_data
-        assert len(result.data.ranking) == 2
-        assert result.data.ranking[0]["index"] == 0
-        assert result.data.ranking[1]["index"] == 1
+        assert result.data.rankings == rankings_data
+        assert result.data.rankings[0]["document_id"] == "doc1"
+        assert result.data.rankings[1]["snippet"] == "Another relevant passage"
 
 
 class TestListParserWithEmbeddings(TestOpenAIResponseExtractor):

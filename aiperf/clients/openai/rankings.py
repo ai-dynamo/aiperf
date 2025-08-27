@@ -10,9 +10,9 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Turn
 
 
-@RequestConverterFactory.register(EndpointType.RANKING)
-class RankingRequestConverter(AIPerfLoggerMixin):
-    """Request converter for OpenAI ranking requests.
+@RequestConverterFactory.register(EndpointType.RANKINGS)
+class RankingsRequestConverter(AIPerfLoggerMixin):
+    """Request converter for rankings requests.
 
     Expects texts with specific names:
     - 'query': Single text containing the query to rank against
@@ -24,12 +24,10 @@ class RankingRequestConverter(AIPerfLoggerMixin):
         model_endpoint: ModelEndpointInfo,
         turn: Turn,
     ) -> dict[str, Any]:
-        """Format payload for a ranking request."""
+        """Format payload for a rankings request."""
 
         if turn.max_tokens:
-            self.error("Max_tokens is provided but is not supported for ranking.")
-
-        # For ranking, we look for texts with specific names: "query" and "passages"
+            self.error("Max_tokens is provided but is not supported for rankings.")
         query_texts = []
         passage_texts = []
 
@@ -40,12 +38,12 @@ class RankingRequestConverter(AIPerfLoggerMixin):
                 passage_texts.extend(text.contents)
             else:
                 self.warning(
-                    f"Ignoring text with name '{text.name}' - ranking expects 'query' and 'passages'"
+                    f"Ignoring text with name '{text.name}' - rankings expects 'query' and 'passages'"
                 )
 
         if not query_texts:
             raise ValueError(
-                "Ranking request requires a text with name 'query'. "
+                "Rankings request requires a text with name 'query'. "
                 "Provide a Text object with name='query' containing the search query."
             )
 
@@ -58,7 +56,7 @@ class RankingRequestConverter(AIPerfLoggerMixin):
 
         if not passage_texts:
             self.warning(
-                "Ranking request has query but no passages to rank. "
+                "Rankings request has query but no passages to rank. "
                 "Consider adding a Text object with name='passages' containing texts to rank."
             )
 
@@ -73,5 +71,5 @@ class RankingRequestConverter(AIPerfLoggerMixin):
         if extra:
             payload.update(extra)
 
-        self.debug(lambda: f"Formatted ranking payload: {payload}")
+        self.debug(lambda: f"Formatted rankings payload: {payload}")
         return payload

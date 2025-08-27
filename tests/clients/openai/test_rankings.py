@@ -6,21 +6,21 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.clients.openai.ranking import RankingRequestConverter
+from aiperf.clients.openai.rankings import RankingsRequestConverter
 from aiperf.common.models import Text, Turn
 
 
-class TestRankingRequestConverter:
-    """Test cases for RankingRequestConverter."""
+class TestRankingsRequestConverter:
+    """Test cases for RankingsRequestConverter."""
 
     @pytest.fixture
     def converter(self):
-        """Create a RankingRequestConverter instance."""
-        return RankingRequestConverter()
+        """Create a RankingsRequestConverter instance."""
+        return RankingsRequestConverter()
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for ranking."""
+        """Create a test ModelEndpointInfo for rankings."""
         mock_endpoint = MagicMock()
         mock_endpoint.endpoint.extra = None
         mock_endpoint.primary_model_name = "test-model"
@@ -209,7 +209,7 @@ class TestRankingRequestConverter:
     async def test_format_payload_max_tokens_warning(
         self, converter, model_endpoint, caplog
     ):
-        """Test that max_tokens generates a warning for ranking."""
+        """Test that max_tokens generates a warning for rankings."""
         turn = Turn(
             texts=[
                 Text(name="query", contents=["Test query"]),
@@ -222,7 +222,7 @@ class TestRankingRequestConverter:
         with caplog.at_level(logging.ERROR):
             await converter.format_payload(model_endpoint, turn)
 
-        assert "not supported for ranking" in caplog.text
+        assert "not supported for rankings" in caplog.text
 
     @pytest.mark.asyncio
     async def test_format_payload_extra_parameters(self, converter):
@@ -253,4 +253,4 @@ class TestRankingRequestConverter:
         """Test that the converter has proper documentation."""
         assert "query" in converter.__class__.__doc__
         assert "passages" in converter.__class__.__doc__
-        assert "ranking" in converter.__class__.__doc__.lower()
+        assert "rankings" in converter.__class__.__doc__.lower()

@@ -384,15 +384,15 @@ class EmbeddingResponseData(BaseResponseData):
         return ""
 
 
-class RankingResponseData(BaseResponseData):
-    """Parsed ranking response data."""
+class RankingsResponseData(BaseResponseData):
+    """Parsed rankings response data."""
 
-    ranking: list[dict[str, Any]] = Field(
-        ..., description="The ranking results from the response."
+    rankings: list[dict[str, Any]] = Field(
+        ..., description="The rankings results from the response."
     )
 
     def get_text(self) -> str:
-        """Get the text of the response (empty for ranking)."""
+        """Get the text of the response (empty for rankings)."""
         return ""
 
 
@@ -404,7 +404,7 @@ class ParsedResponse(AIPerfBaseModel):
         ReasoningResponseData
         | TextResponseData
         | EmbeddingResponseData
-        | RankingResponseData
+        | RankingsResponseData
         | BaseResponseData
     ] = Field(..., description="The parsed response data.")
 

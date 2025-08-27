@@ -18,7 +18,7 @@ from aiperf.common.models import (
     EmbeddingResponseData,
     InferenceServerResponse,
     ParsedResponse,
-    RankingResponseData,
+    RankingsResponseData,
     ReasoningResponseData,
     RequestRecord,
     SSEMessage,
@@ -33,7 +33,7 @@ from aiperf.common.utils import load_json_str
     EndpointType.OPENAI_CHAT_COMPLETIONS,
     EndpointType.OPENAI_COMPLETIONS,
     EndpointType.OPENAI_EMBEDDINGS,
-    EndpointType.RANKING,
+    EndpointType.RANKINGS,
     EndpointType.OPENAI_RESPONSES,
 )
 class OpenAIResponseExtractor(AIPerfLoggerMixin):
@@ -99,7 +99,6 @@ class OpenAIResponseExtractor(AIPerfLoggerMixin):
                     )
                     return None
             else:
-                # For responses without "object" field, infer type from structure
                 object_type = self._infer_object_type(json_str)
                 if object_type is None:
                     self.warning(f"Cannot determine response type: {raw_text}")
@@ -111,18 +110,16 @@ class OpenAIResponseExtractor(AIPerfLoggerMixin):
             except FactoryCreationError:
                 self.warning(f"No parser found for object type: {object_type!r}")
                 return None
-
         except orjson.JSONDecodeError as e:
             self.warning(f"Invalid JSON: {raw_text} - {e!r}")
             return None
 
     def _infer_object_type(self, json_obj: dict[str, Any]) -> OpenAIObjectType | None:
         """Infer the object type from the JSON structure for responses without explicit 'object' field."""
-        # Check for NIM ranking format
         if "rankings" in json_obj:
-            return OpenAIObjectType.NIM_RANKING
+            return OpenAIObjectType.RANKINGS
 
-        # Add other format detection as needed
+        self.warning(f"Could not infer object type from response: {json_obj}")
         return None
 
 
@@ -183,28 +180,16 @@ class ListParser(OpenAIObjectParserProtocol):
             raise ValueError(f"Received invalid list in response: {obj}")
 
 
-@OpenAIObjectParserFactory.register(OpenAIObjectType.RANKING)
-class RankingParser(OpenAIObjectParserProtocol):
-    """Parser for Ranking objects."""
+@OpenAIObjectParserFactory.register(OpenAIObjectType.RANKINGS)
+class RankingsParser(OpenAIObjectParserProtocol):
+    """Parser for Rankings objects."""
 
     def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
-        """Parse a Ranking object."""
-        ranking = obj.get("data", [])
-        if not ranking:
+        """Parse a Rankings object."""
+        rankings = obj.get("data", [])
+        if not rankings:
             return None
-        return RankingResponseData(ranking=ranking)
-
-
-@OpenAIObjectParserFactory.register(OpenAIObjectType.NIM_RANKING)
-class NimRankingParser(OpenAIObjectParserProtocol):
-    """Parser for NIM-style ranking objects with 'rankings' field."""
-
-    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
-        """Parse a NIM ranking object."""
-        ranking = obj.get("rankings", [])
-        if not ranking:
-            return None
-        return RankingResponseData(ranking=ranking)
+        return RankingsResponseData(rankings=rankings)
 
 
 @OpenAIObjectParserFactory.register(OpenAIObjectType.RESPONSE)
@@ -212,7 +197,6 @@ class ResponseParser(OpenAIObjectParserProtocol):
     """Parser for OpenAI Responses objects."""
 
     def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
-        """Parse a Responses object."""
         return _make_text_response_data(obj.get("output_text"))
 
 
@@ -230,7 +214,17 @@ def _make_text_response_data(text: str | None) -> TextResponseData | None:
     return TextResponseData(text=text) if text else None
 
 
-def _make_embedding_response_data(data: list[dict[str, Any]]) -> EmbeddingResponseData:
-    """Create an EmbeddingResponseData from embedding data."""
-    embeddings = [item.get("embedding", []) for item in data]
-    return EmbeddingResponseData(embeddings=embeddings)
+def _make_embedding_response_data(
+    data: list[dict[str, Any]],
+) -> EmbeddingResponseData | None:
+    """Make an EmbeddingResponseData object from a list of embedding dictionaries."""
+    if not data:
+        return None
+
+    embeddings = []
+    for item in data:
+        embedding = item.get("embedding", [])
+        if embedding:
+            embeddings.append(embedding)
+
+    return EmbeddingResponseData(embeddings=embeddings) if embeddings else None
