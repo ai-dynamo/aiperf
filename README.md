@@ -116,6 +116,4 @@ NVIDIA AIPerf | LLM Metrics
 ```
 </div>
 
-Review the [Development](docs/Development.md) Guide for more information.
-</br>
 
