@@ -180,7 +180,7 @@ class InputConfig(BaseConfig):
         CustomDatasetType,
         Field(
             description="The type of custom dataset to use.\n"
-            "This parameter is used in conjunction with the --file parameter.",
+            "This parameter is used in conjunction with the --input-file parameter.",
         ),
         CLIParameter(
             name=("--custom-dataset-type"),
