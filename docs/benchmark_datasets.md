@@ -54,9 +54,9 @@ This document covers the various datasets AIPerf can leverage to generate stimul
     <td><a href="benchmark_modes/trace_replay.md"><code>--input-file your_trace_file.jsonl --custom-dataset-type mooncake_trace</code></a></td>
     </tr>
     <tr>
-      <td><a href="https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"><strong>ShareGPT</strong></td>
+      <td><strong>ShareGPT</strong></td>
       <td style="text-align: center;">✅</td>
-      <td><code>--public-dataset sharegpt</code></td>
+      <td><a href="https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"><code>--public-dataset sharegpt</code></td>
     </tr>
     <tr>
       <td><strong>BurstGPT</strong></td>
