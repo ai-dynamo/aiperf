@@ -27,7 +27,7 @@ class RankingsRequestConverter(AIPerfLoggerMixin):
         """Format payload for a rankings request."""
 
         if turn.max_tokens:
-            self.error("Max_tokens is provided but is not supported for rankings.")
+            self.warning("Max_tokens is provided but is not supported for rankings.")
         query_texts = []
         passage_texts = []
 

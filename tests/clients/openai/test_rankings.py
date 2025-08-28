@@ -219,7 +219,7 @@ class TestRankingsRequestConverter:
             max_tokens=100,  # Should trigger warning
         )
 
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.WARNING):
             await converter.format_payload(model_endpoint, turn)
 
         assert "not supported for rankings" in caplog.text
