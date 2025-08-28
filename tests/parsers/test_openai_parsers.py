@@ -241,15 +241,14 @@ class TestRankingsParser(TestOpenAIResponseExtractor):
     def rankings_response_json(self, rankings_data) -> str:
         """Generate rankings response JSON with specified rankings data."""
         response = {
-            "object": "rankings",
-            "data": rankings_data,
+            "rankings": rankings_data,
             "model": "test-rankings-model",
             "usage": {"total_tokens": 50},
         }
         return json.dumps(response)
 
     @pytest.mark.asyncio
-    async def test_ranking_response_parsing(self, extractor):
+    async def test_rankings_response_parsing(self, extractor):
         rankings_data = [
             {"index": 0, "relevance_score": 0.95},
             {"index": 1, "relevance_score": 0.87},
@@ -272,7 +271,7 @@ class TestRankingsParser(TestOpenAIResponseExtractor):
         assert result.data.rankings[0]["relevance_score"] == 0.95
 
     @pytest.mark.asyncio
-    async def test_ranking_response_empty_data(self, extractor):
+    async def test_rankings_response_empty_data(self, extractor):
         text_response = self.create_raw_text_response(self.rankings_response_json([]))
         request = self.create_request_record(text_response)
 

@@ -186,7 +186,7 @@ class RankingsParser(OpenAIObjectParserProtocol):
 
     def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
         """Parse a Rankings object."""
-        rankings = obj.get("data", [])
+        rankings = obj.get("rankings", [])
         if not rankings:
             return None
         return RankingsResponseData(rankings=rankings)
@@ -197,6 +197,7 @@ class ResponseParser(OpenAIObjectParserProtocol):
     """Parser for OpenAI Responses objects."""
 
     def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
+        """Parse a Responses object."""
         return _make_text_response_data(obj.get("output_text"))
 
 
