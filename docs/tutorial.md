@@ -95,7 +95,6 @@ aiperf profile \
     --synthetic-input-tokens-stddev 0 \
     --output-tokens-mean 2000 \
     --output-tokens-stddev 0 \
-    --extra-inputs max_tokens:2000 \
     --extra-inputs min_tokens:2000 \
     --extra-inputs ignore_eos:true \
     --concurrency 2048 \
