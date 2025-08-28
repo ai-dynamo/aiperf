@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-timeout 5m /bin/bash -c 'while ! curl -s localhost:8080/v1/models | jq -en "input | (.data // []) | length > 0" > /dev/null 2>&1; do sleep 1; done'
+timeout 5m /bin/bash -c "while ! curl -s localhost:${PORT}/v1/models \
+  | jq -en 'input | (.data // []) | length > 0' > /dev/null 2>&1; do sleep 1; done"
 
 if [ $? -eq 124 ]; then
   echo -e "\033[0;36m╔════════════════════════════════════════╗\033[0m"
@@ -21,7 +22,7 @@ echo -e "\033[0;36m╔═══════════════════�
 echo -e "\033[0;36m║           *** AIPERF LOG ***           ║\033[0m"
 echo -e "\033[0;36m╚════════════════════════════════════════╝\033[0m"
 
-timeout 5m aiperf profile --model-names ${MODEL} -u localhost:8080 --concurrency 100 --request-count 300
+timeout 5m aiperf profile --model-names ${MODEL} -u "localhost:${PORT}" --concurrency 100 --request-count 300
 
 EXIT_CODE=$?
 

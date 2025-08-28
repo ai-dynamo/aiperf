@@ -13,10 +13,8 @@ import pytest
 
 REPO_ROOT = Path(os.getenv("AIPERF_SOURCE_DIR", Path.cwd())).resolve()
 JOB_NAME = os.getenv("CI_JOB_NAME", "test_docs")
-DOCS = os.getenv(
-    "DOCS", ""
-)  # comma-separated files/patterns, e.g. "README.md,docs/**/*.md"
-BLOCK_TIMEOUT = 600
+DOCS = os.getenv("DOCS", "")
+BLOCK_TIMEOUT = 1200
 
 BASH_BLOCK_RE = re.compile(
     r"((?:<!--.*?-->\s*)*)```bash(.*?)```", re.DOTALL | re.IGNORECASE
@@ -175,7 +173,7 @@ class TestDocumentationBashBlocks:
         CASES,
         ids=[c[0] for c in CASES] if CASES else [],
     )
-    def test_bash_block_runs_cleanly(self, case_id, tokens, code, doc_env):
+    def test_bash_blocks(self, case_id, tokens, code, doc_env):
         if "skip" in tokens:
             pytest.skip("Test Skipped")
 

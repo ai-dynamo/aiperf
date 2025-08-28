@@ -18,20 +18,20 @@ docker run \
   --gpus all \
   --network host \
   "${DYNAMO_PREBUILT_IMAGE_TAG}" \
-  /bin/bash -c "python3 -m dynamo.frontend --http-port 8000 & \
-                python3 -m dynamo.vllm --model Qwen/Qwen3-0.6B --enforce-eager --no-enable-prefix-caching" \
-  > server.log 2>&1 &
+  /bin/bash -c "python3 -m dynamo.frontend --http-port ${PORT}& \
+                python3 -m dynamo.vllm --model ${MODEL} --enforce-eager --no-enable-prefix-caching" \
+  >> server.log 2>&1 &
 
 sleep 2
 
-timeout 5m bash -c 'until curl -fsS localhost:8000/v1/models \
-  | jq -en "input | (.data // []) | length > 0" >/dev/null 2>&1; do sleep 1; done'
-
-if [ $? -eq 124 ]; then
+timeout 5m bash -c "until curl -fsS http://localhost:${PORT}/v1/models \
+  | jq -en 'input | (.data // []) | length > 0' >/dev/null 2>&1; do sleep 1; done"
+rc=$?
+if [ $rc -eq 124 ]; then
   echo -e "\033[0;36m╔════════════════════════════════════════╗\033[0m"
   echo -e "\033[0;36m║           *** SERVER LOG ***           ║\033[0m"
   echo -e "\033[0;36m╚════════════════════════════════════════╝\033[0m"
-  cat server.log
+  tail -n 200 server.log || true
   echo -e "\033[0;31m╔════════════════════════════════════════╗\033[0m"
   echo -e "\033[0;31m║         *** TIMEOUT ERROR ***          ║\033[0m"
   echo -e "\033[0;31m║ Server did not start within 5 minutes  ║\033[0m"
@@ -39,4 +39,3 @@ if [ $? -eq 124 ]; then
   echo -e "\033[0;31m╚════════════════════════════════════════╝\033[0m"
   exit 1
 fi
-
