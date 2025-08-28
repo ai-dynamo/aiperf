@@ -230,9 +230,6 @@ class TestRankingsRequestConverter:
         mock_endpoint = MagicMock()
         mock_endpoint.endpoint.extra = {"top_k": 5, "return_scores": True}
         mock_endpoint.primary_model_name = "test-model"
-        mock_endpoint = MagicMock()
-        mock_endpoint.endpoint.extra = {"top_k": 5, "return_scores": True}
-        mock_endpoint.primary_model_name = "test-model"
 
         turn = Turn(
             texts=[

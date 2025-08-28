@@ -88,30 +88,28 @@ class OpenAIResponseExtractor(AIPerfLoggerMixin):
 
         try:
             json_str = load_json_str(raw_text)
-
-            # Try to determine object type from "object" field
-            if "object" in json_str:
-                try:
-                    object_type = OpenAIObjectType(json_str["object"])
-                except ValueError:
-                    self.warning(
-                        f"Unsupported OpenAI object type received: {json_str['object']}"
-                    )
-                    return None
-            else:
-                object_type = self._infer_object_type(json_str)
-                if object_type is None:
-                    self.warning(f"Cannot determine response type: {raw_text}")
-                    return None
-
-            try:
-                parser = OpenAIObjectParserFactory.get_or_create_instance(object_type)
-                return parser.parse(json_str)
-            except FactoryCreationError:
-                self.warning(f"No parser found for object type: {object_type!r}")
-                return None
         except orjson.JSONDecodeError as e:
             self.warning(f"Invalid JSON: {raw_text} - {e!r}")
+            return None
+
+        if "object" in json_str:
+            try:
+                object_type = OpenAIObjectType(json_str["object"])
+            except ValueError:
+                self.warning(
+                    f"Unsupported OpenAI object type received: {json_str['object']}"
+                )
+                return None
+        else:
+            object_type = self._infer_object_type(json_str)
+            if object_type is None:
+                return None
+
+        try:
+            parser = OpenAIObjectParserFactory.get_or_create_instance(object_type)
+            return parser.parse(json_str)
+        except FactoryCreationError:
+            self.warning(f"No parser found for object type: {object_type!r}")
             return None
 
     def _infer_object_type(self, json_obj: dict[str, Any]) -> OpenAIObjectType | None:
