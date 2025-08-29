@@ -15,7 +15,7 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.factories import ComposerFactory, ServiceFactory
-from aiperf.common.hooks import on_command, on_request
+from aiperf.common.hooks import on_command, on_init, on_request
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
@@ -30,6 +30,7 @@ from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import Conversation
 from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.dataset.loader import ShareGPTLoader
 
 DATASET_CONFIGURATION_TIMEOUT = 300.0
 
@@ -66,6 +67,22 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         self.dataset_configured = asyncio.Event()
 
+    @on_init
+    async def _initialize(self) -> None:
+        """Initialize the dataset manager."""
+        self.debug("Initializing dataset manager")
+        tokenizer_name = self.user_config.tokenizer.name
+        if tokenizer_name is None:
+            # TODO: What do we do if there are multiple models?
+            # How will we know which tokenizer to use?
+            tokenizer_name = self.user_config.endpoint.model_names[0]
+
+        self.tokenizer = Tokenizer.from_pretrained(
+            tokenizer_name,
+            trust_remote_code=self.user_config.tokenizer.trust_remote_code,
+            revision=self.user_config.tokenizer.revision,
+        )
+
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
         self, message: ProfileConfigureCommand
@@ -82,34 +99,27 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             raise self._service_error("User config is required for dataset manager")
 
         self.dataset_configured.clear()
-        if self.user_config.input.file:
-            composer_type = ComposerType.CUSTOM
-            self.debug(
-                lambda: f"Detected input file '{self.user_config.input.file}'. Setting the composer type to {ComposerType.CUSTOM}."
+
+        # Temporary as this will change with the following dataset processor service PR
+        if self.user_config.input.public_dataset is not None:
+            loader = ShareGPTLoader(self.user_config, self.tokenizer)
+            dataset = await loader.load_dataset()
+            conversations = await loader.convert_to_conversations(dataset)
+        elif self.user_config.input.custom_dataset_type is not None:
+            composer = ComposerFactory.create_instance(
+                ComposerType.CUSTOM,
+                config=self.user_config,
+                tokenizer=self.tokenizer,
             )
+            conversations = composer.create_dataset()
         else:
-            composer_type = ComposerType.SYNTHETIC
-            self.debug(
-                lambda: f"No input file detected. Setting the composer type to {ComposerType.SYNTHETIC}."
+            composer = ComposerFactory.create_instance(
+                ComposerType.SYNTHETIC,
+                config=self.user_config,
+                tokenizer=self.tokenizer,
             )
+            conversations = composer.create_dataset()
 
-        tokenizer_name = self.user_config.tokenizer.name
-        if tokenizer_name is None:
-            # TODO: What do we do if there are multiple models?
-            # How will we know which tokenizer to use?
-            tokenizer_name = self.user_config.endpoint.model_names[0]
-
-        tokenizer = Tokenizer.from_pretrained(
-            tokenizer_name,
-            trust_remote_code=self.user_config.tokenizer.trust_remote_code,
-            revision=self.user_config.tokenizer.revision,
-        )
-        composer = ComposerFactory.create_instance(
-            composer_type,
-            config=self.user_config,
-            tokenizer=tokenizer,
-        )
-        conversations = composer.create_dataset()
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._session_ids_cache = list(self.dataset.keys())
 

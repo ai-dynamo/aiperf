@@ -125,7 +125,7 @@ class TestAioHttpClientMixin:
     ) -> None:
         """Test successful JSON request handling."""
         with patch("aiohttp.ClientSession") as mock_session_class:
-            setup_mock_session(mock_session_class, mock_aiohttp_response, ["post"])
+            setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
 
             record = await aiohttp_client.post_request(
                 "http://test.com/api",
@@ -151,7 +151,7 @@ class TestAioHttpClientMixin:
                 "aiperf.clients.http.aiohttp_client.AioHttpSSEStreamReader"
             ) as mock_reader_class,
         ):
-            setup_mock_session(mock_session_class, mock_sse_response, ["post"])
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
 
             mock_reader = Mock()
             mock_reader.read_complete_stream = AsyncMock(return_value=mock_messages)
@@ -189,7 +189,7 @@ class TestAioHttpClientMixin:
         """Test HTTP error response handling."""
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_response = create_mock_error_response(status_code, reason, error_text)
-            setup_mock_session(mock_session_class, mock_response, ["post"])
+            setup_mock_session(mock_session_class, mock_response, ["request"])
 
             record = await aiohttp_client.post_request("http://test.com", "{}", {})
 
@@ -264,7 +264,7 @@ class TestAioHttpClientMixin:
 
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_session = setup_mock_session(
-                mock_session_class, mock_aiohttp_response, ["post"]
+                mock_session_class, mock_aiohttp_response, ["request"]
             )
 
             record = await aiohttp_client.post_request(
@@ -272,8 +272,8 @@ class TestAioHttpClientMixin:
             )
 
             assert_successful_request_record(record)
-            mock_session.post.assert_called_once()
-            call_kwargs = mock_session.post.call_args[1]
+            mock_session.request.assert_called_once()
+            call_kwargs = mock_session.request.call_args[1]
             assert "ssl" in call_kwargs
             assert "proxy" in call_kwargs
 
@@ -285,7 +285,7 @@ class TestAioHttpClientMixin:
         headers = {"Authorization": "Bearer token", "Custom-Header": "value"}
 
         with patch("aiohttp.ClientSession") as mock_session_class:
-            setup_mock_session(mock_session_class, mock_aiohttp_response, ["post"])
+            setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
 
             record = await aiohttp_client.post_request("http://test.com", "{}", headers)
 
@@ -309,7 +309,7 @@ class TestAioHttpClientMixin:
 
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_response = create_mock_response(text_content=json.dumps(test_response))
-            setup_mock_session(mock_session_class, mock_response, ["post"])
+            setup_mock_session(mock_session_class, mock_response, ["request"])
 
             record = await aiohttp_client.post_request(
                 "http://test.com/api",
@@ -330,7 +330,7 @@ class TestAioHttpClientMixin:
                 (b"d", b"ata: World\n\n"),
             ]
             setup_sse_content_mock(mock_sse_response, sse_chunks)
-            setup_mock_session(mock_session_class, mock_sse_response, ["post"])
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
 
             with patch("time.perf_counter_ns", side_effect=range(123456789, 123456799)):
                 record = await aiohttp_client.post_request(
@@ -353,7 +353,7 @@ class TestAioHttpClientMixin:
 
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_response = create_mock_response()
-            setup_mock_session(mock_session_class, mock_response, ["post"])
+            setup_mock_session(mock_session_class, mock_response, ["request"])
 
             tasks = []
             for i in range(num_requests):
@@ -377,7 +377,7 @@ class TestAioHttpClientMixin:
         """Test handling of empty response body."""
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_response = create_mock_response(text_content="")
-            setup_mock_session(mock_session_class, mock_response, ["post"])
+            setup_mock_session(mock_session_class, mock_response, ["request"])
 
             record = await aiohttp_client.post_request("http://test.com", "{}", {})
 
@@ -391,7 +391,7 @@ class TestAioHttpClientMixin:
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_response = create_mock_response(text_content='{"received": "ok"}')
             mock_session = setup_mock_session(
-                mock_session_class, mock_response, ["post"]
+                mock_session_class, mock_response, ["request"]
             )
 
             record = await aiohttp_client.post_request(
@@ -399,6 +399,6 @@ class TestAioHttpClientMixin:
             )
 
             assert_successful_request_record(record)
-            mock_session.post.assert_called_once()
-            call_args = mock_session.post.call_args
+            mock_session.request.assert_called_once()
+            call_args = mock_session.request.call_args
             assert call_args[1]["data"] == large_payload

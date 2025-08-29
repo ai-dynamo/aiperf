@@ -2,12 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
-import json
 import math
-from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -72,28 +69,6 @@ def encode_image(img: Image, format: str) -> str:
     buffer = BytesIO()
     img.save(buffer, format=format)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-
-def load_json_str(json_str: str, func: Callable = lambda x: x) -> dict[str, Any]:
-    """Deserializes JSON encoded string into Python object.
-
-    Args:
-        json_str: JSON encoded string
-        func: A function that takes deserialized JSON object. This can be used to
-            run validation checks on the object. Defaults to identity function.
-
-    Returns:
-        The deserialized JSON object.
-
-    Raises:
-        RuntimeError: If the JSON string is invalid.
-    """
-    try:
-        # TODO: Consider using orjson for faster JSON parsing
-        return func(json.loads(json_str))
-    except json.JSONDecodeError as e:
-        snippet = json_str[:200] + ("..." if len(json_str) > 200 else "")
-        raise RuntimeError(f"Failed to parse JSON string: '{snippet}'") from e
 
 
 def sample_normal(
