@@ -227,3 +227,143 @@ class TestOpenAIResponseExtractor:
         assert results[1].perf_ns == 3
         assert results[2].data.get_text() == "Valid chunk 2"
         assert results[2].perf_ns == 5
+
+
+class TestRankingsParser(TestOpenAIResponseExtractor):
+    """Test cases for RankingsParser."""
+
+    @pytest.fixture
+    def extractor(self):
+        """Create an OpenAIResponseExtractor instance."""
+        mock_endpoint = MagicMock(spec=ModelEndpointInfo)
+        return OpenAIResponseExtractor(mock_endpoint)
+
+    def rankings_response_json(self, rankings_data) -> str:
+        """Generate rankings response JSON with specified rankings data."""
+        response = {
+            "rankings": rankings_data,
+            "model": "test-rankings-model",
+            "usage": {"total_tokens": 50},
+        }
+        return json.dumps(response)
+
+    @pytest.mark.asyncio
+    async def test_rankings_response_parsing(self, extractor):
+        rankings_data = [
+            {"index": 0, "relevance_score": 0.95},
+            {"index": 1, "relevance_score": 0.87},
+            {"index": 2, "relevance_score": 0.72},
+        ]
+
+        text_response = self.create_raw_text_response(
+            self.rankings_response_json(rankings_data)
+        )
+        request = self.create_request_record(text_response)
+
+        results = await extractor.extract_response_data(request)
+
+        assert len(results) == 1
+        result = results[0]
+
+        assert hasattr(result.data, "rankings")
+        assert result.data.rankings == rankings_data
+        assert len(result.data.rankings) == 3
+        assert result.data.rankings[0]["relevance_score"] == 0.95
+
+    @pytest.mark.asyncio
+    async def test_rankings_response_empty_data(self, extractor):
+        text_response = self.create_raw_text_response(self.rankings_response_json([]))
+        request = self.create_request_record(text_response)
+
+        results = await extractor.extract_response_data(request)
+
+        # Empty rankings should be filtered out, resulting in no results
+        assert len(results) == 0
+
+    @pytest.mark.asyncio
+    async def test_rankings_response_with_metadata(self, extractor):
+        rankings_data = [
+            {
+                "index": 0,
+                "relevance_score": 0.95,
+                "document_id": "doc1",
+                "snippet": "This is a relevant passage",
+            },
+            {
+                "index": 1,
+                "relevance_score": 0.87,
+                "document_id": "doc2",
+                "snippet": "Another relevant passage",
+            },
+        ]
+
+        text_response = self.create_raw_text_response(
+            self.rankings_response_json(rankings_data)
+        )
+        request = self.create_request_record(text_response)
+
+        results = await extractor.extract_response_data(request)
+
+        assert len(results) == 1
+        result = results[0]
+
+        assert result.data.rankings == rankings_data
+        assert result.data.rankings[0]["document_id"] == "doc1"
+        assert result.data.rankings[1]["snippet"] == "Another relevant passage"
+
+
+class TestListParserWithEmbeddings(TestOpenAIResponseExtractor):
+    """Test cases for ListParser with embedding responses."""
+
+    @pytest.fixture
+    def extractor(self):
+        """Create an OpenAIResponseExtractor instance."""
+        mock_endpoint = MagicMock(spec=ModelEndpointInfo)
+        return OpenAIResponseExtractor(mock_endpoint)
+
+    def embedding_list_response_json(self, embeddings_data) -> str:
+        """Generate embedding list response JSON."""
+        response = {
+            "object": "list",
+            "data": embeddings_data,
+            "model": "test-embedding-model",
+            "usage": {"total_tokens": 25},
+        }
+        return json.dumps(response)
+
+    @pytest.mark.asyncio
+    async def test_embedding_list_parsing(self, extractor):
+        """Test parsing of embedding list response."""
+        embeddings_data = [
+            {"object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3, 0.4]},
+            {"object": "embedding", "index": 1, "embedding": [0.5, 0.6, 0.7, 0.8]},
+        ]
+
+        text_response = self.create_raw_text_response(
+            self.embedding_list_response_json(embeddings_data)
+        )
+        request = self.create_request_record(text_response)
+
+        results = await extractor.extract_response_data(request)
+
+        assert len(results) == 1
+        result = results[0]
+
+        # Should be EmbeddingResponseData
+        assert hasattr(result.data, "embeddings")
+        assert len(result.data.embeddings) == 2
+        assert result.data.embeddings[0] == [0.1, 0.2, 0.3, 0.4]
+        assert result.data.embeddings[1] == [0.5, 0.6, 0.7, 0.8]
+
+    @pytest.mark.asyncio
+    async def test_invalid_list_response(self, extractor):
+        """Test that invalid list response raises ValueError."""
+        invalid_data = [{"object": "invalid", "data": "something"}]
+
+        text_response = self.create_raw_text_response(
+            self.embedding_list_response_json(invalid_data)
+        )
+        request = self.create_request_record(text_response)
+
+        with pytest.raises(ValueError, match="Received invalid list in response"):
+            await extractor.extract_response_data(request)

@@ -20,7 +20,7 @@ limitations under the License.
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Discord](https://dcbadge.limes.pink/api/server/D92uqZRjCZ?style=flat)](https://discord.gg/D92uqZRjCZ)
 
-| **[Roadmap](https://github.com/ai-dynamo/dynamo/issues/762)** | **[Documentation](https://docs.nvidia.com/dynamo/latest/index.html)** | **[Design Proposals](https://github.com/ai-dynamo/enhancements)** |
+| **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)**
 
 
 AIPerf is a comprehensive benchmarking tool for measuring the performance of generative AI models served by your preferred inference solution.
@@ -45,8 +45,10 @@ Features
   - request-rate
   - request-rate with a maximum concurrency
   - [trace replay](docs/benchmark_modes/trace_replay.md)
+- [Public dataset support](docs/benchmark_datasets.md)
 
 </br>
+
 
 <!--
 ======================
@@ -116,6 +118,4 @@ NVIDIA AIPerf | LLM Metrics
 ```
 </div>
 
-Review the [Development](docs/Development.md) Guide for more information.
-</br>
 

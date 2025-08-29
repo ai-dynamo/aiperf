@@ -24,6 +24,9 @@ from aiperf.clients.openai.openai_embeddings import (
 from aiperf.clients.openai.openai_responses import (
     OpenAIResponsesRequestConverter,
 )
+from aiperf.clients.openai.rankings import (
+    RankingsRequestConverter,
+)
 
 __all__ = [
     "DEFAULT_ROLE",
@@ -32,4 +35,5 @@ __all__ = [
     "OpenAICompletionRequestConverter",
     "OpenAIEmbeddingsRequestConverter",
     "OpenAIResponsesRequestConverter",
+    "RankingsRequestConverter",
 ]

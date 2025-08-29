@@ -9,7 +9,7 @@ from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, Use
 from aiperf.common.messages import ConversationTurnResponseMessage
 from aiperf.common.models import RequestRecord, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.parsers import InferenceResultParser
+from aiperf.parsers.inference_result_parser import InferenceResultParser
 
 
 @pytest.fixture
