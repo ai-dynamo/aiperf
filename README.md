@@ -49,6 +49,17 @@ Features
 
 </br>
 
+## Supported APIs
+
+- OpenAI chat completions
+- OpenAI completions
+- OpenAI embeddings
+- OpenAI audio: request throughput and latency
+- OpenAI images: request throughput and latency
+- NIM rankings
+
+</br>
+
 
 <!--
 ======================
@@ -119,3 +130,6 @@ NVIDIA AIPerf | LLM Metrics
 </div>
 
 
+## Known Issues
+
+- When setting the OSL via the `--output-tokens-mean` option, if `--extra-inputs ignore_eos:true` is not set currently, then AIPerf cannot guarantee a given OSL constraint. This is being worked on to remove this requirement in the future.
