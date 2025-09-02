@@ -64,12 +64,22 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
 
     def _setup_profiling_phase_config(self) -> None:
         """Setup the profiling phase. This can be overridden in subclasses to modify the profiling phase."""
-        self.ordered_phase_configs.append(
-            CreditPhaseConfig(
-                type=CreditPhase.PROFILING,
-                total_expected_requests=self.config.request_count,
+        if self.config.benchmarking_duration is not None:
+            # Time-based benchmarking: use duration instead of request count
+            self.ordered_phase_configs.append(
+                CreditPhaseConfig(
+                    type=CreditPhase.PROFILING,
+                    expected_duration_sec=self.config.benchmarking_duration,
+                )
             )
-        )
+        else:
+            # Request-count-based benchmarking: use request count
+            self.ordered_phase_configs.append(
+                CreditPhaseConfig(
+                    type=CreditPhase.PROFILING,
+                    total_expected_requests=self.config.request_count,
+                )
+            )
 
     def _validate_phase_configs(self) -> None:
         """Validate the phase configs."""
@@ -154,11 +164,19 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         phase_stats = self.phase_stats[message.phase]
         phase_stats.completed += 1
 
-        if (
-            # If we have sent all the credits, check if this is the last one to be returned
-            phase_stats.is_sending_complete
-            and phase_stats.completed >= phase_stats.total_expected_requests  # type: ignore[operator]
-        ):
+        # Check if this phase is complete
+        is_phase_complete = False
+        if phase_stats.is_sending_complete:
+            if phase_stats.is_request_count_based:
+                # Request-count-based: complete when all requests are returned
+                is_phase_complete = (
+                    phase_stats.completed >= phase_stats.total_expected_requests
+                )  # type: ignore[operator]
+            else:
+                # Time-based: complete when sending is done (all in-flight requests returned)
+                is_phase_complete = phase_stats.in_flight == 0
+
+        if is_phase_complete:
             phase_stats.end_ns = time.time_ns()
             self.notice(f"Phase completed: {phase_stats}")
 

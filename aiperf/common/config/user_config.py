@@ -10,6 +10,7 @@ from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import DisableCLI
+from aiperf.common.config.config_defaults import LoadGeneratorDefaults
 from aiperf.common.config.config_validators import coerce_value
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.input_config import InputConfig
@@ -61,6 +62,19 @@ class UserConfig(BaseConfig):
                 self.loadgen.concurrency = 1
             self._timing_mode = TimingMode.REQUEST_RATE
             self.loadgen.request_rate_mode = RequestRateMode.CONCURRENCY_BURST
+        return self
+
+    @model_validator(mode="after")
+    def validate_benchmarking_mode(self) -> Self:
+        """Validate benchmarking is count-based or timing-based."""
+        if (
+            self.loadgen.benchmarking_duration is not None
+            and self.loadgen.request_count != LoadGeneratorDefaults.REQUEST_COUNT
+        ):
+            raise ValueError(
+                "Count-based and duration-based benchmarking cannot be used together. "
+                "Use either --request-count or --benchmarking-duration."
+            )
         return self
 
     endpoint: Annotated[

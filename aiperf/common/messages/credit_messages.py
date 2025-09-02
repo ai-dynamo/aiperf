@@ -66,7 +66,7 @@ class CreditPhaseStartMessage(BaseServiceMessage):
     )
     expected_duration_sec: float | None = Field(
         default=None,
-        ge=1,
+        gt=0,  # Changed from ge=1 to gt=0 for consistency
         description="The expected duration of the credit phase in seconds. If None, the phase is not time based.",
     )
 

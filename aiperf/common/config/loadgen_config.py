@@ -19,6 +19,19 @@ class LoadGeneratorConfig(BaseConfig):
 
     _CLI_GROUP = Groups.LOAD_GENERATOR
 
+    # NEW AIPerf Option
+    benchmarking_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="The duration in seconds for benchmarking.",
+        ),
+        CLIParameter(
+            name=("--benchmarking-duration",),
+            group=_CLI_GROUP,
+        ),
+    ] = LoadGeneratorDefaults.BENCHMARKING_DURATION
+
     # TODO: Potentially add a validator to ensure that the concurrency is not greater than the request count
     concurrency: Annotated[
         int | None,
@@ -66,7 +79,7 @@ class LoadGeneratorConfig(BaseConfig):
     request_count: Annotated[
         int,
         Field(
-            ge=1,
+            ge=0,
             description="The number of requests to use for measurement.",
         ),
         CLIParameter(
