@@ -32,7 +32,7 @@ class TestInitialization:
 
         input_config = composer.config.input
         assert input_config is custom_config.input
-        assert input_config.file == "test_data.jsonl"
+        assert input_config.file.name == "test_data.jsonl"
         assert input_config.custom_dataset_type == CustomDatasetType.SINGLE_TURN
 
 

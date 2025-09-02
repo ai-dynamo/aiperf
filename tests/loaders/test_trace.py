@@ -54,6 +54,8 @@ class TestMooncakeTraceDatasetLoader:
         return UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(
+                fixed_schedule=True,
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
                 fixed_schedule_start_offset=start_offset,
                 fixed_schedule_end_offset=end_offset,
             ),

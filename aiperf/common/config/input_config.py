@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator, Field, model_validator
@@ -21,7 +22,7 @@ from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.enums import CustomDatasetType, PublicDatasetType
 
-logger = AIPerfLogger(__name__)
+_logger = AIPerfLogger(__name__)
 
 
 class InputConfig(BaseConfig):
@@ -31,16 +32,62 @@ class InputConfig(BaseConfig):
 
     _CLI_GROUP = Groups.INPUT
 
+    # NOTE: The following model validators will be called in the order they are defined.
+    #       Keep this in mind when adding/modifying new validators.
+
+    @model_validator(mode="after")
+    def validate_file(self) -> Self:
+        """Validate the file configuration."""
+        if self.file:
+            if not Path(self.file).is_file():
+                raise ValueError(f"Input file '{self.file}' does not exist")
+            if not self.custom_dataset_type:
+                _logger.info(
+                    "No --custom-dataset-type provided, assuming --custom-dataset-type MOONCAKE_TRACE"
+                )
+                self.custom_dataset_type = CustomDatasetType.MOONCAKE_TRACE
+            _logger.debug(
+                f"Input file '{self.file}' provided, assuming --fixed-schedule"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_dataset_type(self) -> Self:
+        """Validate the different dataset type configuration."""
+        if self.public_dataset is not None and self.custom_dataset_type is not None:
+            raise ValueError(
+                "The --public-dataset and --custom-dataset-type options cannot be set together"
+            )
+        return self
+
     @model_validator(mode="after")
     def validate_fixed_schedule(self) -> Self:
         """Validate the fixed schedule configuration."""
-        if self.fixed_schedule and self.file is None:
-            raise ValueError("Fixed schedule requires a file to be provided")
+        if (
+            self.fixed_schedule
+            and self.custom_dataset_type is None
+            and self.public_dataset is None
+        ):
+            raise ValueError(
+                "--fixed-schedule requires --public-dataset or --custom-dataset-type to be provided"
+            )
+        if not self.fixed_schedule and (
+            self.custom_dataset_type is not None or self.public_dataset is not None
+        ):
+            _logger.debug(
+                "Assuming --fixed-schedule based on --public-dataset or --custom-dataset-type"
+            )
+            self.fixed_schedule = True
         return self
 
     @model_validator(mode="after")
     def validate_fixed_schedule_start_offset(self) -> Self:
         """Validate the fixed schedule start offset configuration."""
+        if self.fixed_schedule_start_offset is not None and not self.fixed_schedule:
+            raise ValueError(
+                "--fixed-schedule-start-offset can only be used with --fixed-schedule"
+            )
+
         if (
             self.fixed_schedule_start_offset is not None
             and self.fixed_schedule_auto_offset
@@ -55,20 +102,19 @@ class InputConfig(BaseConfig):
         """Validate the fixed schedule start and end offset configuration."""
         if (
             self.fixed_schedule_start_offset is not None
+            or self.fixed_schedule_end_offset is not None
+        ) and not self.fixed_schedule:
+            raise ValueError(
+                "--fixed-schedule-start-offset and --fixed-schedule-end-offset can only be used with --fixed-schedule"
+            )
+
+        if (
+            self.fixed_schedule_start_offset is not None
             and self.fixed_schedule_end_offset is not None
             and self.fixed_schedule_start_offset > self.fixed_schedule_end_offset
         ):
             raise ValueError(
                 "The --fixed-schedule-start-offset must be less than or equal to the --fixed-schedule-end-offset"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def validate_dataset_type(self) -> Self:
-        """Validate the different dataset type configuration."""
-        if self.public_dataset is not None and self.custom_dataset_type is not None:
-            raise ValueError(
-                "The --public-dataset and --custom-dataset-type options cannot be set together"
             )
         return self
 

@@ -160,26 +160,34 @@ def multiturn_config():
 
 
 @pytest.fixture
-def custom_config() -> UserConfig:
+def custom_config(tmp_path) -> UserConfig:
     """Basic custom configuration for testing."""
-    # Use model_construct to bypass validation for testing
+    # Create a temporary file for testing
+    test_file = tmp_path / "test_data.jsonl"
+    test_file.write_text('{"input_length": 100, "output_length": 50}')
+
     return UserConfig(
         endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig.model_construct(
-            file="test_data.jsonl",
+        input=InputConfig(
+            file=str(test_file),
             custom_dataset_type=CustomDatasetType.SINGLE_TURN,
         ),
     )
 
 
 @pytest.fixture
-def trace_config() -> UserConfig:
+def trace_config(tmp_path) -> UserConfig:
     """Configuration for TRACE dataset type."""
-    # Use model_construct to bypass validation for testing
+    # Create a temporary file for testing
+    test_file = tmp_path / "trace_data.jsonl"
+    test_file.write_text(
+        '{"input_length": 100, "output_length": 50, "timestamp": 1000}'
+    )
+
     return UserConfig(
         endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig.model_construct(
-            file="trace_data.jsonl",
+        input=InputConfig(
+            file=str(test_file),
             custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
         ),
     )
