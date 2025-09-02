@@ -25,7 +25,7 @@ flowchart TD
     H --> J[DatasetManager]
     H --> K[TimingManager]
     H --> L[RecordsManager]
-    H --> M[InferenceResultParser]
+    H --> M[RecordProcessor]
     H --> N[WorkerManager]
     H --> O[Worker]
 
