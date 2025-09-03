@@ -66,7 +66,7 @@ class CreditPhaseStartMessage(BaseServiceMessage):
     )
     expected_duration_sec: float | None = Field(
         default=None,
-        gt=0,  # Changed from ge=1 to gt=0 for consistency
+        ge=1,
         description="The expected duration of the credit phase in seconds. If None, the phase is not time based.",
     )
 
@@ -119,6 +119,10 @@ class CreditPhaseCompleteMessage(BaseServiceMessage):
         ...,
         ge=1,
         description="The time in which the last credit was returned from the workers in nanoseconds",
+    )
+    duration_elapsed: bool = Field(
+        default=False,
+        description="Whether this phase completed because the benchmarking duration elapsed",
     )
 
 

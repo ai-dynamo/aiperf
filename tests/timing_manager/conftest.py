@@ -175,7 +175,11 @@ class MockCreditManager(AIPerfLifecycleMixin):
         )
 
     async def publish_phase_complete(
-        self, phase: CreditPhase, completed: int, end_ns: int
+        self,
+        phase: CreditPhase,
+        completed: int,
+        end_ns: int,
+        duration_elapsed: bool = False,
     ) -> None:
         """Mock publish_phase_complete method."""
         self.phase_complete_calls.append(
@@ -183,6 +187,7 @@ class MockCreditManager(AIPerfLifecycleMixin):
                 phase=phase,
                 completed=completed,
                 end_ns=end_ns,
+                duration_elapsed=duration_elapsed,
                 service_id="test-service",
             )
         )

@@ -23,7 +23,7 @@ class LoadGeneratorConfig(BaseConfig):
     benchmarking_duration: Annotated[
         float | None,
         Field(
-            gt=0,
+            ge=1,
             description="The duration in seconds for benchmarking.",
         ),
         CLIParameter(
@@ -79,7 +79,7 @@ class LoadGeneratorConfig(BaseConfig):
     request_count: Annotated[
         int,
         Field(
-            ge=0,
+            ge=1,
             description="The number of requests to use for measurement.",
         ),
         CLIParameter(

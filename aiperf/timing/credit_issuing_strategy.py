@@ -5,7 +5,10 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 
-from aiperf.common.constants import DEFAULT_CREDIT_PROGRESS_REPORT_INTERVAL
+from aiperf.common.constants import (
+    DEFAULT_CREDIT_PROGRESS_REPORT_INTERVAL,
+    NANOS_PER_SECOND,
+)
 from aiperf.common.enums import CreditPhase, TimingMode
 from aiperf.common.exceptions import ConfigurationError
 from aiperf.common.factories import AIPerfFactory
@@ -65,7 +68,6 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
     def _setup_profiling_phase_config(self) -> None:
         """Setup the profiling phase. This can be overridden in subclasses to modify the profiling phase."""
         if self.config.benchmarking_duration is not None:
-            # Time-based benchmarking: use duration instead of request count
             self.ordered_phase_configs.append(
                 CreditPhaseConfig(
                     type=CreditPhase.PROFILING,
@@ -73,7 +75,6 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
                 )
             )
         else:
-            # Request-count-based benchmarking: use request count
             self.ordered_phase_configs.append(
                 CreditPhaseConfig(
                     type=CreditPhase.PROFILING,
@@ -141,7 +142,64 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
             )
 
             # Wait for the credits to be returned before continuing to the next phase
+            await self._wait_for_phase_completion(phase_stats)
+
+    async def _wait_for_phase_completion(self, phase_stats: CreditPhaseStats) -> None:
+        """Wait for a phase to complete, with timeout for time-based phases."""
+        if phase_stats.is_time_based and phase_stats.expected_duration_sec is not None:
+            elapsed_ns = time.time_ns() - (phase_stats.start_ns or 0)
+            elapsed_sec = elapsed_ns / NANOS_PER_SECOND
+            remaining_sec = max(0, phase_stats.expected_duration_sec - elapsed_sec)
+
+            if remaining_sec <= 0:
+                self.info(
+                    f"Benchmarking duration has elapsed for {phase_stats.type} phase, completing immediately"
+                )
+                await self._complete_phase_on_duration_timeout(phase_stats)
+                return
+
+            try:
+                await asyncio.wait_for(
+                    self.phase_complete_event.wait(), timeout=remaining_sec
+                )
+            except asyncio.TimeoutError:
+                self.info(
+                    f"Benchmarking duration has elapsed for {phase_stats.type} phase after {phase_stats.expected_duration_sec}s"
+                )
+                await self._complete_phase_on_duration_timeout(phase_stats)
+        else:
+            # For request-count-based phases, wait indefinitely
             await self.phase_complete_event.wait()
+
+    async def _complete_phase_on_duration_timeout(
+        self, phase_stats: CreditPhaseStats
+    ) -> None:
+        """Complete a phase when the duration timeout has elapsed."""
+        if phase_stats.type in self.phase_stats:
+            duration_end_ns = (phase_stats.start_ns or 0) + int(
+                phase_stats.expected_duration_sec * NANOS_PER_SECOND
+            )
+            phase_stats.end_ns = duration_end_ns
+
+            self.notice(f"Phase completed due to duration timeout: {phase_stats}")
+
+            self.execute_async(
+                self.credit_manager.publish_phase_complete(
+                    phase_stats.type,
+                    phase_stats.completed,
+                    phase_stats.end_ns,
+                    duration_elapsed=True,
+                )
+            )
+
+            self.phase_complete_event.set()
+
+            if phase_stats.type == CreditPhase.PROFILING:
+                self.execute_async(self.credit_manager.publish_credits_complete())
+                self.all_phases_complete_event.set()
+
+            # We don't need to keep track of the phase stats anymore
+            self.phase_stats.pop(phase_stats.type)
 
     @abstractmethod
     async def _execute_single_phase(self, phase_stats: CreditPhaseStats) -> None:
@@ -168,13 +226,13 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         is_phase_complete = False
         if phase_stats.is_sending_complete:
             if phase_stats.is_request_count_based:
-                # Request-count-based: complete when all requests are returned
                 is_phase_complete = (
                     phase_stats.completed >= phase_stats.total_expected_requests
                 )  # type: ignore[operator]
-            else:
-                # Time-based: complete when sending is done (all in-flight requests returned)
+            elif phase_stats.is_time_based:
                 is_phase_complete = phase_stats.in_flight == 0
+            else:
+                self.error(f"Unsupported phase stats mode: {phase_stats}")
 
         if is_phase_complete:
             phase_stats.end_ns = time.time_ns()
@@ -182,7 +240,10 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
 
             self.execute_async(
                 self.credit_manager.publish_phase_complete(
-                    message.phase, phase_stats.completed, phase_stats.end_ns
+                    message.phase,
+                    phase_stats.completed,
+                    phase_stats.end_ns,
+                    duration_elapsed=False,
                 )
             )
 
