@@ -18,11 +18,11 @@ from aiperf.common.messages import (
 )
 from aiperf.common.models import ErrorDetails, RequestRecord, Turn, WorkerTaskStats
 from aiperf.common.protocols import (
-    AIPerfLoggerProtocol,
     InferenceClientProtocol,
     PushClientProtocol,
     RequestClientProtocol,
     RequestConverterProtocol,
+    TaskManagerProtocol,
 )
 
 
@@ -38,21 +38,20 @@ class CreditProcessorProtocol(Protocol):
 
 
 @runtime_checkable
-class CreditProcessorMixinRequirements(AIPerfLoggerProtocol, Protocol):
+class CreditProcessorMixinRequirements(TaskManagerProtocol, Protocol):
     """CreditProcessorMixinRequirements is a protocol that provides the requirements needed for the CreditProcessorMixin."""
 
     service_id: str
     inference_client: InferenceClientProtocol
     conversation_request_client: RequestClientProtocol
     inference_results_push_client: PushClientProtocol
+    credit_return_push_client: PushClientProtocol
     request_converter: RequestConverterProtocol
     model_endpoint: ModelEndpointInfo
     task_stats: WorkerTaskStats
 
-    async def _process_credit_drop_internal(
-        self, message: CreditDropMessage
-    ) -> CreditReturnMessage:
-        """Process a credit drop message. Return the CreditReturnMessage."""
+    async def _process_credit_drop_internal(self, message: CreditDropMessage) -> None:
+        """Process a credit drop message. Return the credit as soon as possible."""
         ...
 
     async def _execute_single_credit_internal(
@@ -79,10 +78,8 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
                 "CreditProcessorMixin must be used with CreditProcessorMixinRequirements"
             )
 
-    async def _process_credit_drop_internal(
-        self, message: CreditDropMessage
-    ) -> CreditReturnMessage:
-        """Process a credit drop message. Return the CreditReturnMessage.
+    async def _process_credit_drop_internal(self, message: CreditDropMessage) -> None:
+        """Process a credit drop message. Make sure to return the credit as soon as possible.
 
         - Every credit must be returned after processing
         - All results or errors should be converted to a RequestRecord and pushed to the inference results client.
@@ -93,7 +90,8 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
         """
         # TODO: Add tests to ensure that the above note is never violated in the future
 
-        self.trace(lambda: f"Processing credit drop: {message}")
+        if self.is_trace_enabled:
+            self.trace(f"Processing credit drop: {message}")
         drop_perf_ns = time.perf_counter_ns()  # The time the credit was received
 
         self.task_stats.total += 1
@@ -108,35 +106,26 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
             record.end_perf_ns = time.perf_counter_ns()
 
         finally:
+            return_message = CreditReturnMessage(
+                service_id=self.service_id,
+                phase=message.phase,
+                delayed_ns=record.delayed_ns,
+            )
+            if self.is_trace_enabled:
+                self.trace(f"Returning credit {return_message}")
+            # NOTE: Do not do this execute_async, as we want to give the credit back as soon as possible.
+            await self.credit_return_push_client.push(return_message)
+
+            self.task_stats.task_finished(record.valid)
+
             record.credit_phase = message.phase
             # Calculate the latency of the credit drop (from when the credit drop was first received to when the request was sent)
             record.credit_drop_latency = record.start_perf_ns - drop_perf_ns
-
             msg = InferenceResultsMessage(
                 service_id=self.service_id,
                 record=record,
             )
-
-            # Note that we already ensured that the phase exists in the task_stats dict in the above code.
-            if not record.valid:
-                self.task_stats.failed += 1
-            else:
-                self.task_stats.completed += 1
-
-            try:
-                await self.inference_results_push_client.push(msg)
-            except Exception as e:
-                # If we fail to push the record, log the error and continue
-                self.exception(f"Error pushing request record: {e}")
-            finally:
-                # Always return the credits
-                return_message = CreditReturnMessage(
-                    service_id=self.service_id,
-                    delayed_ns=record.delayed_ns,
-                    phase=message.phase,
-                )
-                self.trace(lambda: f"Returning credit {return_message}")
-                return return_message  # noqa: B012
+            self.execute_async(self.inference_results_push_client.push(msg))
 
     async def _execute_single_credit_internal(
         self, message: CreditDropMessage
@@ -156,25 +145,28 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
                 )
             )
         )
-        self.trace(lambda: f"Received response message: {conversation_response}")
+        if self.is_trace_enabled:
+            self.trace(f"Received response message: {conversation_response}")
+
+        turn_index = 0
+        turn = conversation_response.conversation.turns[turn_index]
 
         if isinstance(conversation_response, ErrorMessage):
             return RequestRecord(
-                model_name=self.model_endpoint.primary_model_name,
+                model_name=turn.model or self.model_endpoint.primary_model_name,
                 conversation_id=message.conversation_id,
-                turn_index=0,
+                turn_index=turn_index,
+                turn=turn,
                 timestamp_ns=time.time_ns(),
                 start_perf_ns=time.perf_counter_ns(),
                 end_perf_ns=time.perf_counter_ns(),
                 error=conversation_response.error,
             )
 
-        record = await self._call_inference_api_internal(
-            message, conversation_response.conversation.turns[0]
-        )
-        record.model_name = self.model_endpoint.primary_model_name
+        record = await self._call_inference_api_internal(message, turn)
+        record.model_name = turn.model or self.model_endpoint.primary_model_name
         record.conversation_id = conversation_response.conversation.session_id
-        record.turn_index = 0
+        record.turn_index = turn_index
         return record
 
     async def _call_inference_api_internal(
@@ -183,7 +175,8 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
         turn: Turn,
     ) -> RequestRecord:
         """Make a single call to the inference API. Will return an error record if the call fails."""
-        self.trace(lambda: f"Calling inference API for turn: {turn}")
+        if self.is_trace_enabled:
+            self.trace(f"Calling inference API for turn: {turn}")
         formatted_payload = None
         pre_send_perf_ns = None
         timestamp_ns = None
@@ -202,9 +195,10 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
             drop_ns = message.credit_drop_ns
             now_ns = time.time_ns()
             if drop_ns and drop_ns > now_ns:
-                self.trace(
-                    lambda: f"Waiting for credit drop expected time: {(drop_ns - now_ns) / NANOS_PER_SECOND:.2f} s"
-                )
+                if self.is_trace_enabled:
+                    self.trace(
+                        f"Waiting for credit drop expected time: {(drop_ns - now_ns) / NANOS_PER_SECOND:.2f} s"
+                    )
                 await asyncio.sleep((drop_ns - now_ns) / NANOS_PER_SECOND)
             elif drop_ns and drop_ns < now_ns:
                 delayed_ns = now_ns - drop_ns
@@ -220,19 +214,21 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
                 payload=formatted_payload,
             )
 
-            self.debug(
-                lambda: f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
-            )
+            if self.is_debug_enabled:
+                self.debug(
+                    f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
+                )
 
             result.delayed_ns = delayed_ns
+            result.turn = turn
             return result
 
         except Exception as e:
-            self.exception(
-                f"Error calling inference server API at {self.model_endpoint.url}: {e}"
+            self.error(
+                f"Error calling inference server API at {self.model_endpoint.url}: {e!r}"
             )
             return RequestRecord(
-                request=formatted_payload,
+                turn=turn,
                 timestamp_ns=timestamp_ns or time.time_ns(),
                 # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
                 start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),

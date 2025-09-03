@@ -5,11 +5,11 @@ import asyncio
 
 from rich.console import Console
 
-from aiperf.common.config import UserConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.factories import ConsoleExporterFactory, DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ProfileResults
-from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
 
 class ExporterManager(AIPerfLoggerMixin):
@@ -18,14 +18,22 @@ class ExporterManager(AIPerfLoggerMixin):
     registered data exporters.
     """
 
-    def __init__(self, results: ProfileResults, input_config: UserConfig, **kwargs):
+    def __init__(
+        self,
+        results: ProfileResults,
+        input_config: UserConfig,
+        service_config: ServiceConfig,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self._results = results
         self._input_config = input_config
         self._tasks: set[asyncio.Task] = set()
+        self._service_config = service_config
         self._exporter_config = ExporterConfig(
             results=self._results,
             user_config=self._input_config,
+            service_config=self._service_config,
         )
 
     def _task_done_callback(self, task: asyncio.Task) -> None:
@@ -51,6 +59,16 @@ class ExporterManager(AIPerfLoggerMixin):
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
         self.debug("Exporting all records completed")
+
+    def get_exported_file_infos(self) -> list[FileExportInfo]:
+        """Get the file infos for all exported files."""
+        file_infos = []
+        for exporter_type in DataExporterFactory.get_all_class_types():
+            exporter = DataExporterFactory.create_instance(
+                exporter_type, exporter_config=self._exporter_config
+            )
+            file_infos.append(exporter.get_export_info())
+        return file_infos
 
     async def export_console(self, console: Console) -> None:
         self.info("Exporting console data")

@@ -1,14 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from collections import deque
 from collections.abc import Callable
 from datetime import datetime
 from enum import Flag
 from functools import cached_property
-from typing import Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
-import pandas as pd
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
@@ -19,9 +17,14 @@ from aiperf.common.enums.base_enums import (
 )
 from aiperf.common.exceptions import MetricUnitError
 
+if TYPE_CHECKING:
+    from aiperf.metrics.metric_dicts import MetricArray
+
 MetricValueTypeT: TypeAlias = int | float | list[float] | list[int]
 MetricValueTypeVarT = TypeVar("MetricValueTypeVarT", bound=MetricValueTypeT)
-MetricDictValueTypeT: TypeAlias = MetricValueTypeT | deque[MetricValueTypeT] | pd.Series
+MetricDictValueTypeT: TypeAlias = (
+    "MetricValueTypeT | list[MetricValueTypeT] | MetricArray"
+)
 
 
 class BaseMetricUnitInfo(BasePydanticEnumInfo):
@@ -190,6 +193,7 @@ class GenericMetricUnit(BaseMetricUnit):
     COUNT = _unit("count")
     REQUESTS = _unit("requests")
     TOKENS = _unit("tokens")
+    RATIO = _unit("ratio")
     USER = _unit("user")
 
 
@@ -287,6 +291,10 @@ class MetricType(CaseInsensitiveStrEnum):
     """Metrics that provide a distinct value for each request. Every request that comes in will produce a new value that is not affected by any other requests.
     These metrics can be tracked over time and compared to each other.
     Examples: request latency, ISL, ITL, OSL, etc."""
+
+    SUM_AGGREGATE = "sum_aggregate"
+    """Metrics that are assigned as the sum aggregator for a specific metric.
+    Examples: total request count, benchmark duration, etc."""
 
     AGGREGATE = "aggregate"
     """Metrics that keep track of one or more values over time, that are updated for each request, such as total counts, min/max values, etc.
@@ -415,6 +423,13 @@ class MetricFlags(Flag):
     SUPPORTS_IMAGE_ONLY = 1 << 7
     """Metrics that are only applicable to image-based endpoints."""
 
+    SUPPORTS_REASONING = 1 << 8
+    """Metrics that are only applicable to reasoning-based models and endpoints."""
+
+    EXPERIMENTAL = (1 << 9) | HIDDEN
+    """Metrics that are experimental and are not yet ready for production use, and may be subject to change.
+    This inherently means that the metric is HIDDEN as well."""
+
     STREAMING_TOKENS_ONLY = STREAMING_ONLY | PRODUCES_TOKENS_ONLY
     """Metrics that are only applicable to streamed responses and token-based endpoints.
     This is a convenience flag that is the combination of the `STREAMING_ONLY` and `PRODUCES_TOKENS_ONLY` flags."""
@@ -423,6 +438,10 @@ class MetricFlags(Flag):
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.
         return (flags & self) == flags
+
+    def has_any_flags(self, flags: "MetricFlags") -> bool:
+        """Return True if the metric has ANY of the given flag(s) (regardless of other flags)."""
+        return (flags & self) != MetricFlags.NONE
 
     def missing_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric does not have ANY of the given flag(s) (regardless of other flags). It will

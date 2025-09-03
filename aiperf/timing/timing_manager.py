@@ -112,20 +112,11 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
                     schedule=dataset_timing_response.timing_data,
                 )
             )
-        elif self.config.timing_mode == TimingMode.CONCURRENCY:
-            self.info("Using concurrency strategy")
+        else:
+            self.info(f"Using {self.config.timing_mode.title()} strategy")
             self._credit_issuing_strategy = (
                 CreditIssuingStrategyFactory.create_instance(
-                    TimingMode.CONCURRENCY,
-                    config=self.config,
-                    credit_manager=self,
-                )
-            )
-        elif self.config.timing_mode == TimingMode.REQUEST_RATE:
-            self.info("Using request rate strategy")
-            self._credit_issuing_strategy = (
-                CreditIssuingStrategyFactory.create_instance(
-                    TimingMode.REQUEST_RATE,
+                    self.config.timing_mode,
                     config=self.config,
                     credit_manager=self,
                 )
@@ -176,7 +167,8 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
     @on_pull_message(MessageType.CREDIT_RETURN)
     async def _on_credit_return(self, message: CreditReturnMessage) -> None:
         """Handle the credit return message."""
-        self.debug(lambda: f"Timing manager received credit return message: {message}")
+        if self.is_debug_enabled:
+            self.debug(f"Timing manager received credit return message: {message}")
         if self._credit_issuing_strategy:
             await self._credit_issuing_strategy._on_credit_return(message)
 

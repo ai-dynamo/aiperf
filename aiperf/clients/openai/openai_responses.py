@@ -27,11 +27,11 @@ class OpenAIResponsesRequestConverter(AIPerfLoggerMixin):
             content for text in turn.texts for content in text.contents if content
         ]
 
-        extra = model_endpoint.endpoint.extra or {}
+        extra = model_endpoint.endpoint.extra or []
 
         payload = {
             "input": prompts,
-            "model": model_endpoint.primary_model_name,
+            "model": turn.model or model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }
         if turn.max_tokens:

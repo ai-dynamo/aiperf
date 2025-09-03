@@ -65,7 +65,7 @@ def test_streaming_validation():
         type=EndpointType.OPENAI_CHAT_COMPLETIONS,
         model_names=["gpt2"],
     )
-    assert config.streaming  # Streaming is enabled by default
+    assert not config.streaming  # Streaming is disabled by default
 
     config = EndpointConfig(
         type=EndpointType.OPENAI_CHAT_COMPLETIONS,
@@ -75,8 +75,15 @@ def test_streaming_validation():
     assert not config.streaming  # Streaming was set to False
 
     config = EndpointConfig(
-        type=EndpointType.OPENAI_EMBEDDINGS,
+        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
         streaming=True,
+        model_names=["gpt2"],
+    )
+    assert config.streaming  # Streaming was set to True
+
+    config = EndpointConfig(
+        type=EndpointType.OPENAI_EMBEDDINGS,
+        streaming=False,
         model_names=["gpt2"],
     )
     assert not config.streaming  # Streaming is not supported for embeddings

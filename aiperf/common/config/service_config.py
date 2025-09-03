@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import Annotated
 
-from cyclopts import Parameter
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
 from aiperf.common.config.base_config import ADD_TO_TEMPLATE
+from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import ServiceDefaults
-from aiperf.common.config.config_validators import parse_service_types
+from aiperf.common.config.dev_config import DeveloperConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
@@ -21,7 +21,6 @@ from aiperf.common.enums import (
     AIPerfLogLevel,
     CommunicationBackend,
     ServiceRunType,
-    ServiceType,
 )
 from aiperf.common.enums.ui_enums import AIPerfUIType
 
@@ -64,10 +63,7 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Type of service run (process, k8s)",
         ),
-        Parameter(
-            name=("--service-run-type", "--run-type"),
-            group=_CLI_GROUP,
-        ),
+        DisableCLI(reason="Only single support for now"),
     ] = ServiceDefaults.SERVICE_RUN_TYPE
 
     comm_backend: Annotated[
@@ -75,10 +71,7 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Communication backend to use",
         ),
-        Parameter(
-            name=("--comm-backend"),
-            group=_CLI_GROUP,
-        ),
+        DisableCLI(reason="This is not supported via CLI"),
     ] = ServiceDefaults.COMM_BACKEND
 
     comm_config: Annotated[
@@ -86,55 +79,8 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Communication configuration",
         ),
-        Parameter(
-            parse=False,  # This is not supported via CLI
-        ),
+        DisableCLI(reason="This is not supported via CLI"),
     ] = ServiceDefaults.COMM_CONFIG
-
-    heartbeat_timeout: Annotated[
-        float,
-        Field(
-            description="Time in seconds after which a service is considered dead if no "
-            "heartbeat received",
-        ),
-        Parameter(
-            name=("--heartbeat-timeout"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.HEARTBEAT_TIMEOUT
-
-    registration_timeout: Annotated[
-        float,
-        Field(
-            description="Time in seconds to wait for all required services to register",
-        ),
-        Parameter(
-            name=("--registration-timeout"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.REGISTRATION_TIMEOUT
-
-    command_timeout: Annotated[
-        float,
-        Field(
-            description="Default timeout for command responses",
-        ),
-        Parameter(
-            name=("--command-timeout", "--command-timeout-seconds"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.COMMAND_TIMEOUT
-
-    heartbeat_interval_seconds: Annotated[
-        float,
-        Field(
-            description="Interval in seconds between heartbeat messages",
-        ),
-        Parameter(
-            name=("--heartbeat-interval-seconds", "--heartbeat-interval"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.HEARTBEAT_INTERVAL_SECONDS
 
     workers: Annotated[
         WorkersConfig,
@@ -148,7 +94,7 @@ class ServiceConfig(BaseSettings):
         Field(
             description="Logging level",
         ),
-        Parameter(
+        CLIParameter(
             name=("--log-level"),
             group=_CLI_GROUP,
         ),
@@ -160,7 +106,7 @@ class ServiceConfig(BaseSettings):
             description="Equivalent to --log-level DEBUG. Enables more verbose logging output, but lacks some raw message logging.",
             json_schema_extra={ADD_TO_TEMPLATE: False},
         ),
-        Parameter(
+        CLIParameter(
             name=("--verbose", "-v"),
             group=_CLI_GROUP,
         ),
@@ -172,24 +118,12 @@ class ServiceConfig(BaseSettings):
             description="Equivalent to --log-level TRACE. Enables the most verbose logging output possible.",
             json_schema_extra={ADD_TO_TEMPLATE: False},
         ),
-        Parameter(
+        CLIParameter(
             name=("--extra-verbose", "-vv"),
             group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.EXTRA_VERBOSE
 
-    enable_uvloop: Annotated[
-        bool,
-        Field(
-            description="Enable the use of uvloop instead of the default asyncio event loop",
-        ),
-        Parameter(
-            name=("--enable-uvloop"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.ENABLE_UVLOOP
-
-    # TODO: Potentially auto-scale this in the future.
     record_processor_service_count: Annotated[
         int | None,
         Field(
@@ -198,70 +132,21 @@ class ServiceConfig(BaseSettings):
             "should be spawned in order to keep up with the incoming records. If not specified, the number of services will be "
             "automatically determined based on the worker count.",
         ),
-        Parameter(
+        CLIParameter(
             name=("--record-processor-service-count", "--record-processors"),
             group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.RECORD_PROCESSOR_SERVICE_COUNT
-
-    progress_report_interval: Annotated[
-        float,
-        Field(
-            description="Interval in seconds to report progress. This is used to report the progress of the profile to the user.",
-        ),
-        Parameter(
-            name=("--progress-report-interval-seconds", "--progress-report-interval"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.PROGRESS_REPORT_INTERVAL
-
-    enable_yappi: Annotated[
-        bool,
-        Field(
-            description="*[Developer use only]* Enable yappi profiling (Yet Another Python Profiler) to profile AIPerf's internal python code. "
-            "This can be used in the development of AIPerf in order to find performance bottlenecks across the various services. "
-            "The output '.prof' files can be viewed with snakeviz. Requires yappi and snakeviz to be installed. "
-            "Run 'pip install yappi snakeviz' to install them.",
-        ),
-        Parameter(
-            name=("--enable-yappi-profiling"),
-            group=_CLI_GROUP,
-        ),
-    ] = ServiceDefaults.ENABLE_YAPPI
-
-    debug_services: Annotated[
-        set[ServiceType] | None,
-        Field(
-            description="List of services to enable debug logging for. Can be a comma-separated list, a single service type, "
-            "or the cli flag can be used multiple times.",
-        ),
-        Parameter(
-            name=("--debug-service", "--debug-services"),
-            group=_CLI_GROUP,
-        ),
-        BeforeValidator(parse_service_types),
-    ] = ServiceDefaults.DEBUG_SERVICES
-
-    trace_services: Annotated[
-        set[ServiceType] | None,
-        Field(
-            description="List of services to enable trace logging for. Can be a comma-separated list, a single service type, "
-            "or the cli flag can be used multiple times.",
-        ),
-        Parameter(
-            name=("--trace-service", "--trace-services"),
-            group=_CLI_GROUP,
-        ),
-        BeforeValidator(parse_service_types),
-    ] = ServiceDefaults.TRACE_SERVICES
 
     ui_type: Annotated[
         AIPerfUIType,
         Field(
             description="Type of UI to use",
         ),
-        Parameter(
+        CLIParameter(
             name=("--ui-type", "--ui"),
             group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.UI_TYPE
+
+    developer: DeveloperConfig = DeveloperConfig()

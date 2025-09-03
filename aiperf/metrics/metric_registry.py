@@ -43,6 +43,11 @@ class MetricRegistry:
     _instances_map: dict[MetricTagT, "BaseMetric"] = {}
     _instance_lock = Lock()
 
+    def __init__(self) -> None:
+        raise TypeError(
+            "MetricRegistry is a singleton and cannot be instantiated directly"
+        )
+
     @classmethod
     def _discover_metrics(cls) -> None:
         """
@@ -196,6 +201,8 @@ class MetricRegistry:
             MetricType.RECORD: {MetricType.RECORD},
             # Aggregate metrics can depend on other record or aggregate metrics
             MetricType.AGGREGATE: {MetricType.RECORD, MetricType.AGGREGATE},
+            # Sum aggregate metrics can only depend on record metrics
+            MetricType.SUM_AGGREGATE: {MetricType.RECORD},
             # Derived metrics can depend on any other metric type
             MetricType.DERIVED: {
                 MetricType.RECORD,

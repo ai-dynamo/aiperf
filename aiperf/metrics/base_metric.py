@@ -12,6 +12,7 @@ from aiperf.common.enums import (
     MetricValueTypeVarT,
 )
 from aiperf.common.enums.metric_enums import MetricUnitT
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import (
@@ -28,9 +29,11 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
 
     The class attributes are:
     - tag: The tag of the metric. This must be a non-empty string that uniquely identifies the metric type.
-    - header: The header of the metric. This is the user-friendly name of the metric that will be displayed in the UI.
+    - header: The header of the metric. This is the user-friendly name of the metric that will be displayed in the Console Export.
+    - short_header: The short header of the metric. This is the shortened user-friendly name of the metric for display in the Dashboard.
     - unit: The unit of the internal representation of the metric. This is used for converting to other units and for display.
     - display_unit: The unit of the metric that is used for display (if different from the unit). None means use the unit for display.
+    - short_header_hide_unit: If True, the unit will not be displayed in the Dashboard short header.
     - display_order: The display order in the ConsoleExporter. Lower numbers are displayed first. None means unordered after any ordered metrics.
     - flags: The flags of the metric that determine how and when it is computed and displayed.
     - required_metrics: The metrics that must be available to compute the metric. This is a set of metric tags.
@@ -39,6 +42,8 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
     # User-defined attributes to be overridden by subclasses
     tag: ClassVar[MetricTagT]
     header: ClassVar[str] = ""
+    short_header: ClassVar[str | None] = None
+    short_header_hide_unit: ClassVar[bool] = False
     unit: ClassVar[MetricUnitT]
     display_unit: ClassVar[MetricUnitT | None] = None
     display_order: ClassVar[int | None] = None
@@ -61,7 +66,9 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
         super().__init_subclass__(**kwargs)
 
         # Only register concrete classes (not abstract ones)
-        if inspect.isabstract(cls):
+        if inspect.isabstract(cls) or (
+            hasattr(cls, "__is_abstract__") and cls.__is_abstract__
+        ):
             return
 
         # Verify that the class is a valid metric type
@@ -126,7 +133,7 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
         if (not record or not record.valid) and not self.has_flags(
             MetricFlags.ERROR_ONLY
         ):
-            raise ValueError("Invalid Record")
+            raise NoMetricValue("Invalid Record")
 
     def _check_metrics(self, metrics: MetricRecordDict | MetricResultsDict) -> None:
         """Check that the required metrics are available."""
@@ -134,12 +141,17 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
             return
         for tag in self.required_metrics:
             if tag not in metrics:
-                raise ValueError(f"Missing required metric: '{tag}'")
+                raise NoMetricValue(f"Missing required metric: '{tag}'")
 
     @classmethod
     def has_flags(cls, flags: MetricFlags) -> bool:
         """Return True if the metric has the given flag(s) (regardless of other flags)."""
         return cls.flags.has_flags(flags)
+
+    @classmethod
+    def has_any_flags(cls, flags: MetricFlags) -> bool:
+        """Return True if the metric has ANY of the given flag(s) (regardless of other flags)."""
+        return cls.flags.has_any_flags(flags)
 
     @classmethod
     def missing_flags(cls, flags: MetricFlags) -> bool:

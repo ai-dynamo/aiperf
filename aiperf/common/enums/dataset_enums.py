@@ -4,6 +4,10 @@
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
+class PublicDatasetType(CaseInsensitiveStrEnum):
+    SHAREGPT = "sharegpt"
+
+
 class ComposerType(CaseInsensitiveStrEnum):
     SYNTHETIC = "synthetic"
     CUSTOM = "custom"

@@ -52,20 +52,27 @@ class AioHttpClientMixin(AIPerfLoggerMixin):
             await self.tcp_connector.close()
             self.tcp_connector = None
 
-    async def post_request(
+    async def _request(
         self,
+        method: str,
         url: str,
-        payload: str,
         headers: dict[str, str],
+        data: str | None = None,
         **kwargs: Any,
     ) -> RequestRecord:
-        """Send a streaming or non-streaming POST request to the specified URL with the given payload and headers.
+        """Generic request method that handles common logic for all HTTP methods.
 
-        If the response is an SSE stream, the response will be parsed into a list of SSE messages.
-        Otherwise, the response will be parsed into a TextResponse object.
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: The URL to send the request to
+            headers: Request headers
+            data: Request payload (for POST, PUT, etc.)
+            **kwargs: Additional arguments to pass to the request
+
+        Returns:
+            RequestRecord with the response data
         """
-
-        self.debug(lambda: f"Sending POST request to {url}")
+        self.debug(lambda: f"Sending {method} request to {url}")
 
         record: RequestRecord = RequestRecord(
             start_perf_ns=time.perf_counter_ns(),
@@ -85,8 +92,8 @@ class AioHttpClientMixin(AIPerfLoggerMixin):
                 connector_owner=False,
             ) as session:
                 record.start_perf_ns = time.perf_counter_ns()
-                async with session.post(
-                    url, data=payload, headers=headers, **kwargs
+                async with session.request(
+                    method, url, data=data, headers=headers, **kwargs
                 ) as response:
                     record.status = response.status
                     # Check for HTTP errors
@@ -101,7 +108,10 @@ class AioHttpClientMixin(AIPerfLoggerMixin):
 
                     record.recv_start_perf_ns = time.perf_counter_ns()
 
-                    if response.content_type == "text/event-stream":
+                    if (
+                        method == "POST"
+                        and response.content_type == "text/event-stream"
+                    ):
                         # Parse SSE stream with optimal performance
                         messages = await AioHttpSSEStreamReader(
                             response
@@ -121,10 +131,33 @@ class AioHttpClientMixin(AIPerfLoggerMixin):
 
         except Exception as e:
             record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Error in aiohttp request: {e}")
+            self.error(f"Error in aiohttp request: {e!r}")
             record.error = ErrorDetails(type=e.__class__.__name__, message=str(e))
 
         return record
+
+    async def post_request(
+        self,
+        url: str,
+        payload: str,
+        headers: dict[str, str],
+        **kwargs: Any,
+    ) -> RequestRecord:
+        """Send a streaming or non-streaming POST request to the specified URL with the given payload and headers.
+
+        If the response is an SSE stream, the response will be parsed into a list of SSE messages.
+        Otherwise, the response will be parsed into a TextResponse object.
+        """
+        return await self._request("POST", url, headers, data=payload, **kwargs)
+
+    async def get_request(
+        self, url: str, headers: dict[str, str], **kwargs: Any
+    ) -> RequestRecord:
+        """Send a GET request to the specified URL with the given headers.
+
+        The response will be parsed into a TextResponse object.
+        """
+        return await self._request("GET", url, headers, **kwargs)
 
 
 class AioHttpSSEStreamReader:

@@ -18,6 +18,7 @@ from aiperf.common.models import ErrorDetails, RequestRecord
     EndpointType.OPENAI_CHAT_COMPLETIONS,
     EndpointType.OPENAI_COMPLETIONS,
     EndpointType.OPENAI_EMBEDDINGS,
+    EndpointType.RANKINGS,
     EndpointType.OPENAI_RESPONSES,
 )
 class OpenAIClientAioHttp(AioHttpClientMixin, AIPerfLoggerMixin, ABC):
@@ -73,11 +74,9 @@ class OpenAIClientAioHttp(AioHttpClientMixin, AIPerfLoggerMixin, ABC):
                 json.dumps(payload),
                 self.get_headers(model_endpoint),
             )
-            record.request = payload
 
         except Exception as e:
             record = RequestRecord(
-                request=payload,
                 start_perf_ns=start_perf_ns,
                 end_perf_ns=time.perf_counter_ns(),
                 error=ErrorDetails(type=e.__class__.__name__, message=str(e)),

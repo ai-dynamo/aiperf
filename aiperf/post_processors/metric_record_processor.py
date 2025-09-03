@@ -7,6 +7,7 @@ from typing import Any
 from aiperf.common.config import UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import MetricType, RecordProcessorType
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.factories import RecordProcessorFactory
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.protocols import RecordProcessorProtocol
@@ -61,6 +62,8 @@ class MetricRecordProcessor(BaseMetricsProcessor):
         for tag, parse_func in parse_funcs:
             try:
                 record_metrics[tag] = parse_func(record, record_metrics)
+            except NoMetricValue as e:
+                self.debug(f"No metric value for metric '{tag}': {e!r}")
             except Exception as e:
-                self.warning(f"Error parsing record for metric '{tag}': {e}")
+                self.warning(f"Error parsing record for metric '{tag}': {e!r}")
         return record_metrics

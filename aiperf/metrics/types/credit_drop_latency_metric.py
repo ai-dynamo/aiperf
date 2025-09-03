@@ -1,8 +1,8 @@
-#  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#  SPDX-License-Identifier: Apache-2.0
-
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -23,6 +23,7 @@ class CreditDropLatencyMetric(BaseRecordMetric[int]):
 
     tag = "credit_drop_latency"
     header = "Credit Drop Latency"
+    short_header = "Credit Latency"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     flags = MetricFlags.INTERNAL
@@ -39,7 +40,7 @@ class CreditDropLatencyMetric(BaseRecordMetric[int]):
         Raises:
             ValueError: If the record does not include a credit drop latency.
         """
-        if record.request.credit_drop_latency is None:
-            raise ValueError("Credit Drop Latency is not included in the record.")
+        if not record.request.credit_drop_latency:
+            raise NoMetricValue("Credit Drop Latency is not included in the record.")
 
         return record.request.credit_drop_latency

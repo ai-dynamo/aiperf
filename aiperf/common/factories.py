@@ -15,7 +15,9 @@ from aiperf.common.enums import (
     CustomDatasetType,
     DataExporterType,
     EndpointType,
+    OpenAIObjectType,
     RecordProcessorType,
+    RequestRateMode,
     ResultsProcessorType,
     ServiceRunType,
     ServiceType,
@@ -51,6 +53,7 @@ if TYPE_CHECKING:
         DataExporterProtocol,
         InferenceClientProtocol,
         RecordProcessorProtocol,
+        RequestRateGeneratorProtocol,
         ResponseExtractorProtocol,
         ResultsProcessorProtocol,
         ServiceManagerProtocol,
@@ -60,6 +63,7 @@ if TYPE_CHECKING:
     )
     from aiperf.dataset.composer.base import BaseDatasetComposer
     from aiperf.exporters.exporter_config import ExporterConfig
+    from aiperf.timing.config import TimingManagerConfig
     from aiperf.zmq.zmq_proxy_base import BaseZMQProxy
 
 
@@ -460,6 +464,14 @@ class InferenceClientFactory(AIPerfFactory[EndpointType, "InferenceClientProtoco
         )
 
 
+class OpenAIObjectParserFactory(
+    AIPerfSingletonFactory[OpenAIObjectType, "OpenAIObjectParserProtocol"]
+):
+    """Factory for registering and creating OpenAIObjectParserProtocol instances based on the specified object type.
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
+
+
 class RequestConverterFactory(
     AIPerfSingletonFactory[EndpointType, "RequestConverterProtocol"]
 ):
@@ -582,6 +594,21 @@ class ResultsProcessorFactory(
             user_config=user_config,
             **kwargs,
         )
+
+
+class RequestRateGeneratorFactory(
+    AIPerfFactory[RequestRateMode, "RequestRateGeneratorProtocol"]
+):
+    """Factory for registering and creating RequestRateGeneratorProtocol instances based on the specified RequestRateMode.
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
+
+    @classmethod
+    def create_instance(  # type: ignore[override]
+        cls,
+        config: "TimingManagerConfig",
+    ) -> "RequestRateGeneratorProtocol":
+        return super().create_instance(config.request_rate_mode, config=config)
 
 
 class ZMQProxyFactory(AIPerfFactory[ZMQProxyType, "BaseZMQProxy"]):

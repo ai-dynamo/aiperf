@@ -87,17 +87,16 @@ class CreditPhaseStats(CreditPhaseConfig):
         """Calculate the number of in-flight credits (sent but not completed)."""
         return self.sent - self.completed
 
-    @property
     def should_send(self) -> bool:
         """Whether the phase should send more credits."""
-        if self.is_time_based:
-            return (
-                time.time_ns() - (self.start_ns or 0)
-                <= (self.expected_duration_sec * NANOS_PER_SECOND)  # type: ignore
+        if self.total_expected_requests is not None:
+            return self.sent < self.total_expected_requests
+        elif self.expected_duration_sec is not None:
+            return time.time_ns() - (self.start_ns or 0) <= (
+                self.expected_duration_sec * NANOS_PER_SECOND
             )
-        elif self.is_request_count_based:
-            return self.sent < self.total_expected_requests  # type: ignore
-        raise InvalidStateError("Phase is not time or request count based")
+        else:
+            raise InvalidStateError("Credit phase is not time or request count based")
 
     @property
     def progress_percent(self) -> float | None:

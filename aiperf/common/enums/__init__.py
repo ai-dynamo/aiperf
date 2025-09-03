@@ -33,8 +33,10 @@ from aiperf.common.enums.dataset_enums import (
     CustomDatasetType,
     ImageFormat,
     PromptSource,
+    PublicDatasetType,
 )
 from aiperf.common.enums.endpoints_enums import (
+    EndpointServiceKind,
     EndpointType,
     EndpointTypeInfo,
 )
@@ -66,6 +68,9 @@ from aiperf.common.enums.metric_enums import (
 )
 from aiperf.common.enums.model_enums import (
     ModelSelectionStrategy,
+)
+from aiperf.common.enums.openai_enums import (
+    OpenAIObjectType,
 )
 from aiperf.common.enums.post_processor_enums import (
     RecordProcessorType,
@@ -114,6 +119,7 @@ __all__ = [
     "CreditPhase",
     "CustomDatasetType",
     "DataExporterType",
+    "EndpointServiceKind",
     "EndpointType",
     "EndpointTypeInfo",
     "GenericMetricUnit",
@@ -134,7 +140,9 @@ __all__ = [
     "MetricValueTypeInfo",
     "MetricValueTypeVarT",
     "ModelSelectionStrategy",
+    "OpenAIObjectType",
     "PromptSource",
+    "PublicDatasetType",
     "RecordProcessorType",
     "RequestRateMode",
     "ResultsProcessorType",

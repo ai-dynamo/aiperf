@@ -4,7 +4,7 @@
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.enums import EndpointType, EndpointTypeInfo
+from aiperf.common.enums import EndpointServiceKind, EndpointType, EndpointTypeInfo
 
 
 class TestEndpointInfo:
@@ -25,6 +25,7 @@ class TestEndpointInfo:
         """Test creating EndpointInfo with valid parameters."""
         endpoint_info = EndpointTypeInfo(
             tag=tag,
+            service_kind=EndpointServiceKind.OPENAI,
             supports_streaming=supports_streaming,
             produces_tokens=produces_tokens,
             endpoint_path=endpoint_path,
@@ -61,6 +62,7 @@ class TestEndpointInfo:
         with pytest.raises(ValidationError):
             EndpointTypeInfo(
                 tag="",
+                service_kind=EndpointServiceKind.OPENAI,
                 supports_streaming=True,
                 produces_tokens=True,
                 endpoint_path=None,
@@ -95,6 +97,13 @@ class TestEndpointType:
                 False,
                 "/v1/embeddings",
             ),
+            (
+                EndpointType.RANKINGS,
+                "rankings",
+                False,
+                False,
+                "/v1/ranking",
+            ),
             (EndpointType.OPENAI_RESPONSES, "responses", True, True, "/v1/responses"),
         ],
     )
@@ -119,6 +128,7 @@ class TestEndpointType:
             (EndpointType.OPENAI_CHAT_COMPLETIONS, "LLM Metrics"),
             (EndpointType.OPENAI_COMPLETIONS, "LLM Metrics"),
             (EndpointType.OPENAI_EMBEDDINGS, "Embeddings Metrics"),
+            (EndpointType.RANKINGS, "Rankings Metrics"),
             (EndpointType.OPENAI_RESPONSES, "LLM Metrics"),
         ],
     )

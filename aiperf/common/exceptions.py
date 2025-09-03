@@ -58,6 +58,10 @@ class DatasetError(AIPerfError):
     """Generic dataset error."""
 
 
+class DatasetLoaderError(AIPerfError):
+    """Generic dataset loader error."""
+
+
 class DatasetGeneratorError(AIPerfError):
     """Generic dataset generator error."""
 
@@ -102,6 +106,10 @@ class NotInitializedError(AIPerfError):
     """Exception raised when something that should be initialized is not."""
 
 
+class NoMetricValue(AIPerfError):
+    """Raised when a metric value is not available."""
+
+
 class ProxyError(AIPerfError):
     """Exception raised when a proxy encounters an error."""
 
@@ -116,3 +124,7 @@ class UnsupportedHookError(AIPerfError):
 
 class ValidationError(AIPerfError):
     """Exception raised when something fails validation."""
+
+
+class TokenizerError(AIPerfError):
+    """Exception raised when a tokenizer encounters an error."""

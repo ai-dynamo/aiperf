@@ -8,7 +8,14 @@ from pydantic import Field
 from aiperf.common.enums.base_enums import (
     BasePydanticBackedStrEnum,
     BasePydanticEnumInfo,
+    CaseInsensitiveStrEnum,
 )
+
+
+class EndpointServiceKind(CaseInsensitiveStrEnum):
+    """Endpoint service kind."""
+
+    OPENAI = "openai"
 
 
 class EndpointTypeInfo(BasePydanticEnumInfo):
@@ -17,6 +24,7 @@ class EndpointTypeInfo(BasePydanticEnumInfo):
     For documentation on the fields, see the :class:`EndpointType` @property functions.
     """
 
+    service_kind: EndpointServiceKind = Field(...)
     supports_streaming: bool = Field(...)
     produces_tokens: bool = Field(...)
     supports_audio: bool = Field(default=False)
@@ -36,6 +44,7 @@ class EndpointType(BasePydanticBackedStrEnum):
 
     OPENAI_CHAT_COMPLETIONS = EndpointTypeInfo(
         tag="chat",
+        service_kind=EndpointServiceKind.OPENAI,
         supports_streaming=True,
         produces_tokens=True,
         supports_audio=True,
@@ -45,6 +54,7 @@ class EndpointType(BasePydanticBackedStrEnum):
     )
     OPENAI_COMPLETIONS = EndpointTypeInfo(
         tag="completions",
+        service_kind=EndpointServiceKind.OPENAI,
         supports_streaming=True,
         produces_tokens=True,
         endpoint_path="/v1/completions",
@@ -52,13 +62,23 @@ class EndpointType(BasePydanticBackedStrEnum):
     )
     OPENAI_EMBEDDINGS = EndpointTypeInfo(
         tag="embeddings",
+        service_kind=EndpointServiceKind.OPENAI,
         supports_streaming=False,
         produces_tokens=False,
         endpoint_path="/v1/embeddings",
         metrics_title="Embeddings Metrics",
     )
+    RANKINGS = EndpointTypeInfo(
+        tag="rankings",
+        service_kind=EndpointServiceKind.OPENAI,
+        supports_streaming=False,
+        produces_tokens=False,
+        endpoint_path="/v1/ranking",
+        metrics_title="Rankings Metrics",
+    )
     OPENAI_RESPONSES = EndpointTypeInfo(
         tag="responses",
+        service_kind=EndpointServiceKind.OPENAI,
         supports_streaming=True,
         produces_tokens=True,
         supports_audio=False,  # Not yet supported by OpenAI
@@ -71,6 +91,11 @@ class EndpointType(BasePydanticBackedStrEnum):
     def info(self) -> EndpointTypeInfo:
         """Get the endpoint info for the endpoint type."""
         return self._info  # type: ignore
+
+    @property
+    def service_kind(self) -> EndpointServiceKind:
+        """Get the service kind for the endpoint type."""
+        return self.info.service_kind
 
     @property
     def supports_streaming(self) -> bool:

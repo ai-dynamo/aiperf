@@ -3,23 +3,23 @@
 
 from typing import Annotated, Any
 
-from cyclopts import Parameter
 from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.base_config import BaseConfig
+from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
-    parse_str_or_dict,
+    parse_str_or_dict_as_tuple_list,
 )
 from aiperf.common.config.conversation_config import ConversationConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, PublicDatasetType
 
 logger = AIPerfLogger(__name__)
 
@@ -36,9 +36,6 @@ class InputConfig(BaseConfig):
         """Validate the fixed schedule configuration."""
         if self.fixed_schedule and self.file is None:
             raise ValueError("Fixed schedule requires a file to be provided")
-        if self.file is not None:
-            self.fixed_schedule = True
-            logger.debug("Fixed schedule is enabled because file is provided")
         return self
 
     @model_validator(mode="after")
@@ -66,33 +63,46 @@ class InputConfig(BaseConfig):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_dataset_type(self) -> Self:
+        """Validate the different dataset type configuration."""
+        if self.public_dataset is not None and self.custom_dataset_type is not None:
+            raise ValueError(
+                "The --public-dataset and --custom-dataset-type options cannot be set together"
+            )
+        return self
+
     extra: Annotated[
-        dict[str, Any] | None,
+        Any,
         Field(
             description="Provide additional inputs to include with every request.\n"
-            "Inputs should be in an 'input_name:value' format.",
+            "Inputs should be in an 'input_name:value' format.\n"
+            "Alternatively, a string representing a json formatted dict can be provided.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--extra-inputs",  # GenAI-Perf
             ),
+            consume_multiple=True,
             group=_CLI_GROUP,
         ),
-        BeforeValidator(parse_str_or_dict),
+        BeforeValidator(parse_str_or_dict_as_tuple_list),
     ] = InputDefaults.EXTRA
 
     headers: Annotated[
-        dict[str, str] | None,
+        Any,
         Field(
             description="Adds a custom header to the requests.\n"
-            "Headers must be specified as 'Header:Value' pairs.",
+            "Headers must be specified as 'Header:Value' pairs.\n"
+            "Alternatively, a string representing a json formatted dict can be provided.",
         ),
-        BeforeValidator(parse_str_or_dict),
-        Parameter(
+        BeforeValidator(parse_str_or_dict_as_tuple_list),
+        CLIParameter(
             name=(
                 "--header",  # GenAI-Perf
                 "-H",  # GenAI-Perf
             ),
+            consume_multiple=True,
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.HEADERS
@@ -105,7 +115,7 @@ class InputConfig(BaseConfig):
             "to support different types of user provided datasets.",
         ),
         BeforeValidator(parse_file),
-        Parameter(
+        CLIParameter(
             name=(
                 "--input-file",  # GenAI-Perf,
             ),
@@ -118,7 +128,7 @@ class InputConfig(BaseConfig):
         Field(
             description="Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file parameter, but can be set manually here."
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--fixed-schedule",  # GenAI-Perf
             ),
@@ -134,7 +144,7 @@ class InputConfig(BaseConfig):
             "timestamp is considered 0, and the rest are shifted accordingly. If disabled, the timestamps will be "
             "assumed to be relative to 0."
         ),
-        Parameter(
+        CLIParameter(
             name=("--fixed-schedule-auto-offset",),
             group=_CLI_GROUP,
         ),
@@ -150,7 +160,7 @@ class InputConfig(BaseConfig):
             "option cannot be used in conjunction with the --fixed-schedule-auto-offset. The schedule will include "
             "any requests at the start offset.",
         ),
-        Parameter(
+        CLIParameter(
             name=("--fixed-schedule-start-offset",),
             group=_CLI_GROUP,
         ),
@@ -165,20 +175,29 @@ class InputConfig(BaseConfig):
             "ends at the last timestamp in the trace dataset, but this option can be used to only run a subset of the trace. "
             "The schedule will include any requests at the end offset.",
         ),
-        Parameter(
+        CLIParameter(
             name=("--fixed-schedule-end-offset",),
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.FIXED_SCHEDULE_END_OFFSET
 
+    public_dataset: Annotated[
+        PublicDatasetType | None,
+        Field(description="The public dataset to use for the requests."),
+        CLIParameter(
+            name=("--public-dataset"),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.PUBLIC_DATASET
+
     # NEW AIPerf Option
     custom_dataset_type: Annotated[
-        CustomDatasetType,
+        CustomDatasetType | None,
         Field(
             description="The type of custom dataset to use.\n"
-            "This parameter is used in conjunction with the --file parameter.",
+            "This parameter is used in conjunction with the --input-file parameter.",
         ),
-        Parameter(
+        CLIParameter(
             name=("--custom-dataset-type"),
             group=_CLI_GROUP,
         ),
@@ -192,7 +211,7 @@ class InputConfig(BaseConfig):
             "Set to some value to make the synthetic data generation deterministic.\n"
             "It will use system default if not provided.",
         ),
-        Parameter(
+        CLIParameter(
             name=(
                 "--random-seed",  # GenAI-Perf
             ),
