@@ -50,11 +50,11 @@ pip install -e ".[dev]"
 aiperf-mock-server -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
 # Custom configuration with short flags
-aiperf-mock-server -p 8080 -t 30 -i 10 -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+aiperf-mock-server -p 8000 -t 30 -i 10 -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
 # Full configuration with long flags
 aiperf-mock-server \
-  --port 8080 \
+  --port 8000 \
   --ttft 30 \
   --itl 10 \
   --host 127.0.0.1 \
@@ -64,7 +64,7 @@ aiperf-mock-server \
   --tokenizer-models deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
 # With environment variables
-export MOCK_SERVER_PORT=8080
+export MOCK_SERVER_PORT=8000
 export MOCK_SERVER_TTFT=30
 export MOCK_SERVER_ITL=10
 export MOCK_SERVER_LOG_LEVEL=DEBUG

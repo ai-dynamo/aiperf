@@ -32,7 +32,7 @@ class EndpointDefaults:
     CUSTOM_ENDPOINT = None
     TYPE = EndpointType.OPENAI_CHAT_COMPLETIONS
     STREAMING = False
-    URL = "localhost:8080"
+    URL = "localhost:8000"
     TIMEOUT = 600.0
     API_KEY = None
 

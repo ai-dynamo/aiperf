@@ -11,11 +11,7 @@ from aiperf.clients.http.aiohttp_client import AioHttpClientMixin, create_tcp_co
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import EndpointType
-from aiperf.common.models import (
-    RequestRecord,
-    SSEMessage,
-    TextResponse,
-)
+from aiperf.common.models import RequestRecord, SSEMessage, TextResponse
 
 
 @pytest.fixture
@@ -106,7 +102,7 @@ def user_config() -> UserConfig:
     return UserConfig(
         endpoint=EndpointConfig(
             type=EndpointType.OPENAI_CHAT_COMPLETIONS,
-            url="http://localhost:8080",
+            url="http://localhost:8000",
             timeout_seconds=600,
             model_names=["gpt-4"],
             api_key="test-api-key",
