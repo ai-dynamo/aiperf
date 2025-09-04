@@ -204,7 +204,7 @@ field-without-value"""
         [
             "data: value: with: multiple: colons",
             "data: key:value pairs",
-            "data: http://example.com:8080/path",
+            "data: http://example.com:8000/path",
             "data: time:12:34:56",
         ],
     )

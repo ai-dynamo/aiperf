@@ -70,7 +70,7 @@ uv pip install ./aiperf
 
 # At this point, Dynamo may not be ready.
 # The following command will return when Dynamo is ready for requests.
-while [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/v1/chat/completions -H 'Content-Type: application/json' -d '{"model":"'"${MODEL}"'","messages":[{"role":"user","content":"a"}],"max_completion_tokens":1}')" != "200" ]; do sleep 1; done
+while [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -d '{"model":"'"${MODEL}"'","messages":[{"role":"user","content":"a"}],"max_completion_tokens":1}')" != "200" ]; do sleep 1; done
 
 # Profile the model
 aiperf profile \
@@ -78,7 +78,7 @@ aiperf profile \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --streaming \
-    --url localhost:8080 \
+    --url localhost:8000 \
     --synthetic-input-tokens-mean 1000 \
     --synthetic-input-tokens-stddev 0 \
     --output-tokens-mean 2000 \

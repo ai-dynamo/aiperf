@@ -12,7 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class MockServerConfig(BaseSettings):
     """Unified server configuration supporting both CLI arguments and environment variables.
 
-    Environment variables should be prefixed with MOCK_SERVER_ (e.g., MOCK_SERVER_PORT=8080).
+    Environment variables should be prefixed with MOCK_SERVER_ (e.g., MOCK_SERVER_PORT=8000).
     CLI arguments will override environment variables.
     """
 
