@@ -12,10 +12,10 @@ SPDX-License-Identifier: Apache-2.0
 | **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)**
 
 
-AIPerf is a comprehensive benchmarking tool for measuring the performance of generative AI models served by your preferred inference solution.
-It provides detailed metrics via a command line display as well as extensive benchmark performance reports.
+AIPerf is a comprehensive benchmarking tool that measures the performance of generative AI models served by your preferred inference solution.
+It provides detailed metrics using a command line display as well as extensive benchmark performance reports.
 
-AIPerf provides multiprocess and kubernetes support (coming soon) out of the box for a single scalable solution.
+AIPerf provides multiprocess and Kubernetes support (coming soon) out of the box for a single scalable solution.
 
 </br>
 
@@ -121,4 +121,4 @@ NVIDIA AIPerf | LLM Metrics
 
 ## Known Issues
 
-- When setting the OSL via the `--output-tokens-mean` option, if `--extra-inputs ignore_eos:true` is not set currently, then AIPerf cannot guarantee a given OSL constraint. This is being worked on to remove this requirement in the future.
+- When setting the OSL using the `--output-tokens-mean` option, if `--extra-inputs ignore_eos:true` isn't set currently, then AIPerf can't guarantee a given OSL constraint. This is being worked on to remove this requirement in the future.
