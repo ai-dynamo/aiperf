@@ -64,15 +64,15 @@ class UserConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
-    def validate_benchmarking_mode(self) -> Self:
+    def validate_benchmark_mode(self) -> Self:
         """Validate benchmarking is count-based or timing-based."""
         if (
-            "benchmarking_duration" in self.loadgen.model_fields_set
+            "benchmark_duration" in self.loadgen.model_fields_set
             and "request_count" in self.loadgen.model_fields_set
         ):
             raise ValueError(
                 "Count-based and duration-based benchmarking cannot be used together. "
-                "Use either --request-count or --benchmarking-duration."
+                "Use either --request-count or --benchmark-duration."
             )
         return self
 

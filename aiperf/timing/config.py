@@ -19,7 +19,7 @@ class TimingManagerConfig(AIPerfBaseModel):
     request_rate_mode: RequestRateMode = LoadGeneratorDefaults.REQUEST_RATE_MODE
     request_count: int = LoadGeneratorDefaults.REQUEST_COUNT
     warmup_request_count: int = LoadGeneratorDefaults.WARMUP_REQUEST_COUNT
-    benchmarking_duration: float | None = LoadGeneratorDefaults.BENCHMARKING_DURATION
+    benchmark_duration: float | None = LoadGeneratorDefaults.BENCHMARK_DURATION
     random_seed: int | None = None
     auto_offset_timestamps: bool = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
     fixed_schedule_start_offset: int | None = InputDefaults.FIXED_SCHEDULE_START_OFFSET
@@ -36,7 +36,7 @@ class TimingManagerConfig(AIPerfBaseModel):
             request_rate_mode=user_config.loadgen.request_rate_mode,
             request_count=user_config.loadgen.request_count,
             warmup_request_count=user_config.loadgen.warmup_request_count,
-            benchmarking_duration=user_config.loadgen.benchmarking_duration,
+            benchmark_duration=user_config.loadgen.benchmark_duration,
             random_seed=user_config.input.random_seed,
             auto_offset_timestamps=user_config.input.fixed_schedule_auto_offset,
             fixed_schedule_start_offset=user_config.input.fixed_schedule_start_offset,

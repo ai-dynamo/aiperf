@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Tests for benchmarking duration works correctly.
+Tests for time-based benchmarking with --benchmark-duration.
 """
 
 import asyncio
@@ -19,22 +19,22 @@ from tests.timing_manager.conftest import (
 )
 
 
-def benchmarking_duration_config(
-    benchmarking_duration: float,
+def benchmark_duration_config(
+    benchmark_duration: float,
     request_rate_mode: RequestRateMode = RequestRateMode.CONCURRENCY_BURST,
     concurrency: int = 1,
     request_rate: float | None = None,
     warmup_request_count: int = 0,
     random_seed: int | None = 42,
 ) -> TimingManagerConfig:
-    """Helper function to create a TimingManagerConfig with benchmarking duration."""
+    """Helper function to create a TimingManagerConfig with benchmark duration."""
     return TimingManagerConfig(
         timing_mode=TimingMode.REQUEST_RATE,
-        benchmarking_duration=benchmarking_duration,
+        benchmark_duration=benchmark_duration,
         request_rate_mode=request_rate_mode,
         concurrency=concurrency,
         request_rate=request_rate,
-        request_count=10,  # This should be ignored when benchmarking_duration is set
+        request_count=10,  # This should be ignored when benchmark_duration is set
         warmup_request_count=warmup_request_count,
         random_seed=random_seed,
     )
@@ -42,7 +42,7 @@ def benchmarking_duration_config(
 
 def mixed_config(
     request_count: int = 10,
-    benchmarking_duration: float | None = None,
+    benchmark_duration: float | None = None,
     request_rate_mode: RequestRateMode = RequestRateMode.CONCURRENCY_BURST,
     concurrency: int = 1,
     request_rate: float | None = None,
@@ -53,7 +53,7 @@ def mixed_config(
     return TimingManagerConfig(
         timing_mode=TimingMode.REQUEST_RATE,
         request_count=request_count,
-        benchmarking_duration=benchmarking_duration,
+        benchmark_duration=benchmark_duration,
         request_rate_mode=request_rate_mode,
         concurrency=concurrency,
         request_rate=request_rate,
@@ -62,37 +62,37 @@ def mixed_config(
     )
 
 
-class TestBenchmarkingDurationConfiguration:
-    """Test configuration validation and behavior of benchmarking duration."""
+class TestBenchmarkDurationConfiguration:
+    """Test configuration validation and behavior of benchmark duration."""
 
-    def test_benchmarking_duration_creates_time_based_config(self):
-        """Test that benchmarking duration creates proper configuration."""
-        config = benchmarking_duration_config(benchmarking_duration=5.0)
+    def test_benchmark_duration_creates_time_based_config(self):
+        """Test that benchmark duration creates proper configuration."""
+        config = benchmark_duration_config(benchmark_duration=5.0)
 
-        assert config.benchmarking_duration == 5.0
+        assert config.benchmark_duration == 5.0
         assert config.timing_mode == TimingMode.REQUEST_RATE
 
-    def test_benchmarking_duration_overrides_request_count(self):
+    def test_benchmark_duration_overrides_request_count(self):
         """Test that when both are provided, duration takes precedence."""
-        config = mixed_config(request_count=100, benchmarking_duration=3.0)
+        config = mixed_config(request_count=100, benchmark_duration=3.0)
 
-        assert config.benchmarking_duration == 3.0
+        assert config.benchmark_duration == 3.0
         assert config.request_count == 100  # Still stored but should be ignored
 
-    def test_benchmarking_duration_large_value(self):
+    def test_benchmark_duration_large_value(self):
         """Test that large duration values are accepted."""
-        config = benchmarking_duration_config(benchmarking_duration=3600.0)
+        config = benchmark_duration_config(benchmark_duration=3600.0)
 
-        assert config.benchmarking_duration == 3600.0
+        assert config.benchmark_duration == 3600.0
 
-    def test_benchmarking_duration_fractional_value(self):
+    def test_benchmark_duration_fractional_value(self):
         """Test that fractional duration values are accepted."""
-        config = benchmarking_duration_config(benchmarking_duration=2.5)
+        config = benchmark_duration_config(benchmark_duration=2.5)
 
-        assert config.benchmarking_duration == 2.5
+        assert config.benchmark_duration == 2.5
 
-    def test_benchmarking_duration_with_different_request_rate_modes(self):
-        """Test benchmarking duration with various request rate modes."""
+    def test_benchmark_duration_with_different_request_rate_modes(self):
+        """Test benchmark duration with various request rate modes."""
         modes = [
             RequestRateMode.CONCURRENCY_BURST,
             RequestRateMode.POISSON,
@@ -100,39 +100,39 @@ class TestBenchmarkingDurationConfiguration:
         ]
 
         for mode in modes:
-            config = benchmarking_duration_config(
-                benchmarking_duration=4.0,
+            config = benchmark_duration_config(
+                benchmark_duration=4.0,
                 request_rate_mode=mode,
                 request_rate=10.0
                 if mode != RequestRateMode.CONCURRENCY_BURST
                 else None,
             )
 
-            assert config.benchmarking_duration == 4.0
+            assert config.benchmark_duration == 4.0
             assert config.request_rate_mode == mode
 
-    def test_benchmarking_duration_with_warmup(self):
-        """Test benchmarking duration configuration with warmup requests."""
-        config = benchmarking_duration_config(
-            benchmarking_duration=6.0, warmup_request_count=5
+    def test_benchmark_duration_with_warmup(self):
+        """Test benchmark duration configuration with warmup requests."""
+        config = benchmark_duration_config(
+            benchmark_duration=6.0, warmup_request_count=5
         )
 
-        assert config.benchmarking_duration == 6.0
+        assert config.benchmark_duration == 6.0
         assert config.warmup_request_count == 5
 
-    def test_benchmarking_duration_with_concurrency(self):
-        """Test benchmarking duration with different concurrency levels."""
+    def test_benchmark_duration_with_concurrency(self):
+        """Test benchmark duration with different concurrency levels."""
         for concurrency in [1, 5, 10]:
-            config = benchmarking_duration_config(
-                benchmarking_duration=3.0, concurrency=concurrency
+            config = benchmark_duration_config(
+                benchmark_duration=3.0, concurrency=concurrency
             )
 
-            assert config.benchmarking_duration == 3.0
+            assert config.benchmark_duration == 3.0
             assert config.concurrency == concurrency
 
 
-class TestBenchmarkingDurationPhaseStats:
-    """Test CreditPhaseStats behavior with benchmarking duration."""
+class TestBenchmarkDurationPhaseStats:
+    """Test CreditPhaseStats behavior with benchmark duration."""
 
     def test_phase_stats_should_send_time_based(self, time_traveler):
         """Test that phase stats correctly determine when to send based on time."""
@@ -194,14 +194,14 @@ class TestBenchmarkingDurationPhaseStats:
         assert not phase_stats.should_send()
 
 
-class TestBenchmarkingDurationRequestRateStrategy:
-    """Test RequestRateStrategy behavior with benchmarking duration."""
+class TestBenchmarkDurationRequestRateStrategy:
+    """Test RequestRateStrategy behavior with benchmark duration."""
 
     async def test_strategy_uses_duration_for_profiling_phase(
         self, mock_credit_manager: MockCreditManager
     ):
-        """Test that RequestRateStrategy respects benchmarking duration."""
-        config = benchmarking_duration_config(benchmarking_duration=2.0)
+        """Test that RequestRateStrategy respects benchmark duration."""
+        config = benchmark_duration_config(benchmark_duration=2.0)
 
         # Create strategy and check profiling phase config
         strategy = RequestRateStrategy(config, mock_credit_manager)
@@ -220,7 +220,7 @@ class TestBenchmarkingDurationRequestRateStrategy:
         self, mock_credit_manager: MockCreditManager
     ):
         """Test that request count is ignored when duration is specified."""
-        config = mixed_config(request_count=50, benchmarking_duration=1.5)
+        config = mixed_config(request_count=50, benchmark_duration=1.5)
 
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
@@ -234,7 +234,7 @@ class TestBenchmarkingDurationRequestRateStrategy:
         self, mock_credit_manager: MockCreditManager
     ):
         """Test that strategy falls back to request count when no duration."""
-        config = mixed_config(request_count=25, benchmarking_duration=None)
+        config = mixed_config(request_count=25, benchmark_duration=None)
 
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
@@ -247,9 +247,9 @@ class TestBenchmarkingDurationRequestRateStrategy:
     async def test_strategy_with_warmup_and_duration(
         self, mock_credit_manager: MockCreditManager
     ):
-        """Test strategy behavior with both warmup and benchmarking duration."""
-        config = benchmarking_duration_config(
-            benchmarking_duration=4.0, warmup_request_count=10
+        """Test strategy behavior with both warmup and benchmark duration."""
+        config = benchmark_duration_config(
+            benchmark_duration=4.0, warmup_request_count=10
         )
 
         strategy = RequestRateStrategy(config, mock_credit_manager)
@@ -270,18 +270,18 @@ class TestBenchmarkingDurationRequestRateStrategy:
         assert profiling_config.total_expected_requests is None
 
 
-class TestBenchmarkingDurationIntegration:
-    """Integration tests for benchmarking duration feature."""
+class TestBenchmarkDurationIntegration:
+    """Integration tests for benchmark duration feature."""
 
     async def test_strategy_with_duration_and_concurrency(
         self, mock_credit_manager: MockCreditManager
     ):
         """Test strategy with duration and concurrency settings."""
-        config = benchmarking_duration_config(benchmarking_duration=3.0, concurrency=5)
+        config = benchmark_duration_config(benchmark_duration=3.0, concurrency=5)
 
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
-        assert config.benchmarking_duration == 3.0
+        assert config.benchmark_duration == 3.0
         assert config.concurrency == 5
 
         profiling_config = strategy.ordered_phase_configs[-1]
@@ -291,36 +291,15 @@ class TestBenchmarkingDurationIntegration:
         self, mock_credit_manager: MockCreditManager
     ):
         """Test strategy with duration and request rate."""
-        config = benchmarking_duration_config(
-            benchmarking_duration=2.5,
+        config = benchmark_duration_config(
+            benchmark_duration=2.5,
             request_rate_mode=RequestRateMode.POISSON,
             request_rate=15.0,
         )
 
-        assert config.benchmarking_duration == 2.5
+        assert config.benchmark_duration == 2.5
         assert config.request_rate == 15.0
         assert config.request_rate_mode == RequestRateMode.POISSON
-
-    async def test_mixed_warmup_and_duration_profiling(
-        self, mock_credit_manager: MockCreditManager
-    ):
-        """Test mixed configuration with warmup requests and duration-based profiling."""
-        config = benchmarking_duration_config(
-            benchmarking_duration=5.0, warmup_request_count=3
-        )
-
-        strategy = RequestRateStrategy(config, mock_credit_manager)
-
-        # Should have 2 phases: warmup (request-based) and profiling (time-based)
-        assert len(strategy.ordered_phase_configs) == 2
-
-        warmup_config = strategy.ordered_phase_configs[0]
-        assert warmup_config.type == CreditPhase.WARMUP
-        assert warmup_config.total_expected_requests == 3
-
-        profiling_config = strategy.ordered_phase_configs[1]
-        assert profiling_config.type == CreditPhase.PROFILING
-        assert profiling_config.expected_duration_sec == 5.0
 
     @pytest.mark.parametrize(
         "duration,warmup_count",
@@ -334,14 +313,14 @@ class TestBenchmarkingDurationIntegration:
         self, mock_credit_manager: MockCreditManager, duration: float, warmup_count: int
     ):
         """Test various combinations of duration and warmup counts."""
-        config = benchmarking_duration_config(
-            benchmarking_duration=duration, warmup_request_count=warmup_count
+        config = benchmark_duration_config(
+            benchmark_duration=duration, warmup_request_count=warmup_count
         )
 
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
         # Verify configuration is correct
-        assert config.benchmarking_duration == duration
+        assert config.benchmark_duration == duration
         assert config.warmup_request_count == warmup_count
 
         # Verify phase configurations
@@ -354,26 +333,26 @@ class TestBenchmarkingDurationIntegration:
         assert profiling_config.expected_duration_sec == duration
 
 
-class TestBenchmarkingDurationConfig:
-    """Test TimingManagerConfig specifically for benchmarking duration."""
+class TestBenchmarkDurationConfig:
+    """Test TimingManagerConfig specifically for benchmark duration."""
 
     def test_timing_manager_config_with_duration(self):
-        """Test TimingManagerConfig creation with benchmarking duration."""
+        """Test TimingManagerConfig creation with benchmark duration."""
         config = TimingManagerConfig(
             timing_mode=TimingMode.REQUEST_RATE,
-            benchmarking_duration=10.0,
+            benchmark_duration=10.0,
             request_rate_mode=RequestRateMode.POISSON,
             request_rate=5.0,
             concurrency=2,
             request_count=100,  # Should be ignored
         )
 
-        assert config.benchmarking_duration == 10.0
+        assert config.benchmark_duration == 10.0
         assert config.request_count == 100  # Still present but should be ignored
         assert config.request_rate == 5.0
 
     def test_timing_manager_config_without_duration(self):
-        """Test TimingManagerConfig creation without benchmarking duration."""
+        """Test TimingManagerConfig creation without benchmark duration."""
         config = TimingManagerConfig(
             timing_mode=TimingMode.REQUEST_RATE,
             request_rate_mode=RequestRateMode.CONCURRENCY_BURST,
@@ -381,62 +360,62 @@ class TestBenchmarkingDurationConfig:
             request_count=50,
         )
 
-        assert config.benchmarking_duration is None
+        assert config.benchmark_duration is None
         assert config.request_count == 50
 
     @pytest.mark.parametrize("duration", [1.0, 5.5, 30.0, 120.0, 3600.0])
     def test_various_duration_values(self, duration: float):
         """Test various valid duration values."""
-        config = benchmarking_duration_config(benchmarking_duration=duration)
+        config = benchmark_duration_config(benchmark_duration=duration)
 
-        assert config.benchmarking_duration == duration
+        assert config.benchmark_duration == duration
 
     def test_duration_with_different_modes(self):
         """Test duration configuration with different request rate modes."""
         # Test with CONCURRENCY_BURST
         config1 = TimingManagerConfig(
             timing_mode=TimingMode.REQUEST_RATE,
-            benchmarking_duration=5.0,
+            benchmark_duration=5.0,
             request_rate_mode=RequestRateMode.CONCURRENCY_BURST,
             concurrency=4,
             request_count=50,
         )
-        assert config1.benchmarking_duration == 5.0
+        assert config1.benchmark_duration == 5.0
         assert config1.request_rate_mode == RequestRateMode.CONCURRENCY_BURST
 
         # Test with CONSTANT
         config2 = TimingManagerConfig(
             timing_mode=TimingMode.REQUEST_RATE,
-            benchmarking_duration=7.5,
+            benchmark_duration=7.5,
             request_rate_mode=RequestRateMode.CONSTANT,
             request_rate=12.0,
             concurrency=1,
             request_count=30,
         )
-        assert config2.benchmarking_duration == 7.5
+        assert config2.benchmark_duration == 7.5
         assert config2.request_rate_mode == RequestRateMode.CONSTANT
 
         # Test with POISSON
         config3 = TimingManagerConfig(
             timing_mode=TimingMode.REQUEST_RATE,
-            benchmarking_duration=15.0,
+            benchmark_duration=15.0,
             request_rate_mode=RequestRateMode.POISSON,
             request_rate=8.0,
             concurrency=2,
             request_count=25,
         )
-        assert config3.benchmarking_duration == 15.0
+        assert config3.benchmark_duration == 15.0
         assert config3.request_rate_mode == RequestRateMode.POISSON
 
 
-class TestBenchmarkingDurationPhaseSetup:
-    """Test phase configuration setup with benchmarking duration."""
+class TestBenchmarkDurationPhaseSetup:
+    """Test phase configuration setup with benchmark duration."""
 
     async def test_profiling_phase_setup_with_duration(
         self, mock_credit_manager: MockCreditManager
     ):
         """Test profiling phase setup when duration is specified."""
-        config = benchmarking_duration_config(benchmarking_duration=8.0)
+        config = benchmark_duration_config(benchmark_duration=8.0)
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
         # Find the profiling phase config
@@ -457,7 +436,7 @@ class TestBenchmarkingDurationPhaseSetup:
         self, mock_credit_manager: MockCreditManager
     ):
         """Test profiling phase setup when duration is not specified."""
-        config = mixed_config(request_count=40, benchmarking_duration=None)
+        config = mixed_config(request_count=40, benchmark_duration=None)
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
         # Find the profiling phase config
@@ -477,9 +456,9 @@ class TestBenchmarkingDurationPhaseSetup:
     async def test_warmup_phase_unaffected_by_duration(
         self, mock_credit_manager: MockCreditManager
     ):
-        """Test that warmup phase is unaffected by benchmarking duration."""
-        config = benchmarking_duration_config(
-            benchmarking_duration=12.0, warmup_request_count=15
+        """Test that warmup phase is unaffected by benchmark duration."""
+        config = benchmark_duration_config(
+            benchmark_duration=12.0, warmup_request_count=15
         )
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
@@ -501,8 +480,8 @@ class TestBenchmarkingDurationPhaseSetup:
         self, mock_credit_manager: MockCreditManager
     ):
         """Test configuration with both warmup and profiling phases."""
-        config = benchmarking_duration_config(
-            benchmarking_duration=6.0, warmup_request_count=8
+        config = benchmark_duration_config(
+            benchmark_duration=6.0, warmup_request_count=8
         )
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
@@ -519,8 +498,8 @@ class TestBenchmarkingDurationPhaseSetup:
         assert profiling_config.expected_duration_sec == 6.0
 
 
-class TestBenchmarkingDurationLogic:
-    """Test the logic behind benchmarking duration implementation."""
+class TestBenchmarkDurationLogic:
+    """Test the logic behind benchmark duration implementation."""
 
     def test_should_send_time_based_phase(self, time_traveler):
         """Test should_send logic for time-based phases."""
@@ -581,25 +560,21 @@ class TestBenchmarkingDurationLogic:
             start_ns=start_time,
         )
 
-        # Verify the should_send logic works correctly with this duration
-        assert time_phase_stats.should_send()
+        # Simulate advancing time to just before the duration expires
+        time_phase_stats.start_ns = (
+            time.time_ns() - expected_nanos + 1_000_000
+        )  # 1ms before expiry
+        assert time_phase_stats.should_send()  # Should still send
 
-    def test_edge_case_zero_start_time(self):
-        """Test behavior when start_ns is None or 0."""
-        phase_stats = CreditPhaseStats(
-            type=CreditPhase.PROFILING,
-            expected_duration_sec=5.0,
-            start_ns=None,
-        )
-
-        # When start_ns is None, should still behave correctly
-        # The implementation uses (self.start_ns or 0), so it defaults to 0
-        # This means it will likely not send since current time >> 0 + duration
-        assert not phase_stats.should_send()
+        # Simulate advancing time past the duration
+        time_phase_stats.start_ns = (
+            time.time_ns() - expected_nanos - 1_000_000
+        )  # 1ms after expiry
+        assert not time_phase_stats.should_send()  # Should not send
 
 
-class TestBenchmarkingDurationCompletion:
-    """Test completion logic for benchmarking duration."""
+class TestBenchmarkDurationCompletion:
+    """Test completion logic for benchmark duration."""
 
     def test_time_based_completion_logic(self, time_traveler):
         """Test completion detection for time-based phases."""
@@ -653,15 +628,15 @@ class TestBenchmarkingDurationCompletion:
         assert phase_stats.in_flight == 0
 
 
-class TestBenchmarkingDurationTimeout:
-    """Test timeout behavior for benchmarking duration."""
+class TestBenchmarkDurationTimeout:
+    """Test timeout behavior for benchmark duration."""
 
-    async def test_force_completion_when_duration_elapsed(self, time_traveler):
+    async def test_force_completion_when_timeout_triggered(self, time_traveler):
         """Test that force completion works when duration has elapsed."""
         from tests.timing_manager.conftest import MockCreditManager
 
         # Create a time-based phase that has already exceeded duration
-        config = benchmarking_duration_config(benchmarking_duration=1.0)
+        config = benchmark_duration_config(benchmark_duration=1.0)
         mock_credit_manager = MockCreditManager(time_traveler=time_traveler)
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
@@ -679,7 +654,7 @@ class TestBenchmarkingDurationTimeout:
         time_traveler.advance_time(2.0)  # Well past the 1.0s duration
 
         # Call the force completion method
-        await strategy._complete_phase_on_duration_timeout(phase_stats)
+        await strategy._force_phase_completion(phase_stats)
 
         # Wait for any async tasks to complete - both strategy and mock credit manager
         await strategy.wait_for_tasks()
@@ -700,7 +675,7 @@ class TestBenchmarkingDurationTimeout:
         """Test that _wait_for_phase_completion respects duration timeout."""
         from tests.timing_manager.conftest import MockCreditManager
 
-        config = benchmarking_duration_config(benchmarking_duration=2.0)
+        config = benchmark_duration_config(benchmark_duration=2.0)
         mock_credit_manager = MockCreditManager(time_traveler=time_traveler)
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
@@ -740,7 +715,7 @@ class TestBenchmarkingDurationTimeout:
         """Test that request-count phases wait indefinitely."""
         from tests.timing_manager.conftest import MockCreditManager
 
-        config = mixed_config(request_count=5, benchmarking_duration=None)
+        config = mixed_config(request_count=5, benchmark_duration=None)
         mock_credit_manager = MockCreditManager(
             time_traveler=None
         )  # No time manipulation needed
@@ -774,27 +749,27 @@ class TestBenchmarkingDurationTimeout:
         await asyncio.wait_for(wait_task, timeout=0.1)
 
 
-class TestBenchmarkingDurationEdgeCases:
-    """Test edge cases and boundary conditions for benchmarking duration."""
+class TestBenchmarkDurationEdgeCases:
+    """Test edge cases and boundary conditions for benchmark duration."""
 
     def test_very_small_duration(self):
         """Test with very small duration values."""
-        config = benchmarking_duration_config(benchmarking_duration=0.01)
+        config = benchmark_duration_config(benchmark_duration=0.01)
 
-        assert config.benchmarking_duration == 0.01
+        assert config.benchmark_duration == 0.01
 
     def test_very_large_duration(self):
         """Test with very large duration values."""
         large_duration = 86400.0  # 24 hours
-        config = benchmarking_duration_config(benchmarking_duration=large_duration)
+        config = benchmark_duration_config(benchmark_duration=large_duration)
 
-        assert config.benchmarking_duration == large_duration
+        assert config.benchmark_duration == large_duration
 
     def test_fractional_duration(self):
         """Test with fractional duration values."""
-        config = benchmarking_duration_config(benchmarking_duration=2.5)
+        config = benchmark_duration_config(benchmark_duration=2.5)
 
-        assert config.benchmarking_duration == 2.5
+        assert config.benchmark_duration == 2.5
 
     def test_phase_validation_with_duration(self):
         """Test phase validation with duration settings."""

@@ -45,7 +45,10 @@ class RequestRateStrategy(CreditIssuingStrategy):
     async def _execute_single_phase(self, phase_stats: CreditPhaseStats) -> None:
         """Execute credit drops based on the request rate generator, optionally with a max concurrency limit."""
 
+        loop_count = 0
         while phase_stats.should_send():
+            loop_count += 1
+
             # Ensure we have an available credit before dropping
             if self._semaphore:
                 await self._semaphore.acquire()
