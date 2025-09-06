@@ -41,40 +41,37 @@ This is responsible for controlling and coordinating the timing of requests duri
 ### Worker Manager
 This is responsible for orchestrating and managing the pool of worker processes that execute benchmarking tasks. Its main functions include:
 
-- Creating, initializing, and supervising workers that send requests to the inference server.
-- Distributing input data and timing instructions to each worker according to the benchmarking configuration.
+- Coordinating with the system controller to spawn and shut down workers that send requests to the inference server.
 - Monitoring worker status, progress, and resource usage.
 - Handling worker lifecycle events, such as startup, shutdown, and error recovery.
-- Aggregating results and metrics from all workers for centralized reporting.
 
 ### Worker
 
 This is responsible for executing individual benchmarking tasks. Each worker operates as a process that sends requests to the inference server, collects responses, and records performance metrics. Its main functions include:
 
-- Receiving input data and timing instructions from the Worker Manager.
+- Pulling timing credits from the timing manager.
+- Pulling data from the dataset manager for a request.
+- Formatting the data for the endpoint.
 - Sending requests to the target endpoint according to the specified schedule.
-- Measuring and recording metrics such as latency, throughput, and response correctness.
-- Handling errors, retries, and edge cases during benchmarking.
-- Reporting results back to the Worker Manager for aggregation and analysis.
+- Recording request and response timestamps.
+- Reporting results to the record processors for aggregation and analysis.
 
-### Inference Result Parser
+### Record Processor
 This is responsible for processing and interpreting the responses received from the inference server during benchmarking. Its main functions include:
 
 - Parsing raw inference results to extract relevant metrics, such as latency, output tokens, and correctness.
 - Handling different response formats from various model endpoints (e.g., OpenAI, vLLM, Triton, custom APIs).
 - Validating and normalizing results to ensure consistency across benchmarking runs.
 - Preparing parsed data for further analysis, aggregation, and reporting by other modules (such as the records manager).
+- Computing the metrics derived from individual requests.
 - Supporting error detection and handling for malformed or unexpected responses.
 
 ### Records Manager
-This is responsible for managing the collection, organization, and storage of benchmarking records and results. It acts as a central component for handling the data generated during benchmarking runs, such as inference results, timing information, and other metrics.
+This is responsible for managing the collection, organization, and storage of benchmarking records and results. It acts as a central component for handling the data generated during benchmarking runs, such as inference results, timing information, and other metrics. Its main functions include:
 
-This is  responsible for collecting, organizing, and storing all benchmarking records and results generated during a test run. Its main functions include:
-
-- Aggregating data from multiple workers, such as inference results, timing information, and metrics.
+- Aggregating data from the records processors, such as inference results, timing information, and metrics.
 - Storing records in memory and/or exporting them to files (e.g., CSV, JSON) for later analysis.
 - Providing interfaces for querying, filtering, and summarizing benchmarking results.
-- Coordinating with other modules (like the worker manager and inference result parser) to ensure all relevant data is captured.
 - Supporting the generation of reports and artifacts for performance evaluation.
 
 ### GPU Telemetry (Coming soon)
