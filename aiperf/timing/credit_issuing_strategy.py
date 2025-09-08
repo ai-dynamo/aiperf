@@ -152,7 +152,7 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
 
     async def _wait_for_phase_completion(self, phase_stats: CreditPhaseStats) -> None:
         """Wait for a phase to complete, with timeout for time-based phases."""
-        if phase_stats.is_time_based and phase_stats.expected_duration_sec is not None:
+        if phase_stats.is_time_based:
             # For time-based phases, calculate how much time is left from the original duration
             elapsed_ns = time.time_ns() - phase_stats.start_ns
             elapsed_sec = elapsed_ns / NANOS_PER_SECOND

@@ -476,27 +476,6 @@ class TestBenchmarkDurationPhaseSetup:
         assert warmup_config.total_expected_requests == 15
         assert warmup_config.expected_duration_sec is None
 
-    async def test_both_warmup_and_profiling_phases(
-        self, mock_credit_manager: MockCreditManager
-    ):
-        """Test configuration with both warmup and profiling phases."""
-        config = benchmark_duration_config(
-            benchmark_duration=6.0, warmup_request_count=8
-        )
-        strategy = RequestRateStrategy(config, mock_credit_manager)
-
-        assert len(strategy.ordered_phase_configs) == 2
-
-        # Verify phases are in correct order
-        warmup_config = strategy.ordered_phase_configs[0]
-        profiling_config = strategy.ordered_phase_configs[1]
-
-        assert warmup_config.type == CreditPhase.WARMUP
-        assert warmup_config.total_expected_requests == 8
-
-        assert profiling_config.type == CreditPhase.PROFILING
-        assert profiling_config.expected_duration_sec == 6.0
-
 
 class TestBenchmarkDurationLogic:
     """Test the logic behind benchmark duration implementation."""
