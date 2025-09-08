@@ -15,7 +15,7 @@ SPDX-License-Identifier: Apache-2.0
 AIPerf is a comprehensive benchmarking tool that measures the performance of generative AI models served by your preferred inference solution.
 It provides detailed metrics using a command line display as well as extensive benchmark performance reports.
 
-AIPerf provides multiprocess and Kubernetes support (coming soon) out of the box for a single scalable solution.
+AIPerf provides multiprocess support out of the box for a single scalable solution.
 
 </br>
 
