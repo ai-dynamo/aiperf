@@ -64,7 +64,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#profiling-using-aiperf" class="md-skip">
+        <a href="#profiling-with-aiperf" class="md-skip">
           Skip to content
         </a>
       
@@ -293,7 +293,7 @@
         <li class="md-nav__item">
   <a href="#profile-qwen3-06b-using-dynamo" class="md-nav__link">
     <span class="md-ellipsis">
-      Profile Qwen3-0.6B using Dynamo
+      Profile Qwen3-0.6B Using Dynamo
     </span>
   </a>
   
@@ -302,7 +302,7 @@
         <li class="md-nav__item">
   <a href="#profile-qwen3-06b-using-vllm" class="md-nav__link">
     <span class="md-ellipsis">
-      Profile Qwen3-0.6B using vllm
+      Profile Qwen3-0.6B Using vLLM
     </span>
   </a>
   
@@ -329,21 +329,19 @@ SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<h1 id="profiling-using-aiperf">Profiling using AIPerf<a class="headerlink" href="#profiling-using-aiperf" title="Permanent link">&para;</a></h1>
-<p>This tutorial will demonstrate how you can use AIPerf to measure the performance of
-models using various inference solutions.</p>
+<h1 id="profiling-with-aiperf">Profiling with AIPerf<a class="headerlink" href="#profiling-with-aiperf" title="Permanent link">&para;</a></h1>
+<p>This tutorial shows how to measure model performance across different inference solutions using AIPerf.</p>
 <h3 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h3>
 <ul>
-<li><a href="#dynamo-qwen3-0.6B">Profile Qwen3-0.6B using Dynamo</a></li>
-<li><a href="#vllm-qwen3-0.6B">Profile Qwen3-0.6B using vllm</a></li>
+<li><a href="#dynamo-qwen3-0.6B">Profile Qwen3-0.6B Using Dynamo</a></li>
+<li><a href="#vllm-qwen3-0.6B">Profile Qwen3-0.6B Using vllm</a></li>
 </ul>
-<p></br></p>
-<h2 id="profile-qwen3-06b-using-dynamo">Profile Qwen3-0.6B using Dynamo <a id="dynamo-qwen3-0.6B"><a class="headerlink" href="#profile-qwen3-06b-using-dynamo" title="Permanent link">&para;</a></h2>
+<h2 id="profile-qwen3-06b-using-dynamo">Profile Qwen3-0.6B Using Dynamo <a id="dynamo-qwen3-0.6B"><a class="headerlink" href="#profile-qwen3-06b-using-dynamo" title="Permanent link">&para;</a></h2>
 <blockquote>
 <p>[!NOTE]
-The most up to date installation instructions for Dynamo are available on <a href="https://github.com/ai-dynamo/dynamo?tab=readme-ov-file#1-initial-setup">Github</a></p>
+The latest installation instructions for Dynamo are available on <a href="https://github.com/ai-dynamo/dynamo?tab=readme-ov-file#1-initial-setup">Github</a></p>
 </blockquote>
-<div class="codehilite"><pre><span></span><code><span class="c1"># set environment variables</span>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Set environment variables</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">AIPERF_REPO_TAG</span><span class="o">=</span><span class="s2">&quot;main&quot;</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">DYNAMO_PREBUILT_IMAGE_TAG</span><span class="o">=</span><span class="s2">&quot;nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.4.0&quot;</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">MODEL</span><span class="o">=</span><span class="s2">&quot;Qwen/Qwen3-0.6B&quot;</span>
@@ -391,8 +389,8 @@ git<span class="w"> </span>clone<span class="w"> </span>-b<span class="w"> </spa
 
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>./aiperf
 
-<span class="c1"># At this point, Dynamo may not be ready.</span>
-<span class="c1"># The following command will return when Dynamo is ready for requests.</span>
+<span class="c1"># It can take some time for Dynamo to become ready.</span>
+<span class="c1"># The following command returns when Dynamo is ready to accept requests.</span>
 <span class="k">while</span><span class="w"> </span><span class="o">[</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s1">&#39;%{http_code}&#39;</span><span class="w"> </span>localhost:8000/v1/chat/completions<span class="w"> </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;model&quot;:&quot;&#39;</span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">MODEL</span><span class="si">}</span><span class="s2">&quot;</span><span class="s1">&#39;&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;a&quot;}],&quot;max_completion_tokens&quot;:1}&#39;</span><span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>!<span class="o">=</span><span class="w"> </span><span class="s2">&quot;200&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">do</span><span class="w"> </span>sleep<span class="w"> </span><span class="m">1</span><span class="p">;</span><span class="w"> </span><span class="k">done</span>
 
 <span class="c1"># Profile the model</span>
@@ -418,7 +416,7 @@ aiperf<span class="w"> </span>profile<span class="w"> </span><span class="se">\<
 <span class="w">    </span>-H<span class="w"> </span><span class="s1">&#39;Accept: text/event-stream&#39;</span>
 </code></pre></div>
 
-<h2 id="profile-qwen3-06b-using-vllm">Profile Qwen3-0.6B using vllm <a id="vllm-qwen3-0.6B"><a class="headerlink" href="#profile-qwen3-06b-using-vllm" title="Permanent link">&para;</a></h2>
+<h2 id="profile-qwen3-06b-using-vllm">Profile Qwen3-0.6B Using vLLM <a id="vllm-qwen3-0.6B"><a class="headerlink" href="#profile-qwen3-06b-using-vllm" title="Permanent link">&para;</a></h2>
 <div class="codehilite"><pre><span></span><code><span class="c1"># Install vLLM from pip:</span>
 pip<span class="w"> </span>install<span class="w"> </span>vllm
 

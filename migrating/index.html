@@ -312,16 +312,16 @@ SPDX-License-Identifier: Apache-2.0
 -->
 
 <h1 id="migrating-from-genai-perf">Migrating from GenAI-Perf<a class="headerlink" href="#migrating-from-genai-perf" title="Permanent link">&para;</a></h1>
-<p>AIPerf is designed to be a drop in replacement for <a href="https://github.com/triton-inference-server/perf_analyzer">GenAI-Perf</a>. There are only a few options from GenAI-Perf that do not directly map to AIPerf options. These are noted below.
-Some options, mainly around the analyze subcommand, may not yet be supported but are coming in the near future.
+<p>AIPerf is designed to be a drop-in replacement for <a href="https://github.com/triton-inference-server/perf_analyzer">GenAI-Perf</a>. Most options from GenAI-Perf map directly to AIPerf options. Options that don't are noted below.
+Some options, primarily for the <code>analyze</code> subcommand, are not yet supported; they're planned for future releases.
 <br></p>
 <h2 id="known-cli-argument-differences">Known CLI Argument Differences<a class="headerlink" href="#known-cli-argument-differences" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>--max-threads</code>: Setting a max-thread option is no longer necessary. This was a global setting for GenAI-Perf controlling the total thread count.
-In AIPerf, for more fine grained control over the number of workers issuing requests to the endpoint, the option <code>--workers-max</code> is available.</li>
+<li><code>--max-threads</code>: You no longer need to set a max-thread option. Previously, this was a global setting to control GenAI-Perf total thread count.
+AIPerf provides more-fine grained control of the number of workers issuing requests to the endpoint by using the <code>--workers-max</code> option.</li>
 <li><code>--</code>: The passthrough args flag is no longer required. All options are now natively supported by AIPerf.</li>
 </ul>
-<p>Removing the above options should be all that is required to have your previous GenAI-Perf commands work in AIPerf.</p>
+<p>To migrate your previous GenAI-Perf commands to AIPerf commands, remove the above options.</p>
 <p><br></p>
 <hr />
 <p>With these simple updates to your previous scripts, AIPerf can replace your usage of GenAI-Perf.</p>
