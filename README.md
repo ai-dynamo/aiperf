@@ -17,7 +17,6 @@ It provides detailed metrics using a command line display as well as extensive b
 
 AIPerf provides multiprocess support out of the box for a single scalable solution.
 
-</br>
 
 <!--
 ======================
