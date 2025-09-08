@@ -3,24 +3,21 @@ SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Profiling using AIPerf
+# Profiling with AIPerf
 
-This tutorial will demonstrate how you can use AIPerf to measure the performance of
-models using various inference solutions.
+This tutorial shows how to measure model performance across different inference solutions using AIPerf.
 
 ### Table of Contents
-- [Profile Qwen3-0.6B using Dynamo](#dynamo-qwen3-0.6B)
-- [Profile Qwen3-0.6B using vllm](#vllm-qwen3-0.6B)
+- [Profile Qwen3-0.6B Using Dynamo](#dynamo-qwen3-0.6B)
+- [Profile Qwen3-0.6B Using vllm](#vllm-qwen3-0.6B)
 
-</br>
-
-## Profile Qwen3-0.6B using Dynamo <a id="dynamo-qwen3-0.6B">
+## Profile Qwen3-0.6B Using Dynamo <a id="dynamo-qwen3-0.6B">
 
 > [!NOTE]
-> The most up to date installation instructions for Dynamo are available on [Github](https://github.com/ai-dynamo/dynamo?tab=readme-ov-file#1-initial-setup)
+> The latest installation instructions for Dynamo are available on [Github](https://github.com/ai-dynamo/dynamo?tab=readme-ov-file#1-initial-setup)
 
 ```bash
-# set environment variables
+# Set environment variables
 export AIPERF_REPO_TAG="main"
 export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.4.0"
 export MODEL="Qwen/Qwen3-0.6B"
@@ -68,8 +65,8 @@ git clone -b ${AIPERF_REPO_TAG} --depth 1 https://github.com/ai-dynamo/aiperf.gi
 
 uv pip install ./aiperf
 
-# At this point, Dynamo may not be ready.
-# The following command will return when Dynamo is ready for requests.
+# It can take some time for Dynamo to become ready.
+# The following command returns when Dynamo is ready to accept requests.
 while [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -d '{"model":"'"${MODEL}"'","messages":[{"role":"user","content":"a"}],"max_completion_tokens":1}')" != "200" ]; do sleep 1; done
 
 # Profile the model
@@ -95,7 +92,7 @@ aiperf profile \
     -H 'Accept: text/event-stream'
 ```
 
-## Profile Qwen3-0.6B using vllm <a id="vllm-qwen3-0.6B">
+## Profile Qwen3-0.6B Using vLLM <a id="vllm-qwen3-0.6B">
 ```bash
 # Install vLLM from pip:
 pip install vllm
