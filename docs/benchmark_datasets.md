@@ -46,21 +46,6 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
       <td style="text-align: center;">✅</td>
       <td>Conversations from <a href="https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"><code>--public-dataset sharegpt</code></td>
     </tr>
-    <tr>
-      <td><strong>BurstGPT</strong></td>
-      <td style="text-align: center;">Coming Soon</td>
-      <td></td>
-    </tr>
-    <tr>
-      <td><strong>HuggingFace-VisionArena</strong></td>
-      <td style="text-align: center;">Coming Soon</td>
-      <td></td>
-    </tr>
-    <tr>
-      <td><strong>HuggingFace-AIMO</strong></td>
-      <td style="text-align: center;">Coming Soon</td>
-      <td></td>
-    </tr>
   </tbody>
 </table>
 
