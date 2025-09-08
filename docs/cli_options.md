@@ -4,7 +4,7 @@ SPDX-License-Identifier: Apache-2.0
 -->
 
 # CLI Options
-The following options are available when profiling using AIPerf.
+Use these options to profile with AIPerf.
 
 ```
 ╭─ Endpoint ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -17,7 +17,7 @@ The following options are available when profiling using AIPerf.
 │                                                             openai-embeddings, openai-responses] [default: openai-chat-completions]                                                   │
 │    STREAMING --streaming                                    An option to enable the use of the streaming API. [default: False]                                                        │
 │    URL --url                                            -u  URL of the endpoint to target for benchmarking. [default: localhost:8000]                                                 │
-│    REQUEST-TIMEOUT-SECONDS --request-timeout-seconds        The timeout in floating points seconds for each request to the endpoint. [default: 600.0]                                 │
+│    REQUEST-TIMEOUT-SECONDS --request-timeout-seconds        The timeout in floating-point seconds for each request to the endpoint. [default: 600.0]                                 │
 │    API-KEY --api-key                                        The API key to use for the endpoint. If provided, it will be sent with every request as a header: Authorization: Bearer   │
 │                                                             <api_key>.                                                                                                                │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -25,9 +25,9 @@ The following options are available when profiling using AIPerf.
 ```
 ╭─ Input ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ EXTRA-INPUTS --extra-inputs                                    Provide additional inputs to include with every request. Inputs should be in an 'input_name:value' format.             │
-│                                                                Alternatively, a string representing a json formatted dict can be provided. [default: []]                              │
+│                                                                Alternatively, a string representing a json formatted dictionary can be provided. [default: []]                              │
 │ HEADER --header                                            -H  Adds a custom header to the requests. Headers must be specified as 'Header:Value' pairs. Alternatively, a string       │
-│                                                                representing a json formatted dict can be provided. [default: []]                                                      │
+│                                                                representing a json formatted dictionary can be provided. [default: []]                                                      │
 │ INPUT-FILE --input-file                                        The file or directory path that contains the dataset to use for profiling. This parameter is used in conjunction with  │
 │                                                                the custom_dataset_type parameter to support different types of user provided datasets.                                │
 │ FIXED-SCHEDULE --fixed-schedule                                Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file parameter, but can be   │
@@ -54,11 +54,11 @@ The following options are available when profiling using AIPerf.
 ```
 ```
 ╭─ Tokenizer ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ TOKENIZER --tokenizer                                      The HuggingFace tokenizer to use to interpret token metrics from prompts and responses. The value can be the name of a     │
+│ TOKENIZER --tokenizer                                      The Hugging Face tokenizer to use to interpret token metrics from prompts and responses. The value can be the name of a     │
 │                                                            tokenizer or the filepath of the tokenizer. The default value is the model name.                                           │
 │ TOKENIZER-REVISION --tokenizer-revision                    The specific model version to use. It can be a branch name, tag name, or commit ID. [default: main]                        │
 │ TOKENIZER-TRUST-REMOTE-CODE --tokenizer-trust-remote-code  Allows custom tokenizer to be downloaded and executed. This carries security risks and should only be used for             │
-│                                                            repositories you trust. This is only necessary for custom tokenizers stored in HuggingFace Hub. [default: False]           │
+│                                                            repositories you trust. This is only necessary for custom tokenizers stored in Hugging Face Hub. [default: False]           │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```
