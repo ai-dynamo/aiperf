@@ -27,7 +27,7 @@ Features
 
 ## Features
 
-- Scalable via multiprocess or Kubernetes (coming soon) support
+- Scalable via multiprocess support
 - Modular design for easy user modification
 - Several benchmarking modes:
   - concurrency
