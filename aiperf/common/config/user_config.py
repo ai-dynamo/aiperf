@@ -63,6 +63,19 @@ class UserConfig(BaseConfig):
             self.loadgen.request_rate_mode = RequestRateMode.CONCURRENCY_BURST
         return self
 
+    @model_validator(mode="after")
+    def validate_benchmark_mode(self) -> Self:
+        """Validate benchmarking is count-based or timing-based."""
+        if (
+            "benchmark_duration" in self.loadgen.model_fields_set
+            and "request_count" in self.loadgen.model_fields_set
+        ):
+            raise ValueError(
+                "Count-based and duration-based benchmarking cannot be used together. "
+                "Use either --request-count or --benchmark-duration."
+            )
+        return self
+
     endpoint: Annotated[
         EndpointConfig,
         Field(
