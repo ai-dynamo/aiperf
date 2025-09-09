@@ -68,8 +68,8 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
     def _setup_profiling_phase_config(self) -> None:
         """Setup the profiling phase. This can be overridden in subclasses to modify the profiling phase."""
         if self.config.benchmark_duration is not None:
-            print(
-                f"DEBUG: Setting up DURATION-based profiling phase: expected_duration_sec={self.config.benchmark_duration}"
+            self.debug(
+                f"Setting up duration-based profiling phase: expected_duration_sec={self.config.benchmark_duration}"
             )
             self.ordered_phase_configs.append(
                 CreditPhaseConfig(
@@ -78,8 +78,8 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
                 )
             )
         else:
-            print(
-                f"DEBUG: Setting up REQUEST-COUNT-based profiling phase: total_expected_requests={self.config.request_count}"
+            self.debug(
+                f"Setting up count-based profiling phase: total_expected_requests={self.config.request_count}"
             )
             self.ordered_phase_configs.append(
                 CreditPhaseConfig(
@@ -158,36 +158,110 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
             elapsed_sec = elapsed_ns / NANOS_PER_SECOND
             remaining_sec = max(0, phase_stats.expected_duration_sec - elapsed_sec)
 
-            if remaining_sec == 0:
-                self.info(
-                    f"Benchmark duration has elapsed for {phase_stats.type} phase, completing immediately"
-                )
-                await self._force_phase_completion(phase_stats)
-                return
+            # Add grace period to the timeout
+            grace_period = self.config.benchmark_grace_period
+            total_timeout = remaining_sec + grace_period
 
-            # Wait for either phase completion or timeout
+            if grace_period > 0 and remaining_sec <= 0:
+                self.info(
+                    f"Benchmark duration elapsed for {phase_stats.type} phase, entering {grace_period}s grace period"
+                )
+
+                # Check if phase is already complete before starting grace period wait
+                if phase_stats.in_flight == 0:
+                    self.info(
+                        f"Phase {phase_stats.type} has no in-flight requests, skipping grace period"
+                    )
+                    await self._force_phase_completion(
+                        phase_stats, grace_period_timeout=False
+                    )
+                    return
+            elif grace_period > 0:
+                self.info(
+                    f"Waiting for {phase_stats.type} phase completion: {remaining_sec:.1f}s duration + {grace_period}s grace period"
+                )
+            else:
+                self.info(
+                    f"Waiting for {phase_stats.type} phase completion: {remaining_sec:.1f}s duration (no grace period)"
+                )
+
+            # Wait for either phase completion or timeout (duration + grace period)
             try:
                 await asyncio.wait_for(
-                    self.phase_complete_event.wait(), timeout=remaining_sec
+                    self.phase_complete_event.wait(), timeout=total_timeout
                 )
+                # Phase completed naturally
+                return
             except asyncio.TimeoutError:
-                # Duration has elapsed, force completion
-                self.info(
-                    f"Benchmark duration has elapsed for {phase_stats.type} phase after {phase_stats.expected_duration_sec}s, completing with {phase_stats.in_flight} in-flight requests"
-                )
-                await self._force_phase_completion(phase_stats)
+                # Total timeout elapsed (duration + grace period), force completion
+                if grace_period > 0 and remaining_sec <= 0:
+                    self.info(
+                        f"Grace period timeout ({grace_period}s) elapsed for {phase_stats.type} phase"
+                    )
+                    await self._force_phase_completion(
+                        phase_stats, grace_period_timeout=True
+                    )
+                else:
+                    self.info(
+                        f"Total timeout ({phase_stats.expected_duration_sec}s + {grace_period}s grace) elapsed for {phase_stats.type} phase"
+                    )
+                    await self._force_phase_completion(
+                        phase_stats, grace_period_timeout=True
+                    )
         else:
             # For request-count-based phases, wait indefinitely
             await self.phase_complete_event.wait()
 
-    async def _force_phase_completion(self, phase_stats: CreditPhaseStats) -> None:
+    async def _wait_for_grace_period_completion(
+        self, phase_stats: CreditPhaseStats
+    ) -> None:
+        """Wait for grace period completion after benchmark duration ends."""
+        grace_period = self.config.benchmark_grace_period
+
+        if grace_period <= 0:
+            self.info(
+                f"No grace period configured, forcing completion of {phase_stats.type} phase immediately"
+            )
+            await self._force_phase_completion(phase_stats, grace_period_timeout=False)
+            return
+
+        # Check if phase is already complete before starting grace period
+        if self.phase_complete_event.is_set():
+            self.info(
+                f"Phase {phase_stats.type} already completed, no grace period needed"
+            )
+            return
+
+        self.info(
+            f"Entering grace period of {grace_period}s for {phase_stats.type} phase with {phase_stats.in_flight} in-flight requests"
+        )
+
+        try:
+            await asyncio.wait_for(
+                self.phase_complete_event.wait(), timeout=grace_period
+            )
+            self.info(
+                f"All responses received during grace period for {phase_stats.type} phase"
+            )
+        except asyncio.TimeoutError:
+            self.info(
+                f"Grace period of {grace_period}s elapsed for {phase_stats.type} phase, forcing completion with {phase_stats.in_flight} remaining in-flight requests"
+            )
+            await self._force_phase_completion(phase_stats, grace_period_timeout=True)
+
+    async def _force_phase_completion(
+        self, phase_stats: CreditPhaseStats, grace_period_timeout: bool = False
+    ) -> None:
         """Force completion of a phase when the duration has elapsed."""
         # Defensive check: ensure this phase is listed as an active phase.
         # In normal operation, this should be true, but it guards against edge
         # cases like duplicate timeout events or race conditions during shutdown.
         if phase_stats.type in self.phase_stats:
             phase_stats.end_ns = time.time_ns()
-            self.notice(f"Phase force-completed due to duration timeout: {phase_stats}")
+            timeout_reason = (
+                "grace period timeout" if grace_period_timeout else "duration timeout"
+            )
+            self.notice(f"Phase force-completed due to {timeout_reason}: {phase_stats}")
 
             self.execute_async(
                 self.credit_manager.publish_phase_complete(
@@ -219,8 +293,9 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         """This is called by the credit manager when a credit is returned. It can be
         overridden in subclasses to handle the credit return."""
         if message.phase not in self.phase_stats:
-            self.warning(
-                f"Credit return message received for phase {message.phase} but no phase stats found"
+            self.debug(
+                f"Credit return message received for phase {message.phase} but no phase stats found "
+                f"(likely due to grace period timeout or normal completion cleanup)"
             )
             return
 

@@ -144,6 +144,7 @@ class ServiceDefaults:
 @dataclass(frozen=True)
 class LoadGeneratorDefaults:
     BENCHMARK_DURATION = None
+    BENCHMARK_GRACE_PERIOD = 30.0
     CONCURRENCY = None
     REQUEST_RATE = None
     REQUEST_COUNT = 10

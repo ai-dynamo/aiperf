@@ -43,11 +43,8 @@ class AllRequestsProcessedCondition(PhaseCompletionCondition):
     """Completion condition for when all expected requests have been processed."""
 
     def is_satisfied(self, context: PhaseCompletionContext) -> bool:
-        # Only trigger for request-count-based benchmarks, not duration-based ones
-        is_request_count_based = context.expected_duration_sec is None
         return (
-            is_request_count_based
-            and context.final_request_count is not None
+            context.final_request_count is not None
             and context.processing_stats.total_records >= context.final_request_count
         )
 

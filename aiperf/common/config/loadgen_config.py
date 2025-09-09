@@ -32,6 +32,21 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = LoadGeneratorDefaults.BENCHMARK_DURATION
 
+    # NEW AIPerf Option
+    benchmark_grace_period: Annotated[
+        float,
+        Field(
+            ge=0,
+            description="The grace period in seconds to wait for responses after benchmark duration ends. "
+            "Only applies when --benchmark-duration is set. Responses received within this period "
+            "are included in metrics.",
+        ),
+        CLIParameter(
+            name=("--benchmark-grace-period",),
+            group=_CLI_GROUP,
+        ),
+    ] = LoadGeneratorDefaults.BENCHMARK_GRACE_PERIOD
+
     # TODO: Potentially add a validator to ensure that the concurrency is not greater than the request count
     concurrency: Annotated[
         int | None,

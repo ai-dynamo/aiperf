@@ -19,22 +19,38 @@ from tests.timing_manager.conftest import (
 )
 
 
+@pytest.fixture
+def isolated_test_env():
+    """Fixture to ensure test isolation and cleanup."""
+    # Setup
+    original_time = time.time_ns
+
+    yield
+
+    # Teardown - restore any global state if needed
+    time.time_ns = original_time
+
+
 def benchmark_duration_config(
-    benchmark_duration: float,
+    request_count: int = None,
+    benchmark_duration: float = None,
+    benchmark_grace_period: float = 30.0,  # Default value, not None
     request_rate_mode: RequestRateMode = RequestRateMode.CONCURRENCY_BURST,
     concurrency: int = 1,
     request_rate: float | None = None,
     warmup_request_count: int = 0,
     random_seed: int | None = 42,
-) -> TimingManagerConfig:
+    **kwargs,
+):
     """Helper function to create a TimingManagerConfig with benchmark duration."""
     return TimingManagerConfig(
         timing_mode=TimingMode.REQUEST_RATE,
         benchmark_duration=benchmark_duration,
+        benchmark_grace_period=benchmark_grace_period,
         request_rate_mode=request_rate_mode,
         concurrency=concurrency,
         request_rate=request_rate,
-        request_count=10,  # This should be ignored when benchmark_duration is set
+        request_count=request_count or 10,  # Default fallback
         warmup_request_count=warmup_request_count,
         random_seed=random_seed,
     )
@@ -47,6 +63,7 @@ def mixed_config(
     concurrency: int = 1,
     request_rate: float | None = None,
     warmup_request_count: int = 0,
+    benchmark_grace_period: float = 30.0,  # Default value, not None
     random_seed: int | None = 42,
 ) -> TimingManagerConfig:
     """Helper function to create a TimingManagerConfig with both request_count and duration."""
@@ -54,6 +71,7 @@ def mixed_config(
         timing_mode=TimingMode.REQUEST_RATE,
         request_count=request_count,
         benchmark_duration=benchmark_duration,
+        benchmark_grace_period=benchmark_grace_period,
         request_rate_mode=request_rate_mode,
         concurrency=concurrency,
         request_rate=request_rate,
@@ -62,7 +80,27 @@ def mixed_config(
     )
 
 
-class TestBenchmarkDurationConfiguration:
+class TestBenchmarkGracePeriodEdgeCases:
+    """Test edge cases and error conditions for grace period functionality."""
+
+    def test_invalid_grace_period_with_request_count(self):
+        """Test that grace period is stored for request-count mode."""
+        # Should not raise error but grace period should be stored
+        config = benchmark_duration_config(
+            request_count=100, benchmark_duration=None, benchmark_grace_period=30.0
+        )
+        # In request-count mode, grace period should be stored but not used
+        assert config.benchmark_grace_period == 30.0
+
+    def test_extremely_large_grace_period(self):
+        """Test handling of extremely large grace periods."""
+        config = benchmark_duration_config(
+            benchmark_duration=5.0, benchmark_grace_period=999999.0
+        )
+        assert config.benchmark_grace_period == 999999.0
+
+
+class TestBenchmarkGracePeriodMixedConfigurations:
     """Test configuration validation and behavior of benchmark duration."""
 
     def test_benchmark_duration_creates_time_based_config(self):
@@ -154,11 +192,11 @@ class TestBenchmarkDurationPhaseStats:
         time_traveler.advance_time(1.1)
         assert not phase_stats.should_send()
 
-    def test_phase_stats_should_send_with_request_count(self):
+    def test_phase_stats_should_send_with_request_count(self, time_traveler):
         """Test that phase stats without duration use request count."""
         phase_stats = CreditPhaseStats(
             type=CreditPhase.PROFILING,
-            start_ns=time.time_ns(),
+            start_ns=time_traveler.time_ns(),
             total_expected_requests=5,
         )
 
@@ -528,10 +566,10 @@ class TestBenchmarkDurationLogic:
         ],
     )
     def test_duration_conversion_to_nanoseconds(
-        self, duration: float, expected_nanos: int
+        self, time_traveler, duration: float, expected_nanos: int
     ):
         """Test that duration is correctly converted to nanoseconds for comparison."""
-        start_time = time.time_ns()
+        start_time = time_traveler.time_ns()
 
         time_phase_stats = CreditPhaseStats(
             type=CreditPhase.PROFILING,
@@ -541,13 +579,13 @@ class TestBenchmarkDurationLogic:
 
         # Simulate advancing time to just before the duration expires
         time_phase_stats.start_ns = (
-            time.time_ns() - expected_nanos + 1_000_000
+            time_traveler.time_ns() - expected_nanos + 1_000_000
         )  # 1ms before expiry
         assert time_phase_stats.should_send()  # Should still send
 
         # Simulate advancing time past the duration
         time_phase_stats.start_ns = (
-            time.time_ns() - expected_nanos - 1_000_000
+            time_traveler.time_ns() - expected_nanos - 1_000_000
         )  # 1ms after expiry
         assert not time_phase_stats.should_send()  # Should not send
 
@@ -762,3 +800,263 @@ class TestBenchmarkDurationEdgeCases:
         assert phase_stats.is_time_based
         assert not phase_stats.is_request_count_based
         assert phase_stats.is_valid
+
+
+class TestBenchmarkGracePeriod:
+    """Test benchmark grace period functionality."""
+
+    def test_grace_period_config_validation(self):
+        """Test grace period configuration validation."""
+        # Valid configuration with both duration and grace period
+        config = benchmark_duration_config(
+            benchmark_duration=5.0, benchmark_grace_period=10.0
+        )
+        assert config.benchmark_duration == 5.0
+        assert config.benchmark_grace_period == 10.0
+
+    def test_grace_period_default_value(self):
+        """Test that grace period has the correct default value."""
+        config = benchmark_duration_config(benchmark_duration=5.0)
+        assert config.benchmark_grace_period == 30.0
+
+    def test_zero_grace_period(self):
+        """Test configuration with zero grace period."""
+        config = benchmark_duration_config(
+            benchmark_duration=5.0, benchmark_grace_period=0.0
+        )
+        assert config.benchmark_grace_period == 0.0
+
+    @pytest.mark.parametrize("grace_period", [15.0, 30.0, 60.0, 120.0])
+    def test_various_grace_period_values(self, grace_period: float):
+        """Test various valid grace period values."""
+        config = benchmark_duration_config(
+            benchmark_duration=10.0, benchmark_grace_period=grace_period
+        )
+        assert config.benchmark_grace_period == grace_period
+
+    async def test_grace_period_with_strategy(
+        self, mock_credit_manager: MockCreditManager
+    ):
+        """Test that RequestRateStrategy correctly handles grace period configuration."""
+        config = benchmark_duration_config(
+            benchmark_duration=2.0, benchmark_grace_period=15.0
+        )
+
+        strategy = RequestRateStrategy(config, mock_credit_manager)
+
+        # Verify configuration is passed through
+        assert strategy.config.benchmark_grace_period == 15.0
+        assert strategy.config.benchmark_duration == 2.0
+
+    async def test_grace_period_integration_with_duration(
+        self, mock_credit_manager: MockCreditManager
+    ):
+        """Test grace period integration with benchmark duration."""
+        config = benchmark_duration_config(
+            benchmark_duration=1.0,  # Short duration for testing
+            benchmark_grace_period=5.0,
+        )
+
+        strategy = RequestRateStrategy(config, mock_credit_manager)
+
+        # Should have profiling phase with duration configuration
+        profiling_config = strategy.ordered_phase_configs[-1]
+        assert profiling_config.type == CreditPhase.PROFILING
+        assert profiling_config.expected_duration_sec == 1.0
+        assert profiling_config.total_expected_requests is None
+
+
+class TestBenchmarkGracePeriodIntegration:
+    """Integration tests for grace period with time-based phases."""
+
+    async def test_grace_period_with_quick_completion(
+        self, mock_credit_manager: MockCreditManager, time_traveler
+    ):
+        """Test grace period when all requests complete quickly."""
+        config = benchmark_duration_config(
+            benchmark_duration=1.0, benchmark_grace_period=5.0
+        )
+
+        strategy = RequestRateStrategy(config, mock_credit_manager)
+
+        # Create a profiling phase that completes quickly
+        phase_stats = CreditPhaseStats(
+            type=CreditPhase.PROFILING,
+            expected_duration_sec=1.0,
+            start_ns=time_traveler.current_time_ns,
+            sent=5,
+            completed=5,  # All requests completed
+        )
+        phase_stats.sent_end_ns = (
+            time_traveler.current_time_ns + 500_000_000
+        )  # 0.5s later
+
+        strategy.phase_stats[CreditPhase.PROFILING] = phase_stats
+
+        # Simulate normal completion before duration ends
+        strategy.phase_complete_event.set()
+
+        # Should complete normally without grace period
+        await strategy._wait_for_phase_completion(phase_stats)
+
+    async def test_grace_period_timeout_with_in_flight_requests(
+        self, mock_credit_manager: MockCreditManager, time_traveler
+    ):
+        """Test grace period timeout with remaining in-flight requests."""
+        config = benchmark_duration_config(
+            benchmark_duration=1.0, benchmark_grace_period=2.0
+        )
+
+        strategy = RequestRateStrategy(config, mock_credit_manager)
+
+        # Create a profiling phase with in-flight requests
+        phase_stats = CreditPhaseStats(
+            type=CreditPhase.PROFILING,
+            expected_duration_sec=1.0,
+            start_ns=time_traveler.current_time_ns,
+            sent=10,
+            completed=7,  # 3 requests still in-flight
+        )
+        phase_stats.sent_end_ns = (
+            time_traveler.current_time_ns + 1_000_000_000
+        )  # 1s later
+
+        strategy.phase_stats[CreditPhase.PROFILING] = phase_stats
+
+        # Advance time past benchmark duration but within grace period
+        time_traveler.advance_time(1.5)
+
+        # Start the wait task
+        wait_task = asyncio.create_task(
+            strategy._wait_for_phase_completion(phase_stats)
+        )
+
+        # Give it a moment to enter grace period
+        await asyncio.sleep(0.01)
+
+        # Advance time past grace period
+        time_traveler.advance_time(2.5)  # Total 4s elapsed, past grace period
+
+        # Should force completion due to grace period timeout
+        await wait_task
+
+        # Verify phase was force-completed
+        assert phase_stats.end_ns is not None
+
+    async def test_zero_grace_period_immediate_completion(
+        self, mock_credit_manager: MockCreditManager, time_traveler
+    ):
+        """Test immediate completion when grace period is zero."""
+        config = benchmark_duration_config(
+            benchmark_duration=1.0, benchmark_grace_period=0.0
+        )
+
+        strategy = RequestRateStrategy(config, mock_credit_manager)
+
+        # Create a profiling phase with in-flight requests
+        phase_stats = CreditPhaseStats(
+            type=CreditPhase.PROFILING,
+            expected_duration_sec=1.0,
+            start_ns=time_traveler.current_time_ns,
+            sent=5,
+            completed=3,  # 2 requests still in-flight
+        )
+        phase_stats.sent_end_ns = time_traveler.current_time_ns + 1_000_000_000
+
+        strategy.phase_stats[CreditPhase.PROFILING] = phase_stats
+
+        # Advance time past benchmark duration
+        time_traveler.advance_time(1.1)
+
+        # Should complete immediately without grace period
+        await strategy._wait_for_phase_completion(phase_stats)
+
+        # Verify phase was force-completed immediately
+        assert phase_stats.end_ns is not None
+
+    async def test_grace_period_completion_during_grace_period(
+        self, mock_credit_manager: MockCreditManager, time_traveler
+    ):
+        """Test completion during grace period when all requests finish."""
+        config = benchmark_duration_config(
+            benchmark_duration=1.0, benchmark_grace_period=5.0
+        )
+
+        strategy = RequestRateStrategy(config, mock_credit_manager)
+
+        # Create a profiling phase with in-flight requests
+        phase_stats = CreditPhaseStats(
+            type=CreditPhase.PROFILING,
+            expected_duration_sec=1.0,
+            start_ns=time_traveler.current_time_ns,
+            sent=5,
+            completed=3,  # 2 requests still in-flight
+        )
+        phase_stats.sent_end_ns = time_traveler.current_time_ns + 1_000_000_000
+
+        strategy.phase_stats[CreditPhase.PROFILING] = phase_stats
+
+        # Advance time past benchmark duration
+        time_traveler.advance_time(1.1)
+
+        # Start the wait task
+        wait_task = asyncio.create_task(
+            strategy._wait_for_phase_completion(phase_stats)
+        )
+
+        # Give it a moment to enter grace period
+        await asyncio.sleep(0.01)
+
+        # Simulate all requests completing during grace period
+        phase_stats.completed = 5  # All requests completed
+        strategy.phase_complete_event.set()
+
+        # Should complete normally during grace period
+        await wait_task
+
+        # Verify completion
+        assert phase_stats.in_flight == 0
+
+
+class TestBenchmarkGracePeriodConfiguration:
+    """Test grace period configuration scenarios."""
+
+    def test_grace_period_with_request_count_mode(self):
+        """Test that grace period doesn't affect request-count mode."""
+        config = mixed_config(
+            request_count=10, benchmark_duration=None, benchmark_grace_period=15.0
+        )
+
+        # Grace period should be configured but not used in request-count mode
+        assert config.benchmark_grace_period == 15.0
+        assert config.benchmark_duration is None
+        assert config.request_count == 10
+
+    def test_grace_period_with_warmup_and_duration(self):
+        """Test grace period with both warmup and duration."""
+        config = benchmark_duration_config(
+            benchmark_duration=10.0, warmup_request_count=5, benchmark_grace_period=20.0
+        )
+
+        assert config.benchmark_duration == 10.0
+        assert config.benchmark_grace_period == 20.0
+        assert config.warmup_request_count == 5
+
+    @pytest.mark.parametrize(
+        "duration,grace_period",
+        [
+            (1.0, 30.0),  # Grace period longer than duration
+            (60.0, 10.0),  # Grace period shorter than duration
+            (30.0, 30.0),  # Grace period equal to duration
+        ],
+    )
+    def test_various_duration_grace_period_combinations(
+        self, duration: float, grace_period: float
+    ):
+        """Test various combinations of duration and grace period."""
+        config = benchmark_duration_config(
+            benchmark_duration=duration, benchmark_grace_period=grace_period
+        )
+
+        assert config.benchmark_duration == duration
+        assert config.benchmark_grace_period == grace_period
