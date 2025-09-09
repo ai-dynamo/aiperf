@@ -1,12 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """
 Utility functions for the end-to-end testing framework.
 """
 
-import os
-import subprocess
 import logging
+import subprocess
 from pathlib import Path
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -17,19 +17,20 @@ def get_repo_root() -> Path:
     return Path(__file__).parent.parent.parent.parent
 
 
-def setup_logging(level: int = logging.INFO, log_file: str = "test_execution.log") -> None:
+def setup_logging(
+    level: int = logging.INFO, log_file: str = "test_execution.log"
+) -> None:
     """Setup consistent logging configuration across all modules"""
     logging.basicConfig(
         level=level,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
     )
 
 
-def run_command_with_timeout(command: str, timeout: int = 30, capture_output: bool = True) -> subprocess.CompletedProcess:
+def run_command_with_timeout(
+    command: str, timeout: int = 30, capture_output: bool = True
+) -> subprocess.CompletedProcess:
     """Run a shell command with timeout and consistent error handling"""
     try:
         result = subprocess.run(
@@ -37,7 +38,7 @@ def run_command_with_timeout(command: str, timeout: int = 30, capture_output: bo
             shell=True,
             capture_output=capture_output,
             text=True,
-            timeout=timeout
+            timeout=timeout,
         )
         return result
     except subprocess.TimeoutExpired as e:
@@ -52,7 +53,7 @@ def run_command_with_realtime_output(command: str, prefix: str = "CMD") -> int:
     """Run a command and show real-time output with consistent formatting"""
     logger.info(f"Executing: {command}")
     logger.info("=" * 60)
-    
+
     process = subprocess.Popen(
         command,
         shell=True,
@@ -62,7 +63,7 @@ def run_command_with_realtime_output(command: str, prefix: str = "CMD") -> int:
         bufsize=1,
         universal_newlines=True,
     )
-    
+
     # Show real-time output
     output_lines = []
     while True:
@@ -72,20 +73,21 @@ def run_command_with_realtime_output(command: str, prefix: str = "CMD") -> int:
         if line:
             print(f"{prefix}: {line.rstrip()}")
             output_lines.append(line)
-    
+
     process.wait()
     logger.info("=" * 60)
-    
+
     return process.returncode
 
 
-def extract_ports_from_command(command: str) -> List[int]:
+def extract_ports_from_command(command: str) -> list[int]:
     """Extract port numbers from a command string using regex"""
     import re
+
     ports = []
-    
+
     # Look for localhost:PORT patterns
-    port_matches = re.findall(r'localhost:(\d+)', command)
+    port_matches = re.findall(r"localhost:(\d+)", command)
     for match in port_matches:
         try:
             port = int(match)
@@ -93,10 +95,10 @@ def extract_ports_from_command(command: str) -> List[int]:
                 ports.append(port)
         except ValueError:
             continue
-    
+
     # Also look for :PORT patterns (without localhost)
     if not ports:
-        port_matches = re.findall(r':(\d+)', command)
+        port_matches = re.findall(r":(\d+)", command)
         for match in port_matches:
             try:
                 port = int(match)
@@ -104,7 +106,7 @@ def extract_ports_from_command(command: str) -> List[int]:
                     ports.append(port)
             except ValueError:
                 continue
-    
+
     # Remove duplicates and return
     return list(set(ports))
 
@@ -117,7 +119,7 @@ def docker_container_exists(container_name: str) -> bool:
             shell=True,
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
         return result.returncode == 0 and bool(result.stdout.strip())
     except Exception:
@@ -133,18 +135,18 @@ def docker_stop_and_remove(container_name: str, timeout: int = 10) -> bool:
             shell=True,
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
         )
-        
+
         # Remove container
         rm_result = subprocess.run(
             f"docker rm {container_name}",
             shell=True,
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
-        
+
         return stop_result.returncode == 0 and rm_result.returncode == 0
     except Exception as e:
         logger.debug(f"Error stopping/removing container {container_name}: {e}")
@@ -170,7 +172,7 @@ def safe_kill_process(pid: int, signal: int = 9) -> bool:
         return False
 
 
-def get_container_id_by_filter(filter_criteria: str) -> Optional[str]:
+def get_container_id_by_filter(filter_criteria: str) -> str | None:
     """Get Docker container ID by filter criteria"""
     try:
         result = subprocess.run(
@@ -178,11 +180,11 @@ def get_container_id_by_filter(filter_criteria: str) -> Optional[str]:
             shell=True,
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
-        
+
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip().split('\n')[0]  # Return first match
+            return result.stdout.strip().split("\n")[0]  # Return first match
         return None
     except Exception:
         return None
@@ -195,15 +197,12 @@ def cleanup_docker_resources(force: bool = False) -> None:
             "docker container prune -f",
             "docker network prune -f",
         ]
-        
+
         if force:
-            commands.extend([
-                "docker volume prune -f",
-                "docker system prune -f"
-            ])
-        
+            commands.extend(["docker volume prune -f", "docker system prune -f"])
+
         for cmd in commands:
             subprocess.run(cmd, shell=True, capture_output=True, timeout=10)
-            
+
     except Exception as e:
         logger.debug(f"Docker cleanup had some issues: {e}")

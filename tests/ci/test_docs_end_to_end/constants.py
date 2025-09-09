@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """
 Constants for the end-to-end testing framework.
 """
@@ -20,5 +22,5 @@ AIPERF_UI_TYPE = "simple"
 # Timeouts
 SETUP_MONITOR_TIMEOUT = 30  # seconds to monitor setup output
 CONTAINER_BUILD_TIMEOUT = 600  # seconds for Docker build
-CONTAINER_START_TIMEOUT = 60   # seconds for container startup
-AIPERF_COMMAND_TIMEOUT = 300   # seconds for AIPerf commands
+CONTAINER_START_TIMEOUT = 60  # seconds for container startup
+AIPERF_COMMAND_TIMEOUT = 300  # seconds for AIPerf commands

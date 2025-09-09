@@ -2,17 +2,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# This script now uses the main.py --all-servers approach
-# instead of manually starting servers
-
 set -x
 
-echo "Starting end-to-end documentation tests using main.py --all-servers"
+time docker pull ${DYNAMO_PREBUILT_IMAGE_TAG}
 
-# Navigate to the test directory
-cd "$(dirname "$0")"
+DYNAMO_REPO_TAG=$(docker run --rm --entrypoint "" ${DYNAMO_PREBUILT_IMAGE_TAG} cat /workspace/version.txt | cut -d'+' -f2)
 
-# Execute the main.py script with --all-servers flag
-python3 main.py --all-servers
+curl -O https://raw.githubusercontent.com/ai-dynamo/dynamo/${DYNAMO_REPO_TAG}/deploy/docker-compose.yml
 
-echo "End-to-end documentation tests completed"
+docker compose -f docker-compose.yml down || true
+
+docker compose -f docker-compose.yml up -d
+
+docker run \
+  --rm \
+  --gpus all \
+  --network host \
+  ${DYNAMO_PREBUILT_IMAGE_TAG} \
+    /bin/bash -c "python3 -m dynamo.frontend & python3 -m dynamo.vllm --model ${MODEL} --enforce-eager --no-enable-prefix-caching" > ${AIPERF_SOURCE_DIR}/server.log 2>&1 &
