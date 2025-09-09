@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+import os
+
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -52,12 +54,15 @@ class Worker(
         service_id: str | None = None,
         **kwargs,
     ):
+        # for now, set the max pull concurrency to the same as the http connection limit
+        max_pull_concurrency = os.environ.get("AIPERF_HTTP_CONNECTION_LIMIT", 2500)
         super().__init__(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
             pull_client_address=CommAddress.CREDIT_DROP,
             pull_client_bind=False,
+            pull_client_max_concurrency=max_pull_concurrency,
             **kwargs,
         )
 

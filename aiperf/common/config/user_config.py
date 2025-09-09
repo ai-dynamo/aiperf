@@ -69,6 +69,9 @@ class UserConfig(BaseConfig):
         if (
             "benchmark_duration" in self.loadgen.model_fields_set
             and "request_count" in self.loadgen.model_fields_set
+        ) and (
+            self.loadgen.benchmark_duration is not None
+            and self.loadgen.request_count is not None
         ):
             raise ValueError(
                 "Count-based and duration-based benchmarking cannot be used together. "

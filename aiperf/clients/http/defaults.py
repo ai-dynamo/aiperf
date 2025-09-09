@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import os
 import socket
 from dataclasses import dataclass
 
@@ -63,8 +64,10 @@ class SocketDefaults:
 class AioHttpDefaults:
     """Default values for aiohttp.ClientSession."""
 
-    LIMIT = 2500  # Maximum number of concurrent connections
-    LIMIT_PER_HOST = 2500  # Maximum number of concurrent connections per host
+    LIMIT = os.environ.get(
+        "AIPERF_HTTP_CONNECTION_LIMIT", 2500
+    )  # Maximum number of concurrent connections
+    LIMIT_PER_HOST = 0  # Maximum number of concurrent connections per host
     TTL_DNS_CACHE = 300  # Time to live for DNS cache
     USE_DNS_CACHE = True  # Enable DNS cache
     ENABLE_CLEANUP_CLOSED = False  # Disable cleanup of closed connections
