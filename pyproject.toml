@@ -19,7 +19,13 @@ packages = ["aiperf"]
 name = "aiperf"
 version = "0.1.0"
 description = "AIPerf is a package for performance testing of AI models"
-authors = []
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "NVIDIA Inc.", email = "sw-dl-dynamo@nvidia.com" },
+]
+requires-python = ">=3.10"
 dependencies = [
   "aiofiles~=24.1.0",
   "aiohttp~=3.12.14",
@@ -42,9 +48,6 @@ dependencies = [
   "transformers>=4.52.0",
   "uvloop~=0.21.0",
 ]
-readme = "README.md"
-requires-python = ">=3.10"
-packages = [{ include = "aiperf" }]
 
 # CLI Entrypoint
 [project.scripts]
