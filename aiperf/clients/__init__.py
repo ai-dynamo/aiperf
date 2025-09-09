@@ -27,6 +27,7 @@ from aiperf.clients.openai import (
     OpenAICompletionRequestConverter,
     OpenAIEmbeddingsRequestConverter,
     OpenAIResponsesRequestConverter,
+    RankingsRequestConverter,
 )
 
 __all__ = [
@@ -43,5 +44,6 @@ __all__ = [
     "OpenAICompletionRequestConverter",
     "OpenAIEmbeddingsRequestConverter",
     "OpenAIResponsesRequestConverter",
+    "RankingsRequestConverter",
     "SocketDefaults",
 ]

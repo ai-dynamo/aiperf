@@ -19,7 +19,7 @@ from aiperf.common.config.conversation_config import ConversationConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, PublicDatasetType
 
 logger = AIPerfLogger(__name__)
 
@@ -36,9 +36,6 @@ class InputConfig(BaseConfig):
         """Validate the fixed schedule configuration."""
         if self.fixed_schedule and self.file is None:
             raise ValueError("Fixed schedule requires a file to be provided")
-        if self.file is not None:
-            self.fixed_schedule = True
-            logger.debug("Fixed schedule is enabled because file is provided")
         return self
 
     @model_validator(mode="after")
@@ -63,6 +60,15 @@ class InputConfig(BaseConfig):
         ):
             raise ValueError(
                 "The --fixed-schedule-start-offset must be less than or equal to the --fixed-schedule-end-offset"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_dataset_type(self) -> Self:
+        """Validate the different dataset type configuration."""
+        if self.public_dataset is not None and self.custom_dataset_type is not None:
+            raise ValueError(
+                "The --public-dataset and --custom-dataset-type options cannot be set together"
             )
         return self
 
@@ -175,12 +181,21 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.FIXED_SCHEDULE_END_OFFSET
 
+    public_dataset: Annotated[
+        PublicDatasetType | None,
+        Field(description="The public dataset to use for the requests."),
+        CLIParameter(
+            name=("--public-dataset"),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.PUBLIC_DATASET
+
     # NEW AIPerf Option
     custom_dataset_type: Annotated[
-        CustomDatasetType,
+        CustomDatasetType | None,
         Field(
             description="The type of custom dataset to use.\n"
-            "This parameter is used in conjunction with the --file parameter.",
+            "This parameter is used in conjunction with the --input-file parameter.",
         ),
         CLIParameter(
             name=("--custom-dataset-type"),

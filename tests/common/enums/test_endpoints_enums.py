@@ -97,6 +97,13 @@ class TestEndpointType:
                 False,
                 "/v1/embeddings",
             ),
+            (
+                EndpointType.RANKINGS,
+                "rankings",
+                False,
+                False,
+                "/v1/ranking",
+            ),
             (EndpointType.OPENAI_RESPONSES, "responses", True, True, "/v1/responses"),
         ],
     )
@@ -121,6 +128,7 @@ class TestEndpointType:
             (EndpointType.OPENAI_CHAT_COMPLETIONS, "LLM Metrics"),
             (EndpointType.OPENAI_COMPLETIONS, "LLM Metrics"),
             (EndpointType.OPENAI_EMBEDDINGS, "Embeddings Metrics"),
+            (EndpointType.RANKINGS, "Rankings Metrics"),
             (EndpointType.OPENAI_RESPONSES, "LLM Metrics"),
         ],
     )

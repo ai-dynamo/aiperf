@@ -120,6 +120,10 @@ class CreditPhaseCompleteMessage(BaseServiceMessage):
         ge=1,
         description="The time in which the last credit was returned from the workers in nanoseconds",
     )
+    timeout_triggered: bool = Field(
+        default=False,
+        description="Whether this phase completed because a timeout was triggered",
+    )
 
 
 class CreditsCompleteMessage(BaseServiceMessage):

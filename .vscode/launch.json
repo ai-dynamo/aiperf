@@ -1,3 +1,7 @@
+/*
+SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 {
     "configurations": [
         {
@@ -22,7 +26,10 @@
             "request": "launch",
             "cwd": "${workspaceFolder}",
             "module": "pytest",
-            "args": ["-n", "auto"]
+            "args": [
+                "-n",
+                "auto"
+            ]
         }
     ],
     "version": "0.2.0"

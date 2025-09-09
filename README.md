@@ -1,34 +1,22 @@
 <!--
 SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 -->
+
 # AIPerf
 
 [![PyPI version](https://img.shields.io/pypi/v/AIPerf)](https://pypi.org/project/aiperf/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Discord](https://dcbadge.limes.pink/api/server/D92uqZRjCZ?style=flat)](https://discord.gg/D92uqZRjCZ)
 
-| **[Roadmap](https://github.com/ai-dynamo/dynamo/issues/762)** | **[Documentation](https://docs.nvidia.com/dynamo/latest/index.html)** | **[Design Proposals](https://github.com/ai-dynamo/enhancements)** |
+**[Architecture](docs/architecture.md)**| **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)**
 
 
-AIPerf is a comprehensive benchmarking tool for measuring the performance of generative AI models served by your preferred inference solution.
-It provides detailed metrics via a command line display as well as extensive benchmark performance reports.
+AIPerf is a comprehensive benchmarking tool that measures the performance of generative AI models served by your preferred inference solution.
+It provides detailed metrics using a command line display as well as extensive benchmark performance reports.
 
-AIPerf provides multiprocess and kubernetes support (coming soon) out of the box for a single scalable solution.
+AIPerf provides multiprocess support out of the box for a single scalable solution.
 
-</br>
 
 <!--
 ======================
@@ -38,15 +26,28 @@ Features
 
 ## Features
 
-- Scalable via multiprocess or Kubernetes (coming soon) support
+- Scalable via multiprocess support
 - Modular design for easy user modification
 - Several benchmarking modes:
   - concurrency
   - request-rate
   - request-rate with a maximum concurrency
   - [trace replay](docs/benchmark_modes/trace_replay.md)
+- [Public dataset support](docs/benchmark_datasets.md)
 
 </br>
+
+## Supported APIs
+
+- OpenAI chat completions
+- OpenAI completions
+- OpenAI embeddings
+- OpenAI audio: request throughput and latency
+- OpenAI images: request throughput and latency
+- NIM rankings
+
+</br>
+
 
 <!--
 ======================
@@ -116,6 +117,7 @@ NVIDIA AIPerf | LLM Metrics
 ```
 </div>
 
-Review the [Development](docs/Development.md) Guide for more information.
-</br>
 
+## Known Issues
+
+- When setting the OSL using the `--output-tokens-mean` option, if `--extra-inputs ignore_eos:true` isn't set currently, then AIPerf can't guarantee a given OSL constraint. This is being worked on to remove this requirement in the future.

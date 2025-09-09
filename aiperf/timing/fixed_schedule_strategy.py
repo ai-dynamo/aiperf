@@ -80,6 +80,7 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
         return time.perf_counter() * MILLIS_PER_SECOND
 
     async def _execute_single_phase(self, phase_stats: CreditPhaseStats) -> None:
+        print("DEBUG: FixedScheduleStrategy._execute_single_phase called!")
         # This is used as a reference point for the wait duration calculation
         start_time_ms = self._perf_counter_ms()
 

@@ -9,7 +9,6 @@ from aiperf.common.enums import (
     AIPerfLogLevel,
     AIPerfUIType,
     AudioFormat,
-    CustomDatasetType,
     EndpointType,
     ImageFormat,
     ModelSelectionStrategy,
@@ -32,7 +31,7 @@ class EndpointDefaults:
     CUSTOM_ENDPOINT = None
     TYPE = EndpointType.OPENAI_CHAT_COMPLETIONS
     STREAMING = False
-    URL = "localhost:8080"
+    URL = "localhost:8000"
     TIMEOUT = 600.0
     API_KEY = None
 
@@ -47,7 +46,8 @@ class InputDefaults:
     FIXED_SCHEDULE_AUTO_OFFSET = False
     FIXED_SCHEDULE_START_OFFSET = None
     FIXED_SCHEDULE_END_OFFSET = None
-    CUSTOM_DATASET_TYPE = CustomDatasetType.MOONCAKE_TRACE
+    PUBLIC_DATASET = None
+    CUSTOM_DATASET_TYPE = None
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
 
@@ -145,6 +145,7 @@ class ServiceDefaults:
 
 @dataclass(frozen=True)
 class LoadGeneratorDefaults:
+    BENCHMARK_DURATION = None
     CONCURRENCY = None
     REQUEST_RATE = None
     REQUEST_COUNT = 10

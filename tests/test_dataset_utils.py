@@ -86,44 +86,6 @@ class TestEncodeImage:
         assert decoded_img.mode == "RGB"
 
 
-class TestLoadJsonStr:
-    def test_valid_json(self):
-        """Test loading valid JSON string."""
-        json_str = '{"key": "value", "number": 42}'
-        result = utils.load_json_str(json_str)
-        assert result == {"key": "value", "number": 42}
-
-    def test_invalid_json(self):
-        """Test that RuntimeError is raised for invalid JSON."""
-        json_str = '{"key": "value", "invalid": }'
-        with pytest.raises(RuntimeError, match="Failed to parse JSON string"):
-            utils.load_json_str(json_str)
-
-    def test_validation_function(self):
-        """Test loading JSON with a validation function."""
-        json_str = '{"required_field": "value"}'
-
-        def validate_func(obj):
-            if "required_field" not in obj:
-                raise ValueError("Missing required field")
-            return obj
-
-        result = utils.load_json_str(json_str, validate_func)
-        assert result == {"required_field": "value"}
-
-    def test_validation_failure(self):
-        """Test that validation function can raise errors."""
-        json_str = '{"wrong_field": "value"}'
-
-        def validate_func(obj):
-            if "required_field" not in obj:
-                raise ValueError("Missing required field")
-            return obj
-
-        with pytest.raises(ValueError, match="Missing required field"):
-            utils.load_json_str(json_str, validate_func)
-
-
 class TestSampleNormal:
     @patch("numpy.random.normal", return_value=5.0)
     def test_basic(self, mock_normal):

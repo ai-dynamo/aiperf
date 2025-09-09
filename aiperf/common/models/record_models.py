@@ -375,6 +375,26 @@ class ReasoningResponseData(BaseResponseData):
 class EmbeddingResponseData(BaseResponseData):
     """Parsed embedding response data."""
 
+    embeddings: list[list[float]] = Field(
+        ..., description="The embedding vectors from the response."
+    )
+
+    def get_text(self) -> str:
+        """Get the text of the response (empty for embeddings)."""
+        return ""
+
+
+class RankingsResponseData(BaseResponseData):
+    """Parsed rankings response data."""
+
+    rankings: list[dict[str, Any]] = Field(
+        ..., description="The rankings results from the response."
+    )
+
+    def get_text(self) -> str:
+        """Get the text of the response (empty for rankings)."""
+        return ""
+
 
 class ParsedResponse(AIPerfBaseModel):
     """Parsed response from a inference client."""
@@ -384,6 +404,7 @@ class ParsedResponse(AIPerfBaseModel):
         ReasoningResponseData
         | TextResponseData
         | EmbeddingResponseData
+        | RankingsResponseData
         | BaseResponseData
     ] = Field(..., description="The parsed response data.")
 

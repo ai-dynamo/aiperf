@@ -92,7 +92,7 @@ class CreditPhaseStats(CreditPhaseConfig):
         if self.total_expected_requests is not None:
             return self.sent < self.total_expected_requests
         elif self.expected_duration_sec is not None:
-            return time.time_ns() - (self.start_ns or 0) <= (
+            return time.time_ns() - self.start_ns <= (
                 self.expected_duration_sec * NANOS_PER_SECOND
             )
         else:

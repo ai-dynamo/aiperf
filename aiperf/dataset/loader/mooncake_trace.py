@@ -72,7 +72,9 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
 
         if self._skipped_traces > 0:
             self.info(
-                f"Skipped {self._skipped_traces:,} traces because they were before the start offset of {self._start_offset} or after the end offset of {self._end_offset}"
+                f"Skipped {self._skipped_traces:,} traces because they were "
+                f"before the start offset of {self._start_offset} or "
+                f"after the end offset of {self._end_offset}"
             )
         self.debug(lambda: f"Loaded {len(data):,} traces from {self.filename}")
 

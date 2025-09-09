@@ -66,4 +66,6 @@ class ImageGenerator(BaseGenerator):
         filenames = glob.glob(str(filepath))
         if not filenames:
             raise ValueError(f"No source images found in '{filepath}'")
+
+        self.debug(lambda: f"Found {len(filenames)} source images in '{filepath}'")
         return Image.open(random.choice(filenames))
