@@ -78,7 +78,7 @@ def run_node_controller(
     log_queue = None
     from aiperf.common.logging import setup_rich_logging
 
-    user_config = UserConfig(endpoint=EndpointConfig(model_names=["gpt-oss"]))
+    user_config = UserConfig(endpoint=EndpointConfig(model_names=["null"]))
 
     setup_rich_logging(user_config, service_config)
 

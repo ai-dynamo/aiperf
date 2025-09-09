@@ -20,6 +20,7 @@ from aiperf.common.messages import (
     SpawnWorkersCommand,
 )
 from aiperf.common.protocols import ServiceManagerProtocol
+from aiperf.common.types import ServiceTypeT
 from aiperf.controller.system_mixins import SignalHandlerMixin
 
 
@@ -49,12 +50,18 @@ class NodeController(SignalHandlerMixin, BaseComponentService):
         self._system_state = SystemState.INITIALIZING
         self.node_config = node_config
 
+        required_services: dict[ServiceTypeT, int] = {
+            ServiceType.WORKER: self.service_config.workers.max or 10,
+        }
+        if self.service_config.record_processor_service_count is not None:
+            required_services[ServiceType.RECORD_PROCESSOR] = (
+                self.service_config.record_processor_service_count
+            )
+
         self.service_manager: ServiceManagerProtocol = (
             ServiceManagerFactory.create_instance(
                 self.service_config.service_run_type.value,
-                required_services={
-                    ServiceType.WORKER: self.service_config.workers.max or 10,
-                },
+                required_services=required_services,
                 user_config=self.user_config,
                 service_config=self.service_config,
                 log_queue=None,

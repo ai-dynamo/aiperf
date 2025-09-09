@@ -14,7 +14,6 @@ from aiperf.common.factories import (
 )
 from aiperf.common.hooks import (
     on_command,
-    on_init,
     on_pull_message,
 )
 from aiperf.common.messages import (
@@ -69,16 +68,24 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
             user_config
         )
-        self.inference_result_parser = InferenceResultParser(
-            service_config=service_config,
-            user_config=user_config,
-        )
+        self.inference_result_parser: InferenceResultParser | None = None
         self.records_processors: list[RecordProcessorProtocol] = []
 
-    @on_init
-    async def _initialize(self) -> None:
-        """Initialize record processor-specific components."""
-        self.debug("Initializing record processor")
+    @on_command(CommandType.PROFILE_CONFIGURE)
+    async def _profile_configure_command(
+        self, message: ProfileConfigureCommand
+    ) -> None:
+        """Configure the inference result parser."""
+        self.user_config = UserConfig(**message.config)
+        self.model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
+        self.info(
+            lambda: f"Creating inference result parser for {self.model_endpoint.endpoint.type}, models: {self.model_endpoint.models.models}"
+        )
+
+        self.inference_result_parser = InferenceResultParser(
+            service_config=self.service_config,
+            user_config=self.user_config,
+        )
 
         self.extractor = ResponseExtractorFactory.create_instance(
             self.model_endpoint.endpoint.type,
@@ -95,11 +102,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 )
             )
 
-    @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
-        """Configure the tokenizers."""
         await self.inference_result_parser.configure()
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
@@ -116,6 +118,11 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
         """Handle an inference results message."""
+        if self.inference_result_parser is None:
+            self.error(
+                f"Inference result parser is not initialized, skipping record: {message.record}"
+            )
+            return
         parsed_record = await self.inference_result_parser.parse_request_record(
             message.record
         )
