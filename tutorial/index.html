@@ -308,6 +308,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#profile-qwen3-06b-using-vllm-and-docker" class="md-nav__link">
+    <span class="md-ellipsis">
+      Profile Qwen3-0.6B Using vLLM and Docker
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -425,7 +434,7 @@ vllm<span class="w"> </span>serve<span class="w"> </span><span class="s2">&quot;
 
 uv<span class="w"> </span>venv
 <span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/ai-dynamo/aiperf.git
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/ai-dynamo/aiperf.git
 
 aiperf<span class="w"> </span>profile<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--model<span class="w"> </span>Qwen/Qwen3-0.6B<span class="w"> </span><span class="se">\</span>
@@ -434,6 +443,34 @@ aiperf<span class="w"> </span>profile<span class="w"> </span><span class="se">\<
 <span class="w">    </span>--streaming<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--request-rate<span class="w"> </span><span class="m">1000</span><span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--request-count<span class="w"> </span><span class="m">6500</span>
+</code></pre></div>
+
+<h2 id="profile-qwen3-06b-using-vllm-and-docker">Profile Qwen3-0.6B Using vLLM and Docker <a id="vllm-qwen3-0.6B-docker"><a class="headerlink" href="#profile-qwen3-06b-using-vllm-and-docker" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Install the latest vLLM docker container:</span>
+docker<span class="w"> </span>run<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-it<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--rm<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--network<span class="w"> </span>host<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>vllm/vllm-openai:latest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model<span class="w"> </span>Qwen/Qwen3-0.6B
+
+<span class="c1"># In a separate terminal, ensure dependencies are installed</span>
+apt<span class="w"> </span>update<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>curl<span class="w"> </span>git
+curl<span class="w"> </span>-LsSf<span class="w"> </span>https://astral.sh/uv/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
+uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.10
+<span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+
+<span class="c1"># Install and Run AIPerf</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/ai-dynamo/aiperf.git
+
+aiperf<span class="w"> </span>profile<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model<span class="w"> </span>Qwen/Qwen3-0.6B<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--endpoint-type<span class="w"> </span>chat<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--endpoint<span class="w"> </span>/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--streaming<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--request-rate<span class="w"> </span><span class="m">100</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--request-count<span class="w"> </span><span class="m">650</span>
 </code></pre></div>
 
 
