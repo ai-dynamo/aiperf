@@ -101,7 +101,7 @@ def user_config() -> UserConfig:
     """Fixture providing a sample UserConfig."""
     return UserConfig(
         endpoint=EndpointConfig(
-            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            type=EndpointType.CHAT,
             url="http://localhost:8000",
             timeout_seconds=600,
             model_names=["gpt-4"],

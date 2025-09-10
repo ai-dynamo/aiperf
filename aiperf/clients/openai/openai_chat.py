@@ -12,7 +12,7 @@ from aiperf.common.models import Turn
 DEFAULT_ROLE = "user"
 
 
-@RequestConverterFactory.register(EndpointType.OPENAI_CHAT_COMPLETIONS)
+@RequestConverterFactory.register(EndpointType.CHAT)
 class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
     """Request converter for OpenAI chat completion requests."""
 

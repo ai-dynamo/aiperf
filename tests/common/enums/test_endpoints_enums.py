@@ -77,21 +77,21 @@ class TestEndpointType:
         "endpoint_type,expected_tag,expected_streaming,expected_tokens,expected_path",
         [
             (
-                EndpointType.OPENAI_CHAT_COMPLETIONS,
+                EndpointType.CHAT,
                 "chat",
                 True,
                 True,
                 "/v1/chat/completions",
             ),
             (
-                EndpointType.OPENAI_COMPLETIONS,
+                EndpointType.COMPLETIONS,
                 "completions",
                 True,
                 True,
                 "/v1/completions",
             ),
             (
-                EndpointType.OPENAI_EMBEDDINGS,
+                EndpointType.EMBEDDINGS,
                 "embeddings",
                 False,
                 False,
@@ -104,7 +104,7 @@ class TestEndpointType:
                 False,
                 "/v1/ranking",
             ),
-            (EndpointType.OPENAI_RESPONSES, "responses", True, True, "/v1/responses"),
+            (EndpointType.RESPONSES, "responses", True, True, "/v1/responses"),
         ],
     )
     def test_endpoint_type_properties(
@@ -125,11 +125,11 @@ class TestEndpointType:
     @pytest.mark.parametrize(
         "endpoint_type,expected_title",
         [
-            (EndpointType.OPENAI_CHAT_COMPLETIONS, "LLM Metrics"),
-            (EndpointType.OPENAI_COMPLETIONS, "LLM Metrics"),
-            (EndpointType.OPENAI_EMBEDDINGS, "Embeddings Metrics"),
+            (EndpointType.CHAT, "LLM Metrics"),
+            (EndpointType.COMPLETIONS, "LLM Metrics"),
+            (EndpointType.EMBEDDINGS, "Embeddings Metrics"),
             (EndpointType.RANKINGS, "Rankings Metrics"),
-            (EndpointType.OPENAI_RESPONSES, "LLM Metrics"),
+            (EndpointType.RESPONSES, "LLM Metrics"),
         ],
     )
     def test_metrics_title_property(self, endpoint_type, expected_title):
@@ -138,7 +138,7 @@ class TestEndpointType:
 
     def test_endpoint_type_info_property(self):
         """Test that info property returns EndpointInfo instance."""
-        endpoint_type = EndpointType.OPENAI_CHAT_COMPLETIONS
+        endpoint_type = EndpointType.CHAT
         info = endpoint_type.info
 
         assert isinstance(info, EndpointTypeInfo)
@@ -159,9 +159,9 @@ class TestEndpointType:
 
     def test_endpoint_type_case_insensitive(self):
         """Test case insensitive enum behavior."""
-        assert EndpointType("CHAT") == EndpointType.OPENAI_CHAT_COMPLETIONS
-        assert EndpointType("Chat") == EndpointType.OPENAI_CHAT_COMPLETIONS
-        assert EndpointType("chat") == EndpointType.OPENAI_CHAT_COMPLETIONS
+        assert EndpointType("CHAT") == EndpointType.CHAT
+        assert EndpointType("Chat") == EndpointType.CHAT
+        assert EndpointType("chat") == EndpointType.CHAT
 
     def test_all_endpoint_types_have_valid_info(self):
         """Test that all endpoint types have valid EndpointInfo objects."""
@@ -178,7 +178,7 @@ class TestEndpointType:
     def test_endpoint_type_metrics_title_fallback(self):
         """Test metrics_title returns default when None."""
         # This tests the fallback logic in the metrics_title property
-        endpoint_type = EndpointType.OPENAI_CHAT_COMPLETIONS
+        endpoint_type = EndpointType.CHAT
 
         # Temporarily modify the info to test fallback
         original_title = endpoint_type.info.metrics_title

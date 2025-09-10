@@ -40,7 +40,7 @@ def test_endpoint_config_custom_values():
     custom_values = {
         "model_names": ["gpt2"],
         "model_selection_strategy": ModelSelectionStrategy.ROUND_ROBIN,
-        "type": EndpointType.OPENAI_CHAT_COMPLETIONS,
+        "type": EndpointType.CHAT,
         "custom_endpoint": "custom_endpoint",
         "streaming": True,
         "url": "http://custom-url",
@@ -62,27 +62,27 @@ def test_streaming_validation():
     """
 
     config = EndpointConfig(
-        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+        type=EndpointType.CHAT,
         model_names=["gpt2"],
     )
     assert not config.streaming  # Streaming is disabled by default
 
     config = EndpointConfig(
-        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+        type=EndpointType.CHAT,
         streaming=False,
         model_names=["gpt2"],
     )
     assert not config.streaming  # Streaming was set to False
 
     config = EndpointConfig(
-        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+        type=EndpointType.CHAT,
         streaming=True,
         model_names=["gpt2"],
     )
     assert config.streaming  # Streaming was set to True
 
     config = EndpointConfig(
-        type=EndpointType.OPENAI_EMBEDDINGS,
+        type=EndpointType.EMBEDDINGS,
         streaming=False,
         model_names=["gpt2"],
     )

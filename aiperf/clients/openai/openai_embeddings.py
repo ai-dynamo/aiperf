@@ -10,7 +10,7 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Turn
 
 
-@RequestConverterFactory.register(EndpointType.OPENAI_EMBEDDINGS)
+@RequestConverterFactory.register(EndpointType.EMBEDDINGS)
 class OpenAIEmbeddingsRequestConverter(AIPerfLoggerMixin):
     """Request converter for OpenAI embeddings requests."""
 
