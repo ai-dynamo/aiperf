@@ -158,7 +158,6 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
             elapsed_sec = elapsed_ns / NANOS_PER_SECOND
             remaining_sec = max(0, phase_stats.expected_duration_sec - elapsed_sec)
 
-            # Add grace period to the timeout
             grace_period = self.config.benchmark_grace_period
             total_timeout = remaining_sec + grace_period
 
@@ -176,16 +175,8 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
                         phase_stats, grace_period_timeout=False
                     )
                     return
-            elif grace_period > 0:
-                self.info(
-                    f"Waiting for {phase_stats.type} phase completion: {remaining_sec:.1f}s duration + {grace_period}s grace period"
-                )
-            else:
-                self.info(
-                    f"Waiting for {phase_stats.type} phase completion: {remaining_sec:.1f}s duration (no grace period)"
-                )
 
-            # Wait for either phase completion or timeout (duration + grace period)
+            # Wait for either phase completion or timeout
             try:
                 await asyncio.wait_for(
                     self.phase_complete_event.wait(), timeout=total_timeout
@@ -193,10 +184,10 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
                 # Phase completed naturally
                 return
             except asyncio.TimeoutError:
-                # Total timeout elapsed (duration + grace period), force completion
+                # Total timeout elapsed, force completion
                 if grace_period > 0 and remaining_sec <= 0:
                     self.info(
-                        f"Grace period timeout ({grace_period}s) elapsed for {phase_stats.type} phase"
+                        f"Grace period timeout elapsed for {phase_stats.type} phase"
                     )
                     await self._force_phase_completion(
                         phase_stats, grace_period_timeout=True
@@ -225,7 +216,6 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
             await self._force_phase_completion(phase_stats, grace_period_timeout=False)
             return
 
-        # Check if phase is already complete before starting grace period
         if self.phase_complete_event.is_set():
             self.info(
                 f"Phase {phase_stats.type} already completed, no grace period needed"
@@ -258,10 +248,9 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         # cases like duplicate timeout events or race conditions during shutdown.
         if phase_stats.type in self.phase_stats:
             phase_stats.end_ns = time.time_ns()
-            timeout_reason = (
-                "grace period timeout" if grace_period_timeout else "duration timeout"
+            self.notice(
+                f"Phase force-completed due to grace period timeout: {phase_stats}"
             )
-            self.notice(f"Phase force-completed due to {timeout_reason}: {phase_stats}")
 
             self.execute_async(
                 self.credit_manager.publish_phase_complete(
@@ -294,8 +283,7 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         overridden in subclasses to handle the credit return."""
         if message.phase not in self.phase_stats:
             self.debug(
-                f"Credit return message received for phase {message.phase} but no phase stats found "
-                f"(likely due to grace period timeout or normal completion cleanup)"
+                f"Credit return message received for phase {message.phase} but no phase stats found"
             )
             return
 

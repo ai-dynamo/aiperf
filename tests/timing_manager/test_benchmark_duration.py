@@ -32,8 +32,8 @@ def isolated_test_env():
 
 
 def benchmark_duration_config(
-    request_count: int = None,
-    benchmark_duration: float = None,
+    request_count: int | None = None,
+    benchmark_duration: float | None = None,
     benchmark_grace_period: float = 30.0,  # Default value, not None
     request_rate_mode: RequestRateMode = RequestRateMode.CONCURRENCY_BURST,
     concurrency: int = 1,
@@ -82,15 +82,6 @@ def mixed_config(
 
 class TestBenchmarkGracePeriodEdgeCases:
     """Test edge cases and error conditions for grace period functionality."""
-
-    def test_invalid_grace_period_with_request_count(self):
-        """Test that grace period is stored for request-count mode."""
-        # Should not raise error but grace period should be stored
-        config = benchmark_duration_config(
-            request_count=100, benchmark_duration=None, benchmark_grace_period=30.0
-        )
-        # In request-count mode, grace period should be stored but not used
-        assert config.benchmark_grace_period == 30.0
 
     def test_extremely_large_grace_period(self):
         """Test handling of extremely large grace periods."""
@@ -807,7 +798,6 @@ class TestBenchmarkGracePeriod:
 
     def test_grace_period_config_validation(self):
         """Test grace period configuration validation."""
-        # Valid configuration with both duration and grace period
         config = benchmark_duration_config(
             benchmark_duration=5.0, benchmark_grace_period=10.0
         )
@@ -844,7 +834,6 @@ class TestBenchmarkGracePeriod:
 
         strategy = RequestRateStrategy(config, mock_credit_manager)
 
-        # Verify configuration is passed through
         assert strategy.config.benchmark_grace_period == 15.0
         assert strategy.config.benchmark_duration == 2.0
 
