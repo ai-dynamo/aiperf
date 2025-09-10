@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import tempfile
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Annotated, ClassVar
 
 from pydantic import BaseModel, Field, model_validator
@@ -199,7 +201,7 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
             name=("--zmq-host"),
             group=_CLI_GROUP,
         ),
-    ] = "0.0.0.0"
+    ] = "127.0.0.1"
     records_push_pull_port: int = Field(
         default=5557, description="Port for inference push/pull messages"
     )
@@ -253,8 +255,17 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
     _CLI_GROUP = Groups.ZMQ_COMMUNICATION
     comm_backend: ClassVar[CommunicationBackend] = CommunicationBackend.ZMQ_IPC
 
+    @model_validator(mode="after")
+    def validate_path(self) -> Self:
+        """Validate provided path or create a temporary path for IPC sockets."""
+        if self.path is None:
+            self.path = Path(tempfile.mkdtemp()) / "aiperf"
+        if not self.path.exists():
+            self.path.mkdir(parents=True, exist_ok=True)
+        return self
+
     path: Annotated[
-        str,
+        Path | None,
         Field(
             description="Path for IPC sockets",
         ),
@@ -262,7 +273,7 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
             name=("--zmq-ipc-path"),
             group=_CLI_GROUP,
         ),
-    ] = "/tmp/aiperf"
+    ] = None
 
     dataset_manager_proxy_config: ZMQIPCProxyConfig = Field(  # type: ignore
         default=ZMQIPCProxyConfig(name="dataset_manager_proxy"),
@@ -280,14 +291,20 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
     @property
     def records_push_pull_address(self) -> str:
         """Get the records push/pull address based on protocol configuration."""
-        return f"ipc://{self.path}/records_push_pull.ipc"
+        if not self.path:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / 'records_push_pull.ipc'}"
 
     @property
     def credit_drop_address(self) -> str:
         """Get the credit drop address based on protocol configuration."""
-        return f"ipc://{self.path}/credit_drop.ipc"
+        if not self.path:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / 'credit_drop.ipc'}"
 
     @property
     def credit_return_address(self) -> str:
         """Get the credit return address based on protocol configuration."""
-        return f"ipc://{self.path}/credit_return.ipc"
+        if not self.path:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / 'credit_return.ipc'}"
