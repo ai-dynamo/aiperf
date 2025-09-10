@@ -4,7 +4,7 @@
 
 echo "Starting dynamo server with model ${MODEL}"
 
-bash -x ${AIPERF_SOURCE_DIR}tests/ci/${CI_JOB_NAME}/start_server.sh
+bash -x ${AIPERF_SOURCE_DIR}/tests/ci/${CI_JOB_NAME}/start_server.sh
 
 echo "Running aiperf functionality tests in container"
 
