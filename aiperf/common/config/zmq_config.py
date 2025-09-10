@@ -1,12 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import tempfile
 from abc import ABC, abstractmethod
-from typing import ClassVar
+from pathlib import Path
+from typing import Annotated, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from typing_extensions import Self
 
-from aiperf.common.enums import CommAddress
+from aiperf.common.config.cli_parameter import CLIParameter
+from aiperf.common.config.groups import Groups
+from aiperf.common.enums import CommAddress, CommunicationBackend
 
 
 class BaseZMQProxyConfig(BaseModel, ABC):
@@ -35,6 +40,8 @@ class BaseZMQProxyConfig(BaseModel, ABC):
 
 class BaseZMQCommunicationConfig(BaseModel, ABC):
     """Configuration for ZMQ communication."""
+
+    comm_backend: ClassVar[CommunicationBackend]
 
     # Proxy config options to be overridden by subclasses
     event_bus_proxy_config: ClassVar[BaseZMQProxyConfig]
@@ -79,8 +86,8 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
 class ZMQTCPProxyConfig(BaseZMQProxyConfig):
     """Configuration for TCP proxy."""
 
-    host: str = Field(
-        default="0.0.0.0",
+    host: str | None = Field(
+        default=None,
         description="Host address for TCP connections",
     )
     frontend_port: int = Field(
@@ -97,50 +104,26 @@ class ZMQTCPProxyConfig(BaseZMQProxyConfig):
     )
 
     @property
-    def frontend_address(self) -> str:
-        """Get the frontend address based on protocol configuration."""
-        return f"tcp://{self.host}:{self.frontend_port}"
-
-    @property
-    def backend_address(self) -> str:
-        """Get the backend address based on protocol configuration."""
-        return f"tcp://{self.host}:{self.backend_port}"
-
-    @property
-    def control_address(self) -> str | None:
-        """Get the control address based on protocol configuration."""
-        return f"tcp://{self.host}:{self.control_port}" if self.control_port else None
-
-    @property
-    def capture_address(self) -> str | None:
-        """Get the capture address based on protocol configuration."""
-        return f"tcp://{self.host}:{self.capture_port}" if self.capture_port else None
-
-
-class ZMQIPCProxyConfig(BaseZMQProxyConfig):
-    """Configuration for IPC proxy."""
-
-    path: str = Field(default="/tmp/aiperf", description="Path for IPC sockets")
-    name: str = Field(default="proxy", description="Name for IPC sockets")
-    enable_control: bool = Field(default=False, description="Enable control socket")
-    enable_capture: bool = Field(default=False, description="Enable capture socket")
+    def host_address(self) -> str:
+        """Get the host address based on protocol configuration."""
+        return self.host or "127.0.0.1"
 
     @property
     def frontend_address(self) -> str:
         """Get the frontend address based on protocol configuration."""
-        return f"ipc://{self.path}/{self.name}_frontend.ipc"
+        return f"tcp://{self.host_address}:{self.frontend_port}"
 
     @property
     def backend_address(self) -> str:
         """Get the backend address based on protocol configuration."""
-        return f"ipc://{self.path}/{self.name}_backend.ipc"
+        return f"tcp://{self.host_address}:{self.backend_port}"
 
     @property
     def control_address(self) -> str | None:
         """Get the control address based on protocol configuration."""
         return (
-            f"ipc://{self.path}/{self.name}_control.ipc"
-            if self.enable_control
+            f"tcp://{self.host_address}:{self.control_port}"
+            if self.control_port
             else None
         )
 
@@ -148,7 +131,52 @@ class ZMQIPCProxyConfig(BaseZMQProxyConfig):
     def capture_address(self) -> str | None:
         """Get the capture address based on protocol configuration."""
         return (
-            f"ipc://{self.path}/{self.name}_capture.ipc"
+            f"tcp://{self.host_address}:{self.capture_port}"
+            if self.capture_port
+            else None
+        )
+
+
+class ZMQIPCProxyConfig(BaseZMQProxyConfig):
+    """Configuration for IPC proxy."""
+
+    path: Path | None = Field(default=None, description="Path for IPC sockets")
+    name: str = Field(default="proxy", description="Name for IPC sockets")
+    enable_control: bool = Field(default=False, description="Enable control socket")
+    enable_capture: bool = Field(default=False, description="Enable capture socket")
+
+    @property
+    def frontend_address(self) -> str:
+        """Get the frontend address based on protocol configuration."""
+        if self.path is None:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / self.name}_frontend.ipc"
+
+    @property
+    def backend_address(self) -> str:
+        """Get the backend address based on protocol configuration."""
+        if self.path is None:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / self.name}_backend.ipc"
+
+    @property
+    def control_address(self) -> str | None:
+        """Get the control address based on protocol configuration."""
+        if self.path is None:
+            raise ValueError("Path is required for IPC transport")
+        return (
+            f"ipc://{self.path / self.name}_control.ipc"
+            if self.enable_control
+            else None
+        )
+
+    @property
+    def capture_address(self) -> str | None:
+        """Get the capture address based on protocol configuration."""
+        if self.path is None:
+            raise ValueError("Path is required for IPC transport")
+        return (
+            f"ipc://{self.path / self.name}_capture.ipc"
             if self.enable_capture
             else None
         )
@@ -157,10 +185,31 @@ class ZMQIPCProxyConfig(BaseZMQProxyConfig):
 class ZMQTCPConfig(BaseZMQCommunicationConfig):
     """Configuration for TCP transport."""
 
-    host: str = Field(
-        default="0.0.0.0",
-        description="Host address for TCP connections",
-    )
+    _CLI_GROUP = Groups.ZMQ_COMMUNICATION
+    comm_backend: ClassVar[CommunicationBackend] = CommunicationBackend.ZMQ_TCP
+
+    @model_validator(mode="after")
+    def validate_host(self) -> Self:
+        """Fill in the host address for the proxy configs if not provided."""
+        for proxy_config in [
+            self.dataset_manager_proxy_config,
+            self.event_bus_proxy_config,
+            self.raw_inference_proxy_config,
+        ]:
+            if proxy_config.host is None:
+                proxy_config.host = self.host
+        return self
+
+    host: Annotated[
+        str,
+        Field(
+            description="Host address for TCP connections",
+        ),
+        CLIParameter(
+            name=("--zmq-host"),
+            group=_CLI_GROUP,
+        ),
+    ] = "127.0.0.1"
     records_push_pull_port: int = Field(
         default=5557, description="Port for inference push/pull messages"
     )
@@ -211,7 +260,36 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
 class ZMQIPCConfig(BaseZMQCommunicationConfig):
     """Configuration for IPC transport."""
 
-    path: str = Field(default="/tmp/aiperf", description="Path for IPC sockets")
+    _CLI_GROUP = Groups.ZMQ_COMMUNICATION
+    comm_backend: ClassVar[CommunicationBackend] = CommunicationBackend.ZMQ_IPC
+
+    @model_validator(mode="after")
+    def validate_path(self) -> Self:
+        """Validate provided path or create a temporary path for IPC sockets."""
+        if self.path is None:
+            self.path = Path(tempfile.mkdtemp()) / "aiperf"
+        if not self.path.exists():
+            self.path.mkdir(parents=True, exist_ok=True)
+        for proxy_config in [
+            self.dataset_manager_proxy_config,
+            self.event_bus_proxy_config,
+            self.raw_inference_proxy_config,
+        ]:
+            if proxy_config.path is None:
+                proxy_config.path = self.path
+        return self
+
+    path: Annotated[
+        Path | None,
+        Field(
+            description="Path for IPC sockets",
+        ),
+        CLIParameter(
+            name=("--zmq-ipc-path"),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
     dataset_manager_proxy_config: ZMQIPCProxyConfig = Field(  # type: ignore
         default=ZMQIPCProxyConfig(name="dataset_manager_proxy"),
         description="Configuration for the ZMQ Dealer Router Proxy. If provided, the proxy will be created and started.",
@@ -228,14 +306,20 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
     @property
     def records_push_pull_address(self) -> str:
         """Get the records push/pull address based on protocol configuration."""
-        return f"ipc://{self.path}/records_push_pull.ipc"
+        if not self.path:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / 'records_push_pull.ipc'}"
 
     @property
     def credit_drop_address(self) -> str:
         """Get the credit drop address based on protocol configuration."""
-        return f"ipc://{self.path}/credit_drop.ipc"
+        if not self.path:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / 'credit_drop.ipc'}"
 
     @property
     def credit_return_address(self) -> str:
         """Get the credit return address based on protocol configuration."""
-        return f"ipc://{self.path}/credit_return.ipc"
+        if not self.path:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / 'credit_return.ipc'}"
