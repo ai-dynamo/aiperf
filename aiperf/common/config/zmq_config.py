@@ -140,7 +140,7 @@ class ZMQTCPProxyConfig(BaseZMQProxyConfig):
 class ZMQIPCProxyConfig(BaseZMQProxyConfig):
     """Configuration for IPC proxy."""
 
-    path: str = Field(default="/tmp/aiperf", description="Path for IPC sockets")
+    path: Path | None = Field(default=None, description="Path for IPC sockets")
     name: str = Field(default="proxy", description="Name for IPC sockets")
     enable_control: bool = Field(default=False, description="Enable control socket")
     enable_capture: bool = Field(default=False, description="Enable capture socket")
@@ -148,18 +148,24 @@ class ZMQIPCProxyConfig(BaseZMQProxyConfig):
     @property
     def frontend_address(self) -> str:
         """Get the frontend address based on protocol configuration."""
-        return f"ipc://{self.path}/{self.name}_frontend.ipc"
+        if self.path is None:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / self.name}_frontend.ipc"
 
     @property
     def backend_address(self) -> str:
         """Get the backend address based on protocol configuration."""
-        return f"ipc://{self.path}/{self.name}_backend.ipc"
+        if self.path is None:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / self.name}_backend.ipc"
 
     @property
     def control_address(self) -> str | None:
         """Get the control address based on protocol configuration."""
+        if self.path is None:
+            raise ValueError("Path is required for IPC transport")
         return (
-            f"ipc://{self.path}/{self.name}_control.ipc"
+            f"ipc://{self.path / self.name}_control.ipc"
             if self.enable_control
             else None
         )
@@ -167,8 +173,10 @@ class ZMQIPCProxyConfig(BaseZMQProxyConfig):
     @property
     def capture_address(self) -> str | None:
         """Get the capture address based on protocol configuration."""
+        if self.path is None:
+            raise ValueError("Path is required for IPC transport")
         return (
-            f"ipc://{self.path}/{self.name}_capture.ipc"
+            f"ipc://{self.path / self.name}_capture.ipc"
             if self.enable_capture
             else None
         )
@@ -262,6 +270,13 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
             self.path = Path(tempfile.mkdtemp()) / "aiperf"
         if not self.path.exists():
             self.path.mkdir(parents=True, exist_ok=True)
+        for proxy_config in [
+            self.dataset_manager_proxy_config,
+            self.event_bus_proxy_config,
+            self.raw_inference_proxy_config,
+        ]:
+            if proxy_config.path is None:
+                proxy_config.path = self.path
         return self
 
     path: Annotated[

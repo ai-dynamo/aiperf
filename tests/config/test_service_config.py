@@ -55,7 +55,7 @@ class TestServiceConfigCommValidation:
         comm_config = config.comm_config
         assert isinstance(comm_config, ZMQIPCConfig)
         # Make sure it is not using a hardcoded path (security measure)
-        assert comm_config.path != "/tmp/aiperf"
+        assert comm_config.path != Path("/tmp/aiperf")
 
         # Make sure a new config uses a different path
         config = ServiceConfig()
@@ -178,6 +178,16 @@ class TestIPCConfiguration:
         assert comm_config.path == path
         for attr, expected in expected_addresses.items():
             assert getattr(comm_config, attr) == expected
+
+    def test_path_sets_proxy_paths(self):
+        """Proxy paths should be set to the given root path."""
+        ipc_config = ZMQIPCConfig()
+        config = ServiceConfig(zmq_ipc=ipc_config)
+        comm_config = config.comm_config
+        assert isinstance(comm_config, ZMQIPCConfig)
+        assert comm_config.dataset_manager_proxy_config.path == comm_config.path
+        assert comm_config.event_bus_proxy_config.path == comm_config.path
+        assert comm_config.raw_inference_proxy_config.path == comm_config.path
 
 
 class TestServiceConfigSerialization:
