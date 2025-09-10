@@ -102,7 +102,7 @@ vllm serve "Qwen/Qwen3-0.6B"
 
 uv venv
 source .venv/bin/activate
-pip install git+https://github.com/ai-dynamo/aiperf.git
+uv pip install git+https://github.com/ai-dynamo/aiperf.git
 
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -111,4 +111,35 @@ aiperf profile \
     --streaming \
     --request-rate 1000 \
     --request-count 6500
+```
+
+## Profile Qwen3-0.6B Using vLLM and Docker <a id="vllm-qwen3-0.6B-docker">
+
+
+```bash
+# Install the latest vLLM docker container:
+docker run \
+  -it \
+  --rm \
+  --gpus all \
+  --network host \
+  vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B
+
+# In a separate terminal, ensure dependencies are installed
+apt update && apt install -y curl git
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv venv --python 3.10
+source .venv/bin/activate
+
+# Install and Run AIPerf
+uv pip install git+https://github.com/ai-dynamo/aiperf.git
+
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --endpoint /v1/chat/completions \
+    --streaming \
+    --request-rate 100 \
+    --request-count 650
 ```
