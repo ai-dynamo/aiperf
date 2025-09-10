@@ -56,17 +56,17 @@ class TestAllRequestsProcessedCondition:
         assert condition.is_satisfied(context) is True
         assert condition.reason == CompletionReason.ALL_REQUESTS_PROCESSED
 
-    def test_not_satisfied_for_duration_based_benchmarks(self):
-        """Test condition is NOT satisfied for duration-based benchmarks."""
+    def test_satisfied_for_duration_based_benchmarks(self):
+        """Test condition IS satisfied for duration-based benchmarks when all requests processed."""
         stats = ProcessingStats(processed=10, errors=0)  # total_records = 10
         context = PhaseCompletionContext(
             processing_stats=stats,
             final_request_count=10,  # All requests processed
-            expected_duration_sec=5.0,  # But it's duration-based
+            expected_duration_sec=5.0,  # Duration-based
         )
 
         condition = AllRequestsProcessedCondition()
-        assert condition.is_satisfied(context) is False
+        assert condition.is_satisfied(context) is True
 
     def test_satisfied_when_more_requests_processed(self):
         """Test condition is satisfied when more requests processed than expected."""
@@ -194,20 +194,20 @@ class TestPhaseCompletionChecker:
         assert is_complete is False
         assert reason is None
 
-    def test_no_completion_when_duration_not_elapsed(self):
-        """Test no completion for duration-based benchmark before timeout."""
+    def test_completion_when_all_requests_processed_duration_based(self):
+        """Test completion for duration-based benchmark when all requests processed."""
         checker = PhaseCompletionChecker()
         stats = ProcessingStats(processed=5, errors=0)
 
         is_complete, reason = checker.is_complete(
             processing_stats=stats,
             final_request_count=5,  # All sent requests processed
-            timeout_triggered=False,  # But duration hasn't elapsed
+            timeout_triggered=False,  # Duration hasn't elapsed, but all done
             expected_duration_sec=5.0,  # Duration-based
         )
 
-        assert is_complete is False
-        assert reason is None
+        assert is_complete is True
+        assert reason == CompletionReason.ALL_REQUESTS_PROCESSED
 
     def test_no_completion_when_timeout_but_no_final_count(self):
         """Test no completion when timeout but final_request_count not set."""

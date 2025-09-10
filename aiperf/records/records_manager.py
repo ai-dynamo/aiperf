@@ -181,8 +181,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if not self.expected_duration_sec:
             return True
 
+        grace_period_sec = self.user_config.loadgen.benchmark_grace_period
         duration_end_ns = self.start_time_ns + int(
-            self.expected_duration_sec * NANOS_PER_SECOND
+            (self.expected_duration_sec + grace_period_sec) * NANOS_PER_SECOND
         )
 
         # Check if any response in this request was received after the duration
