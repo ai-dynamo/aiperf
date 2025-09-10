@@ -19,18 +19,6 @@ from tests.timing_manager.conftest import (
 )
 
 
-@pytest.fixture
-def isolated_test_env():
-    """Fixture to ensure test isolation and cleanup."""
-    # Setup
-    original_time = time.time_ns
-
-    yield
-
-    # Teardown - restore any global state if needed
-    time.time_ns = original_time
-
-
 def benchmark_duration_config(
     request_count: int | None = None,
     benchmark_duration: float | None = None,
@@ -80,18 +68,7 @@ def mixed_config(
     )
 
 
-class TestBenchmarkGracePeriodEdgeCases:
-    """Test edge cases and error conditions for grace period functionality."""
-
-    def test_extremely_large_grace_period(self):
-        """Test handling of extremely large grace periods."""
-        config = benchmark_duration_config(
-            benchmark_duration=5.0, benchmark_grace_period=999999.0
-        )
-        assert config.benchmark_grace_period == 999999.0
-
-
-class TestBenchmarkGracePeriodMixedConfigurations:
+class TestBenchmarkDurationConfiguration:
     """Test configuration validation and behavior of benchmark duration."""
 
     def test_benchmark_duration_creates_time_based_config(self):
@@ -854,9 +831,12 @@ class TestBenchmarkGracePeriod:
         assert profiling_config.expected_duration_sec == 1.0
         assert profiling_config.total_expected_requests is None
 
-
-class TestBenchmarkGracePeriodIntegration:
-    """Integration tests for grace period with time-based phases."""
+    def test_extremely_large_grace_period(self):
+        """Test handling of extremely large grace periods."""
+        config = benchmark_duration_config(
+            benchmark_duration=5.0, benchmark_grace_period=999999.0
+        )
+        assert config.benchmark_grace_period == 999999.0
 
     async def test_grace_period_with_quick_completion(
         self, mock_credit_manager: MockCreditManager, time_traveler
