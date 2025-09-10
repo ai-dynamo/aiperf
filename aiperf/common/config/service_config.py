@@ -6,6 +6,7 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import ADD_TO_TEMPLATE
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import ServiceDefaults
@@ -19,10 +20,11 @@ from aiperf.common.config.zmq_config import (
 )
 from aiperf.common.enums import (
     AIPerfLogLevel,
-    CommunicationBackend,
     ServiceRunType,
 )
 from aiperf.common.enums.ui_enums import AIPerfUIType
+
+_logger = AIPerfLogger(__name__)
 
 
 class ServiceConfig(BaseSettings):
@@ -36,6 +38,7 @@ class ServiceConfig(BaseSettings):
     )
 
     _CLI_GROUP = Groups.SERVICE
+    _comm_config: BaseZMQCommunicationConfig | None = None
 
     @model_validator(mode="after")
     def validate_log_level_from_verbose_flags(self) -> Self:
@@ -48,14 +51,23 @@ class ServiceConfig(BaseSettings):
 
     @model_validator(mode="after")
     def validate_comm_config(self) -> Self:
-        """Initialize the comm_config if it is not provided, based on the comm_backend."""
-        if self.comm_config is None:
-            if self.comm_backend == CommunicationBackend.ZMQ_IPC:
-                self.comm_config = ZMQIPCConfig()
-            elif self.comm_backend == CommunicationBackend.ZMQ_TCP:
-                self.comm_config = ZMQTCPConfig()
-            else:
-                raise ValueError(f"Invalid communication backend: {self.comm_backend}")
+        """Initialize the comm_config based on the zmq_tcp or zmq_ipc config."""
+        _logger.debug(
+            f"Validating comm_config: tcp: {self.zmq_tcp}, ipc: {self.zmq_ipc}"
+        )
+        if self.zmq_tcp is not None and self.zmq_ipc is not None:
+            raise ValueError(
+                "Cannot use both ZMQ TCP and ZMQ IPC configuration at the same time"
+            )
+        elif self.zmq_tcp is not None:
+            _logger.info("Using ZMQ TCP configuration")
+            self._comm_config = self.zmq_tcp
+        elif self.zmq_ipc is not None:
+            _logger.info("Using ZMQ IPC configuration")
+            self._comm_config = self.zmq_ipc
+        else:
+            _logger.info("Using default ZMQ IPC configuration")
+            self._comm_config = ZMQIPCConfig()
         return self
 
     service_run_type: Annotated[
@@ -66,21 +78,19 @@ class ServiceConfig(BaseSettings):
         DisableCLI(reason="Only single support for now"),
     ] = ServiceDefaults.SERVICE_RUN_TYPE
 
-    comm_backend: Annotated[
-        CommunicationBackend,
+    zmq_tcp: Annotated[
+        ZMQTCPConfig | None,
         Field(
-            description="Communication backend to use",
+            description="ZMQ TCP configuration",
         ),
-        DisableCLI(reason="This is not supported via CLI"),
-    ] = ServiceDefaults.COMM_BACKEND
+    ] = None
 
-    comm_config: Annotated[
-        BaseZMQCommunicationConfig | None,
+    zmq_ipc: Annotated[
+        ZMQIPCConfig | None,
         Field(
-            description="Communication configuration",
+            description="ZMQ IPC configuration",
         ),
-        DisableCLI(reason="This is not supported via CLI"),
-    ] = ServiceDefaults.COMM_CONFIG
+    ] = None
 
     workers: Annotated[
         WorkersConfig,
@@ -150,3 +160,12 @@ class ServiceConfig(BaseSettings):
     ] = ServiceDefaults.UI_TYPE
 
     developer: DeveloperConfig = DeveloperConfig()
+
+    @property
+    def comm_config(self) -> BaseZMQCommunicationConfig:
+        """Get the communication configuration."""
+        if not self._comm_config:
+            raise ValueError(
+                "Communication configuration is not set. Please provide a valid configuration."
+            )
+        return self._comm_config

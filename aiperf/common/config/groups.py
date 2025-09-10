@@ -25,3 +25,4 @@ class Groups:
     UI = Group.create_ordered("UI")
     WORKERS = Group.create_ordered("Workers")
     DEVELOPER = Group.create_ordered("Developer")
+    ZMQ_COMMUNICATION = Group.create_ordered("ZMQ Communication")
