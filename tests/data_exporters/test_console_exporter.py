@@ -16,7 +16,7 @@ from aiperf.metrics.metric_registry import MetricRegistry
 @pytest.fixture
 def mock_endpoint_config():
     return EndpointConfig(
-        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+        type=EndpointType.CHAT,
         streaming=True,
         model_names=["test-model"],
     )

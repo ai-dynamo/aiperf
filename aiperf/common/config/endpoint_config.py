@@ -127,7 +127,7 @@ class EndpointConfig(BaseConfig):
     timeout_seconds: Annotated[
         float,
         Field(
-            description="The timeout in floating points seconds for each request to the endpoint.",
+            description="The timeout in floating-point seconds for each request to the endpoint.",
         ),
         CLIParameter(
             name=("--request-timeout-seconds"),

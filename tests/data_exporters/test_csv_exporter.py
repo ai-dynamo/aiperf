@@ -19,7 +19,7 @@ def mock_user_config():
     return UserConfig(
         endpoint=EndpointConfig(
             model_names=["test-model"],
-            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            type=EndpointType.CHAT,
             custom_endpoint="custom_endpoint",
         )
     )

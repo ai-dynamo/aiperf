@@ -14,9 +14,7 @@ from aiperf.exporters.exporter_manager import ExporterManager
 
 @pytest.fixture
 def endpoint_config():
-    return EndpointConfig(
-        type=EndpointType.OPENAI_CHAT_COMPLETIONS, streaming=True, model_names=["gpt2"]
-    )
+    return EndpointConfig(type=EndpointType.CHAT, streaming=True, model_names=["gpt2"])
 
 
 @pytest.fixture

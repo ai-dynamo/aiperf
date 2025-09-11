@@ -11,7 +11,7 @@ from aiperf.common.models import Turn
 
 
 # TODO: Not fully implemented yet.
-@RequestConverterFactory.register(EndpointType.OPENAI_COMPLETIONS)
+@RequestConverterFactory.register(EndpointType.COMPLETIONS)
 class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
     """Request converter for OpenAI completion requests."""
 

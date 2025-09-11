@@ -11,7 +11,7 @@ from aiperf.common.models import Turn
 
 
 # TODO: Not fully implemented yet.
-@RequestConverterFactory.register(EndpointType.OPENAI_RESPONSES)
+@RequestConverterFactory.register(EndpointType.RESPONSES)
 class OpenAIResponsesRequestConverter(AIPerfLoggerMixin):
     """Request converter for OpenAI Responses requests."""
 

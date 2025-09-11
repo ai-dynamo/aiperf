@@ -38,7 +38,7 @@ def test_user_config_serialization_to_file():
     config = UserConfig(
         endpoint=EndpointConfig(
             model_names=["model1", "model2"],
-            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            type=EndpointType.CHAT,
             custom_endpoint="custom_endpoint",
             streaming=True,
             url="http://custom-url",
@@ -81,7 +81,7 @@ def test_user_config_defaults():
     config = UserConfig(
         endpoint=EndpointConfig(
             model_names=["model1", "model2"],
-            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            type=EndpointType.CHAT,
             custom_endpoint="custom_endpoint",
         )
     )
@@ -108,7 +108,7 @@ def test_user_config_custom_values():
 
     custom_values = {
         "endpoint": EndpointConfig(
-            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            type=EndpointType.CHAT,
             custom_endpoint="custom_endpoint",
             model_names=["model1", "model2"],
             streaming=True,
@@ -133,7 +133,7 @@ def test_user_config_exclude_unset_fields():
     config = UserConfig(
         endpoint=EndpointConfig(
             model_names=["model1", "model2"],
-            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            type=EndpointType.CHAT,
             custom_endpoint="custom_endpoint",
             streaming=True,
             url="http://custom-url",
@@ -150,21 +150,21 @@ def test_user_config_exclude_unset_fields():
     [
         (
             ["hf/model"],  # model name with slash
-            EndpointType.OPENAI_CHAT_COMPLETIONS,
+            EndpointType.CHAT,
             TimingMode.REQUEST_RATE,
             True,
             "/tmp/artifacts/hf_model-openai-chat-concurrency5-request_rate10.0",
         ),
         (
             ["model1", "model2"],  # multi-model
-            EndpointType.OPENAI_COMPLETIONS,
+            EndpointType.COMPLETIONS,
             TimingMode.REQUEST_RATE,
             True,
             "/tmp/artifacts/model1_multi-openai-completions-concurrency5-request_rate10.0",
         ),
         (
             ["singlemodel"],  # single model
-            EndpointType.OPENAI_EMBEDDINGS,
+            EndpointType.EMBEDDINGS,
             TimingMode.FIXED_SCHEDULE,
             False,
             "/tmp/artifacts/singlemodel-openai-embeddings-fixed_schedule",

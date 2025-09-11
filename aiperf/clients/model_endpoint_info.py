@@ -58,7 +58,7 @@ class EndpointInfo(AIPerfBaseModel):
     """Information about an endpoint."""
 
     type: EndpointType = Field(
-        default=EndpointType.OPENAI_CHAT_COMPLETIONS,
+        default=EndpointType.CHAT,
         description="The type of request payload to use for the endpoint.",
     )
     base_url: str | None = Field(

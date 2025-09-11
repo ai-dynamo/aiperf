@@ -78,7 +78,7 @@ class TestAioHttpClientMixin:
             client = AioHttpClientMixin(
                 model_endpoint=ModelEndpointInfo(
                     endpoint=EndpointInfo(
-                        type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+                        type=EndpointType.CHAT,
                         base_url="http://test.com",
                         timeout=timeout_ms / 1000,
                     ),
