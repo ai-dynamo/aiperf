@@ -42,7 +42,7 @@ class EndpointType(BasePydanticBackedStrEnum):
     via the `info` property. The enum values can still be used as strings for user input and comparison (via the `tag` field).
     """
 
-    OPENAI_CHAT_COMPLETIONS = EndpointTypeInfo(
+    CHAT = EndpointTypeInfo(
         tag="chat",
         service_kind=EndpointServiceKind.OPENAI,
         supports_streaming=True,
@@ -52,7 +52,7 @@ class EndpointType(BasePydanticBackedStrEnum):
         endpoint_path="/v1/chat/completions",
         metrics_title="LLM Metrics",
     )
-    OPENAI_COMPLETIONS = EndpointTypeInfo(
+    COMPLETIONS = EndpointTypeInfo(
         tag="completions",
         service_kind=EndpointServiceKind.OPENAI,
         supports_streaming=True,
@@ -60,7 +60,7 @@ class EndpointType(BasePydanticBackedStrEnum):
         endpoint_path="/v1/completions",
         metrics_title="LLM Metrics",
     )
-    OPENAI_EMBEDDINGS = EndpointTypeInfo(
+    EMBEDDINGS = EndpointTypeInfo(
         tag="embeddings",
         service_kind=EndpointServiceKind.OPENAI,
         supports_streaming=False,
@@ -76,7 +76,7 @@ class EndpointType(BasePydanticBackedStrEnum):
         endpoint_path="/v1/ranking",
         metrics_title="Rankings Metrics",
     )
-    OPENAI_RESPONSES = EndpointTypeInfo(
+    RESPONSES = EndpointTypeInfo(
         tag="responses",
         service_kind=EndpointServiceKind.OPENAI,
         supports_streaming=True,

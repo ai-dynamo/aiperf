@@ -30,7 +30,7 @@ class CLIDefaults:
 class EndpointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
     CUSTOM_ENDPOINT = None
-    TYPE = EndpointType.OPENAI_CHAT_COMPLETIONS
+    TYPE = EndpointType.CHAT
     STREAMING = False
     URL = "localhost:8080"
     TIMEOUT = 600.0

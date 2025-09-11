@@ -30,11 +30,11 @@ from aiperf.common.utils import load_json_str
 
 
 @ResponseExtractorFactory.register_all(
-    EndpointType.OPENAI_CHAT_COMPLETIONS,
-    EndpointType.OPENAI_COMPLETIONS,
-    EndpointType.OPENAI_EMBEDDINGS,
+    EndpointType.CHAT,
+    EndpointType.COMPLETIONS,
+    EndpointType.EMBEDDINGS,
     EndpointType.RANKINGS,
-    EndpointType.OPENAI_RESPONSES,
+    EndpointType.RESPONSES,
 )
 class OpenAIResponseExtractor(AIPerfLoggerMixin):
     """Extractor for OpenAI responses."""
