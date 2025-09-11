@@ -13,14 +13,15 @@ Use these options to profile with AIPerf.
 │                                                             in the list gets assigned to n-mod len(models). random: assignment is uniformly random [choices: round-robin, random]     │
 │                                                             [default: round-robin]                                                                                                    │
 │    CUSTOM-ENDPOINT --custom-endpoint --endpoint             Set a custom endpoint that differs from the OpenAI defaults.                                                              │
-│    ENDPOINT-TYPE --endpoint-type                            The endpoint type to send requests to on the server. [choices: openai-chat-completions, openai-completions,               │
-│                                                             openai-embeddings, openai-responses] [default: openai-chat-completions]                                                   │
+│    ENDPOINT-TYPE --endpoint-type                            The endpoint type to send requests to on the server. [choices: chat, completions, embeddings, rankings, responses]        │
+│                                                             [default: chat]                                                                                                           │
 │    STREAMING --streaming                                    An option to enable the use of the streaming API. [default: False]                                                        │
 │    URL --url                                            -u  URL of the endpoint to target for benchmarking. [default: localhost:8000]                                                 │
-│    REQUEST-TIMEOUT-SECONDS --request-timeout-seconds        The timeout in floating-point seconds for each request to the endpoint. [default: 600.0]                                 │
+│    REQUEST-TIMEOUT-SECONDS --request-timeout-seconds        The timeout in floating points seconds for each request to the endpoint. [default: 600.0]                                 │
 │    API-KEY --api-key                                        The API key to use for the endpoint. If provided, it will be sent with every request as a header: Authorization: Bearer   │
 │                                                             <api_key>.                                                                                                                │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
 ```
 ```
 ╭─ Input ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
