@@ -9,7 +9,7 @@ from typing import Annotated, ClassVar
 from pydantic import BaseModel, Field, model_validator
 from typing_extensions import Self
 
-from aiperf.common.config.cli_parameter import CLIParameter
+from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import CommAddress, CommunicationBackend
 
@@ -210,30 +210,36 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
             group=_CLI_GROUP,
         ),
     ] = "127.0.0.1"
-    records_push_pull_port: int = Field(
-        default=5557, description="Port for inference push/pull messages"
-    )
-    credit_drop_port: int = Field(
-        default=5562, description="Port for credit drop operations"
-    )
-    credit_return_port: int = Field(
-        default=5563, description="Port for credit return operations"
-    )
-    dataset_manager_proxy_config: ZMQTCPProxyConfig = Field(  # type: ignore
+    records_push_pull_port: Annotated[
+        int, DisableCLI(reason="Not supported via command line")
+    ] = Field(default=5557, description="Port for inference push/pull messages")
+    credit_drop_port: Annotated[
+        int, DisableCLI(reason="Not supported via command line")
+    ] = Field(default=5562, description="Port for credit drop operations")
+    credit_return_port: Annotated[
+        int, DisableCLI(reason="Not supported via command line")
+    ] = Field(default=5563, description="Port for credit return operations")
+    dataset_manager_proxy_config: Annotated[  # type: ignore
+        ZMQTCPProxyConfig, DisableCLI(reason="Not supported via command line")
+    ] = Field(
         default=ZMQTCPProxyConfig(
             frontend_port=5661,
             backend_port=5662,
         ),
         description="Configuration for the ZMQ Proxy. If provided, the proxy will be created and started.",
     )
-    event_bus_proxy_config: ZMQTCPProxyConfig = Field(  # type: ignore
+    event_bus_proxy_config: Annotated[  # type: ignore
+        ZMQTCPProxyConfig, DisableCLI(reason="Not supported via command line")
+    ] = Field(
         default=ZMQTCPProxyConfig(
             frontend_port=5663,
             backend_port=5664,
         ),
         description="Configuration for the ZMQ Proxy. If provided, the proxy will be created and started.",
     )
-    raw_inference_proxy_config: ZMQTCPProxyConfig = Field(  # type: ignore
+    raw_inference_proxy_config: Annotated[  # type: ignore
+        ZMQTCPProxyConfig, DisableCLI(reason="Not supported via command line")
+    ] = Field(
         default=ZMQTCPProxyConfig(
             frontend_port=5665,
             backend_port=5666,
@@ -290,15 +296,21 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
         ),
     ] = None
 
-    dataset_manager_proxy_config: ZMQIPCProxyConfig = Field(  # type: ignore
+    dataset_manager_proxy_config: Annotated[  # type: ignore
+        ZMQIPCProxyConfig, DisableCLI(reason="Not supported via command line")
+    ] = Field(
         default=ZMQIPCProxyConfig(name="dataset_manager_proxy"),
         description="Configuration for the ZMQ Dealer Router Proxy. If provided, the proxy will be created and started.",
     )
-    event_bus_proxy_config: ZMQIPCProxyConfig = Field(  # type: ignore
+    event_bus_proxy_config: Annotated[  # type: ignore
+        ZMQIPCProxyConfig, DisableCLI(reason="Not supported via command line")
+    ] = Field(
         default=ZMQIPCProxyConfig(name="event_bus_proxy"),
         description="Configuration for the ZMQ XPUB/XSUB Proxy. If provided, the proxy will be created and started.",
     )
-    raw_inference_proxy_config: ZMQIPCProxyConfig = Field(  # type: ignore
+    raw_inference_proxy_config: Annotated[  # type: ignore
+        ZMQIPCProxyConfig, DisableCLI(reason="Not supported via command line")
+    ] = Field(
         default=ZMQIPCProxyConfig(name="raw_inference_proxy"),
         description="Configuration for the ZMQ Push/Pull Proxy. If provided, the proxy will be created and started.",
     )
