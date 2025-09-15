@@ -14,7 +14,7 @@ from aiperf.common.config import (
     TokenizerConfig,
     UserConfig,
 )
-from aiperf.common.enums import EndpointType
+from aiperf.common.enums import CustomDatasetType, EndpointType
 from aiperf.common.enums.timing_enums import TimingMode
 
 
@@ -201,3 +201,220 @@ def test_compute_artifact_directory(
 
     artifact_dir = config._compute_artifact_directory()
     assert artifact_dir == Path(expected_dir)
+
+
+class TestGetEffectiveRequestCount:
+    """Test the get_effective_request_count() method."""
+
+    def test_default_behavior_without_custom_dataset(self, tmp_path):
+        """Test that default request count is used when no custom dataset."""
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            # Don't set request_count explicitly - use default
+        )
+
+        result = config.get_effective_request_count()
+        assert result == 10  # Default value from LoadGeneratorDefaults.REQUEST_COUNT
+
+    def test_explicit_request_count_overrides_dataset_size(self, tmp_path):
+        """Test that explicitly set request count takes priority over dataset size."""
+        # Create a test file with 3 lines
+        test_file = tmp_path / "test.jsonl"
+        test_file.write_text(
+            '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}\n'
+            '{"input_length": 200, "hash_ids": [2], "timestamp": 2000}\n'
+            '{"input_length": 300, "hash_ids": [3], "timestamp": 3000}\n'
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            load_generator=LoadGeneratorConfig(
+                request_count=100
+            ),  # Explicitly set - should take priority
+            input=InputConfig(
+                file=str(test_file),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config.get_effective_request_count()
+        assert result == 100  # Explicit setting overrides file size (3)
+
+    def test_dataset_size_used_when_no_explicit_count(self, tmp_path):
+        """Test that dataset size is used when request count is not explicitly set."""
+        # Create a test file with 3 lines
+        test_file = tmp_path / "test.jsonl"
+        test_file.write_text(
+            '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}\n'
+            '{"input_length": 200, "hash_ids": [2], "timestamp": 2000}\n'
+            '{"input_length": 300, "hash_ids": [3], "timestamp": 3000}\n'
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            # No explicit load_generator config - uses defaults
+            input=InputConfig(
+                file=str(test_file),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config.get_effective_request_count()
+        assert result == 3  # Uses dataset size since no explicit count
+
+    def test_custom_dataset_with_empty_file(self, tmp_path):
+        """Test behavior with empty custom dataset file."""
+        test_file = tmp_path / "empty.jsonl"
+        test_file.write_text("")
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            # Don't set request_count explicitly
+            input=InputConfig(
+                file=str(test_file),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config.get_effective_request_count()
+        assert result == 10  # Falls back to default since empty file
+
+    def test_custom_dataset_with_nonexistent_file(self):
+        """Test behavior when file doesn't exist."""
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            # Don't set request_count explicitly
+            input=InputConfig(
+                file="/nonexistent/file.jsonl",
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config.get_effective_request_count()
+        assert result == 10  # Falls back to default
+
+    def test_custom_dataset_skips_empty_lines(self, tmp_path):
+        """Test that empty lines are not counted."""
+        test_file = tmp_path / "test_with_empty.jsonl"
+        test_file.write_text(
+            '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}\n'
+            "\n"  # Empty line
+            '{"input_length": 200, "hash_ids": [2], "timestamp": 2000}\n'
+            "   \n"  # Whitespace line
+            '{"input_length": 300, "hash_ids": [3], "timestamp": 3000}\n'
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            # Don't set request_count explicitly
+            input=InputConfig(
+                file=str(test_file),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config.get_effective_request_count()
+        assert result == 3  # Only non-empty lines counted
+
+    def test_non_mooncake_trace_custom_dataset(self, tmp_path):
+        """Test that non-mooncake_trace custom datasets still use dataset size."""
+        test_file = tmp_path / "other.jsonl"
+        test_file.write_text('{"some": "data"}\n{"other": "data"}\n')
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            # Don't set request_count explicitly
+            input=InputConfig(
+                file=str(test_file),
+                custom_dataset_type=CustomDatasetType.SINGLE_TURN,  # Valid but not mooncake_trace
+            ),
+        )
+
+        result = config.get_effective_request_count()
+        assert result == 2  # Uses file size even for non-mooncake_trace
+
+
+class TestFixedScheduleAutoDetection:
+    """Test the _should_use_fixed_schedule_for_mooncake_trace() method."""
+
+    def test_mooncake_trace_with_timestamps(self, tmp_path):
+        """Test that timestamps in mooncake_trace trigger fixed schedule."""
+        test_file = tmp_path / "with_timestamps.jsonl"
+        test_file.write_text(
+            '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}\n'
+            '{"input_length": 200, "hash_ids": [2], "timestamp": 2000}\n'
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file=str(test_file),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config._should_use_fixed_schedule_for_mooncake_trace()
+        assert result is True
+
+    def test_mooncake_trace_without_timestamps(self, tmp_path):
+        """Test that missing timestamps don't trigger fixed schedule."""
+        test_file = tmp_path / "without_timestamps.jsonl"
+        test_file.write_text(
+            '{"input_length": 100, "hash_ids": [1]}\n'
+            '{"input_length": 200, "hash_ids": [2]}\n'
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file=str(test_file),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config._should_use_fixed_schedule_for_mooncake_trace()
+        assert result is False
+
+    def test_non_mooncake_trace_dataset(self, tmp_path):
+        """Test that non-mooncake_trace datasets don't trigger auto-detection."""
+        test_file = tmp_path / "other_dataset.jsonl"
+        test_file.write_text('{"timestamp": 1000, "data": "test"}\n')
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file=str(test_file), custom_dataset_type=CustomDatasetType.SINGLE_TURN
+            ),
+        )
+
+        result = config._should_use_fixed_schedule_for_mooncake_trace()
+        assert result is False
+
+    def test_empty_file(self, tmp_path):
+        """Test behavior with empty file."""
+        test_file = tmp_path / "empty.jsonl"
+        test_file.write_text("")
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file=str(test_file),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config._should_use_fixed_schedule_for_mooncake_trace()
+        assert result is False
+
+    def test_nonexistent_file(self):
+        """Test behavior with nonexistent file."""
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file="/nonexistent/file.jsonl",
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config._should_use_fixed_schedule_for_mooncake_trace()
+        assert result is False

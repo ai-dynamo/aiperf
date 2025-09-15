@@ -8,6 +8,7 @@ from typing import Annotated, Any
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import DisableCLI
 from aiperf.common.config.config_validators import coerce_value
@@ -16,8 +17,11 @@ from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
+from aiperf.common.enums import CustomDatasetType
 from aiperf.common.enums.endpoints_enums import EndpointServiceKind
 from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
+
+_logger = AIPerfLogger(__name__)
 
 
 def _should_quote_arg(x: Any) -> bool:
@@ -46,6 +50,12 @@ class UserConfig(BaseConfig):
         """Set the timing mode based on the user config. Will be called after all user config is set."""
         if self.input.fixed_schedule:
             self._timing_mode = TimingMode.FIXED_SCHEDULE
+        elif self._should_use_fixed_schedule_for_mooncake_trace():
+            # Automatically enable fixed schedule for mooncake_trace with timestamps
+            self._timing_mode = TimingMode.FIXED_SCHEDULE
+            _logger.info(
+                "Automatically enabling fixed schedule mode for mooncake_trace dataset with timestamps"
+            )
         elif self.loadgen.request_rate is not None:
             # Request rate is checked first, as if user has provided request rate and concurrency,
             # we will still use the request rate strategy.
@@ -85,6 +95,114 @@ class UserConfig(BaseConfig):
             )
 
         return self
+
+    def get_effective_request_count(self) -> int:
+        """Get the effective request count that should be used for benchmarking.
+
+        This method determines the appropriate number of requests based on:
+        1. Custom mooncake_trace dataset size (always takes priority for trace files)
+        2. User-specified request count (for non-trace datasets)
+        3. Default request count (fallback)
+
+        Returns:
+            int: The number of requests that should be sent
+
+        Raises:
+            ValueError: If request_count is explicitly set for mooncake_trace datasets
+        """
+        # For mooncake_trace datasets, reject explicit request_count and always use dataset size
+        if (
+            self.input.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE
+            and self.input.file is not None
+        ):
+            # Check if user explicitly set request_count - this is not allowed for mooncake_trace
+            if "request_count" in self.loadgen.model_fields_set:
+                raise ValueError(
+                    "request_count cannot be explicitly set for mooncake_trace datasets. "
+                    "The dataset size will be used automatically."
+                )
+
+            try:
+                dataset_size = self._count_dataset_entries()
+                _logger.info(
+                    f"Using dataset size ({dataset_size}) as request count for mooncake_trace dataset"
+                )
+                return dataset_size
+            except Exception as e:
+                _logger.warning(
+                    f"Could not determine mooncake_trace dataset size: {e}. Using default request count."
+                )
+                return self.loadgen.request_count
+
+        # For other custom datasets, use dataset size if not explicitly overridden
+        if (
+            self.input.custom_dataset_type is not None
+            and self.input.file is not None
+            and "request_count" not in self.loadgen.model_fields_set
+        ):
+            try:
+                dataset_size = self._count_dataset_entries()
+                if dataset_size > 0:
+                    _logger.info(
+                        f"Using dataset size ({dataset_size}) as request count for custom dataset"
+                    )
+                    return dataset_size
+            except Exception as e:
+                _logger.warning(
+                    f"Could not determine dataset size: {e}. Using default request count."
+                )
+
+        # Fallback to configured request count (explicit or default)
+        return self.loadgen.request_count
+
+    def _should_use_fixed_schedule_for_mooncake_trace(self) -> bool:
+        """Check if mooncake_trace dataset has timestamps and should use fixed schedule.
+
+        Returns:
+            bool: True if fixed schedule should be enabled for this mooncake trace
+        """
+        if (
+            self.input.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
+            or not self.input.file
+        ):
+            return False
+
+        try:
+            # Check if any entries in the file have timestamps
+            with open(self.input.file) as f:
+                for line in f:
+                    if not (line := line.strip()):
+                        continue
+                    try:
+                        import json
+
+                        data = json.loads(line)
+                        if "timestamp" in data and data["timestamp"] is not None:
+                            return True
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+            return False
+        except (OSError, FileNotFoundError):
+            _logger.warning(
+                f"Could not read dataset file {self.input.file} to check for timestamps"
+            )
+            return False
+
+    def _count_dataset_entries(self) -> int:
+        """Count the number of valid entries in a custom dataset file.
+
+        Returns:
+            int: Number of non-empty lines in the file
+        """
+        if not self.input.file:
+            return 0
+
+        try:
+            with open(self.input.file) as f:
+                return sum(1 for line in f if line.strip())
+        except (OSError, FileNotFoundError) as e:
+            _logger.error(f"Cannot read dataset file {self.input.file}: {e}")
+            return 0
 
     endpoint: Annotated[
         EndpointConfig,
@@ -160,9 +278,7 @@ class UserConfig(BaseConfig):
         # Preprocess Huggingface model names that include '/' in their model name.
         if "/" in model_name:
             filtered_name = "_".join(model_name.split("/"))
-            from aiperf.common.logging import AIPerfLogger
 
-            _logger = AIPerfLogger(__name__)
             _logger.info(
                 f"Model name '{model_name}' cannot be used to create artifact "
                 f"directory. Instead, '{filtered_name}' will be used."

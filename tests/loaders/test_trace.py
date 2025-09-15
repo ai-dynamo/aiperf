@@ -13,23 +13,75 @@ from aiperf.dataset import MooncakeTrace, MooncakeTraceDatasetLoader
 class TestMooncakeTrace:
     """Basic functionality tests for MooncakeTrace model."""
 
-    def test_create_with_required_fields_only(self):
-        """Test creating MooncakeTrace with only required fields."""
-        data = MooncakeTrace(
-            input_length=100, output_length=50, hash_ids=[123, 456, 789], timestamp=1000
-        )
+    def test_create_with_input_length(self):
+        """Test creating MooncakeTrace with input_length."""
+        data = MooncakeTrace(input_length=100, hash_ids=[123, 456, 789], timestamp=1000)
 
         assert data.input_length == 100
-        assert data.output_length == 50
+        assert data.output_length is None  # Optional field
+        assert data.text_input is None
         assert data.hash_ids == [123, 456, 789]
         assert data.timestamp == 1000
         assert data.type == CustomDatasetType.MOONCAKE_TRACE
 
-    def test_validation_missing_fields_errors(self):
-        """Test validation errors for MooncakeTrace."""
-        # Missing required fields
-        with pytest.raises(ValueError):
-            MooncakeTrace()  # type: ignore
+    def test_create_with_text_input(self):
+        """Test creating MooncakeTrace with text_input."""
+        data = MooncakeTrace(
+            text_input="This is test input text", hash_ids=[123], timestamp=1000
+        )
+
+        assert data.text_input == "This is test input text"
+        assert data.input_length is None
+        assert data.output_length is None  # Optional field
+        assert data.hash_ids == [123]
+        assert data.timestamp == 1000
+
+    def test_create_with_both_input_fields(self):
+        """Test creating MooncakeTrace with both input_length and text_input."""
+        data = MooncakeTrace(
+            input_length=100,
+            text_input="This is test input text",
+            hash_ids=[123],
+            timestamp=1000,
+        )
+
+        # Both fields should be preserved
+        assert data.input_length == 100
+        assert data.text_input == "This is test input text"
+
+    def test_create_with_optional_output_length(self):
+        """Test creating MooncakeTrace with optional output_length."""
+        data = MooncakeTrace(
+            input_length=100, output_length=50, hash_ids=[123], timestamp=1000
+        )
+
+        assert data.output_length == 50
+
+    def test_validation_missing_input_fields_errors(self):
+        """Test validation errors when neither input_length nor text_input provided."""
+        from pydantic import ValidationError
+
+        with pytest.raises(
+            ValidationError,
+            match="Either 'input_length' or 'text_input' must be provided",
+        ):
+            MooncakeTrace(hash_ids=[123], timestamp=1000)
+
+    def test_validation_missing_required_fields_errors(self):
+        """Test validation errors for MooncakeTrace missing other required fields."""
+        from pydantic import ValidationError
+
+        # When input_length is provided, hash_ids is required
+        with pytest.raises(
+            ValidationError,
+            match="'hash_ids' must be provided when 'input_length' is specified",
+        ):
+            MooncakeTrace(input_length=100, timestamp=1000)
+
+        # text_input does not require hash_ids, so this should work
+        data = MooncakeTrace(text_input="test input")
+        assert data.text_input == "test input"
+        assert data.hash_ids is None
 
 
 class TestMooncakeTraceDatasetLoader:
@@ -92,6 +144,60 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[1][0].output_length == 75
         assert traces[1][0].hash_ids == [789]
         assert traces[1][0].timestamp == 2000
+
+    def test_load_dataset_with_text_input(
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
+    ):
+        """Test loading JSONL file with text_input fields."""
+        content = [
+            '{"text_input": "This is the first test input", "hash_ids": [123], "timestamp": 1000}',
+            '{"text_input": "This is the second test input", "hash_ids": [456], "timestamp": 2000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename, mock_prompt_generator, default_user_config
+        )
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 2
+        traces = list(dataset.values())
+
+        assert traces[0][0].text_input == "This is the first test input"
+        assert traces[0][0].input_length is None
+        assert traces[1][0].text_input == "This is the second test input"
+        assert traces[1][0].input_length is None
+
+    def test_load_dataset_mixed_input_types(
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
+    ):
+        """Test loading JSONL file with mixed input_length and text_input."""
+        content = [
+            '{"input_length": 100, "hash_ids": [123], "timestamp": 1000}',
+            '{"text_input": "Mixed input test", "hash_ids": [456], "timestamp": 2000}',
+            '{"input_length": 200, "text_input": "Both fields", "hash_ids": [789], "timestamp": 3000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename, mock_prompt_generator, default_user_config
+        )
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 3
+        traces = list(dataset.values())
+
+        # First entry: input_length only
+        assert traces[0][0].input_length == 100
+        assert traces[0][0].text_input is None
+
+        # Second entry: text_input only
+        assert traces[1][0].input_length is None
+        assert traces[1][0].text_input == "Mixed input test"
+
+        # Third entry: both fields
+        assert traces[2][0].input_length == 200
+        assert traces[2][0].text_input == "Both fields"
 
     def test_load_dataset_skips_empty_lines(
         self, create_jsonl_file, mock_prompt_generator, default_user_config
