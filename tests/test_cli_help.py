@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import contextlib
 
 import pytest
 from cyclopts.exceptions import UnknownOptionError
@@ -57,7 +56,6 @@ class TestCLIHelp:
     ) -> None:
         """Test that certain parameters marked with DisableCLI() are not recognized."""
         for param in disabled_parameters:
-            with contextlib.suppress(SystemExit):  # noqa: SIM117
-                with pytest.raises(UnknownOptionError):
-                    # Note: For now we just assume that "123" is a valid value for the parameter
-                    app(["profile", param, "123"])
+            with pytest.raises(UnknownOptionError):
+                # Note: For now we just assume that "123" is a valid value for the parameter
+                app(["profile", param, "123"], exit_on_error=False, print_error=False)
