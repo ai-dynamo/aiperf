@@ -90,3 +90,14 @@ DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL = 2.0
 
 DEFAULT_WORKER_HEALTH_CHECK_INTERVAL = 2.0
 """Default interval in seconds between worker health check messages."""
+
+DEFAULT_ZMQ_CONTEXT_TERM_TIMEOUT = 10.0
+"""Default timeout for terminating the ZMQ context in seconds."""
+
+DEFAULT_RECORD_PROCESSOR_SCALE_FACTOR = 4
+"""Default scale factor for the number of record processors to spawn based on the number of workers.
+This will spawn 1 record processor for every X workers."""
+
+DEFAULT_MAX_WORKERS_CAP = 32
+"""Default absolute maximum number of workers to spawn, regardless of the number of CPU cores.
+Only applies if the user does not specify a max workers value."""

@@ -129,6 +129,26 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
                     phase_config.type, phase_stats.sent_end_ns, phase_stats.sent
                 )
             )
+            # If the phase is already complete, we can break out of the loop. This is logged as
+            # info, as typically this should not occur, however if it does, it is not a problem.
+            # We also want to check this here to avoid potentially double publishing the complete event.
+            if self.phase_complete_event.is_set():
+                self.info(
+                    f"Phase {phase_config.type} already complete, continuing to next phase"
+                )
+                continue
+
+            # Check if we need to mark the phase as complete. This is done here to avoid race conditions
+            # where the final credit is returned before we even hit this point in the code. Typically this should not occur,
+            # and if it does, it may indicate a bug in the credit issuing strategy. If we do not check here, we may end up
+            # stuck waiting for an event that will never be set.
+            if await self._check_and_publish_if_phase_is_complete(phase_stats):
+                self.warning(
+                    f"Phase {phase_config.type} completed before the system was aware that all credits were sent. "
+                    "This may indicate a bug in the credit issuing strategy. "
+                    f"Phase stats: {phase_stats}"
+                )
+                continue
 
             # Wait for the credits to be returned before continuing to the next phase
             await self.phase_complete_event.wait()
@@ -142,6 +162,39 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         """Stop the credit issuing strategy."""
         await self.cancel_all_tasks()
 
+    async def _check_and_publish_if_phase_is_complete(
+        self, phase_stats: CreditPhaseStats
+    ) -> bool:
+        """Check if the phase is complete, and if so, publish the phase complete message.
+
+        Returns:
+            bool: True if the phase is complete, False otherwise.
+        """
+        if (
+            # If we have sent all the credits, check if this is the last one to be returned
+            phase_stats.is_sending_complete
+            and phase_stats.completed >= phase_stats.total_expected_requests  # type: ignore[operator]
+        ):
+            phase_stats.end_ns = time.time_ns()
+            self.notice(f"Phase completed: {phase_stats}")
+
+            self.execute_async(
+                self.credit_manager.publish_phase_complete(
+                    phase_stats.type, phase_stats.completed, phase_stats.end_ns
+                )
+            )
+
+            self.phase_complete_event.set()
+
+            if phase_stats.type == CreditPhase.PROFILING:
+                self.execute_async(self.credit_manager.publish_credits_complete())
+                self.all_phases_complete_event.set()
+
+            # We don't need to keep track of the phase stats anymore
+            self.phase_stats.pop(phase_stats.type)
+            return True
+        return False
+
     async def _on_credit_return(self, message: CreditReturnMessage) -> None:
         """This is called by the credit manager when a credit is returned. It can be
         overridden in subclasses to handle the credit return."""
@@ -153,29 +206,7 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
 
         phase_stats = self.phase_stats[message.phase]
         phase_stats.completed += 1
-
-        if (
-            # If we have sent all the credits, check if this is the last one to be returned
-            phase_stats.is_sending_complete
-            and phase_stats.completed >= phase_stats.total_expected_requests  # type: ignore[operator]
-        ):
-            phase_stats.end_ns = time.time_ns()
-            self.notice(f"Phase completed: {phase_stats}")
-
-            self.execute_async(
-                self.credit_manager.publish_phase_complete(
-                    message.phase, phase_stats.completed, phase_stats.end_ns
-                )
-            )
-
-            self.phase_complete_event.set()
-
-            if phase_stats.type == CreditPhase.PROFILING:
-                self.execute_async(self.credit_manager.publish_credits_complete())
-                self.all_phases_complete_event.set()
-
-            # We don't need to keep track of the phase stats anymore
-            self.phase_stats.pop(message.phase)
+        await self._check_and_publish_if_phase_is_complete(phase_stats)
 
     async def _progress_report_loop(self) -> None:
         """Report the progress at a fixed interval."""
