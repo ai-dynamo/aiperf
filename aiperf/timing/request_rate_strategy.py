@@ -63,6 +63,10 @@ class RequestRateStrategy(CreditIssuingStrategy):
 
             await self.credit_manager.drop_credit(credit_phase=phase_stats.type)
             phase_stats.sent += 1
+            # Check if we should break out of the loop before we sleep for the next interval.
+            # This is to ensure we don't sleep for any unnecessary time, which could cause race conditions.
+            if not phase_stats.should_send():
+                break
 
             next_interval = self._request_rate_generator.next_interval()
             if next_interval > 0:
