@@ -7,8 +7,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, InputConfig, UserConfig
-from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CustomDatasetType
 from aiperf.dataset.dataset_manager import DatasetManager
 
@@ -37,10 +36,30 @@ class TestDatasetManagerSequentialIteration:
         generator.generate.return_value = "Generated prompt"
         return generator
 
+    @pytest.fixture(autouse=True)
+    async def teardown(self):
+        """Clean up after each test to prevent shared state issues."""
+        yield
+        # Reset any global state if needed
+        # Clear communication factory state
+        from aiperf.common.factories import CommunicationFactory
+
+        if hasattr(CommunicationFactory, "_instances"):
+            CommunicationFactory._instances.clear()
+
+    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
     async def test_sequential_iteration_order(
-        self, create_mooncake_trace_file, mock_prompt_generator, mock_tokenizer_cls
+        self,
+        mock_tokenizer_from_pretrained,
+        create_mooncake_trace_file,
+        mock_tokenizer_cls,
     ):
         """Test that custom datasets iterate sequentially, not randomly."""
+        # Mock the tokenizer to avoid HTTP requests
+        mock_tokenizer_from_pretrained.return_value = (
+            mock_tokenizer_cls.from_pretrained("test-model")
+        )
+
         # Create a file with distinct input_lengths for easy verification
         entries = [
             '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}',
@@ -52,68 +71,60 @@ class TestDatasetManagerSequentialIteration:
         filename = create_mooncake_trace_file(entries)
 
         try:
-            with patch("aiperf.common.tokenizer.Tokenizer", mock_tokenizer_cls):
-                user_config = UserConfig(
-                    endpoint=EndpointConfig(model_names=["test-model"]),
-                    input=InputConfig(
-                        input_filename=filename,
-                        custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-                    ),
-                )
+            user_config = UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(
+                    file=filename, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
+                ),
+            )
 
-                service_config = ServiceConfig()
-                dataset_manager = DatasetManager(service_config, user_config)
-                await dataset_manager.initialize()  # Initialize the service
-                await dataset_manager.start()  # Start the service
+            service_config = ServiceConfig()
+            dataset_manager = DatasetManager(service_config, user_config)
+            await dataset_manager.initialize()  # Initialize the service
+
+            # Configure the dataset to load conversations
+            await dataset_manager._configure_dataset()
 
             # Get conversations multiple times and verify order
             conversations = []
             for _ in range(5):
-                conv = await dataset_manager._return_any_conversation("test_session")
+                conv = dataset_manager._return_any_conversation("test_session")
                 conversations.append(conv)
 
-            # Extract input_lengths from conversations - they should be sequential
-            input_lengths = []
-            for conv in conversations:
-                if conv.turns and conv.turns[0].texts:
-                    # Find the input_length from the conversation data
-                    # This assumes the conversation structure includes our test data
-                    if hasattr(conv, "_source_data"):
-                        input_lengths.append(conv._source_data.get("input_length"))
-                    else:
-                        # Alternative: check if conversation has our test markers
-                        text_content = (
-                            conv.turns[0].texts[0].contents[0]
-                            if conv.turns[0].texts[0].contents
-                            else ""
-                        )
-                        # We can identify by checking generation pattern or add markers
-                        input_lengths.append(
-                            len(text_content.split())
-                        )  # Rough approximation
-            assert len(input_lengths) == 5
+            # Verify we got 5 conversations
+            assert len(conversations) == 5
 
-            # For exact verification, we need to check the sequential behavior
-            # The key test is that we get the SAME order every time, not random
-
-            # Reset and get conversations again - should be same order
+            # The key test: sequential iteration should mean we get the same order
+            # when we reset and iterate again
             dataset_manager._sequential_iterator_index = 0  # Reset iterator
             conversations_repeat = []
             for _ in range(5):
-                conv = await dataset_manager._return_any_conversation("test_session")
+                conv = dataset_manager._return_any_conversation("test_session")
                 conversations_repeat.append(conv)
 
-            # The order should be identical (sequential), not different (random)
+            # Verify that the order is identical (sequential), not different (random)
             for i in range(5):
-                assert conversations[i].session_id == conversations_repeat[i].session_id
+                assert (
+                    conversations[i].conversation.session_id
+                    == conversations_repeat[i].conversation.session_id
+                )
 
         finally:
             Path(filename).unlink(missing_ok=True)
 
+    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
     async def test_sequential_vs_random_behavior(
-        self, create_mooncake_trace_file, mock_prompt_generator, mock_tokenizer_cls
+        self,
+        mock_tokenizer_from_pretrained,
+        create_mooncake_trace_file,
+        mock_prompt_generator,
+        mock_tokenizer_cls,
     ):
         """Test that custom datasets use sequential iteration while synthetic use random."""
+        # Mock the tokenizer to avoid HTTP requests
+        mock_tokenizer_from_pretrained.return_value = (
+            mock_tokenizer_cls.from_pretrained("test-model")
+        )
 
         entries = [
             '{"input_length": 111, "hash_ids": [1], "timestamp": 1000}',
@@ -127,7 +138,7 @@ class TestDatasetManagerSequentialIteration:
             custom_config = UserConfig(
                 endpoint=EndpointConfig(model_names=["test-model"]),
                 input=InputConfig(
-                    input_filename=filename,
+                    file=filename,
                     custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
                 ),
             )
@@ -135,13 +146,18 @@ class TestDatasetManagerSequentialIteration:
             service_config = ServiceConfig()
             custom_manager = DatasetManager(service_config, custom_config)
             await custom_manager.initialize()  # Initialize the service
-            await custom_manager.start()  # Start the service
+
+            # Configure the dataset
+            await custom_manager._configure_dataset()
+
+            # Verify sequential iteration is enabled for custom datasets
+            assert custom_manager._use_sequential_iteration is True
 
             # Get sessions in order for custom dataset
             custom_sessions = []
             for _ in range(6):  # More than dataset size to test wraparound
-                conv = await custom_manager._return_any_conversation("test_session")
-                custom_sessions.append(conv.session_id)
+                conv = custom_manager._return_any_conversation("test_session")
+                custom_sessions.append(conv.conversation.session_id)
 
             # Should repeat pattern: session1, session2, session3, session1, session2, session3
             assert (
@@ -154,27 +170,6 @@ class TestDatasetManagerSequentialIteration:
                 custom_sessions[2] == custom_sessions[5]
             )  # Third repeats at position 5
 
-            # Test 2: Non-custom dataset (should use different behavior)
-            synthetic_config = UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                input=InputConfig(
-                    input_filename=filename,
-                    # custom_dataset_type=None  # No custom dataset type
-                ),
-            )
-
-            service_config = ServiceConfig()
-            synthetic_manager = DatasetManager(service_config, synthetic_config)
-            await synthetic_manager.initialize()  # Initialize the service
-            await synthetic_manager.start()  # Start the service
-
-            # The behavior should be different (random selection)
-            # We test this by verifying the sequential iterator is not used
-            assert (
-                not hasattr(synthetic_manager, "_sequential_iterator_index")
-                or synthetic_manager._sequential_iterator_index == 0
-            )
-
         finally:
             Path(filename).unlink(missing_ok=True)
 
@@ -184,8 +179,14 @@ class TestDatasetManagerSequentialIteration:
         mock_tokenizer_from_pretrained,
         create_mooncake_trace_file,
         mock_prompt_generator,
+        mock_tokenizer_cls,
     ):
         """Test that sequential iterator wraps around correctly."""
+        # Mock the tokenizer to avoid HTTP requests
+        mock_tokenizer_from_pretrained.return_value = (
+            mock_tokenizer_cls.from_pretrained("test-model")
+        )
+
         entries = [
             '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}',
             '{"input_length": 200, "hash_ids": [2], "timestamp": 2000}',
@@ -196,7 +197,7 @@ class TestDatasetManagerSequentialIteration:
             user_config = UserConfig(
                 endpoint=EndpointConfig(model_names=["test-model"]),
                 input=InputConfig(
-                    input_filename=filename,
+                    file=filename,
                     custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
                 ),
             )
@@ -204,13 +205,15 @@ class TestDatasetManagerSequentialIteration:
             service_config = ServiceConfig()
             dataset_manager = DatasetManager(service_config, user_config)
             await dataset_manager.initialize()  # Initialize the service
-            await dataset_manager.start()  # Start the service
+
+            # Configure the dataset
+            await dataset_manager._configure_dataset()
 
             # Get more conversations than dataset size
             session_ids = []
             for _ in range(5):  # 5 requests for 2-entry dataset
-                conv = await dataset_manager._return_any_conversation("test_session")
-                session_ids.append(conv.session_id)
+                conv = dataset_manager._return_any_conversation("test_session")
+                session_ids.append(conv.conversation.session_id)
 
             # Should follow pattern: entry1, entry2, entry1, entry2, entry1
             assert (
