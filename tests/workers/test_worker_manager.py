@@ -31,8 +31,8 @@ class TestMaxWorkers:
             (1, 100, None, 1),  # Single CPU system, should default to 1 worker minimum
             (2, 100, None, 1),  # Two CPUs: 2 * 0.75 - 1 = 0.5, rounded up to 1
             (4, 100, None, 2),  # Four CPUs: 4 * 0.75 - 1 = 2
-            (44,1000,None,32),  # CPU count that would exceed 32 limit: 44 * 0.75 - 1 = 32
-            (45,1000,None,32),  # CPU count that hits the hard cap: 45 * 0.75 - 1 = 32.75
+            (44, 1000, None, 32),  # CPU count that would exceed 32 limit: 44 * 0.75 - 1 = 32
+            (45, 1000, None, 32),  # CPU count that hits the hard cap: 45 * 0.75 - 1 = 32.75
             (4, 100, 100, 100),  # Very high max_workers, not limited by CPU calculation
             (64, 1, None, 1),  # Concurrency of 1 limits to 1 worker regardless of CPUs
         ],
