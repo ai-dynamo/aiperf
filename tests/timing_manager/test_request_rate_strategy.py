@@ -608,3 +608,34 @@ class TestConstantRateGeneratorExceptions:
         for _ in range(10):
             interval = generator.next_interval()
             assert interval == expected_interval
+
+
+@pytest.mark.asyncio
+class TestRequestRateStrategyEarlyExit:
+    """Test for the early exit fix that prevents unnecessary final sleep."""
+
+    async def test_early_exit_prevents_unnecessary_final_sleep(
+        self, mock_credit_manager: MockCreditManager, time_traveler: TimeTraveler
+    ):
+        """Test that execution stops immediately after sending all credits, without extra sleep."""
+        config, phase_stats = request_rate_config(
+            request_rate=1.0,  # 1 second intervals
+            request_count=2,
+            request_rate_mode=RequestRateMode.CONSTANT,
+            concurrency=1,
+        )
+
+        strategy, mock_semaphore = mock_credit_manager.create_strategy(
+            config, RequestRateStrategy, auto_return_delay=0.1
+        )
+
+        start_time = time_traveler.time()
+        await strategy._execute_single_phase(phase_stats)
+        await strategy.wait_for_tasks()
+        end_time = time_traveler.time()
+
+        # Verify all credits were sent
+        assert phase_stats.sent == 2
+
+        # Should take 1 second (no delay for first, 1 second for 2nd, and no final sleep)
+        assert end_time - start_time == 1.0
