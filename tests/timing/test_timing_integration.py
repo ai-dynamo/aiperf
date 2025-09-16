@@ -44,7 +44,9 @@ class TestTimingConfigurationIntegration:
         try:
             user_config = UserConfig(
                 endpoint=EndpointConfig(model_names=["test-model"]),
-                # Don't set request_count explicitly - should use dataset size
+                load_generator=LoadGeneratorConfig(
+                    request_count=100
+                ),  # Should be overridden
                 input=InputConfig(
                     file=filename, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
                 ),
@@ -52,7 +54,7 @@ class TestTimingConfigurationIntegration:
 
             timing_config = TimingManagerConfig.from_user_config(user_config)
 
-            # Should use dataset size (3)
+            # Should use dataset size (3), not original request_count (100) for mooncake_trace
             assert timing_config.request_count == 3
 
         finally:

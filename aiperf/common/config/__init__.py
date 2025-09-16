@@ -74,7 +74,6 @@ from aiperf.common.config.image_config import (
 )
 from aiperf.common.config.input_config import (
     InputConfig,
-    logger,
 )
 from aiperf.common.config.loader import (
     load_service_config,
@@ -100,6 +99,7 @@ from aiperf.common.config.tokenizer_config import (
 )
 from aiperf.common.config.user_config import (
     UserConfig,
+    logger,
 )
 from aiperf.common.config.worker_config import (
     WorkersConfig,

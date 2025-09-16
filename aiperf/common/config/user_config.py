@@ -21,7 +21,7 @@ from aiperf.common.enums import CustomDatasetType
 from aiperf.common.enums.endpoints_enums import EndpointServiceKind
 from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
 
-_logger = AIPerfLogger(__name__)
+logger = AIPerfLogger(__name__)
 
 
 def _should_quote_arg(x: Any) -> bool:
@@ -53,7 +53,7 @@ class UserConfig(BaseConfig):
         elif self._should_use_fixed_schedule_for_mooncake_trace():
             # Automatically enable fixed schedule for mooncake_trace with timestamps
             self._timing_mode = TimingMode.FIXED_SCHEDULE
-            _logger.info(
+            logger.info(
                 "Automatically enabling fixed schedule mode for mooncake_trace dataset with timestamps"
             )
         elif self.loadgen.request_rate is not None:
@@ -97,62 +97,31 @@ class UserConfig(BaseConfig):
         return self
 
     def get_effective_request_count(self) -> int:
-        """Get the effective request count that should be used for benchmarking.
+        """Get the effective number of requests to send.
 
-        This method determines the appropriate number of requests based on:
-        1. Custom mooncake_trace dataset size (always takes priority for trace files)
-        2. User-specified request count (for non-trace datasets)
-        3. Default request count (fallback)
+        For mooncake_trace custom datasets, always use the dataset size to ensure
+        exact trace replay. For all other scenarios, use the configured request_count.
 
         Returns:
             int: The number of requests that should be sent
-
-        Raises:
-            ValueError: If request_count is explicitly set for mooncake_trace datasets
         """
-        # For mooncake_trace datasets, reject explicit request_count and always use dataset size
+        # For mooncake_trace datasets, always use dataset size for exact replay
         if (
             self.input.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE
             and self.input.file is not None
         ):
-            # Check if user explicitly set request_count - this is not allowed for mooncake_trace
-            if "request_count" in self.loadgen.model_fields_set:
-                raise ValueError(
-                    "request_count cannot be explicitly set for mooncake_trace datasets. "
-                    "The dataset size will be used automatically."
-                )
-
-            try:
-                dataset_size = self._count_dataset_entries()
-                _logger.info(
-                    f"Using dataset size ({dataset_size}) as request count for mooncake_trace dataset"
-                )
-                return dataset_size
-            except Exception as e:
-                _logger.warning(
-                    f"Could not determine mooncake_trace dataset size: {e}. Using default request count."
-                )
-                return self.loadgen.request_count
-
-        # For other custom datasets, use dataset size if not explicitly overridden
-        if (
-            self.input.custom_dataset_type is not None
-            and self.input.file is not None
-            and "request_count" not in self.loadgen.model_fields_set
-        ):
             try:
                 dataset_size = self._count_dataset_entries()
                 if dataset_size > 0:
-                    _logger.info(
-                        f"Using dataset size ({dataset_size}) as request count for custom dataset"
-                    )
                     return dataset_size
+                else:
+                    raise ValueError("Empty mooncake_trace dataset file")
             except Exception as e:
-                _logger.warning(
-                    f"Could not determine dataset size: {e}. Using default request count."
-                )
+                raise ValueError(
+                    f"Could not read mooncake_trace dataset file: {e}"
+                ) from e
 
-        # Fallback to configured request count (explicit or default)
+        # For all other cases, use configured request count
         return self.loadgen.request_count
 
     def _should_use_fixed_schedule_for_mooncake_trace(self) -> bool:
@@ -183,7 +152,7 @@ class UserConfig(BaseConfig):
                         continue
             return False
         except (OSError, FileNotFoundError):
-            _logger.warning(
+            logger.warning(
                 f"Could not read dataset file {self.input.file} to check for timestamps"
             )
             return False
@@ -201,7 +170,7 @@ class UserConfig(BaseConfig):
             with open(self.input.file) as f:
                 return sum(1 for line in f if line.strip())
         except (OSError, FileNotFoundError) as e:
-            _logger.error(f"Cannot read dataset file {self.input.file}: {e}")
+            logger.error(f"Cannot read dataset file {self.input.file}: {e}")
             return 0
 
     endpoint: Annotated[
@@ -278,7 +247,9 @@ class UserConfig(BaseConfig):
         # Preprocess Huggingface model names that include '/' in their model name.
         if "/" in model_name:
             filtered_name = "_".join(model_name.split("/"))
+            from aiperf.common.logging import AIPerfLogger
 
+            _logger = AIPerfLogger(__name__)
             _logger.info(
                 f"Model name '{model_name}' cannot be used to create artifact "
                 f"directory. Instead, '{filtered_name}' will be used."

@@ -87,7 +87,6 @@ class TestDatasetManagerSequentialIteration:
                         input_lengths.append(
                             len(text_content.split())
                         )  # Rough approximation
-
             assert len(input_lengths) == 5
 
             # For exact verification, we need to check the sequential behavior

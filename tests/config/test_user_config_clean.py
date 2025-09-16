@@ -25,8 +25,8 @@ class TestGetEffectiveRequestCount:
         result = config.get_effective_request_count()
         assert result == 100
 
-    def test_mooncake_trace_explicit_request_count_raises_exception(self, tmp_path):
-        """Test that explicit request_count raises exception for mooncake_trace."""
+    def test_mooncake_trace_uses_dataset_size_always(self, tmp_path):
+        """Test that mooncake_trace always uses dataset size, ignoring request_count."""
         # Create a test file with 3 lines
         test_file = tmp_path / "test.jsonl"
         test_file.write_text(
@@ -35,20 +35,17 @@ class TestGetEffectiveRequestCount:
             '{"input_length": 300, "hash_ids": [3]}\n'
         )
 
-        with pytest.raises(
-            ValueError,
-            match="request_count cannot be explicitly set for mooncake_trace datasets",
-        ):
-            UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                loadgen=LoadGeneratorConfig(
-                    request_count=100
-                ),  # This should cause exception
-                input=InputConfig(
-                    file=str(test_file),
-                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-                ),
-            ).get_effective_request_count()
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            loadgen=LoadGeneratorConfig(request_count=100),  # This should be ignored
+            input=InputConfig(
+                file=str(test_file),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config.get_effective_request_count()
+        assert result == 3  # Uses dataset size, not request_count
 
     def test_mooncake_trace_uses_dataset_size_when_no_explicit_count(self, tmp_path):
         """Test that mooncake_trace uses dataset size when no explicit request_count."""
@@ -72,8 +69,8 @@ class TestGetEffectiveRequestCount:
         result = config.get_effective_request_count()
         assert result == 3  # Should use dataset size
 
-    def test_mooncake_trace_empty_file_returns_zero(self, tmp_path):
-        """Test that empty mooncake_trace file returns 0."""
+    def test_mooncake_trace_empty_file_raises_error(self, tmp_path):
+        """Test that empty mooncake_trace file raises an error."""
         test_file = tmp_path / "empty.jsonl"
         test_file.write_text("")
 
@@ -85,8 +82,8 @@ class TestGetEffectiveRequestCount:
             ),
         )
 
-        result = config.get_effective_request_count()
-        assert result == 0
+        with pytest.raises(ValueError, match="Empty mooncake_trace dataset file"):
+            config.get_effective_request_count()
 
     def test_mooncake_trace_skips_empty_lines(self, tmp_path):
         """Test that empty lines are not counted in mooncake_trace."""

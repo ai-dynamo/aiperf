@@ -20,14 +20,14 @@ class TestGetEffectiveRequestCount:
         """Test that default request count is used when no custom dataset."""
         config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            load_generator=LoadGeneratorConfig(request_count=100),
+            loadgen=LoadGeneratorConfig(request_count=100),
         )
 
         result = config.get_effective_request_count()
         assert result == 100
 
-    def test_mooncake_trace_rejects_explicit_request_count(self, tmp_path):
-        """Test that explicit request_count raises exception for mooncake_trace datasets."""
+    def test_mooncake_trace_uses_dataset_size_always(self, tmp_path):
+        """Test that mooncake_trace always uses dataset size, ignoring request_count."""
         # Create a test file with 3 lines
         test_file = tmp_path / "test.jsonl"
         test_file.write_text(
@@ -36,21 +36,17 @@ class TestGetEffectiveRequestCount:
             '{"input_length": 300, "hash_ids": [3], "timestamp": 3000}\n'
         )
 
-        with pytest.raises(
-            ValueError,
-            match="request_count cannot be explicitly set for mooncake_trace datasets",
-        ):
-            config = UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                load_generator=LoadGeneratorConfig(
-                    request_count=100
-                ),  # This should cause exception
-                input=InputConfig(
-                    file=str(test_file),
-                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-                ),
-            )
-            config.get_effective_request_count()
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            loadgen=LoadGeneratorConfig(request_count=100),  # This should be ignored
+            input=InputConfig(
+                file=str(test_file),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        result = config.get_effective_request_count()
+        assert result == 3  # Uses dataset size, not request_count
 
     def test_mooncake_trace_uses_dataset_size(self, tmp_path):
         """Test that mooncake_trace uses dataset size when no explicit request_count."""
@@ -74,8 +70,8 @@ class TestGetEffectiveRequestCount:
         result = config.get_effective_request_count()
         assert result == 3  # Dataset size should be used
 
-    def test_mooncake_trace_with_empty_file(self, tmp_path):
-        """Test behavior with empty mooncake_trace file."""
+    def test_mooncake_trace_with_empty_file_raises_error(self, tmp_path):
+        """Test that empty mooncake_trace file raises an error."""
         test_file = tmp_path / "empty.jsonl"
         test_file.write_text("")
 
@@ -87,8 +83,8 @@ class TestGetEffectiveRequestCount:
             ),
         )
 
-        result = config.get_effective_request_count()
-        assert result == 0
+        with pytest.raises(ValueError, match="Empty mooncake_trace dataset file"):
+            config.get_effective_request_count()
 
     def test_other_custom_dataset_respects_explicit_request_count(self, tmp_path):
         """Test that non-mooncake_trace custom datasets respect explicit request_count."""
@@ -97,7 +93,7 @@ class TestGetEffectiveRequestCount:
 
         config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            load_generator=LoadGeneratorConfig(request_count=75),  # Should be respected
+            loadgen=LoadGeneratorConfig(request_count=75),  # Should be respected
             input=InputConfig(
                 file=str(test_file), custom_dataset_type=CustomDatasetType.SINGLE_TURN
             ),
@@ -106,21 +102,21 @@ class TestGetEffectiveRequestCount:
         result = config.get_effective_request_count()
         assert result == 75  # Explicit request_count should be used
 
-    def test_other_custom_dataset_uses_dataset_size_when_not_explicit(self, tmp_path):
-        """Test that non-mooncake_trace custom datasets use dataset size when no explicit request_count."""
+    def test_other_custom_dataset_uses_default_when_not_explicit(self, tmp_path):
+        """Test that non-mooncake_trace custom datasets use default when no explicit request_count."""
         test_file = tmp_path / "other.jsonl"
         test_file.write_text('{"some": "data"}\n{"other": "data"}\n')
 
         config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            # No explicit request_count - should use dataset size
+            # No explicit request_count - should use default (10)
             input=InputConfig(
                 file=str(test_file), custom_dataset_type=CustomDatasetType.SINGLE_TURN
             ),
         )
 
         result = config.get_effective_request_count()
-        assert result == 2  # Dataset size should be used
+        assert result == 10  # Default should be used, not dataset size
 
 
 class TestFixedScheduleAutoDetection:
