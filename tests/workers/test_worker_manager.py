@@ -23,7 +23,7 @@ class TestMaxWorkers:
             (10, 100, None, 6),  # CPU-based limit: 10 * 0.75 - 1 = 6
             (10, 100, 4, 4),  # max_workers setting limits to 4
             (10, None, None, 1),  # Concurrency defaults to 1, which limits workers to 1
-            (10,3,None,3),  # Low concurrency (3) limits workers below CPU calculation
+            (10, 3, None, 3),  # Low concurrency (3) limits workers below CPU calculation
             (10, 8, 3, 3),  # max_workers (3) overrides higher concurrency (8)
             (10, 10, 5, 5),  # max_workers (5) overrides higher concurrency (10)
             (224, 1000, None, 32),  # High CPU count with hard cap at 32 workers
