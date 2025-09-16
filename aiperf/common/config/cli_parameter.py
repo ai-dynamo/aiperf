@@ -25,7 +25,7 @@ class DisableCLI(CLIParameter):
     This is a subclass of the CLIParameter class that is used to set a CLI parameter to disabled.
     """
 
-    def __init__(self, reason: str, *args, **kwargs):
+    def __init__(self, reason: str = "Not supported via command line", *args, **kwargs):
         super().__init__(*args, parse=False, **kwargs)
 
 
