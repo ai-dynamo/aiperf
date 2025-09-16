@@ -3,11 +3,12 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
 from aiperf.common.config import EndpointConfig, InputConfig, UserConfig
+from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import CustomDatasetType
 from aiperf.dataset.dataset_manager import DatasetManager
 
@@ -37,7 +38,7 @@ class TestDatasetManagerSequentialIteration:
         return generator
 
     async def test_sequential_iteration_order(
-        self, create_mooncake_trace_file, mock_prompt_generator
+        self, create_mooncake_trace_file, mock_prompt_generator, mock_tokenizer_cls
     ):
         """Test that custom datasets iterate sequentially, not randomly."""
         # Create a file with distinct input_lengths for easy verification
@@ -51,16 +52,19 @@ class TestDatasetManagerSequentialIteration:
         filename = create_mooncake_trace_file(entries)
 
         try:
-            user_config = UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                input=InputConfig(
-                    input_filename=filename,
-                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-                ),
-            )
+            with patch("aiperf.common.tokenizer.Tokenizer", mock_tokenizer_cls):
+                user_config = UserConfig(
+                    endpoint=EndpointConfig(model_names=["test-model"]),
+                    input=InputConfig(
+                        input_filename=filename,
+                        custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    ),
+                )
 
-            dataset_manager = DatasetManager(user_config, mock_prompt_generator)
-            await dataset_manager.configure()
+                service_config = ServiceConfig()
+                dataset_manager = DatasetManager(service_config, user_config)
+                await dataset_manager.initialize()  # Initialize the service
+                await dataset_manager.start()  # Start the service
 
             # Get conversations multiple times and verify order
             conversations = []
@@ -107,9 +111,10 @@ class TestDatasetManagerSequentialIteration:
             Path(filename).unlink(missing_ok=True)
 
     async def test_sequential_vs_random_behavior(
-        self, create_mooncake_trace_file, mock_prompt_generator
+        self, create_mooncake_trace_file, mock_prompt_generator, mock_tokenizer_cls
     ):
         """Test that custom datasets use sequential iteration while synthetic use random."""
+
         entries = [
             '{"input_length": 111, "hash_ids": [1], "timestamp": 1000}',
             '{"input_length": 222, "hash_ids": [2], "timestamp": 2000}',
@@ -127,8 +132,10 @@ class TestDatasetManagerSequentialIteration:
                 ),
             )
 
-            custom_manager = DatasetManager(custom_config, mock_prompt_generator)
-            await custom_manager.configure()
+            service_config = ServiceConfig()
+            custom_manager = DatasetManager(service_config, custom_config)
+            await custom_manager.initialize()  # Initialize the service
+            await custom_manager.start()  # Start the service
 
             # Get sessions in order for custom dataset
             custom_sessions = []
@@ -156,8 +163,10 @@ class TestDatasetManagerSequentialIteration:
                 ),
             )
 
-            synthetic_manager = DatasetManager(synthetic_config, mock_prompt_generator)
-            await synthetic_manager.configure()
+            service_config = ServiceConfig()
+            synthetic_manager = DatasetManager(service_config, synthetic_config)
+            await synthetic_manager.initialize()  # Initialize the service
+            await synthetic_manager.start()  # Start the service
 
             # The behavior should be different (random selection)
             # We test this by verifying the sequential iterator is not used
@@ -169,8 +178,12 @@ class TestDatasetManagerSequentialIteration:
         finally:
             Path(filename).unlink(missing_ok=True)
 
+    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
     async def test_sequential_iterator_wraparound(
-        self, create_mooncake_trace_file, mock_prompt_generator
+        self,
+        mock_tokenizer_from_pretrained,
+        create_mooncake_trace_file,
+        mock_prompt_generator,
     ):
         """Test that sequential iterator wraps around correctly."""
         entries = [
@@ -188,8 +201,10 @@ class TestDatasetManagerSequentialIteration:
                 ),
             )
 
-            dataset_manager = DatasetManager(user_config, mock_prompt_generator)
-            await dataset_manager.configure()
+            service_config = ServiceConfig()
+            dataset_manager = DatasetManager(service_config, user_config)
+            await dataset_manager.initialize()  # Initialize the service
+            await dataset_manager.start()  # Start the service
 
             # Get more conversations than dataset size
             session_ids = []

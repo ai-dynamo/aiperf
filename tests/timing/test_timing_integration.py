@@ -103,10 +103,10 @@ class TestTimingConfigurationIntegration:
             Path(filename).unlink(missing_ok=True)
 
     def test_non_custom_dataset_uses_original_count(self):
-        """Test that non-custom datasets use original request count."""
+        """Test that non-custom datasets use explicitly configured request_count."""
         user_config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            load_generator=LoadGeneratorConfig(request_count=42),
+            loadgen=LoadGeneratorConfig(request_count=42),
             # No custom dataset configuration
         )
 
@@ -129,10 +129,9 @@ class TestTimingConfigurationIntegration:
                 ),
             )
 
-            timing_config = TimingManagerConfig.from_user_config(user_config)
-
-            # Should use default since empty file
-            assert timing_config.request_count == 10
+            # Should raise an error when trying to get effective request count
+            with pytest.raises(ValueError, match="Empty mooncake_trace dataset file"):
+                TimingManagerConfig.from_user_config(user_config)
 
         finally:
             Path(filename).unlink(missing_ok=True)
