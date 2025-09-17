@@ -341,7 +341,7 @@ def main() -> None:
             metric_values = {
                 "Power Usage": (record.gpu_power_usage, "W"),
                 "Power Limit": (record.gpu_power_limit, "W"),
-                "Energy Consumption": (record.energy_consumption, "mJ"),
+                "Energy Consumption": (record.energy_consumption, "MJ"),
                 "GPU Utilization": (record.gpu_utilization, "%"),
                 "Memory Used": (record.gpu_memory_used, "GB"),
                 "Total Memory": (record.total_gpu_memory, "GB"),

@@ -409,7 +409,7 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
             
             if energy_metrics:
                 energy_metric = energy_metrics[0]
-                # 1000000 mJ should be scaled to 0.001 MJ (1000000 * 1e-9)
+                # Verify energy scaling: 1000000 mJ scaled to 0.001 MJ
                 expected_mj = 1000000 * 1e-9  # mJ to MJ scaling factor
                 assert abs(energy_metric.avg - expected_mj) < 0.001, f"Energy scaling incorrect: expected {expected_mj:.6f} MJ, got {energy_metric.avg}"
-                assert energy_metric.unit == "mJ", "Energy metric should have mJ unit"
+                assert energy_metric.unit == "MJ", "Energy metric should have MJ unit"
