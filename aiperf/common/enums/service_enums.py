@@ -44,6 +44,10 @@ class ServiceType(CaseInsensitiveStrEnum):
     RECORDS_MANAGER = "records_manager"
     WORKER_MANAGER = "worker_manager"
     WORKER = "worker"
+    TELEMETRY_MANAGER = "telemetry_manager"
+
+    # TODO: @ilana-n Remove when CLI argument is added to AI perf (–server-metrics-url) and telemetry_data_collector.py no longer requires local testing via main().
+    TELEMETRY_COLLECTOR = "telemetry_collector"
 
     # For testing purposes only
     TEST = "test_service"

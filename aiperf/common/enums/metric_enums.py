@@ -195,6 +195,22 @@ class GenericMetricUnit(BaseMetricUnit):
     TOKENS = _unit("tokens")
     RATIO = _unit("ratio")
     USER = _unit("user")
+    PERCENT = _unit("%")
+
+
+class PowerMetricUnit(BaseMetricUnit):
+    """Defines power units for metrics."""
+
+    WATT = _unit("W")
+    MILLIWATT = _unit("mW")
+
+
+class EnergyMetricUnit(BaseMetricUnit):
+    """Defines energy units for metrics."""
+
+    JOULE = _unit("J")
+    MILLIJOULE = _unit("mJ")
+    MEGAJOULE = _unit("MJ")
 
 
 class MetricDateTimeUnit(BaseMetricUnit):
@@ -300,6 +316,11 @@ class MetricType(CaseInsensitiveStrEnum):
     DERIVED = "derived"
     """Metrics that are purely derived from other metrics as a summary, and do not require per-request values.
     Examples: request throughput, output token throughput, etc."""
+
+    TELEMETRY = "telemetry"
+    """Metrics that collect telemetry data from an external source like a DCGM exporter.
+    These metrics are continuously collected during benchmark execution and then aggregated for added display.
+    Examples: GPU power usage, memory utilization, GPU utilization, etc."""
 
 
 class MetricValueTypeInfo(BasePydanticEnumInfo):
@@ -425,6 +446,9 @@ class MetricFlags(Flag):
     EXPERIMENTAL = (1 << 9) | HIDDEN
     """Metrics that are experimental and are not yet ready for production use, and may be subject to change.
     This inherently means that the metric is HIDDEN as well."""
+
+    GPU_TELEMETRY = 1 << 10
+    """Metrics that collect GPU telemetry data such as power usage, memory, and utilization."""
 
     STREAMING_TOKENS_ONLY = STREAMING_ONLY | PRODUCES_TOKENS_ONLY
     """Metrics that are only applicable to streamed responses and token-based endpoints.

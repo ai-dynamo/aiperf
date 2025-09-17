@@ -23,6 +23,9 @@ from aiperf.metrics.base_metric import (
 from aiperf.metrics.base_record_metric import (
     BaseRecordMetric,
 )
+from aiperf.metrics.base_telemetry_metric import (
+    BaseTelemetryMetric,
+)
 from aiperf.metrics.derived_sum_metric import (
     DerivedSumMetric,
     RecordMetricT,
@@ -45,6 +48,7 @@ __all__ = [
     "BaseMetric",
     "BaseMetricDict",
     "BaseRecordMetric",
+    "BaseTelemetryMetric",
     "DerivedSumMetric",
     "MetricArray",
     "MetricDictValueTypeVarT",
