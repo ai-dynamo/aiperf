@@ -31,11 +31,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: htmlcov
-          path: htmlcov
+          path: ./htmlcov
 
       - name: Deploy coverage report to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: htmlcov
+          publish_dir: ./htmlcov
           publish_branch: gh-pages
