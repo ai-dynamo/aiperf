@@ -33,6 +33,9 @@ jobs:
           name: htmlcov
           path: htmlcov
 
+      - name: List files in htmlcov
+        run: ls -R htmlcov
+
       - name: Deploy coverage report to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
