@@ -141,9 +141,6 @@ class MetricArray(Generic[MetricValueTypeVarT]):
             count=self._size,
         )
 
-
-
-# New: PerGpuMetricArray for storing per-GPU metric arrays
 class PerGpuMetricArray(Generic[MetricValueTypeVarT]):
     """Stores a MetricArray for each GPU id."""
 
@@ -169,8 +166,6 @@ class PerGpuMetricArray(Generic[MetricValueTypeVarT]):
             for gpu_id, arr in self._gpu_arrays.items()
         }
 
-
-# New: MetricTelemetryDict for storing per-GPU metric arrays for telemetry metrics
 class MetricTelemetryDict(BaseMetricDict[PerGpuMetricArray]):
     """
     A dict of telemetry metrics, where each value is a PerGpuMetricArray.
