@@ -99,17 +99,19 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
             BaseAggregateMetric,
             BaseDerivedMetric,
             BaseRecordMetric,
+            BaseTelemetryMetric,
         )
 
-        # Enforce that concrete subclasses are a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric
+        # Enforce that concrete subclasses are a subclass of BaseRecordMetric, BaseAggregateMetric, BaseDerivedMetric, or BaseTelemetryMetric
         valid_base_classes = {
             BaseRecordMetric,
             BaseAggregateMetric,
             BaseDerivedMetric,
+            BaseTelemetryMetric,
         }
         if not any(issubclass(cls, base) for base in valid_base_classes):
             raise TypeError(
-                f"Concrete metric class {cls.__name__} must be a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric"
+                f"Concrete metric class {cls.__name__} must be a subclass of BaseRecordMetric, BaseAggregateMetric, BaseDerivedMetric, or BaseTelemetryMetric"
             )
 
     @classmethod

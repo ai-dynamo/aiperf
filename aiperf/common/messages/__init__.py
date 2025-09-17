@@ -57,6 +57,9 @@ from aiperf.common.messages.inference_messages import (
     ParsedInferenceResultsMessage,
     RealtimeMetricsMessage,
 )
+from aiperf.common.messages.telemetry_messages import (
+    TelemetryRecordsMessage,
+)
 from aiperf.common.messages.progress_messages import (
     AllRecordsReceivedMessage,
     ProcessingStatsMessage,
@@ -130,6 +133,7 @@ __all__ = [
     "SpawnWorkersCommand",
     "StatusMessage",
     "TargetedServiceMessage",
+    "TelemetryRecordsMessage",
     "WorkerHealthMessage",
     "WorkerStatusSummaryMessage",
 ]
