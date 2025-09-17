@@ -25,17 +25,17 @@ jobs:
       - name: Run tests and collect coverage
         run: |
           source .venv/bin/activate
-          pytest --cov=aiperf --cov-report=html:coverage_html
+          pytest --cov=aiperf --cov-report=html:htmlcov
 
       - name: Upload coverage report as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-html
-          path: coverage_html
+          name: htmlcov
+          path: htmlcov
 
       - name: Deploy coverage report to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: coverage_html
+          publish_dir: htmlcov
           publish_branch: gh-pages
