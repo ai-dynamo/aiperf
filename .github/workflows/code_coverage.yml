@@ -4,8 +4,6 @@ name: Coverage Report
 
 on:
   push:
-    branches:
-      - main
 
 jobs:
   coverage:
