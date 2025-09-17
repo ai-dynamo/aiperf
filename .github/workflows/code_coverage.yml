@@ -20,12 +20,10 @@ jobs:
         run: |
           uv venv --python 3.10
           source .venv/bin/activate
-          uv pip install -r requirements.txt
-          uv pip install pytest pytest-cov
+          uv pip install -e ".[dev]"
 
       - name: Run tests and collect coverage
         run: |
-          source .venv/bin/activate
           pytest --cov=aiperf --cov-report=html:coverage_html
 
       - name: Upload coverage report as artifact
