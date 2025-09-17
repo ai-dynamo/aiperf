@@ -24,6 +24,7 @@ jobs:
 
       - name: Run tests and collect coverage
         run: |
+          source .venv/bin/activate
           pytest --cov=aiperf --cov-report=html:coverage_html
 
       - name: Upload coverage report as artifact
