@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Coverage Report
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Set up Python and dependencies with uv
+        run: |
+          uv venv --python 3.10
+          source .venv/bin/activate
+          uv pip install -r requirements.txt
+          uv pip install pytest pytest-cov
+
+      - name: Run tests and collect coverage
+        run: |
+          source .venv/bin/activate
+          pytest --cov=. --cov-report=html:coverage_html
+
+      - name: Upload coverage report as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: coverage_html
+
+      - name: Deploy coverage report to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: coverage_html
+          publish_branch: gh-pages
