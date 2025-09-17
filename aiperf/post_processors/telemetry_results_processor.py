@@ -31,7 +31,7 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
         self._metric_units = {
             "gpu_power_usage": "W",
             "gpu_power_limit": "W", 
-            "energy_consumption": "mJ",
+            "energy_consumption": "MJ",
             "gpu_utilization": "%",
             "gpu_memory_used": "GB",
             "total_gpu_memory": "GB",

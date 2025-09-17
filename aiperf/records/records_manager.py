@@ -51,7 +51,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.telemetry_models import TelemetryRecord
-from aiperf.common.protocols import ResultsProcessorProtocol, ServiceProtocol
+from aiperf.common.protocols import ResultsProcessorProtocol, TelemetryResultsProcessorProtocol, ServiceProtocol
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
@@ -108,10 +108,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._results_processors: list[ResultsProcessorProtocol] = []
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
-        self._telemetry_results_processors: list = []  # TelemetryResultsProcessorProtocol instances
-        
-        # Import locally to avoid circular dependencies
-        from aiperf.post_processors.telemetry_results_processor import TelemetryResultsProcessor
+        self._telemetry_results_processors: list[TelemetryResultsProcessorProtocol] = []
         
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
             results_processor = ResultsProcessorFactory.create_instance(
@@ -127,7 +124,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             # Add to appropriate lists based on processor type
             self._results_processors.append(results_processor)
             
-            if isinstance(results_processor, TelemetryResultsProcessor):
+            if isinstance(results_processor, TelemetryResultsProcessorProtocol):
                 self._telemetry_results_processors.append(results_processor)
             else:
                 self._metric_results_processors.append(results_processor)
