@@ -19,24 +19,6 @@ from aiperf.timing.config import TimingManagerConfig
 class TestTimingConfigurationIntegration:
     """Test timing configuration integration with effective request count."""
 
-    @pytest.fixture
-    def create_mooncake_trace_file(self):
-        """Create a temporary mooncake trace file."""
-
-        def _create_file(entry_count, include_timestamps=False):
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".jsonl", delete=False
-            ) as f:
-                for i in range(entry_count):
-                    if include_timestamps:
-                        entry = f'{{"input_length": {100 + i * 50}, "hash_ids": [{i}], "timestamp": {1000 + i * 1000}}}'
-                    else:
-                        entry = f'{{"input_length": {100 + i * 50}, "hash_ids": [{i}]}}'
-                    f.write(f"{entry}\n")
-                return f.name
-
-        return _create_file
-
     def test_effective_request_count_in_timing_config(self, create_mooncake_trace_file):
         """Test that TimingManagerConfig uses effective request count from dataset."""
         filename = create_mooncake_trace_file(3)  # 3 entries

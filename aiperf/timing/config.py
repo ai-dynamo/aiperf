@@ -35,7 +35,7 @@ class TimingManagerConfig(AIPerfBaseModel):
             concurrency=user_config.loadgen.concurrency,
             request_rate=user_config.loadgen.request_rate,
             request_rate_mode=user_config.loadgen.request_rate_mode,
-            request_count=user_config.get_effective_request_count(),  # Use effective request count for custom datasets
+            request_count=user_config.get_effective_request_count(),
             warmup_request_count=user_config.loadgen.warmup_request_count,
             benchmark_duration=user_config.loadgen.benchmark_duration,
             benchmark_grace_period=user_config.loadgen.benchmark_grace_period,

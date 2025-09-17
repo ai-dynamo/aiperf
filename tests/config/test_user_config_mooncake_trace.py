@@ -8,8 +8,6 @@ This module tests:
 1. get_effective_request_count() - request count logic for mooncake_trace vs other datasets
 2. _should_use_fixed_schedule_for_mooncake_trace() - timestamp detection for scheduling
 3. Integration with existing UserConfig functionality
-
-All tests use proper mocking to avoid file I/O dependencies.
 """
 
 from unittest.mock import mock_open, patch
@@ -42,7 +40,6 @@ class TestMooncakeTraceRequestCount:
         """Test that default request count is used when no explicit count."""
         config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            # Uses default loadgen with request_count=10
         )
 
         result = config.get_effective_request_count()
@@ -50,8 +47,8 @@ class TestMooncakeTraceRequestCount:
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
-    def test_mooncake_trace_uses_dataset_size_always(self, mock_is_file, mock_exists):
-        """Test that mooncake_trace always uses dataset size, never request_count."""
+    def test_mooncake_trace_uses_dataset_size(self, mock_is_file, mock_exists):
+        """Test that mooncake_trace uses dataset size."""
         mock_file_content = (
             '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}\n'
             '{"input_length": 200, "hash_ids": [2], "timestamp": 2000}\n'
@@ -69,7 +66,7 @@ class TestMooncakeTraceRequestCount:
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
             result = config.get_effective_request_count()
-            assert result == 3  # Dataset size, not configured count
+            assert result == 3
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
@@ -157,7 +154,7 @@ class TestMooncakeTraceRequestCount:
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
             result = config.get_effective_request_count()
-            assert result == 75  # Always uses configured count for non-mooncake_trace
+            assert result == 75
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
@@ -167,7 +164,6 @@ class TestMooncakeTraceRequestCount:
 
         config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            # No explicit loadgen - uses default request_count=10
             input=InputConfig(
                 file="/fake/path/other.jsonl",
                 custom_dataset_type=CustomDatasetType.SINGLE_TURN,
@@ -176,7 +172,7 @@ class TestMooncakeTraceRequestCount:
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
             result = config.get_effective_request_count()
-            assert result == 10  # Uses default count, not dataset size
+            assert result == 10
 
 
 class TestMooncakeTraceTimingDetection:
@@ -268,76 +264,185 @@ class TestMooncakeTraceTimingDetection:
             result = config._should_use_fixed_schedule_for_mooncake_trace()
             assert result is False
 
-    def test_no_file_no_fixed_schedule(self):
-        """Test behavior when no file is specified."""
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE),
-        )
 
-        result = config._should_use_fixed_schedule_for_mooncake_trace()
-        assert result is False
+class TestMooncakeTraceFixedScheduleValidation:
+    """Test validation that all entries have timestamps when fixed schedule is enabled."""
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
-    def test_mixed_entries_some_with_timestamps(self, mock_is_file, mock_exists):
-        """Test file with mix of entries with/without timestamps."""
+    def test_fixed_schedule_explicit_all_entries_valid(self, mock_is_file, mock_exists):
+        """Test that explicit fixed schedule succeeds when all entries have timestamps."""
+        mock_file_content = (
+            '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}\n'
+            '{"input_length": 200, "hash_ids": [2], "timestamp": 2000}\n'
+            '{"input_length": 300, "hash_ids": [3], "timestamp": 3000}\n'
+        )
+
+        with patch("builtins.open", mock_open(read_data=mock_file_content)):
+            config = UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(
+                    file="/fake/path/all_timestamps.jsonl",
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    fixed_schedule=True,  # Explicitly enable fixed schedule
+                ),
+            )
+            assert config._timing_mode.name == "FIXED_SCHEDULE"
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_fixed_schedule_explicit_missing_timestamps_raises_error(
+        self, mock_is_file, mock_exists
+    ):
+        """Test that explicit fixed schedule fails when some entries lack timestamps."""
+        mock_file_content = (
+            '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}\n'
+            '{"input_length": 200, "hash_ids": [2]}\n'  # No timestamp - line 2
+            '{"input_length": 300, "hash_ids": [3], "timestamp": 3000}\n'
+            '{"input_length": 400, "hash_ids": [4]}\n'  # No timestamp - line 4
+        )
+
+        with (
+            patch("builtins.open", mock_open(read_data=mock_file_content)),
+            pytest.raises(
+                ValueError,
+                match=r"Fixed schedule mode requires all entries to have timestamps.*Found 2 entries without timestamps.*lines: 2, 4",
+            ),
+        ):
+            UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(
+                    file="/fake/path/mixed_timestamps.jsonl",
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    fixed_schedule=True,
+                ),
+            )
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_fixed_schedule_auto_missing_timestamps_raises_error(
+        self, mock_is_file, mock_exists
+    ):
+        """Test that auto-enabled fixed schedule fails when some entries lack timestamps."""
         mock_file_content = (
             '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}\n'
             '{"input_length": 200, "hash_ids": [2]}\n'  # No timestamp
             '{"input_length": 300, "hash_ids": [3], "timestamp": 3000}\n'
         )
 
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
-                file="/fake/path/mixed.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+        with (
+            patch("builtins.open", mock_open(read_data=mock_file_content)),
+            pytest.raises(
+                ValueError,
+                match=r"Fixed schedule mode requires all entries to have timestamps",
             ),
-        )
-
-        with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config._should_use_fixed_schedule_for_mooncake_trace()
-            # Should return True if ANY valid entry has timestamps
-            assert result is True
+        ):
+            UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(
+                    file="/fake/path/mixed_timestamps.jsonl",
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    # fixed_schedule not explicitly set - should auto-enable and then fail validation
+                ),
+            )
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
-    def test_invalid_json_lines_handled_gracefully(self, mock_is_file, mock_exists):
-        """Test that invalid JSON lines don't crash detection."""
+    def test_fixed_schedule_invalid_json_raises_error(self, mock_is_file, mock_exists):
+        """Test that invalid JSON entries are treated as missing timestamps."""
         mock_file_content = (
             '{"input_length": 100, "hash_ids": [1], "timestamp": 1000}\n'
-            "invalid json line\n"  # This should be skipped
-            '{"input_length": 200, "hash_ids": [2], "timestamp": 2000}\n'
+            "invalid json line\n"  # Invalid JSON - line 2
+            '{"input_length": 300, "hash_ids": [3], "timestamp": 3000}\n'
         )
 
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
-                file="/fake/path/invalid.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+        with (
+            patch("builtins.open", mock_open(read_data=mock_file_content)),
+            pytest.raises(
+                ValueError,
+                match=r"Fixed schedule mode requires all entries to have timestamps.*Found 1 entries without timestamps.*lines: 2",
             ),
-        )
-
-        with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config._should_use_fixed_schedule_for_mooncake_trace()
-            # Should still detect timestamps from valid lines
-            assert result is True
+        ):
+            UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(
+                    file="/fake/path/invalid_json.jsonl",
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    fixed_schedule=True,
+                ),
+            )
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
-    def test_file_read_error_handled_gracefully(self, mock_is_file, mock_exists):
-        """Test that file read errors are handled gracefully."""
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
-                file="/fake/path/test.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-            ),
+    def test_fixed_schedule_many_missing_timestamps_limits_error_display(
+        self, mock_is_file, mock_exists
+    ):
+        """Test that error message limits the number of line numbers displayed."""
+        # Create 10 lines, all without timestamps
+        mock_file_content = (
+            "\n".join(
+                [
+                    f'{{"input_length": {100 + i * 10}, "hash_ids": [{i}]}}'
+                    for i in range(10)
+                ]
+            )
+            + "\n"
         )
 
-        # Mock the file reading to raise an exception
-        with patch("builtins.open", side_effect=OSError("File read error")):
-            result = config._should_use_fixed_schedule_for_mooncake_trace()
-            # Should return False on read errors, not crash
-            assert result is False
+        with (
+            patch("builtins.open", mock_open(read_data=mock_file_content)),
+            pytest.raises(ValueError) as exc_info,
+        ):
+            UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(
+                    file="/fake/path/many_missing.jsonl",
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    fixed_schedule=True,
+                ),
+            )
+
+            error_message = str(exc_info.value)
+            assert "Found 10 entries without timestamps" in error_message
+            assert "lines: 1, 2, 3, 4, 5 (and 5 more)" in error_message
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_fixed_schedule_non_mooncake_trace_no_validation(
+        self, mock_is_file, mock_exists
+    ):
+        """Test that non-mooncake_trace datasets don't trigger timestamp validation."""
+        # Should not raise an error even though we're using fixed schedule
+        # because it's not a mooncake_trace dataset
+        with patch("builtins.open", mock_open(read_data="")):
+            config = UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(
+                    file="/fake/path/non_mooncake.jsonl",  # Need file for fixed_schedule
+                    custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+                    fixed_schedule=True,
+                ),
+            )
+            assert config._timing_mode.name == "FIXED_SCHEDULE"
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_no_fixed_schedule_no_validation(self, mock_is_file, mock_exists):
+        """Test that non-fixed-schedule modes don't trigger validation."""
+        mock_file_content = (
+            '{"input_length": 100, "hash_ids": [1]}\n'  # No timestamps
+            '{"input_length": 200, "hash_ids": [2]}\n'
+        )
+
+        # Should not perform validation when not using fixed schedule
+        with patch("builtins.open", mock_open(read_data=mock_file_content)):
+            config = UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(
+                    file="/fake/path/mooncake_no_schedule.jsonl",
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    # fixed_schedule=False (default)
+                ),
+                loadgen=LoadGeneratorConfig(request_rate=10.0),  # Use request rate mode
+            )
+            assert config._timing_mode.name == "REQUEST_RATE"

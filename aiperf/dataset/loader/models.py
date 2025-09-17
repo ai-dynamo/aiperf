@@ -152,10 +152,10 @@ class MooncakeTrace(AIPerfBaseModel):
     See https://github.com/kvcache-ai/Mooncake for more details.
 
     Examples:
-    - With input_length: {"input_length": 10, "output_length": 4, "hash_ids": [123, 456]}
-    - With text_input: {"text_input": "Hello world", "output_length": 4}
     - Minimal: {"input_length": 10, "hash_ids": [123]}
-    - With timestamp: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
+    - With input_length: {"input_length": 10, "output_length": 4}
+    - With text_input: {"text_input": "Hello world", "output_length": 4}
+    - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
     """
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
@@ -183,9 +183,9 @@ class MooncakeTrace(AIPerfBaseModel):
         if self.input_length is None and self.text_input is None:
             raise ValueError("Either 'input_length' or 'text_input' must be provided")
 
-        if self.input_length is not None and self.hash_ids is None:
+        if self.input_length is None and self.hash_ids is not None:
             raise ValueError(
-                "'hash_ids' must be provided when 'input_length' is specified"
+                "'input_length' must be provided when 'hash_ids' is specified"
             )
 
         return self

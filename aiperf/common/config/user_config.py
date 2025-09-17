@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Annotated, Any
 
+from orjson import JSONDecodeError
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
@@ -20,8 +21,9 @@ from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.enums.endpoints_enums import EndpointServiceKind
 from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
+from aiperf.common.utils import load_json_str
 
-logger = AIPerfLogger(__name__)
+_logger = AIPerfLogger(__name__)
 
 
 def _should_quote_arg(x: Any) -> bool:
@@ -51,9 +53,8 @@ class UserConfig(BaseConfig):
         if self.input.fixed_schedule:
             self._timing_mode = TimingMode.FIXED_SCHEDULE
         elif self._should_use_fixed_schedule_for_mooncake_trace():
-            # Automatically enable fixed schedule for mooncake_trace with timestamps
             self._timing_mode = TimingMode.FIXED_SCHEDULE
-            logger.info(
+            _logger.info(
                 "Automatically enabling fixed schedule mode for mooncake_trace dataset with timestamps"
             )
         elif self.loadgen.request_rate is not None:
@@ -71,6 +72,9 @@ class UserConfig(BaseConfig):
                 self.loadgen.concurrency = 1
             self._timing_mode = TimingMode.REQUEST_RATE
             self.loadgen.request_rate_mode = RequestRateMode.CONCURRENCY_BURST
+
+        self._validate_all_entries_have_timestamps_for_fixed_schedule()
+
         return self
 
     @model_validator(mode="after")
@@ -105,11 +109,7 @@ class UserConfig(BaseConfig):
         Returns:
             int: The number of requests that should be sent
         """
-        # For mooncake_trace datasets, always use dataset size for exact replay
-        if (
-            self.input.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE
-            and self.input.file is not None
-        ):
+        if self.input.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE:
             try:
                 dataset_size = self._count_dataset_entries()
                 if dataset_size > 0:
@@ -121,7 +121,6 @@ class UserConfig(BaseConfig):
                     f"Could not read mooncake_trace dataset file: {e}"
                 ) from e
 
-        # For all other cases, use configured request count
         return self.loadgen.request_count
 
     def _should_use_fixed_schedule_for_mooncake_trace(self) -> bool:
@@ -130,32 +129,71 @@ class UserConfig(BaseConfig):
         Returns:
             bool: True if fixed schedule should be enabled for this mooncake trace
         """
-        if (
-            self.input.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
-            or not self.input.file
-        ):
+        if self.input.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE:
+            return False
+
+        if not self.input.file:
             return False
 
         try:
-            # Check if any entries in the file have timestamps
             with open(self.input.file) as f:
                 for line in f:
                     if not (line := line.strip()):
                         continue
                     try:
-                        import json
-
-                        data = json.loads(line)
+                        data = load_json_str(line)
                         if "timestamp" in data and data["timestamp"] is not None:
                             return True
-                    except (json.JSONDecodeError, KeyError):
+                    except (JSONDecodeError, KeyError):
                         continue
             return False
         except (OSError, FileNotFoundError):
-            logger.warning(
+            _logger.warning(
                 f"Could not read dataset file {self.input.file} to check for timestamps"
             )
             return False
+
+    def _validate_all_entries_have_timestamps_for_fixed_schedule(self) -> None:
+        """Validate that all entries have timestamps when fixed schedule is enabled.
+
+        Raises:
+            ValueError: If fixed schedule is enabled but some entries lack timestamps
+        """
+        if (
+            self._timing_mode != TimingMode.FIXED_SCHEDULE
+            or self.input.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
+        ):
+            return
+
+        try:
+            entries_without_timestamps = []
+            line_number = 0
+
+            with open(self.input.file) as f:
+                for line in f:
+                    line_number += 1
+                    if not (line := line.strip()):
+                        continue  # Skip empty lines
+
+                    try:
+                        data = load_json_str(line)
+                        if "timestamp" not in data or data["timestamp"] is None:
+                            entries_without_timestamps.append(line_number)
+                    except (JSONDecodeError, KeyError):
+                        entries_without_timestamps.append(line_number)
+
+            if entries_without_timestamps:
+                error_lines = ", ".join(map(str, entries_without_timestamps[:5]))
+                if len(entries_without_timestamps) > 5:
+                    error_lines += f" (and {len(entries_without_timestamps) - 5} more)"
+
+                raise ValueError(
+                    f"Fixed schedule mode requires all entries to have timestamps. "
+                    f"Found {len(entries_without_timestamps)} entries without timestamps "
+                    f"at lines: {error_lines}."
+                )
+        except (OSError, FileNotFoundError) as e:
+            _logger.warning(f"Could not validate timestamps in {self.input.file}: {e}")
 
     def _count_dataset_entries(self) -> int:
         """Count the number of valid entries in a custom dataset file.
@@ -170,7 +208,7 @@ class UserConfig(BaseConfig):
             with open(self.input.file) as f:
                 return sum(1 for line in f if line.strip())
         except (OSError, FileNotFoundError) as e:
-            logger.error(f"Cannot read dataset file {self.input.file}: {e}")
+            _logger.error(f"Cannot read dataset file {self.input.file}: {e}")
             return 0
 
     endpoint: Annotated[

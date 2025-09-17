@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -14,20 +13,6 @@ from aiperf.dataset.dataset_manager import DatasetManager
 
 class TestDatasetManagerSequentialIteration:
     """Test sequential iteration behavior for custom datasets."""
-
-    @pytest.fixture
-    def create_mooncake_trace_file(self):
-        """Create a temporary mooncake trace file with distinct inputs."""
-
-        def _create_file(entries):
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".jsonl", delete=False
-            ) as f:
-                for entry in entries:
-                    f.write(f"{entry}\n")
-                return f.name
-
-        return _create_file
 
     @pytest.fixture
     def mock_prompt_generator(self):

@@ -63,7 +63,6 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
 
                 trace_data = MooncakeTrace.model_validate_json(line)
 
-                # Only check timestamps if they exist
                 if (
                     trace_data.timestamp is not None
                     and not self._timestamp_within_offsets(trace_data.timestamp)
@@ -84,9 +83,7 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
 
         return data
 
-    def _timestamp_within_offsets(self, timestamp: int | None) -> bool:
-        if timestamp is None:
-            return True  # No timestamp means no offset filtering
+    def _timestamp_within_offsets(self, timestamp: int) -> bool:
         return (self._start_offset is None or timestamp >= self._start_offset) and (
             self._end_offset is None or timestamp <= self._end_offset
         )
@@ -108,10 +105,8 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
             for trace in traces:
                 # Handle both text_input and input_length formats
                 if trace.text_input is not None:
-                    # Use the provided text directly
                     prompt = trace.text_input
                 else:
-                    # Generate synthetic text based on input_length
                     prompt = self.prompt_generator.generate(
                         mean=trace.input_length,
                         stddev=0,
@@ -120,7 +115,7 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
                     )
 
                 turn = Turn(
-                    timestamp=trace.timestamp,  # Will be None if not provided
+                    timestamp=trace.timestamp,
                     texts=[Text(name="text", contents=[prompt])],
                     max_tokens=trace.output_length,
                 )

@@ -99,7 +99,6 @@ from aiperf.common.config.tokenizer_config import (
 )
 from aiperf.common.config.user_config import (
     UserConfig,
-    logger,
 )
 from aiperf.common.config.worker_config import (
     WorkersConfig,
@@ -169,7 +168,6 @@ __all__ = [
     "custom_enum_converter",
     "load_service_config",
     "load_user_config",
-    "logger",
     "parse_file",
     "parse_service_types",
     "parse_str_or_csv_list",

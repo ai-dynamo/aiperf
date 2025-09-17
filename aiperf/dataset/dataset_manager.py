@@ -4,6 +4,7 @@ import asyncio
 import random
 import time
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.decorators import implements_protocol
@@ -34,6 +35,7 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader import ShareGPTLoader
 
 DATASET_CONFIGURATION_TIMEOUT = 300.0
+_logger = AIPerfLogger(__name__)
 
 
 @implements_protocol(ServiceProtocol)
@@ -67,8 +69,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             self.user_config.input.random_seed
         )
         self.dataset_configured = asyncio.Event()
-
-        # For sequential iteration through custom datasets
         self._sequential_iterator_index = 0
         self._use_sequential_iteration = False
 
@@ -170,9 +170,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Return any conversation from the dataset based on the user specified method."""
 
         if self._use_sequential_iteration:
-            # For custom datasets, iterate sequentially to ensure each entry is used exactly once
             if self._sequential_iterator_index >= len(self._session_ids_cache):
                 # Reset iterator if we've gone through all conversations
+                _logger.warning(
+                    "All conversations have been used. Resetting sequential iterator to start over."
+                )
                 self._sequential_iterator_index = 0
 
             session_id = self._session_ids_cache[self._sequential_iterator_index]
@@ -185,7 +187,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 lambda: f"Sending sequential conversation response with id: {conversation.session_id}",
             )
         else:
-            # Default random sampling behavior for synthetic datasets
+            # TODO: Implement the user specified method (random, round robin, etc.)
             session_id = self._conversation_query_random.choice(self._session_ids_cache)
             conversation = self.dataset[session_id]
             self.trace_or_debug(
