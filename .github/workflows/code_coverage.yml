@@ -4,6 +4,7 @@ name: Coverage Report
 
 on:
   push:
+  pull_request:
 
 jobs:
   coverage:
