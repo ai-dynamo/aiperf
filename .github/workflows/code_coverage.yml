@@ -37,8 +37,6 @@ jobs:
         run: ls -R htmlcov
 
       - name: Deploy coverage report to GitHub Pages
-        run: |
-          pwd && ls -la .
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
