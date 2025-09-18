@@ -25,9 +25,9 @@ jobs:
       - name: Run tests and collect coverage
         run: |
           source .venv/bin/activate
-          pytest --cov=aiperf --cov-branch --cov-report=xml
+            pytest --cov=aiperf --cov-branch --cov-report=xml
 
-            - name: Upload results to Codecov
+      - name: Upload results to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
