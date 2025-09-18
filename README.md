@@ -57,7 +57,7 @@ INSTALLATION
 
 ## Installation
 ```
-pip install git+https://github.com/ai-dynamo/aiperf.git
+pip install aiperf
 ```
 
 </br>
