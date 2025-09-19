@@ -4,9 +4,8 @@ from abc import ABC, abstractmethod
 from typing import Generic
 
 from aiperf.common.enums import MetricType, MetricValueTypeVarT
-from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.common.models import TelemetryRecord
 from aiperf.metrics.base_metric import BaseMetric
-from aiperf.metrics.metric_dicts import MetricTelemetryDict
 
 
 class BaseTelemetryMetric(
@@ -21,7 +20,7 @@ class BaseTelemetryMetric(
         tag = "gpu_power_usage"
         header = "GPU Power Usage"
         unit = MetricUnitT.WATT
-        
+
         def _extract_value(self, record: TelemetryRecord) -> float | None:
             return record.gpu_power_usage
     ```
@@ -39,7 +38,7 @@ class BaseTelemetryMetric(
             if value is not None:
                 gpu_values.setdefault(record.gpu_index, []).append(value)
         return gpu_values
-    
+
     @abstractmethod
     def _extract_value(self, record: TelemetryRecord) -> MetricValueTypeVarT | None:
         """Extract metric value from telemetry record.

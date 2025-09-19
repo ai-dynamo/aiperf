@@ -1,42 +1,43 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
-import requests
 import time
 from unittest.mock import Mock, patch
-from threading import Event
-from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
+
+import pytest
+import requests
+
 from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
 
 
 class TestTelemetryDataCollectorCore:
     """Test core TelemetryDataCollector functionality.
-    
+
     This test class focuses exclusively on the data collection, parsing,
     and lifecycle management of the TelemetryDataCollector. It does NOT
     test metric extraction logic or model validation (those are in separate files).
-    
+
     Key areas tested:
     - Initialization and configuration
-    - DCGM HTTP endpoint communication  
+    - DCGM HTTP endpoint communication
     - Prometheus metric parsing
     - Background collection lifecycle
     - Error handling and resilience
     """
-    
+
     def setup_method(self):
         """Set up test fixtures for callback testing."""
 
         self.records_received = []
         self.errors_received = []
-        
+
         def record_callback(records):
             self.records_received.extend(records)
-            
+
         def error_callback(error):
             self.errors_received.append(error)
-            
+
         self.record_callback = record_callback
         self.error_callback = error_callback
 
@@ -49,13 +50,13 @@ class TestTelemetryDataCollectorCore:
         """
 
         collector = TelemetryDataCollector(
-            dcgm_url="http://localhost:9401/metrics", 
+            dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
             record_callback=self.record_callback,
             error_callback=self.error_callback,
-            collector_id="test_collector"
+            collector_id="test_collector",
         )
-        
+
         assert collector._dcgm_url == "http://localhost:9401/metrics"
         assert collector._collection_interval == 0.1
         assert collector._collector_id == "test_collector"
@@ -73,7 +74,7 @@ class TestTelemetryDataCollectorCore:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         assert collector._dcgm_url == "http://localhost:9401/metrics"
         assert collector._collection_interval == 0.033  # Default ~30Hz
         assert collector._collector_id == "telemetry_collector"
@@ -83,7 +84,7 @@ class TestTelemetryDataCollectorCore:
 
 class TestPrometheusMetricParsing:
     """Test DCGM Prometheus metric parsing functionality.
-    
+
     This test class focuses on the parsing of DCGM Prometheus format responses.
     Tests the robustness of metric line parsing, label extraction, and
     data type conversion without testing the full collection lifecycle.
@@ -99,12 +100,21 @@ class TestPrometheusMetricParsing:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         line = 'DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 22.582000'
         result = collector._parse_metric_line(line)
-        
+
         assert result is not None
-        metric_name, gpu_index, value, model_name, uuid, pci_bus_id, device, hostname = result
+        (
+            metric_name,
+            gpu_index,
+            value,
+            model_name,
+            uuid,
+            pci_bus_id,
+            device,
+            hostname,
+        ) = result
         assert metric_name == "DCGM_FI_DEV_POWER_USAGE"
         assert gpu_index == 0
         assert value == 22.582000
@@ -124,14 +134,14 @@ class TestPrometheusMetricParsing:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         malformed_cases = [
-            "DCGM_FI_DEV_POWER_USAGE{gpu=\"0\"}",  # Missing value
+            'DCGM_FI_DEV_POWER_USAGE{gpu="0"}',  # Missing value
             "invalid line",  # Invalid format
-            "DCGM_FI_DEV_POWER_USAGE{modelName=\"RTX\"} 22.5",  # Missing GPU index
-            "DCGM_FI_DEV_POWER_USAGE{gpu=\"0\"} 22.5",  # Missing model name
+            'DCGM_FI_DEV_POWER_USAGE{modelName="RTX"} 22.5',  # Missing GPU index
+            'DCGM_FI_DEV_POWER_USAGE{gpu="0"} 22.5',  # Missing model name
         ]
-        
+
         for malformed_line in malformed_cases:
             assert collector._parse_metric_line(malformed_line) is None
 
@@ -144,15 +154,17 @@ class TestPrometheusMetricParsing:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         assert collector._extract_gpu_index('gpu="0"') == 0
         assert collector._extract_gpu_index('gpu="1",other="value"') == 1
         assert collector._extract_gpu_index('other="value",gpu="2"') == 2
         assert collector._extract_gpu_index('no_gpu="0"') is None
         assert collector._extract_gpu_index('gpu="invalid"') is None
-        
+
         model_str = 'modelName="NVIDIA RTX 6000 Ada Generation"'
-        assert collector._extract_model_name(model_str) == "NVIDIA RTX 6000 Ada Generation"
+        assert (
+            collector._extract_model_name(model_str) == "NVIDIA RTX 6000 Ada Generation"
+        )
         assert collector._extract_model_name('no_model="NVIDIA"') is None
 
     def test_complete_parsing_single_gpu(self, sample_dcgm_data):
@@ -165,10 +177,10 @@ class TestPrometheusMetricParsing:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         records = collector._parse_metrics_to_records(sample_dcgm_data)
         assert len(records) == 1
-        
+
         record = records[0]
         assert record.dcgm_url == "http://localhost:9401/metrics"
         assert record.gpu_index == 0
@@ -176,7 +188,7 @@ class TestPrometheusMetricParsing:
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
         assert record.gpu_power_usage == 22.582000
         assert record.gpu_power_limit == 300.000000
-        
+
         # Test unit scaling applied correctly
         assert abs(record.energy_consumption - 0.955287014) < 0.001  # mJ to MJ
         assert abs(record.gpu_memory_used - 48.878) < 0.001  # MiB to GB
@@ -190,16 +202,16 @@ class TestPrometheusMetricParsing:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         records = collector._parse_metrics_to_records(multi_gpu_dcgm_data)
         assert len(records) == 3
-        
+
         records.sort(key=lambda r: r.gpu_index)
-        
+
         # Verify each GPU has correct metadata
         assert records[0].gpu_index == 0
         assert records[0].gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
-        assert records[1].gpu_index == 1  
+        assert records[1].gpu_index == 1
         assert records[2].gpu_index == 2
         assert records[2].gpu_model_name == "NVIDIA H100 PCIe"
 
@@ -213,13 +225,13 @@ class TestPrometheusMetricParsing:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         empty_cases = [
             "",  # Empty
             "# HELP comment\n# TYPE comment",  # Only comments
             "   \n\n   ",  # Only whitespace
         ]
-        
+
         for empty_data in empty_cases:
             records = collector._parse_metrics_to_records(empty_data)
             assert len(records) == 0
@@ -227,12 +239,12 @@ class TestPrometheusMetricParsing:
 
 class TestHttpCommunication:
     """Test HTTP communication with DCGM endpoints.
-    
+
     This test class focuses on the network communication aspects:
     endpoint reachability, HTTP request handling, and error scenarios.
     """
 
-    @patch('aiperf.gpu_telemetry.telemetry_data_collector.requests.get')
+    @patch("aiperf.gpu_telemetry.telemetry_data_collector.requests.get")
     def test_endpoint_reachability_success(self, mock_get):
         """Test DCGM endpoint reachability check with successful HTTP response.
 
@@ -244,13 +256,13 @@ class TestHttpCommunication:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_get.return_value = mock_response
-        
+
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
         assert collector.is_url_reachable() is True
-        
+
         mock_get.assert_called_once_with("http://localhost:9401/metrics", timeout=5)
 
-    @patch('aiperf.gpu_telemetry.telemetry_data_collector.requests.get')
+    @patch("aiperf.gpu_telemetry.telemetry_data_collector.requests.get")
     def test_endpoint_reachability_failures(self, mock_get):
         """Test DCGM endpoint reachability check with various failure scenarios.
 
@@ -262,18 +274,18 @@ class TestHttpCommunication:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         # Test HTTP error status
         mock_response = Mock()
         mock_response.status_code = 404
         mock_get.return_value = mock_response
         assert collector.is_url_reachable() is False
-        
+
         # Test request exception
         mock_get.side_effect = requests.RequestException("Connection error")
         assert collector.is_url_reachable() is False
 
-    @patch('aiperf.gpu_telemetry.telemetry_data_collector.requests.get')
+    @patch("aiperf.gpu_telemetry.telemetry_data_collector.requests.get")
     def test_metrics_fetching(self, mock_get):
         """Test HTTP request to fetch DCGM metrics from Prometheus endpoint.
 
@@ -286,10 +298,10 @@ class TestHttpCommunication:
         mock_response.text = "test_metrics_data"
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
-        
+
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
         result = collector._fetch_metrics()
-        
+
         assert result == "test_metrics_data"
         mock_get.assert_called_once_with("http://localhost:9401/metrics", timeout=5)
         mock_response.raise_for_status.assert_called_once()
@@ -297,7 +309,7 @@ class TestHttpCommunication:
 
 class TestCollectionLifecycle:
     """Test the background collection thread lifecycle.
-    
+
     This test class focuses on thread management, timing, callbacks,
     and graceful start/stop behavior of the continuous collection process.
     """
@@ -307,13 +319,13 @@ class TestCollectionLifecycle:
 
         self.records_received = []
         self.errors_received = []
-        
+
         def record_callback(records):
             self.records_received.extend(records)
-            
+
         def error_callback(error):
             self.errors_received.append(error)
-            
+
         self.record_callback = record_callback
         self.error_callback = error_callback
 
@@ -331,17 +343,17 @@ class TestCollectionLifecycle:
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
             record_callback=self.record_callback,
-            error_callback=self.error_callback
+            error_callback=self.error_callback,
         )
-        
+
         # Mock successful metrics fetch
-        with patch.object(collector, '_fetch_metrics') as mock_fetch:
-            mock_fetch.return_value = '''DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-test",modelName="Test GPU",pci_bus_id="test",device="test",Hostname="test"} 75.5'''
-            
+        with patch.object(collector, "_fetch_metrics") as mock_fetch:
+            mock_fetch.return_value = """DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-test",modelName="Test GPU",pci_bus_id="test",device="test",Hostname="test"} 75.5"""
+
             collector.start()
             time.sleep(0.25)  # Allow multiple collection cycles
             collector.stop()
-            
+
             # Verify records were collected and processed
             assert len(self.records_received) > 0
             assert all(isinstance(r, TelemetryRecord) for r in self.records_received)
@@ -362,20 +374,22 @@ class TestCollectionLifecycle:
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
             record_callback=self.record_callback,
-            error_callback=self.error_callback
+            error_callback=self.error_callback,
         )
-        
+
         # Mock fetch error
-        with patch.object(collector, '_fetch_metrics') as mock_fetch:
+        with patch.object(collector, "_fetch_metrics") as mock_fetch:
             mock_fetch.side_effect = requests.RequestException("Network error")
-            
+
             collector.start()
             time.sleep(0.25)
             collector.stop()
-            
+
             # Verify errors were captured
             assert len(self.errors_received) > 0
-            assert all(isinstance(e, requests.RequestException) for e in self.errors_received)
+            assert all(
+                isinstance(e, requests.RequestException) for e in self.errors_received
+            )
             assert len(self.records_received) == 0
 
     def test_thread_lifecycle_management(self):
@@ -389,17 +403,19 @@ class TestCollectionLifecycle:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         # Mock collection loop to run until stop_event is set
         def mock_collection_loop():
             while not collector._stop_event.is_set():
                 time.sleep(0.01)
-        
-        with patch.object(collector, '_collection_loop', side_effect=mock_collection_loop):
+
+        with patch.object(
+            collector, "_collection_loop", side_effect=mock_collection_loop
+        ):
             collector.start()
             assert collector._collection_thread is not None
             assert collector._collection_thread.is_alive()
-            
+
             collector.stop()
             time.sleep(0.1)  # Allow thread to terminate
             assert not collector._collection_thread.is_alive()
@@ -415,21 +431,21 @@ class TestCollectionLifecycle:
 
         def failing_record_callback(records):
             raise RuntimeError("Record callback failed")
-            
+
         def failing_error_callback(error):
             raise RuntimeError("Error callback failed")
-        
+
         collector = TelemetryDataCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
             record_callback=failing_record_callback,
-            error_callback=failing_error_callback
+            error_callback=failing_error_callback,
         )
-        
+
         # Test with successful data - record callback should fail but not crash
-        with patch.object(collector, '_fetch_metrics') as mock_fetch:
-            mock_fetch.return_value = '''DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-test",modelName="Test"} 75.5'''
-            
+        with patch.object(collector, "_fetch_metrics") as mock_fetch:
+            mock_fetch.return_value = """DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-test",modelName="Test"} 75.5"""
+
             collector.start()
             time.sleep(0.15)
             collector.stop()
@@ -445,18 +461,20 @@ class TestCollectionLifecycle:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         def mock_collection_loop():
             while not collector._stop_event.is_set():
                 time.sleep(0.01)
-        
-        with patch.object(collector, '_collection_loop', side_effect=mock_collection_loop):
+
+        with patch.object(
+            collector, "_collection_loop", side_effect=mock_collection_loop
+        ):
             collector.start()
             first_thread = collector._collection_thread
-            
+
             collector.start()  # Second call should not create new thread
             assert collector._collection_thread is first_thread
-            
+
             collector.stop()
 
     def test_stop_before_start_safety(self):
@@ -468,13 +486,13 @@ class TestCollectionLifecycle:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
+
         collector.stop()
 
 
 class TestDataProcessingEdgeCases:
     """Test edge cases and data quality scenarios.
-    
+
     This test class focuses on the robustness of data processing
     under various real-world conditions and data quality issues.
     """
@@ -490,22 +508,22 @@ class TestDataProcessingEdgeCases:
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
-        metrics_data = '''
+
+        metrics_data = """
 DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test",modelName="Test"} 2000000000
 DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-test",modelName="Test"} 1024
 DCGM_FI_DEV_FB_TOTAL{gpu="0",UUID="GPU-test",modelName="Test"} 2048
-'''
-        
+"""
+
         records = collector._parse_metrics_to_records(metrics_data)
         assert len(records) == 1
-        
+
         record = records[0]
         # Energy: 2e9 * 1e-9 = 2.0 MJ
         assert record.energy_consumption == pytest.approx(2.0)
         # Memory: 1024 * 1.048576 * 1e-3 = 1.073741824 GB
         assert record.gpu_memory_used == pytest.approx(1.073741824)
-        # Total: 2048 * 1.048576 * 1e-3 = 2.147483648 GB  
+        # Total: 2048 * 1.048576 * 1e-3 = 2.147483648 GB
         assert record.total_gpu_memory == pytest.approx(2.147483648)
 
     def test_mixed_quality_response_resilience(self):
@@ -520,18 +538,18 @@ DCGM_FI_DEV_FB_TOTAL{gpu="0",UUID="GPU-test",modelName="Test"} 2048
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
-        mixed_quality_data = '''
+
+        mixed_quality_data = """
 # Comment line
 DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-test",modelName="Test"} 75.5
 invalid_line_without_braces 123
 DCGM_FI_DEV_GPU_UTIL{gpu="invalid"} 85.0
 DCGM_FI_DEV_FB_USED{} 1024
 DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test",modelName="Test"} invalid_value
-'''
-        
+"""
+
         records = collector._parse_metrics_to_records(mixed_quality_data)
-        
+
         assert len(records) == 1
         assert records[0].gpu_power_usage == 75.5
 
@@ -545,15 +563,17 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test",modelName="Test"} i
         """
 
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
-        
-        metrics_data = '''
+
+        metrics_data = """
 DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-test1",modelName="Test"} 75.5
 DCGM_FI_DEV_GPU_UTIL{gpu="0",UUID="GPU-test1",modelName="Test"} 85.0
 DCGM_FI_DEV_POWER_USAGE{gpu="1",UUID="GPU-test2",modelName="Test"} 120.0
-'''
-        
+"""
+
         records = collector._parse_metrics_to_records(metrics_data)
-        
+
         # All records should have the same timestamp (collected at same time)
         timestamps = [r.timestamp_ns for r in records]
-        assert len(set(timestamps)) == 1, "All records in batch should have same timestamp"
+        assert len(set(timestamps)) == 1, (
+            "All records in batch should have same timestamp"
+        )

@@ -8,6 +8,7 @@ from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.types import MessageTypeT
 
+
 class TelemetryRecordsMessage(BaseServiceMessage):
     """Message from the telemetry data collector to the records manager to notify it
     of the telemetry records for a batch of GPU samples."""
@@ -15,7 +16,8 @@ class TelemetryRecordsMessage(BaseServiceMessage):
     message_type: MessageTypeT = MessageType.TELEMETRY_RECORDS
 
     collector_id: str = Field(
-        ..., description="The ID of the telemetry data collector that collected the records."
+        ...,
+        description="The ID of the telemetry data collector that collected the records.",
     )
     records: list[TelemetryRecord] = Field(
         ..., description="The telemetry records collected from GPU monitoring"
