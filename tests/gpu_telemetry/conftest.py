@@ -5,6 +5,7 @@ Shared fixtures for testing GPU telemetry components.
 """
 
 import pytest
+
 from aiperf.common.models.telemetry_models import TelemetryRecord
 
 
@@ -94,7 +95,7 @@ def sample_telemetry_records():
             energy_consumption=955287014,
             gpu_utilization=1.0,
             gpu_memory_used=45.531,  # 46614 MiB converted to GB
-            total_gpu_memory=47.998  # 49140 MiB converted to GB
+            total_gpu_memory=47.998,  # 49140 MiB converted to GB
         ),
     ]
 
@@ -104,60 +105,66 @@ def multi_gpu_telemetry_records():
     """Multiple GPU records for batch processing tests."""
 
     records = []
-    
+
     # Generate 50 samples for each GPU with realistic patterns
     for i in range(50):
         timestamp = 1000000000 + (i * 33000000)  # 33ms intervals
-        
+
         # GPU 0 - Active workload (RTX 6000)
-        records.append(TelemetryRecord(
-            timestamp_ns=timestamp,
-            gpu_index=0,
-            gpu_model_name="NVIDIA RTX 6000 Ada Generation",
-            gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
-            pci_bus_id="00000000:02:00.0",
-            device="nvidia0",
-            hostname="ed7e7a5e585f",
-            gpu_power_usage=70.0 + (i % 30),  # Varying power 70-99W
-            gpu_power_limit=300.0,
-            energy_consumption=280000000 + (i * 2000000),  # Increasing energy
-            gpu_utilization=float(80 + (i % 20)),  # 80-99%
-            gpu_memory_used=15.0 + (i % 5),  # 15-19 GB
-            total_gpu_memory=48.0
-        ))
-        
+        records.append(
+            TelemetryRecord(
+                timestamp_ns=timestamp,
+                gpu_index=0,
+                gpu_model_name="NVIDIA RTX 6000 Ada Generation",
+                gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
+                pci_bus_id="00000000:02:00.0",
+                device="nvidia0",
+                hostname="ed7e7a5e585f",
+                gpu_power_usage=70.0 + (i % 30),  # Varying power 70-99W
+                gpu_power_limit=300.0,
+                energy_consumption=280000000 + (i * 2000000),  # Increasing energy
+                gpu_utilization=float(80 + (i % 20)),  # 80-99%
+                gpu_memory_used=15.0 + (i % 5),  # 15-19 GB
+                total_gpu_memory=48.0,
+            )
+        )
+
         # GPU 1 - Idle (RTX 6000)
-        records.append(TelemetryRecord(
-            timestamp_ns=timestamp + 1000,
-            gpu_index=1,
-            gpu_model_name="NVIDIA RTX 6000 Ada Generation",
-            gpu_uuid="GPU-12345678-1234-1234-1234-123456789abc",
-            pci_bus_id="00000000:03:00.0",
-            device="nvidia1",
-            hostname="ed7e7a5e585f",
-            gpu_power_usage=42.0 + (i % 3),  # Idle power 42-44W
-            gpu_power_limit=300.0,
-            energy_consumption=230000000 + (i * 500000),  # Slower energy growth
-            gpu_utilization=0.0,
-            gpu_memory_used=0.0,
-            total_gpu_memory=48.0
-        ))
-        
+        records.append(
+            TelemetryRecord(
+                timestamp_ns=timestamp + 1000,
+                gpu_index=1,
+                gpu_model_name="NVIDIA RTX 6000 Ada Generation",
+                gpu_uuid="GPU-12345678-1234-1234-1234-123456789abc",
+                pci_bus_id="00000000:03:00.0",
+                device="nvidia1",
+                hostname="ed7e7a5e585f",
+                gpu_power_usage=42.0 + (i % 3),  # Idle power 42-44W
+                gpu_power_limit=300.0,
+                energy_consumption=230000000 + (i * 500000),  # Slower energy growth
+                gpu_utilization=0.0,
+                gpu_memory_used=0.0,
+                total_gpu_memory=48.0,
+            )
+        )
+
         # GPU 2 - Moderate workload (H100)
-        records.append(TelemetryRecord(
-            timestamp_ns=timestamp + 2000,
-            gpu_index=2,
-            gpu_model_name="NVIDIA H100 PCIe",
-            gpu_uuid="GPU-87654321-4321-4321-4321-cba987654321",
-            pci_bus_id="00000000:04:00.0",
-            device="nvidia2",
-            hostname="ed7e7a5e585f",
-            gpu_power_usage=200.0 + (i % 50),  # Higher power 200-249W
-            gpu_power_limit=700.0,
-            energy_consumption=250000000 + (i * 3000000),
-            gpu_utilization=float(50 + (i % 30)),  # 50-79%
-            gpu_memory_used=40.0 + (i % 10),  # 40-49 GB
-            total_gpu_memory=80.0
-        ))
-    
+        records.append(
+            TelemetryRecord(
+                timestamp_ns=timestamp + 2000,
+                gpu_index=2,
+                gpu_model_name="NVIDIA H100 PCIe",
+                gpu_uuid="GPU-87654321-4321-4321-4321-cba987654321",
+                pci_bus_id="00000000:04:00.0",
+                device="nvidia2",
+                hostname="ed7e7a5e585f",
+                gpu_power_usage=200.0 + (i % 50),  # Higher power 200-249W
+                gpu_power_limit=700.0,
+                energy_consumption=250000000 + (i * 3000000),
+                gpu_utilization=float(50 + (i % 30)),  # 50-79%
+                gpu_memory_used=40.0 + (i % 10),  # 40-49 GB
+                total_gpu_memory=80.0,
+            )
+        )
+
     return records

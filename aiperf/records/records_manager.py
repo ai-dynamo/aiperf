@@ -51,7 +51,11 @@ from aiperf.common.models import (
 )
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.telemetry_models import TelemetryRecord
-from aiperf.common.protocols import ResultsProcessorProtocol, TelemetryResultsProcessorProtocol, ServiceProtocol
+from aiperf.common.protocols import (
+    ResultsProcessorProtocol,
+    ServiceProtocol,
+    TelemetryResultsProcessorProtocol,
+)
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
@@ -109,7 +113,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._results_processors: list[ResultsProcessorProtocol] = []
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
         self._telemetry_results_processors: list[TelemetryResultsProcessorProtocol] = []
-        
+
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
             results_processor = ResultsProcessorFactory.create_instance(
                 class_type=results_processor_type,
@@ -120,10 +124,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self.debug(
                 f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
             )
-            
+
             # Add to appropriate lists based on processor type
             self._results_processors.append(results_processor)
-            
+
             if isinstance(results_processor, TelemetryResultsProcessorProtocol):
                 self._telemetry_results_processors.append(results_processor)
             else:
@@ -182,19 +186,21 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     @on_pull_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
         """Handle telemetry records message from Telemetry Manager.
-        The RecordsManager acts as the central hub for all record processing, 
+        The RecordsManager acts as the central hub for all record processing,
         whether inference metrics or GPU telemetry.
-        
+
         Args:
             message: Batch of telemetry records from a DCGM collector
         """
         if self.is_trace_enabled:
-            self.trace(f"Received {len(message.records)} telemetry records from {message.collector_id}")
-        
+            self.trace(
+                f"Received {len(message.records)} telemetry records from {message.collector_id}"
+            )
+
         if message.valid:
             # Send telemetry records to telemetry results processor
             await self._send_telemetry_to_results_processors(message.records)
-            
+
             # Update processing statistics using same lock pattern as metric records
             # This ensures telemetry collection is included in overall system health monitoring
             async with self.processing_status_lock:
@@ -204,7 +210,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             # Handle telemetry collection errors using existing error handling infrastructure
             async with self.processing_status_lock:
                 self.processing_stats.errors += 1
-            
+
             if message.error:
                 # Add to error summary for reporting in final results
                 async with self.error_summary_lock:
@@ -302,8 +308,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _send_results_to_results_processors(
         self, results: list[dict[MetricTagT, MetricValueTypeT]]
     ) -> None:
-        """Send the results to inference metric results processors only.
-        """
+        """Send the results to inference metric results processors only."""
         await asyncio.gather(
             *[
                 results_processor.process_result(result)
@@ -316,7 +321,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, telemetry_records: list[TelemetryRecord]
     ) -> None:
         """Send individual telemetry records to telemetry results processors only.
-        
+
         Args:
             telemetry_records: Batch of records from single collection cycle
         """
