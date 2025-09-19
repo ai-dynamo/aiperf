@@ -6,6 +6,9 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+managed = true
+
 [tool.hatch.version]
 path = "aiperf/__init__.py"
 
