@@ -64,7 +64,7 @@ class SocketDefaults:
 class AioHttpDefaults:
     """Default values for aiohttp.ClientSession."""
 
-    LIMIT = os.environ.get("AIPERF_HTTP_CONNECTION_LIMIT", 2500)  # Maximum number of concurrent connections
+    LIMIT = int(os.environ.get("AIPERF_HTTP_CONNECTION_LIMIT", 2500)) # Maximum number of concurrent connections
     LIMIT_PER_HOST = 0  # Maximum number of concurrent connections per host
     TTL_DNS_CACHE = 300  # Time to live for DNS cache
     USE_DNS_CACHE = True  # Enable DNS cache
