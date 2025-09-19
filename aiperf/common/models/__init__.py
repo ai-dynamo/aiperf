@@ -63,11 +63,11 @@ from aiperf.common.models.record_models import (
     TextResponse,
     TextResponseData,
 )
-from aiperf.common.models.telemetry_models import (
-    TelemetryRecord,
-)
 from aiperf.common.models.service_models import (
     ServiceRunInfo,
+)
+from aiperf.common.models.telemetry_models import (
+    TelemetryRecord,
 )
 from aiperf.common.models.worker_models import (
     WorkerTaskStats,
@@ -110,6 +110,7 @@ __all__ = [
     "ServiceRunInfo",
     "SessionPayloads",
     "StatsProtocol",
+    "TelemetryRecord",
     "Text",
     "TextResponse",
     "TextResponseData",

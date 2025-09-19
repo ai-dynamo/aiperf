@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.metrics.base_telemetry_metric import BaseTelemetryMetric
 from aiperf.common.enums.metric_enums import EnergyMetricUnit, MetricFlags
-from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.common.models import TelemetryRecord
+from aiperf.metrics.base_telemetry_metric import BaseTelemetryMetric
+
 
 class EnergyConsumptionMetric(BaseTelemetryMetric[float]):
     tag = "energy_consumption"
