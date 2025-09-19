@@ -101,11 +101,21 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
 
             # Drop credits asynchronously for all conversations at this timestamp
             for conversation_id in conversation_ids:
+                # Determine if this request should be cancelled
+                should_cancel = self.cancellation_strategy.should_cancel_request()
+                cancel_after_ns = (
+                    self.cancellation_strategy.get_cancellation_delay_ns()
+                    if should_cancel
+                    else None
+                )
+
                 await self.credit_manager.drop_credit(
                     credit_phase=CreditPhase.PROFILING,
                     conversation_id=conversation_id,
                     # We already waited, so it can be sent ASAP
                     credit_drop_ns=None,
+                    should_cancel=should_cancel,
+                    cancel_after_ns=cancel_after_ns,
                 )
                 phase_stats.sent += 1
 

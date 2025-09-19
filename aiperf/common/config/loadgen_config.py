@@ -120,3 +120,31 @@ class LoadGeneratorConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = LoadGeneratorDefaults.WARMUP_REQUEST_COUNT
+
+    # NEW AIPerf Option
+    request_cancellation_rate: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=100.0,
+            description="The percentage of requests to cancel.",
+        ),
+        CLIParameter(
+            name=("--request-cancellation-rate",),
+            group=_CLI_GROUP,
+        ),
+    ] = LoadGeneratorDefaults.REQUEST_CANCELLATION_RATE
+
+    # NEW AIPerf Option
+    request_cancellation_delay: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            description="The delay in seconds before cancelling requests. "
+            "This is used when --request-cancellation-rate is greater than 0.",
+        ),
+        CLIParameter(
+            name=("--request-cancellation-delay",),
+            group=_CLI_GROUP,
+        ),
+    ] = LoadGeneratorDefaults.REQUEST_CANCELLATION_DELAY

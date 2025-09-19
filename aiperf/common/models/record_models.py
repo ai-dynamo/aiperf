@@ -240,6 +240,20 @@ class RequestRecord(AIPerfBaseModel):
         "This can be used to trace internal latency in order to identify bottlenecks or other issues.",
         ge=0,
     )
+    was_cancelled: bool = Field(
+        default=False,
+        description="Whether the request was cancelled during execution.",
+    )
+    cancel_after_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="The delay in nanoseconds after which the request should be cancelled, as specified in the credit drop message.",
+    )
+    cancellation_time_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
+    )
 
     @property
     def delayed(self) -> bool:

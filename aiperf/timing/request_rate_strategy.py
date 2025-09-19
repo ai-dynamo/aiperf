@@ -64,7 +64,18 @@ class RequestRateStrategy(CreditIssuingStrategy):
                         )
                     break
 
-            await self.credit_manager.drop_credit(credit_phase=phase_stats.type)
+            should_cancel = self.cancellation_strategy.should_cancel_request()
+            cancel_after_ns = (
+                self.cancellation_strategy.get_cancellation_delay_ns()
+                if should_cancel
+                else None
+            )
+
+            await self.credit_manager.drop_credit(
+                credit_phase=phase_stats.type,
+                should_cancel=should_cancel,
+                cancel_after_ns=cancel_after_ns,
+            )
             phase_stats.sent += 1
             # Check if we should break out of the loop before we sleep for the next interval.
             # This is to ensure we don't sleep for any unnecessary time, which could cause race conditions.
