@@ -10,11 +10,19 @@ from typing import Optional, Callable
 
 from aiperf.common.models import ErrorDetails
 from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.gpu_telemetry.constants import (
+    DEFAULT_COLLECTION_INTERVAL,
+    DEFAULT_DCGM_ENDPOINT,
+    DCGM_TO_FIELD_MAPPING,
+    SCALING_FACTORS,
+    THREAD_JOIN_TIMEOUT,
+    URL_REACHABILITY_TIMEOUT,
+)
 
 
 class TelemetryDataCollector:
     """Collects telemetry metrics from DCGM metrics endpoint.
-    
+
     Simple collector that fetches GPU metrics from DCGM exporter and converts them to
     TelemetryRecord objects. Uses callback pattern to send data to parent service.
     - No service dependencies (avoids circular imports)
@@ -22,21 +30,11 @@ class TelemetryDataCollector:
     - Handles errors gracefully with ErrorDetails
     - No local storage (follows centralized architecture)
     """
-    
-    # DCGM field mapping to TelemetryRecord attribute names
-    DCGM_TO_FIELD_MAPPING = {
-        "DCGM_FI_DEV_POWER_USAGE": "gpu_power_usage",
-        "DCGM_FI_DEV_POWER_MGMT_LIMIT": "gpu_power_limit",
-        "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION": "energy_consumption",
-        "DCGM_FI_DEV_GPU_UTIL": "gpu_utilization",
-        "DCGM_FI_DEV_FB_USED": "gpu_memory_used",
-        "DCGM_FI_DEV_FB_TOTAL": "total_gpu_memory",
-    }
-    
+
     def __init__(
         self, 
         dcgm_url: str,
-        collection_interval: float = 0.033,  # 33ms default
+        collection_interval: float = DEFAULT_COLLECTION_INTERVAL,
         record_callback: Optional[Callable[[list[TelemetryRecord]], None]] = None,
         error_callback: Optional[Callable[[Exception], None]] = None,
         collector_id: str = "telemetry_collector"
@@ -47,27 +45,21 @@ class TelemetryDataCollector:
         self._error_callback = error_callback
         self._collector_id = collector_id
         
-        # Thread management for collection loop
         self._stop_event = Event()
         self._collection_thread: Optional[Thread] = None
         
-        # Unit scaling factors for DCGM raw values to display units
-        self._scaling_factors = {
-            "energy_consumption": 1e-9,  # mJ to MJ
-            "gpu_memory_used": 1.048576 * 1e-3,  # MiB to GB
-            "total_gpu_memory": 1.048576 * 1e-3,  # MiB to GB
-        }
+        self._scaling_factors = SCALING_FACTORS
         
-        # Set up logger
         self._logger = logging.getLogger(f"telemetry.{collector_id}")
 
     def is_url_reachable(self) -> bool:
         """Check if DCGM metrics endpoint is accessible.
-        
+
         Returns:
             True if endpoint responds with 200, False otherwise
         """
-        timeout_seconds = 5
+
+        timeout_seconds = URL_REACHABILITY_TIMEOUT
         if self._dcgm_url:
             try:
                 response = requests.get(self._dcgm_url, timeout=timeout_seconds)
@@ -78,10 +70,11 @@ class TelemetryDataCollector:
 
     def start(self) -> None:
         """Start telemetry collection in background thread.
-        
+
         Note: Uses thread instead of async task because requests library
         is synchronous and we don't want to block the main event loop.
         """
+
         if self._collection_thread is None or not self._collection_thread.is_alive():
             self._logger.info(f"Starting telemetry collection from {self._dcgm_url}")
             self._stop_event.clear()
@@ -90,10 +83,11 @@ class TelemetryDataCollector:
 
     def stop(self) -> None:
         """Stop telemetry collection and wait for thread to finish."""
+
         if self._collection_thread is not None and self._collection_thread.is_alive():
             self._logger.info("Stopping telemetry collection")
             self._stop_event.set()
-            self._collection_thread.join(timeout=5.0)  # Wait up to 5 seconds
+            self._collection_thread.join(timeout=THREAD_JOIN_TIMEOUT)
             if self._collection_thread.is_alive():
                 self._logger.warning("Telemetry collection thread did not stop gracefully")
 
@@ -105,21 +99,17 @@ class TelemetryDataCollector:
         """
         while not self._stop_event.is_set():
             try:
-                # Fetch metrics from DCGM endpoint
                 metrics_data = self._fetch_metrics()
                 
-                # Parse into TelemetryRecord objects
                 records = self._parse_metrics_to_records(metrics_data)
                 
                 if records and self._record_callback:
-                    # Send records via callback
                     try:
                         self._record_callback(records)
                     except Exception as e:
                         self._logger.warning(f"Failed to send telemetry records via callback: {e}")
                 
             except Exception as e:
-                # Send error via callback
                 if self._error_callback:
                     try:
                         self._error_callback(e)
@@ -128,41 +118,41 @@ class TelemetryDataCollector:
                 else:
                     self._logger.error(f"Telemetry collection error: {e}")
                 
-            # Sleep until next collection cycle
             if not self._stop_event.wait(self._collection_interval):
-                continue  # Continue if not stopped
+                continue
 
     def _fetch_metrics(self) -> str:
         """Fetch raw metrics data from DCGM endpoint.
-        
+
         Returns:
             Raw metrics text in Prometheus format
-            
+
         Raises:
             requests.RequestException: If HTTP request fails
         """
-        response = requests.get(self._dcgm_url, timeout=5)
+
+        response = requests.get(self._dcgm_url, timeout=URL_REACHABILITY_TIMEOUT)
         response.raise_for_status()
         return response.text
 
     def _parse_metrics_to_records(self, metrics_data: str) -> list[TelemetryRecord]:
         """Parse DCGM metrics text into TelemetryRecord objects.
-        
+
         Args:
             metrics_data: Raw metrics text from DCGM exporter
-            
+
         Returns:
             List of TelemetryRecord objects, one per GPU with valid data
         """
+
         if not metrics_data.strip():
             self._logger.warning("Response from DCGM metrics endpoint is empty")
             return []
 
         current_timestamp = time.perf_counter_ns()
-        gpu_data = {}  # gpu_index -> metrics dict
-        gpu_metadata = {}  # gpu_index -> metadata dict
+        gpu_data = {}
+        gpu_metadata = {}
 
-        # Parse each line of metrics data
         for line in metrics_data.splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
@@ -174,7 +164,6 @@ class TelemetryDataCollector:
 
             metric_name, gpu_index, value, model_name, uuid, pci_bus_id, device, hostname = parsed
             
-            # Store metadata for this GPU (may be repeated, but that's OK)
             gpu_metadata[gpu_index] = {
                 'model_name': model_name,
                 'uuid': uuid,
@@ -183,22 +172,19 @@ class TelemetryDataCollector:
                 'hostname': hostname
             }
             
-            # Store metric value if it's one we care about
-            if metric_name in self.DCGM_TO_FIELD_MAPPING:
-                field_name = self.DCGM_TO_FIELD_MAPPING[metric_name]
+            if metric_name in DCGM_TO_FIELD_MAPPING:
+                field_name = DCGM_TO_FIELD_MAPPING[metric_name]
                 gpu_data.setdefault(gpu_index, {})[field_name] = value
 
-        # Create TelemetryRecord for each GPU with data
         records = []
         for gpu_index, metrics in gpu_data.items():
             metadata = gpu_metadata.get(gpu_index, {})
             
-            # Apply unit scaling to convert raw DCGM values to display units
             scaled_metrics = self._apply_scaling_factors(metrics)
 
             record = TelemetryRecord(
                 timestamp_ns=current_timestamp,
-                dcgm_url=self._dcgm_url,  # Include source URL for hierarchy
+                dcgm_url=self._dcgm_url,
                 gpu_index=gpu_index,
                 gpu_uuid=metadata.get('uuid', f"unknown-gpu-{gpu_index}"),
                 gpu_model_name=metadata.get('model_name', f"GPU {gpu_index}"),
@@ -218,13 +204,14 @@ class TelemetryDataCollector:
     
     def _apply_scaling_factors(self, metrics: dict) -> dict:
         """Apply scaling factors to convert raw DCGM units to display units.
-        
+
         Args:
             metrics: Dict of metric_name -> raw_value
-            
+
         Returns:
             Dict with scaled values for display
         """
+
         scaled_metrics = metrics.copy()
         for metric, factor in self._scaling_factors.items():
             if metric in scaled_metrics and scaled_metrics[metric] is not None:
@@ -233,13 +220,14 @@ class TelemetryDataCollector:
     
     def _parse_metric_line(self, line: str) -> Optional[tuple[str, int, float, str, str, str, str, str]]:
         """Parse a single metric line from DCGM output.
-        
+
         Expected format: metric_name{gpu="0",UUID="...",pci_bus_id="...",device="...",modelName="...",Hostname="..."} value
-        
+
         Returns:
             Tuple of (metric_name, gpu_index, value, model_name, uuid, pci_bus_id, device, hostname)
             or None if parsing fails
         """
+
         try:
             metric_full_name, value_str = line.rsplit(" ", 1)
             value = float(value_str.strip())
@@ -260,6 +248,7 @@ class TelemetryDataCollector:
     
     def _extract_gpu_index(self, metric_full_name: str) -> Optional[int]:
         """Extract GPU index from metric labels."""
+
         try:
             match = re.search(r'(?:^|[,{])gpu="(\d+)"', metric_full_name)
             if match:
@@ -270,6 +259,7 @@ class TelemetryDataCollector:
     
     def _extract_model_name(self, metric_full_name: str) -> Optional[str]:
         """Extract GPU model name from metric labels."""
+
         try:
             match = re.search(r'modelName="([^"]+)"', metric_full_name)
             if match:
@@ -280,6 +270,7 @@ class TelemetryDataCollector:
     
     def _extract_uuid(self, metric_full_name: str) -> Optional[str]:
         """Extract GPU UUID from metric labels."""
+
         try:
             match = re.search(r'UUID="([^"]+)"', metric_full_name)
             if match:
@@ -290,6 +281,7 @@ class TelemetryDataCollector:
     
     def _extract_pci_bus_id(self, metric_full_name: str) -> Optional[str]:
         """Extract PCI Bus ID from metric labels."""
+
         try:
             match = re.search(r'pci_bus_id="([^"]+)"', metric_full_name)
             if match:
@@ -300,6 +292,7 @@ class TelemetryDataCollector:
     
     def _extract_device(self, metric_full_name: str) -> Optional[str]:
         """Extract device identifier from metric labels."""
+
         try:
             match = re.search(r'device="([^"]+)"', metric_full_name)
             if match:
@@ -310,6 +303,7 @@ class TelemetryDataCollector:
     
     def _extract_hostname(self, metric_full_name: str) -> Optional[str]:
         """Extract hostname from metric labels."""
+
         try:
             match = re.search(r'Hostname="([^"]+)"', metric_full_name)
             if match:
@@ -320,11 +314,11 @@ class TelemetryDataCollector:
 
 def main() -> None:
     """Main entry point for locally testing the telemetry collector."""
+
     import time
     from collections import defaultdict
     import statistics
     
-    # Storage for aggregation
     all_records = []
     metrics_data = defaultdict(lambda: defaultdict(list))  # gpu_uuid -> metric_name -> values
     
@@ -337,7 +331,6 @@ def main() -> None:
             print(f"  Host: {record.hostname or 'Unknown'}")
             print(f"  PCI Bus: {record.pci_bus_id or 'Unknown'}")
             
-            # Display all available metrics
             metric_values = {
                 "Power Usage": (record.gpu_power_usage, "W"),
                 "Power Limit": (record.gpu_power_limit, "W"),
@@ -351,7 +344,6 @@ def main() -> None:
             for metric_name, (value, unit) in metric_values.items():
                 if value is not None:
                     print(f"    {metric_name}: {value:.2f} {unit}")
-                    # Store for aggregation
                     metrics_data[record.gpu_uuid][metric_name].append(value)
                 else:
                     print(f"    {metric_name}: N/A")
@@ -371,7 +363,6 @@ def main() -> None:
         print(f"Unique GPUs detected: {len(metrics_data)}")
         
         for gpu_uuid, gpu_metrics in metrics_data.items():
-            # Find a record for this GPU to get metadata
             gpu_record = next(r for r in all_records if r.gpu_uuid == gpu_uuid)
             
             print(f"\n GPU {gpu_record.gpu_index} ({gpu_record.gpu_model_name[:20]}...)")
@@ -383,9 +374,11 @@ def main() -> None:
                     avg_val = statistics.mean(values)
                     min_val = min(values)
                     max_val = max(values)
-                    std_val = statistics.stdev(values) if len(values) > 1 else 0
+                    if len(values) <= 1:
+                        std_val = 0
+                    else:
+                        std_val = statistics.stdev(values)
                     
-                    # Get unit from metric_values mapping
                     unit = next((unit for name, (_, unit) in [
                         ("Power Usage", (None, "W")),
                         ("Power Limit", (None, "W")),
@@ -401,12 +394,11 @@ def main() -> None:
                     print(f"      Max: {max_val:.2f} {unit}")
                     print(f"      Std: {std_val:.2f} {unit}")
     
-    # Example usage with localhost:9401 DCGM URL
     print("AIPerf GPU Telemetry Collector Test")
     print("=====================================")
     
     collector = TelemetryDataCollector(
-        dcgm_url="http://localhost:9401/metrics",
+        dcgm_url=DEFAULT_DCGM_ENDPOINT,
         record_callback=record_callback,
         error_callback=error_callback,
         collector_id="test_collector"
