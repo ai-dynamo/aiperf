@@ -151,20 +151,44 @@ class MooncakeTrace(AIPerfBaseModel):
 
     See https://github.com/kvcache-ai/Mooncake for more details.
 
-    Example:
-    ```json
-    {"timestamp": 1000, "input_length": 10, "output_length": 4, "hash_ids": [123, 456]}
-    ```
+    Examples:
+    - Minimal: {"input_length": 10, "hash_ids": [123]}
+    - With input_length: {"input_length": 10, "output_length": 4}
+    - With text_input: {"text_input": "Hello world", "output_length": 4}
+    - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
     """
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
 
-    input_length: int = Field(..., description="The input sequence length of a request")
-    output_length: int = Field(
-        ..., description="The output sequence length of a request"
+    # Either input_length or text_input must be provided
+    input_length: int | None = Field(
+        None, description="The input sequence length of a request"
     )
-    hash_ids: list[int] = Field(..., description="The hash ids of a request")
-    timestamp: int = Field(..., description="The timestamp of a request")
+    text_input: str | None = Field(
+        None, description="The actual text input for the request"
+    )
+
+    # Optional fields
+    output_length: int | None = Field(
+        None, description="The output sequence length of a request"
+    )
+    hash_ids: list[int] | None = Field(
+        None, description="The hash ids of a request (required if input_length is used)"
+    )
+    timestamp: int | None = Field(None, description="The timestamp of a request")
+
+    @model_validator(mode="after")
+    def validate_input(self) -> "MooncakeTrace":
+        """Validate that either input_length or text_input is provided."""
+        if self.input_length is None and self.text_input is None:
+            raise ValueError("Either 'input_length' or 'text_input' must be provided")
+
+        if self.input_length is None and self.hash_ids is not None:
+            raise ValueError(
+                "'input_length' must be provided when 'hash_ids' is specified"
+            )
+
+        return self
 
 
 CustomDatasetT = TypeVar(
