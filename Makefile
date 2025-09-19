@@ -112,7 +112,7 @@ test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
 	$(activate_venv) && pytest -n auto -v -s --log-cli-level DEBUG
 
 coverage: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest -n auto --cov=aiperf --cov-report=html --cov-report=xml $(args)
+	$(activate_venv) && pytest -n auto --cov=aiperf --cov-branch --cov-report=html --cov-report=xml $(args)
 
 install: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]" $(args)
