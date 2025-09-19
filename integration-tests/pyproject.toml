@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aiperf-mock-server"
-version = "0.1.0"
+version = "0.1.1"
 description = "AIPerf FastAPI-based OpenAI mock server for AI performance testing"
 authors = []
 dependencies = [
