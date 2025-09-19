@@ -18,7 +18,7 @@ class TelemetryRecord(AIPerfBaseModel):
     """
 
     timestamp_ns: int = Field(
-        description="Nanosecond timestamp when telemetry was collected (perf_counter_ns)"
+        description="Nanosecond wall-clock timestamp when telemetry was collected (time_ns)"
     )
 
     dcgm_url: str = Field(
