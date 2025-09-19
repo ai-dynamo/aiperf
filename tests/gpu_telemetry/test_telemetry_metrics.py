@@ -19,30 +19,33 @@ class TestBaseTelemetryMetric:
 
     def test_base_telemetry_metric_is_abstract(self):
         """Test that BaseTelemetryMetric cannot be instantiated directly.
-        
+
         Verifies that the abstract base class properly enforces implementation
         of required methods (_extract_value) and cannot be used directly.
         This ensures proper inheritance patterns for metric implementations.
         """
+
         with pytest.raises(TypeError):
             BaseTelemetryMetric()
 
     def test_base_telemetry_metric_type_classification(self):
         """Test that BaseTelemetryMetric has correct metric type classification.
-        
+
         Verifies that all telemetry metrics are properly classified as
         MetricType.TELEMETRY, enabling correct routing and processing
         in the metrics pipeline.
         """
+
         assert BaseTelemetryMetric.type == MetricType.TELEMETRY
 
     def test_concrete_implementation_interface(self):
         """Test that concrete metric implementations work with the base interface.
-        
+
         Verifies that a properly implemented concrete metric class can be
         instantiated and provides all required attributes (tag, header, unit, type).
         Tests the contract that concrete metrics must fulfill.
         """
+
         class TestTelemetryMetric(BaseTelemetryMetric[float]):
             tag = "test_metric"
             header = "Test Metric"
@@ -59,11 +62,12 @@ class TestBaseTelemetryMetric:
 
     def test_batch_processing_single_gpu_aggregation(self):
         """Test batch processing logic for single GPU scenarios.
-        
+
         Verifies that the base metric class correctly aggregates multiple
         time-series data points for a single GPU into a list of values.
         Tests the core batch processing mechanism used for statistical analysis.
         """
+
         class TestMetric(BaseTelemetryMetric[float]):
             tag = "test_single_gpu"
             header = "Test Metric"
@@ -94,11 +98,12 @@ class TestBaseTelemetryMetric:
 
     def test_batch_processing_none_value_filtering(self):
         """Test that None values are properly filtered during batch processing.
-        
+
         Verifies that the base metric class correctly handles missing data
         by filtering out None values while preserving valid measurements.
         This ensures robust statistical analysis with incomplete data.
         """
+
         class TestMetric(BaseTelemetryMetric[float]):
             tag = "test_none_filtering"
             header = "Test Metric"
@@ -144,11 +149,12 @@ class TestBaseTelemetryMetric:
 
     def test_abstract_method_enforcement(self):
         """Test that abstract method _extract_value must be implemented.
-        
+
         Verifies that concrete classes without proper _extract_value implementation
         cannot be instantiated. This enforces the metric implementation contract
         and prevents incomplete metric classes.
         """
+
         class IncompleteMetric(BaseTelemetryMetric[float]):
             tag = "incomplete"
             header = "Incomplete Metric"
@@ -169,10 +175,11 @@ class TestSpecificTelemetryMetrics:
 
     def test_gpu_power_usage_metric_properties(self):
         """Test GpuPowerUsageMetric configuration and metadata.
-        
+
         Verifies that the power usage metric has correct identifying properties
         for dashboard display and data processing pipeline routing.
         """
+
         metric = GpuPowerUsageMetric()
         
         assert metric.tag == "gpu_power_usage"
@@ -182,10 +189,11 @@ class TestSpecificTelemetryMetrics:
 
     def test_gpu_power_usage_value_extraction(self):
         """Test power usage value extraction from TelemetryRecord.
-        
+
         Verifies that the metric correctly extracts the gpu_power_usage field
         from TelemetryRecord objects and handles None values appropriately.
         """
+
         metric = GpuPowerUsageMetric()
         
         # Test successful extraction
@@ -212,10 +220,11 @@ class TestSpecificTelemetryMetrics:
 
     def test_gpu_utilization_metric_properties(self):
         """Test GpuUtilizationMetric configuration and metadata.
-        
+
         Verifies that the utilization metric has correct identifying properties
         for dashboard display and data processing pipeline routing.
         """
+
         metric = GpuUtilizationMetric()
         
         assert metric.tag == "gpu_utilization"
@@ -225,10 +234,11 @@ class TestSpecificTelemetryMetrics:
 
     def test_gpu_utilization_value_extraction(self):
         """Test GPU utilization value extraction from TelemetryRecord.
-        
+
         Verifies that the metric correctly extracts the gpu_utilization field
         from TelemetryRecord objects and handles None values appropriately.
         """
+
         metric = GpuUtilizationMetric()
         
         # Test successful extraction

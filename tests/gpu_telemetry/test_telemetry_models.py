@@ -15,11 +15,12 @@ class TestTelemetryRecord:
 
     def test_telemetry_record_complete_creation(self):
         """Test creating a TelemetryRecord with all fields populated.
-        
+
         Verifies that a fully-populated TelemetryRecord stores all fields correctly
         including both required fields (timestamp, dcgm_url, gpu_index, etc.) and
         optional metadata fields (pci_bus_id, device, hostname).
         """
+
         record = TelemetryRecord(
             timestamp_ns=1000000000,
             dcgm_url="http://localhost:9401/metrics",
@@ -37,19 +38,16 @@ class TestTelemetryRecord:
             total_gpu_memory=48.0
         )
         
-        # Verify required fields
         assert record.timestamp_ns == 1000000000
         assert record.dcgm_url == "http://localhost:9401/metrics"
         assert record.gpu_index == 0
         assert record.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
         
-        # Verify optional metadata fields
         assert record.pci_bus_id == "00000000:02:00.0"
         assert record.device == "nvidia0"
         assert record.hostname == "ed7e7a5e585f"
         
-        # Verify metric fields
         assert record.gpu_power_usage == 75.5
         assert record.gpu_power_limit == 300.0
         assert record.energy_consumption == 1000000000
@@ -59,11 +57,12 @@ class TestTelemetryRecord:
 
     def test_telemetry_record_minimal_creation(self):
         """Test creating a TelemetryRecord with only required fields.
-        
+
         Verifies that TelemetryRecord can be created with minimal required fields
         and that optional fields default to None. This tests the flexibility
         needed for varying DCGM response completeness.
         """
+
         record = TelemetryRecord(
             timestamp_ns=1000000000,
             dcgm_url="http://node2:9401/metrics",
@@ -79,7 +78,6 @@ class TestTelemetryRecord:
         assert record.gpu_model_name == "NVIDIA H100"
         assert record.gpu_uuid == "GPU-00000000-0000-0000-0000-000000000001"
         
-        # Verify optional fields default to None
         assert record.pci_bus_id is None
         assert record.device is None
         assert record.hostname is None
@@ -92,12 +90,12 @@ class TestTelemetryRecord:
 
     def test_telemetry_record_field_validation(self):
         """Test Pydantic validation of required fields.
-        
+
         Verifies that TelemetryRecord enforces required field validation
         and raises appropriate validation errors when required fields
         are missing. Tests the data integrity guarantees.
         """
-        # Should work with all required fields
+
         record = TelemetryRecord(
             timestamp_ns=1000000000,
             dcgm_url="http://localhost:9401/metrics",
@@ -107,18 +105,18 @@ class TestTelemetryRecord:
         )
         assert record.timestamp_ns == 1000000000
         
-        # Should fail with missing required fields
         with pytest.raises(Exception):  # Pydantic validation error
             TelemetryRecord()  # No fields provided
 
     def test_telemetry_record_metadata_structure(self):
         """Test the hierarchical metadata structure for GPU identification.
-        
+
         Verifies that TelemetryRecord properly supports the hierarchical
         identification structure needed for telemetry organization:
         dcgm_url -> gpu_uuid -> metadata. This structure enables proper
         grouping and filtering in the dashboard.
         """
+
         record = TelemetryRecord(
             timestamp_ns=1000000000,
             dcgm_url="http://gpu-node-01:9401/metrics",

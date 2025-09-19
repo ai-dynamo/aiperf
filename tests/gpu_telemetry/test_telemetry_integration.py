@@ -44,6 +44,7 @@ class TestTelemetryIntegration:
     @pytest.fixture
     def mock_dcgm_response_node1(self):
         """Mock DCGM metrics response for node1 with 2 GPUs."""
+
         return """# HELP DCGM_FI_DEV_GPU_UTIL GPU utilization (in %).
 # TYPE DCGM_FI_DEV_GPU_UTIL gauge
 DCGM_FI_DEV_GPU_UTIL{gpu="0",UUID="GPU-ef6ef310-1234-5678-9abc-def012345678",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="node1"} 75.0
@@ -65,6 +66,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-a1b2c3d4-5678-9abc-def0-123456789abc",dev
     @pytest.fixture
     def mock_dcgm_response_node2(self):
         """Mock DCGM metrics response for node2 with 2 GPUs."""
+
         return """# HELP DCGM_FI_DEV_GPU_UTIL GPU utilization (in %).
 # TYPE DCGM_FI_DEV_GPU_UTIL gauge
 DCGM_FI_DEV_GPU_UTIL{gpu="0",UUID="GPU-f5e6d7c8-9abc-def0-1234-56789abcdef0",device="nvidia0",modelName="NVIDIA H100 PCIe",Hostname="node2"} 90.0
@@ -86,6 +88,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
     @pytest.fixture
     def user_config(self):
         """Mock user configuration for telemetry processing."""
+
         config = create_autospec(UserConfig, instance=True)
         config.log_level = "INFO"
         config.enable_trace = False
@@ -93,6 +96,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
     def setup_method(self):
         """Set up test fixtures for each test."""
+
         self.collected_records = []
         self.collection_errors = []
         
@@ -112,14 +116,14 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
     ):
         """
         Integration test for multi-node telemetry collection through processing pipeline.
-        
+
         Tests the complete flow:
         1. TelemetryDataCollector fetches from multiple DCGM endpoints
         2. Records are processed through callbacks
         3. TelemetryResultsProcessor stores in hierarchical structure
         4. Statistical aggregation produces MetricResult objects
         """
-        
+
         # Mock HTTP responses for different DCGM endpoints
         def mock_requests_get(url, **kwargs):
             mock_response = Mock()
@@ -248,7 +252,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
     def test_callback_pipeline_error_handling(self, mock_dcgm_response_node1, user_config):
         """Test error handling in the callback pipeline during processing."""
-        
+
         # Create a processor that will fail during processing
         faulty_processor = TelemetryResultsProcessor(user_config=user_config)
         
@@ -308,7 +312,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
     def test_empty_dcgm_response_handling(self, user_config):
         """Test handling of empty or invalid DCGM responses."""
-        
+
         def mock_requests_get(url, **kwargs):
             mock_response = Mock()
             mock_response.status_code = 200
@@ -351,7 +355,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
     def test_metric_unit_scaling_in_pipeline(self, user_config):
         """Test that metric unit scaling is applied correctly through the pipeline."""
-        
+
         # Mock response with specific values to test scaling
         mock_response = """# HELP DCGM_FI_DEV_FB_USED Framebuffer memory used (in MiB).
 # TYPE DCGM_FI_DEV_FB_USED gauge

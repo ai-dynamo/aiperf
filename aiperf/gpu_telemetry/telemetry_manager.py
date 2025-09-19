@@ -26,6 +26,7 @@ from aiperf.common.protocols import (
     PushClientProtocol,
     ServiceProtocol,
 )
+from aiperf.gpu_telemetry.constants import DEFAULT_COLLECTION_INTERVAL, DEFAULT_DCGM_ENDPOINT
 from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
 
 
@@ -36,9 +37,9 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
     The TelemetryManager coordinates multiple TelemetryDataCollector instances
     to collect GPU telemetry from multiple DCGM endpoints and send unified
     TelemetryRecordsMessage to RecordsManager.
-    
+
     This service:
-    - Manages lifecycle of TelemetryDataCollector instances  
+    - Manages lifecycle of TelemetryDataCollector instances
     - Collects telemetry from multiple DCGM endpoints
     - Sends TelemetryRecordsMessage to RecordsManager via message system
     - Handles errors gracefully with ErrorDetails
@@ -60,17 +61,16 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
         )
         self.debug("Telemetry manager __init__")
         
-        # Store collectors for multiple DCGM endpoints
         self._collectors: dict[str, TelemetryDataCollector] = {}
         
-        # DCGM endpoints from user config (for now, use a default for testing)
         # TODO: Get from user_config when telemetry config is added
-        self._dcgm_endpoints = ["http://localhost:9401/metrics"]
-        self._collection_interval = 0.033  # 33ms default (~30Hz)
+        self._dcgm_endpoints = [DEFAULT_DCGM_ENDPOINT]
+        self._collection_interval = DEFAULT_COLLECTION_INTERVAL
 
     @on_init
     async def _initialize(self) -> None:
         """Initialize telemetry collectors for each DCGM endpoint."""
+
         self.debug("Initializing telemetry manager")
         
         for dcgm_url in self._dcgm_endpoints:
@@ -92,9 +92,9 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
         self, message: ProfileConfigureCommand
     ) -> None:
         """Configure the telemetry collectors but don't start them yet."""
+
         self.info(f"Configuring telemetry manager for {self.service_id}")
         
-        # Verify all endpoints are reachable
         reachable_count = 0
         for dcgm_url, collector in self._collectors.items():
             if collector.is_url_reachable():
@@ -108,6 +108,7 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, message) -> None:
         """Start all telemetry collectors."""
+
         self.debug("Starting telemetry collection")
         
         started_count = 0
@@ -129,17 +130,20 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
         self, message: ProfileCancelCommand
     ) -> None:
         """Stop all telemetry collectors."""
+
         self.debug(lambda: f"Received profile cancel command: {message}")
         await self._stop_all_collectors()
 
     @on_stop
     async def _telemetry_manager_stop(self) -> None:
         """Stop all telemetry collectors."""
+
         self.debug("Stopping telemetry manager")
         await self._stop_all_collectors()
 
     async def _stop_all_collectors(self) -> None:
         """Stop all telemetry collectors."""
+
         for dcgm_url, collector in self._collectors.items():
             try:
                 collector.stop()
@@ -149,9 +153,10 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
 
     def _on_telemetry_records(self, records: list[TelemetryRecord]) -> None:
         """Callback for receiving telemetry records from collectors.
-        
+
         Sends TelemetryRecordsMessage to RecordsManager via message system.
         """
+
         if not records:
             return
             
@@ -163,7 +168,6 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
                 error=None
             )
             
-            # Send to RecordsManager via async push
             self.execute_async(self.push_client.push(message))
             
         except Exception as e:
@@ -171,9 +175,10 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
 
     def _on_telemetry_error(self, error: Exception) -> None:
         """Callback for receiving telemetry errors from collectors.
-        
+
         Sends error TelemetryRecordsMessage to RecordsManager via message system.
         """
+
         try:
             error_message = TelemetryRecordsMessage(
                 service_id=self.service_id,
@@ -182,7 +187,6 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
                 error=ErrorDetails.from_exception(error)
             )
             
-            # Send error to RecordsManager via async push
             self.execute_async(self.push_client.push(error_message))
             
         except Exception as e:
@@ -191,6 +195,7 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
 
 def main() -> None:
     """Main entry point for the telemetry manager."""
+
     from aiperf.common.bootstrap import bootstrap_and_run_service
     
     bootstrap_and_run_service(TelemetryManager)

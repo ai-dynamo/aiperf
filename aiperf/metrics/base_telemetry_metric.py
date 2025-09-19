@@ -43,11 +43,12 @@ class BaseTelemetryMetric(
     @abstractmethod
     def _extract_value(self, record: TelemetryRecord) -> MetricValueTypeVarT | None:
         """Extract metric value from telemetry record.
-        
+
         Args:
             record: The telemetry record to extract the value from
-            
+
         Returns:
             The metric value, or None if the value is not available
         """
+
         raise NotImplementedError("Subclasses must implement this method")
