@@ -11,6 +11,7 @@ from aiperf.common.models.telemetry_models import TelemetryRecord
 @pytest.fixture
 def sample_dcgm_data():
     """Sample DCGM metrics data in Prometheus format (single GPU)."""
+
     return """# HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz)
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
 DCGM_FI_DEV_SM_CLOCK{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 210
@@ -41,6 +42,7 @@ DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_
 @pytest.fixture
 def multi_gpu_dcgm_data():
     """Sample DCGM metrics data with multiple GPUs."""
+
     return """# HELP DCGM_FI_DEV_POWER_USAGE Power draw (in W)
 # TYPE DCGM_FI_DEV_POWER_USAGE gauge
 DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 79.60
@@ -77,6 +79,7 @@ DCGM_FI_DEV_FB_USED{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_
 @pytest.fixture
 def sample_telemetry_records():
     """Sample TelemetryRecord objects for testing."""
+
     return [
         TelemetryRecord(
             timestamp_ns=1000000000,
@@ -99,6 +102,7 @@ def sample_telemetry_records():
 @pytest.fixture
 def multi_gpu_telemetry_records():
     """Multiple GPU records for batch processing tests."""
+
     records = []
     
     # Generate 50 samples for each GPU with realistic patterns

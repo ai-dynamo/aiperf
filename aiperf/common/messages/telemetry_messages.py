@@ -27,4 +27,5 @@ class TelemetryRecordsMessage(BaseServiceMessage):
     @property
     def valid(self) -> bool:
         """Whether the telemetry collection was valid."""
+
         return self.error is None and len(self.records) > 0
