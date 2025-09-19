@@ -56,9 +56,6 @@ from aiperf.common.messages.inference_messages import (
     MetricRecordsMessage,
     RealtimeMetricsMessage,
 )
-from aiperf.common.messages.telemetry_messages import (
-    TelemetryRecordsMessage,
-)
 from aiperf.common.messages.progress_messages import (
     AllRecordsReceivedMessage,
     ProcessingStatsMessage,
@@ -74,6 +71,9 @@ from aiperf.common.messages.service_messages import (
     HeartbeatMessage,
     RegistrationMessage,
     StatusMessage,
+)
+from aiperf.common.messages.telemetry_messages import (
+    TelemetryRecordsMessage,
 )
 from aiperf.common.messages.worker_messages import (
     WorkerHealthMessage,

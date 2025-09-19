@@ -155,35 +155,3 @@ class MetricArray(Generic[MetricValueTypeVarT]):
             p99=p99,
             count=self._size,
         )
-
-class PerGpuMetricArray(Generic[MetricValueTypeVarT]):
-    """Stores a MetricArray for each GPU id."""
-
-    def __init__(self):
-        self._gpu_arrays: dict[int, MetricArray[MetricValueTypeVarT]] = {}
-
-    def append(self, gpu_id: int, value: MetricValueTypeVarT) -> None:
-        """Append a value for a specific GPU."""
-        if gpu_id not in self._gpu_arrays:
-            self._gpu_arrays[gpu_id] = MetricArray()
-        self._gpu_arrays[gpu_id].append(value)
-
-    def get(self, gpu_id: int) -> MetricArray[MetricValueTypeVarT]:
-        return self._gpu_arrays[gpu_id]
-
-    def items(self):
-        return self._gpu_arrays.items()
-
-    def to_results(self, tag: MetricTagT, header: str, unit: str) -> dict[int, MetricResult]:
-        """Return a dict of MetricResult per GPU."""
-        return {
-            gpu_id: arr.to_result(f"{tag}_gpu{gpu_id}", f"{header} (GPU {gpu_id})", unit)
-            for gpu_id, arr in self._gpu_arrays.items()
-        }
-
-class MetricTelemetryDict(BaseMetricDict[PerGpuMetricArray]):
-    """
-    A dict of telemetry metrics, where each value is a PerGpuMetricArray.
-    Used to store per-GPU time series data for telemetry metrics (e.g., power usage).
-    """
-    pass

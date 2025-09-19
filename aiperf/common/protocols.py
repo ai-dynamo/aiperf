@@ -22,6 +22,7 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
     ServiceRunInfo,
+    TelemetryRecord,
     Turn,
 )
 from aiperf.common.types import (
@@ -513,15 +514,15 @@ class ResultsProcessorProtocol(Protocol):
 @runtime_checkable
 class TelemetryResultsProcessorProtocol(Protocol):
     """Protocol for telemetry results processors that handle TelemetryRecord objects.
-    
+
     This protocol is separate from ResultsProcessorProtocol because telemetry data
     has fundamentally different structure (hierarchical with metadata) compared
     to inference metrics (flat key-value pairs).
     """
 
-    async def process_telemetry_record(self, record: "TelemetryRecord") -> None:
+    async def process_telemetry_record(self, record: TelemetryRecord) -> None:
         """Process individual telemetry record with rich metadata.
-        
+
         Args:
             record: TelemetryRecord containing GPU metrics and hierarchical metadata
         """
@@ -529,7 +530,7 @@ class TelemetryResultsProcessorProtocol(Protocol):
 
     async def summarize(self) -> list["MetricResult"]:
         """Generate MetricResult list with hierarchical tags for telemetry data.
-        
+
         Returns:
             List of MetricResult objects with hierarchical tags that preserve
             dcgm_url -> gpu_uuid grouping structure for dashboard filtering.
