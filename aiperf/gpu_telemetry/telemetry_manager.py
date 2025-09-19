@@ -62,7 +62,7 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
 
         self._collectors: dict[str, TelemetryDataCollector] = {}
 
-        # TODO: Get from user_config when telemetry config is added
+        # [AIP-280] TODO: @ilana-n Get from user_config when telemetry config is added to CLI argument
         self._dcgm_endpoints = [DEFAULT_DCGM_ENDPOINT]
         self._collection_interval = DEFAULT_COLLECTION_INTERVAL
 

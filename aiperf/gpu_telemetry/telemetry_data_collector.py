@@ -155,7 +155,7 @@ class TelemetryDataCollector:
             self._logger.warning("Response from DCGM metrics endpoint is empty")
             return []
 
-        current_timestamp = time.perf_counter_ns()
+        current_timestamp = time.time_ns()
         gpu_data = {}
         gpu_metadata = {}
 

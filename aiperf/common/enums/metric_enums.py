@@ -198,19 +198,97 @@ class GenericMetricUnit(BaseMetricUnit):
     PERCENT = _unit("%")
 
 
+class PowerMetricUnitInfo(BaseMetricUnitInfo):
+    """Information about a power unit for metrics."""
+
+    long_name: str
+    watts: float
+
+    def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
+        """Convert a value from this unit to another unit."""
+        if not isinstance(other_unit, PowerMetricUnit | PowerMetricUnitInfo):
+            return super().convert_to(other_unit, value)
+
+        return value * (self.watts / other_unit.watts)
+
+
 class PowerMetricUnit(BaseMetricUnit):
     """Defines power units for metrics."""
 
-    WATT = _unit("W")
-    MILLIWATT = _unit("mW")
+    WATT = PowerMetricUnitInfo(
+        tag="W",
+        long_name="watts",
+        watts=1.0,
+    )
+    MILLIWATT = PowerMetricUnitInfo(
+        tag="mW",
+        long_name="milliwatts",
+        watts=0.001,
+    )
+
+    @cached_property
+    def info(self) -> PowerMetricUnitInfo:
+        """Get the info for the power unit."""
+        return self._info  # type: ignore
+
+    @cached_property
+    def watts(self) -> float:
+        """The number of watts in the power unit."""
+        return self.info.watts
+
+    @cached_property
+    def long_name(self) -> str:
+        """The long name of the power unit."""
+        return self.info.long_name
+
+
+class EnergyMetricUnitInfo(BaseMetricUnitInfo):
+    """Information about an energy unit for metrics."""
+
+    long_name: str
+    joules: float
+
+    def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
+        """Convert a value from this unit to another unit."""
+        if not isinstance(other_unit, EnergyMetricUnit | EnergyMetricUnitInfo):
+            return super().convert_to(other_unit, value)
+
+        return value * (self.joules / other_unit.joules)
 
 
 class EnergyMetricUnit(BaseMetricUnit):
     """Defines energy units for metrics."""
 
-    JOULE = _unit("J")
-    MILLIJOULE = _unit("mJ")
-    MEGAJOULE = _unit("MJ")
+    JOULE = EnergyMetricUnitInfo(
+        tag="J",
+        long_name="joules",
+        joules=1.0,
+    )
+    MILLIJOULE = EnergyMetricUnitInfo(
+        tag="mJ",
+        long_name="millijoules",
+        joules=0.001,
+    )
+    MEGAJOULE = EnergyMetricUnitInfo(
+        tag="MJ",
+        long_name="megajoules",
+        joules=1_000_000.0,
+    )
+
+    @cached_property
+    def info(self) -> EnergyMetricUnitInfo:
+        """Get the info for the energy unit."""
+        return self._info  # type: ignore
+
+    @cached_property
+    def joules(self) -> float:
+        """The number of joules in the energy unit."""
+        return self.info.joules
+
+    @cached_property
+    def long_name(self) -> str:
+        """The long name of the energy unit."""
+        return self.info.long_name
 
 
 class MetricDateTimeUnit(BaseMetricUnit):
