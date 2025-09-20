@@ -5,7 +5,10 @@
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import DEFAULT_WORKER_HEALTH_CHECK_INTERVAL
+from aiperf.common.constants import (
+    AIPERF_HTTP_CONNECTION_LIMIT,
+    DEFAULT_WORKER_HEALTH_CHECK_INTERVAL,
+)
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -55,6 +58,9 @@ class Worker(
             service_id=service_id,
             pull_client_address=CommAddress.CREDIT_DROP,
             pull_client_bind=False,
+            # NOTE: We set the max concurrency to the same as the HTTP connection limit to ensure
+            # that the worker will not receive any more credits while the connection limit is reached.
+            pull_client_max_concurrency=AIPERF_HTTP_CONNECTION_LIMIT,
             **kwargs,
         )
 
