@@ -9,6 +9,7 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
+    DEFAULT_MAX_WORKERS_CAP,
     DEFAULT_WORKER_CHECK_INTERVAL,
     DEFAULT_WORKER_ERROR_RECOVERY_TIME,
     DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE,
@@ -75,20 +76,25 @@ class WorkerManager(BaseComponentService):
         self.max_concurrency = self.user_config.loadgen.concurrency
         self.max_workers = self.service_config.workers.max
         if self.max_workers is None:
-            # Default to the number of CPU cores - 1
-            self.max_workers = self.cpu_count - 1
+            # Default to 75% of the CPU cores - 1, with a cap of DEFAULT_MAX_WORKERS_CAP, and a minimum of 1
+            self.max_workers = max(
+                1, min(int(self.cpu_count * 0.75) - 1, DEFAULT_MAX_WORKERS_CAP)
+            )
+            self.debug(
+                lambda: f"Auto-setting max workers to {self.max_workers} due to no max workers specified."
+            )
 
         # Cap the worker count to the max concurrency, but only if the user is in concurrency mode.
-        if self.max_concurrency:
-            self.max_workers = min(
-                self.max_concurrency,
-                self.max_workers,
+        if self.max_concurrency and self.max_concurrency < self.max_workers:
+            self.max_workers = self.max_concurrency
+            self.debug(
+                lambda: f"Capping max workers to {self.max_workers} due to concurrency."
             )
 
         # Ensure we have at least the min workers
         self.max_workers = max(
             self.max_workers,
-            self.service_config.workers.min or 0,
+            self.service_config.workers.min or 1,
         )
         self.initial_workers = self.max_workers
 
