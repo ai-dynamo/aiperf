@@ -4,7 +4,11 @@
 -->
 # GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
 
-This comprehensive comparison matrix shows the supported CLI options between GenAI-Perf and AIPerf tools.
+This comparison matrix shows the supported CLI options between GenAI-Perf and AIPerf.
+
+> [!NOTE]
+> This is a living document and will be updated as new features are added to AIPerf.
+
 
 **Legend:**
 - ✅ **Fully Supported** - Feature available with same/similar functionality
@@ -132,7 +136,7 @@ This comprehensive comparison matrix shows the supported CLI options between Gen
 |---------|------------|------------|---------|-------|
 | **Number of Sessions** | `--num-sessions` | ✅ | 🟡 | |
 | **Session Concurrency** | `--session-concurrency` | ✅ | ❌ | |
-| **Session Delay Ratio** | `--session-delay-ratio` | ✅ | 🟡 | |
+| **Session Delay Ratio** | `--session-delay-ratio` | ✅ | ❌ | Present in CLI, but does not do anything |
 | **Session Turn Delay Mean** | `--session-turn-delay-mean` | ✅ | 🟡 | |
 | **Session Turn Delay Stddev** | `--session-turn-delay-stddev` | ✅ | 🟡 | |
 | **Session Turns Mean** | `--session-turns-mean` | ✅ | 🟡 | |
@@ -245,11 +249,18 @@ This comprehensive comparison matrix shows the supported CLI options between Gen
 | Feature | GenAI-Perf | AIPerf | Notes |
 |---------|------------|--------|-------|
 | Console output | ✅ | ✅ | |
-| JSON output | ✅ | ✅ | |
+| JSON output | ✅ | ✅ | [See discrepancies below](#json-output) |
 | CSV output | ✅ | ✅ |  |
 | API Error Summary | ❌ | ✅ | |
 | `profile_export.json` | ✅ | ❌ | |
 | `inputs.json` | ✅ | ❌ | |
+
+### Discrepancies
+
+#### JSON Output
+
+- Currently, the result data is inside the `records` field in the JSON output. This is different from GenAI-Perf, where the result data is directly in the top-level of the JSON object.
+- Fields in the `input_config` section may differ between GenAI-Perf and AIPerf.
 
 ---
 
