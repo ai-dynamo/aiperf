@@ -9,15 +9,14 @@ SPDX-License-Identifier: Apache-2.0
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Discord](https://dcbadge.limes.pink/api/server/D92uqZRjCZ?style=flat)](https://discord.gg/D92uqZRjCZ)
 
-| **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)**
+**[Architecture](docs/architecture.md)**| **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)**
 
 
-AIPerf is a comprehensive benchmarking tool for measuring the performance of generative AI models served by your preferred inference solution.
-It provides detailed metrics via a command line display as well as extensive benchmark performance reports.
+AIPerf is a comprehensive benchmarking tool that measures the performance of generative AI models served by your preferred inference solution.
+It provides detailed metrics using a command line display as well as extensive benchmark performance reports.
 
-AIPerf provides multiprocess and kubernetes support (coming soon) out of the box for a single scalable solution.
+AIPerf provides multiprocess support out of the box for a single scalable solution.
 
-</br>
 
 <!--
 ======================
@@ -27,7 +26,7 @@ Features
 
 ## Features
 
-- Scalable via multiprocess or Kubernetes (coming soon) support
+- Scalable via multiprocess support
 - Modular design for easy user modification
 - Several benchmarking modes:
   - concurrency
@@ -58,7 +57,7 @@ INSTALLATION
 
 ## Installation
 ```
-pip install git+https://github.com/ai-dynamo/aiperf.git
+pip install aiperf
 ```
 
 </br>
@@ -121,4 +120,9 @@ NVIDIA AIPerf | LLM Metrics
 
 ## Known Issues
 
-- When setting the OSL via the `--output-tokens-mean` option, if `--extra-inputs ignore_eos:true` is not set currently, then AIPerf cannot guarantee a given OSL constraint. This is being worked on to remove this requirement in the future.
+- Output sequence length constraints (`--output-tokens-mean`) cannot be guaranteed unless you pass `ignore_eos` and/or `min_tokens` via `--extra-inputs` to an inference server that supports them.
+- A couple of options in the CLI help text use underscore instead of a hyphen inconsistently.
+- Very high concurrency settings (typically >15,000 concurrency) may lead to port exhaustion on some systems, causing connection failures during benchmarking. If encountered, consider adjusting system limits or reducing concurrency.
+- Startup errors caused by invalid configuration settings can cause AIPerf to hang indefinitely. If AIPerf appears to freeze during initialization, terminate the process and check configuration settings.
+- Mooncake trace format currently requires the `--fixed-schedule` option to be set.
+- Dashboard UI may cause corrupted ANSI sequences on macOS or certain terminal environments, making the terminal unusable. Run `reset` command to restore normal terminal functionality, or switch to `--ui simple` for a lightweight progress bar interface.

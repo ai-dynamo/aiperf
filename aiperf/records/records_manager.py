@@ -10,6 +10,7 @@ from aiperf.common.constants import (
     DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
     DEFAULT_REALTIME_METRICS_INTERVAL,
     DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL,
+    NANOS_PER_SECOND,
 )
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
@@ -50,6 +51,11 @@ from aiperf.common.models import (
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol, ServiceProtocol
 from aiperf.common.types import MetricTagT
+from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
+from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from aiperf.records.phase_completion import (
+    PhaseCompletionChecker,
+)
 
 
 @implements_protocol(ServiceProtocol)
@@ -84,7 +90,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.end_time_ns: int | None = None
         self.sent_all_records_received: bool = False
         self.profile_cancelled: bool = False
+        self.timeout_triggered: bool = False
+        self.expected_duration_sec: float | None = None
         #########################################################
+
+        self._completion_checker = PhaseCompletionChecker()
 
         self.error_summary: dict[ErrorDetails, int] = {}
         self.error_summary_lock: asyncio.Lock = asyncio.Lock()
@@ -117,20 +127,36 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self.debug(lambda: f"Skipping non-profiling record: {message.credit_phase}")
             return
 
-        await self._send_results_to_results_processors(message.results)
+        should_include_request = self._should_include_request_by_duration(
+            message.results
+        )
+
+        if should_include_request:
+            await self._send_results_to_results_processors(message.results)
 
         worker_id = message.worker_id
 
-        if message.valid:
+        if message.valid and should_include_request:
+            # Valid record
             async with self.worker_stats_lock:
-                self.worker_stats.setdefault(
+                worker_stats = self.worker_stats.setdefault(
                     worker_id, ProcessingStats()
-                ).processed += 1
+                )
+                worker_stats.processed += 1
             async with self.processing_status_lock:
                 self.processing_stats.processed += 1
+        elif message.valid and not should_include_request:
+            # Timed out record
+            self.debug(
+                f"Filtered out record from worker {worker_id} - response received after duration"
+            )
         else:
+            # Invalid record
             async with self.worker_stats_lock:
-                self.worker_stats.setdefault(worker_id, ProcessingStats()).errors += 1
+                worker_stats = self.worker_stats.setdefault(
+                    worker_id, ProcessingStats()
+                )
+                worker_stats.errors += 1
             async with self.processing_status_lock:
                 self.processing_stats.errors += 1
             if message.error:
@@ -141,20 +167,66 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         await self._check_if_all_records_received()
 
+    def _should_include_request_by_duration(
+        self, results: list[dict[MetricTagT, MetricValueTypeT]]
+    ) -> bool:
+        """Determine if the request should be included based on benchmark duration.
+
+        Args:
+            results: List of metric results for a single request
+
+        Returns:
+            True if the request should be included, else False
+        """
+        if not self.expected_duration_sec:
+            return True
+
+        grace_period_sec = self.user_config.loadgen.benchmark_grace_period
+        duration_end_ns = self.start_time_ns + int(
+            (self.expected_duration_sec + grace_period_sec) * NANOS_PER_SECOND
+        )
+
+        # Check if any response in this request was received after the duration
+        # If so, filter out the entire request (all-or-nothing approach)
+        for result_dict in results:
+            request_timestamp = result_dict.get(MinRequestTimestampMetric.tag)
+            request_latency = result_dict.get(RequestLatencyMetric.tag)
+
+            if request_timestamp is not None and request_latency is not None:
+                final_response_timestamp = request_timestamp + request_latency
+
+                if final_response_timestamp > duration_end_ns:
+                    self.debug(
+                        f"Filtering out timed-out request - response received "
+                        f"{final_response_timestamp - duration_end_ns} ns after timeout"
+                    )
+                    return False
+
+        return True
+
     async def _check_if_all_records_received(self) -> None:
         """Check if all records have been received, and if so, publish a message and process the records."""
         all_records_received = False
+
         async with self.processing_status_lock:
-            if (
-                self.final_request_count is not None
-                and self.processing_stats.total_records >= self.final_request_count
-            ):
-                if self.processing_stats.total_records > self.final_request_count:
+            # Use the Strategy pattern for completion checking
+            is_complete, completion_reason = self._completion_checker.is_complete(
+                processing_stats=self.processing_stats,
+                final_request_count=self.final_request_count,
+                timeout_triggered=self.timeout_triggered,
+                expected_duration_sec=self.expected_duration_sec,
+            )
+            all_records_received = is_complete
+
+            if all_records_received:
+                if (
+                    self.final_request_count is not None
+                    and self.processing_stats.total_records > self.final_request_count
+                ):
                     self.warning(
                         f"Processed {self.processing_stats.total_records:,} records, but only expected {self.final_request_count:,} records"
                     )
 
-                all_records_received = True
                 if self.sent_all_records_received:
                     return
                 self.sent_all_records_received = True
@@ -203,6 +275,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return
         async with self.processing_status_lock:
             self.start_time_ns = phase_start_msg.start_ns
+            self.expected_duration_sec = phase_start_msg.expected_duration_sec
             self.processing_stats.total_expected_requests = (
                 phase_start_msg.total_expected_requests
             )
@@ -238,6 +311,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
                 self.final_request_count = message.completed
             self.end_time_ns = message.end_ns
+            self.timeout_triggered = message.timeout_triggered
+
             self.notice(
                 f"All requests have completed, please wait for the results to be processed "
                 f"(currently {self.processing_stats.total_records:,} of {self.final_request_count:,} records processed)..."

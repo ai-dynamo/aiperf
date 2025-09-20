@@ -30,9 +30,9 @@ class CLIDefaults:
 class EndpointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
     CUSTOM_ENDPOINT = None
-    TYPE = EndpointType.OPENAI_CHAT_COMPLETIONS
+    TYPE = EndpointType.CHAT
     STREAMING = False
-    URL = "localhost:8080"
+    URL = "localhost:8000"
     TIMEOUT = 600.0
     API_KEY = None
 
@@ -143,6 +143,8 @@ class ServiceDefaults:
 
 @dataclass(frozen=True)
 class LoadGeneratorDefaults:
+    BENCHMARK_DURATION = None
+    BENCHMARK_GRACE_PERIOD = 30.0
     CONCURRENCY = None
     REQUEST_RATE = None
     REQUEST_COUNT = 10

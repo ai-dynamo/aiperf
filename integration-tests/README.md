@@ -50,25 +50,24 @@ pip install -e ".[dev]"
 aiperf-mock-server -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
 # Custom configuration with short flags
-aiperf-mock-server -p 8080 -t 30 -i 10 -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+aiperf-mock-server -p 8000 -t 30 -i 10 -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
 # Full configuration with long flags
 aiperf-mock-server \
-  --port 8080 \
+  --port 8000 \
   --ttft 30 \
   --itl 10 \
   --host 127.0.0.1 \
   --workers 4 \
   --log-level DEBUG \
-  --tokenizer-models gpt2 \
   --tokenizer-models deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
 # With environment variables
-export MOCK_SERVER_PORT=8080
+export MOCK_SERVER_PORT=8000
 export MOCK_SERVER_TTFT=30
 export MOCK_SERVER_ITL=10
 export MOCK_SERVER_LOG_LEVEL=DEBUG
-export MOCK_SERVER_TOKENIZER_MODELS='["gpt2", "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]'
+export MOCK_SERVER_TOKENIZER_MODELS='["deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]'
 aiperf-mock-server
 ```
 
@@ -93,7 +92,7 @@ All configuration options can be set via environment variables with the `MOCK_SE
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt2",
+    "model": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
     "messages": [
       {"role": "user", "content": "Hello, world!"}
     ],
@@ -108,7 +107,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt2",
+    "model": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
     "messages": [
       {"role": "user", "content": "Hello, world!"}
     ],
@@ -176,7 +175,7 @@ Runtime configuration endpoint for updating server settings.
 {
   "ttft": 50,
   "itl": 15,
-  "tokenizer_models": ["gpt2", "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]
+  "tokenizer_models": ["deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]
 }
 ```
 

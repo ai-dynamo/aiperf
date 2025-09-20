@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from pathlib import Path
 from unittest.mock import mock_open, patch
+
+import pytest
 
 from aiperf.common.config import (
     EndpointConfig,
@@ -12,9 +15,6 @@ from aiperf.common.config import (
     UserConfig,
 )
 from aiperf.common.enums import EndpointType
-import pytest
-from pathlib import Path
-from aiperf.common.enums.endpoints_enums import EndpointServiceKind
 from aiperf.common.enums.timing_enums import TimingMode
 
 
@@ -38,7 +38,7 @@ def test_user_config_serialization_to_file():
     config = UserConfig(
         endpoint=EndpointConfig(
             model_names=["model1", "model2"],
-            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            type=EndpointType.CHAT,
             custom_endpoint="custom_endpoint",
             streaming=True,
             url="http://custom-url",
@@ -48,11 +48,13 @@ def test_user_config_serialization_to_file():
     # Serialize to JSON and write to a mocked file
     mocked_file = mock_open()
     with patch("pathlib.Path.open", mocked_file):
-        mocked_file().write(config.model_dump_json(indent=4))
+        mocked_file().write(config.model_dump_json(indent=4, exclude_defaults=True))
 
     # Read the mocked file and deserialize back to UserConfig
     with patch("pathlib.Path.open", mocked_file):
-        mocked_file().read.return_value = config.model_dump_json(indent=4)
+        mocked_file().read.return_value = config.model_dump_json(
+            indent=4, exclude_defaults=True
+        )
         loaded_config = UserConfig.model_validate_json(mocked_file().read())
 
     # Ensure the original and loaded configs are identical
@@ -79,7 +81,7 @@ def test_user_config_defaults():
     config = UserConfig(
         endpoint=EndpointConfig(
             model_names=["model1", "model2"],
-            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            type=EndpointType.CHAT,
             custom_endpoint="custom_endpoint",
         )
     )
@@ -106,7 +108,7 @@ def test_user_config_custom_values():
 
     custom_values = {
         "endpoint": EndpointConfig(
-            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            type=EndpointType.CHAT,
             custom_endpoint="custom_endpoint",
             model_names=["model1", "model2"],
             streaming=True,
@@ -131,7 +133,7 @@ def test_user_config_exclude_unset_fields():
     config = UserConfig(
         endpoint=EndpointConfig(
             model_names=["model1", "model2"],
-            type=EndpointType.OPENAI_CHAT_COMPLETIONS,
+            type=EndpointType.CHAT,
             custom_endpoint="custom_endpoint",
             streaming=True,
             url="http://custom-url",
@@ -148,21 +150,21 @@ def test_user_config_exclude_unset_fields():
     [
         (
             ["hf/model"],  # model name with slash
-            EndpointType.OPENAI_CHAT_COMPLETIONS,
+            EndpointType.CHAT,
             TimingMode.REQUEST_RATE,
             True,
             "/tmp/artifacts/hf_model-openai-chat-concurrency5-request_rate10.0",
         ),
         (
             ["model1", "model2"],  # multi-model
-            EndpointType.OPENAI_COMPLETIONS,
+            EndpointType.COMPLETIONS,
             TimingMode.REQUEST_RATE,
             True,
             "/tmp/artifacts/model1_multi-openai-completions-concurrency5-request_rate10.0",
         ),
         (
             ["singlemodel"],  # single model
-            EndpointType.OPENAI_EMBEDDINGS,
+            EndpointType.EMBEDDINGS,
             TimingMode.FIXED_SCHEDULE,
             False,
             "/tmp/artifacts/singlemodel-openai-embeddings-fixed_schedule",
