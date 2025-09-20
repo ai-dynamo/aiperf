@@ -21,6 +21,10 @@ from aiperf.controller.system_controller import (
 from aiperf.controller.system_mixins import (
     SignalHandlerMixin,
 )
+from aiperf.controller.system_utils import (
+    display_command_errors,
+    extract_errors,
+)
 
 __all__ = [
     "BaseServiceManager",
@@ -31,5 +35,7 @@ __all__ = [
     "ServiceKubernetesRunInfo",
     "SignalHandlerMixin",
     "SystemController",
+    "display_command_errors",
+    "extract_errors",
     "main",
 ]
