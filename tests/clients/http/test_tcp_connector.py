@@ -13,6 +13,7 @@ import pytest
 
 from aiperf.clients.http import SocketDefaults
 from aiperf.clients.http.aiohttp_client import create_tcp_connector
+from aiperf.common import constants
 
 ################################################################################
 # Test create_tcp_connector
@@ -35,8 +36,8 @@ class TestCreateTcpConnector:
             call_kwargs = mock_connector_class.call_args[1]
 
             # Verify default parameters
-            assert call_kwargs["limit"] == 2500
-            assert call_kwargs["limit_per_host"] == 2500
+            assert call_kwargs["limit"] == constants.AIPERF_HTTP_CONNECTION_LIMIT
+            assert call_kwargs["limit_per_host"] == 0
             assert call_kwargs["ttl_dns_cache"] == 300
             assert call_kwargs["use_dns_cache"] is True
             assert call_kwargs["enable_cleanup_closed"] is False
