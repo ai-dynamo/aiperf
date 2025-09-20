@@ -5,9 +5,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # Migrating from GenAI-Perf
 
-AIPerf is designed to be a drop-in replacement for [GenAI-Perf](https://github.com/triton-inference-server/perf_analyzer). Most options from GenAI-Perf map directly to AIPerf options. Options that don't are noted below.
+AIPerf is designed to be a drop-in replacement for [GenAI-Perf](https://github.com/triton-inference-server/perf_analyzer/genai-perf) _for currently supported features_. Most options from GenAI-Perf map directly to AIPerf options. Options that don't are noted below.
 Some options, primarily for the `analyze` subcommand, are not yet supported; they're planned for future releases.
 <br>
+
+See the [GenAI-Perf vs AIPerf CLI Feature Comparison Matrix](genai-perf-feature-comparison.md) for a detailed comparison of the supported CLI options.
 
 ## Known CLI Argument Differences
 
