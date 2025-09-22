@@ -8,6 +8,7 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import WorkersDefaults
 from aiperf.common.config.groups import Groups
+from aiperf.common.constants import DEFAULT_MAX_WORKERS_CAP
 
 
 class WorkersConfig(BaseConfig):
@@ -27,7 +28,9 @@ class WorkersConfig(BaseConfig):
         int | None,
         Field(
             description="Maximum number of workers to create. If not specified, the number of"
-            " workers will be determined by the smaller of (concurrency + 1) and (num CPUs - 1).",
+            " workers will be determined by the formula `min(concurrency, (num CPUs * 0.75) - 1)`, "
+            f" with a default max cap of `{DEFAULT_MAX_WORKERS_CAP}`. Any value provided will still be capped by"
+            f" the concurrency value (if specified), but not by the max cap.",
         ),
         CLIParameter(
             name=("--workers-max", "--max-workers"),
