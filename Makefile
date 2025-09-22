@@ -153,8 +153,8 @@ setup-venv: #? create the virtual environment.
 		printf "$(bold)$(green)Virtual environment already exists$(reset)\n"; \
 	fi
 
-setup-mkinit: #? install the mkinit package.
-	$(activate_venv) && uv pip install mkinit
+setup-mkinit: #? install the mkinit and ruff packages for pre-commit.
+	$(activate_venv) && uv pip install mkinit ruff
 
 first-time-setup: #? convenience command to setup the environment for the first time
 	$(MAKE) setup-venv --no-print-directory
