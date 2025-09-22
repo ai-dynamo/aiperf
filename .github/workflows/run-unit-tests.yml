@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-22.04"]
+        os: ["ubuntu-latest"]
         python-version: ["3.10"]
 
     steps:
@@ -25,4 +25,10 @@ jobs:
         make first-time-setup
     - name: Run unit tests
       run: |
-        make test
+        make coverage
+
+    - name: Upload results to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        slug: ai-dynamo/aiperf

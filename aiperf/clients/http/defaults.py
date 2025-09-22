@@ -3,6 +3,8 @@
 import socket
 from dataclasses import dataclass
 
+from aiperf.common import constants
+
 
 @dataclass(frozen=True)
 class SocketDefaults:
@@ -63,8 +65,12 @@ class SocketDefaults:
 class AioHttpDefaults:
     """Default values for aiohttp.ClientSession."""
 
-    LIMIT = 2500  # Maximum number of concurrent connections
-    LIMIT_PER_HOST = 2500  # Maximum number of concurrent connections per host
+    LIMIT = (
+        constants.AIPERF_HTTP_CONNECTION_LIMIT
+    )  # Maximum number of concurrent connections
+    LIMIT_PER_HOST = (
+        0  # Maximum number of concurrent connections per host (0 will set to LIMIT)
+    )
     TTL_DNS_CACHE = 300  # Time to live for DNS cache
     USE_DNS_CACHE = True  # Enable DNS cache
     ENABLE_CLEANUP_CLOSED = False  # Disable cleanup of closed connections
