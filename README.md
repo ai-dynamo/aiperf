@@ -78,7 +78,7 @@ Run a simple benchmark against a model:
 aiperf profile \
   --model your_model_name \
   --url http://localhost:8000 \
-  --endpoint-type chat
+  --endpoint-type chat \
   --streaming
 ```
 
