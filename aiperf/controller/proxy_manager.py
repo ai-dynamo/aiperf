@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
+
 import zmq.asyncio
 
 from aiperf.common.config import ServiceConfig
+from aiperf.common.constants import DEFAULT_ZMQ_CONTEXT_TERM_TIMEOUT
 from aiperf.common.enums import ZMQProxyType
 from aiperf.common.factories import ZMQProxyFactory
 from aiperf.common.hooks import on_init, on_start, on_stop
@@ -47,5 +50,14 @@ class ProxyManager(AIPerfLifecycleMixin):
         self.debug("Stopping all proxies")
         for proxy in self.proxies:
             await proxy.stop()
-        zmq.asyncio.Context.instance().destroy()
         self.debug("All proxies stopped successfully")
+
+        try:
+            self.debug("Terminating ZMQ context")
+            await asyncio.wait_for(
+                asyncio.to_thread(zmq.asyncio.Context.instance().term),
+                timeout=DEFAULT_ZMQ_CONTEXT_TERM_TIMEOUT,
+            )
+            self.debug("ZMQ context terminated successfully")
+        except BaseException as e:
+            self.warning(f"Error terminating ZMQ context: {e}")

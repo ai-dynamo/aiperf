@@ -91,5 +91,8 @@ DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL = 2.0
 DEFAULT_WORKER_HEALTH_CHECK_INTERVAL = 2.0
 """Default interval in seconds between worker health check messages."""
 
+DEFAULT_ZMQ_CONTEXT_TERM_TIMEOUT = 10.0
+"""Default timeout for terminating the ZMQ context in seconds."""
+
 AIPERF_HTTP_CONNECTION_LIMIT = int(os.environ.get("AIPERF_HTTP_CONNECTION_LIMIT", 2500))
 """Maximum number of concurrent connections for HTTP clients."""
