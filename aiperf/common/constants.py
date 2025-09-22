@@ -99,5 +99,8 @@ DEFAULT_MAX_WORKERS_CAP = 32
 """Default absolute maximum number of workers to spawn, regardless of the number of CPU cores.
 Only applies if the user does not specify a max workers value."""
 
+DEFAULT_ZMQ_CONTEXT_TERM_TIMEOUT = 10.0
+"""Default timeout for terminating the ZMQ context in seconds."""
+
 AIPERF_HTTP_CONNECTION_LIMIT = int(os.environ.get("AIPERF_HTTP_CONNECTION_LIMIT", 2500))
 """Maximum number of concurrent connections for HTTP clients."""
