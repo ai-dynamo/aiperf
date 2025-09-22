@@ -17,7 +17,7 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install docker docker-run first-time-setup \
-		test-verbose init-files \
+		test-verbose init-files setup-venv setup-mkinit \
 		internal-help help
 
 
@@ -112,7 +112,7 @@ test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
 	$(activate_venv) && pytest -n auto -v -s --log-cli-level DEBUG
 
 coverage: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest -n auto --cov=aiperf --cov-report=html $(args)
+	$(activate_venv) && pytest -n auto --cov=aiperf --cov-branch --cov-report=html --cov-report=xml $(args)
 
 install: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]" $(args)
@@ -134,7 +134,7 @@ clean: #? clean up the pytest and ruff caches, coverage reports, and *.pyc files
 	find . -type f -name ".coverage" -delete
 	rm -rf htmlcov/
 
-first-time-setup: #? convenience command to setup the environment for the first time
+setup-venv: #? create the virtual environment.
 	@# Install uv if it is not installed
 	@export PATH=$(UV_PATH):$(PATH) && \
 	if ! command -v uv &> /dev/null; then \
@@ -152,6 +152,12 @@ first-time-setup: #? convenience command to setup the environment for the first 
 	else \
 		printf "$(bold)$(green)Virtual environment already exists$(reset)\n"; \
 	fi
+
+setup-mkinit: #? install the mkinit package.
+	$(activate_venv) && uv pip install mkinit
+
+first-time-setup: #? convenience command to setup the environment for the first time
+	$(MAKE) setup-venv --no-print-directory
 
 	@# Install the project
 	@printf "$(bold)$(green)Installing project...$(reset)\n"

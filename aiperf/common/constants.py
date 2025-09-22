@@ -98,3 +98,6 @@ This will spawn 1 record processor for every X workers."""
 DEFAULT_MAX_WORKERS_CAP = 32
 """Default absolute maximum number of workers to spawn, regardless of the number of CPU cores.
 Only applies if the user does not specify a max workers value."""
+
+AIPERF_HTTP_CONNECTION_LIMIT = int(os.environ.get("AIPERF_HTTP_CONNECTION_LIMIT", 2500))
+"""Maximum number of concurrent connections for HTTP clients."""
