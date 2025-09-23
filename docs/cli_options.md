@@ -157,8 +157,9 @@ Use these options to profile with AIPerf.
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```
-╭─ Workers ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ WORKERS-MAX --workers-max --max-workers  Maximum number of workers to create. If not specified, the number of workers will be determined by the smaller of (concurrency + 1) and (num │
-│                                          CPUs - 1).                                                                                                                                   │
-╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Workers ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ WORKERS-MAX --workers-max --max-workers  Maximum number of workers to create. If not specified, the number of workers will be determined by the formula             │
+│                                          min(concurrency, (num CPUs * 0.75) - 1),  with a default max cap of 32. Any value provided will still be capped by the     │
+│                                          concurrency value (if specified), but not by the max cap.                                                                  │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```

@@ -57,7 +57,7 @@ INSTALLATION
 
 ## Installation
 ```
-pip install git+https://github.com/ai-dynamo/aiperf.git
+pip install aiperf
 ```
 
 </br>
@@ -78,7 +78,7 @@ Run a simple benchmark against a model:
 aiperf profile \
   --model your_model_name \
   --url http://localhost:8000 \
-  --endpoint-type chat
+  --endpoint-type chat \
   --streaming
 ```
 
@@ -120,4 +120,9 @@ NVIDIA AIPerf | LLM Metrics
 
 ## Known Issues
 
-- When setting the OSL using the `--output-tokens-mean` option, if `--extra-inputs ignore_eos:true` isn't set currently, then AIPerf can't guarantee a given OSL constraint. This is being worked on to remove this requirement in the future.
+- Output sequence length constraints (`--output-tokens-mean`) cannot be guaranteed unless you pass `ignore_eos` and/or `min_tokens` via `--extra-inputs` to an inference server that supports them.
+- A couple of options in the CLI help text use underscore instead of a hyphen inconsistently.
+- Very high concurrency settings (typically >15,000 concurrency) may lead to port exhaustion on some systems, causing connection failures during benchmarking. If encountered, consider adjusting system limits or reducing concurrency.
+- Startup errors caused by invalid configuration settings can cause AIPerf to hang indefinitely. If AIPerf appears to freeze during initialization, terminate the process and check configuration settings.
+- Mooncake trace format currently requires the `--fixed-schedule` option to be set.
+- Dashboard UI may cause corrupted ANSI sequences on macOS or certain terminal environments, making the terminal unusable. Run `reset` command to restore normal terminal functionality, or switch to `--ui simple` for a lightweight progress bar interface.

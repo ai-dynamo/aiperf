@@ -15,6 +15,7 @@ from aiperf.common.constants import (
     AIPERF_DEV_MODE,
     DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
     DEFAULT_PROFILE_START_TIMEOUT,
+    DEFAULT_RECORD_PROCESSOR_SCALE_FACTOR,
 )
 from aiperf.common.enums import (
     CommandResponseStatus,
@@ -326,7 +327,8 @@ class SystemController(SignalHandlerMixin, BaseService):
         # If we are scaling the record processor service count with the number of workers, spawn the record processors
         if self.scale_record_processors_with_workers:
             await self.service_manager.run_service(
-                ServiceType.RECORD_PROCESSOR, max(1, message.num_workers // 2)
+                ServiceType.RECORD_PROCESSOR,
+                max(1, message.num_workers // DEFAULT_RECORD_PROCESSOR_SCALE_FACTOR),
             )
 
     @on_command(CommandType.SHUTDOWN_WORKERS)

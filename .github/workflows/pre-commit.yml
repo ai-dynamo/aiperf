@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: "Pre-commit"
+
+on:
+  pull_request:
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+    - name: Get modified files
+      id: modified-files
+      run: echo "modified_files=$(git diff --name-only -r HEAD^1 HEAD | xargs)" >> $GITHUB_OUTPUT
+    - uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+    - name: Install dependencies
+      run: |
+        make setup-venv
+        make setup-mkinit
+    - uses: pre-commit/action@v3.0.1
+      with:
+        extra_args: --files ${{ steps.modified-files.outputs.modified_files }}
