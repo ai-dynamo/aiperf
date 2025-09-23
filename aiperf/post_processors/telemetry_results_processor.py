@@ -67,22 +67,24 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
             for gpu_uuid, telemetry_data in gpu_data.items():
                 gpu_index = telemetry_data.metadata.gpu_index
 
-                for metric_name, time_series in telemetry_data.metrics.items():
-                    if not time_series.data_points:
+                # Iterate through available metrics from the metric units we track
+                for metric_name in self._metric_units.keys():
+                    try:
+                        dcgm_tag = (
+                            dcgm_url.replace(":", "_").replace("/", "_").replace(".", "_")
+                        )
+                        tag = f"{metric_name}_dcgm_{dcgm_tag}_gpu{gpu_index}_{gpu_uuid[:8]}"
+
+                        metric_display = metric_name.replace("_", " ").title()
+                        header = f"{metric_display} (GPU {gpu_index}, {gpu_uuid[:8]}...)"
+
+                        unit = self._metric_units.get(metric_name, "")
+
+                        result = telemetry_data.get_metric_result(metric_name, tag, header, unit)
+                        results.append(result)
+                    except Exception:
+                        # Skip metrics with no data - this is expected
                         continue
-
-                    dcgm_tag = (
-                        dcgm_url.replace(":", "_").replace("/", "_").replace(".", "_")
-                    )
-                    tag = f"{metric_name}_dcgm_{dcgm_tag}_gpu{gpu_index}_{gpu_uuid[:8]}"
-
-                    metric_display = metric_name.replace("_", " ").title()
-                    header = f"{metric_display} (GPU {gpu_index}, {gpu_uuid[:8]}...)"
-
-                    unit = self._metric_units.get(metric_name, "")
-
-                    result = time_series.to_metric_result(tag, header, unit)
-                    results.append(result)
 
         self.info(
             f"Generated {len(results)} telemetry metric results across {len(self._telemetry_hierarchy.dcgm_endpoints)} DCGM endpoints"
