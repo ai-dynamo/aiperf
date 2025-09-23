@@ -151,8 +151,8 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
             except Exception as e:
                 self.error(f"Failed to stop collector for {dcgm_url}: {e}")
 
-    def _on_telemetry_records(self, records: list[TelemetryRecord], collector_id: str) -> None:
-        """Callback for receiving telemetry records from collectors.
+    async def _on_telemetry_records(self, records: list[TelemetryRecord], collector_id: str) -> None:
+        """Async callback for receiving telemetry records from collectors.
 
         Sends TelemetryRecordsMessage to RecordsManager via message system.
         """
@@ -168,13 +168,13 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
                 error=None,
             )
 
-            self.execute_async(self.push_client.push(message))
+            await self.push_client.push(message)
 
         except Exception as e:
             self.error(f"Failed to send telemetry records: {e}")
 
-    def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:
-        """Callback for receiving telemetry errors from collectors.
+    async def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:
+        """Async callback for receiving telemetry errors from collectors.
 
         Sends error TelemetryRecordsMessage to RecordsManager via message system.
         """
@@ -187,7 +187,7 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
                 error=error,
             )
 
-            self.execute_async(self.push_client.push(error_message))
+            await self.push_client.push(error_message)
 
         except Exception as e:
             self.error(f"Failed to send telemetry error message: {e}")
