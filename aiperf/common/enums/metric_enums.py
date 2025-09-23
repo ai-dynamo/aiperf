@@ -521,7 +521,9 @@ class TemperatureMetricUnitInfo(BaseMetricUnitInfo):
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
-        if not isinstance(other_unit, TemperatureMetricUnit | TemperatureMetricUnitInfo):
+        if not isinstance(
+            other_unit, TemperatureMetricUnit | TemperatureMetricUnitInfo
+        ):
             return super().convert_to(other_unit, value)
 
         # Convert to Celsius first, then to target unit
@@ -541,7 +543,7 @@ class TemperatureMetricUnit(BaseMetricUnit):
     FAHRENHEIT = TemperatureMetricUnitInfo(
         tag="°F",
         long_name="fahrenheit",
-        celsius=5.0/9.0,
+        celsius=5.0 / 9.0,
         offset=-32.0,
     )
     KELVIN = TemperatureMetricUnitInfo(
