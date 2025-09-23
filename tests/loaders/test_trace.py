@@ -379,3 +379,27 @@ class TestMooncakeTraceDatasetLoader:
         conversations = loader.convert_to_conversations({})
 
         assert len(conversations) == 0
+
+    def test_convert_to_conversations_with_text_input(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Test conversion uses text_input when provided - covers 'if trace.text_input is not None' line."""
+        # Create traces with text_input to cover the uncovered line
+        trace_data = {
+            "session1": [
+                MooncakeTrace(text_input="Hello, how are you?", timestamp=1000),
+                MooncakeTrace(text_input="What is the weather like?", timestamp=2000),
+            ]
+        }
+
+        loader = MooncakeTraceDatasetLoader(
+            "dummy.jsonl", mock_prompt_generator, default_user_config
+        )
+        conversations = loader.convert_to_conversations(trace_data)
+
+        assert len(conversations) == 1  # One conversation with multiple turns
+        conversation = conversations[0]
+
+        assert len(conversation.turns) == 2
+        assert conversation.turns[0].texts[0].contents[0] == "Hello, how are you?"
+        assert conversation.turns[1].texts[0].contents[0] == "What is the weather like?"

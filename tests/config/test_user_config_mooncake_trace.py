@@ -173,6 +173,44 @@ class TestMooncakeTraceRequestCount:
             result = config.get_effective_request_count()
             assert result == 10
 
+    def test_mooncake_trace_no_input_file_edge_case(self):
+        """Test dataset counting when no input file is provided."""
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
+                # No file specified
+            ),
+        )
+
+        # Should return 0 when no file is provided
+        assert config._count_dataset_entries() == 0
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_count_dataset_entries_with_edge_cases(self, mock_is_file, mock_exists):
+        """Test _count_dataset_entries handles empty lines and malformed JSON."""
+        mock_file_content = (
+            '{"input_length": 50, "timestamp": 1000}\n'
+            "\n"  # Empty line
+            "   \n"  # Whitespace-only line
+            '{"input_length": 100}\n'  # Valid JSON
+            "invalid json line\n"  # Malformed JSON
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file="/fake/path/test.jsonl",
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        with patch("builtins.open", mock_open(read_data=mock_file_content)):
+            # Should count all non-empty lines (including malformed JSON)
+            count = config._count_dataset_entries()
+            assert count == 3  # 3 non-empty/non-whitespace lines
+
 
 class TestMooncakeTraceTimingDetection:
     """Test _should_use_fixed_schedule_for_mooncake_trace() for automatic timing detection."""
@@ -242,3 +280,89 @@ class TestMooncakeTraceTimingDetection:
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
             result = config._should_use_fixed_schedule_for_mooncake_trace()
             assert result is False
+
+    def test_no_input_file_timing_detection(self):
+        """Test timing detection when no input file is provided."""
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
+                # No file specified
+            ),
+        )
+
+        # Should return False when no file is provided
+        assert config._should_use_fixed_schedule_for_mooncake_trace() is False
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_file_parsing_with_empty_lines_and_malformed_json(
+        self, mock_is_file, mock_exists
+    ):
+        """Test file parsing handles empty lines and malformed JSON gracefully."""
+        # Content with empty lines, whitespace, and malformed JSON
+        mock_file_content = (
+            '{"input_length": 50, "timestamp": 1000}\n'
+            "\n"  # Empty line
+            "   \n"  # Whitespace-only line
+            '{"input_length": 100}\n'  # Valid JSON, no timestamp
+            "\n"  # Another empty line
+            "invalid json line\n"  # Malformed JSON
+            '{"missing": "required_fields"}\n'  # JSON missing required fields
+            "   \n"  # More whitespace
+            '{"input_length": 150, "timestamp": 3000}\n'  # Valid with timestamp
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file="/fake/path/test.jsonl",
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        with patch("builtins.open", mock_open(read_data=mock_file_content)):
+            # Should handle malformed JSON gracefully and still detect timestamps
+            has_timestamps = config._should_use_fixed_schedule_for_mooncake_trace()
+            assert has_timestamps is True  # Should find valid timestamps despite errors
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_empty_file_timing_detection(self, mock_is_file, mock_exists):
+        """Test timing detection with completely empty files."""
+        mock_file_content = ""  # Completely empty file
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file="/fake/path/empty.jsonl",
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        with patch("builtins.open", mock_open(read_data=mock_file_content)):
+            # Should handle empty file gracefully
+            assert config._should_use_fixed_schedule_for_mooncake_trace() is False
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_only_malformed_json_timing_detection(self, mock_is_file, mock_exists):
+        """Test timing detection with only malformed JSON entries."""
+        mock_file_content = (
+            "not json at all\n"
+            '{"incomplete": \n'  # Incomplete JSON
+            "random text\n"
+            '{"missing_required": "fields"}\n'  # Valid JSON but missing required fields
+        )
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file="/fake/path/malformed.jsonl",
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            ),
+        )
+
+        with patch("builtins.open", mock_open(read_data=mock_file_content)):
+            # Should find no timestamps in malformed JSON
+            assert config._should_use_fixed_schedule_for_mooncake_trace() is False
