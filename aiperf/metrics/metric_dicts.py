@@ -112,7 +112,7 @@ class MetricArray(Generic[MetricValueTypeVarT]):
     def _resize_if_needed(self, additional_size: int) -> None:
         """Resize the array if needed."""
         if self._size + additional_size > self._capacity:
-            self._capacity *= 2
+            self._capacity = max(self._capacity * 2, self._size + additional_size)
             new_data = np.empty(self._capacity)
             new_data[: self._size] = self._data[: self._size]
             self._data = new_data
