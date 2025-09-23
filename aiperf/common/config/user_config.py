@@ -73,8 +73,6 @@ class UserConfig(BaseConfig):
             self._timing_mode = TimingMode.REQUEST_RATE
             self.loadgen.request_rate_mode = RequestRateMode.CONCURRENCY_BURST
 
-        self._validate_all_entries_have_timestamps_for_fixed_schedule()
-
         return self
 
     @model_validator(mode="after")
@@ -152,48 +150,6 @@ class UserConfig(BaseConfig):
                 f"Could not read dataset file {self.input.file} to check for timestamps"
             )
             return False
-
-    def _validate_all_entries_have_timestamps_for_fixed_schedule(self) -> None:
-        """Validate that all entries have timestamps when fixed schedule is enabled.
-
-        Raises:
-            ValueError: If fixed schedule is enabled but some entries lack timestamps
-        """
-        if (
-            self._timing_mode != TimingMode.FIXED_SCHEDULE
-            or self.input.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
-        ):
-            return
-
-        try:
-            entries_without_timestamps = []
-            line_number = 0
-
-            with open(self.input.file) as f:
-                for line in f:
-                    line_number += 1
-                    if not (line := line.strip()):
-                        continue  # Skip empty lines
-
-                    try:
-                        data = load_json_str(line)
-                        if "timestamp" not in data or data["timestamp"] is None:
-                            entries_without_timestamps.append(line_number)
-                    except (JSONDecodeError, KeyError):
-                        entries_without_timestamps.append(line_number)
-
-            if entries_without_timestamps:
-                error_lines = ", ".join(map(str, entries_without_timestamps[:5]))
-                if len(entries_without_timestamps) > 5:
-                    error_lines += f" (and {len(entries_without_timestamps) - 5} more)"
-
-                raise ValueError(
-                    f"Fixed schedule mode requires all entries to have timestamps. "
-                    f"Found {len(entries_without_timestamps)} entries without timestamps "
-                    f"at lines: {error_lines}."
-                )
-        except (OSError, FileNotFoundError) as e:
-            _logger.warning(f"Could not validate timestamps in {self.input.file}: {e}")
 
     def _count_dataset_entries(self) -> int:
         """Count the number of valid entries in a custom dataset file.
