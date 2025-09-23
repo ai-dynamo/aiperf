@@ -140,16 +140,15 @@ class UserConfig(BaseConfig):
                         continue
                     try:
                         data = load_json_str(line)
-                        if "timestamp" in data and data["timestamp"] is not None:
-                            return True
+                        return "timestamp" in data and data["timestamp"] is not None
                     except (JSONDecodeError, KeyError):
                         continue
-            return False
         except (OSError, FileNotFoundError):
             _logger.warning(
                 f"Could not read dataset file {self.input.file} to check for timestamps"
             )
-            return False
+
+        return False
 
     def _count_dataset_entries(self) -> int:
         """Count the number of valid entries in a custom dataset file.

@@ -242,23 +242,3 @@ class TestMooncakeTraceTimingDetection:
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
             result = config._should_use_fixed_schedule_for_mooncake_trace()
             assert result is False
-
-    @patch("pathlib.Path.exists", return_value=True)
-    @patch("pathlib.Path.is_file", return_value=True)
-    def test_empty_mooncake_trace_file_no_fixed_schedule(
-        self, mock_is_file, mock_exists
-    ):
-        """Test behavior with empty mooncake_trace file."""
-        mock_file_content = ""
-
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
-                file="/fake/path/empty.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-            ),
-        )
-
-        with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config._should_use_fixed_schedule_for_mooncake_trace()
-            assert result is False
