@@ -151,7 +151,9 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
             except Exception as e:
                 self.error(f"Failed to stop collector for {dcgm_url}: {e}")
 
-    async def _on_telemetry_records(self, records: list[TelemetryRecord], collector_id: str) -> None:
+    async def _on_telemetry_records(
+        self, records: list[TelemetryRecord], collector_id: str
+    ) -> None:
         """Async callback for receiving telemetry records from collectors.
 
         Sends TelemetryRecordsMessage to RecordsManager via message system.

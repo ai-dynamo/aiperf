@@ -4,7 +4,6 @@
 import asyncio
 import time
 from collections.abc import Callable
-from typing import Any
 
 import aiohttp
 from prometheus_client.parser import text_string_to_metric_families
@@ -93,7 +92,9 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         lifecycle management and stopping when the collector is stopped.
         The interval is set to the collection_interval so this runs periodically.
         """
-        self.debug(f"Starting telemetry collection task (interval: {self._collection_interval}s)")
+        self.debug(
+            f"Starting telemetry collection task (interval: {self._collection_interval}s)"
+        )
         try:
             await self._collect_and_process_metrics()
         except asyncio.CancelledError:
@@ -104,9 +105,7 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                 try:
                     self._error_callback(ErrorDetails.from_exception(e), self.id)
                 except Exception as callback_error:
-                    self.error(
-                        f"Failed to send error via callback: {callback_error}"
-                    )
+                    self.error(f"Failed to send error via callback: {callback_error}")
             else:
                 self.error(f"Telemetry collection error: {e}")
 
@@ -128,9 +127,7 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                         self._record_callback(records, self.id)
                     self.debug("Successfully sent records via callback")
                 except Exception as e:
-                    self.warning(
-                        f"Failed to send telemetry records via callback: {e}"
-                    )
+                    self.warning(f"Failed to send telemetry records via callback: {e}")
 
         except Exception as e:
             self.error(f"Error collecting and processing metrics: {e}")
@@ -264,12 +261,12 @@ async def main() -> None:
     from collections import defaultdict
 
     all_records = []
-    metrics_data = defaultdict(
-        lambda: defaultdict(list)
-    )
+    metrics_data = defaultdict(lambda: defaultdict(list))
 
     def record_callback(records, collector_id):
-        print(f"\n=== Received {len(records)} telemetry records from {collector_id} ===")
+        print(
+            f"\n=== Received {len(records)} telemetry records from {collector_id} ==="
+        )
         for record in records:
             all_records.append(record)
             print(f"\nGPU {record.gpu_index} ({record.gpu_model_name}):")

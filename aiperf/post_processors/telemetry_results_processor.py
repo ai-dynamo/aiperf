@@ -68,19 +68,25 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
                 gpu_index = telemetry_data.metadata.gpu_index
 
                 # Iterate through available metrics from the metric units we track
-                for metric_name in self._metric_units.keys():
+                for metric_name in self._metric_units:
                     try:
                         dcgm_tag = (
-                            dcgm_url.replace(":", "_").replace("/", "_").replace(".", "_")
+                            dcgm_url.replace(":", "_")
+                            .replace("/", "_")
+                            .replace(".", "_")
                         )
                         tag = f"{metric_name}_dcgm_{dcgm_tag}_gpu{gpu_index}_{gpu_uuid[:8]}"
 
                         metric_display = metric_name.replace("_", " ").title()
-                        header = f"{metric_display} (GPU {gpu_index}, {gpu_uuid[:8]}...)"
+                        header = (
+                            f"{metric_display} (GPU {gpu_index}, {gpu_uuid[:8]}...)"
+                        )
 
                         unit = self._metric_units.get(metric_name, "")
 
-                        result = telemetry_data.get_metric_result(metric_name, tag, header, unit)
+                        result = telemetry_data.get_metric_result(
+                            metric_name, tag, header, unit
+                        )
                         results.append(result)
                     except Exception:
                         # Skip metrics with no data - this is expected
