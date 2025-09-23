@@ -92,7 +92,7 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
                 collector_id=collector_id,
             )
 
-            if collector.is_url_reachable():
+            if await collector.is_url_reachable():
                 self._collectors[dcgm_url] = collector
                 reachable_count += 1
                 self.info(f"DCGM endpoint reachable: {dcgm_url}")
@@ -112,8 +112,8 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
         started_count = 0
         for dcgm_url, collector in self._collectors.items():
             try:
-                if collector.is_url_reachable():
-                    collector.start()
+                if await collector.is_url_reachable():
+                    await collector.start()
                     started_count += 1
                     self.info(f"Started telemetry collection for {dcgm_url}")
                 else:
@@ -146,7 +146,7 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
 
         for dcgm_url, collector in self._collectors.items():
             try:
-                collector.stop()
+                await collector.stop()
                 self.info(f"Stopped telemetry collection for {dcgm_url}")
             except Exception as e:
                 self.error(f"Failed to stop collector for {dcgm_url}: {e}")
