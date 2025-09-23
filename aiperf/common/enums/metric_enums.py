@@ -463,6 +463,115 @@ class MetricValueType(BasePydanticBackedStrEnum):
         return MetricValueType(type_name)
 
 
+class FrequencyMetricUnitInfo(BaseMetricUnitInfo):
+    """Information about a frequency unit for metrics."""
+
+    long_name: str
+    hertz: float
+
+    def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
+        """Convert a value from this unit to another unit."""
+        if not isinstance(other_unit, FrequencyMetricUnit | FrequencyMetricUnitInfo):
+            return super().convert_to(other_unit, value)
+
+        return value * (self.hertz / other_unit.hertz)
+
+
+class FrequencyMetricUnit(BaseMetricUnit):
+    """Defines frequency units for metrics."""
+
+    HERTZ = FrequencyMetricUnitInfo(
+        tag="Hz",
+        long_name="hertz",
+        hertz=1.0,
+    )
+    MEGAHERTZ = FrequencyMetricUnitInfo(
+        tag="MHz",
+        long_name="megahertz",
+        hertz=1_000_000.0,
+    )
+    GIGAHERTZ = FrequencyMetricUnitInfo(
+        tag="GHz",
+        long_name="gigahertz",
+        hertz=1_000_000_000.0,
+    )
+
+    @cached_property
+    def info(self) -> FrequencyMetricUnitInfo:
+        """Get the info for the frequency unit."""
+        return self._info  # type: ignore
+
+    @cached_property
+    def hertz(self) -> float:
+        """The number of hertz in the frequency unit."""
+        return self.info.hertz
+
+    @cached_property
+    def long_name(self) -> str:
+        """The long name of the frequency unit."""
+        return self.info.long_name
+
+
+class TemperatureMetricUnitInfo(BaseMetricUnitInfo):
+    """Information about a temperature unit for metrics."""
+
+    long_name: str
+    celsius: float
+    offset: float = 0.0
+
+    def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
+        """Convert a value from this unit to another unit."""
+        if not isinstance(other_unit, TemperatureMetricUnit | TemperatureMetricUnitInfo):
+            return super().convert_to(other_unit, value)
+
+        # Convert to Celsius first, then to target unit
+        celsius_value = (value + self.offset) * self.celsius
+        return (celsius_value / other_unit.celsius) - other_unit.offset
+
+
+class TemperatureMetricUnit(BaseMetricUnit):
+    """Defines temperature units for metrics."""
+
+    CELSIUS = TemperatureMetricUnitInfo(
+        tag="°C",
+        long_name="celsius",
+        celsius=1.0,
+        offset=0.0,
+    )
+    FAHRENHEIT = TemperatureMetricUnitInfo(
+        tag="°F",
+        long_name="fahrenheit",
+        celsius=5.0/9.0,
+        offset=-32.0,
+    )
+    KELVIN = TemperatureMetricUnitInfo(
+        tag="K",
+        long_name="kelvin",
+        celsius=1.0,
+        offset=-273.15,
+    )
+
+    @cached_property
+    def info(self) -> TemperatureMetricUnitInfo:
+        """Get the info for the temperature unit."""
+        return self._info  # type: ignore
+
+    @cached_property
+    def celsius(self) -> float:
+        """The celsius conversion factor."""
+        return self.info.celsius
+
+    @cached_property
+    def offset(self) -> float:
+        """The offset for temperature conversion."""
+        return self.info.offset
+
+    @cached_property
+    def long_name(self) -> str:
+        """The long name of the temperature unit."""
+        return self.info.long_name
+
+
 class MetricFlags(Flag):
     """Defines the possible flags for metrics that are used to determine how they are processed or grouped.
     These flags are intended to be an easy way to group metrics, or turn on/off certain features.

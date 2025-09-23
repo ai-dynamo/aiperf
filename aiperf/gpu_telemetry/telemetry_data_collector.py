@@ -1,33 +1,36 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
-import re
+import asyncio
 import time
 from collections.abc import Callable
-from threading import Event, Thread
+from typing import Any
 
-import requests
+import aiohttp
+from prometheus_client.parser import text_string_to_metric_families
 
-from aiperf.common.models import TelemetryRecord
+from aiperf.common.hooks import background_task, on_init, on_stop
+from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
+from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.gpu_telemetry.constants import (
     DCGM_TO_FIELD_MAPPING,
     DEFAULT_COLLECTION_INTERVAL,
     DEFAULT_DCGM_ENDPOINT,
     SCALING_FACTORS,
-    THREAD_JOIN_TIMEOUT,
     URL_REACHABILITY_TIMEOUT,
 )
 
 
-class TelemetryDataCollector:
-    """Collects telemetry metrics from DCGM metrics endpoint.
+class TelemetryDataCollector(AIPerfLifecycleMixin):
+    """Collects telemetry metrics from DCGM metrics endpoint using async architecture.
 
-    Simple collector that fetches GPU metrics from DCGM exporter and converts them to
-    TelemetryRecord objects. Uses callback pattern to send data to parent service.
-    - No service dependencies (avoids circular imports)
+    Modern async collector that fetches GPU metrics from DCGM exporter and converts them to
+    TelemetryRecord objects. Uses AIPerf lifecycle management and background tasks.
+    - Extends AIPerfLifecycleMixin for proper lifecycle management
+    - Uses aiohttp for async HTTP requests
+    - Uses prometheus_client for robust metric parsing
+    - Uses @background_task for periodic collection
     - Sends TelemetryRecord list via callback function
-    - Handles errors gracefully with ErrorDetails
     - No local storage (follows centralized architecture)
     """
 
@@ -43,106 +46,129 @@ class TelemetryDataCollector:
         self._collection_interval = collection_interval
         self._record_callback = record_callback
         self._error_callback = error_callback
-        self._collector_id = collector_id
-
-        self._stop_event = Event()
-        self._collection_thread: Thread | None = None
-
         self._scaling_factors = SCALING_FACTORS
 
-        self._logger = logging.getLogger(f"telemetry.{collector_id}")
+        # HTTP client session - will be initialized in on_init hook
+        self._session: aiohttp.ClientSession | None = None
 
-    def is_url_reachable(self) -> bool:
+        super().__init__(id=collector_id)
+
+    @on_init
+    async def _initialize_http_client(self) -> None:
+        """Initialize the aiohttp client session."""
+        timeout = aiohttp.ClientTimeout(total=URL_REACHABILITY_TIMEOUT)
+        self._session = aiohttp.ClientSession(timeout=timeout)
+        self.debug(f"Initialized HTTP client for DCGM endpoint: {self._dcgm_url}")
+
+    @on_stop
+    async def _cleanup_http_client(self) -> None:
+        """Clean up the aiohttp client session.
+
+        Race conditions with background tasks are handled by checking
+        self.stop_requested in the background task itself.
+        """
+        if self._session:
+            await self._session.close()
+            self._session = None
+            self.debug("Cleaned up HTTP client session")
+
+    async def is_url_reachable(self) -> bool:
         """Check if DCGM metrics endpoint is accessible.
 
         Returns:
             True if endpoint responds with 200, False otherwise
         """
+        if not self._dcgm_url or not self._session:
+            return False
 
-        timeout_seconds = URL_REACHABILITY_TIMEOUT
-        if self._dcgm_url:
-            try:
-                response = requests.get(self._dcgm_url, timeout=timeout_seconds)
-                return response.status_code == requests.codes.ok
-            except requests.RequestException:
-                return False
-        return False
+        try:
+            async with self._session.get(self._dcgm_url) as response:
+                return response.status == 200
+        except Exception:
+            return False
 
-    def start(self) -> None:
-        """Start telemetry collection in background thread.
+    @background_task(immediate=True, interval=lambda self: self._collection_interval)
+    async def _collect_telemetry_task(self) -> None:
+        """Background task for collecting telemetry data at regular intervals.
 
-        Note: Uses thread instead of async task because requests library
-        is synchronous and we don't want to block the main event loop.
+        This uses the @background_task decorator which automatically handles
+        lifecycle management and stopping when the collector is stopped.
+        The interval is set to the collection_interval so this runs periodically.
         """
+        self.debug(f"Starting telemetry collection task (interval: {self._collection_interval}s)")
+        try:
+            await self._collect_and_process_metrics()
+        except asyncio.CancelledError:
+            # This is expected during shutdown, don't treat it as an error
+            self.debug("Telemetry collection task cancelled during shutdown")
+            raise  # Re-raise to properly cancel the task
+        except Exception as e:
+            if self._error_callback:
+                try:
+                    self._error_callback(ErrorDetails.from_exception(e), self.id)
+                except Exception as callback_error:
+                    self.error(
+                        f"Failed to send error via callback: {callback_error}"
+                    )
+            else:
+                self.error(f"Telemetry collection error: {e}")
 
-        if self._collection_thread is None or not self._collection_thread.is_alive():
-            self._logger.info(f"Starting telemetry collection from {self._dcgm_url}")
-            self._stop_event.clear()
-            self._collection_thread = Thread(target=self._collection_loop, daemon=True)
-            self._collection_thread.start()
+    async def _collect_and_process_metrics(self) -> None:
+        """Collect metrics from DCGM endpoint and process them into TelemetryRecord objects.
 
-    def stop(self) -> None:
-        """Stop telemetry collection and wait for thread to finish."""
-
-        if self._collection_thread is not None and self._collection_thread.is_alive():
-            self._logger.info("Stopping telemetry collection")
-            self._stop_event.set()
-            self._collection_thread.join(timeout=THREAD_JOIN_TIMEOUT)
-            if self._collection_thread.is_alive():
-                self._logger.warning(
-                    "Telemetry collection thread did not stop gracefully"
-                )
-
-    def _collection_loop(self) -> None:
-        """Main collection loop running in background thread.
-
-        Continuously collects telemetry and sends TelemetryRecord list
-        via callback until stop is requested.
+        This method fetches metrics, parses them, and sends them via callback.
         """
-        while not self._stop_event.is_set():
-            try:
-                metrics_data = self._fetch_metrics()
+        try:
+            metrics_data = await self._fetch_metrics()
+            records = self._parse_metrics_to_records(metrics_data)
 
-                records = self._parse_metrics_to_records(metrics_data)
+            if records and self._record_callback:
+                self.debug(f"Sending {len(records)} records via callback")
+                try:
+                    # Support both sync and async callbacks
+                    if asyncio.iscoroutinefunction(self._record_callback):
+                        await self._record_callback(records, self.id)
+                    else:
+                        self._record_callback(records, self.id)
+                    self.debug("Successfully sent records via callback")
+                except Exception as e:
+                    self.warning(
+                        f"Failed to send telemetry records via callback: {e}"
+                    )
 
-                if records and self._record_callback:
-                    try:
-                        self._record_callback(records)
-                    except Exception as e:
-                        self._logger.warning(
-                            f"Failed to send telemetry records via callback: {e}"
-                        )
+        except Exception as e:
+            self.error(f"Error collecting and processing metrics: {e}")
+            raise
 
-            except Exception as e:
-                if self._error_callback:
-                    try:
-                        self._error_callback(e)
-                    except Exception as callback_error:
-                        self._logger.error(
-                            f"Failed to send error via callback: {callback_error}"
-                        )
-                else:
-                    self._logger.error(f"Telemetry collection error: {e}")
-
-            if not self._stop_event.wait(self._collection_interval):
-                continue
-
-    def _fetch_metrics(self) -> str:
-        """Fetch raw metrics data from DCGM endpoint.
+    async def _fetch_metrics(self) -> str:
+        """Fetch raw metrics data from DCGM endpoint using aiohttp.
 
         Returns:
             Raw metrics text in Prometheus format
 
         Raises:
-            requests.RequestException: If HTTP request fails
+            aiohttp.ClientError: If HTTP request fails
+            asyncio.CancelledError: If collector is being stopped
         """
+        # Check if we're being shut down (prevents race condition)
+        if self.stop_requested:
+            raise asyncio.CancelledError("Telemetry collector is being stopped")
 
-        response = requests.get(self._dcgm_url, timeout=URL_REACHABILITY_TIMEOUT)
-        response.raise_for_status()
-        return response.text
+        if not self._session:
+            raise RuntimeError("HTTP session not initialized. Call initialize() first.")
+
+        if self._session.closed:
+            raise asyncio.CancelledError("HTTP session is closed during shutdown")
+
+        self.debug(f"Fetching metrics from {self._dcgm_url}")
+        async with self._session.get(self._dcgm_url) as response:
+            response.raise_for_status()
+            text = await response.text()
+            self.debug(f"Received {len(text)} characters from DCGM")
+            return text
 
     def _parse_metrics_to_records(self, metrics_data: str) -> list[TelemetryRecord]:
-        """Parse DCGM metrics text into TelemetryRecord objects.
+        """Parse DCGM metrics text into TelemetryRecord objects using prometheus_client.
 
         Args:
             metrics_data: Raw metrics text from DCGM exporter
@@ -150,51 +176,57 @@ class TelemetryDataCollector:
         Returns:
             List of TelemetryRecord objects, one per GPU with valid data
         """
-
         if not metrics_data.strip():
-            self._logger.warning("Response from DCGM metrics endpoint is empty")
+            self.warning("Response from DCGM metrics endpoint is empty")
             return []
 
         current_timestamp = time.time_ns()
         gpu_data = {}
         gpu_metadata = {}
 
-        for line in metrics_data.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
+        # Use prometheus client parser directly for robust metric parsing
+        try:
+            for family in text_string_to_metric_families(metrics_data):
+                for sample in family.samples:
+                    metric_name = sample.name
+                    labels = sample.labels
+                    value = sample.value
 
-            parsed = self._parse_metric_line(line)
-            if not parsed:
-                continue
+                    # Extract GPU information from labels
+                    gpu_index = labels.get("gpu")
+                    if gpu_index is not None:
+                        try:
+                            gpu_index = int(gpu_index)
+                        except ValueError:
+                            self.warning(f"Invalid GPU index: {gpu_index}")
+                            continue
+                    else:
+                        continue
 
-            (
-                metric_name,
-                gpu_index,
-                value,
-                model_name,
-                uuid,
-                pci_bus_id,
-                device,
-                hostname,
-            ) = parsed
+                    # Store metadata for this GPU
+                    gpu_metadata[gpu_index] = {
+                        "model_name": labels.get("modelName"),
+                        "uuid": labels.get("UUID"),
+                        "pci_bus_id": labels.get("pci_bus_id"),
+                        "device": labels.get("device"),
+                        "hostname": labels.get("Hostname"),
+                    }
 
-            gpu_metadata[gpu_index] = {
-                "model_name": model_name,
-                "uuid": uuid,
-                "pci_bus_id": pci_bus_id,
-                "device": device,
-                "hostname": hostname,
-            }
+                    # Map DCGM metric name to our field name
+                    # Handle prometheus client adding _total suffix to counters
+                    base_metric_name = metric_name.removesuffix("_total")
+                    if base_metric_name in DCGM_TO_FIELD_MAPPING:
+                        field_name = DCGM_TO_FIELD_MAPPING[base_metric_name]
+                        gpu_data.setdefault(gpu_index, {})[field_name] = value
+        except ValueError:
+            # prometheus client throws ValueError on empty/invalid input
+            self.warning("Failed to parse Prometheus metrics - invalid format")
+            return []
 
-            if metric_name in DCGM_TO_FIELD_MAPPING:
-                field_name = DCGM_TO_FIELD_MAPPING[metric_name]
-                gpu_data.setdefault(gpu_index, {})[field_name] = value
-
+        # Create TelemetryRecord objects
         records = []
         for gpu_index, metrics in gpu_data.items():
             metadata = gpu_metadata.get(gpu_index, {})
-
             scaled_metrics = self._apply_scaling_factors(metrics)
 
             record = TelemetryRecord(
@@ -212,6 +244,10 @@ class TelemetryDataCollector:
                 gpu_utilization=scaled_metrics.get("gpu_utilization"),
                 gpu_memory_used=scaled_metrics.get("gpu_memory_used"),
                 total_gpu_memory=scaled_metrics.get("total_gpu_memory"),
+                sm_clock_frequency=scaled_metrics.get("sm_clock_frequency"),
+                memory_clock_frequency=scaled_metrics.get("memory_clock_frequency"),
+                memory_temperature=scaled_metrics.get("memory_temperature"),
+                gpu_temperature=scaled_metrics.get("gpu_temperature"),
             )
             records.append(record)
 
@@ -226,136 +262,17 @@ class TelemetryDataCollector:
         Returns:
             Dict with scaled values for display
         """
-
         scaled_metrics = metrics.copy()
         for metric, factor in self._scaling_factors.items():
             if metric in scaled_metrics and scaled_metrics[metric] is not None:
                 scaled_metrics[metric] *= factor
         return scaled_metrics
 
-    def _parse_metric_line(
-        self, line: str
-    ) -> tuple[str, int, float, str, str, str, str, str] | None:
-        """Parse a single metric line from DCGM output.
 
-        Expected format: metric_name{gpu="0",UUID="...",pci_bus_id="...",device="...",modelName="...",Hostname="..."} value
-
-        Returns:
-            Tuple of (metric_name, gpu_index, value, model_name, uuid, pci_bus_id, device, hostname)
-            or None if parsing fails
-        """
-
-        try:
-            metric_full_name, value_str = line.rsplit(" ", 1)
-            value = float(value_str.strip())
-
-            metric_name = metric_full_name.split("{")[0]
-            gpu_index = self._extract_gpu_index(metric_full_name)
-            model_name = self._extract_model_name(metric_full_name)
-            uuid = self._extract_uuid(metric_full_name)
-            pci_bus_id = self._extract_pci_bus_id(metric_full_name)
-            device = self._extract_device(metric_full_name)
-            hostname = self._extract_hostname(metric_full_name)
-
-            if gpu_index is not None and model_name:
-                return (
-                    metric_name,
-                    gpu_index,
-                    value,
-                    model_name,
-                    uuid,
-                    pci_bus_id,
-                    device,
-                    hostname,
-                )
-        except (ValueError, IndexError) as e:
-            self._logger.warning(f"Could not parse metric line: {line} - {e}")
-        return None
-
-    def _extract_gpu_index(self, metric_full_name: str) -> int | None:
-        """Extract GPU index from metric labels."""
-
-        try:
-            match = re.search(r'(?:^|[,{])gpu="(\d+)"', metric_full_name)
-            if match:
-                return int(match.group(1))
-        except (ValueError, AttributeError) as e:
-            self._logger.warning(
-                f"Failed to extract GPU index from: {metric_full_name} - {e}"
-            )
-        return None
-
-    def _extract_model_name(self, metric_full_name: str) -> str | None:
-        """Extract GPU model name from metric labels."""
-
-        try:
-            match = re.search(r'modelName="([^"]+)"', metric_full_name)
-            if match:
-                return match.group(1)
-        except AttributeError as e:
-            self._logger.warning(
-                f"Failed to extract model name from: {metric_full_name} - {e}"
-            )
-        return None
-
-    def _extract_uuid(self, metric_full_name: str) -> str | None:
-        """Extract GPU UUID from metric labels."""
-
-        try:
-            match = re.search(r'UUID="([^"]+)"', metric_full_name)
-            if match:
-                return match.group(1)
-        except AttributeError as e:
-            self._logger.warning(
-                f"Failed to extract UUID from: {metric_full_name} - {e}"
-            )
-        return None
-
-    def _extract_pci_bus_id(self, metric_full_name: str) -> str | None:
-        """Extract PCI Bus ID from metric labels."""
-
-        try:
-            match = re.search(r'pci_bus_id="([^"]+)"', metric_full_name)
-            if match:
-                return match.group(1)
-        except AttributeError as e:
-            self._logger.warning(
-                f"Failed to extract PCI Bus ID from: {metric_full_name} - {e}"
-            )
-        return None
-
-    def _extract_device(self, metric_full_name: str) -> str | None:
-        """Extract device identifier from metric labels."""
-
-        try:
-            match = re.search(r'device="([^"]+)"', metric_full_name)
-            if match:
-                return match.group(1)
-        except AttributeError as e:
-            self._logger.warning(
-                f"Failed to extract device from: {metric_full_name} - {e}"
-            )
-        return None
-
-    def _extract_hostname(self, metric_full_name: str) -> str | None:
-        """Extract hostname from metric labels."""
-
-        try:
-            match = re.search(r'Hostname="([^"]+)"', metric_full_name)
-            if match:
-                return match.group(1)
-        except AttributeError as e:
-            self._logger.warning(
-                f"Failed to extract hostname from: {metric_full_name} - {e}"
-            )
-        return None
-
-
-def main() -> None:
+async def main() -> None:
     """Main entry point for locally testing the telemetry collector."""
 
     import statistics
-    import time
     from collections import defaultdict
 
     all_records = []
@@ -363,8 +280,8 @@ def main() -> None:
         lambda: defaultdict(list)
     )  # gpu_uuid -> metric_name -> values
 
-    def record_callback(records):
-        print(f"\n=== Received {len(records)} telemetry records ===")
+    def record_callback(records, collector_id):
+        print(f"\n=== Received {len(records)} telemetry records from {collector_id} ===")
         for record in records:
             all_records.append(record)
             print(f"\nGPU {record.gpu_index} ({record.gpu_model_name}):")
@@ -379,6 +296,10 @@ def main() -> None:
                 "GPU Utilization": (record.gpu_utilization, "%"),
                 "Memory Used": (record.gpu_memory_used, "GB"),
                 "Total Memory": (record.total_gpu_memory, "GB"),
+                "SM Clock Frequency": (record.sm_clock_frequency, "MHz"),
+                "Memory Clock Frequency": (record.memory_clock_frequency, "MHz"),
+                "Memory Temperature": (record.memory_temperature, "°C"),
+                "GPU Temperature": (record.gpu_temperature, "°C"),
             }
 
             print("  Metrics:")
@@ -389,8 +310,8 @@ def main() -> None:
                 else:
                     print(f"    {metric_name}: N/A")
 
-    def error_callback(error):
-        print(f"\nTelemetry error: {error}")
+    def error_callback(error, collector_id):
+        print(f"\nTelemetry error from {collector_id}: {error}")
 
     def print_final_summary():
         if not all_records:
@@ -429,10 +350,14 @@ def main() -> None:
                             for name, (_, unit) in [
                                 ("Power Usage", (None, "W")),
                                 ("Power Limit", (None, "W")),
-                                ("Energy Consumption", (None, "mJ")),
+                                ("Energy Consumption", (None, "MJ")),
                                 ("GPU Utilization", (None, "%")),
                                 ("Memory Used", (None, "GB")),
                                 ("Total Memory", (None, "GB")),
+                                ("SM Clock Frequency", (None, "MHz")),
+                                ("Memory Clock Frequency", (None, "MHz")),
+                                ("Memory Temperature", (None, "°C")),
+                                ("GPU Temperature", (None, "°C")),
                             ]
                             if name == metric_name
                         ),
@@ -455,23 +380,27 @@ def main() -> None:
         collector_id="test_collector",
     )
 
-    if collector.is_url_reachable():
-        print("DCGM endpoint reachable - starting collection...")
-        print("Collection interval: 1.0 seconds")
-        print("Press Ctrl+C to stop and see summary")
+    # Initialize and start the collector to set up HTTP session
+    await collector.initialize_and_start()
 
-        collector.start()
-        try:
-            time.sleep(10)  # Collect for 1s or until interrupted
-        except KeyboardInterrupt:
-            print("\nStopping collection...")
-        finally:
-            collector.stop()
-            print_final_summary()
-    else:
-        print("DCGM endpoint not reachable at http://localhost:9401/metrics")
-        print("Make sure DCGM is running and accessible")
+    try:
+        if await collector.is_url_reachable():
+            print("DCGM endpoint reachable - starting collection...")
+            print("Collection interval: 1.0 seconds")
+            print("Press Ctrl+C to stop and see summary")
+
+            try:
+                await asyncio.sleep(10)  # Collect for 10s or until interrupted
+            except KeyboardInterrupt:
+                print("\nStopping collection...")
+            finally:
+                print_final_summary()
+        else:
+            print("DCGM endpoint not reachable at http://localhost:9401/metrics")
+            print("Make sure DCGM is running and accessible")
+    finally:
+        await collector.stop()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

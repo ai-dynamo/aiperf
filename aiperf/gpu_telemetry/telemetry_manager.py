@@ -68,10 +68,19 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
 
     @on_init
     async def _initialize(self) -> None:
-        """Initialize telemetry collectors for each DCGM endpoint."""
+        """Initialize telemetry manager."""
 
         self.debug("Initializing telemetry manager")
 
+    @on_command(CommandType.PROFILE_CONFIGURE)
+    async def _profile_configure_command(
+        self, message: ProfileConfigureCommand
+    ) -> None:
+        """Configure the telemetry collectors but don't start them yet."""
+
+        self.info(f"Configuring telemetry manager for {self.service_id}")
+
+        reachable_count = 0
         for dcgm_url in self._dcgm_endpoints:
             collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
 
@@ -83,27 +92,15 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
                 collector_id=collector_id,
             )
 
-            self._collectors[dcgm_url] = collector
-            self.info(f"Created telemetry collector for {dcgm_url}")
-
-    @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
-        """Configure the telemetry collectors but don't start them yet."""
-
-        self.info(f"Configuring telemetry manager for {self.service_id}")
-
-        reachable_count = 0
-        for dcgm_url, collector in self._collectors.items():
             if collector.is_url_reachable():
+                self._collectors[dcgm_url] = collector
                 reachable_count += 1
                 self.info(f"DCGM endpoint reachable: {dcgm_url}")
             else:
                 self.warning(f"DCGM endpoint not reachable: {dcgm_url}")
 
         self.info(
-            f"Telemetry manager configured with {reachable_count}/{len(self._collectors)} reachable endpoints"
+            f"Telemetry manager configured with {reachable_count}/{len(self._dcgm_endpoints)} reachable endpoints"
         )
 
     @on_command(CommandType.PROFILE_START)
@@ -154,7 +151,7 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
             except Exception as e:
                 self.error(f"Failed to stop collector for {dcgm_url}: {e}")
 
-    def _on_telemetry_records(self, records: list[TelemetryRecord]) -> None:
+    def _on_telemetry_records(self, records: list[TelemetryRecord], collector_id: str) -> None:
         """Callback for receiving telemetry records from collectors.
 
         Sends TelemetryRecordsMessage to RecordsManager via message system.
@@ -166,7 +163,7 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
         try:
             message = TelemetryRecordsMessage(
                 service_id=self.service_id,
-                collector_id=self.service_id,
+                collector_id=collector_id,
                 records=records,
                 error=None,
             )
@@ -176,7 +173,7 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
         except Exception as e:
             self.error(f"Failed to send telemetry records: {e}")
 
-    def _on_telemetry_error(self, error: Exception) -> None:
+    def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:
         """Callback for receiving telemetry errors from collectors.
 
         Sends error TelemetryRecordsMessage to RecordsManager via message system.
@@ -185,9 +182,9 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
         try:
             error_message = TelemetryRecordsMessage(
                 service_id=self.service_id,
-                collector_id=self.service_id,
+                collector_id=collector_id,
                 records=[],
-                error=ErrorDetails.from_exception(error),
+                error=error,
             )
 
             self.execute_async(self.push_client.push(error_message))
