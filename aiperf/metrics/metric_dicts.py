@@ -92,18 +92,30 @@ class MetricArray(Generic[MetricValueTypeVarT]):
         self._size = 0
         self._sum: MetricValueTypeVarT = 0  # type: ignore
 
+    def extend(self, values: list[MetricValueTypeVarT]) -> None:
+        """Extend the array with a list of values."""
+        self._resize_if_needed(len(values))
+
+        for value in values:
+            self._data[self._size] = value
+            self._size += 1
+            self._sum += value  # type: ignore
+
     def append(self, value: MetricValueTypeVarT) -> None:
         """Append a value to the array."""
-        if self._size >= self._capacity:
-            # Double capacity when full
-            self._capacity *= 2
-            new_data = np.empty(self._capacity)
-            new_data[: self._size] = self._data[: self._size]
-            self._data = new_data
+        self._resize_if_needed(1)
 
         self._data[self._size] = value
         self._size += 1
         self._sum += value  # type: ignore
+
+    def _resize_if_needed(self, additional_size: int) -> None:
+        """Resize the array if needed."""
+        if self._size + additional_size > self._capacity:
+            self._capacity *= 2
+            new_data = np.empty(self._capacity)
+            new_data[: self._size] = self._data[: self._size]
+            self._data = new_data
 
     @property
     def sum(self) -> MetricValueTypeVarT:
