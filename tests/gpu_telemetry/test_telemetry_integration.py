@@ -353,7 +353,20 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             assert len(processing_errors) > 0, "Should have processing errors"
 
     def test_empty_dcgm_response_handling(self, user_config):
-        """Test handling of empty or invalid DCGM responses."""
+        """Test end-to-end pipeline handling of empty DCGM responses.
+
+        INTEGRATION TEST SCOPE: Tests the complete telemetry pipeline behavior
+        (collector + processor) when DCGM endpoint returns empty responses.
+
+        This test ensures:
+        - Collector handles empty HTTP responses gracefully
+        - Processor handles lack of records correctly
+        - Pipeline produces expected empty results
+        - No errors are generated for valid but empty responses
+
+        Note: For unit testing of parsing logic with empty data, see
+        test_telemetry_data_collector.py::test_empty_response_handling()
+        """
 
         def mock_requests_get(url, **kwargs):
             mock_response = Mock()

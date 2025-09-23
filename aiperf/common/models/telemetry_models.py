@@ -63,6 +63,18 @@ class TelemetryRecord(AIPerfBaseModel):
     total_gpu_memory: float | None = Field(
         default=None, description="Total GPU memory in GB"
     )
+    sm_clock_frequency: float | None = Field(
+        default=None, description="SM clock frequency in MHz"
+    )
+    memory_clock_frequency: float | None = Field(
+        default=None, description="Memory clock frequency in MHz"
+    )
+    memory_temperature: float | None = Field(
+        default=None, description="Memory temperature in °C"
+    )
+    gpu_temperature: float | None = Field(
+        default=None, description="GPU temperature in °C"
+    )
 
 
 class GpuMetadata(AIPerfBaseModel):
@@ -80,30 +92,65 @@ class GpuMetadata(AIPerfBaseModel):
     hostname: str | None = Field(default=None, description="Host machine name")
 
 
-class GpuMetricTimeSeries(AIPerfBaseModel):
-    """Time series data for a single metric on a single GPU.
+class GpuTelemetrySnapshot(AIPerfBaseModel):
+    """All metrics for a single GPU at one point in time.
 
-    Stores list of (value, timestamp) tuples for data integrity and future time-series visualization.
+    Groups all metric values collected during a single collection cycle,
+    eliminating timestamp duplication across individual metrics.
     """
 
-    data_points: list[tuple[float, int]] = Field(
-        default_factory=list, description="List of (value, timestamp_ns) pairs"
+    timestamp_ns: int = Field(description="Collection timestamp for all metrics")
+    metrics: dict[str, float] = Field(
+        default_factory=dict,
+        description="All metric values at this timestamp"
     )
 
-    def append(self, value: float, timestamp_ns: int) -> None:
-        """Add new data point to time series.
+
+class GpuMetricTimeSeries(AIPerfBaseModel):
+    """Time series data for all metrics on a single GPU.
+
+    Uses grouped snapshots instead of individual metric time series to eliminate
+    timestamp duplication and improve storage efficiency.
+    """
+
+    snapshots: list[GpuTelemetrySnapshot] = Field(
+        default_factory=list,
+        description="Chronological snapshots of all metrics"
+    )
+
+    def append_snapshot(self, metrics: dict[str, float], timestamp_ns: int) -> None:
+        """Add new snapshot with all metrics at once.
 
         Args:
-            value: Metric value (e.g., power usage in Watts)
-            timestamp_ns: Timestamp when measurement was taken
+            metrics: Dictionary of metric_name -> value for this timestamp
+            timestamp_ns: Timestamp when measurements were taken
         """
+        snapshot = GpuTelemetrySnapshot(
+            timestamp_ns=timestamp_ns,
+            metrics={k: v for k, v in metrics.items() if v is not None}
+        )
+        self.snapshots.append(snapshot)
 
-        self.data_points.append((value, timestamp_ns))
-
-    def to_metric_result(self, tag: str, header: str, unit: str) -> MetricResult:
-        """Convert time series to MetricResult with statistical summary.
+    def get_metric_values(self, metric_name: str) -> list[tuple[float, int]]:
+        """Extract time series data for a specific metric.
 
         Args:
+            metric_name: Name of the metric to extract
+
+        Returns:
+            List of (value, timestamp_ns) tuples for the specified metric
+        """
+        return [
+            (snapshot.metrics[metric_name], snapshot.timestamp_ns)
+            for snapshot in self.snapshots
+            if metric_name in snapshot.metrics
+        ]
+
+    def to_metric_result(self, metric_name: str, tag: str, header: str, unit: str) -> MetricResult:
+        """Convert metric time series to MetricResult with statistical summary.
+
+        Args:
+            metric_name: Name of the metric to analyze
             tag: Unique identifier for this metric (used by dashboard, exports, API)
             header: Human-readable name for display
             unit: Unit of measurement (e.g., "W" for Watts, "%" for percentage)
@@ -112,15 +159,16 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
             MetricResult with min/max/avg/percentiles computed from time series
 
         Raises:
-            NoMetricValue: If no data points are available
+            NoMetricValue: If no data points are available for the specified metric
         """
+        data_points = self.get_metric_values(metric_name)
 
-        if not self.data_points:
+        if not data_points:
             raise NoMetricValue(
-                "No telemetry data available for statistical computation"
+                f"No telemetry data available for metric '{metric_name}'"
             )
 
-        values = np.array([point[0] for point in self.data_points])
+        values = np.array([point[0] for point in data_points])
         p1, p5, p25, p50, p75, p90, p95, p99 = np.percentile(
             values, [1, 5, 25, 50, 75, 90, 95, 99]
         )
@@ -146,27 +194,26 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
 
 
 class GpuTelemetryData(AIPerfBaseModel):
-    """Complete telemetry data for one GPU: metadata + all metric time series.
+    """Complete telemetry data for one GPU: metadata + grouped metric time series.
 
     This combines static GPU information with dynamic time-series data,
-    providing the complete picture for one GPU's telemetry.
+    providing the complete picture for one GPU's telemetry using efficient grouped snapshots.
     """
 
     metadata: GpuMetadata = Field(description="Static GPU information")
-    metrics: dict[str, GpuMetricTimeSeries] = Field(
-        default_factory=dict,
-        description="Time series for each metric type (power_usage, utilization, etc.)",
+    time_series: GpuMetricTimeSeries = Field(
+        default_factory=GpuMetricTimeSeries,
+        description="Grouped time series for all metrics",
     )
 
     def add_record(self, record: TelemetryRecord) -> None:
-        """Add telemetry record to appropriate metric time series.
+        """Add telemetry record as a grouped snapshot.
 
         Args:
             record: New telemetry data point from DCGM collector
 
-        Note: Automatically creates new time series for metrics that don't exist yet
+        Note: Groups all metric values from the record into a single snapshot
         """
-
         metric_mapping = {
             "gpu_power_usage": record.gpu_power_usage,
             "gpu_power_limit": record.gpu_power_limit,
@@ -174,13 +221,30 @@ class GpuTelemetryData(AIPerfBaseModel):
             "gpu_utilization": record.gpu_utilization,
             "gpu_memory_used": record.gpu_memory_used,
             "total_gpu_memory": record.total_gpu_memory,
+            "sm_clock_frequency": record.sm_clock_frequency,
+            "memory_clock_frequency": record.memory_clock_frequency,
+            "memory_temperature": record.memory_temperature,
+            "gpu_temperature": record.gpu_temperature,
         }
 
-        for metric_name, value in metric_mapping.items():
-            if value is not None:
-                if metric_name not in self.metrics:
-                    self.metrics[metric_name] = GpuMetricTimeSeries()
-                self.metrics[metric_name].append(value, record.timestamp_ns)
+        # Filter out None values and add as single snapshot
+        valid_metrics = {k: v for k, v in metric_mapping.items() if v is not None}
+        if valid_metrics:
+            self.time_series.append_snapshot(valid_metrics, record.timestamp_ns)
+
+    def get_metric_result(self, metric_name: str, tag: str, header: str, unit: str) -> MetricResult:
+        """Get MetricResult for a specific metric.
+
+        Args:
+            metric_name: Name of the metric to analyze
+            tag: Unique identifier for this metric
+            header: Human-readable name for display
+            unit: Unit of measurement
+
+        Returns:
+            MetricResult with statistical summary for the specified metric
+        """
+        return self.time_series.to_metric_result(metric_name, tag, header, unit)
 
 
 class TelemetryHierarchy(AIPerfBaseModel):
