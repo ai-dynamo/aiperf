@@ -47,8 +47,6 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         self._record_callback = record_callback
         self._error_callback = error_callback
         self._scaling_factors = SCALING_FACTORS
-
-        # HTTP client session - will be initialized in on_init hook
         self._session: aiohttp.ClientSession | None = None
 
         super().__init__(id=collector_id)
@@ -99,9 +97,8 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         try:
             await self._collect_and_process_metrics()
         except asyncio.CancelledError:
-            # This is expected during shutdown, don't treat it as an error
             self.debug("Telemetry collection task cancelled during shutdown")
-            raise  # Re-raise to properly cancel the task
+            raise
         except Exception as e:
             if self._error_callback:
                 try:
@@ -125,7 +122,6 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
             if records and self._record_callback:
                 self.debug(f"Sending {len(records)} records via callback")
                 try:
-                    # Support both sync and async callbacks
                     if asyncio.iscoroutinefunction(self._record_callback):
                         await self._record_callback(records, self.id)
                     else:
@@ -150,7 +146,6 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
             aiohttp.ClientError: If HTTP request fails
             asyncio.CancelledError: If collector is being stopped
         """
-        # Check if we're being shut down (prevents race condition)
         if self.stop_requested:
             raise asyncio.CancelledError("Telemetry collector is being stopped")
 
@@ -184,15 +179,12 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         gpu_data = {}
         gpu_metadata = {}
 
-        # Use prometheus client parser directly for robust metric parsing
         try:
             for family in text_string_to_metric_families(metrics_data):
                 for sample in family.samples:
                     metric_name = sample.name
                     labels = sample.labels
                     value = sample.value
-
-                    # Extract GPU information from labels
                     gpu_index = labels.get("gpu")
                     if gpu_index is not None:
                         try:
@@ -203,7 +195,6 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                     else:
                         continue
 
-                    # Store metadata for this GPU
                     gpu_metadata[gpu_index] = {
                         "model_name": labels.get("modelName"),
                         "uuid": labels.get("UUID"),
@@ -212,18 +203,14 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                         "hostname": labels.get("Hostname"),
                     }
 
-                    # Map DCGM metric name to our field name
-                    # Handle prometheus client adding _total suffix to counters
                     base_metric_name = metric_name.removesuffix("_total")
                     if base_metric_name in DCGM_TO_FIELD_MAPPING:
                         field_name = DCGM_TO_FIELD_MAPPING[base_metric_name]
                         gpu_data.setdefault(gpu_index, {})[field_name] = value
         except ValueError:
-            # prometheus client throws ValueError on empty/invalid input
             self.warning("Failed to parse Prometheus metrics - invalid format")
             return []
 
-        # Create TelemetryRecord objects
         records = []
         for gpu_index, metrics in gpu_data.items():
             metadata = gpu_metadata.get(gpu_index, {})
@@ -269,6 +256,7 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         return scaled_metrics
 
 
+# [AIP-331] TODO: @ilana-n Remove when CLI argument is added to AI perf (–server-metrics-url) and telemetry_data_collector.py no longer requires local testing via main().
 async def main() -> None:
     """Main entry point for locally testing the telemetry collector."""
 
@@ -278,7 +266,7 @@ async def main() -> None:
     all_records = []
     metrics_data = defaultdict(
         lambda: defaultdict(list)
-    )  # gpu_uuid -> metric_name -> values
+    )
 
     def record_callback(records, collector_id):
         print(f"\n=== Received {len(records)} telemetry records from {collector_id} ===")
@@ -380,7 +368,6 @@ async def main() -> None:
         collector_id="test_collector",
     )
 
-    # Initialize and start the collector to set up HTTP session
     await collector.initialize_and_start()
 
     try:
@@ -390,7 +377,7 @@ async def main() -> None:
             print("Press Ctrl+C to stop and see summary")
 
             try:
-                await asyncio.sleep(10)  # Collect for 10s or until interrupted
+                await asyncio.sleep(10)
             except KeyboardInterrupt:
                 print("\nStopping collection...")
             finally:
