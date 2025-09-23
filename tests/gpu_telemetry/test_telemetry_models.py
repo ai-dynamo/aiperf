@@ -4,7 +4,13 @@
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.models.telemetry_models import (
+    GpuMetricTimeSeries,
+    GpuTelemetryData,
+    GpuTelemetrySnapshot,
+    TelemetryRecord,
+)
 
 
 class TestTelemetryRecord:
@@ -145,3 +151,198 @@ class TestTelemetryRecord:
         # Level 4: Hardware-specific metadata
         assert record.pci_bus_id == "00000000:02:00.0"
         assert record.device == "nvidia0"
+
+
+class TestGpuTelemetrySnapshot:
+    """Test GpuTelemetrySnapshot model for grouped metric collection."""
+
+    def test_snapshot_creation_with_metrics(self):
+        """Test creating a snapshot with multiple metrics."""
+        snapshot = GpuTelemetrySnapshot(
+            timestamp_ns=1000000000,
+            metrics={
+                "gpu_power_usage": 75.5,
+                "gpu_utilization": 85.0,
+                "gpu_memory_used": 15.26,
+            }
+        )
+
+        assert snapshot.timestamp_ns == 1000000000
+        assert len(snapshot.metrics) == 3
+        assert snapshot.metrics["gpu_power_usage"] == 75.5
+        assert snapshot.metrics["gpu_utilization"] == 85.0
+        assert snapshot.metrics["gpu_memory_used"] == 15.26
+
+    def test_snapshot_empty_metrics(self):
+        """Test creating a snapshot with no metrics."""
+        snapshot = GpuTelemetrySnapshot(
+            timestamp_ns=2000000000,
+            metrics={}
+        )
+
+        assert snapshot.timestamp_ns == 2000000000
+        assert len(snapshot.metrics) == 0
+
+
+class TestGpuMetricTimeSeries:
+    """Test GpuMetricTimeSeries model for grouped time series data."""
+
+    def test_append_snapshot(self):
+        """Test adding snapshots to time series."""
+        time_series = GpuMetricTimeSeries()
+
+        metrics1 = {"power": 100.0, "util": 80.0}
+        metrics2 = {"power": 110.0, "util": 85.0}
+
+        time_series.append_snapshot(metrics1, 1000000000)
+        time_series.append_snapshot(metrics2, 2000000000)
+
+        assert len(time_series.snapshots) == 2
+        assert time_series.snapshots[0].timestamp_ns == 1000000000
+        assert time_series.snapshots[0].metrics == metrics1
+        assert time_series.snapshots[1].timestamp_ns == 2000000000
+        assert time_series.snapshots[1].metrics == metrics2
+
+    def test_get_metric_values(self):
+        """Test extracting values for a specific metric."""
+        time_series = GpuMetricTimeSeries()
+
+        time_series.append_snapshot({"power": 100.0, "util": 80.0}, 1000000000)
+        time_series.append_snapshot({"power": 110.0, "util": 85.0}, 2000000000)
+        time_series.append_snapshot({"util": 90.0}, 3000000000)  # Missing power
+
+        power_values = time_series.get_metric_values("power")
+        util_values = time_series.get_metric_values("util")
+
+        assert power_values == [(100.0, 1000000000), (110.0, 2000000000)]
+        assert util_values == [(80.0, 1000000000), (85.0, 2000000000), (90.0, 3000000000)]
+
+    def test_to_metric_result_success(self):
+        """Test converting time series to MetricResult."""
+        time_series = GpuMetricTimeSeries()
+
+        time_series.append_snapshot({"power": 100.0}, 1000000000)
+        time_series.append_snapshot({"power": 120.0}, 2000000000)
+        time_series.append_snapshot({"power": 80.0}, 3000000000)
+
+        result = time_series.to_metric_result("power", "gpu_power", "GPU Power", "W")
+
+        assert result.tag == "gpu_power"
+        assert result.header == "GPU Power"
+        assert result.unit == "W"
+        assert result.min == 80.0
+        assert result.max == 120.0
+        assert result.avg == 100.0  # (100 + 120 + 80) / 3
+        assert result.count == 3
+
+    def test_to_metric_result_no_data(self):
+        """Test MetricResult conversion with no data for specified metric."""
+        time_series = GpuMetricTimeSeries()
+
+        with pytest.raises(NoMetricValue) as exc_info:
+            time_series.to_metric_result("nonexistent", "tag", "header", "unit")
+
+        assert "No telemetry data available for metric 'nonexistent'" in str(exc_info.value)
+
+
+class TestGpuTelemetryData:
+    """Test GpuTelemetryData model with grouped approach."""
+
+    def test_add_record_grouped(self):
+        """Test adding TelemetryRecord creates grouped snapshots."""
+        from aiperf.common.models.telemetry_models import GpuMetadata
+
+        metadata = GpuMetadata(
+            gpu_index=0,
+            gpu_uuid="GPU-test-uuid",
+            model_name="Test GPU"
+        )
+
+        telemetry_data = GpuTelemetryData(metadata=metadata)
+
+        record = TelemetryRecord(
+            timestamp_ns=1000000000,
+            dcgm_url="http://localhost:9401/metrics",
+            gpu_index=0,
+            gpu_model_name="Test GPU",
+            gpu_uuid="GPU-test-uuid",
+            gpu_power_usage=100.0,
+            gpu_utilization=80.0,
+            gpu_memory_used=15.0,
+        )
+
+        telemetry_data.add_record(record)
+
+        assert len(telemetry_data.time_series.snapshots) == 1
+        snapshot = telemetry_data.time_series.snapshots[0]
+        assert snapshot.timestamp_ns == 1000000000
+        assert len(snapshot.metrics) == 3
+        assert snapshot.metrics["gpu_power_usage"] == 100.0
+        assert snapshot.metrics["gpu_utilization"] == 80.0
+        assert snapshot.metrics["gpu_memory_used"] == 15.0
+
+    def test_add_record_filters_none_values(self):
+        """Test that None metric values are filtered out."""
+        from aiperf.common.models.telemetry_models import GpuMetadata
+
+        metadata = GpuMetadata(
+            gpu_index=0,
+            gpu_uuid="GPU-test-uuid",
+            model_name="Test GPU"
+        )
+
+        telemetry_data = GpuTelemetryData(metadata=metadata)
+
+        record = TelemetryRecord(
+            timestamp_ns=1000000000,
+            dcgm_url="http://localhost:9401/metrics",
+            gpu_index=0,
+            gpu_model_name="Test GPU",
+            gpu_uuid="GPU-test-uuid",
+            gpu_power_usage=100.0,
+            gpu_utilization=None,  # Should be filtered out
+            gpu_memory_used=15.0,
+        )
+
+        telemetry_data.add_record(record)
+
+        snapshot = telemetry_data.time_series.snapshots[0]
+        assert len(snapshot.metrics) == 2
+        assert "gpu_power_usage" in snapshot.metrics
+        assert "gpu_memory_used" in snapshot.metrics
+        assert "gpu_utilization" not in snapshot.metrics
+
+    def test_get_metric_result(self):
+        """Test getting MetricResult for a specific metric."""
+        from aiperf.common.models.telemetry_models import GpuMetadata
+
+        metadata = GpuMetadata(
+            gpu_index=0,
+            gpu_uuid="GPU-test-uuid",
+            model_name="Test GPU"
+        )
+
+        telemetry_data = GpuTelemetryData(metadata=metadata)
+
+        # Add multiple records
+        for i, power in enumerate([100.0, 120.0, 80.0]):
+            record = TelemetryRecord(
+                timestamp_ns=1000000000 + i * 1000000,
+                dcgm_url="http://localhost:9401/metrics",
+                gpu_index=0,
+                gpu_model_name="Test GPU",
+                gpu_uuid="GPU-test-uuid",
+                gpu_power_usage=power,
+            )
+            telemetry_data.add_record(record)
+
+        result = telemetry_data.get_metric_result(
+            "gpu_power_usage", "power_tag", "GPU Power", "W"
+        )
+
+        assert result.tag == "power_tag"
+        assert result.header == "GPU Power"
+        assert result.unit == "W"
+        assert result.min == 80.0
+        assert result.max == 120.0
+        assert result.avg == 100.0

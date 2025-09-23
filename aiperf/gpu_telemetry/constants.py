@@ -26,4 +26,8 @@ DCGM_TO_FIELD_MAPPING = {
     "DCGM_FI_DEV_GPU_UTIL": "gpu_utilization",
     "DCGM_FI_DEV_FB_USED": "gpu_memory_used",
     "DCGM_FI_DEV_FB_TOTAL": "total_gpu_memory",
+    "DCGM_FI_DEV_SM_CLOCK": "sm_clock_frequency",
+    "DCGM_FI_DEV_MEM_CLOCK": "memory_clock_frequency",
+    "DCGM_FI_DEV_MEMORY_TEMP": "memory_temperature",
+    "DCGM_FI_DEV_GPU_TEMP": "gpu_temperature",
 }
