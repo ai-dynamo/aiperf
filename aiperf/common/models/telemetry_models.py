@@ -101,8 +101,7 @@ class GpuTelemetrySnapshot(AIPerfBaseModel):
 
     timestamp_ns: int = Field(description="Collection timestamp for all metrics")
     metrics: dict[str, float] = Field(
-        default_factory=dict,
-        description="All metric values at this timestamp"
+        default_factory=dict, description="All metric values at this timestamp"
     )
 
 
@@ -114,8 +113,7 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
     """
 
     snapshots: list[GpuTelemetrySnapshot] = Field(
-        default_factory=list,
-        description="Chronological snapshots of all metrics"
+        default_factory=list, description="Chronological snapshots of all metrics"
     )
 
     def append_snapshot(self, metrics: dict[str, float], timestamp_ns: int) -> None:
@@ -127,7 +125,7 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
         """
         snapshot = GpuTelemetrySnapshot(
             timestamp_ns=timestamp_ns,
-            metrics={k: v for k, v in metrics.items() if v is not None}
+            metrics={k: v for k, v in metrics.items() if v is not None},
         )
         self.snapshots.append(snapshot)
 
@@ -146,7 +144,9 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
             if metric_name in snapshot.metrics
         ]
 
-    def to_metric_result(self, metric_name: str, tag: str, header: str, unit: str) -> MetricResult:
+    def to_metric_result(
+        self, metric_name: str, tag: str, header: str, unit: str
+    ) -> MetricResult:
         """Convert metric time series to MetricResult with statistical summary.
 
         Args:
@@ -232,7 +232,9 @@ class GpuTelemetryData(AIPerfBaseModel):
         if valid_metrics:
             self.time_series.append_snapshot(valid_metrics, record.timestamp_ns)
 
-    def get_metric_result(self, metric_name: str, tag: str, header: str, unit: str) -> MetricResult:
+    def get_metric_result(
+        self, metric_name: str, tag: str, header: str, unit: str
+    ) -> MetricResult:
         """Get MetricResult for a specific metric.
 
         Args:

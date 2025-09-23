@@ -9,11 +9,10 @@ with realistic mock data and callback mechanisms.
 """
 
 import asyncio
-import time
 from unittest.mock import Mock, create_autospec, patch
 
+import aiohttp
 import pytest
-import requests
 
 from aiperf.common.config import UserConfig
 from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
@@ -122,6 +121,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
         # Mock aiohttp responses for different DCGM endpoints
         def mock_aiohttp_get(url, **kwargs):
             from unittest.mock import AsyncMock
+
             mock_context_manager = AsyncMock()
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -220,7 +220,9 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             has_node1_data = len(node1_data) > 0
             has_node2_data = len(node2_data) > 0
 
-            assert has_node1_data or has_node2_data, "At least one node should have collected data"
+            assert has_node1_data or has_node2_data, (
+                "At least one node should have collected data"
+            )
 
             if has_node1_data:
                 assert len(node1_data) == 2, (
@@ -230,7 +232,9 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
                 node1_gpu0 = node1_data.get("GPU-ef6ef310-1234-5678-9abc-def012345678")
                 assert node1_gpu0 is not None, "Node1 GPU0 not found"
                 assert node1_gpu0.metadata.gpu_index == 0
-                assert node1_gpu0.metadata.model_name == "NVIDIA RTX 6000 Ada Generation"
+                assert (
+                    node1_gpu0.metadata.model_name == "NVIDIA RTX 6000 Ada Generation"
+                )
                 assert node1_gpu0.metadata.hostname == "node1"
 
             if has_node2_data:
@@ -341,6 +345,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
         def mock_aiohttp_get_error(url, **kwargs):
             from unittest.mock import AsyncMock
+
             mock_context_manager = AsyncMock()
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -379,21 +384,29 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
             # In test environment, race conditions may prevent data collection
             # but the setup should complete without exceptions
-            print(f"Test results: Records={len(self.collected_records)}, Errors={len(self.collection_errors)}")
+            print(
+                f"Test results: Records={len(self.collected_records)}, Errors={len(self.collection_errors)}"
+            )
 
             # If we got any activity, verify it behaves correctly
             if records_collected:
                 # Records should be TelemetryRecord objects
-                assert all(hasattr(r, 'gpu_uuid') for r in self.collected_records), "Records should be TelemetryRecord objects"
+                assert all(hasattr(r, "gpu_uuid") for r in self.collected_records), (
+                    "Records should be TelemetryRecord objects"
+                )
 
             if errors_collected:
                 # Errors should be string messages
-                assert all(isinstance(e, str) for e in self.collection_errors), "Errors should be strings"
+                assert all(isinstance(e, str) for e in self.collection_errors), (
+                    "Errors should be strings"
+                )
                 processing_errors = [
                     e for e in self.collection_errors if "processing error" in e.lower()
                 ]
                 if len(processing_errors) > 0:
-                    assert "Simulated processing error" in str(processing_errors), "Should contain simulated error message"
+                    assert "Simulated processing error" in str(processing_errors), (
+                        "Should contain simulated error message"
+                    )
 
     def test_empty_dcgm_response_handling(self, user_config):
         """Test end-to-end pipeline handling of empty DCGM responses.
@@ -413,11 +426,14 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
         def mock_aiohttp_get_empty(url, **kwargs):
             from unittest.mock import AsyncMock
+
             mock_context_manager = AsyncMock()
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.raise_for_status = Mock()
-            mock_response.text.return_value = "# No metrics available\n"  # Empty response
+            mock_response.text.return_value = (
+                "# No metrics available\n"  # Empty response
+            )
 
             mock_context_manager.__aenter__.return_value = mock_response
             return mock_context_manager
@@ -484,6 +500,7 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
 
         def mock_aiohttp_get_scaling(url, **kwargs):
             from unittest.mock import AsyncMock
+
             mock_context_manager = AsyncMock()
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200

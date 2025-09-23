@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums.metric_enums import MetricFlags, FrequencyMetricUnit
+from aiperf.common.enums.metric_enums import FrequencyMetricUnit, MetricFlags
 from aiperf.common.models import TelemetryRecord
 from aiperf.metrics.base_telemetry_metric import BaseTelemetryMetric
 
@@ -11,6 +11,7 @@ class MemoryClockFrequencyMetric(BaseTelemetryMetric[float]):
 
     Tracks the memory clock frequency in MHz.
     """
+
     tag = "memory_clock_frequency"
     header = "Memory Clock Frequency"
     unit = FrequencyMetricUnit.MEGAHERTZ
