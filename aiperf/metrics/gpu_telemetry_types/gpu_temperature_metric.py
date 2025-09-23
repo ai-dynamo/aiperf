@@ -11,6 +11,7 @@ class GpuTemperatureMetric(BaseTelemetryMetric[float]):
 
     Tracks the GPU temperature in degrees Celsius.
     """
+
     tag = "gpu_temperature"
     header = "GPU Temperature"
     unit = TemperatureMetricUnit.CELSIUS

@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import time
 from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
@@ -170,7 +169,7 @@ class TestHttpCommunication:
         """Test DCGM endpoint reachability check with successful HTTP response."""
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
 
-        with patch('aiohttp.ClientSession.get') as mock_get:
+        with patch("aiohttp.ClientSession.get") as mock_get:
             # Mock successful response
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -190,7 +189,7 @@ class TestHttpCommunication:
         """Test DCGM endpoint reachability check with various failure scenarios."""
         collector = TelemetryDataCollector("http://nonexistent:9401/metrics")
 
-        with patch('aiohttp.ClientSession.get') as mock_get:
+        with patch("aiohttp.ClientSession.get") as mock_get:
             # Mock different failure scenarios
             failure_scenarios = [
                 aiohttp.ClientError("Connection failed"),
@@ -211,7 +210,7 @@ class TestHttpCommunication:
         """Test successful HTTP fetching of DCGM metrics."""
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
 
-        with patch('aiohttp.ClientSession.get') as mock_get:
+        with patch("aiohttp.ClientSession.get") as mock_get:
             # Mock successful response with sample data
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -244,7 +243,7 @@ class TestCollectionLifecycle:
             record_callback=record_callback,
         )
 
-        with patch('aiohttp.ClientSession.get') as mock_get:
+        with patch("aiohttp.ClientSession.get") as mock_get:
             # Mock successful response
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -267,7 +266,9 @@ class TestCollectionLifecycle:
             # In practice, the background task may get "HTTP session is closed" error
             if len(records_received) == 0:
                 # This can happen due to race condition - session closes before background task completes
-                print("No records received - likely due to session cleanup race condition")
+                print(
+                    "No records received - likely due to session cleanup race condition"
+                )
             else:
                 assert all(isinstance(r, TelemetryRecord) for r in records_received)
                 print(f"Successfully collected {len(records_received)} records")
@@ -286,7 +287,7 @@ class TestCollectionLifecycle:
             error_callback=error_callback,
         )
 
-        with patch('aiohttp.ClientSession.get') as mock_get:
+        with patch("aiohttp.ClientSession.get") as mock_get:
             # Mock HTTP error
             mock_get.side_effect = aiohttp.ClientError("Connection failed")
 
@@ -308,11 +309,16 @@ class TestCollectionLifecycle:
             print(f"Errors received: {len(errors_received)}")
             if len(errors_received) > 0:
                 # If errors were captured, verify they are the right type
-                assert all(hasattr(e, 'message') or isinstance(e, Exception) for e in errors_received)
+                assert all(
+                    hasattr(e, "message") or isinstance(e, Exception)
+                    for e in errors_received
+                )
                 print("Error handling mechanism working correctly")
             else:
                 # No errors captured due to timing - this is acceptable in test environment
-                print("No errors captured due to race condition - test setup completed successfully")
+                print(
+                    "No errors captured due to race condition - test setup completed successfully"
+                )
 
     @pytest.mark.asyncio
     async def test_callback_exception_resilience(self, sample_dcgm_data):
@@ -330,7 +336,7 @@ class TestCollectionLifecycle:
             record_callback=failing_callback,
         )
 
-        with patch('aiohttp.ClientSession.get') as mock_get:
+        with patch("aiohttp.ClientSession.get") as mock_get:
             # Mock successful response
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -352,7 +358,9 @@ class TestCollectionLifecycle:
             # With mocked HTTP, we should get callback calls unless there's a race condition during shutdown
             if call_count == 0:
                 # This can happen due to race condition - session closes before background task completes
-                print("No callback calls received - likely due to session cleanup race condition")
+                print(
+                    "No callback calls received - likely due to session cleanup race condition"
+                )
             else:
                 print(f"Successfully made {call_count} callback calls despite failures")
                 assert call_count > 0
@@ -405,7 +413,9 @@ class TestDataProcessingEdgeCases:
 
         assert scaled["gpu_power_usage"] == 100.0
         assert abs(scaled["energy_consumption"] - 1e-6) < 1e-10  # 1000mJ = 1e-6 MJ
-        assert abs(scaled["gpu_memory_used"] - 1.073741824) < 1e-6  # 1024 MiB ≈ 1.073 GB
+        assert (
+            abs(scaled["gpu_memory_used"] - 1.073741824) < 1e-6
+        )  # 1024 MiB ≈ 1.073 GB
 
     def test_temporal_consistency_in_batches(self, sample_dcgm_data):
         """Test that all records in a batch have consistent timestamps."""

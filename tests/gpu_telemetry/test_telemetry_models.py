@@ -164,7 +164,7 @@ class TestGpuTelemetrySnapshot:
                 "gpu_power_usage": 75.5,
                 "gpu_utilization": 85.0,
                 "gpu_memory_used": 15.26,
-            }
+            },
         )
 
         assert snapshot.timestamp_ns == 1000000000
@@ -175,10 +175,7 @@ class TestGpuTelemetrySnapshot:
 
     def test_snapshot_empty_metrics(self):
         """Test creating a snapshot with no metrics."""
-        snapshot = GpuTelemetrySnapshot(
-            timestamp_ns=2000000000,
-            metrics={}
-        )
+        snapshot = GpuTelemetrySnapshot(timestamp_ns=2000000000, metrics={})
 
         assert snapshot.timestamp_ns == 2000000000
         assert len(snapshot.metrics) == 0
@@ -215,7 +212,11 @@ class TestGpuMetricTimeSeries:
         util_values = time_series.get_metric_values("util")
 
         assert power_values == [(100.0, 1000000000), (110.0, 2000000000)]
-        assert util_values == [(80.0, 1000000000), (85.0, 2000000000), (90.0, 3000000000)]
+        assert util_values == [
+            (80.0, 1000000000),
+            (85.0, 2000000000),
+            (90.0, 3000000000),
+        ]
 
     def test_to_metric_result_success(self):
         """Test converting time series to MetricResult."""
@@ -242,7 +243,9 @@ class TestGpuMetricTimeSeries:
         with pytest.raises(NoMetricValue) as exc_info:
             time_series.to_metric_result("nonexistent", "tag", "header", "unit")
 
-        assert "No telemetry data available for metric 'nonexistent'" in str(exc_info.value)
+        assert "No telemetry data available for metric 'nonexistent'" in str(
+            exc_info.value
+        )
 
 
 class TestGpuTelemetryData:
@@ -253,9 +256,7 @@ class TestGpuTelemetryData:
         from aiperf.common.models.telemetry_models import GpuMetadata
 
         metadata = GpuMetadata(
-            gpu_index=0,
-            gpu_uuid="GPU-test-uuid",
-            model_name="Test GPU"
+            gpu_index=0, gpu_uuid="GPU-test-uuid", model_name="Test GPU"
         )
 
         telemetry_data = GpuTelemetryData(metadata=metadata)
@@ -286,9 +287,7 @@ class TestGpuTelemetryData:
         from aiperf.common.models.telemetry_models import GpuMetadata
 
         metadata = GpuMetadata(
-            gpu_index=0,
-            gpu_uuid="GPU-test-uuid",
-            model_name="Test GPU"
+            gpu_index=0, gpu_uuid="GPU-test-uuid", model_name="Test GPU"
         )
 
         telemetry_data = GpuTelemetryData(metadata=metadata)
@@ -317,9 +316,7 @@ class TestGpuTelemetryData:
         from aiperf.common.models.telemetry_models import GpuMetadata
 
         metadata = GpuMetadata(
-            gpu_index=0,
-            gpu_uuid="GPU-test-uuid",
-            model_name="Test GPU"
+            gpu_index=0, gpu_uuid="GPU-test-uuid", model_name="Test GPU"
         )
 
         telemetry_data = GpuTelemetryData(metadata=metadata)

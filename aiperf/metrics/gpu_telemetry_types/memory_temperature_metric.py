@@ -11,6 +11,7 @@ class MemoryTemperatureMetric(BaseTelemetryMetric[float]):
 
     Tracks the memory temperature in degrees Celsius.
     """
+
     tag = "memory_temperature"
     header = "Memory Temperature"
     unit = TemperatureMetricUnit.CELSIUS
