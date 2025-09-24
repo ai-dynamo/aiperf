@@ -30,7 +30,7 @@ class CreditManagerProtocol(PubClientProtocol, Protocol):
         credit_drop_ns: int | None = None,
         *,
         should_cancel: bool = False,
-        cancel_after_ns: int | None = None,
+        cancel_after_ns: int = 0,
     ) -> None: ...
 
     async def publish_progress(

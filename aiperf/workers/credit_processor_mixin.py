@@ -235,7 +235,7 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
             else:
                 cancellation_time_ns = time.perf_counter_ns()
                 if self.is_debug_enabled:
-                    delay_s = (message.cancel_after_ns or 0) / NANOS_PER_SECOND
+                    delay_s = message.cancel_after_ns / NANOS_PER_SECOND
                     self.debug(f"Request cancelled after {delay_s:.3f}s")
 
                 return RequestRecord(
@@ -250,7 +250,7 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
                         type="RequestCancellationError",
                         message=(
                             f"Request was cancelled after "
-                            f"{(message.cancel_after_ns or 0) / NANOS_PER_SECOND:.3f} seconds"
+                            f"{message.cancel_after_ns / NANOS_PER_SECOND:.3f} seconds"
                         ),
                         code=499,  # Client Closed Request
                     ),
@@ -273,7 +273,7 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
         *,
         send_coroutine: Awaitable[RequestRecord],
         should_cancel: bool,
-        cancel_after_ns: int | None,
+        cancel_after_ns: int,
     ) -> RequestRecord | None:
         """Send a coroutine with optional cancellation after a delay.
         Args:
@@ -283,7 +283,7 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
         Returns:
             The result of the send_coroutine, or None if it was cancelled.
         """
-        if not should_cancel or cancel_after_ns is None:
+        if not should_cancel:
             return await send_coroutine
 
         timeout_s = cancel_after_ns / NANOS_PER_SECOND

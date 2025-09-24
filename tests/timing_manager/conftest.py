@@ -112,7 +112,7 @@ class MockCreditManager(AIPerfLifecycleMixin):
         conversation_id: str | None = None,
         credit_drop_ns: int | None = None,
         should_cancel: bool = False,
-        cancel_after_ns: int | None = None,
+        cancel_after_ns: int = 0,
     ) -> None:
         """Mock drop_credit method."""
         drop_time_ns = self.time_traveler.time_ns()

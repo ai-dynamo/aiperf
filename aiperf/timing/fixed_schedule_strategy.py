@@ -103,11 +103,7 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
             for conversation_id in conversation_ids:
                 # Determine if this request should be cancelled
                 should_cancel = self.cancellation_strategy.should_cancel_request()
-                cancel_after_ns = (
-                    self.cancellation_strategy.get_cancellation_delay_ns()
-                    if should_cancel
-                    else None
-                )
+                cancel_after_ns = self.cancellation_strategy.get_cancellation_delay_ns()
 
                 await self.credit_manager.drop_credit(
                     credit_phase=CreditPhase.PROFILING,

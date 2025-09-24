@@ -65,11 +65,7 @@ class RequestRateStrategy(CreditIssuingStrategy):
                     break
 
             should_cancel = self.cancellation_strategy.should_cancel_request()
-            cancel_after_ns = (
-                self.cancellation_strategy.get_cancellation_delay_ns()
-                if should_cancel
-                else None
-            )
+            cancel_after_ns = self.cancellation_strategy.get_cancellation_delay_ns()
 
             await self.credit_manager.drop_credit(
                 credit_phase=phase_stats.type,

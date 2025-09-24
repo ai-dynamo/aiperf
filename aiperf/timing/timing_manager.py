@@ -178,7 +178,7 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
         conversation_id: str | None = None,
         credit_drop_ns: int | None = None,
         should_cancel: bool = False,
-        cancel_after_ns: int | None = None,
+        cancel_after_ns: int = 0,
     ) -> None:
         """Drop a credit."""
         self.execute_async(

@@ -244,7 +244,7 @@ class RequestRecord(AIPerfBaseModel):
         default=False,
         description="Whether the request was cancelled during execution.",
     )
-    cancel_after_ns: int | None = Field(
+    cancel_after_ns: int = Field(
         default=None,
         ge=0,
         description="The delay in nanoseconds after which the request should be cancelled, as specified in the credit drop message.",

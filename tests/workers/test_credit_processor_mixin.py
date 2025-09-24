@@ -15,7 +15,6 @@ class MockCreditProcessorMixin(CreditProcessorMixin):
     """Mock implementation of CreditProcessorMixin for testing."""
 
     def __init__(self):
-        # Mock all required dependencies for the _send_with_optional_cancel method
         self.inference_client = Mock()
         self.inference_client.send_request = AsyncMock()
 
@@ -30,7 +29,7 @@ class TestCreditProcessorMixin:
         """Create a mock CreditProcessorMixin for testing."""
         return MockCreditProcessorMixin()
 
-    async def test_send_with_optional_cancel_disabled_should_cancel_false(self, mixin):
+    async def test_send_with_optional_cancel_should_cancel_false(self, mixin):
         """Test _send_with_optional_cancel when should_cancel=False."""
         mock_record = RequestRecord(timestamp_ns=time.time_ns())
 
@@ -40,13 +39,13 @@ class TestCreditProcessorMixin:
         result = await mixin._send_with_optional_cancel(
             send_coroutine=mock_coroutine(),
             should_cancel=False,
-            cancel_after_ns=None,
+            cancel_after_ns=0,
         )
 
         assert result == mock_record
 
-    async def test_send_with_optional_cancel_disabled_none_timeout(self, mixin):
-        """Test _send_with_optional_cancel when should_cancel=True but cancel_after_ns=None."""
+    async def test_send_with_optional_cancel_zero_timeout(self, mixin):
+        """Test _send_with_optional_cancel when should_cancel=True with cancel_after_ns=0."""
         mock_record = RequestRecord(timestamp_ns=time.time_ns())
 
         async def mock_coroutine():
@@ -55,17 +54,16 @@ class TestCreditProcessorMixin:
         result = await mixin._send_with_optional_cancel(
             send_coroutine=mock_coroutine(),
             should_cancel=True,
-            cancel_after_ns=None,
+            cancel_after_ns=0,
         )
 
-        assert result == mock_record
+        assert result is None
 
     @patch("asyncio.wait_for")
     async def test_send_with_optional_cancel_success(self, mock_wait_for, mixin):
         """Test successful request with timeout."""
         mock_record = RequestRecord(timestamp_ns=time.time_ns())
 
-        # Create a simple coroutine using an async def function
         async def simple_coroutine():
             return mock_record
 
