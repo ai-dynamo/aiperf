@@ -100,7 +100,6 @@ class TestCreditProcessorMixin:
 
         # Should return None on timeout
         assert result is None
-        # Verify wait_for was called with correct timeout (1.5 seconds)
         mock_wait_for.assert_called_once()
         call_args = mock_wait_for.call_args
         assert call_args[1]["timeout"] == 1.5
@@ -119,7 +118,6 @@ class TestCreditProcessorMixin:
         for cancel_after_ns, expected_timeout in test_cases:
             mock_wait_for.reset_mock()
 
-            # Create a simple coroutine function
             async def simple_coroutine():
                 return RequestRecord(timestamp_ns=time.time_ns())
 
