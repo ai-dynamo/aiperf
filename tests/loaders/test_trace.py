@@ -5,7 +5,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, InputConfig, UserConfig
+from aiperf.common.config import (
+    EndpointConfig,
+    InputConfig,
+    UserConfig,
+)
 from aiperf.common.enums import CustomDatasetType
 from aiperf.dataset import MooncakeTrace, MooncakeTraceDatasetLoader
 
@@ -404,6 +408,24 @@ class TestMooncakeTraceDatasetLoader:
         assert conversation.turns[0].texts[0].contents[0] == "Hello, how are you?"
         assert conversation.turns[1].texts[0].contents[0] == "What is the weather like?"
 
+    def test_convert_to_conversations_with_delay_ratio(
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
+    ):
+        """Test conversion applies delay ratio from user config."""
+        default_user_config.input.conversation.turn.delay.ratio = 0.5
+        content = [
+            '{"session_id": "session-1", "input_length": 100, "output_length": 50}',
+            '{"session_id": "session-1", "delay": 1000, "input_length": 150, "output_length": 60}',
+        ]
+        filename = create_jsonl_file(content)
+        loader = MooncakeTraceDatasetLoader(
+            filename, mock_prompt_generator, default_user_config
+        )
+        dataset = loader.load_dataset()
+        conversations = loader.convert_to_conversations(dataset)
+        second_turn = conversations[0].turns[1]
+        assert second_turn.delay == 500  # 1000 * 0.5
+
     def test_load_dataset_with_session_ids(
         self, create_jsonl_file, mock_prompt_generator, default_user_config
     ):
@@ -428,26 +450,3 @@ class TestMooncakeTraceDatasetLoader:
 
         assert len(dataset["session-2"]) == 1
         assert dataset["session-2"][0].text_input == "This is session 2 input"
-
-    def test_load_dataset_with_delay_field(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
-    ):
-        """Test loading JSONL file with delay fields."""
-        content = [
-            '{"session_id": "abc", "input_length": 100, "output_length": 50, "delay": 500}',
-            '{"session_id": "def", "text_input": "This is test input", "delay": 1000}',
-        ]
-        filename = create_jsonl_file(content)
-
-        default_user_config.conversation.turn.delay.ratio = 0.5
-
-        loader = MooncakeTraceDatasetLoader(
-            filename, mock_prompt_generator, default_user_config
-        )
-        dataset = loader.load_dataset()
-
-        assert len(dataset) == 2
-        traces = list(dataset.values())
-
-        assert traces[0][0].delay == 250  # 500 * 0.5
-        assert traces[1][0].delay == 500  # 1000 * 0.5
