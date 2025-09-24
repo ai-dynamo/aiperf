@@ -4,7 +4,9 @@
 import sys
 import time
 from functools import cached_property
-from typing import Any
+
+# Import with TYPE_CHECKING to avoid circular import issues at runtime
+from typing import TYPE_CHECKING, Any
 
 from pydantic import (
     BaseModel,
@@ -18,6 +20,9 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.types import MetricTagT
+
+if TYPE_CHECKING:
+    from aiperf.common.models.telemetry_models import TelemetryHierarchy
 
 
 class MetricResult(AIPerfBaseModel):
@@ -79,6 +84,10 @@ class ProfileResults(AIPerfBaseModel):
     error_summary: list[ErrorDetailsCount] = Field(
         default_factory=list,
         description="A list of the unique error details and their counts",
+    )
+    telemetry_data: "TelemetryHierarchy | None" = Field(
+        default=None,
+        description="GPU telemetry data collected during the profile run",
     )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:

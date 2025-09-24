@@ -50,7 +50,7 @@ from aiperf.common.models import (
     ProfileResults,
 )
 from aiperf.common.models.record_models import MetricResult
-from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.common.models.telemetry_models import TelemetryHierarchy, TelemetryRecord
 from aiperf.common.protocols import (
     ResultsProcessorProtocol,
     ServiceProtocol,
@@ -109,6 +109,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.worker_stats_lock: asyncio.Lock = asyncio.Lock()
 
         self._previous_realtime_records: int | None = None
+
+        # Telemetry data storage
+        self._telemetry_hierarchy = TelemetryHierarchy()
+        self._telemetry_hierarchy_lock = asyncio.Lock()
 
         self._results_processors: list[ResultsProcessorProtocol] = []
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
@@ -200,6 +204,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if message.valid:
             # Send telemetry records to telemetry results processor
             await self._send_telemetry_to_results_processors(message.records)
+
+            # Store telemetry records in hierarchy for export
+            async with self._telemetry_hierarchy_lock:
+                for record in message.records:
+                    self._telemetry_hierarchy.add_record(record)
 
             # Update processing statistics using same lock pattern as metric records
             # This ensures telemetry collection is included in overall system health monitoring
@@ -503,6 +512,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             elif isinstance(result, BaseException):
                 error_results.append(ErrorDetails.from_exception(result))
 
+        # Get telemetry data for export
+        async with self._telemetry_hierarchy_lock:
+            telemetry_data = (
+                self._telemetry_hierarchy
+                if self._telemetry_hierarchy.dcgm_endpoints
+                else None
+            )
+
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=records_results,
@@ -511,6 +528,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=self.end_time_ns or time.time_ns(),
                 error_summary=await self.get_error_summary(),
                 was_cancelled=cancelled,
+                telemetry_data=telemetry_data,
             ),
             errors=error_results,
         )
