@@ -32,6 +32,9 @@ from aiperf.exporters.exporter_config import (
 from aiperf.exporters.exporter_manager import (
     ExporterManager,
 )
+from aiperf.exporters.gpu_telemetry_console_exporter import (
+    GPUTelemetryConsoleExporter,
+)
 from aiperf.exporters.internal_metrics_console_exporter import (
     ConsoleInternalMetricsExporter,
 )
@@ -49,6 +52,7 @@ __all__ = [
     "ExporterConfig",
     "ExporterManager",
     "FileExportInfo",
+    "GPUTelemetryConsoleExporter",
     "JsonExportData",
     "JsonExporter",
     "STAT_KEYS",

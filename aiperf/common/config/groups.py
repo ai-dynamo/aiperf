@@ -22,6 +22,7 @@ class Groups:
     AUDIO_INPUT = Group.create_ordered("Audio Input")
     IMAGE_INPUT = Group.create_ordered("Image Input")
     SERVICE = Group.create_ordered("Service")
+    TELEMETRY = Group.create_ordered("Telemetry")
     UI = Group.create_ordered("UI")
     WORKERS = Group.create_ordered("Workers")
     DEVELOPER = Group.create_ordered("Developer")
