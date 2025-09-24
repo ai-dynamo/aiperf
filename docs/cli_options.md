@@ -29,7 +29,7 @@ Use these options to profile with AIPerf.
 │ HEADER --header                                            -H  Adds a custom header to the requests. Headers must be specified as 'Header:Value' pairs. Alternatively, a string       │
 │                                                                representing a json formatted dictionary can be provided. [default: []]                                                      │
 │ INPUT-FILE --input-file                                        The file or directory path that contains the dataset to use for profiling. This parameter is used in conjunction with  │
-│                                                                the custom_dataset_type parameter to support different types of user provided datasets.                                │
+│                                                                the --custom-dataset-type parameter to support different types of user provided datasets.                                │
 │ FIXED-SCHEDULE --fixed-schedule                                Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file parameter, but can be   │
 │                                                                set manually here. [default: False]                                                                                    │
 │ FIXED-SCHEDULE-AUTO-OFFSET --fixed-schedule-auto-offset        Specifies to automatically offset the timestamps in the fixed schedule, such that the first timestamp is considered 0, │
@@ -41,7 +41,7 @@ Use these options to profile with AIPerf.
 │ FIXED-SCHEDULE-END-OFFSET --fixed-schedule-end-offset          Specifies the offset in milliseconds to end the fixed schedule at. By default, the schedule ends at the last timestamp │
 │                                                                in the trace dataset, but this option can be used to only run a subset of the trace. The schedule will include any     │
 │                                                                requests at the end offset.                                                                                            │
-│ CUSTOM-DATASET-TYPE --custom-dataset-type                      The type of custom dataset to use. This parameter is used in conjunction with the --file parameter. [choices:          │
+│ CUSTOM-DATASET-TYPE --custom-dataset-type                      The type of custom dataset to use. This parameter is used in conjunction with the --input-file parameter. [choices:          │
 │                                                                single_turn, multi_turn, random_pool, mooncake_trace] [default: mooncake_trace]                                        │
 │ RANDOM-SEED --random-seed                                      The seed used to generate random values. Set to some value to make the synthetic data generation deterministic. It     │
 │                                                                will use system default if not provided.                                                                               │
