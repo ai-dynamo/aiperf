@@ -124,9 +124,12 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
                         or [],  # Use empty list if hash_ids is None
                     )
 
+                delay = trace.delay
+                if delay is not None:
+                    delay *= self.config.conversation.turn.delay.ratio
                 turn = Turn(
                     timestamp=trace.timestamp,
-                    delay=trace.delay,
+                    delay=delay,
                     texts=[Text(name="text", contents=[prompt])],
                     max_tokens=trace.output_length,
                 )

@@ -439,6 +439,8 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
+        default_user_config.conversation.turn.delay.ratio = 0.5
+
         loader = MooncakeTraceDatasetLoader(
             filename, mock_prompt_generator, default_user_config
         )
@@ -447,5 +449,5 @@ class TestMooncakeTraceDatasetLoader:
         assert len(dataset) == 2
         traces = list(dataset.values())
 
-        assert traces[0][0].delay == 500
-        assert traces[1][0].delay == 1000
+        assert traces[0][0].delay == 250  # 500 * 0.5
+        assert traces[1][0].delay == 500  # 1000 * 0.5
