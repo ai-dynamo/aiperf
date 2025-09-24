@@ -1,0 +1,302 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+import numpy as np
+from pydantic import Field
+
+from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.record_models import MetricResult
+
+
+class TelemetryRecord(AIPerfBaseModel):
+    """Single telemetry data point from GPU monitoring.
+
+    This record contains all telemetry data for one GPU at one point in time,
+    along with metadata to identify the source DCGM endpoint and specific GPU.
+    Used for hierarchical storage: dcgm_url -> gpu_uuid -> time series data.
+    """
+
+    timestamp_ns: int = Field(
+        description="Nanosecond wall-clock timestamp when telemetry was collected (time_ns)"
+    )
+
+    dcgm_url: str = Field(
+        description="Source DCGM endpoint URL (e.g., 'http://node1:9401/metrics')"
+    )
+
+    gpu_index: int = Field(
+        description="GPU index on this node (0, 1, 2, etc.) - used for display ordering"
+    )
+    gpu_uuid: str = Field(
+        description="Unique GPU identifier (e.g., 'GPU-ef6ef310-...') - primary key for data"
+    )
+
+    gpu_model_name: str = Field(
+        description="GPU model name (e.g., 'NVIDIA RTX 6000 Ada Generation')"
+    )
+    pci_bus_id: str | None = Field(
+        default=None, description="PCI Bus ID (e.g., '00000000:02:00.0')"
+    )
+    device: str | None = Field(
+        default=None, description="Device identifier (e.g., 'nvidia0')"
+    )
+    hostname: str | None = Field(
+        default=None, description="Hostname where GPU is located"
+    )
+
+    gpu_power_usage: float | None = Field(
+        default=None, description="Current GPU power usage in W"
+    )
+    gpu_power_limit: float | None = Field(
+        default=None, description="GPU power limit in W"
+    )
+    energy_consumption: float | None = Field(
+        default=None, description="Cumulative energy consumption in MJ"
+    )
+    gpu_utilization: float | None = Field(
+        default=None, description="GPU utilization percentage (0-100)"
+    )
+    gpu_memory_used: float | None = Field(
+        default=None, description="GPU memory used in GB"
+    )
+    total_gpu_memory: float | None = Field(
+        default=None, description="Total GPU memory in GB"
+    )
+    sm_clock_frequency: float | None = Field(
+        default=None, description="SM clock frequency in MHz"
+    )
+    memory_clock_frequency: float | None = Field(
+        default=None, description="Memory clock frequency in MHz"
+    )
+    memory_temperature: float | None = Field(
+        default=None, description="Memory temperature in °C"
+    )
+    gpu_temperature: float | None = Field(
+        default=None, description="GPU temperature in °C"
+    )
+
+
+class GpuMetadata(AIPerfBaseModel):
+    """Static metadata for a GPU that doesn't change over time.
+
+    This is stored once per GPU and referenced by all telemetry data points
+    to avoid duplicating metadata in every time-series entry.
+    """
+
+    gpu_index: int = Field(description="GPU index for display ordering (0, 1, 2, etc.)")
+    gpu_uuid: str = Field(description="Unique GPU identifier - primary key")
+    model_name: str = Field(description="GPU hardware model name")
+    pci_bus_id: str | None = Field(default=None, description="PCI Bus location")
+    device: str | None = Field(default=None, description="System device identifier")
+    hostname: str | None = Field(default=None, description="Host machine name")
+
+
+class GpuTelemetrySnapshot(AIPerfBaseModel):
+    """All metrics for a single GPU at one point in time.
+
+    Groups all metric values collected during a single collection cycle,
+    eliminating timestamp duplication across individual metrics.
+    """
+
+    timestamp_ns: int = Field(description="Collection timestamp for all metrics")
+    metrics: dict[str, float] = Field(
+        default_factory=dict, description="All metric values at this timestamp"
+    )
+
+
+class GpuMetricTimeSeries(AIPerfBaseModel):
+    """Time series data for all metrics on a single GPU.
+
+    Uses grouped snapshots instead of individual metric time series to eliminate
+    timestamp duplication and improve storage efficiency.
+    """
+
+    snapshots: list[GpuTelemetrySnapshot] = Field(
+        default_factory=list, description="Chronological snapshots of all metrics"
+    )
+
+    def append_snapshot(self, metrics: dict[str, float], timestamp_ns: int) -> None:
+        """Add new snapshot with all metrics at once.
+
+        Args:
+            metrics: Dictionary of metric_name -> value for this timestamp
+            timestamp_ns: Timestamp when measurements were taken
+        """
+        snapshot = GpuTelemetrySnapshot(
+            timestamp_ns=timestamp_ns,
+            metrics={k: v for k, v in metrics.items() if v is not None},
+        )
+        self.snapshots.append(snapshot)
+
+    def get_metric_values(self, metric_name: str) -> list[tuple[float, int]]:
+        """Extract time series data for a specific metric.
+
+        Args:
+            metric_name: Name of the metric to extract
+
+        Returns:
+            List of (value, timestamp_ns) tuples for the specified metric
+        """
+        return [
+            (snapshot.metrics[metric_name], snapshot.timestamp_ns)
+            for snapshot in self.snapshots
+            if metric_name in snapshot.metrics
+        ]
+
+    def to_metric_result(
+        self, metric_name: str, tag: str, header: str, unit: str
+    ) -> MetricResult:
+        """Convert metric time series to MetricResult with statistical summary.
+
+        Args:
+            metric_name: Name of the metric to analyze
+            tag: Unique identifier for this metric (used by dashboard, exports, API)
+            header: Human-readable name for display
+            unit: Unit of measurement (e.g., "W" for Watts, "%" for percentage)
+
+        Returns:
+            MetricResult with min/max/avg/percentiles computed from time series
+
+        Raises:
+            NoMetricValue: If no data points are available for the specified metric
+        """
+        data_points = self.get_metric_values(metric_name)
+
+        if not data_points:
+            raise NoMetricValue(
+                f"No telemetry data available for metric '{metric_name}'"
+            )
+
+        values = np.array([point[0] for point in data_points])
+        p1, p5, p25, p50, p75, p90, p95, p99 = np.percentile(
+            values, [1, 5, 25, 50, 75, 90, 95, 99]
+        )
+
+        return MetricResult(
+            tag=tag,
+            header=header,
+            unit=unit,
+            min=np.min(values),
+            max=np.max(values),
+            avg=float(np.mean(values)),
+            std=float(np.std(values)),
+            count=len(values),
+            p1=p1,
+            p5=p5,
+            p25=p25,
+            p50=p50,
+            p75=p75,
+            p90=p90,
+            p95=p95,
+            p99=p99,
+        )
+
+
+class GpuTelemetryData(AIPerfBaseModel):
+    """Complete telemetry data for one GPU: metadata + grouped metric time series.
+
+    This combines static GPU information with dynamic time-series data,
+    providing the complete picture for one GPU's telemetry using efficient grouped snapshots.
+    """
+
+    metadata: GpuMetadata = Field(description="Static GPU information")
+    time_series: GpuMetricTimeSeries = Field(
+        default_factory=GpuMetricTimeSeries,
+        description="Grouped time series for all metrics",
+    )
+
+    def add_record(self, record: TelemetryRecord) -> None:
+        """Add telemetry record as a grouped snapshot.
+
+        Args:
+            record: New telemetry data point from DCGM collector
+
+        Note: Groups all metric values from the record into a single snapshot
+        """
+        metric_mapping = {
+            "gpu_power_usage": record.gpu_power_usage,
+            "gpu_power_limit": record.gpu_power_limit,
+            "energy_consumption": record.energy_consumption,
+            "gpu_utilization": record.gpu_utilization,
+            "gpu_memory_used": record.gpu_memory_used,
+            "total_gpu_memory": record.total_gpu_memory,
+            "sm_clock_frequency": record.sm_clock_frequency,
+            "memory_clock_frequency": record.memory_clock_frequency,
+            "memory_temperature": record.memory_temperature,
+            "gpu_temperature": record.gpu_temperature,
+        }
+
+        # Filter out None values and add as single snapshot
+        valid_metrics = {k: v for k, v in metric_mapping.items() if v is not None}
+        if valid_metrics:
+            self.time_series.append_snapshot(valid_metrics, record.timestamp_ns)
+
+    def get_metric_result(
+        self, metric_name: str, tag: str, header: str, unit: str
+    ) -> MetricResult:
+        """Get MetricResult for a specific metric.
+
+        Args:
+            metric_name: Name of the metric to analyze
+            tag: Unique identifier for this metric
+            header: Human-readable name for display
+            unit: Unit of measurement
+
+        Returns:
+            MetricResult with statistical summary for the specified metric
+        """
+        return self.time_series.to_metric_result(metric_name, tag, header, unit)
+
+
+class TelemetryHierarchy(AIPerfBaseModel):
+    """Hierarchical storage: dcgm_url -> gpu_uuid -> complete GPU telemetry data.
+
+    This provides the requested hierarchical structure while maintaining efficient
+    access patterns for both real-time display and final aggregation.
+
+    Structure:
+    {
+        "http://node1:9401/metrics": {
+            "GPU-ef6ef310-...": GpuTelemetryData(metadata + time series),
+            "GPU-a1b2c3d4-...": GpuTelemetryData(metadata + time series)
+        },
+        "http://node2:9401/metrics": {
+            "GPU-f5e6d7c8-...": GpuTelemetryData(metadata + time series)
+        }
+    }
+    """
+
+    dcgm_endpoints: dict[str, dict[str, GpuTelemetryData]] = Field(
+        default_factory=dict,
+        description="Nested dict: dcgm_url -> gpu_uuid -> telemetry data",
+    )
+
+    def add_record(self, record: TelemetryRecord) -> None:
+        """Add telemetry record to hierarchical storage.
+
+        Args:
+            record: New telemetry data from GPU monitoring
+
+        Note: Automatically creates hierarchy levels as needed:
+        - New DCGM endpoints get empty GPU dict
+        - New GPUs get initialized with metadata and empty metrics
+        """
+
+        if record.dcgm_url not in self.dcgm_endpoints:
+            self.dcgm_endpoints[record.dcgm_url] = {}
+
+        dcgm_data = self.dcgm_endpoints[record.dcgm_url]
+
+        if record.gpu_uuid not in dcgm_data:
+            metadata = GpuMetadata(
+                gpu_index=record.gpu_index,
+                gpu_uuid=record.gpu_uuid,
+                model_name=record.gpu_model_name,
+                pci_bus_id=record.pci_bus_id,
+                device=record.device,
+                hostname=record.hostname,
+            )
+            dcgm_data[record.gpu_uuid] = GpuTelemetryData(metadata=metadata)
+
+        dcgm_data[record.gpu_uuid].add_record(record)
