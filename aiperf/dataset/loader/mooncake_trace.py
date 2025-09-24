@@ -63,7 +63,10 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
 
                 trace_data = MooncakeTrace.model_validate_json(line)
 
-                if not self._timestamp_within_offsets(trace_data.timestamp):
+                if (
+                    trace_data.timestamp is not None
+                    and not self._timestamp_within_offsets(trace_data.timestamp)
+                ):
                     self._skipped_traces += 1
                     continue  # Skip traces before or after the fixed schedule offset
 
@@ -100,11 +103,17 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
         for session_id, traces in data.items():
             conversation = Conversation(session_id=session_id)
             for trace in traces:
-                prompt = self.prompt_generator.generate(
-                    mean=trace.input_length,
-                    stddev=0,
-                    hash_ids=trace.hash_ids,
-                )
+                # Handle both text_input and input_length formats
+                if trace.text_input is not None:
+                    prompt = trace.text_input
+                else:
+                    prompt = self.prompt_generator.generate(
+                        mean=trace.input_length,
+                        stddev=0,
+                        hash_ids=trace.hash_ids
+                        or [],  # Use empty list if hash_ids is None
+                    )
+
                 turn = Turn(
                     timestamp=trace.timestamp,
                     texts=[Text(name="text", contents=[prompt])],
