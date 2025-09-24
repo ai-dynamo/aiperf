@@ -12,6 +12,7 @@ from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
+    parse_str_as_dict,
     parse_str_or_dict_as_tuple_list,
 )
 from aiperf.common.config.conversation_config import ConversationConfig
@@ -205,7 +206,6 @@ class InputConfig(BaseConfig):
     random_seed: Annotated[
         int | None,
         Field(
-            default=None,
             description="The seed used to generate random values.\n"
             "Set to some value to make the synthetic data generation deterministic.\n"
             "It will use system default if not provided.",
@@ -217,6 +217,24 @@ class InputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.RANDOM_SEED
+
+    goodput: Annotated[
+        Any | None,
+        Field(
+            default=None,
+            description='Specify service level objectives for goodput as "KEY:VALUE" '
+            "pairs, where the key is a metric name, and the value is in "
+            'milliseconds. Multiple "KEY:VALUE" pairs can be provided, '
+            "separated by spaces. For more context on the definition of "
+            "goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 "
+            "and the blog: https://hao-ai-lab.github.io/blogs/distserve",
+        ),
+        BeforeValidator(parse_str_as_dict),
+        CLIParameter(
+            name=("--goodput",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.GOODPUT
 
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
