@@ -283,6 +283,21 @@ class TestSyntheticDatasetComposer:
         assert isinstance(turn, Turn)
         assert turn.delay == 1500
 
+    def test_create_turn_with_delay_ratio(self, multiturn_config, mock_tokenizer):
+        """Test _create_turn method applies delay ratio correctly."""
+        multiturn_config.input.conversation.turn.delay.mean = 2000
+        multiturn_config.input.conversation.turn.delay.stddev = 0
+        multiturn_config.input.conversation.turn.delay.ratio = 0.5
+
+        composer = SyntheticDatasetComposer(multiturn_config, mock_tokenizer)
+
+        # Test subsequent turn creation
+        turn = composer._create_turn(is_first=False)
+
+        assert isinstance(turn, Turn)
+        # Delay should be mean * ratio
+        assert turn.delay == 1000  # 2000 * 0.5
+
     # ============================================================================
     # Generate Payload Methods Tests
     # ============================================================================
