@@ -42,7 +42,7 @@ Use these options to profile with AIPerf.
 │                                                                in the trace dataset, but this option can be used to only run a subset of the trace. The schedule will include any     │
 │                                                                requests at the end offset.                                                                                            │
 │ CUSTOM-DATASET-TYPE --custom-dataset-type                      The type of custom dataset to use. This parameter is used in conjunction with the --file parameter. [choices:          │
-│                                                                single-turn, multi-turn, random-pool, mooncake-trace] [default: mooncake-trace]                                        │
+│                                                                single_turn, multi_turn, random_pool, mooncake_trace] [default: mooncake_trace]                                        │
 │ RANDOM-SEED --random-seed                                      The seed used to generate random values. Set to some value to make the synthetic data generation deterministic. It     │
 │                                                                will use system default if not provided.                                                                               │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
