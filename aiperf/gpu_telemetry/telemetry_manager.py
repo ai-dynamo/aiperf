@@ -24,7 +24,6 @@ from aiperf.common.protocols import (
 )
 from aiperf.gpu_telemetry.constants import (
     DEFAULT_COLLECTION_INTERVAL,
-    DEFAULT_DCGM_ENDPOINT,
 )
 from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
 
@@ -61,9 +60,7 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
         self.debug("Telemetry manager __init__")
 
         self._collectors: dict[str, TelemetryDataCollector] = {}
-
-        # [AIP-280] TODO: @ilana-n Get from user_config when telemetry config is added to CLI argument
-        self._dcgm_endpoints = [DEFAULT_DCGM_ENDPOINT]
+        self._dcgm_endpoints = user_config.server_metrics_url
         self._collection_interval = DEFAULT_COLLECTION_INTERVAL
 
     @on_init
@@ -99,6 +96,13 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
             else:
                 self.warning(f"DCGM endpoint not reachable: {dcgm_url}")
 
+        if reachable_count == 0:
+            self.warning(
+                "No DCGM endpoints are reachable. Telemetry collection will be disabled."
+            )
+            # Graceful shutdown - this is not an error condition
+            return
+
         self.info(
             f"Telemetry manager configured with {reachable_count}/{len(self._dcgm_endpoints)} reachable endpoints"
         )
@@ -106,6 +110,10 @@ class TelemetryManager(PushClientMixin, BaseComponentService):
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, message) -> None:
         """Start all telemetry collectors."""
+
+        if not self._collectors:
+            self.debug("No telemetry collectors configured, skipping start")
+            return
 
         self.debug("Starting telemetry collection")
 
