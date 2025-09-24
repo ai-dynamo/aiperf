@@ -99,10 +99,10 @@ class MetricArray(Generic[MetricValueTypeVarT]):
         """Extend the array with a list of values."""
         self._resize_if_needed(len(values))
 
-        for value in values:
-            self._data[self._size] = value
-            self._size += 1
-            self._sum += value  # type: ignore
+        end = self._size + len(values)
+        self._data[self._size : end] = values
+        self._sum += sum(values)  # type: ignore
+        self._size = end
 
     def append(self, value: MetricValueTypeVarT) -> None:
         """Append a value to the array."""

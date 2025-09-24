@@ -60,7 +60,7 @@ class TestMetricArray:
 
         assert_array_equal(test_array, [1.0, 2.0, 3.0, 4.0])
 
-    def test_resize_on_capacity_exceeded(self, test_array: MetricArray):
+    def test_resize_on_capacity_exceeded(self):
         """Test that array resizes when capacity is exceeded."""
         array = MetricArray(initial_capacity=2)
         array.extend([1.0, 2.0])
@@ -114,7 +114,7 @@ class TestMetricArray:
 class TestMetricArrayEdgeCases:
     """Test edge cases for MetricArray."""
 
-    def test_test_array_to_result_raises_error(self):
+    def test_array_to_result_raises_error(self):
         """Test that to_result raises error for empty array."""
         with pytest.raises(IndexError):
             MetricArray().to_result("empty", "Empty Metric", "units")

@@ -331,15 +331,15 @@ class MetricValueType(BasePydanticBackedStrEnum):
     )
     FLOAT_LIST = MetricValueTypeInfo(
         tag="list[float]",
-        default_factory=list[float],
-        converter=list[float],
-        dtype=list[float],
+        default_factory=list,
+        converter=lambda v: [float(x) for x in v],
+        dtype=float,
     )
     INT_LIST = MetricValueTypeInfo(
         tag="list[int]",
-        default_factory=list[int],
-        converter=list[int],
-        dtype=list[int],
+        default_factory=list,
+        converter=lambda v: [int(x) for x in v],
+        dtype=int,
     )
 
     @cached_property
