@@ -87,6 +87,9 @@ class MetricArray(Generic[MetricValueTypeVarT]):
     """
 
     def __init__(self, initial_capacity: int = 10000):
+        """Initialize the array with the given initial capacity."""
+        if initial_capacity <= 0:
+            raise ValueError("Initial capacity must be greater than 0")
         self._capacity = initial_capacity
         self._data = np.empty(self._capacity)
         self._size = 0
