@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
                 "--log-level",
                 "DEBUG",
                 "--max-workers",
-                "1"
+                "1",
             ]
         },
         {
@@ -28,7 +28,7 @@ SPDX-License-Identifier: Apache-2.0
             "module": "pytest",
             "args": [
                 "-n",
-                "auto"
+                "auto",
             ]
         }
     ],
