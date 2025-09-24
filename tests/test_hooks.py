@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import pytest
 
-from aiperf.common.exceptions import UnsupportedHookError
+from aiperf.common.exceptions import AIPerfMultiError, HookError, UnsupportedHookError
 from aiperf.common.hooks import (
     AIPerfHook,
     on_init,
@@ -285,3 +285,146 @@ async def test_hook_overridden_methods_still_callable():
         "Hooks1.on_init_1",
         "Hooks2.on_init_1",
     }, "Base class hooks should still be called even if overridden"
+
+
+@pytest.mark.asyncio
+async def test_hook_error_exception():
+    """Test that HookError is raised when a hook throws an exception during execution."""
+
+    @provides_hooks(AIPerfHook.ON_INIT)
+    class HookWithError(MockHookProvider):
+        @on_init
+        async def failing_hook(self):
+            raise ValueError("Something went wrong in the hook")
+
+    hook_provider = HookWithError()
+
+    # Should raise AIPerfMultiError containing the HookError
+    with pytest.raises(AIPerfMultiError) as exc_info:
+        await hook_provider.initialize()
+
+    # Verify the multi-error contains our hook error
+    assert len(exc_info.value.exceptions) == 1
+    hook_error = exc_info.value.exceptions[0]
+    assert isinstance(hook_error, HookError)
+    assert hook_error.hook_class_name == "HookWithError"
+    assert hook_error.hook_func_name == "failing_hook"
+    assert isinstance(hook_error.exception, ValueError)
+    assert str(hook_error.exception) == "Something went wrong in the hook"
+
+
+@pytest.mark.asyncio
+async def test_multiple_hook_errors():
+    """Test that multiple hook errors are collected in AIPerfMultiError."""
+
+    @provides_hooks(AIPerfHook.ON_INIT)
+    class MultipleErrorHooks(MockHookProvider):
+        @on_init
+        async def failing_hook_1(self):
+            raise ValueError("First error")
+
+        @on_init
+        async def failing_hook_2(self):
+            raise RuntimeError("Second error")
+
+    hook_provider = MultipleErrorHooks()
+
+    with pytest.raises(AIPerfMultiError) as exc_info:
+        await hook_provider.initialize()
+
+    # Should have collected both hook errors
+    assert len(exc_info.value.exceptions) == 2
+
+    errors = exc_info.value.exceptions
+
+    hook_error_1 = errors[0]
+    hook_error_2 = errors[1]
+    assert isinstance(hook_error_1, HookError)
+    assert isinstance(hook_error_2, HookError)
+
+    assert hook_error_1.hook_func_name == "failing_hook_1"
+    assert hook_error_2.hook_func_name == "failing_hook_2"
+    assert isinstance(hook_error_1.exception, ValueError)
+    assert isinstance(hook_error_2.exception, RuntimeError)
+
+
+def test_hook_error_properties():
+    """Test that HookError properties are set correctly."""
+    original_exception = ValueError("Test error message")
+    hook_error = HookError("TestClass", "test_method", original_exception)
+
+    assert hook_error.hook_class_name == "TestClass"
+    assert hook_error.hook_func_name == "test_method"
+    assert hook_error.exception is original_exception
+    assert str(hook_error) == "TestClass.test_method: Test error message"
+
+
+def test_unsupported_hook_error_attach_hook():
+    """Test that UnsupportedHookError is raised when attaching an unsupported hook type."""
+
+    @provides_hooks(AIPerfHook.ON_INIT)
+    class LimitedHookProvider(HooksMixin):
+        pass
+
+    provider = LimitedHookProvider()
+
+    # Try to attach a hook type that's not provided
+    with pytest.raises(UnsupportedHookError) as exc_info:
+        provider.attach_hook(AIPerfHook.ON_START, lambda: None)
+
+    error_message = str(exc_info.value)
+    assert all(
+        snippet in error_message
+        for snippet in [
+            "@on_start",
+            "LimitedHookProvider",
+            "not provided by any base class",
+        ]
+    )
+
+
+def test_unsupported_hook_error_message_content():
+    """Test that UnsupportedHookError contains helpful information."""
+
+    @provides_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_STOP)
+    class TestHooksUnsupported(MockHooks):
+        @on_start  # This hook is not provided
+        async def _on_start_1(self):
+            pass
+
+    with pytest.raises(UnsupportedHookError) as exc_info:
+        TestHooksUnsupported()
+
+    error_message = str(exc_info.value)
+    assert all(
+        snippet in error_message
+        for snippet in ["@on_start", "TestHooksUnsupported", "@on_init", "@on_stop"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_hook_execution_continues_after_error():
+    """Test that hook execution continues after one hook fails (collecting all errors)."""
+
+    @provides_hooks(AIPerfHook.ON_INIT)
+    class MixedHooks(MockHookProvider):
+        @on_init
+        async def successful_hook_1(self):
+            self.add_called_hook("successful_1")
+
+        @on_init
+        async def failing_hook(self):
+            raise RuntimeError("Hook failed")
+
+        @on_init
+        async def successful_hook_2(self):
+            self.add_called_hook("successful_2")
+
+    hook_provider = MixedHooks()
+
+    with pytest.raises(AIPerfMultiError):
+        await hook_provider.initialize()
+
+    # Both successful hooks should have been called despite the failure
+    assert "successful_1" in hook_provider.called_hooks
+    assert "successful_2" in hook_provider.called_hooks

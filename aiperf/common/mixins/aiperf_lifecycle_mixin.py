@@ -3,10 +3,15 @@
 
 import asyncio
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import LifecycleState
-from aiperf.common.exceptions import InvalidStateError
+from aiperf.common.exceptions import (
+    InvalidStateError,
+    LifecycleOperationError,
+)
 from aiperf.common.hooks import (
     AIPerfHook,
     BackgroundTaskParams,
@@ -17,6 +22,7 @@ from aiperf.common.hooks import (
 )
 from aiperf.common.mixins.hooks_mixin import HooksMixin
 from aiperf.common.mixins.task_manager_mixin import TaskManagerMixin
+from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 
 
@@ -49,6 +55,7 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         self._stop_requested_event = asyncio.Event()
         self.stopped_event = asyncio.Event()  # set on stop or failure
         self._children: list[AIPerfLifecycleProtocol] = []
+        self._exit_errors: list[ExitErrorInfo] = []
         if "logger_name" not in kwargs:
             kwargs["logger_name"] = self.id
         super().__init__(**kwargs)
@@ -179,10 +186,39 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             self.started_event,
         )
 
+    @asynccontextmanager
+    async def try_operation_or_stop(self, operation: str) -> AsyncIterator[None]:
+        """Context manager to try an operation or stop the lifecycle on failure.
+
+        This context manager catches any exception, logs it, and raises a LifecycleOperationError
+        which will be caught by the lifecycle system and trigger a graceful shutdown via _fail().
+
+        Args:
+            operation: Description of the operation being performed
+
+        Raises:
+            LifecycleOperationError: When the operation fails, triggering graceful shutdown
+        """
+        try:
+            yield
+        except Exception as e:
+            self.error(f"Failed to {operation.lower()}: {e}")
+            error = LifecycleOperationError(
+                operation=operation,
+                original_exception=e,
+                lifecycle_id=self.id,
+            )
+            self._exit_errors.append(
+                ExitErrorInfo.from_lifecycle_operation_error(error)
+            )
+            raise error from e
+
     async def initialize_and_start(self) -> None:
         """Initialize and start the lifecycle. This is a convenience method that calls `initialize` and `start` in sequence."""
-        await self.initialize()
-        await self.start()
+        async with self.try_operation_or_stop("Initialize"):
+            await self.initialize()
+        async with self.try_operation_or_stop("Start"):
+            await self.start()
 
     async def stop(self) -> None:
         """Stop the lifecycle and run the @on_stop hooks.
@@ -232,10 +268,20 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """Set the state to FAILED and raise an asyncio.CancelledError.
         This is used when the transition from one state to another fails.
         """
+        self.error(f"Failed for {self}: {e}")
+        if not isinstance(e, LifecycleOperationError):
+            # Only add to exit errors if the exception has not already been added
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=ErrorDetails.from_exception(e),
+                    operation=self.state.title(),
+                    service_id=self.id,
+                )
+            )
+        if self.state != LifecycleState.STOPPING:
+            self.debug(f"Stopping {self} due to failure")
+            await self.stop()
         await self._set_state(LifecycleState.FAILED)
-        self.exception(f"Failed for {self}: {e}")
-        self.stop_requested = True
-        self.stopped_event.set()
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 
     def attach_child_lifecycle(self, child: AIPerfLifecycleProtocol) -> None:

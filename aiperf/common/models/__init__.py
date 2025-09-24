@@ -28,6 +28,7 @@ from aiperf.common.models.dataset_models import (
 from aiperf.common.models.error_models import (
     ErrorDetails,
     ErrorDetailsCount,
+    ExitErrorInfo,
 )
 from aiperf.common.models.health_models import (
     CPUTimes,
@@ -80,6 +81,7 @@ __all__ = [
     "EmbeddingResponseData",
     "ErrorDetails",
     "ErrorDetailsCount",
+    "ExitErrorInfo",
     "FullPhaseProgress",
     "IOCounters",
     "Image",

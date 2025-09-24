@@ -24,6 +24,7 @@ from aiperf.common.enums import (
     ServiceRegistrationStatus,
     ServiceType,
 )
+from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.factories import (
     AIPerfUIFactory,
     ServiceFactory,
@@ -47,9 +48,15 @@ from aiperf.common.messages import (
     SpawnWorkersCommand,
     StatusMessage,
 )
-from aiperf.common.models import ProcessRecordsResult, ServiceRunInfo
+from aiperf.common.models import (
+    ErrorDetails,
+    ProcessRecordsResult,
+    ServiceRunInfo,
+)
+from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.protocols import AIPerfUIProtocol, ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
+from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.exporters.exporter_manager import ExporterManager
@@ -114,6 +121,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.attach_child_lifecycle(self.ui)
         self._stop_tasks: set[asyncio.Task] = set()
         self._profile_results: ProcessRecordsResult | None = None
+        self._exit_errors: list[ExitErrorInfo] = []
         self.debug("System Controller created")
 
     async def request_realtime_metrics(self) -> None:
@@ -140,7 +148,11 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self.setup_signal_handlers(self._handle_signal)
         self.debug("Setup signal handlers")
-        await self.service_manager.initialize()
+
+        async with self.try_operation_or_stop("Initialize Service Manager"):
+            await self.service_manager.initialize()
+
+        self.debug("System Controller initialized successfully")
 
     @on_start
     async def _start_services(self) -> None:
@@ -152,11 +164,15 @@ class SystemController(SignalHandlerMixin, BaseService):
         - Start all required services
         """
         self.debug("System Controller is bootstrapping services")
+
         # Start all required services
-        await self.service_manager.start()
-        await self.service_manager.wait_for_all_services_registration(
-            stop_event=self._stop_requested_event,
-        )
+        async with self.try_operation_or_stop("Start Service Manager"):
+            await self.service_manager.start()
+
+        async with self.try_operation_or_stop("Register Services"):
+            await self.service_manager.wait_for_all_services_registration(
+                stop_event=self._stop_requested_event,
+            )
 
         self.info("AIPerf System is CONFIGURING")
         await self._profile_configure_all_services()
@@ -172,7 +188,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         """
         self.info("Configuring all services to start profiling")
         begin = time.perf_counter()
-        await self.send_command_and_wait_for_all_responses(
+        responses = await self.send_command_and_wait_for_all_responses(
             ProfileConfigureCommand(
                 service_id=self.service_id,
                 config=self.user_config,
@@ -181,19 +197,47 @@ class SystemController(SignalHandlerMixin, BaseService):
             timeout=DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
         )
         duration = time.perf_counter() - begin
+        self._parse_responses_for_errors(responses, "Configure Profiling")
         self.info(f"All services configured in {duration:.2f} seconds")
 
     async def _start_profiling_all_services(self) -> None:
         """Tell all services to start profiling."""
         self.debug("Sending PROFILE_START command to all services")
-        await self.send_command_and_wait_for_all_responses(
+        responses = await self.send_command_and_wait_for_all_responses(
             ProfileStartCommand(
                 service_id=self.service_id,
             ),
             list(self.service_manager.service_id_map.keys()),
             timeout=DEFAULT_PROFILE_START_TIMEOUT,
         )
+        self._parse_responses_for_errors(responses, "Start Profiling")
         self.info("All services started profiling successfully")
+
+    def _parse_responses_for_errors(
+        self, responses: list[CommandResponse | ErrorDetails], operation: str
+    ) -> None:
+        """Parse the responses for errors."""
+        for response in responses:
+            if isinstance(response, ErrorDetails):
+                self._exit_errors.append(
+                    ExitErrorInfo(
+                        error_details=response, operation=operation, service_id=None
+                    )
+                )
+            elif isinstance(response, CommandErrorResponse):
+                self._exit_errors.append(
+                    ExitErrorInfo(
+                        error_details=response.error,
+                        operation=operation,
+                        service_id=response.service_id,
+                    )
+                )
+        if self._exit_errors:
+            raise LifecycleOperationError(
+                operation=operation,
+                original_exception=None,
+                lifecycle_id=self.id,
+            )
 
     @on_command(CommandType.REGISTER_SERVICE)
     async def _handle_register_service_command(
@@ -415,15 +459,20 @@ class SystemController(SignalHandlerMixin, BaseService):
         # Wait for the UI to stop before exporting any results to the console
         await self.ui.stop()
         await self.ui.wait_for_tasks()
+        await asyncio.sleep(0.1)  # Give time for screen clear to finish
 
-        await self._print_post_benchmark_info_and_metrics()
+        if not self._exit_errors:
+            await self._print_post_benchmark_info_and_metrics()
+        else:
+            print_exit_errors(self._exit_errors)
+            self._print_log_file_info(Console())
 
         if AIPERF_DEV_MODE:
             # Print a warning message to the console if developer mode is enabled, on exit after results
             print_developer_mode_warning()
 
         # Exit the process in a more explicit way, to ensure that it stops
-        os._exit(0)
+        os._exit(1 if self._exit_errors else 0)
 
     async def _print_post_benchmark_info_and_metrics(self) -> None:
         """Print post benchmark info and metrics to the console."""
@@ -446,6 +495,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._print_cli_command(console)
         self._print_benchmark_duration(console)
         self._print_exported_file_infos(exporter_manager, console)
+        self._print_log_file_info(console)
         if self._was_cancelled:
             console.print(
                 "[italic yellow]The profile run was cancelled early. Results shown may be incomplete or inaccurate.[/italic yellow]"
@@ -454,12 +504,18 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.print()
         console.file.flush()
 
+    def _print_log_file_info(self, console: Console) -> None:
+        """Print the log file info."""
+        log_file = self.user_config.output.artifact_directory / "logs" / "aiperf.log"
+        console.print(
+            f"[bold green]Log File:[/bold green] [cyan]{log_file.resolve()}[/cyan]"
+        )
+
     def _print_exported_file_infos(
         self, exporter_manager: ExporterManager, console: Console
     ) -> None:
         """Print the exported file infos."""
         file_infos = exporter_manager.get_exported_file_infos()
-
         for file_info in file_infos:
             console.print(
                 f"[bold green]{file_info.export_type}[/bold green]: [cyan]{file_info.file_path.resolve()}[/cyan]"

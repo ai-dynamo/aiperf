@@ -3,6 +3,9 @@
 from aiperf.controller.base_service_manager import (
     BaseServiceManager,
 )
+from aiperf.controller.controller_utils import (
+    print_exit_errors,
+)
 from aiperf.controller.kubernetes_service_manager import (
     KubernetesServiceManager,
     ServiceKubernetesRunInfo,
@@ -32,4 +35,5 @@ __all__ = [
     "SignalHandlerMixin",
     "SystemController",
     "main",
+    "print_exit_errors",
 ]

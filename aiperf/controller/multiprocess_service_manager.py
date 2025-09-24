@@ -171,6 +171,12 @@ class MultiProcessServiceManager(BaseServiceManager):
                 if required_types.issubset(registered_types):
                     return
 
+                for process in self.multi_process_info:
+                    if not process.process or not process.process.is_alive():
+                        raise AIPerfError(
+                            f"Service process {process.service_id} died before registering"
+                        )
+
                 # Wait a bit before checking again
                 await asyncio.sleep(0.5)
 

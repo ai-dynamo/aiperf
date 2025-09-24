@@ -17,7 +17,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.enums.dataset_enums import CustomDatasetType
 from aiperf.common.factories import ComposerFactory, ServiceFactory
-from aiperf.common.hooks import on_command, on_init, on_request
+from aiperf.common.hooks import on_command, on_request
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
@@ -72,10 +72,26 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._sequential_iterator_index = 0
         self._use_sequential_iteration = False
 
-    @on_init
-    async def _initialize(self) -> None:
-        """Initialize the dataset manager."""
-        self.debug("Initializing dataset manager")
+    @on_command(CommandType.PROFILE_CONFIGURE)
+    async def _profile_configure_command(
+        self, message: ProfileConfigureCommand
+    ) -> None:
+        """Configure the dataset."""
+
+        self.info("Configuring tokenizer(s) for dataset manager")
+        begin = time.perf_counter()
+        await self._configure_tokenizer()
+        duration = time.perf_counter() - begin
+        self.info(lambda: f"Tokenizer(s) configured in {duration:.2f} seconds")
+
+        self.info(lambda: f"Configuring dataset for {self.service_id}")
+        begin = time.perf_counter()
+        await self._configure_dataset()
+        duration = time.perf_counter() - begin
+        self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
+
+    async def _configure_tokenizer(self) -> None:
+        """Configure the tokenizer for the dataset manager."""
         tokenizer_name = self.user_config.tokenizer.name
         if tokenizer_name is None:
             # TODO: What do we do if there are multiple models?
@@ -87,17 +103,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             trust_remote_code=self.user_config.tokenizer.trust_remote_code,
             revision=self.user_config.tokenizer.revision,
         )
-
-    @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
-        """Configure the dataset."""
-        self.info(lambda: f"Configuring dataset for {self.service_id}")
-        begin = time.perf_counter()
-        await self._configure_dataset()
-        duration = time.perf_counter() - begin
-        self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
 
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
