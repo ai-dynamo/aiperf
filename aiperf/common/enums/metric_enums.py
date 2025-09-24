@@ -313,7 +313,7 @@ class MetricValueTypeInfo(BasePydanticEnumInfo):
 class MetricValueType(BasePydanticBackedStrEnum):
     """Defines the possible types of values for metrics.
 
-    NOTE: The string representation is important here, as it is used to automatically determine the type
+    NOTE: The string representation (tag) is important here, as it is used to automatically determine the type
     based on the python generic type definition.
     """
 
@@ -327,6 +327,18 @@ class MetricValueType(BasePydanticBackedStrEnum):
         tag="int",
         default_factory=int,
         converter=int,
+        dtype=int,
+    )
+    FLOAT_LIST = MetricValueTypeInfo(
+        tag="list[float]",
+        default_factory=list,
+        converter=lambda v: [float(x) for x in v],
+        dtype=float,
+    )
+    INT_LIST = MetricValueTypeInfo(
+        tag="list[int]",
+        default_factory=list,
+        converter=lambda v: [int(x) for x in v],
         dtype=int,
     )
 

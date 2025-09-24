@@ -75,7 +75,12 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 if metric_type == MetricType.RECORD:
                     if tag not in self._results:
                         self._results[tag] = MetricArray()
-                    self._results[tag].append(value)  # type: ignore
+                    if isinstance(value, list):
+                        # NOTE: Right now we only support list-based metrics by extending the array.
+                        #       In the future, we possibly could support having nested arrays.
+                        self._results[tag].extend(value)  # type: ignore
+                    else:
+                        self._results[tag].append(value)  # type: ignore
 
                 elif metric_type == MetricType.AGGREGATE:
                     metric: BaseAggregateMetric = self._instances_map[tag]  # type: ignore

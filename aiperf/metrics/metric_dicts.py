@@ -87,23 +87,38 @@ class MetricArray(Generic[MetricValueTypeVarT]):
     """
 
     def __init__(self, initial_capacity: int = 10000):
+        """Initialize the array with the given initial capacity."""
+        if initial_capacity <= 0:
+            raise ValueError("Initial capacity must be greater than 0")
         self._capacity = initial_capacity
         self._data = np.empty(self._capacity)
         self._size = 0
         self._sum: MetricValueTypeVarT = 0  # type: ignore
 
+    def extend(self, values: list[MetricValueTypeVarT]) -> None:
+        """Extend the array with a list of values."""
+        self._resize_if_needed(len(values))
+
+        end = self._size + len(values)
+        self._data[self._size : end] = values
+        self._sum += sum(values)  # type: ignore
+        self._size = end
+
     def append(self, value: MetricValueTypeVarT) -> None:
         """Append a value to the array."""
-        if self._size >= self._capacity:
-            # Double capacity when full
-            self._capacity *= 2
-            new_data = np.empty(self._capacity)
-            new_data[: self._size] = self._data[: self._size]
-            self._data = new_data
+        self._resize_if_needed(1)
 
         self._data[self._size] = value
         self._size += 1
         self._sum += value  # type: ignore
+
+    def _resize_if_needed(self, additional_size: int) -> None:
+        """Resize the array if needed."""
+        if self._size + additional_size > self._capacity:
+            self._capacity = max(self._capacity * 2, self._size + additional_size)
+            new_data = np.empty(self._capacity)
+            new_data[: self._size] = self._data[: self._size]
+            self._data = new_data
 
     @property
     def sum(self) -> MetricValueTypeVarT:
