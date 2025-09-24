@@ -155,8 +155,10 @@ class CsvExporter(AIPerfLoggerMixin):
         """Format a number for CSV output."""
         if value is None:
             return ""
-        if isinstance(value, int):
-            return str(value)
-        if isinstance(value, float):
+        if type(value) is int:
+            return f"{int(value)}"
+        if type(value) is float:
             return f"{float(value):.2f}"
+        if type(value) is bool:
+            return f"{bool(value)}"
         return str(value)

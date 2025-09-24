@@ -352,3 +352,38 @@ async def test_csv_exporter_logs_and_raises_on_write_failure(
 
         assert called["err"] is not None
         assert "Failed to export CSV" in called["err"]
+
+
+class DummyExporter(CsvExporter):
+    # Allow instantiation without full config
+    def __init__(self):
+        pass
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, ""),
+        (142357, "142357"),
+        (0, "0"),
+        (-7, "-7"),
+        (123456.14159, "123456.14"),
+        (2.0, "2.00"),
+        (-1.234, "-1.23"),
+        ("string", "string"),
+        (True, "True"),
+        (False, "False"),
+    ],
+)
+def test_format_number_various_types(value, expected):
+    """
+    Test the `_format_number` method of `DummyExporter` with various input types.
+
+    This parameterized test verifies that the method correctly formats:
+    - None as an empty string
+    - Integers and floats as strings, with floats rounded to two decimal places
+    - Strings as themselves
+    - Boolean values as their string representation
+    """
+    exporter = DummyExporter()
+    assert exporter._format_number(value) == expected
