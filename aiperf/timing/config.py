@@ -25,12 +25,8 @@ class TimingManagerConfig(AIPerfBaseModel):
     auto_offset_timestamps: bool = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
     fixed_schedule_start_offset: int | None = InputDefaults.FIXED_SCHEDULE_START_OFFSET
     fixed_schedule_end_offset: int | None = InputDefaults.FIXED_SCHEDULE_END_OFFSET
-    request_cancellation_rate: float | None = (
-        LoadGeneratorDefaults.REQUEST_CANCELLATION_RATE
-    )
-    request_cancellation_delay: float | None = (
-        LoadGeneratorDefaults.REQUEST_CANCELLATION_DELAY
-    )
+    request_cancellation_rate: float = LoadGeneratorDefaults.REQUEST_CANCELLATION_RATE
+    request_cancellation_delay: float = LoadGeneratorDefaults.REQUEST_CANCELLATION_DELAY
 
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> "TimingManagerConfig":

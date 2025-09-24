@@ -44,7 +44,8 @@ class TestCreditProcessorMixin:
 
         assert result == mock_record
 
-    async def test_send_with_optional_cancel_zero_timeout(self, mixin):
+    @patch("asyncio.wait_for", side_effect=asyncio.TimeoutError())
+    async def test_send_with_optional_cancel_zero_timeout(self, mock_wait_for, mixin):
         """Test _send_with_optional_cancel when should_cancel=True with cancel_after_ns=0."""
         mock_record = RequestRecord(timestamp_ns=time.time_ns())
 
@@ -58,6 +59,7 @@ class TestCreditProcessorMixin:
         )
 
         assert result is None
+        assert mock_wait_for.call_args[1]["timeout"] == 0
 
     @patch("asyncio.wait_for")
     async def test_send_with_optional_cancel_success(self, mock_wait_for, mixin):
