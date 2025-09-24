@@ -230,3 +230,53 @@ class MockSubClient:
 def mock_sub_client() -> MockSubClient:
     """Create a mock sub client."""
     return MockSubClient()
+
+
+@pytest.fixture
+def create_mooncake_trace_file():
+    """Create a temporary mooncake trace file with custom content."""
+    import tempfile
+    from pathlib import Path
+
+    filenames = []
+
+    def _create_file(entries_or_count, include_timestamps=None):
+        """Create a mooncake trace file.
+
+        Args:
+            entries_or_count: Either a list of JSON string entries, or an integer count
+            include_timestamps: Only used when entries_or_count is an integer.
+                               If True, adds timestamps to generated entries.
+                               If False, omits timestamps.
+                               If None, entries are used as-is.
+
+        Returns:
+            str: Path to the created temporary file
+        """
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            if isinstance(entries_or_count, int):
+                # Generate entries based on count
+                entry_count = entries_or_count
+                for i in range(entry_count):
+                    if include_timestamps is True:
+                        entry = f'{{"input_length": {100 + i * 50}, "hash_ids": [{i}], "timestamp": {1000 + i * 1000}}}'
+                    elif include_timestamps is False:
+                        entry = f'{{"input_length": {100 + i * 50}, "hash_ids": [{i}]}}'
+                    else:
+                        # Default behavior when include_timestamps is None
+                        entry = f'{{"input_length": {100 + i * 50}, "hash_ids": [{i}]}}'
+                    f.write(f"{entry}\n")
+            else:
+                # Use provided entries list
+                for entry in entries_or_count:
+                    f.write(f"{entry}\n")
+
+            filename = f.name
+            filenames.append(filename)
+            return filename
+
+    yield _create_file
+
+    # Cleanup all created files
+    for filename in filenames:
+        Path(filename).unlink(missing_ok=True)

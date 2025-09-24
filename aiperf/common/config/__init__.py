@@ -74,7 +74,6 @@ from aiperf.common.config.image_config import (
 )
 from aiperf.common.config.input_config import (
     InputConfig,
-    logger,
 )
 from aiperf.common.config.loader import (
     load_service_config,
@@ -169,7 +168,6 @@ __all__ = [
     "custom_enum_converter",
     "load_service_config",
     "load_user_config",
-    "logger",
     "parse_file",
     "parse_service_types",
     "parse_str_or_csv_list",

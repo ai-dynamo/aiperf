@@ -6,7 +6,6 @@ from typing import Annotated, Any
 from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
-from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
@@ -20,8 +19,6 @@ from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.enums import CustomDatasetType, PublicDatasetType
-
-logger = AIPerfLogger(__name__)
 
 
 class InputConfig(BaseConfig):

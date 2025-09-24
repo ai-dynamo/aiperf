@@ -4,6 +4,7 @@ import asyncio
 import random
 import time
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.decorators import implements_protocol
@@ -14,6 +15,7 @@ from aiperf.common.enums import (
     MessageType,
     ServiceType,
 )
+from aiperf.common.enums.dataset_enums import CustomDatasetType
 from aiperf.common.factories import ComposerFactory, ServiceFactory
 from aiperf.common.hooks import on_command, on_init, on_request
 from aiperf.common.messages import (
@@ -33,6 +35,7 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader import ShareGPTLoader
 
 DATASET_CONFIGURATION_TIMEOUT = 300.0
+_logger = AIPerfLogger(__name__)
 
 
 @implements_protocol(ServiceProtocol)
@@ -66,6 +69,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             self.user_config.input.random_seed
         )
         self.dataset_configured = asyncio.Event()
+        self._sequential_iterator_index = 0
+        self._use_sequential_iteration = False
 
     @on_init
     async def _initialize(self) -> None:
@@ -112,6 +117,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 tokenizer=self.tokenizer,
             )
             conversations = composer.create_dataset()
+            if (
+                self.user_config.input.custom_dataset_type
+                == CustomDatasetType.MOONCAKE_TRACE
+            ):
+                self._use_sequential_iteration = True
         else:
             composer = ComposerFactory.create_instance(
                 ComposerType.SYNTHETIC,
@@ -159,13 +169,32 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     ) -> ConversationResponseMessage:
         """Return any conversation from the dataset based on the user specified method."""
 
-        # TODO: Implement the user specified method (random, round robin, etc.)
-        session_id = self._conversation_query_random.choice(self._session_ids_cache)
-        conversation = self.dataset[session_id]
-        self.trace_or_debug(
-            lambda: f"Sending random conversation response: {conversation}",
-            lambda: f"Sending random conversation response with id: {conversation.session_id}",
-        )
+        if self._use_sequential_iteration:
+            if self._sequential_iterator_index >= len(self._session_ids_cache):
+                # Reset iterator if we've gone through all conversations
+                _logger.warning(
+                    "All conversations have been used. Resetting sequential iterator to start over."
+                )
+                self._sequential_iterator_index = 0
+
+            session_id = self._session_ids_cache[self._sequential_iterator_index]
+            self._sequential_iterator_index += 1
+
+            conversation = self.dataset[session_id]
+
+            self.trace_or_debug(
+                lambda: f"Sending sequential conversation response: {conversation}",
+                lambda: f"Sending sequential conversation response with id: {conversation.session_id}",
+            )
+        else:
+            # TODO: Implement the user specified method (random, round robin, etc.)
+            session_id = self._conversation_query_random.choice(self._session_ids_cache)
+            conversation = self.dataset[session_id]
+            self.trace_or_debug(
+                lambda: f"Sending random conversation response: {conversation}",
+                lambda: f"Sending random conversation response with id: {conversation.session_id}",
+            )
+
         return ConversationResponseMessage(
             service_id=self.service_id,
             request_id=request_id,
