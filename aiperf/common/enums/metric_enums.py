@@ -651,6 +651,9 @@ class MetricFlags(Flag):
     GPU_TELEMETRY = 1 << 10
     """Metrics that collect GPU telemetry data such as power usage, memory, and utilization."""
 
+    GPU_TELEMETRY = 1 << 10
+    """Metrics that collect GPU telemetry data such as power usage, memory, and utilization."""
+
     STREAMING_TOKENS_ONLY = STREAMING_ONLY | PRODUCES_TOKENS_ONLY
     """Metrics that are only applicable to streamed responses and token-based endpoints.
     This is a convenience flag that is the combination of the `STREAMING_ONLY` and `PRODUCES_TOKENS_ONLY` flags."""
