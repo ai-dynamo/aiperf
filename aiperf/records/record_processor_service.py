@@ -9,14 +9,9 @@ from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
 from aiperf.common.enums import CommAddress, CommandType, MessageType, ServiceType
 from aiperf.common.factories import (
     RecordProcessorFactory,
-    ResponseExtractorFactory,
     ServiceFactory,
 )
-from aiperf.common.hooks import (
-    on_command,
-    on_init,
-    on_pull_message,
-)
+from aiperf.common.hooks import on_command, on_init, on_pull_message
 from aiperf.common.messages import (
     InferenceResultsMessage,
     MetricRecordsMessage,
@@ -79,11 +74,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     async def _initialize(self) -> None:
         """Initialize record processor-specific components."""
         self.debug("Initializing record processor")
-
-        self.extractor = ResponseExtractorFactory.create_instance(
-            self.model_endpoint.endpoint.type,
-            model_endpoint=self.model_endpoint,
-        )
 
         # Initialize all the records streamers
         for processor_type in RecordProcessorFactory.get_all_class_types():
