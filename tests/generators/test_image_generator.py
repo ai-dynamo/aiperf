@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import random
 from io import BytesIO
 from unittest.mock import Mock, patch
 
@@ -163,6 +164,8 @@ class TestImageGenerator:
         """Test that multiple generate calls can produce different results."""
         mock_sample_image.return_value = test_image
 
+        # Set random seed to make the test deterministic
+        random.seed(42)
         generator = ImageGenerator(base_config)
         image1 = generator.generate()
         image2 = generator.generate()
