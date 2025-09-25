@@ -464,8 +464,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         if not self._exit_errors:
             await self._print_post_benchmark_info_and_metrics()
         else:
-            print_exit_errors(self._exit_errors)
-            self._print_log_file_info(Console())
+            self._print_exit_errors_and_log_file()
 
         if AIPERF_DEV_MODE:
             # Print a warning message to the console if developer mode is enabled, on exit after results
@@ -473,6 +472,14 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         # Exit the process in a more explicit way, to ensure that it stops
         os._exit(1 if self._exit_errors else 0)
+
+    def _print_exit_errors_and_log_file(self) -> None:
+        """Print post exit errors and log file info to the console."""
+        console = Console()
+        print_exit_errors(self._exit_errors, console=console)
+        self._print_log_file_info(console)
+        console.print()
+        console.file.flush()
 
     async def _print_post_benchmark_info_and_metrics(self) -> None:
         """Print post benchmark info and metrics to the console."""
