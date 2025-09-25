@@ -24,6 +24,15 @@ class CreditDropMessage(BaseServiceMessage):
         default=None,
         description="Timestamp of the credit drop, if applicable. None means send ASAP.",
     )
+    should_cancel: bool = Field(
+        default=False,
+        description="Whether this request should be cancelled after the specified delay.",
+    )
+    cancel_after_ns: int = Field(
+        default=0,
+        ge=0,
+        description="Delay in nanoseconds after which the request should be cancelled. Only applicable if should_cancel is True.",
+    )
 
 
 class CreditReturnMessage(BaseServiceMessage):

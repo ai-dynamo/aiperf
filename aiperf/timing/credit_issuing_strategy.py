@@ -17,6 +17,7 @@ from aiperf.common.mixins import TaskManagerMixin
 from aiperf.common.models import CreditPhaseConfig, CreditPhaseStats
 from aiperf.timing.config import TimingManagerConfig
 from aiperf.timing.credit_manager import CreditManagerProtocol
+from aiperf.timing.request_cancellation_strategy import RequestCancellationStrategy
 
 
 class CreditIssuingStrategy(TaskManagerMixin, ABC):
@@ -30,6 +31,8 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         super().__init__()
         self.config = config
         self.credit_manager = credit_manager
+
+        self.cancellation_strategy = RequestCancellationStrategy(config)
 
         # This event is set when all phases are complete
         self.all_phases_complete_event = asyncio.Event()
