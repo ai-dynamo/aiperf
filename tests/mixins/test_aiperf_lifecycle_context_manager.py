@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ExitErrorInfo
@@ -120,8 +121,12 @@ class TestAIPerfLifecycleContextManager:
         test_exception = RuntimeError(f"{failing_step.title()} failed")
 
         with (
-            patch.object(lifecycle_component, "initialize") as mock_init,
-            patch.object(lifecycle_component, "start") as mock_start,
+            patch.object(
+                lifecycle_component, "initialize", new_callable=AsyncMock
+            ) as mock_init,
+            patch.object(
+                lifecycle_component, "start", new_callable=AsyncMock
+            ) as mock_start,
             patch.object(lifecycle_component, "error") as mock_error,
         ):
             # Set up the failure
@@ -146,8 +151,12 @@ class TestAIPerfLifecycleContextManager:
     async def test_initialize_and_start_success(self, lifecycle_component):
         """Test that initialize_and_start works correctly when both steps succeed."""
         with (
-            patch.object(lifecycle_component, "initialize") as mock_init,
-            patch.object(lifecycle_component, "start") as mock_start,
+            patch.object(
+                lifecycle_component, "initialize", new_callable=AsyncMock
+            ) as mock_init,
+            patch.object(
+                lifecycle_component, "start", new_callable=AsyncMock
+            ) as mock_start,
         ):
             await lifecycle_component.initialize_and_start()
 
@@ -198,11 +207,15 @@ class TestAIPerfLifecycleContextManager:
         # Now simulate the lifecycle system catching this error and calling _fail
         # This simulates what happens in _execute_state_transition when an exception occurs
         with (
-            patch.object(lifecycle_component, "stop") as mock_stop,
-            patch.object(lifecycle_component, "_set_state") as mock_set_state,
+            patch.object(
+                lifecycle_component, "stop", new_callable=AsyncMock
+            ) as mock_stop,
+            patch.object(
+                lifecycle_component, "_set_state", new_callable=AsyncMock
+            ) as mock_set_state,
         ):
             # Set a non-stopping state to ensure stop() gets called
-            await lifecycle_component._set_state("running")
+            await lifecycle_component._set_state(LifecycleState.RUNNING)
 
             with pytest.raises(asyncio.CancelledError):
                 await lifecycle_component._fail(lifecycle_operation_error)
@@ -211,4 +224,4 @@ class TestAIPerfLifecycleContextManager:
             mock_stop.assert_called_once()
 
             # Verify that the state was set to FAILED
-            mock_set_state.assert_called_with("failed")
+            mock_set_state.assert_called_with(LifecycleState.FAILED)
