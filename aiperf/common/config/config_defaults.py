@@ -122,6 +122,7 @@ class OutputDefaults:
     PROFILE_EXPORT_AIPERF_CSV_FILE = Path("profile_export_aiperf.csv")
     PROFILE_EXPORT_AIPERF_JSON_FILE = Path("profile_export_aiperf.json")
     EXPORT_LEVEL = ExportLevel.RECORDS
+    SLICE_DURATION = None
 
 
 @dataclass(frozen=True)

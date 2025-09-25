@@ -45,6 +45,17 @@ class OutputConfig(BaseConfig):
         ),
     ] = OutputDefaults.PROFILE_EXPORT_FILE
 
+    slice_duration: Annotated[
+        int | None,
+        Field(
+            description="The duration (in milliseconds) of an individual time slice to be used post-benchmark in time-slicing mode.",
+        ),
+        CLIParameter(
+            name=("--slice-duration"),
+            group=_CLI_GROUP,
+        ),
+    ] = OutputDefaults.SLICE_DURATION
+
     @property
     def export_level(self) -> ExportLevel:
         return ExportLevel.RECORDS
