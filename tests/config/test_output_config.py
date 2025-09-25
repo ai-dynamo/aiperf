@@ -15,6 +15,7 @@ def test_output_config_defaults():
     """
     config = OutputConfig()
     assert config.artifact_directory == OutputDefaults.ARTIFACT_DIRECTORY
+    assert config.slice_duration == OutputDefaults.SLICE_DURATION
 
 
 def test_output_config_custom_values():
@@ -26,6 +27,7 @@ def test_output_config_custom_values():
     """
     custom_values = {
         "artifact_directory": Path("/custom/artifact/directory"),
+        "slice_duration": 1000,
     }
     config = OutputConfig(**custom_values)
 
