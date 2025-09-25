@@ -60,7 +60,7 @@ class TestPrintExitErrors:
         print_exit_errors([error], console)
 
         result = output.getvalue()
-        assert f"• Services: {expected_display}" in result
+        assert f"• Service: {expected_display}" in result
         assert "Operation: Test Operation" in result
         assert "Error: TestError" in result
         assert "Reason: Test message" in result
@@ -76,7 +76,7 @@ class TestPrintExitErrors:
         print_exit_errors(errors, console)
 
         result = output.getvalue()
-        assert result.count("• Services:") == 2
+        assert result.count("• Service:") == 2
         assert "service1" in result and "service2" in result
         assert "Error1" in result and "Error2" in result
 
@@ -208,8 +208,8 @@ class TestPrintExitErrorsDeduplication:
         print_exit_errors([error], console)
         result = output.getvalue()
 
-        assert result.count("• Services:") == 1
-        assert "• Services: single_service" in result
+        assert result.count("• Service:") == 1
+        assert "• Service: single_service" in result
         assert "Operation: Single Operation" in result
         assert "SingleError" in result
         assert "Single message" in result
@@ -274,7 +274,8 @@ class TestPrintExitErrorsDeduplication:
         result = output.getvalue()
 
         # Should show two distinct error blocks
-        assert result.count("• Services:") == 2
+        assert result.count("• Services:") == 1
+        assert result.count("• Service:") == 1
 
         # Duplicate error should be grouped
         assert "2 services: service1, service2" in result
@@ -337,4 +338,5 @@ class TestPrintExitErrorsDeduplication:
         print_exit_errors(errors, console)
         result = output.getvalue()
 
-        assert f"• Services: {expected_display}" in result
+        service_label = "Services" if num_services > 1 else "Service"
+        assert f"• {service_label}: {expected_display}" in result
