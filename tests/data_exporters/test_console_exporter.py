@@ -156,7 +156,7 @@ class TestConsoleExporter:
             max=20.0 * NANOS_PER_MILLIS,
             p99=None,
             p90=15.5 * NANOS_PER_MILLIS,
-            p75=12.3 * NANOS_PER_MILLIS,
+            p50=12.3 * NANOS_PER_MILLIS,
         )
         record = to_display_unit(record, MetricRegistry)
         row = exporter._format_row(record)

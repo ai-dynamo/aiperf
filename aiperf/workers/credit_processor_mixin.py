@@ -3,6 +3,7 @@
 
 import asyncio
 import time
+from collections.abc import Awaitable
 from typing import Protocol, runtime_checkable
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
@@ -121,6 +122,9 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
             record.credit_phase = message.phase
             # Calculate the latency of the credit drop (from when the credit drop was first received to when the request was sent)
             record.credit_drop_latency = record.start_perf_ns - drop_perf_ns
+
+            record.cancel_after_ns = message.cancel_after_ns
+
             msg = InferenceResultsMessage(
                 service_id=self.service_id,
                 record=record,
@@ -208,21 +212,52 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
             pre_send_perf_ns = time.perf_counter_ns()
             timestamp_ns = time.time_ns()
 
-            # Send the request to the Inference Server API and wait for the response
-            result: RequestRecord = await self.inference_client.send_request(
+            send_coroutine = self.inference_client.send_request(
                 model_endpoint=self.model_endpoint,
                 payload=formatted_payload,
             )
 
-            if self.is_debug_enabled:
-                self.debug(
-                    f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
+            maybe_result: RequestRecord | None = await self._send_with_optional_cancel(
+                send_coroutine=send_coroutine,
+                should_cancel=message.should_cancel,
+                cancel_after_ns=message.cancel_after_ns,
+            )
+
+            if maybe_result is not None:
+                result = maybe_result
+                if self.is_debug_enabled:
+                    self.debug(
+                        f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
+                    )
+                result.delayed_ns = delayed_ns
+                result.turn = turn
+                return result
+            else:
+                cancellation_perf_ns = time.perf_counter_ns()
+                if self.is_debug_enabled:
+                    delay_s = message.cancel_after_ns / NANOS_PER_SECOND
+                    self.debug(f"Request cancelled after {delay_s:.3f}s")
+
+                return RequestRecord(
+                    turn=turn,
+                    timestamp_ns=timestamp_ns,
+                    start_perf_ns=pre_send_perf_ns,
+                    end_perf_ns=cancellation_perf_ns,
+                    was_cancelled=True,
+                    cancellation_perf_ns=cancellation_perf_ns,
+                    delayed_ns=delayed_ns,
+                    error=ErrorDetails(
+                        type="RequestCancellationError",
+                        message=(
+                            f"Request was cancelled after "
+                            f"{message.cancel_after_ns / NANOS_PER_SECOND:.3f} seconds"
+                        ),
+                        code=499,  # Client Closed Request
+                    ),
                 )
-
-            result.delayed_ns = delayed_ns
-            result.turn = turn
-            return result
-
+        except asyncio.CancelledError:
+            # If a task is cancelled (e.g. during shutdown), propagate the cancellation.
+            raise
         except Exception as e:
             self.error(
                 f"Error calling inference server API at {self.model_endpoint.url}: {e!r}"
@@ -235,3 +270,27 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
                 end_perf_ns=time.perf_counter_ns(),
                 error=ErrorDetails.from_exception(e),
             )
+
+    async def _send_with_optional_cancel(
+        self,
+        *,
+        send_coroutine: Awaitable[RequestRecord],
+        should_cancel: bool,
+        cancel_after_ns: int,
+    ) -> RequestRecord | None:
+        """Send a coroutine with optional cancellation after a delay.
+        Args:
+            send_coroutine: The coroutine object to send.
+            should_cancel: Whether to enable cancellation.
+            cancel_after_ns: The delay in nanoseconds after which to cancel the request.
+        Returns:
+            The result of the send_coroutine, or None if it was cancelled.
+        """
+        if not should_cancel:
+            return await send_coroutine
+
+        timeout_s = cancel_after_ns / NANOS_PER_SECOND
+        try:
+            return await asyncio.wait_for(send_coroutine, timeout=timeout_s)
+        except asyncio.TimeoutError:
+            return None

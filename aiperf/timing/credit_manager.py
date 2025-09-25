@@ -28,6 +28,9 @@ class CreditManagerProtocol(PubClientProtocol, Protocol):
         credit_phase: CreditPhase,
         conversation_id: str | None = None,
         credit_drop_ns: int | None = None,
+        *,
+        should_cancel: bool = False,
+        cancel_after_ns: int = 0,
     ) -> None: ...
 
     async def publish_progress(

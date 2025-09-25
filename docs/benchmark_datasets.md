@@ -34,7 +34,7 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
     <tr>
       <td><strong>Custom Data</strong></td>
       <td style="text-align: center;">✅</td>
-      <td>--input-file your_file.jsonl --custom-dataset-type single-turn</td>
+  <td>--input-file your_file.jsonl --custom-dataset-type single_turn</td>
     </tr>
     <tr>
     <td><strong>Mooncake</strong></td>

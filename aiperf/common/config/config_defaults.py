@@ -151,6 +151,8 @@ class LoadGeneratorDefaults:
     WARMUP_REQUEST_COUNT = 0
     REQUEST_RATE_MODE = RequestRateMode.POISSON
     TIMING_MODE = TimingMode.REQUEST_RATE
+    REQUEST_CANCELLATION_RATE = 0.0
+    REQUEST_CANCELLATION_DELAY = 0.0
 
 
 @dataclass(frozen=True)

@@ -23,6 +23,9 @@ from aiperf.timing.credit_manager import (
 from aiperf.timing.fixed_schedule_strategy import (
     FixedScheduleStrategy,
 )
+from aiperf.timing.request_cancellation_strategy import (
+    RequestCancellationStrategy,
+)
 from aiperf.timing.request_rate_strategy import (
     ConcurrencyBurstRateGenerator,
     ConstantRateGenerator,
@@ -43,6 +46,7 @@ __all__ = [
     "CreditPhaseMessagesRequirements",
     "FixedScheduleStrategy",
     "PoissonRateGenerator",
+    "RequestCancellationStrategy",
     "RequestRateStrategy",
     "TimingManager",
     "TimingManagerConfig",

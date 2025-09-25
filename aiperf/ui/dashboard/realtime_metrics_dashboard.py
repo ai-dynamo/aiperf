@@ -35,7 +35,7 @@ class RealtimeMetricsTable(Widget):
     }
     """
 
-    STATS_FIELDS = ["avg", "min", "max", "p99", "p90", "p75", "std"]
+    STATS_FIELDS = ["avg", "min", "max", "p99", "p90", "p50", "std"]
     COLUMNS = ["Metric", *STATS_FIELDS]
 
     def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
