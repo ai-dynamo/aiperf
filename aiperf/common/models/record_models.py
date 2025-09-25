@@ -249,7 +249,7 @@ class RequestRecord(AIPerfBaseModel):
         ge=0,
         description="The delay in nanoseconds after which the request should be cancelled, as specified in the credit drop message.",
     )
-    cancellation_time_ns: int | None = Field(
+    cancellation_perf_ns: int | None = Field(
         default=None,
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",

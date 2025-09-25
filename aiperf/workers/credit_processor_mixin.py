@@ -233,7 +233,7 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
                 result.turn = turn
                 return result
             else:
-                cancellation_time_ns = time.perf_counter_ns()
+                cancellation_perf_ns = time.perf_counter_ns()
                 if self.is_debug_enabled:
                     delay_s = message.cancel_after_ns / NANOS_PER_SECOND
                     self.debug(f"Request cancelled after {delay_s:.3f}s")
@@ -242,9 +242,9 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
                     turn=turn,
                     timestamp_ns=timestamp_ns,
                     start_perf_ns=pre_send_perf_ns,
-                    end_perf_ns=cancellation_time_ns,
+                    end_perf_ns=cancellation_perf_ns,
                     was_cancelled=True,
-                    cancellation_time_ns=cancellation_time_ns,
+                    cancellation_perf_ns=cancellation_perf_ns,
                     delayed_ns=delayed_ns,
                     error=ErrorDetails(
                         type="RequestCancellationError",

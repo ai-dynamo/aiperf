@@ -139,7 +139,7 @@ class LoadGeneratorConfig(BaseConfig):
     request_cancellation_delay: Annotated[
         float,
         Field(
-            gt=0.0,
+            ge=0.0,
             description="The delay in seconds before cancelling requests. "
             "This is used when --request-cancellation-rate is greater than 0.",
         ),
