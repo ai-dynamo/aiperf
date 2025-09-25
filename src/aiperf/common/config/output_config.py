@@ -89,6 +89,17 @@ class OutputConfig(BaseConfig):
 
         return self
 
+    slice_duration: Annotated[
+        int | None,
+        Field(
+            description="The duration (in milliseconds) of an individual time slice to be used post-benchmark in time-slicing mode.",
+        ),
+        CLIParameter(
+            name=("--slice-duration"),
+            group=_CLI_GROUP,
+        ),
+    ] = OutputDefaults.SLICE_DURATION
+
     @property
     def profile_export_csv_file(self) -> Path:
         return self.artifact_directory / self._profile_export_csv_file
