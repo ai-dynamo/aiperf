@@ -201,6 +201,17 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """
         try:
             yield
+        except LifecycleOperationError as e:
+            # Log error and re-raise without wrapping to avoid duplicate error info
+            self.error(f"Failed to {operation.lower()}: {e}")
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=ErrorDetails.from_exception(e),
+                    operation=operation,
+                    service_id=self.id,
+                )
+            )
+            raise
         except Exception as e:
             self.error(f"Failed to {operation.lower()}: {e}")
             error = LifecycleOperationError(

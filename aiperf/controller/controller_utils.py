@@ -47,7 +47,7 @@ def print_exit_errors(
             next(iter(operations)) if len(operations) == 1 else "Multiple Operations"
         )
 
-        affected_services = sorted([error.service_id or "N/A" for error in error_list])
+        affected_services = sorted({error.service_id or "N/A" for error in error_list})
         service_count = len(affected_services)
 
         if service_count == 1:
@@ -84,6 +84,7 @@ def print_exit_errors(
         end = "\n\n" if i < len(grouped_errors) - 1 else ""
         summary.append(_create_field("Reason", wrapped_text, end=end))
 
+    console.print()
     console.print(
         Panel(
             Text.assemble(*summary),
