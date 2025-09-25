@@ -354,12 +354,6 @@ async def test_csv_exporter_logs_and_raises_on_write_failure(
         assert "Failed to export CSV" in called["err"]
 
 
-class DummyExporter(CsvExporter):
-    # Allow instantiation without full config
-    def __init__(self):
-        pass
-
-
 @pytest.mark.parametrize(
     "value,expected",
     [
@@ -375,7 +369,10 @@ class DummyExporter(CsvExporter):
         (False, "False"),
     ],
 )
-def test_format_number_various_types(value, expected):
+@pytest.mark.asyncio
+async def test_format_number_various_types(
+    monkeypatch, mock_user_config, value, expected
+):
     """
     Test the `_format_number` method of `DummyExporter` with various input types.
 
@@ -385,5 +382,10 @@ def test_format_number_various_types(value, expected):
     - Strings as themselves
     - Boolean values as their string representation
     """
-    exporter = DummyExporter()
+    cfg = ExporterConfig(
+        results=None,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+    )
+    exporter = CsvExporter(cfg)
     assert exporter._format_number(value) == expected
