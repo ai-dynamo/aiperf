@@ -124,7 +124,6 @@ NVIDIA AIPerf | LLM Metrics
 ## Known Issues
 
 - Output sequence length constraints (`--output-tokens-mean`) cannot be guaranteed unless you pass `ignore_eos` and/or `min_tokens` via `--extra-inputs` to an inference server that supports them.
-- A couple of options in the CLI help text use underscore instead of a hyphen inconsistently.
 - Very high concurrency settings (typically >15,000 concurrency) may lead to port exhaustion on some systems, causing connection failures during benchmarking. If encountered, consider adjusting system limits or reducing concurrency.
 - Startup errors caused by invalid configuration settings can cause AIPerf to hang indefinitely. If AIPerf appears to freeze during initialization, terminate the process and check configuration settings.
 - Mooncake trace format currently requires the `--fixed-schedule` option to be set.
