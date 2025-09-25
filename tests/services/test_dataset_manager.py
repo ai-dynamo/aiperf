@@ -8,6 +8,7 @@ import pytest
 
 from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CustomDatasetType
+from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.dataset.dataset_manager import DatasetManager
 
 
@@ -65,10 +66,11 @@ class TestDatasetManagerSequentialIteration:
 
             service_config = ServiceConfig()
             dataset_manager = DatasetManager(service_config, user_config)
-            await dataset_manager.initialize()  # Initialize the service
 
             # Configure the dataset to load conversations
-            await dataset_manager._configure_dataset()
+            await dataset_manager._profile_configure_command(
+                ProfileConfigureCommand(config=user_config, service_id="test_service")
+            )
 
             # Get conversations multiple times and verify order
             conversations = []
@@ -130,10 +132,11 @@ class TestDatasetManagerSequentialIteration:
 
             service_config = ServiceConfig()
             custom_manager = DatasetManager(service_config, custom_config)
-            await custom_manager.initialize()  # Initialize the service
 
             # Configure the dataset
-            await custom_manager._configure_dataset()
+            await custom_manager._profile_configure_command(
+                ProfileConfigureCommand(config=custom_config, service_id="test_service")
+            )
 
             # Verify sequential iteration is enabled for custom datasets
             assert custom_manager._use_sequential_iteration is True
@@ -189,10 +192,11 @@ class TestDatasetManagerSequentialIteration:
 
             service_config = ServiceConfig()
             dataset_manager = DatasetManager(service_config, user_config)
-            await dataset_manager.initialize()  # Initialize the service
 
             # Configure the dataset
-            await dataset_manager._configure_dataset()
+            await dataset_manager._profile_configure_command(
+                ProfileConfigureCommand(config=user_config, service_id="test_service")
+            )
 
             # Get more conversations than dataset size
             session_ids = []

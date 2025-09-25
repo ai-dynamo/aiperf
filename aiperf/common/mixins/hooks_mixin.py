@@ -6,7 +6,7 @@ from typing import Any
 
 from aiperf.common import aiperf_logger
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.exceptions import AIPerfMultiError, UnsupportedHookError
+from aiperf.common.exceptions import AIPerfMultiError, HookError, UnsupportedHookError
 from aiperf.common.hooks import Hook, HookAttrs, HookType
 from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
 from aiperf.common.protocols import HooksProtocol
@@ -184,15 +184,12 @@ class HooksMixin(AIPerfLoggerMixin):
             try:
                 await hook(**kwargs)
             except Exception as e:
-                exceptions.append(e)
+                exceptions.append(HookError(self.__class__.__name__, hook.func_name, e))
                 self.exception(
                     f"Error running {hook!r} hook for {self.__class__.__name__}: {e}"
                 )
         if exceptions:
-            raise AIPerfMultiError(
-                f"Errors running {hook_types} hooks for {self.__class__.__name__}",
-                exceptions,
-            )
+            raise AIPerfMultiError(None, exceptions)
 
 
 # Add this file as one to be ignored when finding the caller of aiperf_logger.

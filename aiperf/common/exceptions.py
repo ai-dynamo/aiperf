@@ -16,18 +16,32 @@ class AIPerfError(Exception):
 
     def __str__(self) -> str:
         """Return the string representation of the exception with the class name."""
-        return f"{self.__class__.__name__}: {super().__str__()}"
+        return super().__str__()
 
 
 class AIPerfMultiError(AIPerfError):
     """Exception raised when running multiple tasks and one or more fail."""
 
-    def __init__(self, message: str, exceptions: list[Exception]) -> None:
+    def __init__(self, message: str | None, exceptions: list[Exception]) -> None:
+        self.exceptions = exceptions
+
         err_strings = [
             e.raw_str() if isinstance(e, AIPerfError) else str(e) for e in exceptions
         ]
-        super().__init__(f"{message}: {','.join(err_strings)}")
-        self.exceptions = exceptions
+        if message:
+            super().__init__(f"{message}: {','.join(err_strings)}")
+        else:
+            super().__init__(",".join(err_strings))
+
+
+class HookError(AIPerfError):
+    """Exception raised when a hook encounters an error."""
+
+    def __init__(self, hook_class_name: str, hook_func_name: str, e: Exception) -> None:
+        self.hook_class_name = hook_class_name
+        self.hook_func_name = hook_func_name
+        self.exception = e
+        super().__init__(f"{hook_class_name}.{hook_func_name}: {e}")
 
 
 class ServiceError(AIPerfError):
@@ -44,6 +58,25 @@ class ServiceError(AIPerfError):
         )
         self.service_type = service_type
         self.service_id = service_id
+
+
+class LifecycleOperationError(AIPerfError):
+    """Exception raised when a lifecycle operation fails and the lifecycle should stop gracefully."""
+
+    def __init__(
+        self,
+        operation: str,
+        original_exception: Exception | None,
+        lifecycle_id: str,
+    ) -> None:
+        self.operation = operation
+        self.original_exception = original_exception
+        self.lifecycle_id = lifecycle_id
+        super().__init__(
+            str(original_exception)
+            if original_exception
+            else f"Failed to perform operation '{operation}'"
+        )
 
 
 class CommunicationError(AIPerfError):

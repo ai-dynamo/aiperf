@@ -31,6 +31,7 @@ def print_developer_mode_warning() -> None:
         title_align="left",
     )
     console.print(panel)
+    console.file.flush()
 
 
 if AIPERF_DEV_MODE:
