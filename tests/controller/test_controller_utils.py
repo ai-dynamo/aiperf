@@ -110,7 +110,7 @@ class TestPrintExitErrors:
             print_exit_errors([error])
 
             mock_console_class.assert_called_once()
-            mock_console.print.assert_called_once()
+            assert mock_console.print.call_count == 2
             mock_console.file.flush.assert_called()
 
 
