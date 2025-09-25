@@ -4,6 +4,8 @@
 
 from unittest.mock import Mock
 
+import pytest
+
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.models import ParsedResponseRecord
@@ -26,6 +28,7 @@ TEST_DURATION_SECONDS = 10
 EXPECTED_THROUGHPUT = TEST_REQUEST_COUNT / TEST_DURATION_SECONDS
 
 
+@pytest.mark.asyncio
 class TestPostProcessorIntegration:
     """Integration tests focusing on key processor handoffs."""
 

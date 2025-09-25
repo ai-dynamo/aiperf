@@ -31,6 +31,7 @@ class TestMetricResultsProcessor:
         assert isinstance(processor._instances_map, dict)
         assert isinstance(processor._tags_to_aggregate_funcs, dict)
 
+    @pytest.mark.asyncio
     async def test_process_result_record_metric(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
@@ -48,6 +49,7 @@ class TestMetricResultsProcessor:
         await processor.process_result(MetricRecordDict({"test_record": 84.0}))
         assert list(processor._results["test_record"].data) == [42.0, 84.0]
 
+    @pytest.mark.asyncio
     async def test_process_result_record_metric_list_values(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
@@ -64,6 +66,7 @@ class TestMetricResultsProcessor:
         assert isinstance(processor._results["test_record"], MetricArray)
         assert list(processor._results["test_record"].data) == [10.0, 20.0, 30.0]
 
+    @pytest.mark.asyncio
     async def test_process_result_aggregate_metric(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
@@ -79,6 +82,7 @@ class TestMetricResultsProcessor:
         await processor.process_result(MetricRecordDict({RequestCountMetric.tag: 3}))
         assert processor._results[RequestCountMetric.tag] == 8
 
+    @pytest.mark.asyncio
     async def test_update_derived_metrics(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
@@ -94,6 +98,7 @@ class TestMetricResultsProcessor:
 
         assert processor._results[RequestThroughputMetric.tag] == 100.0
 
+    @pytest.mark.asyncio
     async def test_update_derived_metrics_handles_no_metric_value(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
@@ -111,6 +116,7 @@ class TestMetricResultsProcessor:
             assert RequestThroughputMetric.tag not in processor._results
             mock_debug.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_update_derived_metrics_handles_value_error_exception(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
@@ -128,6 +134,7 @@ class TestMetricResultsProcessor:
             assert RequestThroughputMetric.tag not in processor._results
             mock_warning.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_summarize(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
@@ -145,6 +152,7 @@ class TestMetricResultsProcessor:
         assert isinstance(results[0], MetricResult)
         assert results[0].tag == RequestLatencyMetric.tag
 
+    @pytest.mark.asyncio
     async def test_full_metrics(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:

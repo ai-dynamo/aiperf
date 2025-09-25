@@ -3,6 +3,8 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
+
 from aiperf.common.config import UserConfig
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
@@ -91,6 +93,7 @@ class TestMetricRecordProcessor:
         assert mock_metric_registry.tags_applicable_to.call_count == 2
         assert mock_metric_registry.create_dependency_order_for.call_count == 2
 
+    @pytest.mark.asyncio
     async def test_process_valid_record(
         self,
         mock_metric_registry: Mock,
@@ -109,6 +112,7 @@ class TestMetricRecordProcessor:
         expected_latency = DEFAULT_LAST_RESPONSE_NS - DEFAULT_START_TIME_NS
         assert result[RequestLatencyMetric.tag] == expected_latency
 
+    @pytest.mark.asyncio
     async def test_process_error_record(
         self,
         mock_metric_registry: Mock,
@@ -126,6 +130,7 @@ class TestMetricRecordProcessor:
         assert isinstance(result, MetricRecordDict)
         assert result[ErrorRequestCountMetric.tag] == 1
 
+    @pytest.mark.asyncio
     async def test_process_record_multiple_metrics(
         self,
         mock_metric_registry: Mock,
@@ -148,6 +153,7 @@ class TestMetricRecordProcessor:
         expected_latency = DEFAULT_LAST_RESPONSE_NS - DEFAULT_START_TIME_NS
         assert result[RequestLatencyMetric.tag] == expected_latency
 
+    @pytest.mark.asyncio
     async def test_process_record_handles_no_metric_value_exception(
         self,
         mock_metric_registry: Mock,
@@ -169,6 +175,7 @@ class TestMetricRecordProcessor:
                 mock_debug.call_args
             )
 
+    @pytest.mark.asyncio
     async def test_process_record_handles_value_error_exception(
         self,
         mock_metric_registry: Mock,
@@ -193,6 +200,7 @@ class TestMetricRecordProcessor:
                 in str(mock_warning.call_args)
             )
 
+    @pytest.mark.asyncio
     async def test_process_record_mixed_success_failure(
         self,
         mock_metric_registry: Mock,
@@ -216,6 +224,7 @@ class TestMetricRecordProcessor:
             expected_latency = DEFAULT_LAST_RESPONSE_NS - DEFAULT_START_TIME_NS
             assert result[RequestLatencyMetric.tag] == expected_latency
 
+    @pytest.mark.asyncio
     async def test_process_record_with_dependencies(
         self,
         mock_metric_registry: Mock,
@@ -239,6 +248,7 @@ class TestMetricRecordProcessor:
             result[DoubleLatencyTestMetric.tag] == result[RequestLatencyMetric.tag] * 2
         )
 
+    @pytest.mark.asyncio
     async def test_process_record_empty_metrics(
         self,
         mock_metric_registry: Mock,
