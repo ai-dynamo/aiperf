@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import contextlib
 import time
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -69,8 +70,13 @@ class TestCreditProcessorMixin:
         async def simple_coroutine():
             return mock_record
 
-        # Mock wait_for to return the successful result
-        mock_wait_for.return_value = mock_record
+        # Mock wait_for to consume the coroutine and return the successful result
+        async def mock_wait_for_impl(coro, timeout):
+            # Properly consume the coroutine to avoid warnings
+            await coro
+            return mock_record
+
+        mock_wait_for.side_effect = mock_wait_for_impl
 
         result = await mixin._send_with_optional_cancel(
             send_coroutine=simple_coroutine(),
@@ -86,25 +92,30 @@ class TestCreditProcessorMixin:
 
     @patch("asyncio.wait_for")
     async def test_send_with_optional_cancel_timeout(self, mock_wait_for, mixin):
-        """Test request timeout scenario."""
-        # Mock wait_for to raise TimeoutError
-        mock_wait_for.side_effect = asyncio.TimeoutError()
+        """Test request that times out."""
 
-        # Create a simple coroutine that won't actually run due to timeout
         async def simple_coroutine():
             return RequestRecord(timestamp_ns=time.time_ns())
+
+        # Mock wait_for to properly consume the coroutine before raising TimeoutError
+        async def mock_wait_for_timeout(coro, timeout):
+            # Consume the coroutine to avoid warnings, then raise timeout
+            with contextlib.suppress(GeneratorExit):
+                coro.close()  # Close the coroutine to prevent warnings
+            raise asyncio.TimeoutError
+
+        mock_wait_for.side_effect = mock_wait_for_timeout
 
         result = await mixin._send_with_optional_cancel(
             send_coroutine=simple_coroutine(),
             should_cancel=True,
-            cancel_after_ns=int(1.5 * NANOS_PER_SECOND),
+            cancel_after_ns=int(1.0 * NANOS_PER_SECOND),
         )
 
-        # Should return None on timeout
         assert result is None
         mock_wait_for.assert_called_once()
         call_args = mock_wait_for.call_args
-        assert call_args[1]["timeout"] == 1.5
+        assert call_args[1]["timeout"] == 1.0
 
     @patch("asyncio.wait_for")
     async def test_timeout_conversion_precision(self, mock_wait_for, mixin):
@@ -123,7 +134,13 @@ class TestCreditProcessorMixin:
             async def simple_coroutine():
                 return RequestRecord(timestamp_ns=time.time_ns())
 
-            mock_wait_for.return_value = RequestRecord(timestamp_ns=time.time_ns())
+            # Mock wait_for to properly consume the coroutine and return result
+            async def mock_wait_for_impl(coro, timeout):
+                # Properly consume the coroutine to avoid warnings
+                await coro
+                return RequestRecord(timestamp_ns=time.time_ns())
+
+            mock_wait_for.side_effect = mock_wait_for_impl
 
             await mixin._send_with_optional_cancel(
                 send_coroutine=simple_coroutine(),
