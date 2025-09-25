@@ -192,11 +192,13 @@ class InputConfig(BaseConfig):
         CustomDatasetType | None,
         Field(
             description="The type of custom dataset to use.\n"
-            "This parameter is used in conjunction with the --input-file parameter.",
+            "This parameter is used in conjunction with the --input-file parameter.\n"
+            "[choices: single_turn, multi_turn, random_pool, mooncake_trace]",
         ),
         CLIParameter(
             name=("--custom-dataset-type"),
             group=_CLI_GROUP,
+            show_choices=False,
         ),
     ] = InputDefaults.CUSTOM_DATASET_TYPE
 
