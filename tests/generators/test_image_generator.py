@@ -164,13 +164,17 @@ class TestImageGenerator:
         """Test that multiple generate calls can produce different results."""
         mock_sample_image.return_value = test_image
 
-        # Set random seed to make the test deterministic
-        random.seed(42)
-        generator = ImageGenerator(base_config)
-        image1 = generator.generate()
-        image2 = generator.generate()
+        state = random.getstate()
+        try:
+            # Set random seed to make the test deterministic
+            random.seed(42)
+            generator = ImageGenerator(base_config)
+            image1 = generator.generate()
+            image2 = generator.generate()
 
-        assert image1 != image2
+            assert image1 != image2
+        finally:
+            random.setstate(state)
 
     def test_sample_source_image_success(self, base_config, mock_file_system):
         """Test successful sampling of source image."""
