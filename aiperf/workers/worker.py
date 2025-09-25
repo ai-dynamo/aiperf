@@ -2,45 +2,54 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+import asyncio
+import time
+
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
     AIPERF_HTTP_CONNECTION_LIMIT,
     DEFAULT_WORKER_HEALTH_CHECK_INTERVAL,
+    NANOS_PER_SECOND,
 )
-from aiperf.common.enums import (
-    CommAddress,
-    CommandType,
-    MessageType,
-    ServiceType,
-)
+from aiperf.common.enums import CommAddress, CommandType, MessageType, ServiceType
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.factories import (
     InferenceClientFactory,
     RequestConverterFactory,
+    ResponseExtractorFactory,
     ServiceFactory,
 )
 from aiperf.common.hooks import background_task, on_command, on_pull_message, on_stop
 from aiperf.common.messages import (
     CommandAcknowledgedResponse,
+    ConversationRequestMessage,
+    ConversationResponseMessage,
     CreditDropMessage,
     CreditReturnMessage,
+    ErrorMessage,
+    InferenceResultsMessage,
     ProfileCancelCommand,
     WorkerHealthMessage,
 )
 from aiperf.common.mixins import ProcessHealthMixin, PullClientMixin
-from aiperf.common.models import WorkerTaskStats
+from aiperf.common.models import (
+    ErrorDetails,
+    RequestRecord,
+    Text,
+    Turn,
+    WorkerTaskStats,
+)
 from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
+    ResponseExtractorProtocol,
 )
-from aiperf.workers.credit_processor_mixin import CreditProcessorMixin
 
 
 @ServiceFactory.register(ServiceType.WORKER)
-class Worker(
-    PullClientMixin, BaseComponentService, ProcessHealthMixin, CreditProcessorMixin
-):
+class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
     """Worker is primarily responsible for making API calls to the inference server.
     It also manages the conversation between turns and returns the results to the Inference Results Parsers.
     """
@@ -99,6 +108,12 @@ class Worker(
             self.model_endpoint.endpoint.type,
             model_endpoint=self.model_endpoint,
         )
+        self.extractor: ResponseExtractorProtocol = (
+            ResponseExtractorFactory.create_instance(
+                self.model_endpoint.endpoint.type,
+                model_endpoint=self.model_endpoint,
+            )
+        )
 
     @on_pull_message(MessageType.CREDIT_DROP)
     async def _credit_drop_callback(self, message: CreditDropMessage) -> None:
@@ -146,6 +161,174 @@ class Worker(
             CommandAcknowledgedResponse.from_command_message(message, self.service_id)
         )
         await self.stop()
+
+    async def _process_credit_drop_internal(self, message: CreditDropMessage) -> None:
+        """Process a credit drop message. Make sure to return the credit as soon as possible.
+
+        - Every credit must be returned after processing
+        - All results or errors should be converted to a RequestRecord and pushed to the inference results client.
+
+        NOTE: This function MUST NOT return until the credit drop is fully processed.
+        This is to ensure that the max concurrency is respected via the semaphore of the pull client.
+        The way this is enforced is by requiring that this method returns a CreditReturnMessage.
+        """
+        if self.is_trace_enabled:
+            self.trace(f"Processing credit drop: {message}")
+
+        self.task_stats.total += 1
+
+        try:
+            await self._execute_single_credit_internal(message)
+        finally:
+            # Need to return the credit here to ensure it is always returned
+            return_message = CreditReturnMessage(
+                service_id=self.service_id,
+                phase=message.phase,
+                delayed_ns=None,  # TODO: set this properly (from record if available?)
+            )
+            if self.is_trace_enabled:
+                self.trace(f"Returning credit {return_message}")
+            # NOTE: Do not do this execute_async, as we want to give the credit back as soon as possible.
+            await self.credit_return_push_client.push(return_message)
+
+    async def _execute_single_credit_internal(self, message: CreditDropMessage) -> None:
+        """Run a credit task for a single credit."""
+        drop_perf_ns = time.perf_counter_ns()  # The time the credit was received
+
+        if not self.inference_client:
+            raise NotInitializedError("Inference server client not initialized.")
+
+        # retrieve the prompt from the dataset
+        conversation_response: ConversationResponseMessage = (
+            await self.conversation_request_client.request(
+                ConversationRequestMessage(
+                    service_id=self.service_id,
+                    conversation_id=message.conversation_id,
+                    credit_phase=message.phase,
+                )
+            )
+        )
+        if self.is_trace_enabled:
+            self.trace(f"Received response message: {conversation_response}")
+
+        # Check for error in conversation response
+        if isinstance(conversation_response, ErrorMessage):
+            await self._send_inference_result_message(
+                RequestRecord(
+                    model_name=self.model_endpoint.primary_model_name,
+                    conversation_id=message.conversation_id,
+                    turn_index=0,
+                    turn=None,
+                    timestamp_ns=time.time_ns(),
+                    start_perf_ns=time.perf_counter_ns(),
+                    end_perf_ns=time.perf_counter_ns(),
+                    error=conversation_response.error,
+                )
+            )
+            return
+
+        turn_list = []
+
+        for turn_index in range(len(conversation_response.conversation.turns)):
+            turn = conversation_response.conversation.turns[turn_index]
+            turn_list.append(turn)
+            # TODO: how do we handle errors in the middle of a conversation?
+            record = await self._call_inference_api_internal(message, turn)
+            record.model_name = turn.model or self.model_endpoint.primary_model_name
+            record.conversation_id = conversation_response.conversation.session_id
+            record.turn_index = turn_index
+            record.credit_phase = message.phase
+            # If this is the first turn, calculate the credit drop latency
+            if turn_index == 0:
+                record.credit_drop_latency = record.start_perf_ns - drop_perf_ns
+            await self._send_inference_result_message(record)
+
+            resp = await self.extractor.extract_response_data(record)
+            # TODO how do we handle reasoning responses in multi turn?
+            resp_text = "".join([r.data.get_text() for r in resp])
+            if resp_text:
+                resp_turn = Turn(
+                    role="assistant",
+                    texts=[Text(contents=[resp_text])],
+                )
+                turn_list.append(resp_turn)
+
+    async def _call_inference_api_internal(
+        self,
+        message: CreditDropMessage,
+        turn: Turn,
+    ) -> RequestRecord:
+        """Make a single call to the inference API. Will return an error record if the call fails."""
+        if self.is_trace_enabled:
+            self.trace(f"Calling inference API for turn: {turn}")
+        formatted_payload = None
+        pre_send_perf_ns = None
+        timestamp_ns = None
+        try:
+            # Format payload for the API request
+            formatted_payload = await self.request_converter.format_payload(
+                model_endpoint=self.model_endpoint,
+                turn=turn,
+            )
+
+            # NOTE: Current implementation of the TimingManager bypasses this, it is for future use.
+            # Wait for the credit drop time if it is in the future.
+            # Note that we check this after we have retrieved the data from the dataset, to ensure
+            # that we are fully ready to go.
+            delayed_ns = None
+            drop_ns = message.credit_drop_ns
+            now_ns = time.time_ns()
+            if drop_ns and drop_ns > now_ns:
+                if self.is_trace_enabled:
+                    self.trace(
+                        f"Waiting for credit drop expected time: {(drop_ns - now_ns) / NANOS_PER_SECOND:.2f} s"
+                    )
+                await asyncio.sleep((drop_ns - now_ns) / NANOS_PER_SECOND)
+            elif drop_ns and drop_ns < now_ns:
+                delayed_ns = now_ns - drop_ns
+
+            # Save the current perf_ns before sending the request so it can be used to calculate
+            # the start_perf_ns of the request in case of an exception.
+            pre_send_perf_ns = time.perf_counter_ns()
+            timestamp_ns = time.time_ns()
+
+            # Send the request to the Inference Server API and wait for the response
+            result: RequestRecord = await self.inference_client.send_request(
+                model_endpoint=self.model_endpoint,
+                payload=formatted_payload,
+            )
+
+            if self.is_debug_enabled:
+                self.debug(
+                    f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
+                )
+
+            result.delayed_ns = delayed_ns
+            result.turn = turn
+            return result
+        except Exception as e:
+            self.error(
+                f"Error calling inference server API at {self.model_endpoint.url}: {e!r}"
+            )
+            return RequestRecord(
+                turn=turn,
+                timestamp_ns=timestamp_ns or time.time_ns(),
+                # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
+                start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),
+                end_perf_ns=time.perf_counter_ns(),
+                error=ErrorDetails.from_exception(e),
+            )
+
+    async def _send_inference_result_message(self, record: RequestRecord) -> None:
+        """Send the inference result message to the inference results push client."""
+        # All records will flow through here to be sent to the inference results push client.
+        self.task_stats.task_finished(record.valid)
+
+        msg = InferenceResultsMessage(
+            service_id=self.service_id,
+            record=record,
+        )
+        self.execute_async(self.inference_results_push_client.push(msg))
 
 
 def main() -> None:
