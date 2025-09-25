@@ -34,7 +34,7 @@ class OutputConfig(BaseConfig):
     ] = OutputDefaults.ARTIFACT_DIRECTORY
 
     slice_duration: Annotated[
-        int,
+        int | None,
         Field(
             description="The duration (in milliseconds) of an individual time slice to be used post-benchmark in time-slicing mode.",
         ),
