@@ -352,3 +352,40 @@ async def test_csv_exporter_logs_and_raises_on_write_failure(
 
         assert called["err"] is not None
         assert "Failed to export CSV" in called["err"]
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, ""),
+        (142357, "142357"),
+        (0, "0"),
+        (-7, "-7"),
+        (123456.14159, "123456.14"),
+        (2.0, "2.00"),
+        (-1.234, "-1.23"),
+        ("string", "string"),
+        (True, "True"),
+        (False, "False"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_format_number_various_types(
+    monkeypatch, mock_user_config, value, expected
+):
+    """
+    Test the `_format_number` method of `DummyExporter` with various input types.
+
+    This parameterized test verifies that the method correctly formats:
+    - None as an empty string
+    - Integers and floats as strings, with floats rounded to two decimal places
+    - Strings as themselves
+    - Boolean values as their string representation
+    """
+    cfg = ExporterConfig(
+        results=None,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+    )
+    exporter = CsvExporter(cfg)
+    assert exporter._format_number(value) == expected

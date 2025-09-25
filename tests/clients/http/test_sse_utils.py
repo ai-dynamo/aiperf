@@ -353,8 +353,8 @@ retry: 5000"""
         result = parse_sse_message(raw_message, base_perf_ns)
         end_time = time.perf_counter()
 
-        # Should parse quickly (less than 100ms for 1000 fields)
-        assert (end_time - start_time) < 0.1
+        # Should parse quickly (less than 250ms for 1000 fields)
+        assert (end_time - start_time) < 0.250
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1000
 

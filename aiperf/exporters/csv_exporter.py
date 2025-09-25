@@ -3,7 +3,9 @@
 
 import csv
 import io
+import numbers
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
 
 import aiofiles
 
@@ -155,8 +157,14 @@ class CsvExporter(AIPerfLoggerMixin):
         """Format a number for CSV output."""
         if value is None:
             return ""
-        if isinstance(value, int):
+        # Handle bools explicitly (bool is a subclass of int)
+        if isinstance(value, bool):
             return str(value)
-        if isinstance(value, float):
+        # Integers (covers built-in int and other Integral implementations)
+        if isinstance(value, numbers.Integral):
+            return f"{int(value)}"
+        # Real numbers (covers built-in float and many Real implementations) and Decimal
+        if isinstance(value, numbers.Real | Decimal):
             return f"{float(value):.2f}"
+
         return str(value)
