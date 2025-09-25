@@ -12,7 +12,7 @@ import logging
 import sys
 
 from parser import MarkdownParser
-from test_runner import TestRunner
+from test_runner import EndToEndTestRunner
 from utils import get_repo_root, setup_logging
 
 # Configure logging using centralized utility
@@ -70,7 +70,7 @@ def main():
         return 0
 
     # Run tests
-    runner = TestRunner()
+    runner = EndToEndTestRunner()
     success = runner.run_tests(servers)
 
     if success:

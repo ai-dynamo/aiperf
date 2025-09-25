@@ -22,7 +22,7 @@ from utils import (
 logger = logging.getLogger(__name__)
 
 
-class TestRunner:
+class EndToEndTestRunner:
     """Runs the end-to-end tests"""
 
     def __init__(self):
