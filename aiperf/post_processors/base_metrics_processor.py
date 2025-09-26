@@ -63,8 +63,12 @@ class BaseMetricsProcessor(AIPerfLoggerMixin, ABC):
             *metric_types,
         )
         if self.user_config.input.goodput and GOOD_REQUEST_COUNT_TAG in supported_tags:
-            good_request_count = MetricRegistry.get_class(GOOD_REQUEST_COUNT_TAG)
-            good_request_count.set_slos(self.user_config.input.goodput)
+            try:
+                MetricRegistry.get_class(GOOD_REQUEST_COUNT_TAG).set_slos(
+                    self.user_config.input.goodput
+                )
+            except ValueError as e:
+                raise RuntimeError(f"Invalid --goodput: {e}") from e
 
         ordered_tags = MetricRegistry.create_dependency_order_for(
             supported_tags,
