@@ -178,10 +178,10 @@ def _format_parameter_options(param: ParameterInfo) -> list[str]:
         return []
 
     combined = " | ".join(f"`{opt}`" for opt in options)
-    if param.display_name:
-        return [f"#### {param.display_name}", "", f"{combined}", ""]
-    else:
-        return [f"#### {combined}", ""]
+    # if param.display_name:
+    #     return [f"#### {param.display_name}", "", f"{combined}", ""]
+    # else:
+    return [f"#### {combined}", ""]
 
 
 def _add_parameter_details(lines: list[str], param: ParameterInfo) -> None:
