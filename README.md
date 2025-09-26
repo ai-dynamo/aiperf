@@ -40,6 +40,41 @@ Features
 
 </br>
 
+## 📖 Tutorials & Advanced Features
+
+### Getting Started
+- **[Basic Tutorial](docs/tutorial.md)** - Learn the fundamentals with Dynamo and vLLM examples
+
+### Advanced Benchmarking Features
+| Feature | Description | Use Cases |
+|---------|-------------|-----------|
+| **[⏱️ Request Cancellation](docs/tutorials/request-cancellation.md)** | Test timeout behavior and service resilience | SLA validation, network resilience, circuit breaker config |
+| **[🎯 Trace Benchmarking](docs/tutorials/trace-benchmarking.md)** | Deterministic workload replay with custom datasets | Regression testing, A/B testing, production validation |
+| **[⏰ Fixed Schedule](docs/tutorials/fixed-schedule.md)** | Precise timestamp-based request execution | Traffic replay, temporal analysis, burst testing |
+| **[⏳ Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md)** | Duration-based testing with grace period control | Stability testing, sustained performance, memory leak detection |
+
+### Quick Navigation
+```bash
+# Basic profiling
+aiperf profile --model Qwen/Qwen3-0.6B --url localhost:8000 --endpoint-type chat
+
+# Request timeout testing
+aiperf profile --request-timeout-seconds 30.0 [other options...]
+
+# Trace-based benchmarking
+aiperf profile --input-file trace.jsonl --custom-dataset-type single_turn [other options...]
+
+# Fixed schedule execution
+aiperf profile --input-file schedule.jsonl --fixed-schedule --fixed-schedule-auto-offset [other options...]
+
+# Time-based benchmarking
+aiperf profile --benchmark-duration 300.0 --benchmark-grace-period 30.0 [other options...]
+```
+
+> **💡 Pro Tip:** Combine advanced features for comprehensive testing strategies. For example, use trace benchmarking with time-based duration limits for realistic sustained testing.
+
+</br>
+
 ## Supported APIs
 
 - OpenAI chat completions
