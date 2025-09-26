@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
+from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
@@ -91,7 +92,7 @@ class TestJsonExporter:
             exporter = JsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = output_dir / "profile_export_aiperf.json"
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
             assert expected_file.exists()
 
             with open(expected_file) as f:
