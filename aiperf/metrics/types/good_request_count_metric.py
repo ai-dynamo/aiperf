@@ -20,7 +20,7 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
     short_header = "GoodRequestCount"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.GOODPUT
+    flags = MetricFlags.GOODPUT | MetricFlags.HIDDEN
     required_metrics: set[str] | None = None
 
     _thresholds: dict[str, float] = {}
