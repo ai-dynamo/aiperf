@@ -40,9 +40,9 @@ class HelpData:
 def extract_plain_text(obj) -> str:
     """Extract plain text from cyclopts objects."""
     if isinstance(obj, InlineText):
-        console = Console(file=StringIO(), record=True, width=1000)
+        console = Console(file=StringIO(), record=True, width=100000)
         console.print(obj)
-        return console.export_text(clear=False, styles=False).strip()
+        return console.export_text(clear=False, styles=False).replace("\n", "").strip()
     return str(obj) if obj else ""
 
 
@@ -119,7 +119,13 @@ def extract_help_data(subcommand: str) -> HelpData:
 
 def generate_markdown_docs(help_data: HelpData) -> str:
     """Generate markdown documentation from help data."""
-    lines = []
+    lines = [
+        "<!--",
+        "# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+        "# SPDX-License-Identifier: Apache-2.0",
+        "-->",
+        "",
+    ]
 
     # Parameters section
     if help_data.parameter_groups:
