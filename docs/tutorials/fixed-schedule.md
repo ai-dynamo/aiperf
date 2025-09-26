@@ -140,42 +140,6 @@ aiperf profile \
 - `--fixed-schedule-start-offset 2000`: Start execution at 2000ms timestamp
 - `--fixed-schedule-end-offset 6000`: End execution at 6000ms timestamp
 
-### Burst Traffic Pattern
-
-Create and execute a burst pattern to test peak load handling:
-
-<!-- create-burst-schedule -->
-```bash
-# Create burst traffic pattern
-cat > burst_schedule.jsonl << 'EOF'
-{"timestamp": 0, "input_length": 100, "hash_ids": [5001]}
-{"timestamp": 100, "input_length": 100, "hash_ids": [5002]}
-{"timestamp": 200, "input_length": 100, "hash_ids": [5003]}
-{"timestamp": 300, "input_length": 100, "hash_ids": [5004]}
-{"timestamp": 400, "input_length": 100, "hash_ids": [5005]}
-{"timestamp": 5000, "input_length": 200, "hash_ids": [5006]}
-{"timestamp": 5100, "input_length": 200, "hash_ids": [5007]}
-{"timestamp": 5200, "input_length": 200, "hash_ids": [5008]}
-{"timestamp": 5300, "input_length": 200, "hash_ids": [5009]}
-{"timestamp": 5400, "input_length": 200, "hash_ids": [5010]}
-EOF
-```
-<!-- /create-burst-schedule -->
-
-<!-- aiperf-run-burst-schedule -->
-```bash
-# Execute burst pattern to test peak handling
-aiperf profile \
-    --model Qwen/Qwen3-0.6B \
-    --endpoint-type chat \
-    --endpoint /v1/chat/completions \
-    --streaming \
-    --url localhost:8000 \
-    --input-file burst_schedule.jsonl \
-    --custom-dataset-type mooncake_trace
-```
-<!-- /aiperf-run-burst-schedule -->
-
 ### Gradual Ramp-up Pattern
 
 Test gradual load increases with precise timing:
