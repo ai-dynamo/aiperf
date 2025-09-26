@@ -40,7 +40,7 @@ Features
 
 </br>
 
-## 📖 Tutorials & Advanced Features
+## Tutorials & Advanced Features
 
 ### Getting Started
 - **[Basic Tutorial](docs/tutorial.md)** - Learn the fundamentals with Dynamo and vLLM examples
@@ -48,10 +48,10 @@ Features
 ### Advanced Benchmarking Features
 | Feature | Description | Use Cases |
 |---------|-------------|-----------|
-| **[⏱️ Request Cancellation](docs/tutorials/request-cancellation.md)** | Test timeout behavior and service resilience | SLA validation, network resilience, circuit breaker config |
-| **[🎯 Trace Benchmarking](docs/tutorials/trace-benchmarking.md)** | Deterministic workload replay with custom datasets | Regression testing, A/B testing, production validation |
-| **[⏰ Fixed Schedule](docs/tutorials/fixed-schedule.md)** | Precise timestamp-based request execution | Traffic replay, temporal analysis, burst testing |
-| **[⏳ Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md)** | Duration-based testing with grace period control | Stability testing, sustained performance, memory leak detection |
+| **[Request Cancellation](docs/tutorials/request-cancellation.md)** | Test timeout behavior and service resilience | SLA validation, cancellation modeling |
+| **[Trace Benchmarking](docs/tutorials/trace-benchmarking.md)** | Deterministic workload replay with custom datasets | Regression testing, A/B testing |
+| **[Fixed Schedule](docs/tutorials/fixed-schedule.md)** | Precise timestamp-based request execution | Traffic replay, temporal analysis, burst testing |
+| **[Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md)** | Duration-based testing with grace period control | Stability testing, sustained performance |
 
 ### Quick Navigation
 ```bash

@@ -91,12 +91,12 @@ aiperf profile \
 
 ### Use Cases
 
-**✅ Perfect for:**
+**Perfect for:**
 - Regression testing (detecting performance changes)
 - A/B testing different model configurations
 - Debugging specific prompt performance
 - Production workload replay
 
-**❌ Not ideal for:**
+**Not ideal for:**
 - Load testing with varied request patterns (use `random_pool` instead)
 - Scalability testing requiring many unique requests
