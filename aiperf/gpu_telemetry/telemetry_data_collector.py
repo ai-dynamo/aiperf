@@ -19,6 +19,8 @@ from aiperf.gpu_telemetry.constants import (
     URL_REACHABILITY_TIMEOUT,
 )
 
+__all__ = ["TelemetryDataCollector"]
+
 
 class TelemetryDataCollector(AIPerfLifecycleMixin):
     """Collects telemetry metrics from DCGM metrics endpoint using async architecture.
@@ -75,14 +77,25 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         Returns:
             True if endpoint responds with 200, False otherwise
         """
-        if not self._dcgm_url or not self._session:
+        if not self._dcgm_url:
             return False
 
-        try:
-            async with self._session.get(self._dcgm_url) as response:
-                return response.status == 200
-        except Exception:
-            return False
+        # Use existing session if available, otherwise create a temporary one
+        if self._session:
+            try:
+                async with self._session.get(self._dcgm_url) as response:
+                    return response.status == 200
+            except Exception:
+                return False
+        else:
+            # Create a temporary session for reachability check
+            timeout = aiohttp.ClientTimeout(total=URL_REACHABILITY_TIMEOUT)
+            async with aiohttp.ClientSession(timeout=timeout) as temp_session:
+                try:
+                    async with temp_session.get(self._dcgm_url) as response:
+                        return response.status == 200
+                except Exception:
+                    return False
 
     @background_task(immediate=True, interval=lambda self: self._collection_interval)
     async def _collect_telemetry_task(self) -> None:
@@ -92,9 +105,6 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         lifecycle management and stopping when the collector is stopped.
         The interval is set to the collection_interval so this runs periodically.
         """
-        self.debug(
-            f"Starting telemetry collection task (interval: {self._collection_interval}s)"
-        )
         try:
             await self._collect_and_process_metrics()
         except asyncio.CancelledError:
@@ -119,13 +129,11 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
             records = self._parse_metrics_to_records(metrics_data)
 
             if records and self._record_callback:
-                self.debug(f"Sending {len(records)} records via callback")
                 try:
                     if asyncio.iscoroutinefunction(self._record_callback):
                         await self._record_callback(records, self.id)
                     else:
                         self._record_callback(records, self.id)
-                    self.debug("Successfully sent records via callback")
                 except Exception as e:
                     self.warning(f"Failed to send telemetry records via callback: {e}")
 
@@ -152,11 +160,9 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         if self._session.closed:
             raise asyncio.CancelledError("HTTP session is closed during shutdown")
 
-        self.debug(f"Fetching metrics from {self._dcgm_url}")
         async with self._session.get(self._dcgm_url) as response:
             response.raise_for_status()
             text = await response.text()
-            self.debug(f"Received {len(text)} characters from DCGM")
             return text
 
     def _parse_metrics_to_records(self, metrics_data: str) -> list[TelemetryRecord]:

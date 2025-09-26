@@ -22,7 +22,7 @@ from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.types import MetricTagT
 
 if TYPE_CHECKING:
-    from aiperf.common.models.telemetry_models import TelemetryHierarchy
+    pass
 
 
 class MetricResult(AIPerfBaseModel):
@@ -85,10 +85,6 @@ class ProfileResults(AIPerfBaseModel):
         default_factory=list,
         description="A list of the unique error details and their counts",
     )
-    telemetry_data: "TelemetryHierarchy | None" = Field(
-        default=None,
-        description="GPU telemetry data collected during the profile run",
-    )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
         """Get a metric result by tag, if it exists."""
@@ -102,6 +98,10 @@ class ProcessRecordsResult(AIPerfBaseModel):
     """Result of the process records command."""
 
     results: ProfileResults = Field(..., description="The profile results")
+    # telemetry_results: "TelemetryResults | None" = Field(
+    #     default=None,
+    #     description="GPU telemetry results collected during the profile run"
+    # )
     errors: list[ErrorDetails] = Field(
         default_factory=list,
         description="Any error that occurred while processing the profile results",

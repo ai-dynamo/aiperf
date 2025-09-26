@@ -37,6 +37,8 @@ class MessageType(CaseInsensitiveStrEnum):
     PARSED_INFERENCE_RESULTS = "parsed_inference_results"
     PROCESSING_STATS = "processing_stats"
     PROCESS_RECORDS_RESULT = "process_records_result"
+    PROCESS_TELEMETRY_RESULT = "process_telemetry_result"
+    TELEMETRY_STATUS = "telemetry_status"
     PROFILE_PROGRESS = "profile_progress"
     PROFILE_RESULTS = "profile_results"
     REALTIME_METRICS = "realtime_metrics"
