@@ -8,9 +8,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
+from typing import Any, get_origin
 
+from cyclopts.argument import Argument, ArgumentCollection
 from cyclopts.bind import normalize_tokens
-from cyclopts.help import InlineText, format_doc, format_usage, resolve_help_format
+from cyclopts.field_info import FieldInfo
+from cyclopts.help import InlineText
 from rich.console import Console
 
 from aiperf.cli import app
@@ -26,6 +29,8 @@ class ParameterInfo:
     description: str
     required: bool
     type_suffix: str
+    default_value: str = ""
+    choices: list[str] | None = None
 
 
 @dataclass
@@ -37,18 +42,18 @@ class HelpData:
     parameter_groups: dict[str, list[ParameterInfo]]
 
 
-def extract_plain_text(obj) -> str:
+def extract_plain_text(obj: Any) -> str:
     """Extract plain text from cyclopts objects."""
     if isinstance(obj, InlineText):
-        console = Console(file=StringIO(), record=True, width=100000)
+        console = Console(file=StringIO(), record=True, width=1000)
         console.print(obj)
         return console.export_text(clear=False, styles=False).replace("\n", "").strip()
     return str(obj) if obj else ""
 
 
-def get_type_suffix(hint) -> str:
+def get_type_suffix(hint: Any) -> str:
     """Get type suffix for parameter hints."""
-    type_mapping = {
+    type_mapping: dict[type, str] = {
         bool: "",
         int: " <int>",
         float: " <float>",
@@ -58,66 +63,143 @@ def get_type_suffix(hint) -> str:
     }
 
     # Check direct type first, then origin type for generics
-    lookup_type = hint if hint in type_mapping else getattr(hint, "__origin__", None)
+    lookup_type = hint if hint in type_mapping else get_origin(hint)
     return type_mapping.get(lookup_type, " <str>")
 
 
-def extract_help_data(subcommand: str) -> HelpData:
-    """Extract structured help data from the CLI."""
-    tokens = normalize_tokens(subcommand)
-    command_chain, apps, _ = app.parse_commands(tokens)
-    executing_app = apps[-1]
-    help_format = resolve_help_format(apps)
+def _extract_display_name(arg: Argument) -> str:
+    """Extract display name from argument, following cyclopts convention."""
+    first_name = arg.names[0].lstrip("-").upper().replace("-", " ").title()
+    if arg.required:
+        first_name = f"{first_name} _(Required)_"
+    return first_name
 
-    # Extract usage and description
-    usage = executing_app.usage or format_usage(app, command_chain)
-    description = extract_plain_text(format_doc(executing_app, help_format))
 
-    # Extract parameter groups
-    parameter_groups = {}
-    if executing_app.default_command:
-        argument_collection = executing_app.assemble_argument_collection(
-            apps=apps, parse_docstring=True
-        )
-        groups = defaultdict(list)
+def _extract_default_value(arg: Argument) -> str:
+    """Extract default value from argument showing raw values."""
+    if not arg.show_default:
+        return ""
 
-        for arg in argument_collection.filter_by(show=True):
-            group_name = (
-                arg.parameter.group[0]._name if arg.parameter.group else "Parameters"
-            )
-            type_suffix = get_type_suffix(arg.hint)
+    default = arg.field_info.default
+    if default is FieldInfo.empty or default is None:
+        return ""
 
-            short_opts = [
-                name
-                for name in arg.names
-                if name.startswith("-") and not name.startswith("--")
-            ]
-            long_opts = [name for name in arg.names if name.startswith("--")]
+    # Handle callable show_default
+    if callable(arg.show_default):
+        return str(arg.show_default(default))
 
-            # Extract display name - derive from first long option if available
-            display_name = ""
-            if long_opts:
-                # Convert --model-names to MODEL-NAMES
-                display_name = long_opts[0][2:].upper().replace("-", "-")
+    # For all other cases, show the raw value
+    return str(default)
 
-            param_info = ParameterInfo(
-                display_name=display_name,
-                long_options=" --".join(long_opts),
-                short=" ".join(short_opts),
-                description=extract_plain_text(arg.parameter.help),
-                required=arg.required,
-                type_suffix=type_suffix,
-            )
-            groups[group_name].append(param_info)
 
-        parameter_groups = dict(groups)
+def _extract_choices(arg: Argument) -> list[str] | None:
+    """Extract choices from argument using only public APIs."""
+    if not arg.parameter.show_choices:
+        return None
 
-    return HelpData(
-        usage=usage, description=description, parameter_groups=parameter_groups
+    # Handle enum types directly
+    from enum import Enum
+    from inspect import isclass
+
+    if isclass(arg.hint) and issubclass(arg.hint, Enum):
+        choices = list(arg.hint.__members__.values())
+        return [f"`{choice}`" for choice in choices]
+
+    return None
+
+
+def _split_argument_names(names: tuple[str, ...]) -> tuple[list[str], list[str]]:
+    """Split argument names into short and long options."""
+    short_opts = [
+        name for name in names if name.startswith("-") and not name.startswith("--")
+    ]
+    long_opts = [name for name in names if name.startswith("--")]
+    return short_opts, long_opts
+
+
+def _create_parameter_info(arg: Argument) -> ParameterInfo:
+    """Create ParameterInfo from cyclopts argument using clean property access."""
+    short_opts, long_opts = _split_argument_names(arg.names)
+
+    return ParameterInfo(
+        display_name=_extract_display_name(arg),
+        long_options=" --".join(long_opts),
+        short=" ".join(short_opts),
+        description=extract_plain_text(arg.parameter.help),
+        required=arg.required,
+        type_suffix=get_type_suffix(arg.hint),
+        default_value=_extract_default_value(arg),
+        choices=_extract_choices(arg),
     )
 
 
-def generate_markdown_docs(help_data: HelpData) -> str:
+def _extract_parameter_groups(
+    argument_collection: ArgumentCollection,
+) -> dict[str, list[ParameterInfo]]:
+    """Extract parameter groups from argument collection."""
+    groups: dict[str, list[ParameterInfo]] = defaultdict(list)
+
+    for arg in argument_collection.filter_by(show=True):
+        group_name = arg.parameter.group[0].name
+        param_info = _create_parameter_info(arg)
+        groups[group_name].append(param_info)
+
+    return dict(groups)
+
+
+def extract_help_data(subcommand: str) -> dict[str, list[ParameterInfo]]:
+    """Extract structured help data from the CLI."""
+    tokens = normalize_tokens(subcommand)
+    _, apps, _ = app.parse_commands(tokens)
+
+    argument_collection = apps[-1].assemble_argument_collection(
+        apps=apps, parse_docstring=True
+    )
+    return _extract_parameter_groups(argument_collection)
+
+
+def _format_parameter_options(param: ParameterInfo) -> list[str]:
+    """Format parameter options for display."""
+    options = []
+
+    if param.short:
+        options.append(f"{param.short}{param.type_suffix}")
+
+    for option in param.long_options.split(" --"):
+        option = option.strip()
+        if option:
+            if not option.startswith("--"):
+                option = "--" + option.lower().replace(" ", "-")
+            formatted = f"{option}{param.type_suffix}"
+            if formatted not in options:
+                options.append(formatted)
+
+    if not options:
+        return []
+
+    combined = " | ".join(f"`{opt}`" for opt in options)
+    if param.display_name:
+        return [f"#### {param.display_name}", "", f"{combined}", ""]
+    else:
+        return [f"#### {combined}", ""]
+
+
+def _add_parameter_details(lines: list[str], param: ParameterInfo) -> None:
+    """Add description with choices and default value inline."""
+    description_parts = [param.description.rstrip(".") + "."]
+
+    if param.choices:
+        choices_str = ", ".join(param.choices)
+        description_parts.append(f"(Choices: {choices_str}).")
+
+    if param.default_value and param.default_value != "False":
+        description_parts.append(f"(Default: `{param.default_value}`).")
+
+    full_description = " ".join(description_parts)
+    lines.extend([full_description, ""])
+
+
+def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> str:
     """Generate markdown documentation from help data."""
     lines = [
         "<!--",
@@ -127,53 +209,22 @@ def generate_markdown_docs(help_data: HelpData) -> str:
         "",
     ]
 
-    # Parameters section
-    if help_data.parameter_groups:
-        lines.extend(["## Command Line Options", ""])
+    lines.extend(["## Command Line Options", ""])
 
-        for group_name, parameters in help_data.parameter_groups.items():
-            if not parameters:
-                continue
+    for group_name, parameters in parameter_groups.items():
+        lines.extend([f"### {group_name} Options", ""])
 
-            lines.extend([f"### {group_name} Options", ""])
-
-            for param in parameters:
-                options = []
-                value_suffix = param.type_suffix
-
-                # Add short option
-                if param.short:
-                    options.append(f"{param.short}{value_suffix}")
-
-                # Add long options
-                for option in param.long_options.split(" --"):
-                    option = option.strip()
-                    if option:
-                        if not option.startswith("--"):
-                            option = "--" + option.lower().replace(" ", "-")
-                        formatted = f"{option}{value_suffix}"
-                        if formatted not in options:
-                            options.append(formatted)
-
-                # Format options with display name
-                if options:
-                    combined = " | ".join(f"`{opt}`" for opt in options)
-                    if param.display_name:
-                        lines.extend([f"##### {param.display_name}", "", combined, ""])
-                    else:
-                        lines.extend([f"##### {combined}", ""])
-
-                # Add description
-                if param.description:
-                    lines.extend([param.description, ""])
+        for param in parameters:
+            lines.extend(_format_parameter_options(param))
+            _add_parameter_details(lines, param)
 
     return "\n".join(lines)
 
 
 def main():
     """Generate CLI documentation."""
-    help_data = extract_help_data("profile")
-    markdown_content = generate_markdown_docs(help_data)
+    parameter_groups = extract_help_data("profile")
+    markdown_content = generate_markdown_docs(parameter_groups)
 
     output_file = Path("CLI_REFERENCE.md")
     output_file.write_text(markdown_content)
