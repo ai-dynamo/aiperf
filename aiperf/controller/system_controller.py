@@ -10,6 +10,7 @@ from rich.console import Console
 
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.config.dev_config import print_developer_mode_warning
 from aiperf.common.constants import (
     AIPERF_DEV_MODE,
@@ -513,7 +514,11 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     def _print_log_file_info(self, console: Console) -> None:
         """Print the log file info."""
-        log_file = self.user_config.output.artifact_directory / "logs" / "aiperf.log"
+        log_file = (
+            self.user_config.output.artifact_directory
+            / OutputDefaults.LOG_FOLDER
+            / OutputDefaults.LOG_FILE
+        )
         console.print(
             f"[bold green]Log File:[/bold green] [cyan]{log_file.resolve()}[/cyan]"
         )

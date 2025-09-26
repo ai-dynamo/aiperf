@@ -4,9 +4,13 @@ import asyncio
 import random
 import time
 
+import aiofiles
+
+from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
@@ -16,7 +20,11 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.enums.dataset_enums import CustomDatasetType
-from aiperf.common.factories import ComposerFactory, ServiceFactory
+from aiperf.common.factories import (
+    ComposerFactory,
+    RequestConverterFactory,
+    ServiceFactory,
+)
 from aiperf.common.hooks import on_command, on_request
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -29,8 +37,9 @@ from aiperf.common.messages import (
     ProfileConfigureCommand,
 )
 from aiperf.common.mixins import ReplyClientMixin
-from aiperf.common.models import Conversation
-from aiperf.common.protocols import ServiceProtocol
+from aiperf.common.models import Conversation, InputsFile
+from aiperf.common.models.dataset_models import SessionPayloads
+from aiperf.common.protocols import RequestConverterProtocol, ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader import ShareGPTLoader
 
@@ -87,6 +96,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.info(lambda: f"Configuring dataset for {self.service_id}")
         begin = time.perf_counter()
         await self._configure_dataset()
+        await self._generate_inputs_json_file()
         duration = time.perf_counter() - begin
         self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
 
@@ -103,6 +113,55 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             trust_remote_code=self.user_config.tokenizer.trust_remote_code,
             revision=self.user_config.tokenizer.revision,
         )
+
+    async def _generate_input_payloads(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        request_converter: RequestConverterProtocol,
+    ) -> InputsFile:
+        """Generate input payloads from the dataset for use in the inputs.json file."""
+        inputs = InputsFile()
+        for conversation in self.dataset.values():
+            payloads = await asyncio.gather(
+                *[
+                    request_converter.format_payload(model_endpoint, turn)
+                    for turn in conversation.turns
+                ]
+            )
+            inputs.data.append(
+                SessionPayloads(session_id=conversation.session_id, payloads=payloads)
+            )
+        return inputs
+
+    async def _generate_inputs_json_file(self) -> None:
+        """Generate inputs.json file in the artifact directory."""
+        file_path = (
+            self.user_config.output.artifact_directory / OutputDefaults.INPUTS_JSON_FILE
+        )
+        self.info(f"Generating inputs.json file at {file_path.resolve()}")
+
+        try:
+            start_time = time.perf_counter()
+            model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
+            request_converter = RequestConverterFactory.create_instance(
+                model_endpoint.endpoint.type,
+            )
+
+            inputs = await self._generate_input_payloads(
+                model_endpoint, request_converter
+            )
+
+            async with aiofiles.open(file_path, "w") as f:
+                await f.write(inputs.model_dump_json(indent=2, exclude_unset=True))
+
+            duration = time.perf_counter() - start_time
+            self.info(f"inputs.json file generated in {duration:.2f} seconds")
+
+        except Exception as e:
+            # Log as warning, but continue to run the benchmark
+            self.warning(
+                f"Error generating inputs.json file at {file_path.resolve()}: {e}"
+            )
 
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
