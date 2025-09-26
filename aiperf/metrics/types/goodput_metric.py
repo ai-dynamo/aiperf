@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
@@ -26,7 +27,11 @@ class GoodputMetric(BaseDerivedMetric[float]):
     required_metrics = {GoodRequestCountMetric.tag, BenchmarkDurationMetric.tag}
 
     def _derive_value(self, metric_results: MetricResultsDict) -> float:
-        good_request_count = metric_results.get_or_raise(GoodRequestCountMetric)
+        tag = GoodRequestCountMetric.tag
+        if tag not in metric_results:
+            raise NoMetricValue(f"Metric '{tag}' is not available for the run.")
+        good_request_count = metric_results[tag]
+
         benchmark_duration_converted = metric_results.get_converted_or_raise(
             BenchmarkDurationMetric,
             self.unit.time_unit,  # type: ignore
