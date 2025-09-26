@@ -4,6 +4,7 @@
 from abc import ABC
 
 from aiperf.common.config import UserConfig
+from aiperf.common.constants import GOOD_REQUEST_COUNT_TAG
 from aiperf.common.enums import MetricFlags, MetricType
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.metrics.base_metric import BaseMetric
@@ -52,15 +53,28 @@ class BaseMetricsProcessor(AIPerfLoggerMixin, ABC):
         elif exclude_error_metrics:
             disallowed_flags |= MetricFlags.ERROR_ONLY
 
+        if not self.user_config.input.goodput:
+            disallowed_flags |= MetricFlags.GOODPUT
+
         metrics: list[BaseMetric] = []
         supported_tags = MetricRegistry.tags_applicable_to(
             required_flags,
             disallowed_flags,
             *metric_types,
         )
+        if self.user_config.input.goodput and GOOD_REQUEST_COUNT_TAG in supported_tags:
+            try:
+                MetricRegistry.get_class(GOOD_REQUEST_COUNT_TAG).set_slos(
+                    self.user_config.input.goodput
+                )
+            except ValueError as e:
+                raise RuntimeError(f"Invalid --goodput: {e}") from e
+
         ordered_tags = MetricRegistry.create_dependency_order_for(
             supported_tags,
         )
         for metric_tag in ordered_tags:
-            metrics.append(MetricRegistry.get_instance(metric_tag))
+            metric = MetricRegistry.get_instance(metric_tag)
+            metrics.append(metric)
+
         return metrics
