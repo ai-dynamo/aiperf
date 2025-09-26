@@ -4,249 +4,179 @@
 
 """Generate CLI docs for AIPerf."""
 
+from collections import defaultdict
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import Any
 
 from cyclopts.bind import normalize_tokens
-from cyclopts.help import format_doc, format_usage, resolve_help_format
+from cyclopts.help import InlineText, format_doc, format_usage, resolve_help_format
 from rich.console import Console
 
 from aiperf.cli import app
 
 
-def extract_plain_text_from_inline_text(description_obj) -> str:
-    """Extract plain text specifically from cyclopts InlineText objects."""
-    # Import here to check the type
-    from cyclopts.help import InlineText
+@dataclass
+class ParameterInfo:
+    """Information about a CLI parameter."""
 
-    # If it's an InlineText object, extract using Console
-    if isinstance(description_obj, InlineText):
-        string_io = StringIO()
-        console = Console(file=string_io, record=True, width=1000)
-        console.print(description_obj)
+    name: str
+    short: str
+    description: str
+    required: bool
+    type_suffix: str
+
+
+@dataclass
+class HelpData:
+    """Structured help data from CLI."""
+
+    usage: str
+    description: str
+    parameter_groups: dict[str, list[ParameterInfo]]
+
+
+def extract_plain_text(obj) -> str:
+    """Extract plain text from cyclopts objects."""
+    if isinstance(obj, InlineText):
+        console = Console(file=StringIO(), record=True, width=1000)
+        console.print(obj)
         return console.export_text(clear=False, styles=False).strip()
-
-    # For other types, use the native cyclopts approach (str conversion)
-    return str(description_obj) if description_obj else ""
+    return str(obj) if obj else ""
 
 
-def get_type_suffix_from_hint(hint) -> str:
-    """Extract type suffix from Python type hint."""
-    import typing
-    from typing import get_args, get_origin
+def get_type_suffix(hint) -> str:
+    """Get type suffix for parameter hints."""
+    type_mapping = {
+        bool: "",
+        int: " <int>",
+        float: " <float>",
+        list: " <list>",
+        tuple: " <list>",
+        set: " <list>",
+    }
 
-    if hint is None:
-        return " <str>"
-
-    # Handle basic types
-    if hint == str:
-        return " <str>"
-    elif hint == int:
-        return " <int>"
-    elif hint == float:
-        return " <float>"
-    elif hint == bool:
-        return ""  # Boolean flags don't take values
-
-    # Handle typing constructs
-    origin = get_origin(hint)
-    if (
-        origin is list
-        or origin is list
-        or origin is tuple
-        or origin is tuple
-        or origin is set
-        or origin is set
-    ):
-        return " <list>"
-    elif origin is typing.Union:
-        # For Optional types (Union[X, None]), use the non-None type
-        args = get_args(hint)
-        non_none_args = [arg for arg in args if arg is not type(None)]
-        if non_none_args:
-            return get_type_suffix_from_hint(non_none_args[0])
-
-    # Default to string for unknown types
-    return " <str>"
+    # Check direct type first, then origin type for generics
+    lookup_type = hint if hint in type_mapping else getattr(hint, "__origin__", None)
+    return type_mapping.get(lookup_type, " <str>")
 
 
-def extract_help_data(subcommand: str) -> dict[str, Any]:
+def extract_help_data(subcommand: str) -> HelpData:
     """Extract structured help data from the CLI."""
     tokens = normalize_tokens(subcommand)
     command_chain, apps, _ = app.parse_commands(tokens)
     executing_app = apps[-1]
-
     help_format = resolve_help_format(apps)
 
-    # Extract usage
-    usage = None
-    if executing_app.usage is None:
-        usage = format_usage(app, command_chain)
-    elif executing_app.usage:
-        usage = executing_app.usage
+    # Extract usage and description
+    usage = executing_app.usage or format_usage(app, command_chain)
+    description = extract_plain_text(format_doc(executing_app, help_format))
 
-    # Extract description
-    description = extract_plain_text_from_inline_text(
-        format_doc(executing_app, help_format)
-    )
-
-    # Extract parameter groups by accessing argument collection directly
+    # Extract parameter groups
     parameter_groups = {}
-
-    # Get the argument collection to access type information
     if executing_app.default_command:
         argument_collection = executing_app.assemble_argument_collection(
             apps=apps, parse_docstring=True
         )
-
-        # Group arguments by their groups
-        from collections import defaultdict
-
         groups = defaultdict(list)
 
-        for argument in argument_collection.filter_by(show=True):
-            # Group is a tuple of Group objects, take the first one
+        for arg in argument_collection.filter_by(show=True):
             group_name = (
-                argument.parameter.group[0]._name
-                if argument.parameter.group
-                else "Parameters"
+                arg.parameter.group[0]._name if arg.parameter.group else "Parameters"
             )
+            type_suffix = get_type_suffix(arg.hint)
 
-            # Get type information from the hint
-            type_suffix = get_type_suffix_from_hint(argument.hint)
-
-            # Handle boolean flags specially
-            if argument.hint == bool or (
-                hasattr(argument, "field_info")
-                and hasattr(argument.field_info, "default")
-                and argument.field_info.default is False
-            ):
-                type_suffix = ""
-
-            # Separate short and long options
-            short_options = [
+            short_opts = [
                 name
-                for name in argument.names
+                for name in arg.names
                 if name.startswith("-") and not name.startswith("--")
             ]
-            long_options = [name for name in argument.names if name.startswith("--")]
+            long_opts = [name for name in arg.names if name.startswith("--")]
 
-            # Build parameter info
-            param_info = {
-                "name": " --".join(long_options),  # Join long options with " --"
-                "short": " ".join(short_options),
-                "description": extract_plain_text_from_inline_text(
-                    argument.parameter.help
-                )
-                if argument.parameter.help
-                else "",
-                "required": argument.required,
-                "type_suffix": type_suffix,
-            }
-
+            param_info = ParameterInfo(
+                name=" --".join(long_opts),
+                short=" ".join(short_opts),
+                description=extract_plain_text(arg.parameter.help),
+                required=arg.required,
+                type_suffix=type_suffix,
+            )
             groups[group_name].append(param_info)
 
         parameter_groups = dict(groups)
 
-    return {
-        "usage": usage,
-        "description": description,
-        "parameter_groups": parameter_groups,
-    }
-
-
-def generate_markdown_docs(help_data: dict[str, Any]) -> str:
-    """Generate markdown documentation from help data."""
-    md_content = []
-
-    # Title and description
-    md_content.append("# AIPerf CLI Reference")
-    md_content.append("")
-    md_content.append(
-        "This document provides a comprehensive reference for all AIPerf CLI parameters."
+    return HelpData(
+        usage=usage, description=description, parameter_groups=parameter_groups
     )
-    md_content.append("")
 
-    # Usage
-    if help_data.get("usage"):
-        md_content.append("## Usage")
-        md_content.append("")
-        md_content.append("```bash")
-        md_content.append(str(help_data["usage"]).strip())
-        md_content.append("```")
-        md_content.append("")
 
-    # Description
-    if help_data.get("description"):
-        md_content.append("## Description")
-        md_content.append("")
-        md_content.append(str(help_data["description"]).strip())
-        md_content.append("")
+def generate_markdown_docs(help_data: HelpData) -> str:
+    """Generate markdown documentation from help data."""
+    lines = [
+        "# AIPerf CLI Reference",
+        "",
+        "This document provides a comprehensive reference for all AIPerf CLI parameters.",
+        "",
+    ]
 
-    # Parameter groups
-    if help_data.get("parameter_groups"):
-        md_content.append("## Parameters")
-        md_content.append("")
+    # Usage section
+    if help_data.usage:
+        lines.extend(
+            ["## Usage", "", "```bash", str(help_data.usage).strip(), "```", ""]
+        )
 
-        for group_name, parameters in help_data["parameter_groups"].items():
-            if not parameters:  # Skip empty groups
+    # Description section
+    if help_data.description:
+        lines.extend(["## Description", "", str(help_data.description).strip(), ""])
+
+    # Parameters section
+    if help_data.parameter_groups:
+        lines.extend(["## Parameters", ""])
+
+        for group_name, parameters in help_data.parameter_groups.items():
+            if not parameters:
                 continue
 
-            md_content.append(f"### {group_name}")
-            md_content.append("")
+            lines.extend([f"### {group_name}", ""])
 
             for param in parameters:
-                # Parse parameter name and aliases - the name field contains all options
-                all_options = param["name"].split(" --")
+                options = []
+                value_suffix = param.type_suffix
 
-                # Use the type suffix from the extracted data
-                value_suffix = param.get("type_suffix", " <str>")
+                # Add short option
+                if param.short:
+                    options.append(f"{param.short}{value_suffix}")
 
-                # Collect unique options
-                unique_options = []
-
-                # Add short option if available
-                if param["short"]:
-                    unique_options.append(f"{param['short']}{value_suffix}")
-
-                # Process all long options
-                for option in all_options:
+                # Add long options
+                for option in param.name.split(" --"):
                     option = option.strip()
                     if option:
-                        # Ensure it starts with --
                         if not option.startswith("--"):
                             option = "--" + option.lower().replace(" ", "-")
-                        formatted_option = f"{option}{value_suffix}"
-                        if formatted_option not in unique_options:
-                            unique_options.append(formatted_option)
+                        formatted = f"{option}{value_suffix}"
+                        if formatted not in options:
+                            options.append(formatted)
 
-                # Combine all options on a single line
-                if unique_options:
-                    combined_options = " | ".join(f"`{opt}`" for opt in unique_options)
-                    md_content.append(f"##### {combined_options}")
+                # Format options
+                if options:
+                    combined = " | ".join(f"`{opt}`" for opt in options)
+                    lines.extend([f"##### {combined}", ""])
 
-                md_content.append("")
+                # Add description
+                if param.description:
+                    lines.extend([param.description, ""])
 
-                # Description (without "Description:" prefix)
-                if param["description"]:
-                    md_content.append(param["description"])
-                    md_content.append("")
-
-    return "\n".join(md_content)
+    return "\n".join(lines)
 
 
 def main():
-    """Main function."""
+    """Generate CLI documentation."""
     help_data = extract_help_data("profile")
     markdown_content = generate_markdown_docs(help_data)
 
-    # Write to file
     output_file = Path("CLI_REFERENCE.md")
     output_file.write_text(markdown_content)
     print(f"Documentation written to {output_file}")
 
-    # Also print to console for inspection
     print("\n" + "=" * 50)
     print("GENERATED MARKDOWN:")
     print("=" * 50)
