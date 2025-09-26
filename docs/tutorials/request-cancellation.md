@@ -34,7 +34,7 @@ aiperf profile \
 <!-- /aiperf-run-basic-cancellation -->
 
 **Parameters Explained:**
-- `--request-cancellation-rate 10`: Cancel 10% of requests (value between 0.0 and 1.0)
+- `--request-cancellation-rate 10`: Cancel 10% of requests (value between 0.0 and 100.0)
 - `--request-cancellation-delay 0.5`: Wait .5 seconds before cancelling selected requests
 
 ### High Cancellation Rate Testing

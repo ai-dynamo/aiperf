@@ -22,7 +22,6 @@ Time-based benchmarking provides several advantages:
 
 ### Benchmark Duration
 - `--benchmark-duration SECONDS`: Total time to run the benchmark
-- Overrides `--request-count` when specified
 - Requests are sent continuously until duration expires
 
 ### Grace Period
