@@ -71,8 +71,6 @@ aiperf profile --input-file schedule.jsonl --fixed-schedule --fixed-schedule-aut
 aiperf profile --benchmark-duration 300.0 --benchmark-grace-period 30.0 [other options...]
 ```
 
-> **💡 Pro Tip:** Combine advanced features for comprehensive testing strategies. For example, use trace benchmarking with time-based duration limits for realistic sustained testing.
-
 </br>
 
 ## Supported APIs

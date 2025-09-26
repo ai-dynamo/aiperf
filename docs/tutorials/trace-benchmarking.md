@@ -22,33 +22,8 @@ The `mooncake_trace` dataset type with `text_input` provides:
 This is different from `random_pool` which samples from a dataset.
 Traces send each entry exactly once in order.
 
-## Creating Mooncake Trace Files
-
-### Basic Text Input Traces
-
-Create trace files with exact text payloads:
-
-<!-- create-mooncake-trace -->
-```bash
-# Create a trace file with specific text inputs
-cat > production_queries.jsonl << 'EOF'
-{"text_input": "What is the capital of France?", "output_length": 20}
-{"text_input": "Explain quantum computing in simple terms.", "output_length": 100}
-{"text_input": "Write a Python function to calculate fibonacci numbers.", "output_length": 150}
-{"text_input": "Summarize the main causes of World War II.", "output_length": 200}
-{"text_input": "How do neural networks learn?", "output_length": 80}
-EOF
-```
-<!-- /create-mooncake-trace -->
-
-**Field Descriptions:**
-- `text_input`: The exact text prompt to send (required if not
-providing input_length instead).
-- `output_length`: Maximum tokens to generate in response (optional)
-
 ### Setting Up the Server
 
-<!-- setup-vllm-trace-benchmarking -->
 ```bash
 # Start vLLM server
 docker pull vllm/vllm-openai:latest
@@ -56,20 +31,28 @@ docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --model Qwen/Qwen3-0.6B \
   --host 0.0.0.0 --port 8000 &
 ```
-<!-- /setup-vllm-trace-benchmarking -->
 
-<!-- health-check-vllm-trace-benchmarking -->
 ```bash
 # Wait for server to be ready
 timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
 ```
-<!-- /health-check-vllm-trace-benchmarking -->
 
 ### Running Basic Trace Benchmark
 
-<!-- aiperf-run-trace -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+# Create a trace file with specific text inputs
 ```bash
-# Run with exact text payloads from trace file
+# Create an input file to use for benchmarking
+# Text can be provided via text_input or input_length
+# Output_length can optionally set the maximum number of tokens to generate in the response
+cat > production_queries.jsonl << 'EOF'
+{"text_input": "What is the capital of France?", "output_length": 20}
+{"text_input": "Explain quantum computing in simple terms.", "output_length": 100}
+{"text_input": "Write a Python function to calculate fibonacci numbers.", "output_length": 150}
+{"text_input": "Summarize the main causes of World War II.", "output_length": 200}
+{"text_input": "How do neural networks learn?", "output_length": 80}
+EOF
+# Run with exact text payloads
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
@@ -81,7 +64,7 @@ aiperf profile \
     --concurrency 2 \
     --warmup-request-count 1
 ```
-<!-- /aiperf-run-mooncake-trace -->
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Key Points:**
 - Each line in the JSONL file becomes exactly one request

@@ -37,9 +37,24 @@ Fixed schedule files use JSONL format with timestamp-based entries:
 
 ## Basic Fixed Schedule Execution
 
-### Creating a Basic Schedule
+### Setting Up the Server
 
-<!-- create-fixed-schedule -->
+```bash
+# Start vLLM server for fixed schedule testing
+docker pull vllm/vllm-openai:latest
+docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B \
+  --host 0.0.0.0 --port 8000 &
+```
+
+```bash
+# Wait for server to be ready
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
+```
+
+### Running Basic Fixed Schedule
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Create a fixed schedule with precise timing
 cat > precise_schedule.jsonl << 'EOF'
@@ -54,32 +69,6 @@ cat > precise_schedule.jsonl << 'EOF'
 {"timestamp": 4000, "input_length": 500, "hash_ids": [3009]}
 {"timestamp": 5000, "input_length": 600, "hash_ids": [3010, 3050]}
 EOF
-```
-<!-- /create-fixed-schedule -->
-
-### Setting Up the Server
-
-<!-- setup-vllm-fixed-schedule -->
-```bash
-# Start vLLM server for fixed schedule testing
-docker pull vllm/vllm-openai:latest
-docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
-  --model Qwen/Qwen3-0.6B \
-  --host 0.0.0.0 --port 8000 &
-```
-<!-- /setup-vllm-fixed-schedule -->
-
-<!-- health-check-vllm-fixed-schedule -->
-```bash
-# Wait for server to be ready
-timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
-```
-<!-- /health-check-vllm-fixed-schedule -->
-
-### Running Basic Fixed Schedule
-
-<!-- aiperf-run-basic-fixed-schedule -->
-```bash
 # Run basic fixed schedule benchmarking
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -91,7 +80,7 @@ aiperf profile \
     --custom-dataset-type mooncake_trace \
     --fixed-schedule-auto-offset
 ```
-<!-- /aiperf-run-basic-fixed-schedule -->
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Key Parameters:**
 - `--fixed-schedule-auto-offset`: Automatically adjusts timestamps to start from 0
@@ -102,25 +91,7 @@ aiperf profile \
 
 Execute only a portion of the schedule using start and end offsets:
 
-<!-- create-extended-schedule -->
-```bash
-# Create an extended schedule for windowing demonstration
-cat > extended_schedule.jsonl << 'EOF'
-{"timestamp": 0, "input_length": 50, "hash_ids": [4001]}
-{"timestamp": 1000, "input_length": 100, "hash_ids": [4002]}
-{"timestamp": 2000, "input_length": 150, "hash_ids": [4003]}
-{"timestamp": 3000, "input_length": 200, "hash_ids": [4004]}
-{"timestamp": 4000, "input_length": 250, "hash_ids": [4005]}
-{"timestamp": 5000, "input_length": 300, "hash_ids": [4006]}
-{"timestamp": 6000, "input_length": 350, "hash_ids": [4007]}
-{"timestamp": 7000, "input_length": 400, "hash_ids": [4008]}
-{"timestamp": 8000, "input_length": 450, "hash_ids": [4009]}
-{"timestamp": 9000, "input_length": 500, "hash_ids": [4010]}
-EOF
-```
-<!-- /create-extended-schedule -->
-
-<!-- aiperf-run-windowed-schedule -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Execute schedule from 2s to 6s window
 aiperf profile \
@@ -129,88 +100,17 @@ aiperf profile \
     --endpoint /v1/chat/completions \
     --streaming \
     --url localhost:8000 \
-    --input-file extended_schedule.jsonl \
+    --input-file precise_schedule.jsonl \
     --custom-dataset-type mooncake_trace \
     --fixed-schedule-start-offset 2000 \
-    --fixed-schedule-end-offset 6000
+    --fixed-schedule-end-offset 4000
 ```
-<!-- /aiperf-run-windowed-schedule -->
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Windowing Parameters:**
 - `--fixed-schedule-start-offset 2000`: Start execution at 2000ms timestamp
-- `--fixed-schedule-end-offset 6000`: End execution at 6000ms timestamp
+- `--fixed-schedule-end-offset 4000`: End execution at 4000ms timestamp
 
-### Gradual Ramp-up Pattern
-
-Test gradual load increases with precise timing:
-
-<!-- create-rampup-schedule -->
-```bash
-# Create gradual ramp-up pattern
-cat > rampup_schedule.jsonl << 'EOF'
-{"timestamp": 0, "input_length": 300, "hash_ids": [6001]}
-{"timestamp": 2000, "input_length": 300, "hash_ids": [6002]}
-{"timestamp": 3500, "input_length": 300, "hash_ids": [6003]}
-{"timestamp": 4500, "input_length": 300, "hash_ids": [6004]}
-{"timestamp": 5000, "input_length": 300, "hash_ids": [6005]}
-{"timestamp": 5250, "input_length": 300, "hash_ids": [6006]}
-{"timestamp": 5500, "input_length": 300, "hash_ids": [6007]}
-{"timestamp": 5750, "input_length": 300, "hash_ids": [6008]}
-{"timestamp": 6000, "input_length": 300, "hash_ids": [6009]}
-{"timestamp": 6100, "input_length": 300, "hash_ids": [6010]}
-EOF
-```
-<!-- /create-rampup-schedule -->
-
-<!-- aiperf-run-rampup-schedule -->
-```bash
-# Execute ramp-up pattern
-aiperf profile \
-    --model Qwen/Qwen3-0.6B \
-    --endpoint-type chat \
-    --endpoint /v1/chat/completions \
-    --streaming \
-    --url localhost:8000 \
-    --input-file rampup_schedule.jsonl \
-    --custom-dataset-type mooncake_trace
-```
-<!-- /aiperf-run-rampup-schedule -->
-
-## Specialized Schedule Patterns
-
-### Sine Wave Load Pattern
-
-Create a periodic load pattern for sustained testing:
-
-```bash
-# Generate sine wave pattern using Python
-python3 -c "
-import json
-import math
-for i in range(60):  # 60 requests over 30 seconds
-    timestamp = i * 500  # Every 500ms
-    # Vary input length in sine pattern
-    base_length = 300
-    variation = int(150 * math.sin(i * 0.2))
-    input_length = base_length + variation
-    entry = {
-        'timestamp': timestamp,
-        'input_length': max(50, input_length),  # Minimum 50 tokens
-        'hash_ids': [7000 + i]
-    }
-    print(json.dumps(entry))
-" > sine_schedule.jsonl
-
-# Run sine wave pattern
-aiperf profile \
-    --model Qwen/Qwen3-0.6B \
-    --endpoint-type chat \
-    --endpoint /v1/chat/completions \
-    --streaming \
-    --url localhost:8000 \
-    --input-file sine_schedule.jsonl \
-    --custom-dataset-type mooncake_trace
-```
 
 ## Use Cases
 
