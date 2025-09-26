@@ -39,6 +39,7 @@ class CsvExporter(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         self.debug(lambda: f"Initializing CsvExporter with config: {exporter_config}")
         self._results = exporter_config.results
+        self._telemetry_results = getattr(exporter_config, "telemetry_results", None)
         self._output_directory = exporter_config.user_config.output.artifact_directory
         self._metric_registry = MetricRegistry
         self._file_path = (
@@ -64,7 +65,7 @@ class CsvExporter(AIPerfLoggerMixin):
                     self._results.records, self._metric_registry
                 )
 
-            csv_content = self._generate_csv_content(records)
+            csv_content = self._generate_csv_content(records, self._telemetry_results)
 
             async with aiofiles.open(
                 self._file_path, "w", newline="", encoding="utf-8"
@@ -75,7 +76,9 @@ class CsvExporter(AIPerfLoggerMixin):
             self.error(f"Failed to export CSV to {self._file_path}: {e}")
             raise
 
-    def _generate_csv_content(self, records: Mapping[str, MetricResult]) -> str:
+    def _generate_csv_content(
+        self, records: Mapping[str, MetricResult], telemetry_results=None
+    ) -> str:
         buf = io.StringIO()
         writer = csv.writer(buf)
 
@@ -88,6 +91,10 @@ class CsvExporter(AIPerfLoggerMixin):
 
         if system_metrics:
             self._write_system_metrics(writer, system_metrics)
+
+        # Add telemetry data section if available
+        if telemetry_results:
+            self._write_telemetry_section(writer, telemetry_results)
 
         return buf.getvalue()
 
@@ -171,3 +178,97 @@ class CsvExporter(AIPerfLoggerMixin):
             return f"{float(value):.2f}"
 
         return str(value)
+
+    def _write_telemetry_section(self, writer, telemetry_results) -> None:
+        """Write GPU telemetry data section to CSV with statistical aggregation."""
+        # Add blank lines before telemetry section
+        writer.writerow([])
+        writer.writerow([])
+
+        # Process each DCGM endpoint separately
+        for (
+            dcgm_url,
+            gpus_data,
+        ) in telemetry_results.telemetry_data.dcgm_endpoints.items():
+            if not gpus_data:
+                continue
+
+            # Endpoint header
+            endpoint_display = dcgm_url.replace("http://", "").replace("/metrics", "")
+            writer.writerow([f"=== GPU Telemetry: {endpoint_display} ==="])
+            writer.writerow([])
+
+            # Define metrics to export with full statistics
+            metrics_to_export = [
+                ("GPU Power Usage", "gpu_power_usage", "W"),
+                ("GPU Power Limit", "gpu_power_limit", "W"),
+                ("Energy Consumption", "energy_consumption", "MJ"),
+                ("GPU Utilization", "gpu_utilization", "%"),
+                ("GPU Memory Used", "gpu_memory_used", "GB"),
+                ("GPU Temperature", "gpu_temperature", "°C"),
+                ("SM Clock Frequency", "sm_clock_frequency", "MHz"),
+                ("Memory Clock Frequency", "memory_clock_frequency", "MHz"),
+            ]
+
+            # Create subtable for each metric
+            for metric_display, metric_key, unit in metrics_to_export:
+                # Check if any GPU has this metric
+                has_metric_data = any(
+                    self._gpu_has_metric(gpu_data, metric_key)
+                    for gpu_data in gpus_data.values()
+                )
+
+                if not has_metric_data:
+                    continue
+
+                # Metric subtable header
+                writer.writerow([f"=== {metric_display} ({unit}) ==="])
+                writer.writerow(
+                    [
+                        "GPU Index",
+                        "GPU Name",
+                        "GPU UUID",
+                        "Avg",
+                        "Min",
+                        "Max",
+                        "P99",
+                        "P90",
+                        "P75",
+                        "Std",
+                    ]
+                )
+
+                # Add row for each GPU
+                for gpu_uuid, gpu_data in gpus_data.items():
+                    try:
+                        metric_result = gpu_data.get_metric_result(
+                            metric_key, metric_key, metric_display, unit
+                        )
+
+                        writer.writerow(
+                            [
+                                str(gpu_data.metadata.gpu_index),
+                                gpu_data.metadata.model_name,
+                                gpu_uuid,
+                                self._format_number(metric_result.avg),
+                                self._format_number(metric_result.min),
+                                self._format_number(metric_result.max),
+                                self._format_number(metric_result.p99),
+                                self._format_number(metric_result.p90),
+                                self._format_number(metric_result.p75),
+                                self._format_number(metric_result.std),
+                            ]
+                        )
+                    except Exception:
+                        # Skip GPUs without this metric
+                        continue
+
+                writer.writerow([])  # Spacing between metric tables
+
+    def _gpu_has_metric(self, gpu_data, metric_key: str) -> bool:
+        """Check if GPU has data for the specified metric."""
+        try:
+            gpu_data.get_metric_result(metric_key, metric_key, "test", "test")
+            return True
+        except Exception:
+            return False

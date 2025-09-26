@@ -71,8 +71,10 @@ from aiperf.common.models.telemetry_models import (
     GpuMetricTimeSeries,
     GpuTelemetryData,
     GpuTelemetrySnapshot,
+    ProcessTelemetryResult,
     TelemetryHierarchy,
     TelemetryRecord,
+    TelemetryResults,
 )
 from aiperf.common.models.sequence_distribution import (
     DistributionParser,
@@ -119,6 +121,7 @@ __all__ = [
     "ParsedResponseRecord",
     "ProcessHealth",
     "ProcessRecordsResult",
+    "ProcessTelemetryResult",
     "ProcessingStats",
     "ProfileResults",
     "RankingsResponseData",
@@ -135,6 +138,7 @@ __all__ = [
     "StatsProtocol",
     "TelemetryHierarchy",
     "TelemetryRecord",
+    "TelemetryResults",
     "Text",
     "TextResponse",
     "TextResponseData",

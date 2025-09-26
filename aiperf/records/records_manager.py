@@ -34,6 +34,7 @@ from aiperf.common.messages import (
     MetricRecordsMessage,
     ProcessRecordsCommand,
     ProcessRecordsResultMessage,
+    ProcessTelemetryResultMessage,
     ProfileCancelCommand,
     RealtimeMetricsMessage,
     RecordsProcessingStatsMessage,
@@ -50,7 +51,12 @@ from aiperf.common.models import (
     ProfileResults,
 )
 from aiperf.common.models.record_models import MetricResult
-from aiperf.common.models.telemetry_models import TelemetryHierarchy, TelemetryRecord
+from aiperf.common.models.telemetry_models import (
+    ProcessTelemetryResult,
+    TelemetryHierarchy,
+    TelemetryRecord,
+    TelemetryResults,
+)
 from aiperf.common.protocols import (
     ResultsProcessorProtocol,
     ServiceProtocol,
@@ -113,6 +119,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Telemetry data storage
         self._telemetry_hierarchy = TelemetryHierarchy()
         self._telemetry_hierarchy_lock = asyncio.Lock()
+        self._telemetry_errors: list[
+            ErrorDetails
+        ] = []  # Track telemetry-specific errors
 
         self._results_processors: list[ResultsProcessorProtocol] = []
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
@@ -187,7 +196,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         await self._check_if_all_records_received()
 
-    @on_pull_message(MessageType.TELEMETRY_RECORDS)
+    @on_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
         """Handle telemetry records message from Telemetry Manager.
         The RecordsManager acts as the central hub for all record processing,
@@ -196,10 +205,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         Args:
             message: Batch of telemetry records from a DCGM collector
         """
-        if self.is_trace_enabled:
-            self.trace(
-                f"Received {len(message.records)} telemetry records from {message.collector_id}"
-            )
 
         if message.valid:
             # Send telemetry records to telemetry results processor
@@ -210,22 +215,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 for record in message.records:
                     self._telemetry_hierarchy.add_record(record)
 
-            # Update processing statistics using same lock pattern as metric records
-            # This ensures telemetry collection is included in overall system health monitoring
-            async with self.processing_status_lock:
-                # Count individual telemetry records, not batch messages
-                self.processing_stats.processed += len(message.records)
+            # Track telemetry separately - don't add to inference record count
+            # Telemetry should not affect inference processing statistics or completion detection
+            self.debug(
+                f"✅ Processed {len(message.records)} telemetry records from {message.collector_id}"
+            )
         else:
-            # Handle telemetry collection errors using existing error handling infrastructure
-            async with self.processing_status_lock:
-                self.processing_stats.errors += 1
-
+            # Handle telemetry collection errors separately from inference errors
+            # Don't add to inference processing stats or error summary
+            self.warning(
+                f"❌ Telemetry collection error from {message.collector_id}: {message.error}"
+            )
+            # Store telemetry-specific errors for ProcessTelemetryResult.errors
             if message.error:
-                # Add to error summary for reporting in final results
-                async with self.error_summary_lock:
-                    self.error_summary[message.error] = (
-                        self.error_summary.get(message.error, 0) + 1
-                    )
+                self._telemetry_errors.append(message.error)
+                self.debug(
+                    f"Stored telemetry error (total: {len(self._telemetry_errors)})"
+                )
 
     def _should_include_request_by_duration(
         self, results: list[dict[MetricTagT, MetricValueTypeT]]
@@ -477,7 +483,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         results = await asyncio.gather(
             *[
                 results_processor.summarize()
-                for results_processor in self._results_processors
+                for results_processor in self._metric_results_processors  # Only inference processors for real-time
             ],
             return_exceptions=True,
         )
@@ -494,11 +500,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
 
         self.info("Processing records results...")
-        # Process the records through the results processors.
+        # Process the records through INFERENCE results processors only (exclude telemetry)
         results = await asyncio.gather(
             *[
                 results_processor.summarize()
-                for results_processor in self._results_processors
+                for results_processor in self._metric_results_processors  # Only inference processors
             ],
             return_exceptions=True,
         )
@@ -512,13 +518,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             elif isinstance(result, BaseException):
                 error_results.append(ErrorDetails.from_exception(result))
 
-        # Get telemetry data for export
+        # Create separate telemetry results if data exists
         async with self._telemetry_hierarchy_lock:
-            telemetry_data = (
-                self._telemetry_hierarchy
-                if self._telemetry_hierarchy.dcgm_endpoints
-                else None
-            )
+            # Note: telemetry_results intentionally unused here as it's created in _publish_telemetry_results
+            pass
 
         result = ProcessRecordsResult(
             results=ProfileResults(
@@ -528,8 +531,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=self.end_time_ns or time.time_ns(),
                 error_summary=await self.get_error_summary(),
                 was_cancelled=cancelled,
-                telemetry_data=telemetry_data,
             ),
+            # telemetry_results=telemetry_results,  # Temporarily disabled
             errors=error_results,
         )
         self.debug(lambda: f"Process records result: {result}")
@@ -539,7 +542,62 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 results=result,
             )
         )
+
+        # Send telemetry results independently (parallel pipeline)
+        await self._publish_telemetry_results(cancelled)
+
         return result
+
+    async def export_telemetry_independently(self) -> TelemetryResults | None:
+        """Export telemetry data independently from inference results.
+
+        This method provides a separate export path for telemetry data that doesn't
+        interfere with the inference results pipeline.
+
+        Returns:
+            TelemetryResults if telemetry data was collected, None otherwise
+        """
+        async with self._telemetry_hierarchy_lock:
+            if not self._telemetry_hierarchy.dcgm_endpoints:
+                self.debug("No telemetry data collected for independent export")
+                return None
+
+            telemetry_results = TelemetryResults(
+                telemetry_data=self._telemetry_hierarchy,
+                start_ns=self.start_time_ns or time.time_ns(),
+                end_ns=self.end_time_ns or time.time_ns(),
+                endpoints_tested=list(self._telemetry_hierarchy.dcgm_endpoints.keys()),
+                endpoints_successful=list(
+                    self._telemetry_hierarchy.dcgm_endpoints.keys()
+                ),
+            )
+
+            self.info(
+                f"Independent telemetry export: {len(telemetry_results.endpoints_successful)} endpoints"
+            )
+            return telemetry_results
+
+    async def _publish_telemetry_results(self, cancelled: bool) -> None:
+        """Publish telemetry results independently - mirrors inference results pattern."""
+        try:
+            telemetry_results = await self.export_telemetry_independently()
+            if telemetry_results:
+                telemetry_result = ProcessTelemetryResult(
+                    results=telemetry_results,
+                    errors=self._telemetry_errors.copy(),  # Include telemetry-specific errors
+                )
+
+                await self.publish(
+                    ProcessTelemetryResultMessage(
+                        service_id=self.service_id,
+                        telemetry_result=telemetry_result,
+                    )
+                )
+                self.info("✅ Published telemetry results independently")
+            else:
+                self.debug("No telemetry data to publish")
+        except Exception as e:
+            self.error(f"Failed to publish telemetry results: {e}")
 
     async def get_error_summary(self) -> list[ErrorDetailsCount]:
         """Generate a summary of the error records."""
