@@ -123,13 +123,13 @@ def generate_markdown_docs(help_data: HelpData) -> str:
 
     # Parameters section
     if help_data.parameter_groups:
-        lines.extend(["## CLI Parameters", ""])
+        lines.extend(["## Command Line Options", ""])
 
         for group_name, parameters in help_data.parameter_groups.items():
             if not parameters:
                 continue
 
-            lines.extend([f"### {group_name}", ""])
+            lines.extend([f"### {group_name} Options", ""])
 
             for param in parameters:
                 options = []
