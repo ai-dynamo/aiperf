@@ -20,7 +20,8 @@ from aiperf.cli import app
 class ParameterInfo:
     """Information about a CLI parameter."""
 
-    name: str
+    display_name: str
+    long_options: str
     short: str
     description: str
     required: bool
@@ -93,8 +94,15 @@ def extract_help_data(subcommand: str) -> HelpData:
             ]
             long_opts = [name for name in arg.names if name.startswith("--")]
 
+            # Extract display name - derive from first long option if available
+            display_name = ""
+            if long_opts:
+                # Convert --model-names to MODEL-NAMES
+                display_name = long_opts[0][2:].upper().replace("-", "-")
+
             param_info = ParameterInfo(
-                name=" --".join(long_opts),
+                display_name=display_name,
+                long_options=" --".join(long_opts),
                 short=" ".join(short_opts),
                 description=extract_plain_text(arg.parameter.help),
                 required=arg.required,
@@ -111,26 +119,11 @@ def extract_help_data(subcommand: str) -> HelpData:
 
 def generate_markdown_docs(help_data: HelpData) -> str:
     """Generate markdown documentation from help data."""
-    lines = [
-        "# AIPerf CLI Reference",
-        "",
-        "This document provides a comprehensive reference for all AIPerf CLI parameters.",
-        "",
-    ]
-
-    # Usage section
-    if help_data.usage:
-        lines.extend(
-            ["## Usage", "", "```bash", str(help_data.usage).strip(), "```", ""]
-        )
-
-    # Description section
-    if help_data.description:
-        lines.extend(["## Description", "", str(help_data.description).strip(), ""])
+    lines = []
 
     # Parameters section
     if help_data.parameter_groups:
-        lines.extend(["## Parameters", ""])
+        lines.extend(["## CLI Parameters", ""])
 
         for group_name, parameters in help_data.parameter_groups.items():
             if not parameters:
@@ -147,7 +140,7 @@ def generate_markdown_docs(help_data: HelpData) -> str:
                     options.append(f"{param.short}{value_suffix}")
 
                 # Add long options
-                for option in param.name.split(" --"):
+                for option in param.long_options.split(" --"):
                     option = option.strip()
                     if option:
                         if not option.startswith("--"):
@@ -156,10 +149,13 @@ def generate_markdown_docs(help_data: HelpData) -> str:
                         if formatted not in options:
                             options.append(formatted)
 
-                # Format options
+                # Format options with display name
                 if options:
                     combined = " | ".join(f"`{opt}`" for opt in options)
-                    lines.extend([f"##### {combined}", ""])
+                    if param.display_name:
+                        lines.extend([f"##### {param.display_name}", "", combined, ""])
+                    else:
+                        lines.extend([f"##### {combined}", ""])
 
                 # Add description
                 if param.description:
