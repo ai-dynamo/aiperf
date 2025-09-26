@@ -142,6 +142,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         try:
             start_time = time.perf_counter()
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+
             model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
             request_converter = RequestConverterFactory.create_instance(
                 model_endpoint.endpoint.type,
