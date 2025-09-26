@@ -25,6 +25,7 @@ class TimingManagerConfig(AIPerfBaseModel):
     auto_offset_timestamps: bool = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
     fixed_schedule_start_offset: int | None = InputDefaults.FIXED_SCHEDULE_START_OFFSET
     fixed_schedule_end_offset: int | None = InputDefaults.FIXED_SCHEDULE_END_OFFSET
+    fixed_schedule_speedup: float | None = InputDefaults.FIXED_SCHEDULE_SPEEDUP
     request_cancellation_rate: float = LoadGeneratorDefaults.REQUEST_CANCELLATION_RATE
     request_cancellation_delay: float = LoadGeneratorDefaults.REQUEST_CANCELLATION_DELAY
 
@@ -45,6 +46,7 @@ class TimingManagerConfig(AIPerfBaseModel):
             auto_offset_timestamps=user_config.input.fixed_schedule_auto_offset,
             fixed_schedule_start_offset=user_config.input.fixed_schedule_start_offset,
             fixed_schedule_end_offset=user_config.input.fixed_schedule_end_offset,
+            fixed_schedule_speedup=user_config.input.fixed_schedule_speedup,
             request_cancellation_rate=user_config.loadgen.request_cancellation_rate,
             request_cancellation_delay=user_config.loadgen.request_cancellation_delay,
         )

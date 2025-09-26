@@ -178,6 +178,21 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.FIXED_SCHEDULE_END_OFFSET
 
+    # NEW AIPerf Option
+    fixed_schedule_speedup: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Specifies a scaling factor to apply to the timestamps in the fixed schedule. "
+            "For example, a value of 2.0 will make the schedule run twice as fast, while a value of 0.5 "
+            "will make it run half as fast.",
+        ),
+        CLIParameter(
+            name=("--fixed-schedule-speedup",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.FIXED_SCHEDULE_SPEEDUP
+
     public_dataset: Annotated[
         PublicDatasetType | None,
         Field(description="The public dataset to use for the requests."),
