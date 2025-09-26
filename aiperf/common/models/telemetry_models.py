@@ -6,6 +6,7 @@ from pydantic import Field
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.record_models import MetricResult
 
 
@@ -300,3 +301,41 @@ class TelemetryHierarchy(AIPerfBaseModel):
             dcgm_data[record.gpu_uuid] = GpuTelemetryData(metadata=metadata)
 
         dcgm_data[record.gpu_uuid].add_record(record)
+
+
+class TelemetryResults(AIPerfBaseModel):
+    """Results from GPU telemetry collection during a profile run.
+
+    This class contains all telemetry data and metadata collected during
+    a benchmarking session, separate from inference performance results.
+    """
+
+    telemetry_data: TelemetryHierarchy = Field(
+        description="Hierarchical telemetry data organized by DCGM endpoint and GPU"
+    )
+    start_ns: int = Field(
+        description="Start time of telemetry collection in nanoseconds"
+    )
+    end_ns: int = Field(description="End time of telemetry collection in nanoseconds")
+    endpoints_tested: list[str] = Field(
+        default_factory=list,
+        description="List of DCGM endpoint URLs that were tested for reachability",
+    )
+    endpoints_successful: list[str] = Field(
+        default_factory=list,
+        description="List of DCGM endpoint URLs that successfully provided telemetry data",
+    )
+
+
+class ProcessTelemetryResult(AIPerfBaseModel):
+    """Result of telemetry processing - mirrors ProcessRecordsResult pattern.
+
+    This provides a parallel structure to ProcessRecordsResult for the telemetry pipeline,
+    maintaining complete separation while following the same architectural patterns.
+    """
+
+    results: TelemetryResults = Field(description="The processed telemetry results")
+    errors: list[ErrorDetails] = Field(
+        default_factory=list,
+        description="Any errors that occurred while processing telemetry data",
+    )

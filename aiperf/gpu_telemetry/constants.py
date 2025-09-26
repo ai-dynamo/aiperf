@@ -5,7 +5,7 @@
 
 # Default telemetry configuration
 DEFAULT_DCGM_ENDPOINT = "http://localhost:9401/metrics"
-DEFAULT_COLLECTION_INTERVAL = 0.033  # 33ms (~30Hz)
+DEFAULT_COLLECTION_INTERVAL = 0.33  # in seconds, 330ms (~3Hz)
 
 # Timeouts for telemetry operations (seconds)
 URL_REACHABILITY_TIMEOUT = 5

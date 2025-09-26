@@ -8,7 +8,7 @@ from rich.console import Console
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.factories import ConsoleExporterFactory, DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models import ProfileResults
+from aiperf.common.models import ProfileResults, TelemetryResults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
 
@@ -23,6 +23,7 @@ class ExporterManager(AIPerfLoggerMixin):
         results: ProfileResults,
         input_config: UserConfig,
         service_config: ServiceConfig,
+        telemetry_results: TelemetryResults | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -34,6 +35,7 @@ class ExporterManager(AIPerfLoggerMixin):
             results=self._results,
             user_config=self._input_config,
             service_config=self._service_config,
+            telemetry_results=telemetry_results,
         )
 
     def _task_done_callback(self, task: asyncio.Task) -> None:
