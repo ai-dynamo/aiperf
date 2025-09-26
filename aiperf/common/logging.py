@@ -11,6 +11,7 @@ from rich.logging import RichHandler
 
 from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
 from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
+from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import ServiceType
 from aiperf.common.enums.ui_enums import AIPerfUIType
 from aiperf.common.factories import ServiceFactory
@@ -112,7 +113,7 @@ def setup_child_process_logging(
 
     if user_config and user_config.output.artifact_directory:
         file_handler = create_file_handler(
-            user_config.output.artifact_directory / "logs", level
+            user_config.output.artifact_directory / OutputDefaults.LOG_FOLDER, level
         )
         root_logger.addHandler(file_handler)
 
@@ -138,9 +139,9 @@ def setup_rich_logging(user_config: UserConfig, service_config: ServiceConfig) -
 
     # Enable file logging for services
     # TODO: Use config to determine if file logging is enabled and the folder path.
-    log_folder = user_config.output.artifact_directory / "logs"
+    log_folder = user_config.output.artifact_directory / OutputDefaults.LOG_FOLDER
     log_folder.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(log_folder / "aiperf.log")
+    file_handler = logging.FileHandler(log_folder / OutputDefaults.LOG_FILE)
     file_handler.setLevel(level)
     file_handler.formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -158,7 +159,7 @@ def create_file_handler(
     """Configure a file handler for logging."""
 
     log_folder.mkdir(parents=True, exist_ok=True)
-    log_file_path = log_folder / "aiperf.log"
+    log_file_path = log_folder / OutputDefaults.LOG_FILE
 
     file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
     file_handler.setLevel(level)

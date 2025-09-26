@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import Field
 
@@ -81,3 +81,25 @@ class Conversation(AIPerfBaseModel):
         default=[], description="List of turns in the conversation."
     )
     session_id: str = Field(default="", description="Session ID of the conversation.")
+
+
+class SessionPayloads(AIPerfBaseModel):
+    """A single session, with its session ID and a list of formatted payloads (one per turn)."""
+
+    session_id: str | None = Field(
+        default=None, description="Session ID of the conversation."
+    )
+    payloads: list[dict[str, Any]] = Field(
+        default=[],
+        description="List of formatted payloads in the session (one per turn). These have been formatted for the model and endpoint.",
+    )
+
+
+class InputsFile(AIPerfBaseModel):
+    """A list of all dataset sessions. Each session contains a list of formatted payloads (one per turn).
+    This is similar to the format used by GenAI-Perf for the inputs.json file.
+    """
+
+    data: list[SessionPayloads] = Field(
+        default=[], description="List of all dataset sessions."
+    )
