@@ -9,11 +9,11 @@ import pytest
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.models.record_models import RequestRecord
-from aiperf.workers.credit_processor_mixin import CreditProcessorMixin
+from aiperf.workers.worker import Worker
 
 
-class MockCreditProcessorMixin(CreditProcessorMixin):
-    """Mock implementation of CreditProcessorMixin for testing."""
+class MockWorker(Worker):
+    """Mock implementation of Worker for testing."""
 
     def __init__(self):
         self.inference_client = Mock()
@@ -24,20 +24,20 @@ class MockCreditProcessorMixin(CreditProcessorMixin):
         return "mock-service-id"
 
 
-class TestCreditProcessorMixin:
+class TestWorker:
     @pytest.fixture
-    def mixin(self):
-        """Create a mock CreditProcessorMixin for testing."""
-        return MockCreditProcessorMixin()
+    def worker(self):
+        """Create a mock Worker for testing."""
+        return MockWorker()
 
-    async def test_send_with_optional_cancel_should_cancel_false(self, mixin):
+    async def test_send_with_optional_cancel_should_cancel_false(self, worker):
         """Test _send_with_optional_cancel when should_cancel=False."""
         mock_record = RequestRecord(timestamp_ns=time.time_ns())
 
         async def mock_coroutine():
             return mock_record
 
-        result = await mixin._send_with_optional_cancel(
+        result = await worker._send_with_optional_cancel(
             send_coroutine=mock_coroutine(),
             should_cancel=False,
             cancel_after_ns=0,
@@ -46,14 +46,14 @@ class TestCreditProcessorMixin:
         assert result == mock_record
 
     @patch("asyncio.wait_for", side_effect=asyncio.TimeoutError())
-    async def test_send_with_optional_cancel_zero_timeout(self, mock_wait_for, mixin):
+    async def test_send_with_optional_cancel_zero_timeout(self, mock_wait_for, worker):
         """Test _send_with_optional_cancel when should_cancel=True with cancel_after_ns=0."""
         mock_record = RequestRecord(timestamp_ns=time.time_ns())
 
         async def mock_coroutine():
             return mock_record
 
-        result = await mixin._send_with_optional_cancel(
+        result = await worker._send_with_optional_cancel(
             send_coroutine=mock_coroutine(),
             should_cancel=True,
             cancel_after_ns=0,
@@ -63,7 +63,7 @@ class TestCreditProcessorMixin:
         assert mock_wait_for.call_args[1]["timeout"] == 0
 
     @patch("asyncio.wait_for")
-    async def test_send_with_optional_cancel_success(self, mock_wait_for, mixin):
+    async def test_send_with_optional_cancel_success(self, mock_wait_for, worker):
         """Test successful request with timeout."""
         mock_record = RequestRecord(timestamp_ns=time.time_ns())
 
@@ -78,7 +78,7 @@ class TestCreditProcessorMixin:
 
         mock_wait_for.side_effect = mock_wait_for_impl
 
-        result = await mixin._send_with_optional_cancel(
+        result = await worker._send_with_optional_cancel(
             send_coroutine=simple_coroutine(),
             should_cancel=True,
             cancel_after_ns=int(2.0 * NANOS_PER_SECOND),
@@ -91,7 +91,7 @@ class TestCreditProcessorMixin:
         assert call_args[1]["timeout"] == 2.0
 
     @patch("asyncio.wait_for")
-    async def test_send_with_optional_cancel_timeout(self, mock_wait_for, mixin):
+    async def test_send_with_optional_cancel_timeout(self, mock_wait_for, worker):
         """Test request that times out."""
 
         async def simple_coroutine():
@@ -106,7 +106,7 @@ class TestCreditProcessorMixin:
 
         mock_wait_for.side_effect = mock_wait_for_timeout
 
-        result = await mixin._send_with_optional_cancel(
+        result = await worker._send_with_optional_cancel(
             send_coroutine=simple_coroutine(),
             should_cancel=True,
             cancel_after_ns=int(1.0 * NANOS_PER_SECOND),
@@ -118,7 +118,7 @@ class TestCreditProcessorMixin:
         assert call_args[1]["timeout"] == 1.0
 
     @patch("asyncio.wait_for")
-    async def test_timeout_conversion_precision(self, mock_wait_for, mixin):
+    async def test_timeout_conversion_precision(self, mock_wait_for, worker):
         """Test that nanoseconds are correctly converted to seconds with proper precision."""
         # Test various nanosecond values
         test_cases = [
@@ -142,7 +142,7 @@ class TestCreditProcessorMixin:
 
             mock_wait_for.side_effect = mock_wait_for_impl
 
-            await mixin._send_with_optional_cancel(
+            await worker._send_with_optional_cancel(
                 send_coroutine=simple_coroutine(),
                 should_cancel=True,
                 cancel_after_ns=cancel_after_ns,
