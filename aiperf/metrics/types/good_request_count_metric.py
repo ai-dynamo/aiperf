@@ -32,7 +32,12 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
         """
         slos = slos or {}
         for metric_tag in slos:
-            MetricRegistry.get_class(metric_tag)
+            try:
+                MetricRegistry.get_class(metric_tag)
+            except Exception:
+                raise ValueError(
+                    f"Unknown metric tag(s) in --goodput: {metric_tag}. "
+                ) from None
 
         cls._thresholds = {k: float(v) for k, v in slos.items()}
 
