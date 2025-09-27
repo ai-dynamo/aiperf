@@ -117,7 +117,7 @@ class MultiProcessServiceManager(BaseServiceManager):
             )
 
             self.info(
-                f"Service {service_type} started as subprocess (PID: {process.pid})"
+                f"Service {service_id} started as subprocess (PID: {process.pid})"
             )
 
             self.subprocess_info.append(
