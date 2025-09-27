@@ -9,7 +9,6 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.zmq_config import ZMQIPCConfig, ZMQTCPConfig
 from aiperf.common.constants import (
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
@@ -78,12 +77,6 @@ class MultiProcessServiceManager(BaseServiceManager):
         """Run a service with the given number of replicas."""
         for _ in range(num_replicas):
             service_id = f"{service_type}_{uuid.uuid4().hex[:8]}"
-
-            if isinstance(self.service_config._comm_config, ZMQIPCConfig):
-                self.service_config.zmq_ipc = self.service_config._comm_config
-            elif isinstance(self.service_config._comm_config, ZMQTCPConfig):
-                self.service_config.zmq_tcp = self.service_config._comm_config
-
             service_config_json = self.service_config.model_dump_json()
             user_config_json = self.user_config.model_dump_json(exclude_unset=True)
 
@@ -111,9 +104,8 @@ class MultiProcessServiceManager(BaseServiceManager):
             else:
                 env["PYTHONPATH"] = str(current_dir)
 
-            # Start the subprocess
             self.debug(
-                f"Starting subprocess for {service_type} with command: {' '.join(args[:3])} ..."
+                lambda args=args: f"Starting subprocess for {service_type} with command: {' '.join(args[:3])} ..."
             )
 
             process = await asyncio.create_subprocess_exec(
@@ -128,11 +120,6 @@ class MultiProcessServiceManager(BaseServiceManager):
                 f"Service {service_type} started as subprocess (PID: {process.pid})"
             )
 
-            # Start background tasks to handle subprocess output
-            self.execute_async(self._handle_subprocess_output(process, service_id))
-
-            # Check if process is still alive after a brief moment
-
             self.subprocess_info.append(
                 AsyncSubprocessRunInfo(
                     process=process,
@@ -140,6 +127,8 @@ class MultiProcessServiceManager(BaseServiceManager):
                     service_id=service_id,
                 )
             )
+
+            self.execute_async(self._handle_subprocess_output(process, service_id))
 
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None
@@ -246,24 +235,46 @@ class MultiProcessServiceManager(BaseServiceManager):
     ) -> None:
         """Handle stdout and stderr output from subprocess."""
         self.debug(
-            f"Starting output handling for subprocess {service_id} (PID: {process.pid})"
+            lambda: f"Starting output handling for subprocess {service_id} (PID: {process.pid})"
         )
 
         async def _read_stream(stream, stream_name):
             if stream is None:
                 return
             try:
-                while True:
-                    line = await stream.readline()
-                    if not line:
-                        break
-                    decoded_line = line.decode().rstrip()
-                    if decoded_line:
-                        handle_subprocess_log_line(decoded_line, service_id)
-            except Exception as e:
-                self.debug(f"Error reading {stream_name} for {service_id}: {e}")
+                buffer_chunks = []
 
-        # Start reading both streams concurrently
+                while True:
+                    chunk = await stream.read(1024)  # Read up to 1KB at a time
+                    if not chunk:
+                        # Process any remaining data in buffer
+                        if buffer_chunks:
+                            remaining_data = b"".join(buffer_chunks)
+                            decoded_line = remaining_data.decode().rstrip()
+                            if decoded_line:
+                                handle_subprocess_log_line(decoded_line, service_id)
+                        break
+
+                    buffer_chunks.append(chunk)
+
+                    # Process complete lines when we have newlines
+                    if b"\n" in chunk:
+                        # Join all chunks to process lines
+                        buffer_data = b"".join(buffer_chunks)
+                        lines = buffer_data.split(b"\n")
+
+                        # Process all complete lines (all except the last)
+                        for line in lines[:-1]:
+                            decoded_line = line.decode().rstrip()
+                            if decoded_line:
+                                handle_subprocess_log_line(decoded_line, service_id)
+
+                        # Keep the last part (incomplete line) in buffer
+                        buffer_chunks = [lines[-1]] if lines[-1] else []
+
+            except Exception as e:
+                self.warning(f"Error reading {stream_name} for {service_id}: {e}")
+
         try:
             await asyncio.gather(
                 _read_stream(process.stdout, "stdout"),
@@ -271,7 +282,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                 return_exceptions=True,
             )
         except Exception as e:
-            self.error(f"Error in subprocess output handling for {service_id}: {e}")
+            self.warning(f"Error in subprocess output handling for {service_id}: {e}")
 
         # Wait for process to complete and log exit code
         try:
@@ -282,10 +293,10 @@ class MultiProcessServiceManager(BaseServiceManager):
                 )
             else:
                 self.debug(
-                    f"Subprocess {service_id} (PID: {process.pid}) exited successfully"
+                    lambda: f"Subprocess {service_id} (PID: {process.pid}) exited successfully"
                 )
         except Exception as e:
-            self.error(f"Error waiting for subprocess {service_id}: {e}")
+            self.warning(f"Error waiting for subprocess {service_id}: {e}")
 
     async def _wait_for_subprocess(self, info: AsyncSubprocessRunInfo) -> None:
         """Wait for a subprocess to terminate with timeout handling."""
@@ -293,16 +304,14 @@ class MultiProcessServiceManager(BaseServiceManager):
             return
 
         try:
-            # Send SIGTERM to subprocess
             info.process.terminate()
 
-            # Wait for graceful termination with timeout
             try:
                 await asyncio.wait_for(
                     info.process.wait(), timeout=TASK_CANCEL_TIMEOUT_SHORT
                 )
                 self.debug(
-                    f"Service {info.service_type} subprocess stopped gracefully (pid: {info.process.pid})"
+                    lambda: f"Service {info.service_type} subprocess stopped gracefully (pid: {info.process.pid})"
                 )
             except asyncio.TimeoutError:
                 self.warning(
@@ -312,7 +321,6 @@ class MultiProcessServiceManager(BaseServiceManager):
                 await info.process.wait()
 
         except ProcessLookupError:
-            # Process already terminated
             self.debug(
                 f"Service {info.service_type} subprocess (pid: {info.process.pid}) already terminated"
             )

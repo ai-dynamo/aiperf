@@ -67,7 +67,8 @@ class ServiceConfig(BaseSettings):
             self._comm_config = self.zmq_ipc
         else:
             _logger.info("Using default ZMQ IPC configuration")
-            self._comm_config = ZMQIPCConfig()
+            self.zmq_ipc = ZMQIPCConfig()
+            self._comm_config = self.zmq_ipc
         return self
 
     service_run_type: Annotated[
