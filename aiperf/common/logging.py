@@ -43,15 +43,15 @@ def _is_service_in_types(service_id: str, service_types: set[ServiceType]) -> bo
     return False
 
 
-def setup_child_process_logging(
+def setup_logging(
     service_id: str | None = None,
     service_config: ServiceConfig | None = None,
     user_config: UserConfig | None = None,
-    use_structured_subprocess_format: bool = False,
+    use_structured_subprocess_format: bool = True,
 ) -> None:
-    """Set up logging for a child process.
+    """Set up logging for a service.
 
-    This should be called early in child process initialization.
+    This should be called early in service initialization.
 
     Args:
         service_id: The ID of the service to log under. If None, logs will be under the process name.
@@ -109,40 +109,6 @@ def setup_child_process_logging(
         root_logger.addHandler(file_handler)
 
 
-# TODO: Integrate with the subprocess logging instead of being separate
-def setup_rich_logging(user_config: UserConfig, service_config: ServiceConfig) -> None:
-    """Set up rich logging with appropriate configuration."""
-    # Set logging level for the root logger (affects all loggers)
-    level = service_config.log_level.upper()
-    logging.root.setLevel(level)
-
-    rich_handler = RichHandler(
-        rich_tracebacks=True,
-        show_path=True,
-        console=Console(),
-        show_time=True,
-        show_level=True,
-        tracebacks_show_locals=False,
-        log_time_format="%H:%M:%S.%f",
-        omit_repeated_times=False,
-    )
-    logging.root.addHandler(rich_handler)
-
-    # Enable file logging for services
-    # TODO: Use config to determine if file logging is enabled and the folder path.
-    log_folder = user_config.output.artifact_directory / OutputDefaults.LOG_FOLDER
-    log_folder.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(log_folder / OutputDefaults.LOG_FILE)
-    file_handler.setLevel(level)
-    file_handler.formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    logging.root.addHandler(file_handler)
-
-    _logger.debug(lambda: f"Logging initialized with level: {level}")
-
-
 def create_file_handler(
     log_folder: Path,
     level: str | int,
@@ -196,32 +162,32 @@ def parse_subprocess_log_line(line: str) -> logging.LogRecord | None:
         LogRecord with parsed log data or None if parsing fails
     """
     match = SUBPROCESS_LOG_PATTERN.match(line)
-    if match:
-        # Create a LogRecord directly from parsed data
-        record = logging.LogRecord(
-            name=match.group("name"),
-            level=int(match.group("levelno")),
-            pathname=match.group("pathname"),
-            lineno=int(match.group("lineno")),
-            msg=match.group("msg"),
-            args=(),
-            exc_info=None,
-            func=None,
-            sinfo=None,
-        )
+    if not match:
+        return None
+    # Create a LogRecord directly from parsed data
+    record = logging.LogRecord(
+        name=match.group("name"),
+        level=int(match.group("levelno")),
+        pathname=match.group("pathname"),
+        lineno=int(match.group("lineno")),
+        msg=match.group("msg"),
+        args=(),
+        exc_info=None,
+        func=None,
+        sinfo=None,
+    )
 
-        # Set additional attributes from subprocess
-        record.created = float(match.group("created"))
-        record.msecs = (record.created % 1) * 1000
-        record.processName = match.group("process_name")
-        record.process = int(match.group("process_id"))
-        record.levelname = match.group("levelname")
+    # Set additional attributes from subprocess
+    record.created = float(match.group("created"))
+    record.msecs = (record.created % 1) * 1000
+    record.processName = match.group("process_name")
+    record.process = int(match.group("process_id"))
+    record.levelname = match.group("levelname")
 
-        # Store service_id as custom attribute
-        record.service_id = match.group("service_id")
+    # Store service_id as custom attribute
+    record.service_id = match.group("service_id")
 
-        return record
-    return None
+    return record
 
 
 def handle_subprocess_log_line(line: str, fallback_service_id: str) -> None:
@@ -239,18 +205,15 @@ def handle_subprocess_log_line(line: str, fallback_service_id: str) -> None:
     parsed_record = parse_subprocess_log_line(line)
 
     if parsed_record:
-        # Structured log - forward directly to original logger
         original_logger = logging.getLogger(parsed_record.name)
         if original_logger.isEnabledFor(parsed_record.levelno):
             original_logger.handle(parsed_record)
     else:
-        # Unstructured log - create LogRecord and forward to fallback logger
         fallback_logger = logging.getLogger(fallback_service_id)
-        if fallback_logger.isEnabledFor(logging.INFO):
-            # Create LogRecord directly without temporary objects
+        if fallback_logger.isEnabledFor(logging.WARNING):
             record = logging.LogRecord(
                 name=fallback_service_id,
-                level=logging.INFO,
+                level=logging.WARNING,
                 pathname="<subprocess>",
                 lineno=0,
                 msg=line,
@@ -261,6 +224,6 @@ def handle_subprocess_log_line(line: str, fallback_service_id: str) -> None:
             )
             record.created = time.time()
             record.msecs = (record.created % 1) * 1000
-            record.levelname = "INFO"
+            record.levelname = "WARNING"
 
             fallback_logger.handle(record)

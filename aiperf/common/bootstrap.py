@@ -14,7 +14,6 @@ def bootstrap_and_run_service(
     service_config: ServiceConfig | None = None,
     user_config: UserConfig | None = None,
     service_id: str | None = None,
-    use_structured_subprocess_format: bool = False,
     **kwargs,
 ):
     """Bootstrap the service and run it.
@@ -49,24 +48,11 @@ def bootstrap_and_run_service(
         if service_config.developer.enable_yappi:
             _start_yappi_profiling()
 
-        from aiperf.module_loader import ensure_modules_loaded
-
-        ensure_modules_loaded()
-
         service = service_class(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
             **kwargs,
-        )
-
-        from aiperf.common.logging import setup_child_process_logging
-
-        setup_child_process_logging(
-            service.service_id,
-            service_config,
-            user_config,
-            use_structured_subprocess_format,
         )
 
         if user_config.input.random_seed is not None:

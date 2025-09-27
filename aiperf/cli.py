@@ -14,6 +14,7 @@ from cyclopts import App
 
 from aiperf.cli_utils import exit_on_error
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.types import ServiceTypeT
 
 app = App(name="aiperf", help="NVIDIA AIPerf")
 
@@ -23,7 +24,7 @@ def profile(
     user_config: UserConfig,
     service_config: ServiceConfig | None = None,
 ) -> None:
-    """Run the Profile subcommand.
+    """Profile an inference server.
 
     Args:
         user_config: User configuration for the benchmark
@@ -36,6 +37,23 @@ def profile(
         service_config = service_config or load_service_config()
 
         run_system_controller(user_config, service_config)
+
+
+@app.command(name="service")
+def service(
+    service_type: ServiceTypeT,
+    user_config: UserConfig,
+    service_config: ServiceConfig | None = None,
+) -> None:
+    """Execute an individual AIPerf service."""
+
+    with exit_on_error(title=f"Error Running AIPerf {service_type} Service"):
+        from aiperf.cli_runner import run_service
+        from aiperf.common.config import load_service_config
+
+        service_config = service_config or load_service_config()
+
+        run_service(service_type, service_config, user_config)
 
 
 if __name__ == "__main__":
