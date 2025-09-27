@@ -19,7 +19,6 @@ from aiperf.controller.proxy_manager import (
 )
 from aiperf.controller.system_controller import (
     SystemController,
-    main,
 )
 from aiperf.controller.system_mixins import (
     SignalHandlerMixin,
@@ -34,6 +33,5 @@ __all__ = [
     "ServiceKubernetesRunInfo",
     "SignalHandlerMixin",
     "SystemController",
-    "main",
     "print_exit_errors",
 ]

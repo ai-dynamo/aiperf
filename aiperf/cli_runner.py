@@ -1,10 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import time
 import uuid
 
-from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -12,7 +10,8 @@ from aiperf.common.enums.service_enums import ServiceType
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.logging import setup_logging
 from aiperf.common.types import ServiceTypeT
-from aiperf.module_loader import ensure_modules_loaded
+
+# Plugin discovery is now done lazily in factories, no need to preload all modules
 
 
 def run_service(
@@ -34,16 +33,7 @@ def run_service(
 
     _logger = AIPerfLogger(service_id)
 
-    try:
-        start_time = time.perf_counter()
-        ensure_modules_loaded()
-        end_time = time.perf_counter()
-        _logger.info(f"AIPerf modules loaded in {end_time - start_time:.2f} seconds")
-    except Exception as e:
-        raise_startup_error_and_exit(
-            f"Error loading modules: {e}",
-            title="Error Loading Modules",
-        )
+    # Modules are now loaded on-demand via factory plugin discovery
 
     try:
         service_class = ServiceFactory.get_class_from_type(service_type)

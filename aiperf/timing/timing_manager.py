@@ -195,12 +195,11 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
         )
 
 
-def main() -> None:
-    """Main entry point for the timing manager."""
-    from aiperf.common.bootstrap import bootstrap_and_run_service
-
-    bootstrap_and_run_service(TimingManager)
-
-
 if __name__ == "__main__":
-    main()
+    """Main entry point for TimingManager service."""
+    import sys
+
+    from aiperf.common.subprocess_service_runner import create_service_app
+
+    app = create_service_app(ServiceType.TIMING_MANAGER)
+    sys.exit(app())

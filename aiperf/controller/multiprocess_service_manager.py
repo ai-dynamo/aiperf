@@ -58,6 +58,20 @@ class MultiProcessServiceManager(BaseServiceManager):
         super().__init__(required_services, service_config, user_config, **kwargs)
         self.subprocess_info: list[AsyncSubprocessRunInfo] = []
 
+    def _get_service_module_path(self, service_type: ServiceTypeT) -> str:
+        """Get the module path for a service type from the registered factory."""
+        try:
+            # Get the service class from the factory
+            from aiperf.common.factories import ServiceFactory
+
+            service_class = ServiceFactory.get_class_from_type(service_type)
+            # Return the full module path where the service class is defined
+            return service_class.__module__
+        except Exception as e:
+            raise ValueError(
+                f"Failed to get module path for service type {service_type}: {e}"
+            ) from e
+
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
     ) -> None:
@@ -73,17 +87,19 @@ class MultiProcessServiceManager(BaseServiceManager):
             service_config_json = self.service_config.model_dump_json()
             user_config_json = self.user_config.model_dump_json(exclude_unset=True)
 
-            # Create subprocess arguments using the service subcommand
+            # Create subprocess arguments using cyclopts CLI (braindead simple)
+            service_module = self._get_service_module_path(service_type)
             args = [
                 sys.executable,
                 "-m",
-                "aiperf.cli",
-                "service",
-                str(service_type),
+                service_module,
+                "--service-id",
                 service_id,
+                "--service-config",
                 service_config_json,
+                "--user-config",
                 user_config_json,
-                "--use-structured-logging",  # Enable structured logging for subprocess parsing
+                "--use-structured-logging",
             ]
 
             # Prepare environment for subprocess

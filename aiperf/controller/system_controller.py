@@ -560,14 +560,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         await super()._kill()
 
 
-def main() -> None:
-    """Main entry point for the system controller."""
-
-    from aiperf.common.bootstrap import bootstrap_and_run_service
-
-    bootstrap_and_run_service(SystemController)
-
-
 if __name__ == "__main__":
-    main()
-    sys.exit(0)
+    """Main entry point for SystemController service."""
+    import sys
+
+    from aiperf.common.subprocess_service_runner import create_service_app
+
+    app = create_service_app(ServiceType.SYSTEM_CONTROLLER)
+    sys.exit(app())

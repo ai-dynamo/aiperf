@@ -149,11 +149,11 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         return results
 
 
-def main() -> None:
-    from aiperf.common.bootstrap import bootstrap_and_run_service
-
-    bootstrap_and_run_service(RecordProcessor)
-
-
 if __name__ == "__main__":
-    main()
+    """Main entry point for RecordProcessor service."""
+    import sys
+
+    from aiperf.common.subprocess_service_runner import create_service_app
+
+    app = create_service_app(ServiceType.RECORD_PROCESSOR)
+    sys.exit(app())

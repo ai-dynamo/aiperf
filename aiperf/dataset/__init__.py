@@ -9,7 +9,6 @@ from aiperf.dataset.composer import (
 from aiperf.dataset.dataset_manager import (
     DATASET_CONFIGURATION_TIMEOUT,
     DatasetManager,
-    main,
 )
 from aiperf.dataset.generator import (
     DEFAULT_CORPUS_FILE,
@@ -74,7 +73,6 @@ __all__ = [
     "SyntheticDatasetComposer",
     "check_file_exists",
     "encode_image",
-    "main",
     "open_image",
     "sample_normal",
     "sample_positive_normal",

@@ -6,7 +6,6 @@ import time
 from pydantic import Field
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
     DEFAULT_MAX_WORKERS_CAP,
@@ -194,9 +193,11 @@ class WorkerManager(BaseComponentService):
         await self.publish(summary)
 
 
-def main() -> None:
-    bootstrap_and_run_service(WorkerManager)
-
-
 if __name__ == "__main__":
-    main()
+    """Main entry point for WorkerManager service."""
+    import sys
+
+    from aiperf.common.subprocess_service_runner import create_service_app
+
+    app = create_service_app(ServiceType.WORKER_MANAGER)
+    sys.exit(app())

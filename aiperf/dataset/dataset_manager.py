@@ -357,13 +357,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
 
 
-def main() -> None:
-    """Main entry point for the dataset manager."""
-
-    from aiperf.common.bootstrap import bootstrap_and_run_service
-
-    bootstrap_and_run_service(DatasetManager)
-
-
 if __name__ == "__main__":
-    main()
+    """Main entry point for DatasetManager service."""
+    import sys
+
+    from aiperf.common.subprocess_service_runner import create_service_app
+
+    app = create_service_app(ServiceType.DATASET_MANAGER)
+    sys.exit(app())
