@@ -149,7 +149,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         return results
 
 
-if __name__ == "__main__":
+def main() -> None:
     """Main entry point for RecordProcessor service."""
     import sys
 
@@ -157,3 +157,7 @@ if __name__ == "__main__":
 
     app = create_service_app(ServiceType.RECORD_PROCESSOR)
     sys.exit(app())
+
+
+if __name__ == "__main__":
+    main()

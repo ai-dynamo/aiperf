@@ -193,7 +193,7 @@ class WorkerManager(BaseComponentService):
         await self.publish(summary)
 
 
-if __name__ == "__main__":
+def main() -> None:
     """Main entry point for WorkerManager service."""
     import sys
 
@@ -201,3 +201,7 @@ if __name__ == "__main__":
 
     app = create_service_app(ServiceType.WORKER_MANAGER)
     sys.exit(app())
+
+
+if __name__ == "__main__":
+    main()

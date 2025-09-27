@@ -148,7 +148,7 @@ class Worker(
         await self.stop()
 
 
-if __name__ == "__main__":
+def main() -> None:
     """Main entry point for Worker service."""
     import sys
 
@@ -156,3 +156,7 @@ if __name__ == "__main__":
 
     app = create_service_app(ServiceType.WORKER)
     sys.exit(app())
+
+
+if __name__ == "__main__":
+    main()

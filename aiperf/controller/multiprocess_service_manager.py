@@ -87,18 +87,16 @@ class MultiProcessServiceManager(BaseServiceManager):
             service_config_json = self.service_config.model_dump_json()
             user_config_json = self.user_config.model_dump_json(exclude_unset=True)
 
-            # Create subprocess arguments using cyclopts CLI (braindead simple)
+            # Create subprocess arguments using cli runner
             service_module = self._get_service_module_path(service_type)
             args = [
                 sys.executable,
                 "-m",
                 service_module,
+                service_config_json,
+                user_config_json,
                 "--service-id",
                 service_id,
-                "--service-config",
-                service_config_json,
-                "--user-config",
-                user_config_json,
                 "--use-structured-logging",
             ]
 

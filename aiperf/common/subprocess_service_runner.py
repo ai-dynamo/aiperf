@@ -18,45 +18,38 @@ def create_service_app(service_type: ServiceType) -> App:
 
     @app.default
     def run(
+        service_config: str,
+        user_config: str,
         service_id: str | None = None,
-        service_config: str | None = None,
-        user_config: str | None = None,
         use_structured_logging: bool = False,
     ) -> None:
         """Run the service.
 
         Args:
-            service_id: Service ID for subprocess mode
             service_config: Service configuration as JSON string
             user_config: User configuration as JSON string
+            service_id: Service ID (auto-generated if not provided)
             use_structured_logging: Enable structured logging for subprocess communication
         """
-        if service_config and user_config:
-            # Subprocess mode: parse JSON configs and use cli_runner
-            try:
-                service_config_obj = ServiceConfig.model_validate_json(service_config)
-                user_config_obj = UserConfig.model_validate_json(user_config)
+        try:
+            service_config_obj = ServiceConfig.model_validate_json(service_config)
+            user_config_obj = UserConfig.model_validate_json(user_config)
 
-                run_service(
-                    service_type,
-                    service_config_obj,
-                    user_config_obj,
-                    service_id=service_id,
-                    use_structured_subprocess_format=use_structured_logging,
-                )
-            except Exception as e:
-                print(f"Error in subprocess mode: {e}")
-                raise SystemExit(1) from e
-        else:
-            # Standalone mode: use bootstrap_and_run_service
-            from aiperf.common.bootstrap import bootstrap_and_run_service
-            from aiperf.common.factories import ServiceFactory
+            # Auto-generate service_id if not provided
+            if service_id is None:
+                import uuid
 
-            try:
-                service_class = ServiceFactory.get_class_from_type(service_type)
-                bootstrap_and_run_service(service_class)
-            except Exception as e:
-                print(f"Error in standalone mode: {e}")
-                raise SystemExit(1) from e
+                service_id = f"{service_type}_{uuid.uuid4().hex[:8]}"
+
+            run_service(
+                service_type,
+                service_config_obj,
+                user_config_obj,
+                service_id=service_id,
+                use_structured_subprocess_format=use_structured_logging,
+            )
+        except Exception as e:
+            print(f"Error running service: {e}")
+            raise SystemExit(1) from e
 
     return app

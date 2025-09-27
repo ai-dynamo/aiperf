@@ -357,7 +357,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
 
 
-if __name__ == "__main__":
+def main() -> None:
     """Main entry point for DatasetManager service."""
     import sys
 
@@ -365,3 +365,7 @@ if __name__ == "__main__":
 
     app = create_service_app(ServiceType.DATASET_MANAGER)
     sys.exit(app())
+
+
+if __name__ == "__main__":
+    main()
