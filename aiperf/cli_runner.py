@@ -23,7 +23,6 @@ def run_service(
     use_structured_subprocess_format: bool = True,
 ) -> None:
     """Run the specified service with the given configuration."""
-    service_class = ServiceFactory.get_class_from_type(service_type)
     service_id = service_id or f"{service_type}_{uuid.uuid4().hex[:8]}"
 
     setup_logging(
@@ -47,6 +46,7 @@ def run_service(
         )
 
     try:
+        service_class = ServiceFactory.get_class_from_type(service_type)
         bootstrap_and_run_service(
             service_class,
             service_id=service_id,

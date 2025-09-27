@@ -174,7 +174,7 @@ class WorkerManager(BaseComponentService):
     @background_task(immediate=False, interval=DEFAULT_WORKER_CHECK_INTERVAL)
     async def _worker_status_loop(self) -> None:
         """Check the status of all workers."""
-        self.debug("Checking worker status")
+        self.trace("Checking worker status")
 
         for _, info in self.worker_infos.items():
             if (time.time_ns() - (info.last_update_ns or 0)) / NANOS_PER_SECOND > DEFAULT_WORKER_STALE_TIME:  # fmt: skip
@@ -189,7 +189,8 @@ class WorkerManager(BaseComponentService):
                 worker_id: info.status for worker_id, info in self.worker_infos.items()
             },
         )
-        self.debug(lambda: f"Publishing worker status summary: {summary}")
+        if self.is_trace_enabled:
+            self.trace(f"Publishing worker status summary: {summary}")
         await self.publish(summary)
 
 

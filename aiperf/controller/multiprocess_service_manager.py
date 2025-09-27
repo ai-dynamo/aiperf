@@ -73,18 +73,15 @@ class MultiProcessServiceManager(BaseServiceManager):
             service_config_json = self.service_config.model_dump_json()
             user_config_json = self.user_config.model_dump_json(exclude_unset=True)
 
-            # Create subprocess arguments with proper Python path
+            # Create subprocess arguments using the service subcommand
             args = [
                 sys.executable,
                 "-m",
-                "aiperf.subprocess_runner",
-                "--service-type",
+                "aiperf.cli",
+                "service",
                 str(service_type),
-                "--service-id",
                 service_id,
-                "--service-config",
                 service_config_json,
-                "--user-config",
                 user_config_json,
                 "--use-structured-logging",  # Enable structured logging for subprocess parsing
             ]

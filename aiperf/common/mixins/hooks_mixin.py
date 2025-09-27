@@ -180,7 +180,8 @@ class HooksMixin(AIPerfLoggerMixin):
         """
         exceptions: list[Exception] = []
         for hook in self.get_hooks(*hook_types, reverse=reverse):
-            self.debug(lambda hook=hook: f"Running hook: {hook!r}")
+            if self.is_trace_enabled:
+                self.trace(f"Running hook: {hook!r}")
             try:
                 await hook(**kwargs)
             except Exception as e:

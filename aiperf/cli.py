@@ -42,18 +42,37 @@ def profile(
 @app.command(name="service")
 def service(
     service_type: ServiceTypeT,
-    user_config: UserConfig,
-    service_config: ServiceConfig | None = None,
+    service_id: str,
+    service_config: str,
+    user_config: str,
+    use_structured_logging: bool = False,
 ) -> None:
-    """Execute an individual AIPerf service."""
+    """Execute an individual AIPerf service.
+
+    This command is designed for subprocess execution and requires JSON serialized configurations.
+    """
+    import sys
+
+    try:
+        # Parse and validate JSON configurations directly
+        from aiperf.common.config import ServiceConfig, UserConfig
+
+        service_config_obj = ServiceConfig.model_validate_json(service_config)
+        user_config_obj = UserConfig.model_validate_json(user_config)
+    except Exception as e:
+        print(f"Error parsing or validating configuration: {e}", file=sys.stderr)
+        sys.exit(1)
 
     with exit_on_error(title=f"Error Running AIPerf {service_type} Service"):
         from aiperf.cli_runner import run_service
-        from aiperf.common.config import load_service_config
 
-        service_config = service_config or load_service_config()
-
-        run_service(service_type, service_config, user_config)
+        run_service(
+            service_type,
+            service_config_obj,
+            user_config_obj,
+            service_id=service_id,
+            use_structured_subprocess_format=use_structured_logging,
+        )
 
 
 if __name__ == "__main__":

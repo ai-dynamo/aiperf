@@ -285,14 +285,14 @@ class SystemController(SignalHandlerMixin, BaseService):
         service_type = message.service_type
         timestamp = message.request_ns
 
-        self.debug(lambda: f"Received heartbeat from {service_type} (ID: {service_id})")
+        self.trace(lambda: f"Received heartbeat from {service_type} (ID: {service_id})")
 
         # Update the last heartbeat timestamp if the component exists
         try:
             service_info = self.service_manager.service_id_map[service_id]
             service_info.last_seen = timestamp
             service_info.state = message.state
-            self.debug(f"Updated heartbeat for {service_id} to {timestamp}")
+            self.trace(lambda: f"Updated heartbeat for {service_id} to {timestamp}")
         except Exception:
             self.warning(
                 f"Received heartbeat from unknown service: {service_id} ({service_type})"

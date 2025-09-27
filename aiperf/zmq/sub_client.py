@@ -167,9 +167,10 @@ class ZMQSubClient(BaseZMQClient):
         else:
             message = Message.from_json_with_type(message_type, message_json)
 
-        self.debug(
-            lambda: f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"
-        )
+        if self.is_trace_enabled:
+            self.trace(
+                f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"
+            )
 
         # Call callbacks with the parsed message object
         if topic in self._subscribers:
