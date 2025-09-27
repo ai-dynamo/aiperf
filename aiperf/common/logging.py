@@ -3,6 +3,7 @@
 import logging
 import multiprocessing
 import re
+import time
 from pathlib import Path
 
 from rich.console import Console
@@ -15,9 +16,9 @@ from aiperf.common.enums import ServiceType
 from aiperf.common.factories import ServiceFactory
 
 # Regex pattern for parsing structured log format from subprocess output
-# Format: created|levelno|levelname|name|process_name|process_id|service_id|msg
+# Format: created|levelno|levelname|name|process_name|process_id|service_id|pathname|lineno|msg
 SUBPROCESS_LOG_PATTERN = re.compile(
-    r"(?P<created>\d+\.\d+)\|(?P<levelno>\d+)\|(?P<levelname>\w+)\|(?P<name>[^|]+)\|(?P<process_name>[^|]+)\|(?P<process_id>\d+)\|(?P<service_id>[^|]*)\|(?P<msg>.*)"
+    r"(?P<created>\d+\.\d+)\|(?P<levelno>\d+)\|(?P<levelname>\w+)\|(?P<name>[^|]+)\|(?P<process_name>[^|]+)\|(?P<process_id>\d+)\|(?P<service_id>[^|]*)\|(?P<pathname>[^|]*)\|(?P<lineno>\d+)\|(?P<msg>.*)"
 )
 
 _logger = AIPerfLogger(__name__)
@@ -168,37 +169,98 @@ class StructuredSubprocessLogHandler(logging.Handler):
     def __init__(self, service_id: str | None = None) -> None:
         super().__init__()
         self.service_id = service_id
+        self.process_id = multiprocessing.current_process().pid
+        self.process_name = multiprocessing.current_process().name
 
     def emit(self, record: logging.LogRecord) -> None:
         """Emit a log record in structured pipe-delimited format."""
         try:
-            # Format: created|levelno|levelname|name|process_name|process_id|service_id|msg
-            structured_log = f"{record.created}|{record.levelno}|{record.levelname}|{record.name}|{multiprocessing.current_process().name}|{multiprocessing.current_process().pid}|{self.service_id or ''}|{record.getMessage()}"
+            # Format: created|levelno|levelname|name|process_name|process_id|service_id|pathname|lineno|msg
+            pathname = getattr(record, "pathname", "")
+            lineno = getattr(record, "lineno", 0)
+
+            structured_log = f"{record.created}|{record.levelno}|{record.levelname}|{record.name}|{self.process_name}|{self.process_id}|{self.service_id or ''}|{pathname}|{lineno}|{record.getMessage()}"
             print(structured_log, flush=True)
         except Exception:
             # Do not log to prevent recursion
             pass
 
 
-def parse_subprocess_log_line(line: str) -> dict | None:
+def parse_subprocess_log_line(line: str) -> logging.LogRecord | None:
     """Parse a structured log line from subprocess output.
 
     Args:
         line: The log line to parse
 
     Returns:
-        Dictionary with parsed log data or None if parsing fails
+        LogRecord with parsed log data or None if parsing fails
     """
     match = SUBPROCESS_LOG_PATTERN.match(line)
     if match:
-        return {
-            "created": float(match.group("created")),
-            "levelno": int(match.group("levelno")),
-            "levelname": match.group("levelname"),
-            "name": match.group("name"),
-            "process_name": match.group("process_name"),
-            "process_id": int(match.group("process_id")),
-            "service_id": match.group("service_id"),
-            "msg": match.group("msg"),
-        }
+        # Create a LogRecord directly from parsed data
+        record = logging.LogRecord(
+            name=match.group("name"),
+            level=int(match.group("levelno")),
+            pathname=match.group("pathname"),
+            lineno=int(match.group("lineno")),
+            msg=match.group("msg"),
+            args=(),
+            exc_info=None,
+            func=None,
+            sinfo=None,
+        )
+
+        # Set additional attributes from subprocess
+        record.created = float(match.group("created"))
+        record.msecs = (record.created % 1) * 1000
+        record.processName = match.group("process_name")
+        record.process = int(match.group("process_id"))
+        record.levelname = match.group("levelname")
+
+        # Store service_id as custom attribute
+        record.service_id = match.group("service_id")
+
+        return record
     return None
+
+
+def handle_subprocess_log_line(line: str, fallback_service_id: str) -> None:
+    """Handle a subprocess log line by parsing and forwarding to appropriate logger.
+
+    This function handles both structured and unstructured log lines from subprocesses,
+    parsing them and forwarding directly to the appropriate logger without creating
+    temporary objects.
+
+    Args:
+        line: The log line from subprocess output
+        fallback_service_id: Service ID to use if line is not structured
+    """
+    # Try structured parsing first
+    parsed_record = parse_subprocess_log_line(line)
+
+    if parsed_record:
+        # Structured log - forward directly to original logger
+        original_logger = logging.getLogger(parsed_record.name)
+        if original_logger.isEnabledFor(parsed_record.levelno):
+            original_logger.handle(parsed_record)
+    else:
+        # Unstructured log - create LogRecord and forward to fallback logger
+        fallback_logger = logging.getLogger(fallback_service_id)
+        if fallback_logger.isEnabledFor(logging.INFO):
+            # Create LogRecord directly without temporary objects
+            record = logging.LogRecord(
+                name=fallback_service_id,
+                level=logging.INFO,
+                pathname="<subprocess>",
+                lineno=0,
+                msg=line,
+                args=(),
+                exc_info=None,
+                func=None,
+                sinfo=None,
+            )
+            record.created = time.time()
+            record.msecs = (record.created % 1) * 1000
+            record.levelname = "INFO"
+
+            fallback_logger.handle(record)

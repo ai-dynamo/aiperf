@@ -3,7 +3,6 @@
 import asyncio
 import os
 import sys
-import time
 import uuid
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ServiceRegistrationStatus, ServiceRunType
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.factories import ServiceManagerFactory
+from aiperf.common.logging import handle_subprocess_log_line
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.base_service_manager import BaseServiceManager
@@ -248,57 +248,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                         break
                     decoded_line = line.decode().rstrip()
                     if decoded_line:
-                        # Try to parse as structured log entry first
-                        from aiperf.common.logging import parse_subprocess_log_line
-
-                        parsed_log = parse_subprocess_log_line(decoded_line)
-                        if not parsed_log:
-                            parsed_log = {
-                                "name": service_id,
-                                "levelno": 20,
-                                "levelname": "INFO",
-                                "msg": decoded_line,
-                                "created": time.time(),
-                            }
-                        if parsed_log:
-                            # Forward the parsed log entry using the original logger
-                            # This preserves the original logger hierarchy and source
-                            import logging
-
-                            # Get the original logger from the subprocess
-                            original_logger = logging.getLogger(parsed_log["name"])
-
-                            # Create a LogRecord with the original information
-                            record = logging.LogRecord(
-                                name=parsed_log["name"],
-                                level=parsed_log["levelno"],
-                                pathname="<subprocess>",  # We don't have the original pathname
-                                lineno=0,  # We don't have the original line number
-                                msg=parsed_log["msg"],
-                                args=(),
-                                exc_info=None,
-                                func=None,
-                                sinfo=None,
-                            )
-
-                            # Set the timestamp from the subprocess
-                            record.created = parsed_log["created"]
-                            record.msecs = (parsed_log["created"] % 1) * 1000
-
-                            # Set process information from subprocess
-                            record.processName = parsed_log["process_name"]
-                            record.process = parsed_log["process_id"]
-
-                            # Emit the record through the original logger
-                            # This will respect the logger's handlers and level settings
-                            if original_logger.isEnabledFor(parsed_log["levelno"]):
-                                original_logger.handle(record)
-                        else:
-                            # Fall back to original behavior for non-structured logs
-                            if stream_name == "stderr":
-                                self.warning(f"[{service_id}] {decoded_line}")
-                            else:
-                                self.info(f"[{service_id}] {decoded_line}")
+                        handle_subprocess_log_line(decoded_line, service_id)
             except Exception as e:
                 self.debug(f"Error reading {stream_name} for {service_id}: {e}")
 
