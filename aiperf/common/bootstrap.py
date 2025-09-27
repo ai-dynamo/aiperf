@@ -3,7 +3,6 @@
 
 import asyncio
 import contextlib
-import multiprocessing
 import random
 
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -15,7 +14,7 @@ def bootstrap_and_run_service(
     service_config: ServiceConfig | None = None,
     user_config: UserConfig | None = None,
     service_id: str | None = None,
-    log_queue: "multiprocessing.Queue | None" = None,
+    use_structured_subprocess_format: bool = False,
     **kwargs,
 ):
     """Bootstrap the service and run it.
@@ -30,8 +29,6 @@ def bootstrap_and_run_service(
             configuration will be loaded from the environment variables.
         user_config: The user configuration to use. If not provided, the user configuration
             will be loaded from the environment variables.
-        log_queue: Optional multiprocessing queue for child process logging. If provided,
-            the child process logging will be set up.
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
 
@@ -66,7 +63,10 @@ def bootstrap_and_run_service(
         from aiperf.common.logging import setup_child_process_logging
 
         setup_child_process_logging(
-            log_queue, service.service_id, service_config, user_config
+            service.service_id,
+            service_config,
+            user_config,
+            use_structured_subprocess_format,
         )
 
         if user_config.input.random_seed is not None:

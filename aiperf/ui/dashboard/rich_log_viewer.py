@@ -1,20 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import multiprocessing
+import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from rich.highlighter import Highlighter, ReprHighlighter
 from rich.text import Text
+from textual.await_remove import AwaitRemove
 from textual.events import Click
 from textual.widgets import RichLog
-
-from aiperf.common.hooks import background_task
-from aiperf.common.mixins import AIPerfLifecycleMixin
-from aiperf.common.utils import yield_to_event_loop
-
-if TYPE_CHECKING:
-    from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
 
 
 class RichLogViewer(RichLog):
@@ -64,21 +57,23 @@ class RichLogViewer(RichLog):
         self.border_title = "Application Logs"
         self.highlighter: Highlighter = ReprHighlighter()
 
-    def display_log_record(self, log_data: dict) -> None:
-        timestamp = datetime.fromtimestamp(log_data["created"]).strftime("%H:%M:%S.%f")[:-3]  # fmt: skip
-        level_style = self.LOG_LEVEL_STYLES.get(log_data["levelname"], "white")
+        # Create and register the dedicated log handler
+        self._log_handler: UILogHandler | None = None
+        self._setup_log_handler()
 
-        formatted_log = Text.assemble(
-            Text.from_markup(f"[dim]{timestamp}[/dim] "),
-            Text.from_markup(
-                f"[bold][{level_style}]{log_data['levelname']}[/{level_style}][/bold] "
-            ),
-            Text.from_markup(f"[bold]{log_data['name']}[/bold] "),
-            self.highlighter(
-                Text.from_markup(log_data["msg"][: self.MAX_LOG_MESSAGE_LENGTH])
-            ),
-        )
-        self.write(formatted_log)
+    def _setup_log_handler(self) -> None:
+        """Set up the dedicated log handler for this viewer."""
+        self._log_handler = UILogHandler(self)
+        root_logger = logging.getLogger()
+        root_logger.addHandler(self._log_handler)
+
+    def _cleanup_log_handler(self) -> None:
+        """Clean up the log handler."""
+        if self._log_handler is not None:
+            root_logger = logging.getLogger()
+            if self._log_handler in root_logger.handlers:
+                root_logger.removeHandler(self._log_handler)
+            self._log_handler = None
 
     def on_click(self, event: Click) -> None:
         """Handle click events to toggle the maximize state of the widget."""
@@ -93,36 +88,46 @@ class RichLogViewer(RichLog):
         else:
             self.screen.minimize()
 
+    def remove(self) -> AwaitRemove:
+        """Clean up when the widget is removed."""
+        self._cleanup_log_handler()
+        return super().remove()
 
-class LogConsumer(AIPerfLifecycleMixin):
-    """LogConsumer is a class that consumes log records from the shared log queue
-    and displays them in the RichLogViewer."""
 
-    def __init__(
-        self, log_queue: multiprocessing.Queue, app: "AIPerfTextualApp", **kwargs
-    ) -> None:
-        super().__init__(**kwargs)
-        self.log_queue = log_queue
-        self.app = app
+class UILogHandler(logging.Handler):
+    """Lightweight logging handler that directly interfaces with RichLogViewer.
 
-    LOG_REFRESH_INTERVAL = 0.1
+    This handler is specifically designed for the RichLogViewer and provides
+    direct, high-performance log forwarding without callbacks or queues.
+    """
 
-    @background_task(immediate=True, interval=LOG_REFRESH_INTERVAL)
-    async def _consume_logs(self) -> None:
-        """Consume log records from the queue and display them.
+    def __init__(self, log_viewer: RichLogViewer) -> None:
+        super().__init__()
+        self.log_viewer = log_viewer
+        self.write = log_viewer.write
 
-        This is a background task that runs every LOG_REFRESH_INTERVAL seconds
-        to consume log records from the queue and display them in the log viewer.
-        """
-        if self.app.log_viewer is None:
-            return
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit a log record directly to the RichLogViewer with maximum performance."""
+        try:
+            # Direct formatting without intermediate dictionary
+            timestamp = datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[
+                :-3
+            ]
+            level_style = self.log_viewer.LOG_LEVEL_STYLES.get(
+                record.levelname, "white"
+            )
+            message = record.getMessage()[: self.log_viewer.MAX_LOG_MESSAGE_LENGTH]
 
-        # Process all pending log records
-        while not self.log_queue.empty():
-            try:
-                log_data = self.log_queue.get_nowait()
-                self.app.log_viewer.display_log_record(log_data)
-                await yield_to_event_loop()
-            except Exception:
-                # Silently ignore queue errors to avoid recursion
-                break
+            # Direct assembly and write - no intermediate steps
+            formatted_log = Text.assemble(
+                Text.from_markup(f"[dim]{timestamp}[/dim] "),
+                Text.from_markup(
+                    f"[bold][{level_style}]{record.levelname}[/{level_style}][/bold] "
+                ),
+                Text.from_markup(f"[bold]{record.name}[/bold] "),
+                self.log_viewer.highlighter(Text.from_markup(message)),
+            )
+            self.write(formatted_log)
+        except Exception:
+            # Do not log to prevent recursion
+            pass

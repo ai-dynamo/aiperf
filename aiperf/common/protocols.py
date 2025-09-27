@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import multiprocessing
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -435,7 +434,6 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
         required_services: dict[ServiceTypeT, int],
         service_config: "ServiceConfig",
         user_config: "UserConfig",
-        log_queue: "multiprocessing.Queue | None" = None,
     ): ...
 
     required_services: dict[ServiceTypeT, int]

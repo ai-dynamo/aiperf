@@ -28,6 +28,11 @@ def main():
     parser.add_argument(
         "--user-config", required=True, help="JSON serialized user configuration"
     )
+    parser.add_argument(
+        "--use-structured-logging",
+        action="store_true",
+        help="Use structured logging format for subprocess parsing",
+    )
 
     args = parser.parse_args()
 
@@ -73,6 +78,7 @@ def main():
             service_id=args.service_id,
             service_config=service_config,
             user_config=user_config,
+            use_structured_subprocess_format=args.use_structured_logging,
         )
 
     except KeyboardInterrupt:

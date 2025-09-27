@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import multiprocessing
 
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
@@ -17,7 +16,6 @@ from aiperf.common.protocols import AIPerfUIProtocol
 from aiperf.controller.system_controller import SystemController
 from aiperf.ui.base_ui import BaseAIPerfUI
 from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
-from aiperf.ui.dashboard.rich_log_viewer import LogConsumer
 
 
 @implements_protocol(AIPerfUIProtocol)
@@ -38,7 +36,6 @@ class AIPerfDashboardUI(BaseAIPerfUI):
 
     def __init__(
         self,
-        log_queue: multiprocessing.Queue,
         service_config: ServiceConfig,
         user_config: UserConfig,
         controller: SystemController,
@@ -55,9 +52,7 @@ class AIPerfDashboardUI(BaseAIPerfUI):
         self.app: AIPerfTextualApp = AIPerfTextualApp(
             service_config=service_config, controller=controller
         )
-        # Setup the log consumer to consume log records from the shared log queue
-        self.log_consumer: LogConsumer = LogConsumer(log_queue=log_queue, app=self.app)
-        self.attach_child_lifecycle(self.log_consumer)  # type: ignore
+        # RichLogViewer now handles logging directly - no separate consumer needed
 
         # Attach the hooks directly to the function on the app, to avoid the extra function call overhead
         self.attach_hook(AIPerfHook.ON_RECORDS_PROGRESS, self.app.on_records_progress)

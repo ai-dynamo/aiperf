@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import multiprocessing
-import queue
-from functools import lru_cache
+import re
 from pathlib import Path
 
 from rich.console import Console
@@ -13,19 +12,15 @@ from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
 from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import ServiceType
-from aiperf.common.enums.ui_enums import AIPerfUIType
 from aiperf.common.factories import ServiceFactory
 
-LOG_QUEUE_MAXSIZE = 1000
-
+# Regex pattern for parsing structured log format from subprocess output
+# Format: created|levelno|levelname|name|process_name|process_id|service_id|msg
+SUBPROCESS_LOG_PATTERN = re.compile(
+    r"(?P<created>\d+\.\d+)\|(?P<levelno>\d+)\|(?P<levelname>\w+)\|(?P<name>[^|]+)\|(?P<process_name>[^|]+)\|(?P<process_id>\d+)\|(?P<service_id>[^|]*)\|(?P<msg>.*)"
+)
 
 _logger = AIPerfLogger(__name__)
-
-
-@lru_cache(maxsize=1)
-def get_global_log_queue() -> multiprocessing.Queue:
-    """Get the global log queue. Will create a new queue if it doesn't exist."""
-    return multiprocessing.Queue(maxsize=LOG_QUEUE_MAXSIZE)
 
 
 def _is_service_in_types(service_id: str, service_types: set[ServiceType]) -> bool:
@@ -48,20 +43,20 @@ def _is_service_in_types(service_id: str, service_types: set[ServiceType]) -> bo
 
 
 def setup_child_process_logging(
-    log_queue: "multiprocessing.Queue | None" = None,
     service_id: str | None = None,
     service_config: ServiceConfig | None = None,
     user_config: UserConfig | None = None,
+    use_structured_subprocess_format: bool = False,
 ) -> None:
-    """Set up logging for a child process to send logs to the main process.
+    """Set up logging for a child process.
 
     This should be called early in child process initialization.
 
     Args:
-        log_queue: The multiprocessing queue to send logs to. If None, tries to get the global queue.
         service_id: The ID of the service to log under. If None, logs will be under the process name.
         service_config: The service configuration used to determine the log level.
         user_config: The user configuration used to determine the log folder.
+        use_structured_subprocess_format: If True, use structured pipe-delimited format for subprocess parsing.
     """
     root_logger = logging.getLogger()
     level = ServiceDefaults.LOG_LEVEL.upper()
@@ -86,16 +81,11 @@ def setup_child_process_logging(
     for existing_handler in root_logger.handlers[:]:
         root_logger.removeHandler(existing_handler)
 
-    if (
-        log_queue is not None
-        and service_config
-        and service_config.ui_type == AIPerfUIType.DASHBOARD
-    ):
-        # For dashboard UI, we want to log to the queue, so it can be displayed in the UI
-        # log viewer, instead of the console directly.
-        queue_handler = MultiProcessLogHandler(log_queue, service_id)
-        queue_handler.setLevel(level)
-        root_logger.addHandler(queue_handler)
+    if use_structured_subprocess_format:
+        # Use structured format for subprocess output that will be parsed by parent process
+        structured_handler = StructuredSubprocessLogHandler(service_id)
+        structured_handler.setLevel(level)
+        root_logger.addHandler(structured_handler)
     else:
         # For all other cases, set up rich logging to the console
         rich_handler = RichHandler(
@@ -172,34 +162,43 @@ def create_file_handler(
     return file_handler
 
 
-class MultiProcessLogHandler(RichHandler):
-    """Custom logging handler that forwards log records to a multiprocessing queue."""
+class StructuredSubprocessLogHandler(logging.Handler):
+    """Custom logging handler that outputs structured log format for subprocess parsing."""
 
-    def __init__(
-        self, log_queue: multiprocessing.Queue, service_id: str | None = None
-    ) -> None:
+    def __init__(self, service_id: str | None = None) -> None:
         super().__init__()
-        self.log_queue = log_queue
         self.service_id = service_id
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Emit a log record to the queue."""
+        """Emit a log record in structured pipe-delimited format."""
         try:
-            # Create a serializable log data structure
-            log_data = {
-                "name": record.name,
-                "levelname": record.levelname,
-                "levelno": record.levelno,
-                "msg": record.getMessage(),
-                "created": record.created,
-                "process_name": multiprocessing.current_process().name,
-                "process_id": multiprocessing.current_process().pid,
-                "service_id": self.service_id,
-            }
-            self.log_queue.put_nowait(log_data)
-        except queue.Full:
-            # Drop logs if queue is full to prevent blocking. Do not log to prevent recursion.
-            pass
+            # Format: created|levelno|levelname|name|process_name|process_id|service_id|msg
+            structured_log = f"{record.created}|{record.levelno}|{record.levelname}|{record.name}|{multiprocessing.current_process().name}|{multiprocessing.current_process().pid}|{self.service_id or ''}|{record.getMessage()}"
+            print(structured_log, flush=True)
         except Exception:
             # Do not log to prevent recursion
             pass
+
+
+def parse_subprocess_log_line(line: str) -> dict | None:
+    """Parse a structured log line from subprocess output.
+
+    Args:
+        line: The log line to parse
+
+    Returns:
+        Dictionary with parsed log data or None if parsing fails
+    """
+    match = SUBPROCESS_LOG_PATTERN.match(line)
+    if match:
+        return {
+            "created": float(match.group("created")),
+            "levelno": int(match.group("levelno")),
+            "levelname": match.group("levelname"),
+            "name": match.group("name"),
+            "process_name": match.group("process_name"),
+            "process_id": int(match.group("process_id")),
+            "service_id": match.group("service_id"),
+            "msg": match.group("msg"),
+        }
+    return None
