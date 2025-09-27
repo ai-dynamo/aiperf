@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import multiprocessing
+import os
+import sys
 import uuid
-from multiprocessing import Process
-from multiprocessing.context import ForkProcess, SpawnProcess
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config.zmq_config import ZMQIPCConfig, ZMQTCPConfig
 from aiperf.common.constants import (
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
@@ -18,25 +18,25 @@ from aiperf.common.constants import (
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ServiceRegistrationStatus, ServiceRunType
 from aiperf.common.exceptions import AIPerfError
-from aiperf.common.factories import ServiceFactory, ServiceManagerFactory
+from aiperf.common.factories import ServiceManagerFactory
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.base_service_manager import BaseServiceManager
 
 
-class MultiProcessRunInfo(BaseModel):
-    """Information about a service running as a multiprocessing process."""
+class AsyncSubprocessRunInfo(BaseModel):
+    """Information about a service running as an asyncio subprocess."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    process: Process | SpawnProcess | ForkProcess | None = Field(default=None)
+    process: asyncio.subprocess.Process | None = Field(default=None)
     service_type: ServiceTypeT = Field(
         ...,
-        description="Type of service running in the process",
+        description="Type of service running in the subprocess",
     )
     service_id: str = Field(
         ...,
-        description="ID of the service running in the process",
+        description="ID of the service running in the subprocess",
     )
 
 
@@ -44,7 +44,7 @@ class MultiProcessRunInfo(BaseModel):
 @ServiceManagerFactory.register(ServiceRunType.MULTIPROCESSING)
 class MultiProcessServiceManager(BaseServiceManager):
     """
-    Service Manager for starting and stopping services as multiprocessing processes.
+    Service Manager for starting and stopping services as asyncio subprocesses.
     """
 
     def __init__(
@@ -52,43 +52,76 @@ class MultiProcessServiceManager(BaseServiceManager):
         required_services: dict[ServiceTypeT, int],
         service_config: ServiceConfig,
         user_config: UserConfig,
-        log_queue: "multiprocessing.Queue | None" = None,
         **kwargs,
     ):
         super().__init__(required_services, service_config, user_config, **kwargs)
-        self.multi_process_info: list[MultiProcessRunInfo] = []
-        self.log_queue = log_queue
+        self.subprocess_info: list[AsyncSubprocessRunInfo] = []
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
     ) -> None:
         """Run a service with the given number of replicas."""
-        service_class = ServiceFactory.get_class_from_type(service_type)
-
         for _ in range(num_replicas):
             service_id = f"{service_type}_{uuid.uuid4().hex[:8]}"
-            process = Process(
-                target=bootstrap_and_run_service,
-                name=f"{service_type}_process",
-                kwargs={
-                    "service_class": service_class,
-                    "service_id": service_id,
-                    "service_config": self.service_config,
-                    "user_config": self.user_config,
-                    "log_queue": self.log_queue,
-                },
-                daemon=True,
-            )
 
-            process.start()
+            if isinstance(self.service_config._comm_config, ZMQIPCConfig):
+                self.service_config.zmq_ipc = self.service_config._comm_config
+            elif isinstance(self.service_config._comm_config, ZMQTCPConfig):
+                self.service_config.zmq_tcp = self.service_config._comm_config
 
+            service_config_json = self.service_config.model_dump_json()
+            user_config_json = self.user_config.model_dump_json(exclude_unset=True)
+
+            # Create subprocess arguments with proper Python path
+            args = [
+                sys.executable,
+                "-m",
+                "aiperf.subprocess_runner",
+                "--service-type",
+                str(service_type),
+                "--service-id",
+                service_id,
+                "--service-config",
+                service_config_json,
+                "--user-config",
+                user_config_json,
+            ]
+
+            # Prepare environment for subprocess
+            env = os.environ.copy()
+
+            # Ensure the current working directory is in PYTHONPATH
+            current_dir = Path.cwd()
+            python_path = env.get("PYTHONPATH", "")
+            if python_path:
+                env["PYTHONPATH"] = f"{current_dir}:{python_path}"
+            else:
+                env["PYTHONPATH"] = str(current_dir)
+
+            # Start the subprocess
             self.debug(
-                lambda pid=process.pid,
-                type=service_type: f"Service {type} started as process (pid: {pid})"
+                f"Starting subprocess for {service_type} with command: {' '.join(args[:3])} ..."
             )
 
-            self.multi_process_info.append(
-                MultiProcessRunInfo(
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                cwd=current_dir,
+            )
+
+            self.info(
+                f"Service {service_type} started as subprocess (PID: {process.pid})"
+            )
+
+            # Start background tasks to handle subprocess output
+            self.execute_async(self._handle_subprocess_output(process, service_id))
+
+            # Check if process is still alive after a brief moment
+
+            self.subprocess_info.append(
+                AsyncSubprocessRunInfo(
                     process=process,
                     service_type=service_type,
                     service_id=service_id,
@@ -98,41 +131,43 @@ class MultiProcessServiceManager(BaseServiceManager):
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None
     ) -> list[BaseException | None]:
-        self.debug(lambda: f"Stopping {service_type} process(es) with id: {service_id}")
+        self.debug(
+            lambda: f"Stopping {service_type} subprocess(es) with id: {service_id}"
+        )
         tasks = []
-        for info in list(self.multi_process_info):
+        for info in list(self.subprocess_info):
             if info.service_type == service_type and (
                 service_id is None or info.service_id == service_id
             ):
-                task = asyncio.create_task(self._wait_for_process(info))
+                task = asyncio.create_task(self._wait_for_subprocess(info))
                 task.add_done_callback(
-                    lambda _, info=info: self.multi_process_info.remove(info)
+                    lambda _, info=info: self.subprocess_info.remove(info)
                 )
                 tasks.append(task)
         return await asyncio.gather(*tasks, return_exceptions=True)
 
     async def shutdown_all_services(self) -> list[BaseException | None]:
-        """Stop all required services as multiprocessing processes."""
-        self.debug("Stopping all service processes")
+        """Stop all required services as asyncio subprocesses."""
+        self.debug("Stopping all service subprocesses")
 
         # Wait for all to finish in parallel
         return await asyncio.gather(
-            *[self._wait_for_process(info) for info in self.multi_process_info],
+            *[self._wait_for_subprocess(info) for info in self.subprocess_info],
             return_exceptions=True,
         )
 
     async def kill_all_services(self) -> list[BaseException | None]:
-        """Kill all required services as multiprocessing processes."""
-        self.debug("Killing all service processes")
+        """Kill all required services as asyncio subprocesses."""
+        self.debug("Killing all service subprocesses")
 
-        # Kill all processes
-        for info in self.multi_process_info:
-            if info.process:
+        # Kill all subprocesses
+        for info in self.subprocess_info:
+            if info.process and info.process.returncode is None:
                 info.process.kill()
 
         # Wait for all to finish in parallel
         return await asyncio.gather(
-            *[self._wait_for_process(info) for info in self.multi_process_info],
+            *[self._wait_for_subprocess(info) for info in self.subprocess_info],
             return_exceptions=True,
         )
 
@@ -171,12 +206,6 @@ class MultiProcessServiceManager(BaseServiceManager):
                 if required_types.issubset(registered_types):
                     return
 
-                for process in self.multi_process_info:
-                    if not process.process or not process.process.is_alive():
-                        raise AIPerfError(
-                            f"Service process {process.service_id} died before registering"
-                        )
-
                 # Wait a bit before checking again
                 await asyncio.sleep(0.5)
 
@@ -199,24 +228,84 @@ class MultiProcessServiceManager(BaseServiceManager):
 
             raise AIPerfError("Some services failed to register within timeout") from e
 
-    async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:
-        """Wait for a process to terminate with timeout handling."""
-        if not info.process or not info.process.is_alive():
+    async def _handle_subprocess_output(
+        self, process: asyncio.subprocess.Process, service_id: str
+    ) -> None:
+        """Handle stdout and stderr output from subprocess."""
+        self.debug(
+            f"Starting output handling for subprocess {service_id} (PID: {process.pid})"
+        )
+
+        async def _read_stream(stream, stream_name):
+            if stream is None:
+                return
+            try:
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    decoded_line = line.decode().rstrip()
+                    if decoded_line:
+                        if stream_name == "stderr":
+                            self.warning(f"[{service_id}] {decoded_line}")
+                        else:
+                            self.debug(f"[{service_id}] {decoded_line}")
+            except Exception as e:
+                self.debug(f"Error reading {stream_name} for {service_id}: {e}")
+
+        # Start reading both streams concurrently
+        try:
+            await asyncio.gather(
+                _read_stream(process.stdout, "stdout"),
+                _read_stream(process.stderr, "stderr"),
+                return_exceptions=True,
+            )
+        except Exception as e:
+            self.error(f"Error in subprocess output handling for {service_id}: {e}")
+
+        # Wait for process to complete and log exit code
+        try:
+            exit_code = await process.wait()
+            if exit_code != 0:
+                self.warning(
+                    f"Subprocess {service_id} (PID: {process.pid}) exited with code: {exit_code}"
+                )
+            else:
+                self.debug(
+                    f"Subprocess {service_id} (PID: {process.pid}) exited successfully"
+                )
+        except Exception as e:
+            self.error(f"Error waiting for subprocess {service_id}: {e}")
+
+    async def _wait_for_subprocess(self, info: AsyncSubprocessRunInfo) -> None:
+        """Wait for a subprocess to terminate with timeout handling."""
+        if not info.process or info.process.returncode is not None:
             return
 
         try:
+            # Send SIGTERM to subprocess
             info.process.terminate()
-            await asyncio.to_thread(
-                info.process.join, timeout=TASK_CANCEL_TIMEOUT_SHORT
-            )
+
+            # Wait for graceful termination with timeout
+            try:
+                await asyncio.wait_for(
+                    info.process.wait(), timeout=TASK_CANCEL_TIMEOUT_SHORT
+                )
+                self.debug(
+                    f"Service {info.service_type} subprocess stopped gracefully (pid: {info.process.pid})"
+                )
+            except asyncio.TimeoutError:
+                self.warning(
+                    f"Service {info.service_type} subprocess (pid: {info.process.pid}) did not terminate gracefully, killing"
+                )
+                info.process.kill()
+                await info.process.wait()
+
+        except ProcessLookupError:
+            # Process already terminated
             self.debug(
-                f"Service {info.service_type} process stopped (pid: {info.process.pid})"
+                f"Service {info.service_type} subprocess (pid: {info.process.pid}) already terminated"
             )
-        except asyncio.TimeoutError:
-            self.warning(
-                f"Service {info.service_type} process (pid: {info.process.pid}) did not terminate gracefully, killing"
-            )
-            info.process.kill()
 
     async def wait_for_all_services_start(
         self,
@@ -226,5 +315,5 @@ class MultiProcessServiceManager(BaseServiceManager):
         """Wait for all required services to be started."""
         self.debug("Waiting for all required services to start...")
         self.warning(
-            "Waiting for all required services to start is not implemented for multiprocessing"
+            "Waiting for all required services to start is not implemented for subprocess management"
         )
