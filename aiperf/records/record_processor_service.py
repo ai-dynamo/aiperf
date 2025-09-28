@@ -85,8 +85,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             model_endpoint=self.model_endpoint,
         )
 
+        RecordProcessorFactory.load_all_implementations()
+        record_processor_types = RecordProcessorFactory.get_all_class_types()
+        if len(record_processor_types) == 0:
+            raise ValueError("No record processors found")
         # Initialize all the records streamers
-        for processor_type in RecordProcessorFactory.get_all_class_types():
+        for processor_type in record_processor_types:
+            self.debug(f"Creating record processor: {processor_type}")
             self.records_processors.append(
                 RecordProcessorFactory.create_instance(
                     processor_type,

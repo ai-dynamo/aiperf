@@ -13,6 +13,9 @@ from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.protocols import RecordProcessorProtocol
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.metrics.metric_registry import (
+    MetricRegistry as MetricRegistry,  # trigger it to be imported
+)
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 

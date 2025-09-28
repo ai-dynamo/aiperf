@@ -62,5 +62,6 @@ class BaseMetricsProcessor(AIPerfLoggerMixin, ABC):
             supported_tags,
         )
         for metric_tag in ordered_tags:
+            self.debug(f"Adding metric {metric_tag} to the list of metrics")
             metrics.append(MetricRegistry.get_instance(metric_tag))
         return metrics

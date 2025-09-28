@@ -16,6 +16,7 @@ from aiperf.common.protocols import AIPerfUIProtocol
 from aiperf.controller.system_controller import SystemController
 from aiperf.ui.base_ui import BaseAIPerfUI
 from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
+from aiperf.ui.dashboard.rich_log_viewer import LogConsumer
 
 
 @implements_protocol(AIPerfUIProtocol)
@@ -52,7 +53,10 @@ class AIPerfDashboardUI(BaseAIPerfUI):
         self.app: AIPerfTextualApp = AIPerfTextualApp(
             service_config=service_config, controller=controller
         )
-        # RichLogViewer now handles logging directly - no separate consumer needed
+
+        # Setup the log consumer to consume log records from the shared log queue
+        self.log_consumer: LogConsumer = LogConsumer(app=self.app)
+        self.attach_child_lifecycle(self.log_consumer)  # type: ignore
 
         # Attach the hooks directly to the function on the app, to avoid the extra function call overhead
         self.attach_hook(AIPerfHook.ON_RECORDS_PROGRESS, self.app.on_records_progress)

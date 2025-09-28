@@ -36,6 +36,9 @@ from aiperf.common.types import (
     ServiceProtocolT,
     ServiceTypeT,
 )
+from aiperf.module_loader import (
+    ModuleRegistry as ModuleRegistry,  # trigger it to be imported
+)
 
 if TYPE_CHECKING:
     # NOTE: These imports are for the factory class type hints.
@@ -252,6 +255,7 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
     @classmethod
     def get_all_class_types(cls) -> list[ClassEnumT | str]:
         """Get all registered class types."""
+        cls.load_all_implementations()
         return list(cls._registry.keys())
 
     @classmethod
@@ -271,7 +275,6 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
         Returns:
             List of all available class types for this factory
         """
-        from aiperf.module_loader import ModuleRegistry
 
         # Get currently registered types
         registered_types = set(cls._registry.keys())
@@ -290,7 +293,6 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
         This forces loading of all plugins that are registered for this factory
         in the module registry, making them available in the factory's registry.
         """
-        from aiperf.module_loader import ModuleRegistry
 
         ModuleRegistry().load_all_plugins(cls.__name__)
 
@@ -301,7 +303,6 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
         Args:
             class_type: The class type to discover a plugin for
         """
-        from aiperf.module_loader import ModuleRegistry
 
         with contextlib.suppress(Exception):
             ModuleRegistry().load_plugin(cls.__name__, class_type)

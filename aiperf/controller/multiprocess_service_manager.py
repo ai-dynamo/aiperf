@@ -109,13 +109,14 @@ class MultiProcessServiceManager(BaseServiceManager):
 
         self.info(f"Service {service_id} started as subprocess (PID: {process.pid})")
 
-        self.subprocess_info.append(
-            AsyncSubprocessRunInfo(
-                process=process,
-                service_type=service_type,
-                service_id=service_id,
-            )
+        info = AsyncSubprocessRunInfo(
+            process=process,
+            service_type=service_type,
+            service_id=service_id,
         )
+        self.subprocess_info.append(info)
+
+        # self.execute_async(self._watch_subprocess(info))
 
         self.execute_async(self._handle_subprocess_output(process, service_id))
         await yield_to_event_loop()
@@ -281,7 +282,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                 buffer_chunks = []
 
                 while True:
-                    chunk = await stream.read(1024)  # Read up to 1KB at a time
+                    chunk = await stream.read(8192)  # Read up to 8KB at a time
                     if not chunk:
                         # Process any remaining data in buffer
                         if buffer_chunks:
@@ -307,6 +308,7 @@ class MultiProcessServiceManager(BaseServiceManager):
 
                         # Keep the last part (incomplete line) in buffer
                         buffer_chunks = [lines[-1]] if lines[-1] else []
+                        await asyncio.sleep(0.01)
 
                     # Yield to the event loop to prevent starvation of other tasks because
                     # of reading too frequently from the subprocess
@@ -337,6 +339,18 @@ class MultiProcessServiceManager(BaseServiceManager):
                 )
         except Exception as e:
             self.warning(f"Error waiting for subprocess {service_id}: {e}")
+
+    async def _watch_subprocess(self, info: AsyncSubprocessRunInfo) -> None:
+        """Watch a subprocess for output and handle it."""
+        if not info.process:
+            return
+        try:
+            await info.process.wait()
+            self.debug(
+                lambda: f"Service {info.service_type} subprocess stopped gracefully (pid: {info.process.pid})"
+            )
+        except Exception as e:
+            self.warning(f"Error watching subprocess {info.service_id}: {e}")
 
     async def _wait_for_subprocess(self, info: AsyncSubprocessRunInfo) -> None:
         """Wait for a subprocess to terminate with timeout handling."""
