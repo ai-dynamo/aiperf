@@ -4,16 +4,30 @@ import logging
 import multiprocessing
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
-from rich.console import Console
+from rich.console import Console, ConsoleRenderable
 from rich.logging import RichHandler
+from rich.text import Text
+from rich.traceback import Traceback
 
 from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
 from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import ServiceType
 from aiperf.common.factories import ServiceFactory
+
+_LOG_LEVEL_STYLES = {
+    "TRACE": "dim",
+    "DEBUG": "dim",
+    "INFO": "cyan",
+    "NOTICE": "blue",
+    "WARNING": "yellow",
+    "SUCCESS": "green",
+    "ERROR": "red",
+    "CRITICAL": "red",
+}
 
 # Regex pattern for parsing structured log format from subprocess output
 # Format: created|levelno|levelname|name|process_name|process_id|service_id|pathname|lineno|msg
@@ -89,7 +103,7 @@ def setup_logging(
         root_logger.addHandler(structured_handler)
     else:
         # For all other cases, set up rich logging to the console
-        rich_handler = RichHandler(
+        rich_handler = CustomRichHandler(
             rich_tracebacks=True,
             show_path=True,
             console=Console(),
@@ -150,6 +164,48 @@ class StructuredSubprocessLogHandler(logging.Handler):
         except Exception:
             # Do not log to prevent recursion
             pass
+
+
+class CustomRichHandler(RichHandler):
+    """Custom RichHandler that formats log records in our own format."""
+
+    def render(
+        self,
+        *,
+        record: logging.LogRecord,
+        traceback: Traceback | None,
+        message_renderable: ConsoleRenderable,
+    ) -> ConsoleRenderable:
+        """Render log for display.
+
+        Args:
+            record (LogRecord): logging Record.
+            traceback (Optional[Traceback]): Traceback instance or None for no Traceback.
+            message_renderable (ConsoleRenderable): Renderable (typically Text) containing log message contents.
+
+        Returns:
+            ConsoleRenderable: Renderable to display log.
+        """
+        timestamp = datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[:-3]  # fmt: skip
+        level_style = _LOG_LEVEL_STYLES.get(record.levelname, "white")
+
+        # wrapped_text = textwrap.fill(
+        #     record.getMessage(),
+        #     width=self.console.size.width - 22,
+        #     subsequent_indent=" " * 22,
+        # )
+
+        formatted_log = Text.assemble(
+            Text.from_markup(f"[dim]{timestamp}[/dim] "),
+            Text.from_markup(
+                f"[bold][{level_style}]{record.levelname:>7}[/{level_style}][/bold] "
+            ),
+            Text.from_markup(f"[bold]{record.processName}[/bold] "),
+            Text.from_markup(f"[bold]{record.name}[/bold] "),
+            self.highlighter(Text(record.getMessage())),
+        )
+
+        return formatted_log
 
 
 def parse_subprocess_log_line(line: str) -> logging.LogRecord | None:

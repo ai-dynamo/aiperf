@@ -55,7 +55,13 @@ class MultiProcessServiceManager(BaseServiceManager):
         user_config: UserConfig,
         **kwargs,
     ):
-        super().__init__(required_services, service_config, user_config, **kwargs)
+        super().__init__(
+            required_services,
+            service_config,
+            user_config,
+            id="multiprocess_service_manager",
+            **kwargs,
+        )
         self.subprocess_info: list[AsyncSubprocessRunInfo] = []
 
     def _get_service_module_path(self, service_type: ServiceTypeT) -> str:
