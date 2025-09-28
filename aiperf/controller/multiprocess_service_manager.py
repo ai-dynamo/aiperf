@@ -185,7 +185,7 @@ class MultiProcessServiceManager(BaseServiceManager):
             timeout_seconds: Maximum time to wait in seconds
 
         Raises:
-            Exception if any service failed to register, None otherwise
+            AIPerfError if any service failed to register or died before registering
         """
         self.debug("Waiting for all required services to register...")
 
@@ -196,6 +196,14 @@ class MultiProcessServiceManager(BaseServiceManager):
 
         async def _wait_for_registration():
             while not stop_event.is_set():
+                # Check for dead processes first
+                for info in self.subprocess_info:
+                    # Check if process is None (failed to start) or has terminated
+                    if info.process is None or info.process.returncode is not None:
+                        raise AIPerfError(
+                            f"Service process {info.service_id} died before registering"
+                        )
+
                 # Get all registered service types from the id map
                 registered_types = {
                     service_info.service_type

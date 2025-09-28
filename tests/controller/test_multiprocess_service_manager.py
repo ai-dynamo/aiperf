@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from multiprocessing import Process
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,7 +9,7 @@ import pytest
 from aiperf.common.enums import ServiceType
 from aiperf.common.exceptions import AIPerfError
 from aiperf.controller.multiprocess_service_manager import (
-    MultiProcessRunInfo,
+    AsyncSubprocessRunInfo,
     MultiProcessServiceManager,
 )
 from tests.conftest import real_sleep
@@ -22,16 +21,16 @@ class TestMultiProcessServiceManager:
     @pytest.fixture
     def mock_dead_process(self) -> MagicMock:
         """Create a mock process that appears dead."""
-        mock_process = MagicMock(spec=Process)
-        mock_process.is_alive.return_value = False
+        mock_process = MagicMock(spec=asyncio.subprocess.Process)
+        mock_process.returncode = 1  # Process has terminated with exit code 1
         mock_process.pid = 12345
         return mock_process
 
     @pytest.fixture
     def mock_alive_process(self) -> MagicMock:
         """Create a mock process that appears alive."""
-        mock_process = MagicMock(spec=Process)
-        mock_process.is_alive.return_value = True
+        mock_process = MagicMock(spec=asyncio.subprocess.Process)
+        mock_process.returncode = None  # Process is still running
         mock_process.pid = 54321
         return mock_process
 
@@ -64,12 +63,12 @@ class TestMultiProcessServiceManager:
         """
         asyncio.sleep = real_sleep
         # Create a process info with a dead process
-        dead_process_info = MultiProcessRunInfo.model_construct(
+        dead_process_info = AsyncSubprocessRunInfo.model_construct(
             process=mock_dead_process,
             service_type=ServiceType.DATASET_MANAGER,
             service_id="dead_service_123",
         )
-        service_manager.multi_process_info = [dead_process_info]
+        service_manager.subprocess_info = [dead_process_info]
 
         # Expect an error due to the dead process
         with pytest.raises(
@@ -91,17 +90,17 @@ class TestMultiProcessServiceManager:
         """Test that the manager raises error for dead process even when other processes are alive."""
         asyncio.sleep = real_sleep
         # Create mix of alive and dead processes
-        alive_process_info = MultiProcessRunInfo.model_construct(
+        alive_process_info = AsyncSubprocessRunInfo.model_construct(
             process=mock_alive_process,
             service_type=ServiceType.TIMING_MANAGER,
             service_id="alive_service_456",
         )
-        dead_process_info = MultiProcessRunInfo.model_construct(
+        dead_process_info = AsyncSubprocessRunInfo.model_construct(
             process=mock_dead_process,
             service_type=ServiceType.DATASET_MANAGER,
             service_id="dead_service_789",
         )
-        service_manager.multi_process_info = [alive_process_info, dead_process_info]
+        service_manager.subprocess_info = [alive_process_info, dead_process_info]
 
         # Should raise error about the dead process
         with pytest.raises(
@@ -119,12 +118,12 @@ class TestMultiProcessServiceManager:
         """Test that a None process (failed to start) is treated as dead."""
         asyncio.sleep = real_sleep
         # Create a process info with None process (failed to start)
-        none_process_info = MultiProcessRunInfo.model_construct(
+        none_process_info = AsyncSubprocessRunInfo.model_construct(
             process=None,
             service_type=ServiceType.DATASET_MANAGER,
             service_id="failed_to_start_service",
         )
-        service_manager.multi_process_info = [none_process_info]
+        service_manager.subprocess_info = [none_process_info]
 
         # Should raise error about the failed process
         with pytest.raises(
@@ -143,12 +142,12 @@ class TestMultiProcessServiceManager:
         # Sleep for a fraction of the time for faster test execution
         asyncio.sleep = lambda x: real_sleep(0.01 * x)
         # Create an alive process that won't register (to test cancellation)
-        alive_process_info = MultiProcessRunInfo.model_construct(
+        alive_process_info = AsyncSubprocessRunInfo.model_construct(
             process=mock_alive_process,
             service_type=ServiceType.DATASET_MANAGER,
             service_id="alive_but_not_registering",
         )
-        service_manager.multi_process_info = [alive_process_info]
+        service_manager.subprocess_info = [alive_process_info]
 
         stop_event = asyncio.Event()
 

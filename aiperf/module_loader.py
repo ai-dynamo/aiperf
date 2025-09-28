@@ -7,22 +7,28 @@ Simple singleton that scans for @Factory.register decorators and loads modules o
 
 import ast
 import importlib
+import threading
 from enum import Enum
 from pathlib import Path
 
 
 class ModuleRegistry:
-    """Fast singleton for lazy module loading."""
+    """Thread-safe singleton for lazy module loading."""
 
     _instance = None
+    _instance_lock = threading.Lock()
     _registrations: dict[
         str, dict[str, str]
     ] = {}  # factory -> {class_type -> module_path}
     _loaded = False
+    _scan_lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
+            with cls._instance_lock:
+                # Double-check locking pattern
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
         return cls._instance
 
     def load_plugin(self, factory_name: str, class_type: str) -> None:
@@ -37,33 +43,38 @@ class ModuleRegistry:
             if hasattr(class_type, "name") and isinstance(class_type, Enum)
             else str(class_type),
         ]:
-            module_path = self._registrations.get(factory_name, {}).get(type_key)
+            with self._scan_lock:
+                module_path = self._registrations.get(factory_name, {}).get(type_key)
             if module_path:
                 importlib.import_module(module_path)
                 return
 
     def _scan_all(self) -> None:
         """Scan all Python files for @Factory.register decorators."""
-        if self._loaded:
-            return
+        with self._scan_lock:
+            if self._loaded:
+                return
 
-        aiperf_root = Path(__file__).parent
-        for file_path in aiperf_root.rglob("*.py"):
-            if "__pycache__" in str(file_path) or file_path.name == "module_loader.py":
-                continue
+            aiperf_root = Path(__file__).parent
+            for file_path in aiperf_root.rglob("*.py"):
+                if (
+                    "__pycache__" in str(file_path)
+                    or file_path.name == "module_loader.py"
+                ):
+                    continue
 
-            try:
-                tree = ast.parse(file_path.read_text())
-                module_path = f"aiperf.{'.'.join(file_path.relative_to(aiperf_root).with_suffix('').parts)}"
+                try:
+                    tree = ast.parse(file_path.read_text())
+                    module_path = f"aiperf.{'.'.join(file_path.relative_to(aiperf_root).with_suffix('').parts)}"
 
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.ClassDef):
-                        for decorator in node.decorator_list:
-                            self._parse_decorator(decorator, module_path)
-            except Exception:
-                continue
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.ClassDef):
+                            for decorator in node.decorator_list:
+                                self._parse_decorator(decorator, module_path)
+                except Exception:
+                    continue
 
-        self._loaded = True
+            self._loaded = True
 
     def _parse_decorator(self, decorator: ast.expr, module_path: str) -> None:
         """Parse @Factory.register() decorator and store registration."""
