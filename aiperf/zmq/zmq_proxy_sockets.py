@@ -221,20 +221,23 @@ The ZMQ proxy handles the message routing automatically.
 # ZMQ Proxy Factory Stubs
 ################################################################################
 
-# NOTE: These are here to ensure that the ZMQProxyFactory registers all the
-# proxy classes as part of the ModuleRegistry scan and lazy loading.
-
 
 @ZMQProxyFactory.register(ZMQProxyType.PUSH_PULL)
-class ZMQPushPullProxy(BaseZMQProxy):  # noqa: F811
+class ZMQPushPullProxyStub(ZMQPushPullProxy):
+    # NOTE: Do not remove this stub, it is used to ensure that the ZMQProxyFactory registers all the
+    # proxy classes as part of the ModuleRegistry scan and lazy loading.
     pass
 
 
 @ZMQProxyFactory.register(ZMQProxyType.DEALER_ROUTER)
-class ZMQDealerRouterProxy(BaseZMQProxy):  # noqa: F811
+class ZMQDealerRouterProxyStub(ZMQDealerRouterProxy):
+    # NOTE: Do not remove this stub, it is used to ensure that the ZMQProxyFactory registers all the
+    # proxy classes as part of the ModuleRegistry scan and lazy loading.
     pass
 
 
 @ZMQProxyFactory.register(ZMQProxyType.XPUB_XSUB)
-class ZMQXPubXSubProxy(BaseZMQProxy):  # noqa: F811
+class ZMQXPubXSubProxyStub(ZMQXPubXSubProxy):
+    # NOTE: Do not remove this stub, it is used to ensure that the ZMQProxyFactory registers all the
+    # proxy classes as part of the ModuleRegistry scan and lazy loading.
     pass

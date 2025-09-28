@@ -67,7 +67,6 @@ if TYPE_CHECKING:
     from aiperf.exporters.exporter_config import ExporterConfig
     from aiperf.timing.config import TimingManagerConfig
     from aiperf.timing.credit_issuing_strategy import CreditIssuingStrategy
-    from aiperf.timing.credit_manager import CreditManagerProtocol
     from aiperf.zmq.zmq_proxy_base import BaseZMQProxy
 
 
@@ -485,8 +484,6 @@ class CreditIssuingStrategyFactory(
     def create_instance(  # type: ignore[override]
         cls,
         class_type: TimingMode | str,
-        config: "TimingManagerConfig",
-        credit_manager: "CreditManagerProtocol",
         **kwargs,
     ) -> "CreditIssuingStrategy":
         return super().create_instance(class_type, **kwargs)
