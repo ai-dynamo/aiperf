@@ -60,10 +60,10 @@ if TYPE_CHECKING:
         ResultsProcessorProtocol,
         ServiceManagerProtocol,
     )
-    from aiperf.dataset import (
+    from aiperf.dataset.composer.base import BaseDatasetComposer
+    from aiperf.dataset.loader.protocol import (
         CustomDatasetLoaderProtocol,
     )
-    from aiperf.dataset.composer.base import BaseDatasetComposer
     from aiperf.exporters.exporter_config import ExporterConfig
     from aiperf.timing.config import TimingManagerConfig
     from aiperf.timing.credit_issuing_strategy import CreditIssuingStrategy

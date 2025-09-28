@@ -116,7 +116,7 @@ def define_proxy_class(
     ZMQProxy.__name__ = f"ZMQ_{proxy_type.name}_Proxy"
     ZMQProxy.__qualname__ = ZMQProxy.__name__
     ZMQProxy.__doc__ = f"A ZMQ Proxy for {proxy_type.name} communication."
-    ZMQProxyFactory.register(proxy_type)(ZMQProxy)
+    # ZMQProxyFactory.register(proxy_type)(ZMQProxy)
     return ZMQProxy
 
 

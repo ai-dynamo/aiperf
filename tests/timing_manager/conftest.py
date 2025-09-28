@@ -20,8 +20,8 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.models.credit_models import CreditPhaseStats
-from aiperf.timing import CreditIssuingStrategy
 from aiperf.timing.config import TimingManagerConfig
+from aiperf.timing.credit_issuing_strategy import CreditIssuingStrategy
 from tests.utils.time_traveler import TimeTraveler
 
 T = TypeVar("T", bound=CreditIssuingStrategy)
@@ -74,7 +74,14 @@ class MockSemaphore:
 class MockCreditManager(AIPerfLifecycleMixin):
     """Mock implementation of CreditManagerProtocol for testing."""
 
-    def __init__(self, time_traveler: TimeTraveler, **kwargs):
+    def __init__(
+        self,
+        address: str,
+        bind: bool,
+        socket_ops: dict | None = None,
+        time_traveler: TimeTraveler | None = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.dropped_timestamps = []
         self.dropped_credits = []
@@ -96,8 +103,9 @@ class MockCreditManager(AIPerfLifecycleMixin):
         """Create a credit issuing strategy."""
         self.credit_strategy = strategy_type(config, self)  # type: ignore
         if config.concurrency is not None:
+            interval = auto_return_delay if auto_return_delay is not None else 0.0
             self.credit_strategy._semaphore = MockSemaphore(  # type: ignore
-                config.concurrency, auto_return_delay
+                config.concurrency, interval
             )
             return self.credit_strategy, self.credit_strategy._semaphore  # type: ignore
         return self.credit_strategy
@@ -115,7 +123,9 @@ class MockCreditManager(AIPerfLifecycleMixin):
         cancel_after_ns: int = 0,
     ) -> None:
         """Mock drop_credit method."""
-        drop_time_ns = self.time_traveler.time_ns()
+        drop_time_ns = (
+            self.time_traveler.time_ns() if self.time_traveler else time.time_ns()
+        )
         self.dropped_timestamps.append(drop_time_ns)
         self.dropped_credits.append(
             CreditDropMessage(
@@ -206,7 +216,7 @@ class MockCreditManager(AIPerfLifecycleMixin):
 @pytest.fixture
 def mock_credit_manager(time_traveler: TimeTraveler):
     """Fixture providing a mock credit manager."""
-    return MockCreditManager(time_traveler=time_traveler)
+    return MockCreditManager(address="", bind=False, time_traveler=time_traveler)
 
 
 def profiling_phase_stats_from_config(config: TimingManagerConfig) -> CreditPhaseStats:
