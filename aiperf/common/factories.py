@@ -260,6 +260,39 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
         return [(cls, class_type) for class_type, cls in cls._registry.items()]
 
     @classmethod
+    def get_all_available_types(cls) -> list[ClassEnumT | str]:
+        """Get all available class types that can be discovered and loaded.
+
+        This includes both currently registered types AND types that can be
+        discovered from the module registry without actually loading them.
+
+        Returns:
+            List of all available class types for this factory
+        """
+        from aiperf.module_loader import ModuleRegistry
+
+        # Get currently registered types
+        registered_types = set(cls._registry.keys())
+
+        # Get discoverable types from module registry
+        discoverable_types = set(ModuleRegistry().get_available_types(cls.__name__))
+
+        # Return union of both sets
+        all_types = registered_types.union(discoverable_types)
+        return list(all_types)
+
+    @classmethod
+    def load_all_implementations(cls) -> None:
+        """Discover and load all available implementations for this factory.
+
+        This forces loading of all plugins that are registered for this factory
+        in the module registry, making them available in the factory's registry.
+        """
+        from aiperf.module_loader import ModuleRegistry
+
+        ModuleRegistry().load_all_plugins(cls.__name__)
+
+    @classmethod
     def _discover_plugin(cls, class_type: ClassEnumT | str) -> None:
         """Attempt to discover and load a plugin for the given class type.
 
