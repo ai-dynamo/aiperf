@@ -198,13 +198,8 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
             FactoryCreationError: If the class type is not registered or there is an error creating the instance
         """
         if class_type not in cls._registry:
-            # First try to load any lazy registration
-            if cls._load_lazy_registration(class_type):
-                # Successfully loaded from lazy registry
-                pass
-            else:
-                # Try to discover and load the plugin for this class type
-                cls._discover_plugin(class_type)
+            # Try to discover and load the plugin for this class type
+            cls._discover_plugin(class_type)
 
             # Check again after discovery attempt
             if class_type not in cls._registry:
@@ -232,13 +227,8 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
             TypeError: If the class type is not registered
         """
         if class_type not in cls._registry:
-            # First try to load any lazy registration
-            if cls._load_lazy_registration(class_type):
-                # Successfully loaded from lazy registry
-                pass
-            else:
-                # Try to discover and load the plugin for this class type
-                cls._discover_plugin(class_type)
+            # Try to discover and load the plugin for this class type
+            cls._discover_plugin(class_type)
 
             # Check again after discovery attempt
             if class_type not in cls._registry:
@@ -275,109 +265,23 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
         Args:
             class_type: The class type to discover a plugin for
         """
-        from aiperf.module_loader import discover_and_load_plugin
+        from aiperf.module_loader import ModuleRegistry
 
         cls._logger.debug(
             lambda: f"Attempting to discover plugin for {class_type!r} in {cls.__name__}"
         )
 
         try:
-            discover_and_load_plugin(cls.__name__, class_type)
+            registry = ModuleRegistry.get_instance()
+            success = registry.discover_and_load_plugin(cls.__name__, class_type)
+            if not success:
+                cls._logger.debug(
+                    f"No plugin found for {class_type!r} in {cls.__name__}"
+                )
         except Exception as e:
             cls._logger.debug(
                 lambda e=e: f"Failed to discover plugin for {class_type!r} in {cls.__name__}: {e}"
             )
-
-    @classmethod
-    def register_lazy(
-        cls,
-        class_type: ClassEnumT | str,
-        module_path: str,
-        class_name: str,
-        override_priority: int = 0,
-    ) -> None:
-        """Register a class for lazy loading.
-
-        This method allows registering a class without importing it immediately.
-        The class will be imported and registered when first requested.
-
-        Args:
-            class_type: The type of class to register
-            module_path: The module path where the class is defined
-            class_name: The name of the class to import
-            override_priority: The priority of the override
-        """
-        # Store lazy registration info in a special registry
-        if not hasattr(cls, "_lazy_registry"):
-            cls._lazy_registry = {}
-        if not hasattr(cls, "_lazy_priorities"):
-            cls._lazy_priorities = {}
-
-        existing_priority = cls._lazy_priorities.get(class_type, -1)
-        if class_type in cls._lazy_registry and existing_priority >= override_priority:
-            cls._logger.warning(
-                f"Lazy registration for {class_type!r} already exists with same or higher priority "
-                f"({existing_priority}). The new registration with priority {override_priority} will be ignored."
-            )
-            return
-
-        cls._lazy_registry[class_type] = (module_path, class_name)
-        cls._lazy_priorities[class_type] = override_priority
-
-        cls._logger.debug(
-            lambda: f"Lazy registration for {class_type!r} -> {module_path}.{class_name} with priority {override_priority}"
-        )
-
-    @classmethod
-    def _load_lazy_registration(cls, class_type: ClassEnumT | str) -> bool:
-        """Load a lazy registration if it exists.
-
-        Args:
-            class_type: The class type to load
-
-        Returns:
-            True if a lazy registration was found and loaded, False otherwise
-        """
-        if not hasattr(cls, "_lazy_registry"):
-            return False
-
-        if class_type not in cls._lazy_registry:
-            return False
-
-        module_path, class_name = cls._lazy_registry[class_type]
-
-        try:
-            cls._logger.debug(
-                f"Loading lazy registration: {module_path}.{class_name} for {class_type!r}"
-            )
-
-            # Import the module
-            import importlib
-
-            module = importlib.import_module(module_path)
-
-            # Get the class from the module
-            class_cls = getattr(module, class_name)
-
-            # Register it normally
-            priority = cls._lazy_priorities.get(class_type, 0)
-            cls._registry[class_type] = class_cls
-            cls._override_priorities[class_type] = priority
-
-            # Remove from lazy registry since it's now loaded
-            del cls._lazy_registry[class_type]
-            del cls._lazy_priorities[class_type]
-
-            cls._logger.debug(
-                f"Successfully loaded lazy registration for {class_type!r}"
-            )
-            return True
-
-        except Exception as e:
-            cls._logger.warning(
-                f"Failed to load lazy registration for {class_type!r}: {e}"
-            )
-            return False
 
 
 class AIPerfSingletonFactory(AIPerfFactory[ClassEnumT, ClassProtocolT]):
