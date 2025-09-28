@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import contextlib
 import os
 from collections.abc import Callable
 from threading import Lock
@@ -267,21 +268,8 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
         """
         from aiperf.module_loader import ModuleRegistry
 
-        cls._logger.debug(
-            lambda: f"Attempting to discover plugin for {class_type!r} in {cls.__name__}"
-        )
-
-        try:
-            registry = ModuleRegistry.get_instance()
-            success = registry.discover_and_load_plugin(cls.__name__, class_type)
-            if not success:
-                cls._logger.debug(
-                    f"No plugin found for {class_type!r} in {cls.__name__}"
-                )
-        except Exception as e:
-            cls._logger.debug(
-                lambda e=e: f"Failed to discover plugin for {class_type!r} in {cls.__name__}: {e}"
-            )
+        with contextlib.suppress(Exception):
+            ModuleRegistry().load_plugin(cls.__name__, class_type)
 
 
 class AIPerfSingletonFactory(AIPerfFactory[ClassEnumT, ClassProtocolT]):
