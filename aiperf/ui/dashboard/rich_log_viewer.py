@@ -66,8 +66,8 @@ class RichLogViewer(RichLog):
         )
         self.border_title = "Application Logs"
         self.highlighter: Highlighter = ReprHighlighter()
-        self.queue = asyncio.Queue(maxsize=100)
-        self.removed_log_handlers = []
+        self.log_queue = asyncio.Queue(maxsize=1000)
+        self._removed_log_handlers = []
 
         # Create and register the dedicated log handler
         self._log_handler: UILogHandler | None = None
@@ -79,7 +79,7 @@ class RichLogViewer(RichLog):
         root_logger = logging.getLogger()
         for logger in root_logger.handlers[:]:
             if not isinstance(logger, logging.FileHandler):
-                self.removed_log_handlers.append(logger)
+                self._removed_log_handlers.append(logger)
                 root_logger.removeHandler(logger)
         root_logger.addHandler(self._log_handler)
 
@@ -90,7 +90,7 @@ class RichLogViewer(RichLog):
             if self._log_handler in root_logger.handlers:
                 root_logger.removeHandler(self._log_handler)
             self._log_handler = None
-        for handler in self.removed_log_handlers:
+        for handler in self._removed_log_handlers:
             root_logger.addHandler(handler)
 
     def on_click(self, event: Click) -> None:
@@ -114,14 +114,12 @@ class RichLogViewer(RichLog):
     def _write_log_record(self, record: logging.LogRecord) -> None:
         """Write a log record to the widget."""
         with suppress(Exception):
-            # Direct formatting without intermediate dictionary
             timestamp = datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[
                 :-3
             ]
             level_style = self.LOG_LEVEL_STYLES.get(record.levelname, "white")
             message = record.getMessage()[: self.MAX_LOG_MESSAGE_LENGTH]
 
-            # Direct assembly and write - no intermediate steps
             formatted_log = Text.assemble(
                 Text.from_markup(f"[dim]{timestamp}[/dim] "),
                 Text.from_markup(
@@ -130,7 +128,7 @@ class RichLogViewer(RichLog):
                 Text.from_markup(f"[bold]{record.name}[/bold] "),
                 self.highlighter(Text.from_markup(message)),
             )
-            self.write(formatted_log)
+            self.write(formatted_log, scroll_end=self.auto_scroll)
 
 
 class UILogHandler(logging.Handler):
@@ -148,7 +146,7 @@ class UILogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         """Emit a log record directly to the RichLogViewer with maximum performance."""
         with suppress(asyncio.QueueFull):
-            self.log_viewer.queue.put_nowait(record)
+            self.log_viewer.log_queue.put_nowait(record)
 
 
 class LogConsumer(AIPerfLifecycleMixin):
@@ -172,9 +170,9 @@ class LogConsumer(AIPerfLifecycleMixin):
             return
 
         # Process all pending log records
-        while not self.app.log_viewer.queue.empty():
+        while not self.app.log_viewer.log_queue.empty():
             try:
-                log_data = self.app.log_viewer.queue.get_nowait()
+                log_data = self.app.log_viewer.log_queue.get_nowait()
                 self.app.log_viewer._write_log_record(log_data)
                 await yield_to_event_loop()
             except Exception:
