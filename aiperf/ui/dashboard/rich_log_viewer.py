@@ -114,9 +114,7 @@ class RichLogViewer(RichLog):
     def _write_log_record(self, record: logging.LogRecord) -> None:
         """Write a log record to the widget."""
         with suppress(Exception):
-            timestamp = datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[
-                :-3
-            ]
+            timestamp = datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[:-3]  # fmt: skip
             level_style = self.LOG_LEVEL_STYLES.get(record.levelname, "white")
             message = record.getMessage()[: self.MAX_LOG_MESSAGE_LENGTH]
 
