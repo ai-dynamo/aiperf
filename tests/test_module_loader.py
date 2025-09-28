@@ -28,14 +28,6 @@ class ComplexTestEnum(Enum):
     SIMPLE_TYPE = "simple"
 
 
-@pytest.fixture(autouse=True)
-def reset_module_registry():
-    """Reset singleton state before each test."""
-    ModuleRegistry._instance = None
-    ModuleRegistry._registrations = {}
-    ModuleRegistry._loaded = False
-
-
 @pytest.fixture
 def mock_import_module():
     """Mock importlib.import_module."""
@@ -400,7 +392,7 @@ class TestClass:
         mock_file_system["parse"].return_value = MagicMock()
 
         # Create registry - this will automatically trigger _scan_all() with our mocks
-        registry = ModuleRegistry()
+        _ = ModuleRegistry()
 
         # Should only try to parse the valid file
         assert mock_file_system["parse"].call_count == 1

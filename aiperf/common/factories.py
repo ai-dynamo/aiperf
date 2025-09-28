@@ -24,6 +24,7 @@ from aiperf.common.enums import (
     ServiceType,
     ZMQProxyType,
 )
+from aiperf.common.enums.timing_enums import TimingMode
 from aiperf.common.exceptions import (
     FactoryCreationError,
     InvalidOperationError,
@@ -65,6 +66,8 @@ if TYPE_CHECKING:
     from aiperf.dataset.composer.base import BaseDatasetComposer
     from aiperf.exporters.exporter_config import ExporterConfig
     from aiperf.timing.config import TimingManagerConfig
+    from aiperf.timing.credit_issuing_strategy import CreditIssuingStrategy
+    from aiperf.timing.credit_manager import CreditManagerProtocol
     from aiperf.zmq.zmq_proxy_base import BaseZMQProxy
 
 
@@ -469,6 +472,24 @@ class ConsoleExporterFactory(
         return super().create_instance(
             class_type, exporter_config=exporter_config, **kwargs
         )
+
+
+class CreditIssuingStrategyFactory(
+    AIPerfFactory["TimingMode", "CreditIssuingStrategy"]
+):
+    """Factory for creating credit issuing strategies based on the timing mode.
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
+
+    @classmethod
+    def create_instance(  # type: ignore[override]
+        cls,
+        class_type: TimingMode | str,
+        config: "TimingManagerConfig",
+        credit_manager: "CreditManagerProtocol",
+        **kwargs,
+    ) -> "CreditIssuingStrategy":
+        return super().create_instance(class_type, **kwargs)
 
 
 class CustomDatasetFactory(

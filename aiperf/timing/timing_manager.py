@@ -13,7 +13,7 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.exceptions import InvalidStateError
-from aiperf.common.factories import ServiceFactory
+from aiperf.common.factories import CreditIssuingStrategyFactory, ServiceFactory
 from aiperf.common.hooks import (
     on_command,
     on_pull_message,
@@ -41,7 +41,6 @@ from aiperf.timing.config import (
 )
 from aiperf.timing.credit_issuing_strategy import (
     CreditIssuingStrategy,
-    CreditIssuingStrategyFactory,
 )
 from aiperf.timing.credit_manager import CreditPhaseMessagesMixin
 

@@ -9,9 +9,8 @@ from aiperf.common.constants import (
     DEFAULT_CREDIT_PROGRESS_REPORT_INTERVAL,
     NANOS_PER_SECOND,
 )
-from aiperf.common.enums import CreditPhase, TimingMode
+from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import ConfigurationError
-from aiperf.common.factories import AIPerfFactory
 from aiperf.common.messages import CreditReturnMessage
 from aiperf.common.mixins import TaskManagerMixin
 from aiperf.common.models import CreditPhaseConfig, CreditPhaseStats
@@ -343,7 +342,3 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
                     return
 
         self.debug("All credits completed, stopping credit progress reporting loop")
-
-
-class CreditIssuingStrategyFactory(AIPerfFactory[TimingMode, CreditIssuingStrategy]):
-    """Factory for creating credit issuing strategies based on the timing mode."""

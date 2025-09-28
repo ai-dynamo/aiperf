@@ -41,13 +41,26 @@ class ModuleRegistry:
 
     def load_plugin(self, factory_name: str, class_type: str) -> None:
         """Load a plugin module for the given factory and class type."""
-        # Try both string representations
-        for type_key in [
-            str(class_type),
-            f"{class_type.__class__.__name__}.{class_type.name}"
-            if hasattr(class_type, "name") and isinstance(class_type, Enum)
-            else str(class_type),
-        ]:
+        # Try different representations in order of preference
+        type_keys_to_try = []
+
+        # If it's an enum, prioritize the string representation
+        if hasattr(class_type, "name") and isinstance(class_type, Enum):
+            type_keys_to_try.extend(
+                [
+                    str(class_type),  # String representation (e.g., "none")
+                    f"{class_type.__class__.__name__}.{class_type.name}",  # Full format (e.g., "AIPerfUIType.NONE")
+                ]
+            )
+        else:
+            # For string inputs, try as-is first, then check if it might be an enum format
+            type_keys_to_try.append(str(class_type))
+
+            # If the input looks like an enum format, also try it as-is
+            if "." in str(class_type):
+                type_keys_to_try.append(str(class_type))
+
+        for type_key in type_keys_to_try:
             module_path = self._registrations.get(factory_name, {}).get(type_key)
             if module_path:
                 importlib.import_module(module_path)
@@ -124,7 +137,35 @@ class ModuleRegistry:
 
             for arg in decorator.args:
                 if isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Name):
-                    class_type = f"{arg.value.id}.{arg.attr}"
+                    # Store the full enum format for backward compatibility
+                    full_enum_format = f"{arg.value.id}.{arg.attr}"
+
                     if factory_name not in self._registrations:
                         self._registrations[factory_name] = {}
-                    self._registrations[factory_name][class_type] = module_path
+
+                    # Store the full enum format
+                    self._registrations[factory_name][full_enum_format] = module_path
+
+                    # Try to get the actual enum value and store its string representation
+                    try:
+                        # Dynamically import and get the enum value
+                        enum_class_name = arg.value.id
+                        enum_value_name = arg.attr
+
+                        # Import the enum class from common.enums
+                        import importlib
+
+                        enums_module = importlib.import_module("aiperf.common.enums")
+
+                        if hasattr(enums_module, enum_class_name):
+                            enum_class = getattr(enums_module, enum_class_name)
+                            if hasattr(enum_class, enum_value_name):
+                                enum_value = getattr(enum_class, enum_value_name)
+                                # Store the string representation as the primary key
+                                string_representation = str(enum_value)
+                                self._registrations[factory_name][
+                                    string_representation
+                                ] = module_path
+                    except Exception:
+                        # If we can't resolve the enum, just continue with the full format
+                        pass

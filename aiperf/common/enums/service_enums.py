@@ -45,9 +45,6 @@ class ServiceType(CaseInsensitiveStrEnum):
     WORKER_MANAGER = "worker_manager"
     WORKER = "worker"
 
-    # For testing purposes only
-    TEST = "test_service"
-
 
 class ServiceRegistrationStatus(CaseInsensitiveStrEnum):
     """Defines the various states a service can be in during registration with

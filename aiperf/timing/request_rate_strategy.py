@@ -7,16 +7,18 @@ import random
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import TimingMode
 from aiperf.common.enums.timing_enums import RequestRateMode
-from aiperf.common.factories import RequestRateGeneratorFactory
+from aiperf.common.factories import (
+    CreditIssuingStrategyFactory,
+    RequestRateGeneratorFactory,
+)
 from aiperf.common.messages import CreditReturnMessage
 from aiperf.common.models import CreditPhaseStats
 from aiperf.common.protocols import RequestRateGeneratorProtocol
 from aiperf.timing.config import TimingManagerConfig
 from aiperf.timing.credit_issuing_strategy import (
     CreditIssuingStrategy,
-    CreditIssuingStrategyFactory,
-    CreditManagerProtocol,
 )
+from aiperf.timing.credit_manager import CreditManagerProtocol
 
 
 @CreditIssuingStrategyFactory.register(TimingMode.REQUEST_RATE)

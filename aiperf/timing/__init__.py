@@ -13,7 +13,6 @@ from aiperf.timing.config import (
 )
 from aiperf.timing.credit_issuing_strategy import (
     CreditIssuingStrategy,
-    CreditIssuingStrategyFactory,
 )
 from aiperf.timing.credit_manager import (
     CreditManagerProtocol,
@@ -40,7 +39,6 @@ __all__ = [
     "ConcurrencyBurstRateGenerator",
     "ConstantRateGenerator",
     "CreditIssuingStrategy",
-    "CreditIssuingStrategyFactory",
     "CreditManagerProtocol",
     "CreditPhaseMessagesMixin",
     "CreditPhaseMessagesRequirements",
