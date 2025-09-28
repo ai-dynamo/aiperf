@@ -21,6 +21,7 @@ from aiperf.common.factories import ServiceManagerFactory
 from aiperf.common.logging import handle_subprocess_log_line
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
+from aiperf.common.utils import yield_to_event_loop
 from aiperf.controller.base_service_manager import BaseServiceManager
 
 
@@ -279,6 +280,10 @@ class MultiProcessServiceManager(BaseServiceManager):
 
                         # Keep the last part (incomplete line) in buffer
                         buffer_chunks = [lines[-1]] if lines[-1] else []
+
+                    # Yield to the event loop to prevent starvation of other tasks because
+                    # of reading too frequently from the subprocess
+                    await yield_to_event_loop()
 
             except Exception as e:
                 self.warning(f"Error reading {stream_name} for {service_id}: {e}")

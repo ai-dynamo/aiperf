@@ -8,18 +8,14 @@ from aiperf.common.hooks import AIPerfHook, on_message, provides_hooks
 from aiperf.common.messages import RealtimeMetricsMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models import MetricResult
-from aiperf.controller.system_controller import SystemController
 
 
 @provides_hooks(AIPerfHook.ON_REALTIME_METRICS)
 class RealtimeMetricsMixin(MessageBusClientMixin):
     """A mixin that provides a hook for real-time metrics."""
 
-    def __init__(
-        self, service_config: ServiceConfig, controller: SystemController, **kwargs
-    ):
-        super().__init__(service_config=service_config, controller=controller, **kwargs)
-        self._controller = controller
+    def __init__(self, service_config: ServiceConfig, **kwargs):
+        super().__init__(service_config=service_config, **kwargs)
         self._metrics: list[MetricResult] = []
         self._metrics_lock = asyncio.Lock()
 
