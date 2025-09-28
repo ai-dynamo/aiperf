@@ -72,64 +72,91 @@ class MultiProcessServiceManager(BaseServiceManager):
                 f"Failed to get module path for service type {service_type}: {e}"
             ) from e
 
+    async def _run_service_replica(
+        self,
+        service_type: ServiceTypeT,
+        service_id: str,
+        user_config_json: str,
+        service_config_json: str,
+        env: dict[str, str],
+        current_dir: Path,
+    ) -> None:
+        """Run a service replica with the given service id."""
+        # Create subprocess arguments using cli runner
+        service_module = self._get_service_module_path(service_type)
+        args = [
+            sys.executable,
+            "-m",
+            service_module,
+            service_config_json,
+            user_config_json,
+            "--service-id",
+            service_id,
+            "--use-structured-logging",
+        ]
+
+        self.debug(
+            lambda args=args: f"Starting subprocess for {service_type} with command: {' '.join(args[:3])} ..."
+        )
+
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            cwd=current_dir,
+        )
+
+        self.info(f"Service {service_id} started as subprocess (PID: {process.pid})")
+
+        self.subprocess_info.append(
+            AsyncSubprocessRunInfo(
+                process=process,
+                service_type=service_type,
+                service_id=service_id,
+            )
+        )
+
+        self.execute_async(self._handle_subprocess_output(process, service_id))
+        await yield_to_event_loop()
+
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
     ) -> None:
         """Run a service with the given number of replicas."""
+        tasks = []
+
+        service_config_json = self.service_config.model_dump_json()
+        user_config_json = self.user_config.model_dump_json(exclude_unset=True)
+
+        # Prepare environment for subprocess
+        env = os.environ.copy()
+
+        # Ensure the current working directory is in PYTHONPATH
+        current_dir = Path.cwd()
+        python_path = env.get("PYTHONPATH", "")
+        if python_path:
+            env["PYTHONPATH"] = f"{current_dir}:{python_path}"
+        else:
+            env["PYTHONPATH"] = str(current_dir)
+
         for _ in range(num_replicas):
             service_id = f"{service_type}_{uuid.uuid4().hex[:8]}"
-            service_config_json = self.service_config.model_dump_json()
-            user_config_json = self.user_config.model_dump_json(exclude_unset=True)
 
-            # Create subprocess arguments using cli runner
-            service_module = self._get_service_module_path(service_type)
-            args = [
-                sys.executable,
-                "-m",
-                service_module,
-                service_config_json,
-                user_config_json,
-                "--service-id",
-                service_id,
-                "--use-structured-logging",
-            ]
-
-            # Prepare environment for subprocess
-            env = os.environ.copy()
-
-            # Ensure the current working directory is in PYTHONPATH
-            current_dir = Path.cwd()
-            python_path = env.get("PYTHONPATH", "")
-            if python_path:
-                env["PYTHONPATH"] = f"{current_dir}:{python_path}"
-            else:
-                env["PYTHONPATH"] = str(current_dir)
-
-            self.debug(
-                lambda args=args: f"Starting subprocess for {service_type} with command: {' '.join(args[:3])} ..."
-            )
-
-            process = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-                cwd=current_dir,
-            )
-
-            self.info(
-                f"Service {service_id} started as subprocess (PID: {process.pid})"
-            )
-
-            self.subprocess_info.append(
-                AsyncSubprocessRunInfo(
-                    process=process,
-                    service_type=service_type,
-                    service_id=service_id,
+            task = asyncio.create_task(
+                self._run_service_replica(
+                    service_type,
+                    service_id,
+                    user_config_json,
+                    service_config_json,
+                    env,
+                    current_dir,
                 )
             )
+            tasks.append(task)
+            await yield_to_event_loop()
 
-            self.execute_async(self._handle_subprocess_output(process, service_id))
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None
