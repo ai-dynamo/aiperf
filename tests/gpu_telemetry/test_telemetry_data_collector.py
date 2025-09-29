@@ -73,7 +73,7 @@ class TestTelemetryDataCollectorCore:
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
 
         assert collector._dcgm_url == "http://localhost:9401/metrics"
-        assert collector._collection_interval == 0.033  # Default ~30Hz
+        assert collector._collection_interval == 0.33  # Default collection interval
         assert collector.id == "telemetry_collector"  # Default ID
         assert collector._record_callback is None
         assert collector._error_callback is None
@@ -105,7 +105,6 @@ class TestPrometheusMetricParsing:
         assert record.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
         assert record.gpu_power_usage == 22.582000
-        assert record.gpu_power_limit == 300.000000
 
         # Test unit scaling applied correctly
         assert abs(record.energy_consumption - 0.955287014) < 0.001  # mJ to MJ

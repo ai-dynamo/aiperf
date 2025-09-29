@@ -27,11 +27,13 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
 
         self._metric_units = {
             "gpu_power_usage": "W",
-            "gpu_power_limit": "W",
             "energy_consumption": "MJ",
             "gpu_utilization": "%",
             "gpu_memory_used": "GB",
-            "total_gpu_memory": "GB",
+            "sm_clock_frequency": "MHz",
+            "memory_clock_frequency": "MHz",
+            "memory_temperature": "°C",
+            "gpu_temperature": "°C",
         }
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
@@ -89,10 +91,6 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
                         )
                         results.append(result)
                     except Exception:
-                        # Skip metrics with no data - this is expected
                         continue
 
-        self.info(
-            f"Generated {len(results)} telemetry metric results across {len(self._telemetry_hierarchy.dcgm_endpoints)} DCGM endpoints"
-        )
         return results

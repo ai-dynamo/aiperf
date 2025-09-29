@@ -21,11 +21,9 @@ SCALING_FACTORS = {
 # DCGM field mapping to telemetry record fields
 DCGM_TO_FIELD_MAPPING = {
     "DCGM_FI_DEV_POWER_USAGE": "gpu_power_usage",
-    "DCGM_FI_DEV_POWER_MGMT_LIMIT": "gpu_power_limit",
     "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION": "energy_consumption",
     "DCGM_FI_DEV_GPU_UTIL": "gpu_utilization",
     "DCGM_FI_DEV_FB_USED": "gpu_memory_used",
-    "DCGM_FI_DEV_FB_TOTAL": "total_gpu_memory",
     "DCGM_FI_DEV_SM_CLOCK": "sm_clock_frequency",
     "DCGM_FI_DEV_MEM_CLOCK": "memory_clock_frequency",
     "DCGM_FI_DEV_MEMORY_TEMP": "memory_temperature",
