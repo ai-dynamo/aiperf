@@ -1,16 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Module loader for AIPerf.
+"""Fast and lazy module loader for AIPerf.
 
-This module is used to load all modules into the system to ensure everything is
-registered and ready to be used. This is done to avoid the performance penalty of
-importing all modules during CLI startup, while still ensuring that all
-implementations are properly registered with their factories.
+Thread-safe singleton that automatically scans for @Factory.register decorators on first
+instantiation, then loads modules on demand. The scan happens only once during singleton
+creation, ensuring all subsequent operations are fast and don't need to check scan status.
 """
 
+import ast
 import importlib
 import threading
-import time
+from enum import Enum
 from pathlib import Path
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -18,41 +18,137 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 _logger = AIPerfLogger(__name__)
 
 
-def _load_all_modules() -> None:
-    """Import all top-level modules to trigger their registration decorators.
+class ModuleRegistry:
+    """Thread-safe singleton for lazy module loading.
 
-    This is called only when modules are actually needed, not during CLI startup.
+    Automatically scans all Python files for @Factory.register decorators on first
+    instantiation. All subsequent operations are guaranteed to have complete registry
+    data available without additional scan checks or locks.
     """
-    for module in Path(__file__).parent.iterdir():
-        if (
-            module.is_dir()
-            and not module.name.startswith("_")
-            and not module.name.startswith(".")
-            and (module / "__init__.py").exists()
-        ):
-            _logger.debug(f"Loading module: aiperf.{module.name}")
+
+    _instance = None
+    _instance_lock = threading.Lock()
+    # factory -> {class_type -> module_path}
+    _registrations: dict[str, dict[str, str]] = {}
+    _loaded = False
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._instance_lock:
+                # Double-check locking pattern
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    # Automatically scan on first instantiation
+                    cls._instance._scan_all()
+        return cls._instance
+
+    def load_plugin(self, factory_name: str, class_type: str | Enum) -> None:
+        """Load a plugin module for the given factory and class type."""
+        # Convert to string representation - all enums are string enums
+        type_key = str(class_type)
+
+        module_path = self._registrations.get(factory_name, {}).get(type_key)
+        if module_path:
+            importlib.import_module(module_path)
+
+    def get_available_types(self, factory_name: str) -> list[str]:
+        """Get all available types for a factory without loading them.
+
+        Args:
+            factory_name: Name of the factory to get types for
+
+        Returns:
+            List of available type strings for the factory
+        """
+        return list(self._registrations.get(factory_name, {}).keys())
+
+    def get_all_factories(self) -> list[str]:
+        """Get all available factory names.
+
+        Returns:
+            List of all factory names that have registered implementations
+        """
+        return list(self._registrations.keys())
+
+    def load_all_plugins(self, factory_name: str) -> None:
+        """Load all available plugins for a factory.
+
+        Args:
+            factory_name: Name of the factory to load all plugins for
+        """
+        factory_registrations = self._registrations.get(factory_name, {})
+
+        # Load all modules for this factory
+        for module_path in factory_registrations.values():
+            importlib.import_module(module_path)
+
+    def _scan_all(self) -> None:
+        """Scan all Python files for @Factory.register decorators.
+
+        This method is only called during singleton instantiation, so no additional
+        locking is needed as the instance lock already protects this operation.
+        """
+        if self._loaded:
+            return
+
+        aiperf_root = Path(__file__).parent
+        for file_path in aiperf_root.rglob("*.py"):
+            if "__pycache__" in str(file_path) or file_path.name == "module_loader.py":
+                continue
+
             try:
-                importlib.import_module(f"aiperf.{module.name}")
-            except ImportError:
-                _logger.exception(
-                    f"Error loading AIPerf module: aiperf.{module.name}. Ensure the folder {module.resolve()} is a valid Python package"
-                )
-                raise
+                tree = ast.parse(file_path.read_text())
+                module_path = f"aiperf.{'.'.join(file_path.relative_to(aiperf_root).with_suffix('').parts)}"
 
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ClassDef):
+                        for decorator in node.decorator_list:
+                            self._parse_decorator(decorator, module_path)
+            except Exception:
+                continue
 
-_modules_loaded = False
-_modules_loaded_lock = threading.Lock()
+        self._loaded = True
 
+    def _parse_decorator(self, decorator: ast.expr, module_path: str) -> None:
+        """Parse @Factory.register() decorator and store registration."""
+        if (
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and isinstance(decorator.func.value, ast.Name)
+            and decorator.func.value.id.endswith("Factory")
+            and decorator.func.attr in ["register", "register_all"]
+        ):
+            factory_name = decorator.func.value.id
 
-def ensure_modules_loaded() -> None:
-    """Ensure all modules are loaded exactly once."""
-    global _modules_loaded
-    with _modules_loaded_lock:
-        if not _modules_loaded:
-            start_time = time.perf_counter()
-            _logger.debug("Loading all modules")
-            _load_all_modules()
-            _logger.debug(
-                f"Modules loaded in {time.perf_counter() - start_time:.2f} seconds"
-            )
-            _modules_loaded = True
+            for arg in decorator.args:
+                if isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Name):
+                    if factory_name not in self._registrations:
+                        self._registrations[factory_name] = {}
+
+                    enum_class_name = arg.value.id
+                    enum_value_name = arg.attr
+                    # Try to get the actual enum value and store its string representation
+                    try:
+                        # Dynamically import and get the enum value
+
+                        # Import the enum class from common.enums
+                        import importlib
+
+                        enums_module = importlib.import_module("aiperf.common.enums")
+
+                        if hasattr(enums_module, enum_class_name):
+                            enum_class = getattr(enums_module, enum_class_name)
+                            if hasattr(enum_class, enum_value_name):
+                                enum_value = getattr(enum_class, enum_value_name)
+                                # Store the string representation as the key
+                                self._registrations[factory_name][str(enum_value)] = (
+                                    module_path
+                                )
+                                _logger.debug(
+                                    f"Registered {enum_class_name}.{enum_value_name} -> '{enum_value}' for {factory_name} in {module_path}"
+                                )
+                    except Exception:
+                        # If we can't resolve the enum, skip it with a warning
+                        _logger.warning(
+                            f"Could not resolve enum {enum_class_name}.{enum_value_name} for {factory_name} in {module_path}"
+                        )

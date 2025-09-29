@@ -72,8 +72,8 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             return
         old_state = self._state
         self._state = state
-        if self.is_debug_enabled:
-            self.debug(f"State changed from {old_state!r} to {state!r} for {self}")
+        if self.is_trace_enabled:
+            self.trace(f"State changed from {old_state!r} to {state!r} for {self}")
         await self.run_hooks(
             AIPerfHook.ON_STATE_CHANGE, old_state=old_state, new_state=state
         )

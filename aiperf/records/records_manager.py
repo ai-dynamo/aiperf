@@ -466,11 +466,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
 
 def main() -> None:
-    """Main entry point for the records manager."""
+    """Main entry point for RecordsManager service."""
+    import sys
 
-    from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.common.subprocess_service_runner import create_service_app
 
-    bootstrap_and_run_service(RecordsManager)
+    app = create_service_app(ServiceType.RECORDS_MANAGER)
+    sys.exit(app())
 
 
 if __name__ == "__main__":

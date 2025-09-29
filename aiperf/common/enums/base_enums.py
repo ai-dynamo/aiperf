@@ -46,6 +46,10 @@ class CaseInsensitiveStrEnum(str, Enum):
             for member in cls:
                 if member.value.lower() == value.lower():
                     return member
+                if member.value.lower().replace("-", "_") == value.lower().replace(
+                    "-", "_"
+                ):
+                    return member
         return None
 
 

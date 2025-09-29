@@ -6,7 +6,6 @@ import time
 from pydantic import Field
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
     DEFAULT_MAX_WORKERS_CAP,
@@ -174,7 +173,7 @@ class WorkerManager(BaseComponentService):
     @background_task(immediate=False, interval=DEFAULT_WORKER_CHECK_INTERVAL)
     async def _worker_status_loop(self) -> None:
         """Check the status of all workers."""
-        self.debug("Checking worker status")
+        self.trace("Checking worker status")
 
         for _, info in self.worker_infos.items():
             if (time.time_ns() - (info.last_update_ns or 0)) / NANOS_PER_SECOND > DEFAULT_WORKER_STALE_TIME:  # fmt: skip
@@ -189,12 +188,19 @@ class WorkerManager(BaseComponentService):
                 worker_id: info.status for worker_id, info in self.worker_infos.items()
             },
         )
-        self.debug(lambda: f"Publishing worker status summary: {summary}")
+        if self.is_trace_enabled:
+            self.trace(f"Publishing worker status summary: {summary}")
         await self.publish(summary)
 
 
 def main() -> None:
-    bootstrap_and_run_service(WorkerManager)
+    """Main entry point for WorkerManager service."""
+    import sys
+
+    from aiperf.common.subprocess_service_runner import create_service_app
+
+    app = create_service_app(ServiceType.WORKER_MANAGER)
+    sys.exit(app())
 
 
 if __name__ == "__main__":

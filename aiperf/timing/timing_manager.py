@@ -13,7 +13,7 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.exceptions import InvalidStateError
-from aiperf.common.factories import ServiceFactory
+from aiperf.common.factories import CreditIssuingStrategyFactory, ServiceFactory
 from aiperf.common.hooks import (
     on_command,
     on_pull_message,
@@ -41,7 +41,6 @@ from aiperf.timing.config import (
 )
 from aiperf.timing.credit_issuing_strategy import (
     CreditIssuingStrategy,
-    CreditIssuingStrategyFactory,
 )
 from aiperf.timing.credit_manager import CreditPhaseMessagesMixin
 
@@ -196,10 +195,13 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
 
 
 def main() -> None:
-    """Main entry point for the timing manager."""
-    from aiperf.common.bootstrap import bootstrap_and_run_service
+    """Main entry point for TimingManager service."""
+    import sys
 
-    bootstrap_and_run_service(TimingManager)
+    from aiperf.common.subprocess_service_runner import create_service_app
+
+    app = create_service_app(ServiceType.TIMING_MANAGER)
+    sys.exit(app())
 
 
 if __name__ == "__main__":

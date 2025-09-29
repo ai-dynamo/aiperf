@@ -149,9 +149,13 @@ class Worker(
 
 
 def main() -> None:
-    from aiperf.common.bootstrap import bootstrap_and_run_service
+    """Main entry point for Worker service."""
+    import sys
 
-    bootstrap_and_run_service(Worker)
+    from aiperf.common.subprocess_service_runner import create_service_app
+
+    app = create_service_app(ServiceType.WORKER)
+    sys.exit(app())
 
 
 if __name__ == "__main__":

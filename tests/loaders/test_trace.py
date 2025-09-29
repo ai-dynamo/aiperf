@@ -7,7 +7,10 @@ import pytest
 
 from aiperf.common.config import EndpointConfig, InputConfig, UserConfig
 from aiperf.common.enums import CustomDatasetType
-from aiperf.dataset import MooncakeTrace, MooncakeTraceDatasetLoader
+from aiperf.dataset.loader.mooncake_trace import (
+    MooncakeTrace,
+    MooncakeTraceDatasetLoader,
+)
 
 
 class TestMooncakeTrace:

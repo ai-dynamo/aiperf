@@ -11,7 +11,6 @@ class PublicDatasetType(CaseInsensitiveStrEnum):
 class ComposerType(CaseInsensitiveStrEnum):
     SYNTHETIC = "synthetic"
     CUSTOM = "custom"
-    PUBLIC_DATASET = "public_dataset"
 
 
 class CustomDatasetType(CaseInsensitiveStrEnum):

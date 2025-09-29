@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from aiperf.common.enums import MessageType
 from aiperf.common.messages import Message
-from aiperf.zmq import BaseZMQCommunication
+from aiperf.zmq.zmq_comms import BaseZMQCommunication
 
 
 class MockCommunicationData(BaseModel):

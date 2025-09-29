@@ -12,7 +12,6 @@ import sys
 
 from cyclopts import App
 
-from aiperf.cli_utils import exit_on_error
 from aiperf.common.config import ServiceConfig, UserConfig
 
 app = App(name="aiperf", help="NVIDIA AIPerf")
@@ -23,12 +22,14 @@ def profile(
     user_config: UserConfig,
     service_config: ServiceConfig | None = None,
 ) -> None:
-    """Run the Profile subcommand.
+    """Profile an inference server.
 
     Args:
         user_config: User configuration for the benchmark
         service_config: Service configuration options
     """
+    from aiperf.cli_utils import exit_on_error
+
     with exit_on_error(title="Error Running AIPerf System"):
         from aiperf.cli_runner import run_system_controller
         from aiperf.common.config import load_service_config

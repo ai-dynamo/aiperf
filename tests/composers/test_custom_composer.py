@@ -7,13 +7,11 @@ import pytest
 
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.models import Conversation, Turn
-from aiperf.dataset import (
-    MooncakeTraceDatasetLoader,
-    MultiTurnDatasetLoader,
-    RandomPoolDatasetLoader,
-    SingleTurnDatasetLoader,
-)
 from aiperf.dataset.composer.custom import CustomDatasetComposer
+from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
+from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
+from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
+from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
 
 
 class TestInitialization:

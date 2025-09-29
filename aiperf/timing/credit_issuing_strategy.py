@@ -9,9 +9,8 @@ from aiperf.common.constants import (
     DEFAULT_CREDIT_PROGRESS_REPORT_INTERVAL,
     NANOS_PER_SECOND,
 )
-from aiperf.common.enums import CreditPhase, TimingMode
+from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import ConfigurationError
-from aiperf.common.factories import AIPerfFactory
 from aiperf.common.messages import CreditReturnMessage
 from aiperf.common.mixins import TaskManagerMixin
 from aiperf.common.models import CreditPhaseConfig, CreditPhaseStats
@@ -157,6 +156,13 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         """Wait for a phase to complete, with timeout for time-based phases."""
         if phase_stats.is_time_based:
             # For time-based phases, calculate how much time is left from the original duration
+            if (
+                phase_stats.start_ns is None
+                or phase_stats.expected_duration_sec is None
+            ):
+                raise ValueError(
+                    "Time-based phase must have start_ns and expected_duration_sec set"
+                )
             elapsed_ns = time.time_ns() - phase_stats.start_ns
             elapsed_sec = elapsed_ns / NANOS_PER_SECOND
             remaining_sec = max(0, phase_stats.expected_duration_sec - elapsed_sec)
@@ -343,7 +349,3 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
                     return
 
         self.debug("All credits completed, stopping credit progress reporting loop")
-
-
-class CreditIssuingStrategyFactory(AIPerfFactory[TimingMode, CreditIssuingStrategy]):
-    """Factory for creating credit issuing strategies based on the timing mode."""

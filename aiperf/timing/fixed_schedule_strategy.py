@@ -7,11 +7,11 @@ from collections import defaultdict
 
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.enums import CreditPhase, TimingMode
+from aiperf.common.factories import CreditIssuingStrategyFactory
 from aiperf.common.models import CreditPhaseConfig, CreditPhaseStats
 from aiperf.timing.config import TimingManagerConfig
 from aiperf.timing.credit_issuing_strategy import (
     CreditIssuingStrategy,
-    CreditIssuingStrategyFactory,
 )
 from aiperf.timing.credit_manager import CreditManagerProtocol
 

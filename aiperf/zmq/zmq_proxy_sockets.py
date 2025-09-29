@@ -116,7 +116,7 @@ def define_proxy_class(
     ZMQProxy.__name__ = f"ZMQ_{proxy_type.name}_Proxy"
     ZMQProxy.__qualname__ = ZMQProxy.__name__
     ZMQProxy.__doc__ = f"A ZMQ Proxy for {proxy_type.name} communication."
-    ZMQProxyFactory.register(proxy_type)(ZMQProxy)
+    # ZMQProxyFactory.register(proxy_type)(ZMQProxy)
     return ZMQProxy
 
 
@@ -124,7 +124,7 @@ def define_proxy_class(
 # XPUB/XSUB Proxy
 ################################################################################
 
-ZMQXPubXSubProxy = define_proxy_class(
+ZMQXPubXSubProxy = define_proxy_class(  # type: ignore[assignment]
     ZMQProxyType.XPUB_XSUB,
     create_proxy_socket_class(SocketType.XSUB, ProxyEndType.Frontend),
     create_proxy_socket_class(SocketType.XPUB, ProxyEndType.Backend),
@@ -154,7 +154,7 @@ The ZMQ proxy handles the message routing automatically.
 # ROUTER/DEALER Proxy
 ################################################################################
 
-ZMQDealerRouterProxy = define_proxy_class(
+ZMQDealerRouterProxy = define_proxy_class(  # type: ignore[assignment]
     ZMQProxyType.DEALER_ROUTER,
     create_proxy_socket_class(SocketType.ROUTER, ProxyEndType.Frontend),
     create_proxy_socket_class(SocketType.DEALER, ProxyEndType.Backend),
@@ -190,7 +190,7 @@ for proper response forwarding back to original DEALER clients.
 # PUSH/PULL Proxy
 ################################################################################
 
-ZMQPushPullProxy = define_proxy_class(
+ZMQPushPullProxy = define_proxy_class(  # type: ignore[assignment]
     ZMQProxyType.PUSH_PULL,
     create_proxy_socket_class(SocketType.PULL, ProxyEndType.Frontend),
     create_proxy_socket_class(SocketType.PUSH, ProxyEndType.Backend),
@@ -215,3 +215,29 @@ routing automatically.
 The PUSH backend socket forwards messages from the proxy to PULL services.
 The ZMQ proxy handles the message routing automatically.
 """
+
+
+################################################################################
+# ZMQ Proxy Factory Stubs
+################################################################################
+
+
+@ZMQProxyFactory.register(ZMQProxyType.PUSH_PULL)
+class ZMQPushPullProxyStub(ZMQPushPullProxy):
+    # NOTE: Do not remove this stub, it is used to ensure that the ZMQProxyFactory registers all the
+    # proxy classes as part of the ModuleRegistry scan and lazy loading.
+    pass
+
+
+@ZMQProxyFactory.register(ZMQProxyType.DEALER_ROUTER)
+class ZMQDealerRouterProxyStub(ZMQDealerRouterProxy):
+    # NOTE: Do not remove this stub, it is used to ensure that the ZMQProxyFactory registers all the
+    # proxy classes as part of the ModuleRegistry scan and lazy loading.
+    pass
+
+
+@ZMQProxyFactory.register(ZMQProxyType.XPUB_XSUB)
+class ZMQXPubXSubProxyStub(ZMQXPubXSubProxy):
+    # NOTE: Do not remove this stub, it is used to ensure that the ZMQProxyFactory registers all the
+    # proxy classes as part of the ModuleRegistry scan and lazy loading.
+    pass

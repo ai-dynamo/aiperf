@@ -11,9 +11,11 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.hooks import on_command
-from aiperf.common.messages import CommandMessage
-from aiperf.common.messages.command_messages import CommandAcknowledgedResponse
-from aiperf.common.mixins import CommandHandlerMixin
+from aiperf.common.messages.command_messages import (
+    CommandAcknowledgedResponse,
+    CommandMessage,
+)
+from aiperf.common.mixins.command_handler_mixin import CommandHandlerMixin
 from aiperf.common.mixins.process_health_mixin import ProcessHealthMixin
 from aiperf.common.types import ServiceTypeT
 

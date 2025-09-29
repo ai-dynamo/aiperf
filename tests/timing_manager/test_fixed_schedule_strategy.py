@@ -11,7 +11,8 @@ import pytest
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.enums import CreditPhase, TimingMode
 from aiperf.common.models import CreditPhaseStats
-from aiperf.timing import FixedScheduleStrategy, TimingManagerConfig
+from aiperf.timing.config import TimingManagerConfig
+from aiperf.timing.fixed_schedule_strategy import FixedScheduleStrategy
 from tests.timing_manager.conftest import MockCreditManager
 from tests.utils.time_traveler import TimeTraveler
 

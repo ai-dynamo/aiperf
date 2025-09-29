@@ -16,7 +16,7 @@ import pytest
 
 from aiperf.common.aiperf_logger import _TRACE
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import CommunicationBackend, ServiceRunType
+from aiperf.common.enums import ServiceRunType
 from aiperf.common.messages import Message
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
@@ -167,7 +167,14 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
 
         def _mock_call(self, text, **kwargs):
             base_tokens = list(range(10, 10 + len(text.split())))
-            return {"input_ids": base_tokens}
+            # Create a mock BatchEncoding-like object
+            mock_result = MagicMock()
+            mock_result.__getitem__ = lambda self, key: {"input_ids": base_tokens}[key]
+            mock_result.__contains__ = lambda self, key: key == "input_ids"
+            mock_result.get = lambda key, default=None: {"input_ids": base_tokens}.get(
+                key, default
+            )
+            return mock_result
 
         def _mock_encode(self, text, **kwargs):
             return self._mock_call(text, **kwargs)["input_ids"]
@@ -188,7 +195,6 @@ def user_config() -> UserConfig:
 def service_config() -> ServiceConfig:
     return ServiceConfig(
         service_run_type=ServiceRunType.MULTIPROCESSING,
-        comm_backend=CommunicationBackend.ZMQ_IPC,
     )
 
 

@@ -7,8 +7,7 @@ import pytest
 
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.models import Image, Text
-from aiperf.dataset import SingleTurn
-from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
+from aiperf.dataset.loader.single_turn import SingleTurn, SingleTurnDatasetLoader
 
 
 class TestSingleTurn:

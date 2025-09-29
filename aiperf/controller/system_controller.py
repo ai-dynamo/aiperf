@@ -32,7 +32,6 @@ from aiperf.common.factories import (
     ServiceManagerFactory,
 )
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
-from aiperf.common.logging import get_global_log_queue
 from aiperf.common.messages import (
     CommandErrorResponse,
     CommandResponse,
@@ -44,6 +43,7 @@ from aiperf.common.messages import (
     ProfileStartCommand,
     RealtimeMetricsCommand,
     RegisterServiceCommand,
+    ServiceFailedMessage,
     ShutdownCommand,
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
@@ -109,14 +109,12 @@ class SystemController(SignalHandlerMixin, BaseService):
                 required_services=self.required_services,
                 user_config=self.user_config,
                 service_config=self.service_config,
-                log_queue=get_global_log_queue(),
             )
         )
         self.ui: AIPerfUIProtocol = AIPerfUIFactory.create_instance(
             self.service_config.ui_type,
             service_config=self.service_config,
             user_config=self.user_config,
-            log_queue=get_global_log_queue(),
             controller=self,
         )
         self.attach_child_lifecycle(self.ui)
@@ -288,14 +286,14 @@ class SystemController(SignalHandlerMixin, BaseService):
         service_type = message.service_type
         timestamp = message.request_ns
 
-        self.debug(lambda: f"Received heartbeat from {service_type} (ID: {service_id})")
+        self.trace(lambda: f"Received heartbeat from {service_type} (ID: {service_id})")
 
         # Update the last heartbeat timestamp if the component exists
         try:
             service_info = self.service_manager.service_id_map[service_id]
             service_info.last_seen = timestamp
             service_info.state = message.state
-            self.debug(f"Updated heartbeat for {service_id} to {timestamp}")
+            self.trace(lambda: f"Updated heartbeat for {service_id} to {timestamp}")
         except Exception:
             self.warning(
                 f"Received heartbeat from unknown service: {service_id} ({service_type})"
@@ -386,6 +384,21 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.service_manager.stop_service(ServiceType.WORKER)
         if self.scale_record_processors_with_workers:
             await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
+
+    @on_message(MessageType.SERVICE_FAILED)
+    async def _on_service_failed_message(self, message: ServiceFailedMessage) -> None:
+        """Handle a service failed message."""
+        self.error(f"Service {message.service_id} failed: {message.error}")
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=message.error,
+                operation=f"Service {message.service_id} failed",
+                service_id=message.service_id,
+            )
+        )
+        while not self.is_running:
+            await asyncio.sleep(0.1)
+        await self.stop()
 
     @on_message(MessageType.PROCESS_RECORDS_RESULT)
     async def _on_process_records_result_message(
@@ -564,13 +577,13 @@ class SystemController(SignalHandlerMixin, BaseService):
 
 
 def main() -> None:
-    """Main entry point for the system controller."""
+    """Main entry point for SystemController service."""
 
-    from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.common.subprocess_service_runner import create_service_app
 
-    bootstrap_and_run_service(SystemController)
+    app = create_service_app(ServiceType.SYSTEM_CONTROLLER)
+    sys.exit(app())
 
 
 if __name__ == "__main__":
     main()
-    sys.exit(0)

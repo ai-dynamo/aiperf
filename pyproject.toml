@@ -49,9 +49,16 @@ dependencies = [
   "uvloop~=0.21.0",
 ]
 
-# CLI Entrypoint
+# CLI Entrypoints
 [project.scripts]
 aiperf = "aiperf.cli:app"
+aiperf-worker = "aiperf.workers.worker:main"
+aiperf-worker-manager = "aiperf.workers.worker_manager:main"
+aiperf-system-controller = "aiperf.controller.system_controller:main"
+aiperf-dataset-manager = "aiperf.dataset.dataset_manager:main"
+aiperf-timing-manager = "aiperf.timing.timing_manager:main"
+aiperf-records-manager = "aiperf.records.records_manager:main"
+aiperf-record-processor = "aiperf.records.record_processor_service:main"
 
 [project.optional-dependencies]
 dev = [
