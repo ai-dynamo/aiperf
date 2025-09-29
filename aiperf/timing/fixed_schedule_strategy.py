@@ -35,6 +35,7 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
         self._auto_offset_timestamps = config.auto_offset_timestamps
         self._start_offset = config.fixed_schedule_start_offset
         self._end_offset = config.fixed_schedule_end_offset
+        self._time_scale = 1 / (config.fixed_schedule_speedup or 1.0)
         super().__init__(config=config, credit_manager=credit_manager)
 
     def _create_timestamp_groups(self) -> None:
@@ -90,8 +91,10 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
 
             # Calculate the wait duration for this timestamp
             # (timestamp - schedule_zero_ms) is the offset of the conversation(s) from the start of the schedule
+            # Apply time scaling to the offset, then subtract elapsed time
             # (self._perf_counter_ms() - start_time_ms) is how much time has passed since we started dropping credits
-            wait_duration_ms = (timestamp - self._schedule_zero_ms) - (
+            scaled_offset_ms = (timestamp - self._schedule_zero_ms) * self._time_scale
+            wait_duration_ms = scaled_offset_ms - (
                 self._perf_counter_ms() - start_time_ms
             )
             wait_duration_sec = wait_duration_ms / MILLIS_PER_SECOND
