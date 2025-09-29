@@ -94,7 +94,6 @@ class SystemController(SignalHandlerMixin, BaseService):
             ServiceType.TIMING_MANAGER: 1,
             ServiceType.WORKER_MANAGER: 1,
             ServiceType.RECORDS_MANAGER: 1,
-            # ServiceType.TELEMETRY_MANAGER: 1,  # Optional service - may shut down if no DCGM endpoints reachable
         }
         if self.service_config.record_processor_service_count is not None:
             self.required_services[ServiceType.RECORD_PROCESSOR] = (
@@ -127,15 +126,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._stop_tasks: set[asyncio.Task] = set()
         self._profile_results: ProcessRecordsResult | None = None
         self._exit_errors: list[ExitErrorInfo] = []
-        self._telemetry_results: TelemetryResults | None = (
-            None  # Store telemetry results for unified export
-        )
+        self._telemetry_results: TelemetryResults | None = None
         self._profile_results_received = False
-        self._should_wait_for_telemetry = (
-            False  # Assume telemetry is disabled initially
-        )
-        self._shutdown_triggered = False  # Prevent multiple shutdown calls
-        # Store endpoint reachability info from TelemetryStatusMessage
+        self._should_wait_for_telemetry = False
+
+        self._shutdown_triggered = False
         self._endpoints_tested: list[str] = []
         self._endpoints_reachable: list[str] = []
         self.debug("System Controller created")
@@ -200,19 +195,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self._start_profiling_all_services()
         self.info("AIPerf System is PROFILING")
 
-    def _get_required_service_ids(self) -> list[str]:
-        """Get service IDs for required services only."""
-        return [
-            sid
-            for sid, info in self.service_manager.service_id_map.items()
-            if info.service_type in self.required_services
-        ]
-
     async def _profile_configure_all_services(self) -> None:
         """Configure all services to start profiling.
 
-        This is a blocking call that will wait for all services to be configured before returning. This way
-        we can ensure that all services are configured before we start profiling.
+        This is a blocking call that will wait for all registered services to be configured before returning.
+        Timeout ensures we don't wait forever for optional services that may shut down.
         """
         self.info("Configuring all services to start profiling")
         begin = time.perf_counter()
@@ -221,7 +208,7 @@ class SystemController(SignalHandlerMixin, BaseService):
                 service_id=self.service_id,
                 config=self.user_config,
             ),
-            self._get_required_service_ids(),
+            list(self.service_manager.service_id_map.keys()),
             timeout=DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
         )
         duration = time.perf_counter() - begin
@@ -235,7 +222,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             ProfileStartCommand(
                 service_id=self.service_id,
             ),
-            self._get_required_service_ids(),
+            list(self.service_manager.service_id_map.keys()),
             timeout=DEFAULT_PROFILE_START_TIMEOUT,
         )
         self._parse_responses_for_errors(responses, "Start Profiling")
@@ -346,8 +333,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Process a generic service lifecycle status message.
 
         Updates the service registry with lifecycle state changes (initializing,
-        running, stopping, etc.). For telemetry-specific status updates, see
-        _on_telemetry_status_message() which handles export coordination.
+        running, stopping, etc.).
 
         Args:
             message: The status message to process
@@ -379,60 +365,14 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _on_telemetry_status_message(
         self, message: TelemetryStatusMessage
     ) -> None:
-        """Handle telemetry availability status from TelemetryManager.
+        """Handle telemetry status from TelemetryManager.
 
-        This method uses a dedicated TelemetryStatusMessage rather than the generic
-        StatusMessage system because:
-
-        1. **Different Purpose**: StatusMessage tracks generic service lifecycle
-           (starting/running/stopping), while this tracks telemetry data availability
-           for export coordination.
-
-        2. **Different Timing**: StatusMessage is sent throughout service lifecycle,
-           while TelemetryStatusMessage is sent once during PROFILE_CONFIGURE phase
-           to inform SystemController whether telemetry results will be available.
-
-        3. **Export Coordination**: This message specifically controls whether
-           SystemController should wait for telemetry results before triggering
-           the unified export process (data files + console).
-
-        4. **Clear Intent**: Dedicated message type makes telemetry coordination
-           explicit and easier to debug/maintain.
-
-        The message determines export coordination flow:
-        - enabled=True → Wait for ProcessTelemetryResultMessage before export
-        - enabled=False → Proceed with export immediately (no telemetry data)
+        TelemetryStatusMessage informs SystemController if telemetry results will be available.
         """
-        self.warning(
-            f"🔧 TELEMETRY STATUS RECEIVED: enabled={message.enabled}, reason={message.reason}"
-        )
 
-        # Store endpoint reachability information for export
         self._endpoints_tested = message.endpoints_tested
         self._endpoints_reachable = message.endpoints_reachable
-
-        self.warning(
-            f"🔧 TELEMETRY STATUS: endpoints_tested={len(message.endpoints_tested)}, "
-            f"endpoints_reachable={len(message.endpoints_reachable)}"
-        )
-
-        if not message.enabled:
-            # Telemetry is disabled, don't wait for telemetry results
-            old_value = self._should_wait_for_telemetry
-            self._should_wait_for_telemetry = False
-            self.warning(
-                f"🔧 TELEMETRY DISABLED: changed _should_wait_for_telemetry from {old_value} to {self._should_wait_for_telemetry}"
-            )
-            # Check if we should trigger shutdown now
-            self.warning("🔧 TELEMETRY DISABLED: calling _check_and_trigger_shutdown()")
-            await self._check_and_trigger_shutdown()
-        else:
-            # Telemetry is enabled, we should wait for telemetry results
-            old_value = self._should_wait_for_telemetry
-            self._should_wait_for_telemetry = True
-            self.warning(
-                f"🔧 TELEMETRY ENABLED: changed _should_wait_for_telemetry from {old_value} to {self._should_wait_for_telemetry}"
-            )
+        self._should_wait_for_telemetry = message.enabled
 
     @on_message(MessageType.COMMAND_RESPONSE)
     async def _process_command_response_message(self, message: CommandResponse) -> None:
@@ -487,26 +427,17 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"Received process records result message with errors: {message.results.errors}"
             )
 
-        # This data will also be displayed by the console error exporter
         self.debug(lambda: f"Error summary: {message.results.results.error_summary}")
 
         self._profile_results = message.results
 
-        # Validate that we have results, but defer all exports until shutdown
         if not message.results.results:
             self.error(
                 f"Received process records result message with no records: {message.results.results}"
             )
 
-        # Mark that profile results have been received
-        old_value = self._profile_results_received
         self._profile_results_received = True
-        self.warning(
-            f"🔧 PROFILE RESULTS RECEIVED: changed _profile_results_received from {old_value} to {self._profile_results_received}"
-        )
 
-        # Check if we should trigger shutdown after receiving profile results
-        self.warning("🔧 PROFILE RESULTS: calling _check_and_trigger_shutdown()")
         await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.PROCESS_TELEMETRY_RESULT)
@@ -521,19 +452,23 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"Received process telemetry result message with errors: {message.telemetry_result.errors}"
             )
 
-        # Store telemetry results for export, updating with correct endpoint information
-        telemetry_results = message.telemetry_result.results
-        if telemetry_results:
-            # Update the endpoint information with the correct tested/successful lists
-            telemetry_results.endpoints_tested = self._endpoints_tested
-            telemetry_results.endpoints_successful = self._endpoints_reachable
-        self._telemetry_results = telemetry_results
-
-        self.info(
-            f"✅ SystemController received telemetry results from {len(self._telemetry_results.endpoints_successful) if self._telemetry_results else 0} endpoints"
+        self.debug(
+            lambda: f"Error summary: {message.telemetry_result.results.error_summary}"
         )
 
-        # Check if we should trigger shutdown after receiving telemetry results
+        telemetry_results = message.telemetry_result.results
+
+        if not message.telemetry_result.results:
+            self.error(
+                f"Received process telemetry result message with no records: {telemetry_results}"
+            )
+
+        if telemetry_results:
+            telemetry_results.endpoints_tested = self._endpoints_tested
+            telemetry_results.endpoints_successful = self._endpoints_reachable
+
+        self._telemetry_results = telemetry_results
+
         await self._check_and_trigger_shutdown()
 
     async def _check_and_trigger_shutdown(self) -> None:
@@ -541,52 +476,25 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         Coordination logic:
         1. Always wait for profile results (ProcessRecordsResultMessage)
-        2. Wait for telemetry results only if _should_wait_for_telemetry=True
-           (set by TelemetryStatusMessage during PROFILE_CONFIGURE phase)
-        3. When both conditions met, trigger shutdown which performs unified export
-           (data files + console) with complete dataset including telemetry when available
-
-        This ensures consistent data across all export formats and prevents the
-        "No telemetry results available" error in console export.
+        2. If telemetry disabled OR telemetry results received → proceed with shutdown
+        3. Otherwise → wait (telemetry results arrive nearly simultaneously and will call this method again)
         """
-        # DEBUG: Log current state for troubleshooting hang issue
-        self.warning(
-            f"🔧 COORDINATION CHECK - shutdown_triggered={self._shutdown_triggered}, "
-            f"profile_results_received={self._profile_results_received}, "
-            f"should_wait_for_telemetry={self._should_wait_for_telemetry}, "
-            f"telemetry_results_exists={self._telemetry_results is not None}"
-        )
-
         if self._shutdown_triggered:
-            self.debug("Already triggered shutdown, returning")
-            return  # Already triggered shutdown
-
-        # Check if we have profile results
-        if not self._profile_results_received:
-            self.warning("🔧 COORDINATION: Waiting for profile results before shutdown")
             return
 
-        # If telemetry is disabled or we received telemetry results, proceed with shutdown
-        condition1 = not self._should_wait_for_telemetry
-        condition2 = self._telemetry_results is not None
-        should_proceed = condition1 or condition2
+        if not self._profile_results_received:
+            return
 
-        self.warning(
-            f"🔧 COORDINATION: condition1 (not should_wait)={condition1}, "
-            f"condition2 (has_telemetry_results)={condition2}, "
-            f"should_proceed={should_proceed}"
+        telemetry_ready_for_shutdown = (
+            not self._should_wait_for_telemetry or self._telemetry_results is not None
         )
 
-        if should_proceed:
+        if telemetry_ready_for_shutdown:
             self._shutdown_triggered = True
-            self.warning(
-                "🔧 COORDINATION: Both conditions met, triggering system shutdown"
-            )
+            self.debug("All results received, initiating shutdown")
             await asyncio.shield(self.stop())
         else:
-            self.warning(
-                "🔧 COORDINATION: Waiting for telemetry results before shutdown"
-            )
+            self.debug("Waiting for telemetry results...")
 
     async def _handle_signal(self, sig: int) -> None:
         """Handle received signals by triggering graceful shutdown.

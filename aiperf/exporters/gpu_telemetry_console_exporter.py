@@ -36,32 +36,8 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         if not self._service_config.verbose:
             return
 
-        # Check if we have telemetry results (using same pattern as CSV exporter)
         if not self._telemetry_results:
-            self.error(
-                "❌ GPUTelemetryConsoleExporter: No telemetry results available for console export"
-            )
             return
-
-        telemetry_data = self._telemetry_results.telemetry_data
-
-        if not telemetry_data or not telemetry_data.dcgm_endpoints:
-            self.error(
-                "❌ GPUTelemetryConsoleExporter: No telemetry data available for console export"
-            )
-            self.error(
-                f"🔧 GPUTelemetryConsoleExporter DEBUG: telemetry_data exists = {telemetry_data is not None}"
-            )
-            if telemetry_data:
-                self.error(
-                    f"🔧 GPUTelemetryConsoleExporter DEBUG: dcgm_endpoints = {telemetry_data.dcgm_endpoints}"
-                )
-            return
-
-        endpoint_count = len(telemetry_data.dcgm_endpoints)
-        self.error(
-            f"✅ GPUTelemetryConsoleExporter: About to display telemetry data from {endpoint_count} endpoints (verbose mode)"
-        )
 
         self._print_renderable(
             console, self.get_renderable(self._telemetry_results, console)
@@ -76,72 +52,97 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
     def get_renderable(
         self, telemetry_results: TelemetryResults, console: Console
     ) -> RenderableType:
-        """Create Rich tables showing GPU telemetry metrics with per-metric statistical breakdown."""
+        """Create Rich tables showing GPU telemetry metrics with consolidated single-table format."""
 
         renderables = []
 
-        # Add endpoint reachability summary at the top
-        renderables.extend(self._create_endpoint_summary(telemetry_results))
-
-        # Get the actual telemetry data
         telemetry_data = telemetry_results.telemetry_data
 
-        # Create separate table for each DCGM endpoint
+        first_table = True
         for dcgm_url, gpus_data in telemetry_data.dcgm_endpoints.items():
             if not gpus_data:
                 continue
 
-            # Add endpoint header (more prominent)
             endpoint_display = dcgm_url.replace("http://", "").replace("/metrics", "")
-            renderables.append(
-                Text(f"\nGPU TELEMETRY: {endpoint_display}", style="bold cyan on black")
-            )
 
-            # Define metrics to display with full statistics
-            metrics_to_display = [
-                ("GPU Power Usage", "gpu_power_usage", "W"),
-                ("GPU Power Limit", "gpu_power_limit", "W"),
-                ("Energy Consumption", "energy_consumption", "MJ"),
-                ("GPU Utilization", "gpu_utilization", "%"),
-                ("GPU Memory Used", "gpu_memory_used", "GB"),
-                ("GPU Temperature", "gpu_temperature", "°C"),
-            ]
+            for _gpu_uuid, gpu_data in gpus_data.items():
+                gpu_index = gpu_data.metadata.gpu_index
+                gpu_name = gpu_data.metadata.model_name
 
-            # Create table for each metric (ensure left alignment)
-            for metric_display, metric_key, unit in metrics_to_display:
-                metric_table = Table(
-                    title=f"{metric_display} ({unit})",
-                    title_justify="left",
-                    show_header=True,
-                    header_style="bold magenta",
+                table_title_base = f"{endpoint_display} | GPU {gpu_index} | {gpu_name}"
+
+                if first_table:
+                    first_table = False
+
+                    title_lines = []
+                    title_lines.append("NVIDIA AIPerf | GPU Telemetry Summary")
+
+                    endpoints_tested = telemetry_results.endpoints_tested
+                    endpoints_successful = telemetry_results.endpoints_successful
+                    total_count = len(endpoints_tested)
+                    successful_count = len(endpoints_successful)
+                    failed_count = total_count - successful_count
+
+                    if failed_count == 0:
+                        title_lines.append(
+                            f"[bold green]{successful_count}/{total_count} DCGM endpoints reachable[/bold green]"
+                        )
+                    elif successful_count == 0:
+                        title_lines.append(
+                            f"[bold red]{successful_count}/{total_count} DCGM endpoints reachable[/bold red]"
+                        )
+                    else:
+                        title_lines.append(
+                            f"[bold yellow]{successful_count}/{total_count} DCGM endpoints reachable[/bold yellow]"
+                        )
+
+                    for endpoint in endpoints_tested:
+                        clean_endpoint = endpoint.replace("http://", "").replace(
+                            "/metrics", ""
+                        )
+                        if endpoint in endpoints_successful:
+                            title_lines.append(f"[green]• {clean_endpoint} ✅[/green]")
+                        else:
+                            title_lines.append(
+                                f"[red]• {clean_endpoint} ❌ (unreachable)[/red]"
+                            )
+
+                    title_lines.append("")
+                    title_lines.append(table_title_base)
+                    table_title = "\n".join(title_lines)
+                else:
+                    renderables.append(Text(""))
+                    table_title = table_title_base
+
+                metrics_table = Table(
+                    show_header=True, title=table_title, title_style="italic"
                 )
+                metrics_table.add_column("Metric", justify="right", style="cyan")
+                metrics_table.add_column("avg", justify="right", style="green")
+                metrics_table.add_column("min", justify="right", style="green")
+                metrics_table.add_column("max", justify="right", style="green")
+                metrics_table.add_column("p99", justify="right", style="green")
+                metrics_table.add_column("p90", justify="right", style="green")
+                metrics_table.add_column("p75", justify="right", style="green")
+                metrics_table.add_column("std", justify="right", style="green")
 
-                # Add columns: GPU Index, GPU Name, and statistics
-                metric_table.add_column("GPU Index", justify="center", style="cyan")
-                metric_table.add_column("GPU Name", justify="left", style="blue")
-                metric_table.add_column("avg", justify="right", style="green")
-                metric_table.add_column("min", justify="right", style="green")
-                metric_table.add_column("max", justify="right", style="green")
-                metric_table.add_column("p99", justify="right", style="green")
-                metric_table.add_column("p90", justify="right", style="green")
-                metric_table.add_column("p75", justify="right", style="green")
+                metrics_to_display = [
+                    ("Power Usage (W)", "gpu_power_usage", "W"),
+                    ("Energy Consumption (MJ)", "energy_consumption", "MJ"),
+                    ("Utilization (%)", "gpu_utilization", "%"),
+                    ("Memory Used (GB)", "gpu_memory_used", "GB"),
+                    ("Temperature (°C)", "gpu_temperature", "°C"),
+                    ("SM Clock (MHz)", "sm_clock_frequency", "MHz"),
+                ]
 
-                # Add data for each GPU
-                has_data = False
-                for _gpu_uuid, gpu_data in gpus_data.items():
+                for metric_display, metric_key, unit in metrics_to_display:
                     try:
                         metric_result = gpu_data.get_metric_result(
                             metric_key, metric_key, metric_display, unit
                         )
 
-                        # Truncate GPU name if too long
-                        gpu_name = gpu_data.metadata.model_name
-                        if len(gpu_name) > 40:
-                            gpu_name = f"{gpu_name[:37]}..."
-
-                        metric_table.add_row(
-                            str(gpu_data.metadata.gpu_index),
-                            gpu_name,
+                        metrics_table.add_row(
+                            metric_display,
                             f"{metric_result.avg:.2f}"
                             if metric_result.avg is not None
                             else "N/A",
@@ -160,76 +161,49 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                             f"{metric_result.p75:.2f}"
                             if metric_result.p75 is not None
                             else "N/A",
+                            f"{metric_result.std:.2f}"
+                            if metric_result.std is not None
+                            else "N/A",
                         )
-                        has_data = True
                     except Exception:
-                        # Skip metrics without data
                         continue
 
-                # Only add table if it has data
-                if has_data:
-                    renderables.append(metric_table)
-                    renderables.append(Text(""))  # Spacing between tables
+                renderables.append(metrics_table)
 
         if not renderables:
+            message_parts = [
+                "No GPU telemetry data collected during the benchmarking run."
+            ]
+
+            endpoints_tested = telemetry_results.endpoints_tested
+            endpoints_successful = telemetry_results.endpoints_successful
+            failed_endpoints = [
+                ep for ep in endpoints_tested if ep not in endpoints_successful
+            ]
+
+            if failed_endpoints:
+                message_parts.append("\n\nUnreachable endpoints:")
+                for endpoint in failed_endpoints:
+                    clean_endpoint = endpoint.replace("http://", "").replace(
+                        "/metrics", ""
+                    )
+                    message_parts.append(f"  • {clean_endpoint}")
+
+            if telemetry_results.error_summary:
+                message_parts.append("\n\nErrors encountered:")
+                for error_count in telemetry_results.error_summary:
+                    error = error_count.error_details
+                    count = error_count.count
+                    if count > 1:
+                        message_parts.append(
+                            f"  • {error.message} ({count} occurrences)"
+                        )
+                    else:
+                        message_parts.append(f"  • {error.message}")
+
             return Text(
-                "No GPU telemetry data collected during the benchmarking run.",
+                "".join(message_parts),
                 style="dim italic",
             )
 
-        # Return all tables in a vertical layout (each on new line)
         return Group(*renderables)
-
-    def _create_endpoint_summary(
-        self, telemetry_results: TelemetryResults
-    ) -> list[RenderableType]:
-        """Create endpoint reachability summary display."""
-        renderables = []
-
-        endpoints_tested = telemetry_results.endpoints_tested
-        endpoints_successful = telemetry_results.endpoints_successful
-
-        # Calculate failed endpoints
-        endpoints_failed = [
-            ep for ep in endpoints_tested if ep not in endpoints_successful
-        ]
-
-        total_count = len(endpoints_tested)
-        successful_count = len(endpoints_successful)
-        failed_count = len(endpoints_failed)
-
-        # Add summary header
-        if failed_count == 0:
-            status_text = (
-                f"✅ {successful_count}/{total_count} DCGM endpoints reachable"
-            )
-            status_style = "bold green"
-        elif successful_count == 0:
-            status_text = (
-                f"❌ {successful_count}/{total_count} DCGM endpoints reachable"
-            )
-            status_style = "bold red"
-        else:
-            status_text = (
-                f"⚠️  {successful_count}/{total_count} DCGM endpoints reachable"
-            )
-            status_style = "bold yellow"
-
-        renderables.append(Text("GPU TELEMETRY SUMMARY", style="bold cyan"))
-        renderables.append(Text(status_text, style=status_style))
-
-        # Add detailed endpoint list if there are any tested endpoints
-        if total_count > 0:
-            for endpoint in endpoints_tested:
-                clean_endpoint = endpoint.replace("http://", "").replace("/metrics", "")
-                if endpoint in endpoints_successful:
-                    renderables.append(Text(f"   • {clean_endpoint} ✅", style="green"))
-                else:
-                    renderables.append(
-                        Text(f"   • {clean_endpoint} ❌ (unreachable)", style="red")
-                    )
-
-        # Add spacing after summary
-        renderables.append(Text(""))
-
-        return renderables

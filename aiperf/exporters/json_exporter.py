@@ -90,12 +90,8 @@ class JsonExporter(AIPerfLoggerMixin):
                 k: v for k, v in converted_records.items() if self._should_export(v)
             }
 
-        # Include telemetry data if available (statistical summary only, no raw hierarchy)
         telemetry_export_data = None
         if self._telemetry_results:
-            self.debug(
-                f"JSON export: Including telemetry data from {len(self._telemetry_results.endpoints_successful)} endpoints"
-            )
             telemetry_export_data = {
                 "summary": {
                     "endpoints_tested": self._telemetry_results.endpoints_tested,
@@ -139,10 +135,8 @@ class JsonExporter(AIPerfLoggerMixin):
             endpoint_display = dcgm_url.replace("http://", "").replace("/metrics", "")
             summary[endpoint_display] = {"gpus": {}}
 
-            # Define metrics to include in summary
             metrics_to_export = [
                 ("gpu_power_usage", "W"),
-                ("gpu_power_limit", "W"),
                 ("energy_consumption", "MJ"),
                 ("gpu_utilization", "%"),
                 ("gpu_memory_used", "GB"),
@@ -160,7 +154,6 @@ class JsonExporter(AIPerfLoggerMixin):
                     "metrics": {},
                 }
 
-                # Add statistical summary for each metric
                 for metric_key, unit in metrics_to_export:
                     try:
                         metric_result = gpu_data.get_metric_result(
@@ -192,7 +185,6 @@ class JsonExporter(AIPerfLoggerMixin):
                             "unit": unit,
                         }
                     except Exception:
-                        # Skip metrics without data
                         continue
 
                 summary[endpoint_display]["gpus"][

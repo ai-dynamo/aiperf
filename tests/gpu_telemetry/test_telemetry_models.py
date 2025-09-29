@@ -39,11 +39,9 @@ class TestTelemetryRecord:
             device="nvidia0",
             hostname="ed7e7a5e585f",
             gpu_power_usage=75.5,
-            gpu_power_limit=300.0,
             energy_consumption=1000000000,
             gpu_utilization=85.0,
             gpu_memory_used=15.26,
-            total_gpu_memory=48.0,
         )
 
         assert record.timestamp_ns == 1000000000
@@ -57,11 +55,9 @@ class TestTelemetryRecord:
         assert record.hostname == "ed7e7a5e585f"
 
         assert record.gpu_power_usage == 75.5
-        assert record.gpu_power_limit == 300.0
         assert record.energy_consumption == 1000000000
         assert record.gpu_utilization == 85.0
         assert record.gpu_memory_used == 15.26
-        assert record.total_gpu_memory == 48.0
 
     def test_telemetry_record_minimal_creation(self):
         """Test creating a TelemetryRecord with only required fields.
@@ -90,11 +86,9 @@ class TestTelemetryRecord:
         assert record.device is None
         assert record.hostname is None
         assert record.gpu_power_usage is None
-        assert record.gpu_power_limit is None
         assert record.energy_consumption is None
         assert record.gpu_utilization is None
         assert record.gpu_memory_used is None
-        assert record.total_gpu_memory is None
 
     def test_telemetry_record_field_validation(self):
         """Test Pydantic validation of required fields.

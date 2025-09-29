@@ -14,7 +14,6 @@ from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.gpu_telemetry.constants import (
     DCGM_TO_FIELD_MAPPING,
     DEFAULT_COLLECTION_INTERVAL,
-    DEFAULT_DCGM_ENDPOINT,
     SCALING_FACTORS,
     URL_REACHABILITY_TIMEOUT,
 )
@@ -57,7 +56,6 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         """Initialize the aiohttp client session."""
         timeout = aiohttp.ClientTimeout(total=URL_REACHABILITY_TIMEOUT)
         self._session = aiohttp.ClientSession(timeout=timeout)
-        self.debug(f"Initialized HTTP client for DCGM endpoint: {self._dcgm_url}")
 
     @on_stop
     async def _cleanup_http_client(self) -> None:
@@ -69,7 +67,6 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         if self._session:
             await self._session.close()
             self._session = None
-            self.debug("Cleaned up HTTP client session")
 
     async def is_url_reachable(self) -> bool:
         """Check if DCGM metrics endpoint is accessible.
@@ -108,7 +105,6 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         try:
             await self._collect_and_process_metrics()
         except asyncio.CancelledError:
-            self.debug("Telemetry collection task cancelled during shutdown")
             raise
         except Exception as e:
             if self._error_callback:
@@ -193,7 +189,6 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                         try:
                             gpu_index = int(gpu_index)
                         except ValueError:
-                            self.warning(f"Invalid GPU index: {gpu_index}")
                             continue
                     else:
                         continue
@@ -229,11 +224,9 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                 device=metadata.get("device"),
                 hostname=metadata.get("hostname"),
                 gpu_power_usage=scaled_metrics.get("gpu_power_usage"),
-                gpu_power_limit=scaled_metrics.get("gpu_power_limit"),
                 energy_consumption=scaled_metrics.get("energy_consumption"),
                 gpu_utilization=scaled_metrics.get("gpu_utilization"),
                 gpu_memory_used=scaled_metrics.get("gpu_memory_used"),
-                total_gpu_memory=scaled_metrics.get("total_gpu_memory"),
                 sm_clock_frequency=scaled_metrics.get("sm_clock_frequency"),
                 memory_clock_frequency=scaled_metrics.get("memory_clock_frequency"),
                 memory_temperature=scaled_metrics.get("memory_temperature"),
@@ -257,140 +250,3 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
             if metric in scaled_metrics and scaled_metrics[metric] is not None:
                 scaled_metrics[metric] *= factor
         return scaled_metrics
-
-
-# [AIP-331] TODO: @ilana-n Remove when CLI argument is added to AI perf (–server-metrics-url) and telemetry_data_collector.py no longer requires local testing via main().
-async def main() -> None:
-    """Main entry point for locally testing the telemetry collector."""
-
-    import statistics
-    from collections import defaultdict
-
-    all_records = []
-    metrics_data = defaultdict(lambda: defaultdict(list))
-
-    def record_callback(records, collector_id):
-        print(
-            f"\n=== Received {len(records)} telemetry records from {collector_id} ==="
-        )
-        for record in records:
-            all_records.append(record)
-            print(f"\nGPU {record.gpu_index} ({record.gpu_model_name}):")
-            print(f"  UUID: {record.gpu_uuid}")
-            print(f"  Host: {record.hostname or 'Unknown'}")
-            print(f"  PCI Bus: {record.pci_bus_id or 'Unknown'}")
-
-            metric_values = {
-                "Power Usage": (record.gpu_power_usage, "W"),
-                "Power Limit": (record.gpu_power_limit, "W"),
-                "Energy Consumption": (record.energy_consumption, "MJ"),
-                "GPU Utilization": (record.gpu_utilization, "%"),
-                "Memory Used": (record.gpu_memory_used, "GB"),
-                "Total Memory": (record.total_gpu_memory, "GB"),
-                "SM Clock Frequency": (record.sm_clock_frequency, "MHz"),
-                "Memory Clock Frequency": (record.memory_clock_frequency, "MHz"),
-                "Memory Temperature": (record.memory_temperature, "°C"),
-                "GPU Temperature": (record.gpu_temperature, "°C"),
-            }
-
-            print("  Metrics:")
-            for metric_name, (value, unit) in metric_values.items():
-                if value is not None:
-                    print(f"    {metric_name}: {value:.2f} {unit}")
-                    metrics_data[record.gpu_uuid][metric_name].append(value)
-                else:
-                    print(f"    {metric_name}: N/A")
-
-    def error_callback(error, collector_id):
-        print(f"\nTelemetry error from {collector_id}: {error}")
-
-    def print_final_summary():
-        if not all_records:
-            print("\nNo data collected for summary")
-            return
-
-        print("\nFINAL SUMMARY")
-        print(f"{'=' * 60}")
-        print(f"Total records collected: {len(all_records)}")
-        print(
-            f"Collection period: {all_records[-1].timestamp_ns - all_records[0].timestamp_ns} ns"
-        )
-        print(f"Unique GPUs detected: {len(metrics_data)}")
-
-        for gpu_uuid, gpu_metrics in metrics_data.items():
-            gpu_record = next(r for r in all_records if r.gpu_uuid == gpu_uuid)
-
-            print(
-                f"\n GPU {gpu_record.gpu_index} ({gpu_record.gpu_model_name[:20]}...)"
-            )
-            print(f"   UUID: {gpu_uuid}")
-            print(
-                f"   Samples: {len([r for r in all_records if r.gpu_uuid == gpu_uuid])}"
-            )
-
-            for metric_name, values in gpu_metrics.items():
-                if values:
-                    avg_val = statistics.mean(values)
-                    min_val = min(values)
-                    max_val = max(values)
-                    std_val = 0 if len(values) <= 1 else statistics.stdev(values)
-
-                    unit = next(
-                        (
-                            unit
-                            for name, (_, unit) in [
-                                ("Power Usage", (None, "W")),
-                                ("Power Limit", (None, "W")),
-                                ("Energy Consumption", (None, "MJ")),
-                                ("GPU Utilization", (None, "%")),
-                                ("Memory Used", (None, "GB")),
-                                ("Total Memory", (None, "GB")),
-                                ("SM Clock Frequency", (None, "MHz")),
-                                ("Memory Clock Frequency", (None, "MHz")),
-                                ("Memory Temperature", (None, "°C")),
-                                ("GPU Temperature", (None, "°C")),
-                            ]
-                            if name == metric_name
-                        ),
-                        "",
-                    )
-
-                    print(f"    {metric_name}:")
-                    print(f"      Avg: {avg_val:.2f} {unit}")
-                    print(f"      Min: {min_val:.2f} {unit}")
-                    print(f"      Max: {max_val:.2f} {unit}")
-                    print(f"      Std: {std_val:.2f} {unit}")
-
-    print("AIPerf GPU Telemetry Collector Test")
-    print("=====================================")
-
-    collector = TelemetryDataCollector(
-        dcgm_url=DEFAULT_DCGM_ENDPOINT,
-        record_callback=record_callback,
-        error_callback=error_callback,
-        collector_id="test_collector",
-    )
-
-    await collector.initialize_and_start()
-
-    try:
-        if await collector.is_url_reachable():
-            print("DCGM endpoint reachable - starting collection...")
-            print("Collection interval: 1.0 seconds")
-            print("Press Ctrl+C to stop and see summary")
-
-            try:
-                await asyncio.sleep(10)
-            except KeyboardInterrupt:
-                print("\nStopping collection...")
-            finally:
-                print_final_summary()
-        else:
-            print("DCGM endpoint not reachable at http://localhost:9401/metrics")
-            print("Make sure DCGM is running and accessible")
-    finally:
-        await collector.stop()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

@@ -119,9 +119,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Telemetry data storage
         self._telemetry_hierarchy = TelemetryHierarchy()
         self._telemetry_hierarchy_lock = asyncio.Lock()
-        self._telemetry_errors: list[
-            ErrorDetails
-        ] = []  # Track telemetry-specific errors
+        self._telemetry_error_counts: dict[
+            ErrorDetails, int
+        ] = {}  # Track telemetry-specific errors with counts
+        self._telemetry_error_counts_lock = asyncio.Lock()
 
         self._results_processors: list[ResultsProcessorProtocol] = []
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
@@ -207,31 +208,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """
 
         if message.valid:
-            # Send telemetry records to telemetry results processor
             await self._send_telemetry_to_results_processors(message.records)
 
-            # Store telemetry records in hierarchy for export
             async with self._telemetry_hierarchy_lock:
                 for record in message.records:
                     self._telemetry_hierarchy.add_record(record)
-
-            # Track telemetry separately - don't add to inference record count
-            # Telemetry should not affect inference processing statistics or completion detection
-            self.debug(
-                f"✅ Processed {len(message.records)} telemetry records from {message.collector_id}"
-            )
         else:
-            # Handle telemetry collection errors separately from inference errors
-            # Don't add to inference processing stats or error summary
-            self.warning(
-                f"❌ Telemetry collection error from {message.collector_id}: {message.error}"
-            )
-            # Store telemetry-specific errors for ProcessTelemetryResult.errors
             if message.error:
-                self._telemetry_errors.append(message.error)
-                self.debug(
-                    f"Stored telemetry error (total: {len(self._telemetry_errors)})"
-                )
+                async with self._telemetry_error_counts_lock:
+                    self._telemetry_error_counts[message.error] = (
+                        self._telemetry_error_counts.get(message.error, 0) + 1
+                    )
 
     def _should_include_request_by_duration(
         self, results: list[dict[MetricTagT, MetricValueTypeT]]
@@ -559,7 +546,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """
         async with self._telemetry_hierarchy_lock:
             if not self._telemetry_hierarchy.dcgm_endpoints:
-                self.debug("No telemetry data collected for independent export")
                 return None
 
             telemetry_results = TelemetryResults(
@@ -570,11 +556,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 endpoints_successful=list(
                     self._telemetry_hierarchy.dcgm_endpoints.keys()
                 ),
+                error_summary=await self.get_telemetry_error_summary(),
             )
 
-            self.info(
-                f"Independent telemetry export: {len(telemetry_results.endpoints_successful)} endpoints"
-            )
             return telemetry_results
 
     async def _publish_telemetry_results(self, cancelled: bool) -> None:
@@ -582,9 +566,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         try:
             telemetry_results = await self.export_telemetry_independently()
             if telemetry_results:
+                async with self._telemetry_error_counts_lock:
+                    unique_errors = list(self._telemetry_error_counts.keys())
+
                 telemetry_result = ProcessTelemetryResult(
                     results=telemetry_results,
-                    errors=self._telemetry_errors.copy(),  # Include telemetry-specific errors
+                    errors=unique_errors,
                 )
 
                 await self.publish(
@@ -593,9 +580,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                         telemetry_result=telemetry_result,
                     )
                 )
-                self.info("✅ Published telemetry results independently")
             else:
-                self.debug("No telemetry data to publish")
+                await self.publish(
+                    ProcessTelemetryResultMessage(
+                        service_id=self.service_id,
+                        telemetry_result=ProcessTelemetryResult(
+                            results=TelemetryResults(
+                                telemetry_data=TelemetryHierarchy(),
+                                start_ns=self.start_time_ns or time.time_ns(),
+                                end_ns=self.end_time_ns or time.time_ns(),
+                            ),
+                            errors=[],
+                        ),
+                    )
+                )
         except Exception as e:
             self.error(f"Failed to publish telemetry results: {e}")
 
@@ -605,6 +603,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return [
                 ErrorDetailsCount(error_details=error_details, count=count)
                 for error_details, count in self.error_summary.items()
+            ]
+
+    async def get_telemetry_error_summary(self) -> list[ErrorDetailsCount]:
+        """Generate a summary of the telemetry error records."""
+        async with self._telemetry_error_counts_lock:
+            return [
+                ErrorDetailsCount(error_details=error_details, count=count)
+                for error_details, count in self._telemetry_error_counts.items()
             ]
 
 
