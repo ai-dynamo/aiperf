@@ -20,11 +20,18 @@ from aiperf.common.factories import (
     RequestConverterFactory,
     ServiceFactory,
 )
-from aiperf.common.hooks import background_task, on_command, on_pull_message, on_stop
+from aiperf.common.hooks import (
+    background_task,
+    on_command,
+    on_message,
+    on_pull_message,
+    on_stop,
+)
 from aiperf.common.messages import (
     CommandAcknowledgedResponse,
     CreditDropMessage,
     CreditReturnMessage,
+    DatasetInfoMessage,
     ProfileCancelCommand,
     WorkerHealthMessage,
 )
@@ -35,11 +42,16 @@ from aiperf.common.protocols import (
     RequestClientProtocol,
 )
 from aiperf.workers.credit_processor_mixin import CreditProcessorMixin
+from aiperf.workers.dataset_access_mixin import DatasetAccessMixin
 
 
 @ServiceFactory.register(ServiceType.WORKER)
 class Worker(
-    PullClientMixin, BaseComponentService, ProcessHealthMixin, CreditProcessorMixin
+    PullClientMixin,
+    BaseComponentService,
+    DatasetAccessMixin,
+    ProcessHealthMixin,
+    CreditProcessorMixin,
 ):
     """Worker is primarily responsible for making API calls to the inference server.
     It also manages the conversation between turns and returns the results to the Inference Results Parsers.
@@ -121,6 +133,7 @@ class Worker(
         self.debug("Shutting down worker")
         if self.inference_client:
             await self.inference_client.close()
+        self.cleanup_dataset()
 
     @background_task(
         immediate=False,
@@ -146,6 +159,24 @@ class Worker(
             CommandAcknowledgedResponse.from_command_message(message, self.service_id)
         )
         await self.stop()
+
+    @on_message(MessageType.DATASET_INFO)
+    async def _handle_dataset_info(self, message: DatasetInfoMessage) -> None:
+        """Handle dataset info message from dataset manager."""
+        self.info(f"Received dataset info: enabled={message.enabled}")
+
+        if message.enabled and message.data_location and message.index_location:
+            try:
+                self.initialize_dataset_access(
+                    message.data_location, message.index_location
+                )
+                self.info(
+                    f"Successfully initialized memory-mapped dataset with {message.dataset_size} conversations"
+                )
+            except Exception as e:
+                self.warning(f"Failed to initialize memory-mapped dataset: {e}")
+        else:
+            self.debug("Memory-mapped dataset not available, will use network requests")
 
 
 def main() -> None:

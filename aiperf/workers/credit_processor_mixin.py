@@ -139,37 +139,55 @@ class CreditProcessorMixin(CreditProcessorMixinRequirements):
         if not self.inference_client:
             raise NotInitializedError("Inference server client not initialized.")
 
-        # retrieve the prompt from the dataset
-        conversation_response: ConversationResponseMessage = (
-            await self.conversation_request_client.request(
-                ConversationRequestMessage(
-                    service_id=self.service_id,
-                    conversation_id=message.conversation_id,
-                    credit_phase=message.phase,
+        # Try to retrieve the conversation from memory-mapped files first
+        conversation = None
+        if self.is_dataset_available():
+            conversation = self.get_conversation_from_dataset(message.conversation_id)
+            # self.info(
+            #     f"Retrieved conversation from memory-mapped files: {conversation is not None}"
+            # )
+
+        # Fall back to network request if memory-mapped dataset is not available or failed
+        if conversation is None:
+            conversation_response: ConversationResponseMessage = (
+                await self.conversation_request_client.request(
+                    ConversationRequestMessage(
+                        service_id=self.service_id,
+                        conversation_id=message.conversation_id,
+                        credit_phase=message.phase,
+                    )
                 )
             )
-        )
-        if self.is_trace_enabled:
-            self.trace(f"Received response message: {conversation_response}")
+            if self.is_trace_enabled:
+                self.trace(
+                    f"Received response message from network: {conversation_response}"
+                )
+
+            if isinstance(conversation_response, ErrorMessage):
+                turn_index = 0
+                # Create a dummy turn for error handling
+                from aiperf.common.models import Turn
+
+                turn = Turn()
+                return RequestRecord(
+                    model_name=turn.model or self.model_endpoint.primary_model_name,
+                    conversation_id=message.conversation_id,
+                    turn_index=turn_index,
+                    turn=turn,
+                    timestamp_ns=time.time_ns(),
+                    start_perf_ns=time.perf_counter_ns(),
+                    end_perf_ns=time.perf_counter_ns(),
+                    error=conversation_response.error,
+                )
+
+            conversation = conversation_response.conversation
 
         turn_index = 0
-        turn = conversation_response.conversation.turns[turn_index]
-
-        if isinstance(conversation_response, ErrorMessage):
-            return RequestRecord(
-                model_name=turn.model or self.model_endpoint.primary_model_name,
-                conversation_id=message.conversation_id,
-                turn_index=turn_index,
-                turn=turn,
-                timestamp_ns=time.time_ns(),
-                start_perf_ns=time.perf_counter_ns(),
-                end_perf_ns=time.perf_counter_ns(),
-                error=conversation_response.error,
-            )
+        turn = conversation.turns[turn_index]
 
         record = await self._call_inference_api_internal(message, turn)
         record.model_name = turn.model or self.model_endpoint.primary_model_name
-        record.conversation_id = conversation_response.conversation.session_id
+        record.conversation_id = conversation.session_id
         record.turn_index = turn_index
         return record
 

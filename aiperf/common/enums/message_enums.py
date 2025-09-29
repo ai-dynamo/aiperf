@@ -42,6 +42,7 @@ class MessageType(CaseInsensitiveStrEnum):
     REALTIME_METRICS = "realtime_metrics"
     REGISTRATION = "registration"
     SERVICE_ERROR = "service_error"
+    DATASET_INFO = "dataset_info"
     STATUS = "status"
     WORKER_HEALTH = "worker_health"
     WORKER_STATUS_SUMMARY = "worker_status_summary"

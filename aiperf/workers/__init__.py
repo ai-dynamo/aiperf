@@ -13,6 +13,9 @@ from aiperf.workers.credit_processor_mixin import (
     CreditProcessorMixinRequirements,
     CreditProcessorProtocol,
 )
+from aiperf.workers.dataset_access_mixin import (
+    DatasetAccessMixin,
+)
 from aiperf.workers.worker import (
     Worker,
 )
@@ -25,6 +28,7 @@ __all__ = [
     "CreditProcessorMixin",
     "CreditProcessorMixinRequirements",
     "CreditProcessorProtocol",
+    "DatasetAccessMixin",
     "Worker",
     "WorkerManager",
     "WorkerStatusInfo",

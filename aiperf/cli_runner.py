@@ -34,6 +34,7 @@ def run_system_controller(
     try:
         ensure_modules_loaded()
     except Exception as e:
+        logger.exception(f"Error loading modules: {e}")
         raise_startup_error_and_exit(
             f"Error loading modules: {e}",
             title="Error Loading Modules",

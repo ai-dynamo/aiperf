@@ -25,13 +25,14 @@ from aiperf.common.factories import (
     RequestConverterFactory,
     ServiceFactory,
 )
-from aiperf.common.hooks import on_command, on_request
+from aiperf.common.hooks import on_command, on_request, on_stop
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
     DatasetConfiguredNotification,
+    DatasetInfoMessage,
     DatasetTimingRequest,
     DatasetTimingResponse,
     ProfileConfigureCommand,
@@ -42,6 +43,7 @@ from aiperf.common.models.dataset_models import SessionPayloads
 from aiperf.common.protocols import RequestConverterProtocol, ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader import ShareGPTLoader
+from aiperf.dataset.mmap_dataset_manager import MMapDatasetManager
 
 DATASET_CONFIGURATION_TIMEOUT = 300.0
 _logger = AIPerfLogger(__name__)
@@ -80,6 +82,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.dataset_configured = asyncio.Event()
         self._sequential_iterator_index = 0
         self._use_sequential_iteration = False
+
+        # Memory-mapped dataset manager
+        self._mmap_dataset_manager: MMapDatasetManager | None = None
+        self._mmap_file_paths: tuple[str, str] | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -199,12 +205,78 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._session_ids_cache = list(self.dataset.keys())
 
+        # Create memory-mapped dataset
+        await self._create_mmap_dataset()
+
         self.dataset_configured.set()
         await self.publish(
             DatasetConfiguredNotification(
                 service_id=self.service_id,
             ),
         )
+
+        # Publish memory-mapped file info to workers
+        await self._publish_mmap_info()
+
+    async def _create_mmap_dataset(self) -> None:
+        """Create a memory-mapped dataset for workers to access.
+
+        This method creates memory-mapped files that allow worker processes to access
+        conversation data directly without network requests, improving performance.
+        """
+        if not self.dataset:
+            self.warning("Cannot create memory-mapped dataset: dataset is empty")
+            return
+
+        try:
+            self._mmap_dataset_manager = MMapDatasetManager(
+                dataset=self.dataset,
+                random_seed=self.user_config.input.random_seed,
+                use_sequential_iteration=self._use_sequential_iteration,
+            )
+
+            self._mmap_file_paths = (
+                self._mmap_dataset_manager.create_memory_mapped_files()
+            )
+            self.info(
+                f"Created memory-mapped dataset with {len(self.dataset)} conversations "
+                f"(sequential_iteration={self._use_sequential_iteration}, "
+                f"random_seed={self.user_config.input.random_seed})"
+            )
+
+        except (ValueError, TypeError) as e:
+            self.warning(f"Invalid dataset for memory mapping: {e}")
+            self._mmap_dataset_manager = None
+            self._mmap_file_paths = None
+        except (OSError, PermissionError) as e:
+            self.warning(f"Failed to create memory-mapped files: {e}")
+            self._mmap_dataset_manager = None
+            self._mmap_file_paths = None
+
+    def get_mmap_file_paths(self) -> tuple[str, str] | None:
+        """Get the memory-mapped file paths for workers to connect to."""
+        return self._mmap_file_paths
+
+    async def _publish_mmap_info(self) -> None:
+        """Publish memory-mapped file information to workers."""
+        if self._mmap_file_paths:
+            data_file_path, index_file_path = self._mmap_file_paths
+            message = DatasetInfoMessage(
+                service_id=self.service_id,
+                data_location=data_file_path,
+                index_location=index_file_path,
+                dataset_size=len(self.dataset),
+                enabled=True,
+            )
+        else:
+            # Memory mapping not available
+            message = DatasetInfoMessage(
+                service_id=self.service_id,
+                dataset_size=len(self.dataset),
+                enabled=False,
+            )
+
+        await self.publish(message)
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(
@@ -355,6 +427,23 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             await asyncio.wait_for(
                 self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
             )
+
+    async def _cleanup_mmap_dataset(self) -> None:
+        """Clean up the memory-mapped dataset."""
+        if self._mmap_dataset_manager:
+            try:
+                self._mmap_dataset_manager.cleanup_memory_mapped_files()
+                self.debug("Cleaned up memory-mapped dataset")
+            except Exception as e:
+                self.warning(f"Error cleaning up memory-mapped dataset: {e}")
+            finally:
+                self._mmap_dataset_manager = None
+                self._mmap_file_paths = None
+
+    @on_stop
+    async def _shutdown_dataset_manager(self) -> None:
+        """Clean up resources on shutdown."""
+        await self._cleanup_mmap_dataset()
 
 
 def main() -> None:
