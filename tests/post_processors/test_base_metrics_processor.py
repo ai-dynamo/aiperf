@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from aiperf.common.config import UserConfig
+from aiperf.common.constants import GOOD_REQUEST_COUNT_TAG
 from aiperf.common.enums import EndpointType, MetricFlags, MetricType
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
@@ -106,6 +107,7 @@ class TestBaseMetricsProcessor:
             MetricFlags.SUPPORTS_AUDIO_ONLY
             | MetricFlags.SUPPORTS_IMAGE_ONLY
             | MetricFlags.STREAMING_ONLY
+            | MetricFlags.GOODPUT
         )
 
         # Verify registry calls
@@ -129,7 +131,8 @@ class TestBaseMetricsProcessor:
                 MetricFlags.ERROR_ONLY,
                 MetricFlags.SUPPORTS_AUDIO_ONLY
                 | MetricFlags.SUPPORTS_IMAGE_ONLY
-                | MetricFlags.STREAMING_ONLY,
+                | MetricFlags.STREAMING_ONLY
+                | MetricFlags.GOODPUT,
             ),
             # Test exclude_error_metrics=True
             (
@@ -139,7 +142,8 @@ class TestBaseMetricsProcessor:
                 MetricFlags.SUPPORTS_AUDIO_ONLY
                 | MetricFlags.SUPPORTS_IMAGE_ONLY
                 | MetricFlags.STREAMING_ONLY
-                | MetricFlags.ERROR_ONLY,
+                | MetricFlags.ERROR_ONLY
+                | MetricFlags.GOODPUT,
             ),
             # Test both flags (error_metrics_only takes precedence)
             (
@@ -148,7 +152,8 @@ class TestBaseMetricsProcessor:
                 MetricFlags.ERROR_ONLY,
                 MetricFlags.SUPPORTS_AUDIO_ONLY
                 | MetricFlags.SUPPORTS_IMAGE_ONLY
-                | MetricFlags.STREAMING_ONLY,
+                | MetricFlags.STREAMING_ONLY
+                | MetricFlags.GOODPUT,
             ),
         ],
     )
@@ -220,8 +225,96 @@ class TestBaseMetricsProcessor:
             MetricFlags.NONE,
             MetricFlags.SUPPORTS_AUDIO_ONLY
             | MetricFlags.SUPPORTS_IMAGE_ONLY
-            | MetricFlags.STREAMING_ONLY,
+            | MetricFlags.STREAMING_ONLY
+            | MetricFlags.GOODPUT,
             MetricType.RECORD,
             MetricType.AGGREGATE,
             MetricType.DERIVED,
         )
+
+    def test_setup_metrics_disallows_goodput_flag_when_no_slos(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config,
+    ):
+        mock_user_config.input.goodput = None
+
+        mock_metric_registry.tags_applicable_to.return_value = set()
+        processor = BaseMetricsProcessor(mock_user_config)
+        processor._setup_metrics(MetricType.RECORD)
+
+        (required_flags, disallowed_flags, *types), _ = (
+            mock_metric_registry.tags_applicable_to.call_args
+        )
+        assert required_flags == MetricFlags.NONE
+        assert disallowed_flags & MetricFlags.GOODPUT
+
+    def test_setup_metrics_calls_set_slos(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config,
+    ):
+        mock_user_config.input.goodput = {"request_latency": 250.0}
+
+        supported = {GOOD_REQUEST_COUNT_TAG, "request_latency"}
+        mock_metric_registry.tags_applicable_to.return_value = supported
+        mock_metric_registry.create_dependency_order_for.return_value = [
+            "request_latency",
+            GOOD_REQUEST_COUNT_TAG,
+        ]
+
+        GoodReqCountClass = type("GoodReqCountClass", (), {})
+        GoodReqCountClass.set_slos = Mock()
+        mock_metric_registry.get_class.return_value = GoodReqCountClass
+
+        def _get_instance(tag):
+            m = Mock()
+            m.tag = tag
+            return m
+
+        mock_metric_registry.get_instance.side_effect = _get_instance
+
+        processor = BaseMetricsProcessor(mock_user_config)
+        metrics = processor._setup_metrics(MetricType.RECORD)
+
+        GoodReqCountClass.set_slos.assert_called_once_with({"request_latency": 250.0})
+        assert [m.tag for m in metrics] == ["request_latency", GOOD_REQUEST_COUNT_TAG]
+
+    def test_setup_metrics_does_not_call_set_slos_if_tag_not_supported(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config,
+    ):
+        mock_user_config.input.goodput = {"request_latency": 250.0}
+
+        mock_metric_registry.tags_applicable_to.return_value = {"request_latency"}
+        mock_metric_registry.create_dependency_order_for.return_value = [
+            "request_latency"
+        ]
+
+        processor = BaseMetricsProcessor(mock_user_config)
+        processor._setup_metrics(MetricType.RECORD)
+
+        mock_metric_registry.get_class.assert_not_called()
+
+    def test_setup_metrics_raises_runtimeerror_when_set_slos_invalid(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config,
+    ):
+        mock_user_config.input.goodput = {"unknown_metric": 123.0}
+
+        mock_metric_registry.tags_applicable_to.return_value = {GOOD_REQUEST_COUNT_TAG}
+        mock_metric_registry.create_dependency_order_for.return_value = [
+            GOOD_REQUEST_COUNT_TAG
+        ]
+
+        class BadGoodReqCountClass:
+            @classmethod
+            def set_slos(cls, _):
+                raise ValueError("Unknown metric tag(s) in --goodput: unknown_metric")
+
+        mock_metric_registry.get_class.return_value = BadGoodReqCountClass
+
+        with pytest.raises(RuntimeError, match="Invalid --goodput:"):
+            BaseMetricsProcessor(mock_user_config)._setup_metrics(MetricType.RECORD)

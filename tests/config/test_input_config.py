@@ -69,3 +69,29 @@ def test_input_config_file_validation():
 
     with pytest.raises(ValidationError):
         InputConfig(file=12345)  # Invalid file (non-string value)
+
+
+def test_input_config_goodput_default():
+    cfg = InputConfig()
+    # Whatever InputDefaults.GOODPUT is set to (likely None) is the truth
+    assert cfg.goodput == InputDefaults.GOODPUT
+
+
+def test_input_config_goodput_success():
+    cfg = InputConfig(goodput="request_latency:250 inter_token_latency:10")
+    assert cfg.goodput == {"request_latency": 250.0, "inter_token_latency": 10.0}
+
+
+def test_input_config_goodput_empty_raises_validation_error():
+    with pytest.raises(ValidationError):
+        InputConfig(goodput="   ")
+
+
+def test_input_config_goodput_missing_colon_raises_validation_error():
+    with pytest.raises(ValidationError):
+        InputConfig(goodput="request_latency250")
+
+
+def test_input_config_goodput_non_numeric_value_raises_validation_error():
+    with pytest.raises(ValidationError):
+        InputConfig(goodput="request_latency:abc")
