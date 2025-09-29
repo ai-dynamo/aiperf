@@ -32,6 +32,7 @@ dependencies = [
   "cyclopts>=3,<4",
   "numpy~=2.2.6",
   "openai[aiohttp]~=1.92.2",
+  "opencv-python-headless~=4.12.0.88",
   "orjson~=3.10.18",
   "pandas~=2.3.0",
   "pillow~=11.1.0",

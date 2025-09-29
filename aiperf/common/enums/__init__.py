@@ -34,6 +34,8 @@ from aiperf.common.enums.dataset_enums import (
     ImageFormat,
     PromptSource,
     PublicDatasetType,
+    VideoFormat,
+    VideoSynthType,
 )
 from aiperf.common.enums.endpoints_enums import (
     EndpointServiceKind,
@@ -152,6 +154,8 @@ __all__ = [
     "ServiceType",
     "SystemState",
     "TimingMode",
+    "VideoFormat",
+    "VideoSynthType",
     "WorkerStatus",
     "ZMQProxyType",
 ]

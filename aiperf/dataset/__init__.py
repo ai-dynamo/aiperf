@@ -19,6 +19,7 @@ from aiperf.dataset.generator import (
     BaseGenerator,
     ImageGenerator,
     PromptGenerator,
+    VideoGenerator,
 )
 from aiperf.dataset.loader import (
     AIPERF_DATASET_CACHE_DIR,
@@ -72,6 +73,7 @@ __all__ = [
     "SingleTurn",
     "SingleTurnDatasetLoader",
     "SyntheticDatasetComposer",
+    "VideoGenerator",
     "check_file_exists",
     "encode_image",
     "main",
