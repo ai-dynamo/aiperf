@@ -227,9 +227,16 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                 )
             )
             return
+        await self._process_turns(conversation_response, message, drop_perf_ns)
 
+    async def _process_turns(
+        self,
+        conversation_response: ConversationResponseMessage,
+        message: CreditDropMessage,
+        drop_perf_ns: int,
+    ) -> None:
+        """Process each turn in the conversation sequentially."""
         turn_list = []
-
         for turn_index in range(len(conversation_response.conversation.turns)):
             turn = conversation_response.conversation.turns[turn_index]
             turn_list.append(turn)
@@ -244,7 +251,6 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             if turn_index == 0:
                 record.credit_drop_latency = record.start_perf_ns - drop_perf_ns
             await self._send_inference_result_message(record)
-
             resp = await self.extractor.extract_response_data(record)
             # TODO how do we handle reasoning responses in multi turn?
             resp_text = "".join([r.data.get_text() for r in resp])
