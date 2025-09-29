@@ -23,7 +23,7 @@ The server echoes user prompts back token by token with configurable latencies, 
 - **Pre-loading support**: Pre-load tokenizers at startup for faster responses
 - **Runtime configuration**: Configure server settings via `/configure` endpoint
 - **Comprehensive logging**: Configurable log levels and access logs
-- **Error simulation**: Returns 404 for unsupported models to simulate real-world scenarios
+- **Fallback tokenizer**: Uses a configurable fallback tokenizer (default: Qwen/Qwen3-0.6B) when requested model is unavailable
 
 ## Installation
 
@@ -39,14 +39,18 @@ pip install -e ".[dev]"
 
 ## Usage
 
-> [!IMPORTANT]
->You must provide a model tokenizer to load either on start or dynamically
-> after running using the /configure endpoint, or all requests will return HTTP 404.
+> [!NOTE]
+> The server includes a default fallback tokenizer (Qwen/Qwen3-0.6B) that will be used automatically
+> if the requested model's tokenizer is not available. You can configure a different fallback tokenizer
+> via command line arguments or the /configure endpoint.
 
 ### Command Line
 
 ```bash
-# Basic usage
+# Basic usage (uses default fallback tokenizer)
+aiperf-mock-server
+
+# With specific model pre-loaded
 aiperf-mock-server -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
 # Custom configuration with short flags
@@ -60,7 +64,8 @@ aiperf-mock-server \
   --host 127.0.0.1 \
   --workers 4 \
   --log-level DEBUG \
-  --tokenizer-models deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+  --tokenizer-models deepseek-ai/DeepSeek-R1-Distill-Llama-8B \
+  --fallback-tokenizer Qwen/Qwen3-0.6B
 
 # With environment variables
 export MOCK_SERVER_PORT=8000
@@ -68,6 +73,7 @@ export MOCK_SERVER_TTFT=30
 export MOCK_SERVER_ITL=10
 export MOCK_SERVER_LOG_LEVEL=DEBUG
 export MOCK_SERVER_TOKENIZER_MODELS='["deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]'
+export MOCK_SERVER_FALLBACK_TOKENIZER="Qwen/Qwen3-0.6B"
 aiperf-mock-server
 ```
 
@@ -83,6 +89,7 @@ All configuration options can be set via environment variables with the `MOCK_SE
 - `MOCK_SERVER_LOG_LEVEL`: Logging level (default: INFO)
 - `MOCK_SERVER_ACCESS_LOGS`: Enable HTTP access logs (default: false)
 - `MOCK_SERVER_TOKENIZER_MODELS`: JSON-formatted array of models to pre-load
+- `MOCK_SERVER_FALLBACK_TOKENIZER`: Fallback tokenizer model (default: Qwen/Qwen3-0.6B)
 
 ### API Usage
 
@@ -119,13 +126,16 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 #### Runtime Configuration
 
 ```bash
-# Configure latencies at runtime
+# Configure latencies and tokenizers at runtime.
+# The following are all possible configuration options.
+# See the Configuration Options section for more details.
 curl -X POST http://localhost:8000/configure \
   -H "Content-Type: application/json" \
   -d '{
     "ttft": 100,
     "itl": 25,
-    "tokenizer_models": ["deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]
+    "tokenizer_models": ["deepseek-ai/DeepSeek-R1-Distill-Llama-8B"],
+    "fallback_tokenizer": "Qwen/Qwen3-0.6B"
   }'
 ```
 
@@ -153,6 +163,7 @@ curl http://localhost:8000/
 | Log Level | `--log-level`, `-l` | `MOCK_SERVER_LOG_LEVEL` | INFO | Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
 | Access Logs | `--access-logs`, `-a` | `MOCK_SERVER_ACCESS_LOGS` | false | Enable HTTP access logs |
 | Tokenizer Models | `--tokenizer-models`, `-m` | `MOCK_SERVER_TOKENIZER_MODELS` | [] | Models to pre-load at startup |
+| Fallback Tokenizer | `--fallback-tokenizer` | `MOCK_SERVER_FALLBACK_TOKENIZER` | Qwen/Qwen3-0.6B | Fallback tokenizer when requested model's tokenizer is unavailable |
 
 Configuration priority (highest to lowest):
 1. CLI arguments
@@ -175,7 +186,8 @@ Runtime configuration endpoint for updating server settings.
 {
   "ttft": 50,
   "itl": 15,
-  "tokenizer_models": ["deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]
+  "tokenizer_models": ["deepseek-ai/DeepSeek-R1-Distill-Llama-8B"],
+  "fallback_tokenizer": "Qwen/Qwen3-0.6B"
 }
 ```
 
@@ -188,13 +200,17 @@ Root endpoint providing server information and available endpoints.
 ## How It Works
 
 1. **Request Processing**: The server receives a chat completion request
-2. **Tokenization**: Uses the model-specific tokenizer to tokenize the user prompt
-3. **Token Limit**: Respects the `max_tokens` parameter if specified
-4. **Latency Simulation**:
+2. **Tokenizer Selection**:
+   - First attempts to use the requested model's tokenizer if pre-loaded
+   - Falls back to the configured fallback tokenizer if the requested model is unavailable
+   - Returns 404 only if both the requested model and fallback tokenizer fail
+3. **Tokenization**: Uses the selected tokenizer to tokenize the user prompt
+4. **Token Limit**: Respects the `max_completion_tokens` parameter if specified
+5. **Latency Simulation**:
    - Waits for the configured TTFT before sending the first token
    - Waits for the configured ITL between subsequent tokens
    - Uses `perf_counter` for precise timing control
-5. **Response**: Echoes back the tokenized prompt either as:
+6. **Response**: Echoes back the tokenized prompt either as:
    - A complete response (non-streaming)
    - Token-by-token chunks (streaming)
 
@@ -204,7 +220,10 @@ The server uses Hugging Face Transformers to load tokenizers for any supported m
 - Available on Hugging Face Hub
 - Compatible with `AutoTokenizer.from_pretrained()`
 
-If a tokenizer fails to load for a requested model, the server returns a 404 error to simulate model unavailability.
+**Fallback Behavior**:
+- If a tokenizer has not been pre-loaded for a requested model, the server automatically falls back to the configured fallback tokenizer (default: `Qwen/Qwen3-0.6B`)
+- The server only returns a 404 error if both the requested model's tokenizer and the fallback tokenizer fail to load
+- This ensures the server remains functional even when specific model tokenizers are unavailable
 
 ## Development
 
