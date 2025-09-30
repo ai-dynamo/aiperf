@@ -63,9 +63,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         if not self._telemetry_results:
             return
 
-        self._print_renderable(
-            console, self.get_renderable(self._telemetry_results, console)
-        )
+        self._print_renderable(console, self.get_renderable(self._telemetry_results))
 
     def _print_renderable(self, console: Console, renderable: RenderableType) -> None:
         """Print the renderable to the console."""
@@ -73,9 +71,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         console.print(renderable)
         console.file.flush()
 
-    def get_renderable(
-        self, telemetry_results: TelemetryResults, console: Console
-    ) -> RenderableType:
+    def get_renderable(self, telemetry_results: TelemetryResults) -> RenderableType:
         """Create Rich tables showing GPU telemetry metrics with consolidated single-table format."""
 
         renderables = []
@@ -187,7 +183,10 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                             if metric_result.std is not None
                             else "N/A",
                         )
-                    except Exception:
+                    except Exception as e:
+                        self.debug(
+                            f"Failed to retrieve metric {metric_key} for GPU {gpu_index}: {e}"
+                        )
                         continue
 
                 renderables.append(metrics_table)

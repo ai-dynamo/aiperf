@@ -83,6 +83,13 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         # Use existing session if available, otherwise create a temporary one
         if self._session:
             try:
+                # Try HEAD first for efficiency
+                async with self._session.head(
+                    self._dcgm_url, allow_redirects=False
+                ) as response:
+                    if response.status == 200:
+                        return True
+                # Fall back to GET if HEAD is not supported
                 async with self._session.get(self._dcgm_url) as response:
                     return response.status == 200
             except (aiohttp.ClientError, asyncio.TimeoutError):
@@ -92,6 +99,13 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
             timeout = aiohttp.ClientTimeout(total=URL_REACHABILITY_TIMEOUT)
             async with aiohttp.ClientSession(timeout=timeout) as temp_session:
                 try:
+                    # Try HEAD first for efficiency
+                    async with temp_session.head(
+                        self._dcgm_url, allow_redirects=False
+                    ) as response:
+                        if response.status == 200:
+                            return True
+                    # Fall back to GET if HEAD is not supported
                     async with temp_session.get(self._dcgm_url) as response:
                         return response.status == 200
                 except (aiohttp.ClientError, asyncio.TimeoutError):
@@ -188,6 +202,13 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                     metric_name = sample.name
                     labels = sample.labels
                     value = sample.value
+
+                    # Skip non-finite values early
+                    if isinstance(value, float) and (
+                        value != value or value in (float("inf"), float("-inf"))
+                    ):
+                        continue
+
                     gpu_index = labels.get("gpu")
                     if gpu_index is not None:
                         try:

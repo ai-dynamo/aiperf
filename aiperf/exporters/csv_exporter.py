@@ -35,6 +35,16 @@ def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
 class CsvExporter(AIPerfLoggerMixin):
     """Exports records to a CSV file in a legacy, two-section format."""
 
+    TELEMETRY_METRICS_CONFIG = [
+        ("GPU Power Usage", "gpu_power_usage", "W"),
+        ("Energy Consumption", "energy_consumption", "MJ"),
+        ("GPU Utilization", "gpu_utilization", "%"),
+        ("GPU Memory Used", "gpu_memory_used", "GB"),
+        ("GPU Temperature", "gpu_temperature", "°C"),
+        ("SM Clock Frequency", "sm_clock_frequency", "MHz"),
+        ("Memory Clock Frequency", "memory_clock_frequency", "MHz"),
+    ]
+
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self.debug(lambda: f"Initializing CsvExporter with config: {exporter_config}")
@@ -198,17 +208,7 @@ class CsvExporter(AIPerfLoggerMixin):
             writer.writerow([f"=== GPU Telemetry: {endpoint_display} ==="])
             writer.writerow([])
 
-            metrics_to_export = [
-                ("GPU Power Usage", "gpu_power_usage", "W"),
-                ("Energy Consumption", "energy_consumption", "MJ"),
-                ("GPU Utilization", "gpu_utilization", "%"),
-                ("GPU Memory Used", "gpu_memory_used", "GB"),
-                ("GPU Temperature", "gpu_temperature", "°C"),
-                ("SM Clock Frequency", "sm_clock_frequency", "MHz"),
-                ("Memory Clock Frequency", "memory_clock_frequency", "MHz"),
-            ]
-
-            for metric_display, metric_key, unit in metrics_to_export:
+            for metric_display, metric_key, unit in self.TELEMETRY_METRICS_CONFIG:
                 has_metric_data = any(
                     self._gpu_has_metric(gpu_data, metric_key)
                     for gpu_data in gpus_data.values()
@@ -234,34 +234,45 @@ class CsvExporter(AIPerfLoggerMixin):
                 )
 
                 for gpu_uuid, gpu_data in gpus_data.items():
-                    try:
-                        metric_result = gpu_data.get_metric_result(
-                            metric_key, metric_key, metric_display, unit
-                        )
-
-                        writer.writerow(
-                            [
-                                str(gpu_data.metadata.gpu_index),
-                                gpu_data.metadata.model_name,
-                                gpu_uuid,
-                                self._format_number(metric_result.avg),
-                                self._format_number(metric_result.min),
-                                self._format_number(metric_result.max),
-                                self._format_number(metric_result.p99),
-                                self._format_number(metric_result.p90),
-                                self._format_number(metric_result.p75),
-                                self._format_number(metric_result.std),
-                            ]
-                        )
-                    except Exception:
-                        continue
+                    self._write_gpu_metric_row(
+                        writer, gpu_data, gpu_uuid, metric_key, metric_display, unit
+                    )
 
                 writer.writerow([])
+
+    def _write_gpu_metric_row(
+        self, writer, gpu_data, gpu_uuid, metric_key, metric_display, unit
+    ):
+        """Write a single GPU metric row to CSV."""
+        try:
+            metric_result = gpu_data.get_metric_result(
+                metric_key, metric_key, metric_display, unit
+            )
+
+            writer.writerow(
+                [
+                    str(gpu_data.metadata.gpu_index),
+                    gpu_data.metadata.model_name,
+                    gpu_uuid,
+                    self._format_number(metric_result.avg),
+                    self._format_number(metric_result.min),
+                    self._format_number(metric_result.max),
+                    self._format_number(metric_result.p99),
+                    self._format_number(metric_result.p90),
+                    self._format_number(metric_result.p75),
+                    self._format_number(metric_result.std),
+                ]
+            )
+        except Exception as e:
+            self.debug(
+                f"Failed to write metric row for GPU {gpu_uuid}, metric {metric_key}: {e}"
+            )
 
     def _gpu_has_metric(self, gpu_data, metric_key: str) -> bool:
         """Check if GPU has data for the specified metric."""
         try:
             gpu_data.get_metric_result(metric_key, metric_key, "test", "test")
             return True
-        except Exception:
+        except Exception as e:
+            self.debug(f"GPU metric {metric_key} not available: {e}")
             return False

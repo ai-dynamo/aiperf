@@ -91,7 +91,7 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
 
     @classmethod
     def _verify_base_class(cls) -> None:
-        """Verify that the class is a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric.
+        """Verify that the class is a subclass of BaseRecordMetric, BaseAggregateMetric, BaseDerivedMetric, or BaseTelemetryMetric.
         This is done to ensure that the class is a valid metric type.
         """
         # Note: this is valid because the below imports are abstract, so they will not get here
