@@ -15,7 +15,7 @@ from aiperf.common.enums import DataExporterType
 from aiperf.common.enums.metric_enums import MetricFlags
 from aiperf.common.factories import DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models import MetricResult
+from aiperf.common.models import MetricResult, TelemetryResults
 from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.display_units_utils import (
     STAT_KEYS,
@@ -39,7 +39,7 @@ class CsvExporter(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         self.debug(lambda: f"Initializing CsvExporter with config: {exporter_config}")
         self._results = exporter_config.results
-        self._telemetry_results = getattr(exporter_config, "telemetry_results", None)
+        self._telemetry_results = exporter_config.telemetry_results
         self._output_directory = exporter_config.user_config.output.artifact_directory
         self._metric_registry = MetricRegistry
         self._file_path = (
@@ -77,7 +77,9 @@ class CsvExporter(AIPerfLoggerMixin):
             raise
 
     def _generate_csv_content(
-        self, records: Mapping[str, MetricResult], telemetry_results=None
+        self,
+        records: Mapping[str, MetricResult],
+        telemetry_results: TelemetryResults | None = None,
     ) -> str:
         buf = io.StringIO()
         writer = csv.writer(buf)

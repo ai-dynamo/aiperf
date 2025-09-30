@@ -61,7 +61,12 @@ class TelemetryManager(BaseComponentService):
 
         self._collectors: dict[str, TelemetryDataCollector] = {}
 
-        user_endpoints = user_config.server_metrics_url or []
+        # Normalize user_endpoints to always be a list
+        user_endpoints = user_config.server_metrics_url
+        if not user_endpoints:
+            user_endpoints = []
+        elif isinstance(user_endpoints, str):
+            user_endpoints = [user_endpoints]
 
         if DEFAULT_DCGM_ENDPOINT not in user_endpoints:
             self._dcgm_endpoints = [DEFAULT_DCGM_ENDPOINT] + user_endpoints
@@ -101,16 +106,7 @@ class TelemetryManager(BaseComponentService):
                 self.error(f"Exception testing {dcgm_url}: {e}")
 
         if reachable_count == 0:
-            self.info("GPU telemetry disabled - no DCGM endpoints reachable")
-
-            await self._send_telemetry_status(
-                enabled=False,
-                reason="No DCGM endpoints reachable",
-                endpoints_tested=self._dcgm_endpoints,
-                endpoints_reachable=[],
-            )
-
-            asyncio.create_task(self.stop())
+            await self._disable_telemetry_and_stop("no DCGM endpoints reachable")
             return
 
         reachable_endpoints = list(self._collectors)
@@ -139,6 +135,8 @@ class TelemetryManager(BaseComponentService):
 
         if started_count == 0:
             self.warning("No telemetry collectors successfully started")
+            await self._disable_telemetry_and_stop("all collectors failed to start")
+            return
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _handle_profile_cancel_command(
@@ -156,6 +154,23 @@ class TelemetryManager(BaseComponentService):
     async def _telemetry_manager_stop(self) -> None:
         """Stop all telemetry collectors during service shutdown."""
         await self._stop_all_collectors()
+
+    async def _disable_telemetry_and_stop(self, reason: str) -> None:
+        """Disable telemetry by sending status update and stopping service.
+
+        Args:
+            reason: Human-readable reason for disabling telemetry
+        """
+        self.info(f"GPU telemetry disabled - {reason}")
+
+        await self._send_telemetry_status(
+            enabled=False,
+            reason=reason,
+            endpoints_tested=self._dcgm_endpoints,
+            endpoints_reachable=[],
+        )
+
+        asyncio.create_task(self.stop())
 
     async def _stop_all_collectors(self) -> None:
         """Stop all telemetry collectors."""

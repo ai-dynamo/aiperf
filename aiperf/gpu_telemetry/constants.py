@@ -15,7 +15,6 @@ THREAD_JOIN_TIMEOUT = 5.0
 SCALING_FACTORS = {
     "energy_consumption": 1e-9,  # mJ to MJ
     "gpu_memory_used": 1.048576 * 1e-3,  # MiB to GB
-    "total_gpu_memory": 1.048576 * 1e-3,  # MiB to GB
 }
 
 # DCGM field mapping to telemetry record fields

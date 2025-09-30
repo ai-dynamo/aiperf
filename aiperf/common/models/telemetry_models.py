@@ -58,9 +58,6 @@ class TelemetryRecord(AIPerfBaseModel):
     gpu_memory_used: float | None = Field(
         default=None, description="GPU memory used in GB"
     )
-    total_gpu_memory: float | None = Field(
-        default=None, description="Total GPU memory in GB"
-    )
     sm_clock_frequency: float | None = Field(
         default=None, description="SM clock frequency in MHz"
     )

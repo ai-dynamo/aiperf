@@ -139,7 +139,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
             )
 
-            # Add to appropriate lists based on processor type
             self._results_processors.append(results_processor)
 
             if isinstance(results_processor, TelemetryResultsProcessorProtocol):
@@ -470,7 +469,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         results = await asyncio.gather(
             *[
                 results_processor.summarize()
-                for results_processor in self._metric_results_processors  # Only inference processors for real-time
+                for results_processor in self._metric_results_processors
             ],
             return_exceptions=True,
         )
@@ -487,11 +486,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
 
         self.info("Processing records results...")
-        # Process the records through INFERENCE results processors only (exclude telemetry)
         results = await asyncio.gather(
             *[
                 results_processor.summarize()
-                for results_processor in self._metric_results_processors  # Only inference processors
+                for results_processor in self._metric_results_processors
             ],
             return_exceptions=True,
         )
@@ -505,11 +503,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             elif isinstance(result, BaseException):
                 error_results.append(ErrorDetails.from_exception(result))
 
-        # Create separate telemetry results if data exists
-        async with self._telemetry_hierarchy_lock:
-            # Note: telemetry_results intentionally unused here as it's created in _publish_telemetry_results
-            pass
-
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=records_results,
@@ -519,7 +512,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 error_summary=await self.get_error_summary(),
                 was_cancelled=cancelled,
             ),
-            # telemetry_results=telemetry_results,  # Temporarily disabled
             errors=error_results,
         )
         self.debug(lambda: f"Process records result: {result}")
@@ -530,8 +522,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
         )
 
-        # Send telemetry results independently (parallel pipeline)
-        await self._publish_telemetry_results(cancelled)
+        await self._publish_telemetry_results()
 
         return result
 
@@ -561,8 +552,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
             return telemetry_results
 
-    async def _publish_telemetry_results(self, cancelled: bool) -> None:
-        """Publish telemetry results independently - mirrors inference results pattern."""
+    async def _publish_telemetry_results(self) -> None:
+        """Publish telemetry results independently."""
         try:
             telemetry_results = await self.export_telemetry_independently()
             if telemetry_results:

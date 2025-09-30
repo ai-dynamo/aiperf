@@ -44,7 +44,7 @@ class JsonExporter(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         self.debug(lambda: f"Initializing JsonExporter with config: {exporter_config}")
         self._results = exporter_config.results
-        self._telemetry_results = getattr(exporter_config, "telemetry_results", None)
+        self._telemetry_results = exporter_config.telemetry_results
         self._output_directory = exporter_config.user_config.output.artifact_directory
         self._input_config = exporter_config.user_config
         self._metric_registry = MetricRegistry
