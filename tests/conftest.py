@@ -18,6 +18,7 @@ from aiperf.common.aiperf_logger import _TRACE
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType
 from aiperf.common.messages import Message
+from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
 from tests.comms.mock_zmq import (
@@ -280,3 +281,37 @@ def create_mooncake_trace_file():
     # Cleanup all created files
     for filename in filenames:
         Path(filename).unlink(missing_ok=True)
+
+
+@pytest.fixture
+def sample_conversations() -> dict[str, Conversation]:
+    """Create sample conversations for testing."""
+    conversations = {
+        "session_1": Conversation(
+            session_id="session_1",
+            turns=[
+                Turn(
+                    texts=[Text(contents=["Hello, world!"])],
+                    role="user",
+                    model="test-model",
+                ),
+                Turn(
+                    texts=[Text(contents=["How can I help you?"])],
+                    role="assistant",
+                    model="test-model",
+                ),
+            ],
+        ),
+        "session_2": Conversation(
+            session_id="session_2",
+            turns=[
+                Turn(
+                    texts=[Text(contents=["What is AI?"])],
+                    role="user",
+                    model="test-model",
+                    max_tokens=100,
+                ),
+            ],
+        ),
+    }
+    return conversations

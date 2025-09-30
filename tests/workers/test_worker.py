@@ -18,12 +18,14 @@ class MockWorker(Worker):
     def __init__(self):
         self.inference_client = Mock()
         self.inference_client.send_request = AsyncMock()
+        self.id = self.service_id
 
     @property
     def service_id(self):
         return "mock-service-id"
 
 
+@pytest.mark.asyncio
 class TestWorker:
     @pytest.fixture
     def worker(self):
@@ -154,3 +156,24 @@ class TestWorker:
             assert abs(actual_timeout - expected_timeout) < 1e-9, (
                 f"Expected timeout {expected_timeout}, got {actual_timeout}"
             )
+
+    # @patch("aiperf.workers.worker.extract_response_data")
+    # async def test_process_response(self, monkeypatch, worker):
+    #     """Ensure process_response extracts text correctly from RequestRecord."""
+    #     mock_parsed_response = ParsedResponse(
+    #         perf_ns=0,
+    #         data=TextResponseData(text="Hello, world!"),
+    #     )
+    #     mock_extractor = Mock()
+    #     mock_extractor.extract_response_data = AsyncMock(
+    #         return_value=mock_parsed_response
+    #     )
+    #     monkeypatch.setattr(worker, "extractor", mock_extractor)
+    #     turn = await worker._process_response(RequestRecord())
+    #     assert turn.text == "Hello, world!"
+
+    # async def test_process_response_empty(self, worker):
+    #     """Ensure process_response handles empty responses correctly."""
+    #     response = RequestRecord(responses=[])
+    #     text = await worker._process_response(response)
+    #     assert text is None

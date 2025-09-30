@@ -227,39 +227,48 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                 )
             )
             return
-        await self._process_turns(conversation_response, message, drop_perf_ns)
-
-    async def _process_turns(
-        self,
-        conversation_response: ConversationResponseMessage,
-        message: CreditDropMessage,
-        drop_perf_ns: int,
-    ) -> None:
-        """Process each turn in the conversation sequentially."""
         turn_list = []
         for turn_index in range(len(conversation_response.conversation.turns)):
             turn = conversation_response.conversation.turns[turn_index]
             turn_list.append(turn)
             # TODO: how do we handle errors in the middle of a conversation?
-            record = await self._call_inference_api_internal(message, turn)
-            record.model_name = turn.model or self.model_endpoint.primary_model_name
-            record.conversation_id = conversation_response.conversation.session_id
-            record.turn_index = turn_index
-            record.credit_phase = message.phase
-            record.cancel_after_ns = message.cancel_after_ns
-            # If this is the first turn, calculate the credit drop latency
-            if turn_index == 0:
-                record.credit_drop_latency = record.start_perf_ns - drop_perf_ns
+            record = await self._build_response_record(
+                conversation_response, message, turn, turn_index, drop_perf_ns
+            )
             await self._send_inference_result_message(record)
-            resp = await self.extractor.extract_response_data(record)
-            # TODO how do we handle reasoning responses in multi turn?
-            resp_text = "".join([r.data.get_text() for r in resp])
-            if resp_text:
-                resp_turn = Turn(
-                    role="assistant",
-                    texts=[Text(contents=[resp_text])],
-                )
+            resp_turn = await self._process_response(record)
+            if resp_turn:
                 turn_list.append(resp_turn)
+
+    async def _build_response_record(
+        self,
+        conversation_response: ConversationResponseMessage,
+        message: CreditDropMessage,
+        turn: Turn,
+        turn_index: int,
+        drop_perf_ns: int,
+    ) -> RequestRecord:
+        record = await self._call_inference_api_internal(message, turn)
+        record.model_name = turn.model or self.model_endpoint.primary_model_name
+        record.conversation_id = conversation_response.conversation.session_id
+        record.turn_index = turn_index
+        record.credit_phase = message.phase
+        record.cancel_after_ns = message.cancel_after_ns
+        # If this is the first turn, calculate the credit drop latency
+        if turn_index == 0:
+            record.credit_drop_latency = record.start_perf_ns - drop_perf_ns
+        return record
+
+    async def _process_response(self, record: RequestRecord) -> Turn | None:
+        resp = await self.extractor.extract_response_data(record)
+        # TODO how do we handle reasoning responses in multi turn?
+        resp_text = "".join([r.data.get_text() for r in resp])
+        if resp_text:
+            return Turn(
+                role="assistant",
+                texts=[Text(contents=[resp_text])],
+            )
+        return None
 
     async def _call_inference_api_internal(
         self,
