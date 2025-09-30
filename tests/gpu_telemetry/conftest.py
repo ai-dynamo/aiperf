@@ -78,7 +78,7 @@ def sample_telemetry_records():
             gpu_power_usage=22.582,
             energy_consumption=955287014,
             gpu_utilization=1.0,
-            gpu_memory_used=45.531,  # 46614 MiB converted to GB
+            gpu_memory_used=45.531,  # 46614 MiB / 1024 ≈ 45.52 GB
         ),
     ]
 

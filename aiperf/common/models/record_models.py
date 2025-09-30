@@ -4,9 +4,7 @@
 import sys
 import time
 from functools import cached_property
-
-# Import with TYPE_CHECKING to avoid circular import issues at runtime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -20,9 +18,6 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.types import MetricTagT
-
-if TYPE_CHECKING:
-    pass
 
 
 class MetricResult(AIPerfBaseModel):

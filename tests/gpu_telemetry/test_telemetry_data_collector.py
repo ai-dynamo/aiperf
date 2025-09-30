@@ -30,10 +30,10 @@ class TestTelemetryDataCollectorCore:
         self.records_received = []
         self.errors_received = []
 
-        def record_callback(records, collector_id):
+        def record_callback(records, _collector_id):
             self.records_received.extend(records)
 
-        def error_callback(error, collector_id):
+        def error_callback(error, _collector_id):
             self.errors_received.append(error)
 
         self.record_callback = record_callback
@@ -233,7 +233,7 @@ class TestCollectionLifecycle:
         """Test successful telemetry collection with proper lifecycle management."""
         records_received = []
 
-        def record_callback(records, collector_id):
+        def record_callback(records, _collector_id):
             records_received.extend(records)
 
         collector = TelemetryDataCollector(
@@ -277,7 +277,7 @@ class TestCollectionLifecycle:
         """Test error handling during collection loop."""
         errors_received = []
 
-        def error_callback(error, collector_id):
+        def error_callback(error, _collector_id):
             errors_received.append(error)
 
         collector = TelemetryDataCollector(
@@ -324,7 +324,7 @@ class TestCollectionLifecycle:
         """Test that collection continues even if callback raises exceptions."""
         call_count = 0
 
-        def failing_callback(records, collector_id):
+        def failing_callback(records, _collector_id):
             nonlocal call_count
             call_count += 1
             raise ValueError("Callback failed")

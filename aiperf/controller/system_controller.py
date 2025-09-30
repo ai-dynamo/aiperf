@@ -438,7 +438,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
 
         self._profile_results_received = True
-
+        # Coordinate with telemetry results before shutdown
         await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.PROCESS_TELEMETRY_RESULT)
