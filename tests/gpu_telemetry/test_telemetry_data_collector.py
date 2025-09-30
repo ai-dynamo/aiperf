@@ -31,9 +31,23 @@ class TestTelemetryDataCollectorCore:
         self.errors_received = []
 
         def record_callback(records, collector_id):
+            """
+            Append received telemetry records to the test collector's received-records list.
+            
+            Parameters:
+                records (Iterable[TelemetryRecord]): Telemetry records produced by the collector.
+                collector_id (str): Identifier of the collector that produced the records.
+            """
             self.records_received.extend(records)
 
         def error_callback(error, collector_id):
+            """
+            Record an error reported by a telemetry collector.
+            
+            Parameters:
+                error: The exception or error object produced during collection.
+                collector_id (str): Identifier of the collector that reported the error.
+            """
             self.errors_received.append(error)
 
         self.record_callback = record_callback
@@ -234,6 +248,13 @@ class TestCollectionLifecycle:
         records_received = []
 
         def record_callback(records, collector_id):
+            """
+            Append received telemetry records to the shared `records_received` list.
+            
+            Parameters:
+                records (iterable): Telemetry records delivered by the collector.
+                collector_id (str): Identifier of the collector that produced the records.
+            """
             records_received.extend(records)
 
         collector = TelemetryDataCollector(
@@ -325,6 +346,16 @@ class TestCollectionLifecycle:
         call_count = 0
 
         def failing_callback(records, collector_id):
+            """
+            Simulates a failing record callback by incrementing a shared invocation counter and then raising an exception.
+            
+            Parameters:
+                records: The telemetry records passed to the callback.
+                collector_id: Identifier of the collector invoking the callback.
+            
+            Raises:
+                ValueError: Always raised to simulate a callback failure.
+            """
             nonlocal call_count
             call_count += 1
             raise ValueError("Callback failed")

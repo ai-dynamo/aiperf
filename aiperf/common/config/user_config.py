@@ -227,9 +227,13 @@ class UserConfig(BaseConfig):
 
     @model_validator(mode="after")
     def _compute_config(self) -> Self:
-        """Compute additional configuration.
-
-        This method is automatically called after the model is validated to compute additional configuration.
+        """
+        Compute derived configuration fields and populate any missing artifact directory.
+        
+        If `output.artifact_directory` was not set by the user, computes and assigns it from `_compute_artifact_directory()`.
+        
+        Returns:
+            self: The same UserConfig instance with computed fields applied.
         """
 
         if "artifact_directory" not in self.output.model_fields_set:

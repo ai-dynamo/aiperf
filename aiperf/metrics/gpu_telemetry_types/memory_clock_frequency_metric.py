@@ -20,4 +20,13 @@ class MemoryClockFrequencyMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
+        """
+        Extract the memory clock frequency value from a telemetry record.
+        
+        Parameters:
+            record (TelemetryRecord): Telemetry record containing GPU metrics.
+        
+        Returns:
+            float | None: Memory clock frequency in megahertz, or `None` if the value is unavailable.
+        """
         return record.memory_clock_frequency

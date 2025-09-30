@@ -80,6 +80,21 @@ class SystemController(SignalHandlerMixin, BaseService):
         service_config: ServiceConfig,
         service_id: str | None = None,
     ) -> None:
+        """
+        Initialize the SystemController and configure its managers, UI, required service layout, and internal state used for profiling, telemetry coordination, and shutdown.
+        
+        Parameters:
+            user_config (UserConfig): Runtime user-provided configuration for the controller and services.
+            service_config (ServiceConfig): Service-level configuration that controls service run types, counts, UI type, and telemetry behavior.
+            service_id (str | None): Optional explicit service identifier; if omitted a default is used.
+        
+        Notes:
+            - Sets up required_services mapping (counts per ServiceType) and scaling behavior for record processors.
+            - Creates and stores ProxyManager, ServiceManagerProtocol, and AIPerfUIProtocol instances and attaches the UI as a child lifecycle.
+            - Initializes internal tracking fields used across the controller lifecycle:
+                - _was_cancelled, _stop_tasks, _profile_results, _telemetry_results, _profile_results_received,
+                  _should_wait_for_telemetry, _shutdown_triggered, _endpoints_tested, _endpoints_reachable, _exit_errors.
+        """
         super().__init__(
             service_config=service_config,
             user_config=user_config,
@@ -136,7 +151,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.debug("System Controller created")
 
     async def request_realtime_metrics(self) -> None:
-        """Request real-time metrics from the RecordsManager."""
+        """
+        Request real-time metrics from the RecordsManager and wait for its command response.
+        """
         await self.send_command_and_wait_for_response(
             RealtimeMetricsCommand(
                 service_id=self.service_id,
@@ -167,12 +184,10 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     @on_start
     async def _start_services(self) -> None:
-        """Bootstrap the system services.
-
-        This method will:
-        - Initialize all required services
-        - Wait for all required services to be registered
-        - Start all required services
+        """
+        Bootstrap and start the system services, configure them for profiling, and begin profiling.
+        
+        Starts the Service Manager, launches optional services required for configuration (for example TelemetryManager), waits for all services to register, issues profile configuration to registered services, and then starts profiling across the system.
         """
         self.debug("System Controller is bootstrapping services")
 
@@ -196,10 +211,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.info("AIPerf System is PROFILING")
 
     async def _profile_configure_all_services(self) -> None:
-        """Configure all services to start profiling.
-
-        This is a blocking call that will wait for all registered services to be configured before returning.
-        Timeout ensures we don't wait forever for optional services that may shut down.
+        """
+        Send a PROFILE_CONFIGURE command to all registered services and wait for their responses.
+        
+        Sends profiling configuration (from the controller's user_config) to every known service, waits up to DEFAULT_PROFILE_CONFIGURE_TIMEOUT for replies, records any service-side errors, and raises a lifecycle error if any services report failures. Logs the total time taken to configure all services.
         """
         self.info("Configuring all services to start profiling")
         begin = time.perf_counter()
@@ -330,13 +345,13 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     @on_message(MessageType.STATUS)
     async def _process_status_message(self, message: StatusMessage) -> None:
-        """Process a generic service lifecycle status message.
-
-        Updates the service registry with lifecycle state changes (initializing,
-        running, stopping, etc.).
-
-        Args:
-            message: The status message to process
+        """
+        Update a registered service's lifecycle state based on an incoming StatusMessage.
+        
+        If the message refers to an unknown service, it is ignored; otherwise the service's stored state is set to the message's state.
+        
+        Parameters:
+            message (StatusMessage): Message containing `service_id`, `service_type`, and the lifecycle `state` to apply.
         """
         service_id = message.service_id
         service_type = message.service_type
@@ -365,9 +380,13 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _on_telemetry_status_message(
         self, message: TelemetryStatusMessage
     ) -> None:
-        """Handle telemetry status from TelemetryManager.
-
-        TelemetryStatusMessage informs SystemController if telemetry results will be available.
+        """
+        Update the controller's telemetry endpoint state and whether shutdown should wait for telemetry results.
+        
+        Parameters:
+            message (TelemetryStatusMessage): Message containing `endpoints_tested` (list of endpoint identifiers tested),
+                `endpoints_reachable` (list of endpoints confirmed reachable), and `enabled` (True if telemetry results
+                should be awaited before shutdown).
         """
 
         self._endpoints_tested = message.endpoints_tested
@@ -376,7 +395,12 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     @on_message(MessageType.COMMAND_RESPONSE)
     async def _process_command_response_message(self, message: CommandResponse) -> None:
-        """Process a command response message."""
+        """
+        Handle an incoming command response message and log its result.
+        
+        Logs a debug message for success, acknowledged, and unhandled statuses. For failure
+        responses, logs an error containing the command, service id, and error details.
+        """
         self.debug(lambda: f"Received command response message: {message}")
         if message.status == CommandResponseStatus.SUCCESS:
             self.debug(f"Command {message.command} succeeded from {message.service_id}")
@@ -420,7 +444,14 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _on_process_records_result_message(
         self, message: ProcessRecordsResultMessage
     ) -> None:
-        """Handle a profile results message."""
+        """
+        Process and store profile results received from a records-processing service and initiate shutdown coordination.
+        
+        This records the provided ProcessRecordsResultMessage.results into the controller's profile results state, logs any reported errors or an absence of records, marks that profile results have been received, and invokes shutdown coordination to determine whether the controller should stop.
+        
+        Parameters:
+            message (ProcessRecordsResultMessage): Message containing profiling results and any associated errors.
+        """
         self.debug(lambda: f"Received profile results message: {message}")
         if message.results.errors:
             self.error(
@@ -444,7 +475,14 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _on_process_telemetry_result_message(
         self, message: ProcessTelemetryResultMessage
     ) -> None:
-        """Handle a telemetry results message."""
+        """
+        Handle an incoming ProcessTelemetryResultMessage and store its telemetry results.
+        
+        Processes the telemetry result payload, logs any reported errors or missing records, attaches endpoint test metadata, saves the resulting TelemetryResults into the controller state, and triggers shutdown coordination logic as appropriate.
+        
+        Parameters:
+        	message (ProcessTelemetryResultMessage): Message containing the processed telemetry results and any associated errors.
+        """
         self.debug(lambda: f"Received telemetry results message: {message}")
 
         if message.telemetry_result.errors:
@@ -472,12 +510,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self._check_and_trigger_shutdown()
 
     async def _check_and_trigger_shutdown(self) -> None:
-        """Check if all required results are received and trigger unified export + shutdown.
-
-        Coordination logic:
-        1. Always wait for profile results (ProcessRecordsResultMessage)
-        2. If telemetry disabled OR telemetry results received → proceed with shutdown
-        3. Otherwise → wait (telemetry results arrive nearly simultaneously and will call this method again)
+        """
+        Coordinate readiness of profiling and telemetry results and initiate unified export and shutdown when both are ready.
+        
+        This method verifies that profile results have been received and that either telemetry is disabled or telemetry results are available. When readiness conditions are met it marks shutdown as triggered and initiates the controller shutdown sequence; otherwise it returns without side effects.
         """
         if self._shutdown_triggered:
             return
@@ -497,10 +533,11 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.debug("Waiting for telemetry results...")
 
     async def _handle_signal(self, sig: int) -> None:
-        """Handle received signals by triggering graceful shutdown.
-
-        Args:
-            sig: The signal number received
+        """
+        Handle an OS signal by initiating a graceful shutdown or forcefully killing services if shutdown is already in progress.
+        
+        Parameters:
+            sig (int): OS signal number received.
         """
         if self.stop_requested:
             # If we are already in a stopping state, we need to kill the process to be safe.
@@ -561,7 +598,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.file.flush()
 
     async def _print_post_benchmark_info_and_metrics(self) -> None:
-        """Print post benchmark info and metrics to the console."""
+        """
+        Display and export post-benchmark metrics and related information to the console.
+        
+        If profile results are available, exports full dataset (including telemetry when present) to data files (e.g., CSV/JSON) and a console export, then prints the CLI command used, benchmark duration, exported file paths, and log file information. If the profiling run was cancelled early, prints a warning that results may be incomplete.
+        """
         if not self._profile_results or not self._profile_results.results.records:
             self.warning("No profile results to export")
             return

@@ -32,6 +32,14 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         self._endpoint_type = exporter_config.user_config.endpoint.type
 
     async def export(self, console: Console) -> None:
+        """
+        Render and print stored metric records to the provided Rich Console.
+        
+        If there are no records to export this function does nothing.
+        
+        Parameters:
+            console (Console): Rich Console instance used to render and print the metrics table.
+        """
         if not self._results.records:
             self.debug("No records to export")
             return

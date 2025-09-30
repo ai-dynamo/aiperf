@@ -36,6 +36,17 @@ class CsvExporter(AIPerfLoggerMixin):
     """Exports records to a CSV file in a legacy, two-section format."""
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
+        """
+        Initialize the CsvExporter with configuration and prepare internal export state.
+        
+        Sets exporter results, optional telemetry results, output directory, metric registry,
+        default CSV file path, and percentile keys used when formatting exported CSV content.
+        
+        Parameters:
+            exporter_config (ExporterConfig): Exporter configuration containing `results` (metrics to export),
+                `user_config.output.artifact_directory` (destination directory), and optionally
+                `telemetry_results` (GPU telemetry data). Additional keyword arguments are passed to the superclass.
+        """
         super().__init__(**kwargs)
         self.debug(lambda: f"Initializing CsvExporter with config: {exporter_config}")
         self._results = exporter_config.results
@@ -54,6 +65,11 @@ class CsvExporter(AIPerfLoggerMixin):
         )
 
     async def export(self) -> None:
+        """
+        Write collected metrics and optional telemetry results to the configured CSV file.
+        
+        This method ensures the output directory exists, converts stored metric records to display units when present, generates CSV content (including an optional GPU telemetry section), and writes the content to the exporter file path. Any exception raised during generation or file I/O is logged and re-raised.
+        """
         self._output_directory.mkdir(parents=True, exist_ok=True)
 
         self.debug(lambda: f"Exporting data to CSV file: {self._file_path}")
@@ -79,6 +95,16 @@ class CsvExporter(AIPerfLoggerMixin):
     def _generate_csv_content(
         self, records: Mapping[str, MetricResult], telemetry_results=None
     ) -> str:
+        """
+        Generate the CSV file content for the provided metric records and optional telemetry results.
+        
+        Parameters:
+            records (Mapping[str, MetricResult]): Mapping of metric tag to MetricResult to include in the CSV.
+            telemetry_results (optional): Telemetry results object; when provided, a GPU telemetry section is appended to the CSV.
+        
+        Returns:
+            csv_content (str): Complete CSV-formatted content including request metrics, system metrics, and an optional telemetry section.
+        """
         buf = io.StringIO()
         writer = csv.writer(buf)
 
@@ -101,7 +127,15 @@ class CsvExporter(AIPerfLoggerMixin):
     def _split_metrics(
         self, records: Mapping[str, MetricResult]
     ) -> tuple[dict[str, MetricResult], dict[str, MetricResult]]:
-        """Split metrics into request metrics (with percentiles) and system metrics (single values)."""
+        """
+        Partition metric records into request-style metrics that include percentiles and system-style metrics that do not.
+        
+        Parameters:
+            records (Mapping[str, MetricResult]): Mapping of metric tag to MetricResult objects to classify.
+        
+        Returns:
+            tuple[dict[str, MetricResult], dict[str, MetricResult]]: A tuple (request_metrics, system_metrics) where `request_metrics` maps tags to metrics that have percentile values and `system_metrics` maps tags to metrics that do not.
+        """
         request_metrics: dict[str, MetricResult] = {}
         system_metrics: dict[str, MetricResult] = {}
 
@@ -122,6 +156,15 @@ class CsvExporter(AIPerfLoggerMixin):
         writer: csv.writer,
         records: Mapping[str, MetricResult],
     ) -> None:
+        """
+        Write the request-style metrics section to the CSV writer using STAT_KEYS as the column headers.
+        
+        Writes a header row of "Metric" followed by STAT_KEYS, then emits one row per metric (sorted by metric tag) that passes the exporter filter. Each row starts with the formatted metric name and contains the metric's STAT_KEYS values formatted for display.
+        
+        Parameters:
+        	writer (csv.writer): CSV writer to receive header and metric rows.
+        	records (Mapping[str, MetricResult]): Mapping of metric tag to MetricResult for request metrics.
+        """
         header = ["Metric"] + list(STAT_KEYS)
         writer.writerow(header)
 
@@ -148,6 +191,15 @@ class CsvExporter(AIPerfLoggerMixin):
         writer: csv.writer,
         records: Mapping[str, MetricResult],
     ) -> None:
+        """
+        Write the system-level metrics section to the CSV output.
+        
+        Writes a header row ["Metric", "Value"] and then, for each metric in `records` sorted by tag, writes a row containing the formatted metric name and its formatted average value. Metrics that are not eligible for export are skipped.
+        
+        Parameters:
+            writer (csv.writer): CSV writer used to emit rows.
+            records (Mapping[str, MetricResult]): Mapping of metric tag to MetricResult objects to export.
+        """
         writer.writerow(["Metric", "Value"])
         for _, metric in sorted(records.items(), key=lambda kv: kv[0]):
             if not self._should_export(metric):
@@ -164,7 +216,15 @@ class CsvExporter(AIPerfLoggerMixin):
         return name
 
     def _format_number(self, value) -> str:
-        """Format a number for CSV output."""
+        """
+        Convert a value into a CSV-friendly string representation.
+        
+        Parameters:
+            value: The value to format; may be None, bool, Integral, Real, Decimal, or any other type.
+        
+        Returns:
+            A string suitable for CSV output: an empty string for `None`, `"True"`/`"False"` for booleans, an integer string for integral values, a floating representation with two decimal places for real numbers and `Decimal`, and `str(value)` for all other types.
+        """
         if value is None:
             return ""
         # Handle bools explicitly (bool is a subclass of int)
@@ -180,7 +240,11 @@ class CsvExporter(AIPerfLoggerMixin):
         return str(value)
 
     def _write_telemetry_section(self, writer, telemetry_results) -> None:
-        """Write GPU telemetry data section to CSV with statistical aggregation."""
+        """
+        Write GPU telemetry sections to the CSV for each telemetry endpoint that contains data.
+        
+        For each endpoint in telemetry_results.telemetry_data.dcgm_endpoints, emits a labeled section that lists selected GPU metrics (power, energy, utilization, memory, temperature, SM and memory clocks) when data for that metric exists across any GPU. Each metric section contains a header row and rows per GPU with the following columns: "GPU Index", "GPU Name", "GPU UUID", "Avg", "Min", "Max", "P99", "P90", "P75", "Std". Endpoints with no GPUs or metrics with no data are skipped. Individual GPU entries that fail to produce a metric result are omitted.
+        """
 
         writer.writerow([])
         writer.writerow([])
@@ -257,7 +321,16 @@ class CsvExporter(AIPerfLoggerMixin):
                 writer.writerow([])
 
     def _gpu_has_metric(self, gpu_data, metric_key: str) -> bool:
-        """Check if GPU has data for the specified metric."""
+        """
+        Determine whether the given GPU data contains a result for the specified metric key.
+        
+        Parameters:
+            gpu_data: An object exposing get_metric_result(metric_key, ...) used to probe for the metric.
+            metric_key (str): The metric identifier to check for on the GPU.
+        
+        Returns:
+            bool: `True` if a MetricResult can be retrieved for `metric_key`, `False` otherwise.
+        """
         try:
             gpu_data.get_metric_result(metric_key, metric_key, "test", "test")
             return True

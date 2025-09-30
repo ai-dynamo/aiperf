@@ -15,4 +15,13 @@ class GpuPowerUsageMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
+        """
+        Extracts GPU power usage from a TelemetryRecord.
+        
+        Parameters:
+            record (TelemetryRecord): Telemetry record containing GPU telemetry fields.
+        
+        Returns:
+            float | None: GPU power usage in watts, or None if the value is not present.
+        """
         return record.gpu_power_usage

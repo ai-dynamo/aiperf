@@ -21,6 +21,16 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
     """Process individual TelemetryRecord objects into hierarchical storage."""
 
     def __init__(self, user_config: UserConfig, **kwargs: Any):
+        """
+        Initialize the TelemetryResultsProcessor, preparing internal storage and metric unit mappings.
+        
+        Parameters:
+            user_config (UserConfig): Configuration for the current user/session used by the processor; passed to the base class initializer.
+        
+        Detailed behavior:
+            - Creates an empty TelemetryHierarchy to store incoming telemetry records in a hierarchical structure.
+            - Initializes a mapping of telemetry metric names to their display units (e.g., "gpu_power_usage" -> "W", "energy_consumption" -> "MJ").
+        """
         super().__init__(user_config=user_config, **kwargs)
 
         self._telemetry_hierarchy = TelemetryHierarchy()
@@ -37,10 +47,11 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
         }
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
-        """Process individual telemetry record into hierarchical storage.
-
-        Args:
-            record: TelemetryRecord containing GPU metrics and hierarchical metadata
+        """
+        Add a telemetry record to the processor's hierarchical storage.
+        
+        Parameters:
+            record (TelemetryRecord): Telemetry record containing GPU metrics and hierarchical metadata (for example `dcgm_url`, `gpu_uuid`, and metric samples).
         """
 
         if self.is_trace_enabled:
@@ -51,16 +62,13 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
         self._telemetry_hierarchy.add_record(record)
 
     async def summarize(self) -> list[MetricResult]:
-        """Generate MetricResult list for real-time display and final export.
-
-        This method is called by RecordsManager for:
-        1. Final results generation when profiling completes
-        2. [AIP-355] TODO: @ilana-n [FUTURE] real-time dashboard updates (every DEFAULT_REALTIME_METRICS_INTERVAL)
-          when user-set flag is enabled
-
+        """
+        Produce MetricResult objects for each tracked metric of every GPU for display and export.
+        
+        Constructs per-metric tags and headers (including a sanitized DCGM endpoint identifier and GPU index/UUID prefix) and retrieves a MetricResult from the stored telemetry for each combination.
+        
         Returns:
-            List of MetricResult objects, one per GPU per metric type.
-            Tags follow hierarchical naming pattern for dashboard filtering.
+            list[MetricResult]: MetricResult objects, one per GPU per tracked metric. Tags are formatted for dashboard filtering using the sanitized DCGM URL and GPU identifiers.
         """
 
         results = []

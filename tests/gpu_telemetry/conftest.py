@@ -11,7 +11,16 @@ from aiperf.common.models.telemetry_models import TelemetryRecord
 
 @pytest.fixture
 def sample_dcgm_data():
-    """Sample DCGM metrics data in Prometheus format (single GPU)."""
+    """
+    Return a sample Prometheus-formatted DCGM metrics payload for a single GPU.
+    
+    The string contains metric HELP/TYPE headers and sample values for one GPU, including:
+    SM and memory clock frequencies (MHz), power usage (W), total energy consumption since boot (mJ),
+    GPU utilization (%), and framebuffer memory used (MiB).
+    
+    Returns:
+        str: Prometheus-formatted metrics representing a single GPU's DCGM output.
+    """
 
     return """# HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz)
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
@@ -36,7 +45,19 @@ DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_
 
 @pytest.fixture
 def multi_gpu_dcgm_data():
-    """Sample DCGM metrics data with multiple GPUs."""
+    """
+    Provide a Prometheus-formatted sample of DCGM metrics for three GPUs.
+    
+    The returned text includes HELP/TYPE headers and metric lines for:
+    - DCGM_FI_DEV_POWER_USAGE (power draw in W)
+    - DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION (total energy since boot in mJ, counter)
+    - DCGM_FI_DEV_GPU_UTIL (GPU utilization in %)
+    - DCGM_FI_DEV_FB_USED (framebuffer memory used in MiB)
+    
+    Each metric line contains per-GPU labels: gpu, UUID, pci_bus_id, device, modelName, and Hostname.
+    Returns:
+        A multi-line string with Prometheus-format DCGM metrics for three GPUs.
+    """
 
     return """# HELP DCGM_FI_DEV_POWER_USAGE Power draw (in W)
 # TYPE DCGM_FI_DEV_POWER_USAGE gauge
@@ -63,7 +84,14 @@ DCGM_FI_DEV_FB_USED{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_
 
 @pytest.fixture
 def sample_telemetry_records():
-    """Sample TelemetryRecord objects for testing."""
+    """
+    Provide a single example TelemetryRecord representing one GPU telemetry snapshot.
+    
+    The record includes identifying fields (timestamp_ns, dcgm_url, gpu_index, gpu_model_name, gpu_uuid, pci_bus_id, device, hostname) and measured metrics: gpu_power_usage (watts), energy_consumption (millijoules), gpu_utilization (percent), and gpu_memory_used (gigabytes).
+    
+    Returns:
+        list[TelemetryRecord]: A list containing one populated TelemetryRecord instance.
+    """
 
     return [
         TelemetryRecord(

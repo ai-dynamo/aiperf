@@ -205,7 +205,18 @@ class PowerMetricUnitInfo(BaseMetricUnitInfo):
     watts: float
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
-        """Convert a value from this unit to another unit."""
+        """
+        Convert a power quantity from this unit to another unit.
+        
+        If the target unit is not a power unit, defers to the base unit conversion behavior.
+        
+        Parameters:
+            other_unit (MetricUnitT): Target unit to convert to.
+            value (int | float): Power value expressed in this unit.
+        
+        Returns:
+            float: The converted power value expressed in the target unit.
+        """
         if not isinstance(other_unit, PowerMetricUnit | PowerMetricUnitInfo):
             return super().convert_to(other_unit, value)
 
@@ -228,17 +239,32 @@ class PowerMetricUnit(BaseMetricUnit):
 
     @cached_property
     def info(self) -> PowerMetricUnitInfo:
-        """Get the info for the power unit."""
+        """
+        Return the metadata object associated with this power unit.
+        
+        Returns:
+            PowerMetricUnitInfo: Unit metadata containing attributes such as `long_name` and `watts`.
+        """
         return self._info  # type: ignore
 
     @cached_property
     def watts(self) -> float:
-        """The number of watts in the power unit."""
+        """
+        Power of this unit expressed in watts.
+        
+        Returns:
+            float: Number of watts represented by this power unit.
+        """
         return self.info.watts
 
     @cached_property
     def long_name(self) -> str:
-        """The long name of the power unit."""
+        """
+        Human-readable long name for the power unit.
+        
+        Returns:
+            long_name (str): The long descriptive name of the unit.
+        """
         return self.info.long_name
 
 
@@ -249,7 +275,16 @@ class EnergyMetricUnitInfo(BaseMetricUnitInfo):
     joules: float
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
-        """Convert a value from this unit to another unit."""
+        """
+        Convert a numeric energy value from this unit into the specified target energy unit.
+        
+        Parameters:
+            other_unit (MetricUnitT): Target unit; expected to be an EnergyMetricUnit or EnergyMetricUnitInfo.
+            value (int | float): Energy value in this unit to convert.
+        
+        Returns:
+            float: The input `value` expressed in `other_unit`.
+        """
         if not isinstance(other_unit, EnergyMetricUnit | EnergyMetricUnitInfo):
             return super().convert_to(other_unit, value)
 
@@ -277,7 +312,12 @@ class EnergyMetricUnit(BaseMetricUnit):
 
     @cached_property
     def info(self) -> EnergyMetricUnitInfo:
-        """Get the info for the energy unit."""
+        """
+        Get the EnergyMetricUnitInfo associated with this energy unit.
+        
+        Returns:
+            EnergyMetricUnitInfo: The info object for this energy unit.
+        """
         return self._info  # type: ignore
 
     @cached_property
@@ -287,7 +327,12 @@ class EnergyMetricUnit(BaseMetricUnit):
 
     @cached_property
     def long_name(self) -> str:
-        """The long name of the energy unit."""
+        """
+        Human-readable long name of the energy unit.
+        
+        Returns:
+            long_name (str): The long, human-readable name of the energy unit.
+        """
         return self.info.long_name
 
 
@@ -463,7 +508,15 @@ class MetricValueType(BasePydanticBackedStrEnum):
 
     @classmethod
     def from_python_type(cls, type: type[MetricValueTypeT]) -> "MetricValueType":
-        """Get the MetricValueType for a given type."""
+        """
+        Map a Python type to the corresponding MetricValueType.
+        
+        Parameters:
+            type (type[MetricValueTypeT]): The Python type to map (e.g., float, int, list[int], or the type variable `MetricValueTypeVarT`).
+        
+        Returns:
+            MetricValueType: The MetricValueType that corresponds to the provided Python type. If `MetricValueTypeVarT` is provided, returns the float-backed MetricValueType.
+        """
         # If the type is a simple type like float or int, we have to use __name__.
         # This is because using str() on float or int will return <class 'float'> or <class 'int'>, etc.
         type_name = type.__name__
@@ -482,7 +535,18 @@ class FrequencyMetricUnitInfo(BaseMetricUnitInfo):
     hertz: float
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
-        """Convert a value from this unit to another unit."""
+        """
+        Convert a numeric value from this frequency unit to another frequency unit.
+        
+        If `other_unit` is not a frequency unit, delegation is performed to the base implementation.
+        
+        Parameters:
+            other_unit (MetricUnitT): Target unit (typically a FrequencyMetricUnit or FrequencyMetricUnitInfo).
+            value (int | float): Numeric value in this unit to convert.
+        
+        Returns:
+            float: The input value expressed in `other_unit`.
+        """
         if not isinstance(other_unit, FrequencyMetricUnit | FrequencyMetricUnitInfo):
             return super().convert_to(other_unit, value)
 
@@ -510,7 +574,12 @@ class FrequencyMetricUnit(BaseMetricUnit):
 
     @cached_property
     def info(self) -> FrequencyMetricUnitInfo:
-        """Get the info for the frequency unit."""
+        """
+        Access the FrequencyMetricUnit's associated FrequencyMetricUnitInfo.
+        
+        Returns:
+            FrequencyMetricUnitInfo: The unit's info object containing metadata such as `hertz` and `long_name`.
+        """
         return self._info  # type: ignore
 
     @cached_property
@@ -520,7 +589,12 @@ class FrequencyMetricUnit(BaseMetricUnit):
 
     @cached_property
     def long_name(self) -> str:
-        """The long name of the frequency unit."""
+        """
+        Return the long human-readable name of the frequency unit.
+        
+        Returns:
+            long_name (str): The unit's descriptive long name.
+        """
         return self.info.long_name
 
 
@@ -532,7 +606,16 @@ class TemperatureMetricUnitInfo(BaseMetricUnitInfo):
     offset: float = 0.0
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
-        """Convert a value from this unit to another unit."""
+        """
+        Convert a temperature value from this temperature unit to another temperature unit.
+        
+        Parameters:
+            other_unit (MetricUnitT): Target unit; must be a TemperatureMetricUnit or TemperatureMetricUnitInfo — otherwise conversion is delegated to the base implementation.
+            value (int | float): Temperature value expressed in this unit.
+        
+        Returns:
+            float: The temperature converted to the target unit.
+        """
         if not isinstance(
             other_unit, TemperatureMetricUnit | TemperatureMetricUnitInfo
         ):
@@ -567,22 +650,42 @@ class TemperatureMetricUnit(BaseMetricUnit):
 
     @cached_property
     def info(self) -> TemperatureMetricUnitInfo:
-        """Get the info for the temperature unit."""
+        """
+        Return the TemperatureMetricUnitInfo associated with this unit.
+        
+        Returns:
+            info (TemperatureMetricUnitInfo): Metadata and conversion rules for this temperature unit.
+        """
         return self._info  # type: ignore
 
     @cached_property
     def celsius(self) -> float:
-        """The celsius conversion factor."""
+        """
+        Conversion factor to convert a value in this temperature unit to degrees Celsius.
+        
+        Returns:
+            celsius (float): Multiplier to convert a value from this unit into degrees Celsius.
+        """
         return self.info.celsius
 
     @cached_property
     def offset(self) -> float:
-        """The offset for temperature conversion."""
+        """
+        Offset added to temperature values during conversion.
+        
+        Returns:
+            float: The offset value for this temperature unit.
+        """
         return self.info.offset
 
     @cached_property
     def long_name(self) -> str:
-        """The long name of the temperature unit."""
+        """
+        Human-readable long name of the temperature unit.
+        
+        Returns:
+            long_name (str): The long-form name of the unit.
+        """
         return self.info.long_name
 
 

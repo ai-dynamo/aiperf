@@ -26,6 +26,16 @@ class ExporterManager(AIPerfLoggerMixin):
         telemetry_results: TelemetryResults | None = None,
         **kwargs,
     ) -> None:
+        """
+        Initialize the ExporterManager with profiling results and configuration used to construct exporter instances.
+        
+        Parameters:
+            results (ProfileResults): Collected profiling results to be exported.
+            input_config (UserConfig): User-provided configuration that influences exporter behaviour and output.
+            service_config (ServiceConfig): Service-level configuration required by exporters.
+            telemetry_results (TelemetryResults | None): Optional telemetry data to include in exporter configuration.
+            **kwargs: Additional keyword arguments forwarded to the superclass initializer.
+        """
         super().__init__(**kwargs)
         self._results = results
         self._input_config = input_config
@@ -39,6 +49,13 @@ class ExporterManager(AIPerfLoggerMixin):
         )
 
     def _task_done_callback(self, task: asyncio.Task) -> None:
+        """
+        Handle completion of an asyncio Task created by ExporterManager.
+        
+        This callback logs the task result or any exception raised, and removes the task from the manager's internal tracking set.
+        Parameters:
+            task (asyncio.Task): The completed task whose outcome will be logged and which will be removed from self._tasks.
+        """
         self.debug(lambda: f"Task done: {task}")
         if task.exception():
             self.error(f"Error exporting records: {task.exception()}")

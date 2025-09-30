@@ -15,4 +15,13 @@ class GpuMemoryUsedMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
+        """
+        Extracts the GPU memory used value from a telemetry record.
+        
+        Parameters:
+            record (TelemetryRecord): Telemetry record containing GPU metrics.
+        
+        Returns:
+            float | None: GPU memory used in gigabytes, or `None` if the value is not present.
+        """
         return record.gpu_memory_used

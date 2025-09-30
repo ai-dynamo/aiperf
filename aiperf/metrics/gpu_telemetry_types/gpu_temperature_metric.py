@@ -20,4 +20,13 @@ class GpuTemperatureMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
+        """
+        Extracts the GPU temperature from a TelemetryRecord.
+        
+        Parameters:
+            record (TelemetryRecord): Telemetry record containing GPU telemetry fields.
+        
+        Returns:
+            float | None: The GPU temperature in degrees Celsius, or `None` if the value is unavailable.
+        """
         return record.gpu_temperature

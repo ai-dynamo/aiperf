@@ -31,7 +31,12 @@ class TelemetryRecordsMessage(BaseServiceMessage):
 
     @property
     def valid(self) -> bool:
-        """Whether the telemetry collection was valid."""
+        """
+        Indicates whether collected telemetry records are present and no error occurred.
+        
+        Returns:
+            `true` if `error` is None and there is at least one record in `records`, `false` otherwise.
+        """
 
         return self.error is None and len(self.records) > 0
 

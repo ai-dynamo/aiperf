@@ -115,11 +115,12 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
     )
 
     def append_snapshot(self, metrics: dict[str, float], timestamp_ns: int) -> None:
-        """Add new snapshot with all metrics at once.
-
-        Args:
-            metrics: Dictionary of metric_name -> value for this timestamp
-            timestamp_ns: Timestamp when measurements were taken
+        """
+        Append a timestamped snapshot containing the provided metric values to the time series.
+        
+        Parameters:
+            metrics (dict[str, float]): Mapping of metric names to values; entries with `None` values are omitted.
+            timestamp_ns (int): Timestamp for the snapshot in nanoseconds.
         """
         snapshot = GpuTelemetrySnapshot(
             timestamp_ns=timestamp_ns,
@@ -145,19 +146,21 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
     def to_metric_result(
         self, metric_name: str, tag: str, header: str, unit: str
     ) -> MetricResult:
-        """Convert metric time series to MetricResult with statistical summary.
-
-        Args:
-            metric_name: Name of the metric to analyze
-            tag: Unique identifier for this metric (used by dashboard, exports, API)
-            header: Human-readable name for display
-            unit: Unit of measurement (e.g., "W" for Watts, "%" for percentage)
-
+        """
+        Create a MetricResult summarizing the time-series values for a given metric.
+        
+        Parameters:
+            metric_name (str): Metric key to extract from the time series.
+            tag (str): Identifier used by dashboards, exports, and APIs for this metric.
+            header (str): Human-readable display name for the metric.
+            unit (str): Measurement unit (for example, "W" for watts or "%" for percent).
+        
         Returns:
-            MetricResult with min/max/avg/percentiles computed from time series
-
+            MetricResult: Aggregated statistics for the metric, including min, max, average,
+            standard deviation, count, and selected percentiles (1, 5, 25, 50, 75, 90, 95, 99).
+        
         Raises:
-            NoMetricValue: If no data points are available for the specified metric
+            NoMetricValue: If no data points exist for the specified metric.
         """
         data_points = self.get_metric_values(metric_name)
 
@@ -205,12 +208,14 @@ class GpuTelemetryData(AIPerfBaseModel):
     )
 
     def add_record(self, record: TelemetryRecord) -> None:
-        """Add telemetry record as a grouped snapshot.
-
-        Args:
-            record: New telemetry data point from DCGM collector
-
-        Note: Groups all metric values from the record into a single snapshot
+        """
+        Append a grouped snapshot of present metric values from a TelemetryRecord to the GPU time series.
+        
+        Parameters:
+            record (TelemetryRecord): Telemetry data point from the DCGM collector.
+        
+        Description:
+            Creates a snapshot containing only metrics with non-`None` values from `record` and appends it to the underlying time series if at least one metric is present.
         """
         metric_mapping = {
             "gpu_power_usage": record.gpu_power_usage,
@@ -268,14 +273,11 @@ class TelemetryHierarchy(AIPerfBaseModel):
     )
 
     def add_record(self, record: TelemetryRecord) -> None:
-        """Add telemetry record to hierarchical storage.
-
-        Args:
-            record: New telemetry data from GPU monitoring
-
-        Note: Automatically creates hierarchy levels as needed:
-        - New DCGM endpoints get empty GPU dict
-        - New GPUs get initialized with metadata and empty metrics
+        """
+        Store a TelemetryRecord in the hierarchy organized by DCGM endpoint URL and GPU UUID, initializing missing endpoint entries and per-GPU metadata.
+        
+        Parameters:
+            record (TelemetryRecord): Telemetry data point to store; may initialize a new GPU entry with its static metadata if the GPU is not yet present.
         """
 
         if record.dcgm_url not in self.dcgm_endpoints:

@@ -15,4 +15,13 @@ class GpuUtilizationMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
+        """
+        Extracts the GPU utilization percentage from a telemetry record.
+        
+        Parameters:
+            record (TelemetryRecord): Telemetry record containing GPU telemetry fields.
+        
+        Returns:
+            float | None: GPU utilization percentage from the record, or `None` if not available.
+        """
         return record.gpu_utilization

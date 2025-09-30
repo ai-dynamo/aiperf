@@ -20,4 +20,13 @@ class SmClockFrequencyMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
+        """
+        Return the SM (streaming multiprocessor) clock frequency from a telemetry record in megahertz.
+        
+        Parameters:
+            record (TelemetryRecord): Telemetry record containing GPU telemetry fields.
+        
+        Returns:
+            float | None: SM clock frequency in MHz if present, otherwise None.
+        """
         return record.sm_clock_frequency

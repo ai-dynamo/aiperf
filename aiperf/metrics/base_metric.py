@@ -91,8 +91,11 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
 
     @classmethod
     def _verify_base_class(cls) -> None:
-        """Verify that the class is a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric.
-        This is done to ensure that the class is a valid metric type.
+        """
+        Ensure the class inherits from one of the concrete metric base classes.
+        
+        Raises:
+            TypeError: If `cls` is not a subclass of BaseRecordMetric, BaseAggregateMetric, BaseDerivedMetric, or BaseTelemetryMetric.
         """
         # Note: this is valid because the below imports are abstract, so they will not get here
         from aiperf.metrics import (

@@ -31,7 +31,17 @@ class BaseTelemetryMetric(
     def process_telemetry_batch(
         self, telemetry_records: list[TelemetryRecord]
     ) -> dict[int, list[MetricValueTypeVarT]]:
-        """Process batch of telemetry records, returning values grouped by GPU index."""
+        """
+        Group extracted metric values from telemetry records by GPU index.
+        
+        Processes the provided telemetry records, extracts a metric value from each record via _extract_value, and collects non-missing values into lists keyed by the record's GPU index. Records for which no value can be extracted are ignored.
+        
+        Parameters:
+            telemetry_records (list[TelemetryRecord]): Telemetry records to process.
+        
+        Returns:
+            dict[int, list[MetricValueTypeVarT]]: Mapping from GPU index to a list of extracted metric values.
+        """
         gpu_values = {}
         for record in telemetry_records:
             value = self._extract_value(record)

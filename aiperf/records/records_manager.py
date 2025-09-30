@@ -84,6 +84,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         user_config: UserConfig,
         service_id: str | None = None,
     ) -> None:
+        """
+        Initialize the RecordsManager service and configure its internal processing and telemetry state.
+        
+        Sets up the base service (pull client bound to RECORDS) and initializes synchronization primitives, processing timers and counters, per-worker and global processing statistics, error-summary stores, telemetry hierarchy and telemetry-specific error tracking, and result processor instances (partitioned into metric and telemetry processor lists).
+        """
         super().__init__(
             service_config=service_config,
             user_config=user_config,
@@ -149,7 +154,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     @on_pull_message(MessageType.METRIC_RECORDS)
     async def _on_metric_records(self, message: MetricRecordsMessage) -> None:
-        """Handle a metric records message."""
+        """
+        Process incoming metric records for the profiling phase, forward applicable results to metric processors, and update processing statistics and error summaries.
+        
+        Only handles messages from the PROFILING credit phase; messages from other phases are ignored. Determines whether the results fall within the expected profiling duration and, if so and the message is marked valid, forwards results to metric result processors. Updates per-worker and global processed or error counters accordingly; if the message contains an error, increments the aggregated error summary. Always triggers a completion check after handling the message.
+        
+        Parameters:
+            message (MetricRecordsMessage): The incoming metric records message containing worker id, validity, results, credit phase, and optional error information.
+        """
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 
@@ -199,12 +211,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     @on_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
-        """Handle telemetry records message from Telemetry Manager.
-        The RecordsManager acts as the central hub for all record processing,
-        whether inference metrics or GPU telemetry.
-
-        Args:
-            message: Batch of telemetry records from a DCGM collector
+        """
+        Handle an incoming TelemetryRecordsMessage by dispatching valid telemetry records to telemetry processors and updating internal telemetry state.
+        
+        If the message is valid, forwards its records to telemetry result processors and adds each record to the telemetry hierarchy under the telemetry lock. If the message is invalid and contains an error, increments the telemetry error counter for that error under the error-counts lock.
+        
+        Parameters:
+            message (TelemetryRecordsMessage): Batch of telemetry records from the Telemetry Manager.
         """
 
         if message.valid:
@@ -223,13 +236,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     def _should_include_request_by_duration(
         self, results: list[dict[MetricTagT, MetricValueTypeT]]
     ) -> bool:
-        """Determine if the request should be included based on benchmark duration.
-
-        Args:
-            results: List of metric results for a single request
-
+        """
+        Decide whether a request's metric results fall within the configured benchmark duration (including the configured grace period).
+        
+        Parameters:
+            results (list[dict[MetricTagT, MetricValueTypeT]]): Metric results for a single request where entries may include `MinRequestTimestampMetric.tag` and `RequestLatencyMetric.tag`.
+        
         Returns:
-            True if the request should be included, else False
+            True if every result's final response timestamp is at or before the benchmark end time (start_time_ns + expected_duration_sec + grace period), `False` if any response was received after that end time.
         """
         if not self.expected_duration_sec:
             return True
@@ -310,7 +324,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _send_results_to_results_processors(
         self, results: list[dict[MetricTagT, MetricValueTypeT]]
     ) -> None:
-        """Send the results to inference metric results processors only."""
+        """
+        Dispatch each metric result to all configured metric results processors.
+        
+        Parameters:
+            results (list[dict[MetricTagT, MetricValueTypeT]]): A list of metric result mappings where each mapping's keys are metric tags and values are metric values; each mapping will be processed by every metric results processor.
+        """
         await asyncio.gather(
             *[
                 results_processor.process_result(result)
@@ -322,10 +341,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _send_telemetry_to_results_processors(
         self, telemetry_records: list[TelemetryRecord]
     ) -> None:
-        """Send individual telemetry records to telemetry results processors only.
-
-        Args:
-            telemetry_records: Batch of records from single collection cycle
+        """
+        Forward telemetry records to each registered telemetry results processor, invoking per-record processing.
+        
+        Parameters:
+            telemetry_records (list[TelemetryRecord]): Telemetry records collected in a single cycle to be processed individually by telemetry processors.
         """
         await asyncio.gather(
             *[
@@ -339,7 +359,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _on_credit_phase_start(
         self, phase_start_msg: CreditPhaseStartMessage
     ) -> None:
-        """Handle a credit phase start message in order to track the total number of expected requests."""
+        """
+        Record profiling phase start metadata (start time, expected duration, and expected request count).
+        
+        Parameters:
+            phase_start_msg (CreditPhaseStartMessage): Message describing the credit phase start. If the message's phase is PROFILING, the manager will store its start timestamp, expected duration, and total expected requests; otherwise no action is taken.
+        """
         if phase_start_msg.phase != CreditPhase.PROFILING:
             return
         async with self.processing_status_lock:
@@ -466,7 +491,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
 
     async def _generate_realtime_metrics(self) -> list[MetricResult]:
-        """Generate the real-time metrics for the profile run."""
+        """
+        Collect current realtime metric summaries from all metric results processors.
+        
+        Returns:
+            metrics (list[MetricResult]): Flattened list of MetricResult instances returned by the metric results processors; excludes non-MetricResult values and processor results that failed.
+        """
         results = await asyncio.gather(
             *[
                 results_processor.summarize()
@@ -483,7 +513,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ]
 
     async def _process_results(self, cancelled: bool) -> ProcessRecordsResult:
-        """Process the results."""
+        """
+        Finalize and publish aggregated metric results and trigger independent telemetry publishing.
+        
+        Gathers summaries from metric-only (inference) results processors, aggregates metric records and any processing errors, builds a ProfileResults object containing records, counts, timing, and an error summary, and publishes a ProcessRecordsResultMessage. After publishing the combined metric results, initiates separate telemetry result publishing. The final aggregated ProcessRecordsResult is returned.
+        
+        Parameters:
+            cancelled (bool): Whether profiling was cancelled before completion.
+        
+        Returns:
+            ProcessRecordsResult: The aggregated processing outcome including profile results and any errors.
+        """
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
 
         self.info("Processing records results...")
@@ -536,13 +576,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         return result
 
     async def export_telemetry_independently(self) -> TelemetryResults | None:
-        """Export telemetry data independently from inference results.
-
-        This method provides a separate export path for telemetry data that doesn't
-        interfere with the inference results pipeline.
-
+        """
+        Provide telemetry results separately from the inference/results processing pipeline.
+        
         Returns:
-            TelemetryResults if telemetry data was collected, None otherwise
+            TelemetryResults: Collected telemetry data with timing, endpoints, and error summary, or `None` if no telemetry endpoints were present.
         """
         async with self._telemetry_hierarchy_lock:
             if not self._telemetry_hierarchy.dcgm_endpoints:
@@ -562,7 +600,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return telemetry_results
 
     async def _publish_telemetry_results(self, cancelled: bool) -> None:
-        """Publish telemetry results independently - mirrors inference results pattern."""
+        """
+        Publish collected telemetry results as a ProcessTelemetryResultMessage.
+        
+        If telemetry data is available, include the exported TelemetryResults and the list of unique telemetry errors; otherwise publish an empty TelemetryResults wrapper with no errors.
+        
+        Parameters:
+            cancelled (bool): Indicates whether processing was cancelled; accepted for parity with result-publishing APIs.
+        """
         try:
             telemetry_results = await self.export_telemetry_independently()
             if telemetry_results:
@@ -598,7 +643,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self.error(f"Failed to publish telemetry results: {e}")
 
     async def get_error_summary(self) -> list[ErrorDetailsCount]:
-        """Generate a summary of the error records."""
+        """
+        Builds a list summarizing recorded errors and their observed counts.
+        
+        Returns:
+            list[ErrorDetailsCount]: Each element contains `error_details` and the corresponding `count` observed.
+        """
         async with self.error_summary_lock:
             return [
                 ErrorDetailsCount(error_details=error_details, count=count)
@@ -606,7 +656,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             ]
 
     async def get_telemetry_error_summary(self) -> list[ErrorDetailsCount]:
-        """Generate a summary of the telemetry error records."""
+        """
+        Return counts of telemetry error details accumulated during processing.
+        
+        Returns:
+            list[ErrorDetailsCount]: A list of ErrorDetailsCount objects pairing each telemetry error details entry with its occurrence count.
+        """
         async with self._telemetry_error_counts_lock:
             return [
                 ErrorDetailsCount(error_details=error_details, count=count)

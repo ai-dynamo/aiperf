@@ -24,6 +24,12 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
+        """
+        Initialize the exporter with the given ExporterConfig and capture runtime data needed for rendering telemetry.
+        
+        Parameters:
+            exporter_config (ExporterConfig): Configuration object for the exporter; used to obtain benchmarking results, service configuration, and optional telemetry results.
+        """
         super().__init__(**kwargs)
         self._results = exporter_config.results
         self._service_config = exporter_config.service_config
@@ -31,7 +37,14 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         self._telemetry_results = getattr(exporter_config, "telemetry_results", None)
 
     async def export(self, console: Console) -> None:
-        """Export telemetry data to console if verbose mode is enabled."""
+        """
+        Export GPU telemetry to the provided console when verbose mode is enabled and telemetry data is available.
+        
+        If verbose mode is disabled on the service configuration or no telemetry results are present, the method returns without producing output. When data is available, builds a renderable representation and prints it to the console.
+        
+        Parameters:
+            console (Console): Rich Console instance used to render the telemetry output.
+        """
 
         if not self._service_config.verbose:
             return
@@ -44,7 +57,16 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         )
 
     def _print_renderable(self, console: Console, renderable: RenderableType) -> None:
-        """Print the renderable to the console."""
+        """
+        Print the given renderable to the provided Rich console and flush the console output.
+        
+        Parameters:
+            console (Console): Rich console to receive the printed renderable.
+            renderable (RenderableType): The renderable object (table, text, group, etc.) to print.
+        
+        Side effects:
+            Writes a leading newline, prints the renderable to the console, and flushes the console's output buffer.
+        """
         console.print("\n")
         console.print(renderable)
         console.file.flush()
@@ -52,7 +74,18 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
     def get_renderable(
         self, telemetry_results: TelemetryResults, console: Console
     ) -> RenderableType:
-        """Create Rich tables showing GPU telemetry metrics with consolidated single-table format."""
+        """
+        Build a Rich renderable that summarizes GPU telemetry by DCGM endpoint and GPU.
+        
+        Constructs one or more Rich Tables (grouped into a Group) with per-GPU metrics for each reachable DCGM endpoint; if no metric tables can be produced, returns a dim italic Text explaining that no telemetry was collected and listing unreachable endpoints and any error summary.
+        
+        Parameters:
+            telemetry_results (TelemetryResults): Telemetry data and metadata including telemetry_data.dcgm_endpoints, endpoints_tested, endpoints_successful, and optional error_summary.
+            console (Console): Rich Console used for rendering context (passed through for consistent styling/width).
+        
+        Returns:
+            RenderableType: A Group containing per-GPU Tables when telemetry is available, or a Text object with diagnostic information when no tables can be rendered.
+        """
 
         renderables = []
 

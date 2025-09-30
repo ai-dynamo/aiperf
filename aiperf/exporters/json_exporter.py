@@ -41,6 +41,14 @@ class JsonExporter(AIPerfLoggerMixin):
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
+        """
+        Initialize the JSON exporter and configure its internal state from the given ExporterConfig.
+        
+        The initializer stores references to the exporter results and optional telemetry results, captures the user's input configuration and output artifact directory, assigns the metric registry, and computes the default JSON output file path.
+        
+        Parameters:
+            exporter_config (ExporterConfig): Configuration object containing export results, optional telemetry_results, and user_config used to derive output paths and exporter inputs.
+        """
         super().__init__(**kwargs)
         self.debug(lambda: f"Initializing JsonExporter with config: {exporter_config}")
         self._results = exporter_config.results
@@ -68,6 +76,11 @@ class JsonExporter(AIPerfLoggerMixin):
         return res
 
     async def export(self) -> None:
+        """
+        Export the collected results and optional telemetry summary to the configured JSON file on disk.
+        
+        Builds an export data object containing converted, exportable metric records, run metadata (start/end times, cancellation and error summaries), and, when telemetry results are available, a telemetry summary and per-endpoint statistics; ensures the output directory exists and writes the serialized JSON to the exporter's configured file path.
+        """
         self._output_directory.mkdir(parents=True, exist_ok=True)
 
         start_time = (

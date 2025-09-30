@@ -504,7 +504,15 @@ class ResultsProcessorProtocol(Protocol):
         self, result: dict[MetricTagT, "MetricValueTypeT"]
     ) -> None: ...
 
-    async def summarize(self) -> list["MetricResult"]: ...
+    async def summarize(self) -> list["MetricResult"]: """
+Produce summarized telemetry metrics as a list of MetricResult objects.
+
+Aggregate processed telemetry records into hierarchical, tagged MetricResult objects that preserve metadata grouping and support downstream telemetry consumers (for example, dashboard filtering).
+
+Returns:
+    list[MetricResult]: Aggregated telemetry metrics where each MetricResult includes hierarchical tags and metadata that maintain grouping context.
+"""
+...
 
 
 @runtime_checkable
@@ -517,19 +525,26 @@ class TelemetryResultsProcessorProtocol(Protocol):
     """
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
-        """Process individual telemetry record with rich metadata.
-
-        Args:
-            record: TelemetryRecord containing GPU metrics and hierarchical metadata
+        """
+        Process a single telemetry record and incorporate its metrics into the processor's internal aggregation.
+        
+        Implementations should ingest or aggregate the provided TelemetryRecord — which includes GPU metrics, timestamp, and hierarchical metadata (e.g., service/component tags) — so that those metrics are available for later summarize() calls.
+        
+        Parameters:
+            record (TelemetryRecord): Telemetry entry with GPU metrics and associated hierarchical metadata used for grouping and aggregation.
         """
         ...
 
     async def summarize(self) -> list["MetricResult"]:
-        """Generate MetricResult list with hierarchical tags for telemetry data.
-
+        """
+        Summarize processed telemetry into hierarchical MetricResult objects.
+        
+        Each MetricResult preserves telemetry metadata grouping (for example, dcgm_url then gpu_uuid)
+        by encoding tags hierarchically to allow downstream dashboards and filters to maintain grouping.
+        
         Returns:
-            List of MetricResult objects with hierarchical tags that preserve
-            dcgm_url -> gpu_uuid grouping structure for dashboard filtering.
+            list[MetricResult]: A list of MetricResult objects whose tags encode hierarchical
+            telemetry grouping (e.g., `dcgm_url -> gpu_uuid`).
         """
         ...
 

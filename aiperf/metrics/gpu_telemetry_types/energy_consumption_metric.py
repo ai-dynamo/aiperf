@@ -15,4 +15,13 @@ class EnergyConsumptionMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
+        """
+        Extracts the energy consumption value from a telemetry record.
+        
+        Parameters:
+        	record (TelemetryRecord): Telemetry record to read energy consumption from.
+        
+        Returns:
+        	(float | None): Energy consumption in millijoules, or None if not available.
+        """
         return record.energy_consumption
