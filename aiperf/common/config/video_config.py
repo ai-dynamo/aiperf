@@ -15,6 +15,9 @@ from aiperf.common.enums import VideoFormat, VideoSynthType
 class VideoConfig(BaseConfig):
     """
     A configuration class for defining video related settings.
+
+    Note: Video generation requires FFmpeg to be installed on your system.
+    If FFmpeg is not found, you'll get installation instructions specific to your platform.
     """
 
     _CLI_GROUP = Groups.VIDEO_INPUT
@@ -103,3 +106,19 @@ class VideoConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = VideoDefaults.FORMAT
+
+    codec: Annotated[
+        str,
+        Field(
+            description=(
+                "The video codec to use for encoding. Common options: "
+                "libx264 (CPU, widely compatible), libx265 (CPU, smaller files), "
+                "h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). "
+                "Any FFmpeg-supported codec can be used."
+            ),
+        ),
+        CLIParameter(
+            name=("--video-codec",),
+            group=_CLI_GROUP,
+        ),
+    ] = VideoDefaults.CODEC

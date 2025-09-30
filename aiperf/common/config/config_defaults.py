@@ -85,6 +85,7 @@ class VideoDefaults:
     HEIGHT = 0
     SYNTH_TYPE = VideoSynthType.MOVING_SHAPES
     FORMAT = VideoFormat.MP4
+    CODEC = "libx264"
 
 
 @dataclass(frozen=True)

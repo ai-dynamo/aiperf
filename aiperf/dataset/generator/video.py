@@ -4,10 +4,11 @@
 import base64
 import math
 import os
+import platform
 import shutil
-import subprocess
 import tempfile
 
+import ffmpeg
 from PIL import Image, ImageDraw
 
 from aiperf.common.config.video_config import VideoConfig
@@ -26,6 +27,47 @@ class VideoGenerator(BaseGenerator):
     def __init__(self, config: VideoConfig):
         super().__init__()
         self.config = config
+
+    def _check_ffmpeg_availability(self) -> bool:
+        """Check if FFmpeg binary is available in the system."""
+        return shutil.which("ffmpeg") is not None
+
+    def _get_ffmpeg_install_instructions(self) -> str:
+        """Get platform-specific FFmpeg installation instructions."""
+        system = platform.system().lower()
+
+        if system == "linux":
+            # Try to detect the distribution
+            try:
+                with open("/etc/os-release") as f:
+                    os_info = f.read().lower()
+                if "ubuntu" in os_info or "debian" in os_info:
+                    return "sudo apt update && sudo apt install ffmpeg"
+                elif "fedora" in os_info or "rhel" in os_info or "centos" in os_info:
+                    return "sudo dnf install ffmpeg  # or: sudo yum install ffmpeg"
+                elif "arch" in os_info:
+                    return "sudo pacman -S ffmpeg"
+            except (FileNotFoundError, PermissionError, OSError):
+                pass
+            return "sudo apt install ffmpeg  # (Ubuntu/Debian) or use your distribution's package manager"
+        elif system == "darwin":  # macOS
+            if shutil.which("brew"):
+                return "brew install ffmpeg"
+            elif shutil.which("port"):
+                return "sudo port install ffmpeg"
+            else:
+                return (
+                    "brew install ffmpeg  # (install Homebrew first: https://brew.sh)"
+                )
+        elif system == "windows":
+            if shutil.which("choco"):
+                return "choco install ffmpeg"
+            elif shutil.which("winget"):
+                return "winget install ffmpeg"
+            else:
+                return "Download from https://ffmpeg.org/download.html or use 'choco install ffmpeg'"
+        else:
+            return "Install FFmpeg using your system's package manager or download from https://ffmpeg.org"
 
     def generate(self, *args, **kwargs) -> str:
         """Generate a video with the configured parameters.
@@ -219,111 +261,165 @@ class VideoGenerator(BaseGenerator):
                 f"Unsupported video format: {self.config.format}. Only MP4 is supported."
             )
 
-        try:
-            # Try OpenCV first (most efficient)
-            return self._create_mp4_with_opencv(frames)
-        except ImportError:
-            self.logger.debug("OpenCV not available, trying ffmpeg subprocess")
-            try:
-                return self._create_mp4_with_ffmpeg(frames)
-            except Exception as e:
-                self.logger.error(f"Failed to create MP4 with ffmpeg: {e}")
-                raise RuntimeError(
-                    "Unable to create MP4 video. Please install OpenCV (pip install opencv-python) or ffmpeg."
-                ) from None
-        except Exception as e:
-            self.logger.error(
-                f"Failed to encode video frames to {self.config.format}: {e}"
+        # Check if FFmpeg is available before proceeding
+        if not self._check_ffmpeg_availability():
+            install_cmd = self._get_ffmpeg_install_instructions()
+            raise RuntimeError(
+                f"FFmpeg binary not found. Please install FFmpeg:\n\n"
+                f"  Recommended: {install_cmd}\n\n"
+                f"  Alternative: conda install -c conda-forge ffmpeg\n\n"
+                f"After installation, restart your terminal and try again."
             )
-            raise
-
-    def _create_mp4_with_opencv(self, frames: list[Image.Image]) -> str:
-        """Create MP4 data using OpenCV."""
-        try:
-            import cv2
-            import numpy as np
-        except ImportError:
-            raise ImportError("OpenCV (cv2) not available") from None
-
-        # Create a temporary file for OpenCV (it needs a file path)
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:
-            temp_path = temp_file.name
 
         try:
-            # Convert PIL frames to OpenCV format
-            height, width = self.config.height, self.config.width
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out = cv2.VideoWriter(temp_path, fourcc, self.config.fps, (width, height))
+            return self._create_mp4_with_ffmpeg(frames)
+        except Exception as e:
+            self.logger.error(f"Failed to create MP4 with ffmpeg: {e}")
 
+            # Provide specific error messages based on the error type
+            if "No such file or directory" in str(e) or "not found" in str(e):
+                raise RuntimeError(
+                    "FFmpeg binary not accessible. Please ensure FFmpeg is installed and in your PATH."
+                ) from e
+            elif "Codec" in str(e) or "codec" in str(e):
+                raise RuntimeError(
+                    f"Video codec '{self.config.codec}' is not supported. "
+                    f"Please use a valid FFmpeg codec (e.g., libx264, libx265, h264_nvenc)."
+                ) from e
+            else:
+                raise RuntimeError(
+                    f"FFmpeg failed to create video: {e}\n"
+                    f"Codec: {self.config.codec}, Size: {self.config.width}x{self.config.height}, FPS: {self.config.fps}"
+                ) from e
+
+    def _create_mp4_with_ffmpeg(self, frames: list[Image.Image]) -> str:
+        """Create MP4 data using ffmpeg-python with improved error handling."""
+
+        try:
+            # First try the in-memory approach
+            return self._create_mp4_with_pipes(frames)
+        except (BrokenPipeError, OSError, RuntimeError) as e:
+            self.logger.warning(
+                f"Pipe method failed ({e}), falling back to temporary file method"
+            )
+            # Fall back to temporary file approach if pipes fail
+            return self._create_mp4_with_temp_files(frames)
+
+    def _create_mp4_with_pipes(self, frames: list[Image.Image]) -> str:
+        """Create MP4 using pipes via temporary file (preferred method)."""
+        # MP4 muxer doesn't support non-seekable output (pipes), so we use a temp file
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
+            temp_path = tmp_file.name
+
+        try:
+            # Collect all frame data first to avoid pipe timing issues
+            frame_data = []
             for frame in frames:
-                # Convert PIL Image to OpenCV format (BGR)
-                frame_array = np.array(frame)
-                frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
-                out.write(frame_bgr)
+                # Ensure frame is the correct size
+                if frame.size != (self.config.width, self.config.height):
+                    frame = frame.resize(
+                        (self.config.width, self.config.height), Image.LANCZOS
+                    )
 
-            out.release()
+                # Convert to RGB format and get raw bytes
+                if frame.mode != "RGB":
+                    frame = frame.convert("RGB")
 
-            # Read the MP4 data back
+                frame_data.append(frame.tobytes())
+
+            # Combine all frame data
+            all_data = b"".join(frame_data)
+
+            # Use ffmpeg.run with input data, output to temporary file
+            _ = (
+                ffmpeg.input(
+                    "pipe:",
+                    format="rawvideo",
+                    pix_fmt="rgb24",
+                    s=f"{self.config.width}x{self.config.height}",
+                    r=self.config.fps,
+                )
+                .output(
+                    temp_path,
+                    format="mp4",
+                    vcodec=self.config.codec,
+                    pix_fmt="yuv420p",
+                    movflags="faststart",
+                )
+                .overwrite_output()  # Allow overwriting the temp file
+                .run(input=all_data, capture_stdout=True, capture_stderr=True)
+            )
+
+            # Read the MP4 file back
             with open(temp_path, "rb") as f:
                 mp4_data = f.read()
 
-            # Clean up temp file
-            os.unlink(temp_path)
+            if not mp4_data:
+                raise RuntimeError("FFmpeg produced no output")
 
             # Encode as base64
             base64_data = base64.b64encode(mp4_data).decode("utf-8")
             return f"data:video/{self.config.format.value};base64,{base64_data}"
 
-        except Exception as e:
-            # Clean up temp file on error
+        except ffmpeg.Error as e:
+            error_msg = e.stderr.decode("utf-8") if e.stderr else "Unknown ffmpeg error"
+            self.logger.error(f"FFmpeg error: {error_msg}")
+            raise RuntimeError(f"FFmpeg process failed: {error_msg}") from e
+        finally:
+            # Clean up temp file
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
-            raise e
 
-    def _create_mp4_with_ffmpeg(self, frames: list[Image.Image]) -> str:
-        """Create MP4 data using ffmpeg subprocess."""
-
+    def _create_mp4_with_temp_files(self, frames: list[Image.Image]) -> str:
+        """Create MP4 using temporary files (fallback method)."""
         # Create temporary directory for frames
         temp_dir = tempfile.mkdtemp(prefix="aiperf_frames_")
 
         try:
             # Save frames as PNG files
-            frame_paths = []
             for i, frame in enumerate(frames):
+                # Ensure frame is the correct size
+                if frame.size != (self.config.width, self.config.height):
+                    frame = frame.resize(
+                        (self.config.width, self.config.height), Image.LANCZOS
+                    )
+
                 frame_path = os.path.join(temp_dir, f"frame_{i:06d}.png")
                 frame.save(frame_path, "PNG")
-                frame_paths.append(frame_path)
 
-            # Use ffmpeg to create MP4 from frames
+            # Create output file in the same temp directory
             output_path = os.path.join(temp_dir, "output.mp4")
             frame_pattern = os.path.join(temp_dir, "frame_%06d.png")
 
-            cmd = [
-                "ffmpeg",
-                "-y",  # -y to overwrite output file
-                "-r",
-                str(self.config.fps),  # frame rate
-                "-i",
-                frame_pattern,  # input pattern
-                "-c:v",
-                "libx264",  # video codec
-                "-pix_fmt",
-                "yuv420p",  # pixel format for compatibility
-                "-movflags",
-                "+faststart",  # optimize for streaming
-                output_path,
-            ]
+            # Use ffmpeg to create MP4 from frames
+            _ = (
+                ffmpeg.input(frame_pattern, r=self.config.fps)
+                .output(
+                    output_path,
+                    format="mp4",
+                    vcodec=self.config.codec,
+                    pix_fmt="yuv420p",
+                    movflags="faststart",
+                )
+                .overwrite_output()
+                .run(capture_stdout=True, capture_stderr=True)
+            )
 
-            _ = subprocess.run(cmd, capture_output=True, text=True, check=True)
-
-            # Read the MP4 data
+            # Read the output file
             with open(output_path, "rb") as f:
                 mp4_data = f.read()
+
+            if not mp4_data:
+                raise RuntimeError("FFmpeg produced no output")
 
             # Encode as base64
             base64_data = base64.b64encode(mp4_data).decode("utf-8")
             return f"data:video/{self.config.format.value};base64,{base64_data}"
 
+        except ffmpeg.Error as e:
+            error_msg = e.stderr.decode("utf-8") if e.stderr else "Unknown ffmpeg error"
+            self.logger.error(f"FFmpeg error: {error_msg}")
+            raise RuntimeError(f"FFmpeg process failed: {error_msg}") from e
         finally:
             # Clean up temporary files
             if os.path.exists(temp_dir):
