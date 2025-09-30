@@ -6,6 +6,7 @@ from typing import Any
 from aiperf.common.config import UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ResultsProcessorType
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.models import MetricResult
 from aiperf.common.models.telemetry_models import TelemetryHierarchy, TelemetryRecord
@@ -77,11 +78,12 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
                             .replace("/", "_")
                             .replace(".", "_")
                         )
-                        tag = f"{metric_name}_dcgm_{dcgm_tag}_gpu{gpu_index}_{gpu_uuid[:8]}"
+                        # Use first 12 chars of UUID for readability while maintaining uniqueness
+                        tag = f"{metric_name}_dcgm_{dcgm_tag}_gpu{gpu_index}_{gpu_uuid[:12]}"
 
                         metric_display = metric_name.replace("_", " ").title()
                         header = (
-                            f"{metric_display} (GPU {gpu_index}, {gpu_uuid[:8]}...)"
+                            f"{metric_display} (GPU {gpu_index}, {gpu_uuid[:12]}...)"
                         )
 
                         unit = self._metric_units.get(metric_name, "")
@@ -90,7 +92,15 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
                             metric_name, tag, header, unit
                         )
                         results.append(result)
-                    except Exception:
+                    except NoMetricValue:
+                        self.debug(
+                            f"No data available for metric '{metric_name}' on GPU {gpu_uuid[:12]} from {dcgm_url}"
+                        )
+                        continue
+                    except Exception as e:
+                        self.exception(
+                            f"Unexpected error generating metric result for '{metric_name}' on GPU {gpu_uuid[:12]} from {dcgm_url}: {e}"
+                        )
                         continue
 
         return results

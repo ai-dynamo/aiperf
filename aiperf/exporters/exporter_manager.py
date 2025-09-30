@@ -23,7 +23,7 @@ class ExporterManager(AIPerfLoggerMixin):
         results: ProfileResults,
         input_config: UserConfig,
         service_config: ServiceConfig,
-        telemetry_results: TelemetryResults | None = None,
+        telemetry_results: TelemetryResults | None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import inspect
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import aiohttp
 from prometheus_client.parser import text_string_to_metric_families
@@ -38,8 +39,10 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         self,
         dcgm_url: str,
         collection_interval: float = DEFAULT_COLLECTION_INTERVAL,
-        record_callback: Callable[[list[TelemetryRecord]], None] | None = None,
-        error_callback: Callable[[Exception], None] | None = None,
+        record_callback: Callable[[list[TelemetryRecord], str], Awaitable[None] | None]
+        | None = None,
+        error_callback: Callable[[ErrorDetails, str], Awaitable[None] | None]
+        | None = None,
         collector_id: str = "telemetry_collector",
     ) -> None:
         self._dcgm_url = dcgm_url
@@ -82,7 +85,7 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
             try:
                 async with self._session.get(self._dcgm_url) as response:
                     return response.status == 200
-            except Exception:
+            except (aiohttp.ClientError, asyncio.TimeoutError):
                 return False
         else:
             # Create a temporary session for reachability check
@@ -91,7 +94,7 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                 try:
                     async with temp_session.get(self._dcgm_url) as response:
                         return response.status == 200
-                except Exception:
+                except (aiohttp.ClientError, asyncio.TimeoutError):
                     return False
 
     @background_task(immediate=True, interval=lambda self: self._collection_interval)
@@ -109,7 +112,9 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         except Exception as e:
             if self._error_callback:
                 try:
-                    self._error_callback(ErrorDetails.from_exception(e), self.id)
+                    res = self._error_callback(ErrorDetails.from_exception(e), self.id)
+                    if inspect.isawaitable(res):
+                        await res
                 except Exception as callback_error:
                     self.error(f"Failed to send error via callback: {callback_error}")
             else:
@@ -126,10 +131,9 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
 
             if records and self._record_callback:
                 try:
-                    if asyncio.iscoroutinefunction(self._record_callback):
-                        await self._record_callback(records, self.id)
-                    else:
-                        self._record_callback(records, self.id)
+                    res = self._record_callback(records, self.id)
+                    if inspect.isawaitable(res):
+                        await res
                 except Exception as e:
                     self.warning(f"Failed to send telemetry records via callback: {e}")
 
@@ -148,13 +152,13 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
             asyncio.CancelledError: If collector is being stopped
         """
         if self.stop_requested:
-            raise asyncio.CancelledError("Telemetry collector is being stopped")
+            raise asyncio.CancelledError
 
         if not self._session:
             raise RuntimeError("HTTP session not initialized. Call initialize() first.")
 
         if self._session.closed:
-            raise asyncio.CancelledError("HTTP session is closed during shutdown")
+            raise asyncio.CancelledError
 
         async with self._session.get(self._dcgm_url) as response:
             response.raise_for_status()

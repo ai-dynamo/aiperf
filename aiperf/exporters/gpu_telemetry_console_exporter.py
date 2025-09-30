@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from urllib.parse import urlparse
+
 from rich.console import Console, Group, RenderableType
 from rich.table import Table
 from rich.text import Text
@@ -28,7 +30,29 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         self._results = exporter_config.results
         self._service_config = exporter_config.service_config
         self._exporter_config = exporter_config
-        self._telemetry_results = getattr(exporter_config, "telemetry_results", None)
+        self._telemetry_results = exporter_config.telemetry_results
+
+    @staticmethod
+    def _normalize_endpoint_display(url: str) -> str:
+        """Normalize endpoint URL for display by removing scheme and trimming /metrics suffix.
+
+        Args:
+            url: The full URL to normalize (e.g., "https://host:9400/api/metrics")
+
+        Returns:
+            Normalized display string with netloc and trimmed path (e.g., "host:9400/api")
+        """
+        parsed = urlparse(url)
+        path = parsed.path
+
+        if path.endswith("/metrics"):
+            path = path[: -len("/metrics")]
+
+        display = parsed.netloc
+        if path:
+            display += path
+
+        return display
 
     async def export(self, console: Console) -> None:
         """Export telemetry data to console if verbose mode is enabled."""
@@ -63,7 +87,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
             if not gpus_data:
                 continue
 
-            endpoint_display = dcgm_url.replace("http://", "").replace("/metrics", "")
+            endpoint_display = self._normalize_endpoint_display(dcgm_url)
 
             for _gpu_uuid, gpu_data in gpus_data.items():
                 gpu_index = gpu_data.metadata.gpu_index
@@ -97,9 +121,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                         )
 
                     for endpoint in endpoints_tested:
-                        clean_endpoint = endpoint.replace("http://", "").replace(
-                            "/metrics", ""
-                        )
+                        clean_endpoint = self._normalize_endpoint_display(endpoint)
                         if endpoint in endpoints_successful:
                             title_lines.append(f"[green]• {clean_endpoint} ✅[/green]")
                         else:
@@ -184,9 +206,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
             if failed_endpoints:
                 message_parts.append("\n\nUnreachable endpoints:")
                 for endpoint in failed_endpoints:
-                    clean_endpoint = endpoint.replace("http://", "").replace(
-                        "/metrics", ""
-                    )
+                    clean_endpoint = self._normalize_endpoint_display(endpoint)
                     message_parts.append(f"  • {clean_endpoint}")
 
             if telemetry_results.error_summary:

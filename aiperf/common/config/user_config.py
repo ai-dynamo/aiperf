@@ -223,7 +223,7 @@ class UserConfig(BaseConfig):
             consume_multiple=True,
             group=Groups.TELEMETRY,
         ),
-    ] = ["http://localhost:9401/metrics"]
+    ]
 
     @model_validator(mode="after")
     def _compute_config(self) -> Self:

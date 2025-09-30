@@ -131,6 +131,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._should_wait_for_telemetry = False
 
         self._shutdown_triggered = False
+        self._shutdown_lock = asyncio.Lock()
         self._endpoints_tested: list[str] = []
         self._endpoints_reachable: list[str] = []
         self.debug("System Controller created")
@@ -478,23 +479,30 @@ class SystemController(SignalHandlerMixin, BaseService):
         1. Always wait for profile results (ProcessRecordsResultMessage)
         2. If telemetry disabled OR telemetry results received → proceed with shutdown
         3. Otherwise → wait (telemetry results arrive nearly simultaneously and will call this method again)
+
+        Thread safety:
+        Uses self._shutdown_lock to prevent race conditions when ProcessRecordsResultMessage
+        and ProcessTelemetryResultMessage arrive concurrently. The lock ensures atomic
+        check-and-set of _shutdown_triggered, preventing double-triggering of stop().
         """
-        if self._shutdown_triggered:
-            return
+        async with self._shutdown_lock:
+            if self._shutdown_triggered:
+                return
 
-        if not self._profile_results_received:
-            return
+            if not self._profile_results_received:
+                return
 
-        telemetry_ready_for_shutdown = (
-            not self._should_wait_for_telemetry or self._telemetry_results is not None
-        )
+            telemetry_ready_for_shutdown = (
+                not self._should_wait_for_telemetry
+                or self._telemetry_results is not None
+            )
 
-        if telemetry_ready_for_shutdown:
-            self._shutdown_triggered = True
-            self.debug("All results received, initiating shutdown")
-            await asyncio.shield(self.stop())
-        else:
-            self.debug("Waiting for telemetry results...")
+            if telemetry_ready_for_shutdown:
+                self._shutdown_triggered = True
+                self.debug("All results received, initiating shutdown")
+                await asyncio.shield(self.stop())
+            else:
+                self.debug("Waiting for telemetry results...")
 
     async def _handle_signal(self, sig: int) -> None:
         """Handle received signals by triggering graceful shutdown.
