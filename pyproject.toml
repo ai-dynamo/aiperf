@@ -30,8 +30,10 @@ dependencies = [
   "aiofiles~=24.1.0",
   "aiohttp~=3.12.14",
   "cyclopts>=3,<4",
+  "ffmpeg-python~=0.2.0",
   "numpy~=2.2.6",
   "openai[aiohttp]~=1.92.2",
+
   "orjson~=3.10.18",
   "pandas~=2.3.0",
   "pillow~=11.1.0",

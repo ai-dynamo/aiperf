@@ -29,6 +29,7 @@ class EndpointTypeInfo(BasePydanticEnumInfo):
     produces_tokens: bool = Field(...)
     supports_audio: bool = Field(default=False)
     supports_images: bool = Field(default=False)
+    supports_videos: bool = Field(default=False)
     endpoint_path: str | None = Field(default=None)
     metrics_title: str | None = Field(default=None)
 
@@ -49,6 +50,7 @@ class EndpointType(BasePydanticBackedStrEnum):
         produces_tokens=True,
         supports_audio=True,
         supports_images=True,
+        supports_videos=True,
         endpoint_path="/v1/chat/completions",
         metrics_title="LLM Metrics",
     )
@@ -83,6 +85,7 @@ class EndpointType(BasePydanticBackedStrEnum):
         produces_tokens=True,
         supports_audio=False,  # Not yet supported by OpenAI
         supports_images=True,
+        supports_videos=False,  # Not yet supported by OpenAI
         endpoint_path="/v1/responses",
         metrics_title="LLM Metrics",
     )
@@ -123,6 +126,12 @@ class EndpointType(BasePydanticBackedStrEnum):
         """Return True if the endpoint supports image input.
         This is used to determine what metrics are applicable to the endpoint, as well as what inputs can be used."""
         return self.info.supports_images
+
+    @property
+    def supports_videos(self) -> bool:
+        """Return True if the endpoint supports video input.
+        This is used to determine what metrics are applicable to the endpoint, as well as what inputs can be used."""
+        return self.info.supports_videos
 
     @property
     def metrics_title(self) -> str:

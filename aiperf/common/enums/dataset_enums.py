@@ -32,6 +32,15 @@ class AudioFormat(CaseInsensitiveStrEnum):
     MP3 = "mp3"
 
 
+class VideoFormat(CaseInsensitiveStrEnum):
+    MP4 = "mp4"
+
+
+class VideoSynthType(CaseInsensitiveStrEnum):
+    MOVING_SHAPES = "moving_shapes"
+    GRID_CLOCK = "grid_clock"
+
+
 class PromptSource(CaseInsensitiveStrEnum):
     SYNTHETIC = "synthetic"
     FILE = "file"

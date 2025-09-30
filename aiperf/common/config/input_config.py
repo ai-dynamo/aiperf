@@ -18,6 +18,7 @@ from aiperf.common.config.conversation_config import ConversationConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
+from aiperf.common.config.video_config import VideoConfig
 from aiperf.common.enums import CustomDatasetType, PublicDatasetType
 
 
@@ -220,5 +221,6 @@ class InputConfig(BaseConfig):
 
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
+    video: VideoConfig = VideoConfig()
     prompt: PromptConfig = PromptConfig()
     conversation: ConversationConfig = ConversationConfig()
