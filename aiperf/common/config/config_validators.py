@@ -120,6 +120,7 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
         into key and value, trims any whitespace, and coerces the value to the correct type.
     - If the input is a dictionary, it is converted to a list of tuples by key and value pairs.
     - If the input is a list, it recursively calls this function on each item, and aggregates the results.
+        - If the item is already a 2-element sequence (key-value pair), it is converted directly to a tuple.
     - Otherwise, a ValueError is raised.
 
     Args:
@@ -135,9 +136,14 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
     if isinstance(input, list | tuple | set):
         output = []
         for item in input:
-            res = parse_str_or_dict_as_tuple_list(item)
-            if res is not None:
-                output.extend(res)
+            # If item is already a 2-element sequence (key-value pair), convert directly to tuple
+            if isinstance(item, list | tuple) and len(item) == 2:
+                key, value = item
+                output.append((str(key), coerce_value(value)))
+            else:
+                res = parse_str_or_dict_as_tuple_list(item)
+                if res is not None:
+                    output.extend(res)
         return output
 
     if isinstance(input, dict):
