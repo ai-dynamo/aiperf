@@ -247,6 +247,31 @@ class TestParseStrOrDictAsTupleList:
         result = parse_str_or_dict_as_tuple_list(None)
         assert result is None
 
+    @pytest.mark.parametrize(
+        "input_list,expected",
+        [
+            (
+                [["temperature", 0.1], ["max_tokens", 150]],
+                [("temperature", 0.1), ("max_tokens", 150)],
+            ),
+            (
+                [("temperature", 0.1), ("max_tokens", 150)],
+                [("temperature", 0.1), ("max_tokens", 150)],
+            ),
+            (
+                [("key1", "value1"), ("key2", 123), ("key3", True)],
+                [("key1", "value1"), ("key2", 123), ("key3", True)],
+            ),
+        ],
+    )
+    def test_list_of_key_value_pairs_input(self, input_list, expected):
+        """Test that a list of key-value pairs (lists/tuples) is converted correctly to a list of tuples."""
+        result = parse_str_or_dict_as_tuple_list(input_list)
+        assert result == expected
+        # Make sure that the result is the same when parsed again.
+        result2 = parse_str_or_dict_as_tuple_list(result)
+        assert result2 == expected
+
 
 class TestParseStrOrListOfPositiveValues:
     """Test suite for the parse_str_or_list_of_positive_values function."""
