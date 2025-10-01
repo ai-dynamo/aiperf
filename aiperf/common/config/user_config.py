@@ -211,15 +211,15 @@ class UserConfig(BaseConfig):
         DisableCLI(reason="This is automatically set by the CLI"),
     ] = None
 
-    server_metrics_url: Annotated[
-        list[str],
+    gpu_telemetry: Annotated[
+        list[str] | None,
         Field(
-            default_factory=lambda: ["http://localhost:9401/metrics"],
-            description="List of DCGM exporter endpoint URLs for GPU telemetry collection",
+            default=None,
+            description="Enable GPU telemetry console display and optionally specify custom DCGM exporter URLs (e.g., http://node1:9401/metrics http://node2:9401/metrics). Default localhost:9401 is always attempted",
         ),
         BeforeValidator(parse_str_or_list),
         CLIParameter(
-            name=("--server-metrics-url",),
+            name=("--gpu-telemetry",),
             consume_multiple=True,
             group=Groups.TELEMETRY,
         ),

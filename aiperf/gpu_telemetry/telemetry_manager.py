@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from urllib.parse import urlparse
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -49,7 +50,7 @@ class TelemetryManager(BaseComponentService):
 
     Args:
         service_config: Service-level configuration (logging, communication, etc.)
-        user_config: User-provided configuration including server_metrics_url list
+        user_config: User-provided configuration including gpu_telemetry list
         service_id: Optional unique identifier for this service instance
     """
 
@@ -68,14 +69,26 @@ class TelemetryManager(BaseComponentService):
         self._collectors: dict[str, TelemetryDataCollector] = {}
 
         # Normalize user_endpoints to always be a list
-        user_endpoints = user_config.server_metrics_url
+        user_endpoints = user_config.gpu_telemetry
         if user_endpoints is None:
             user_endpoints = []
         elif isinstance(user_endpoints, str):
             user_endpoints = [user_endpoints]
         else:
-            # Handle tuples, lists, and other sequences from Click/Typer
+            # Handle tuples, lists, and other sequences
             user_endpoints = list(user_endpoints)
+
+        # Filter to keep only valid URLs (has http/https scheme and netloc)
+        valid_endpoints = []
+        for endpoint in user_endpoints:
+            try:
+                parsed = urlparse(endpoint)
+                if parsed.scheme in ("http", "https") and parsed.netloc:
+                    valid_endpoints.append(endpoint)
+            except Exception:
+                # Skip invalid URLs
+                continue
+        user_endpoints = valid_endpoints
 
         if DEFAULT_DCGM_ENDPOINT not in user_endpoints:
             self._dcgm_endpoints = [DEFAULT_DCGM_ENDPOINT] + user_endpoints

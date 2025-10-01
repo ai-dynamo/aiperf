@@ -21,27 +21,28 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
     """Console exporter for GPU telemetry data.
 
     Displays GPU metrics in a table format similar to other console exporters.
-    Only displays when verbose mode is enabled.
+    Only displays when --gpu-telemetry flag is explicitly provided by the user.
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self._results = exporter_config.results
+        self._user_config = exporter_config.user_config
         self._service_config = exporter_config.service_config
         self._exporter_config = exporter_config
         self._telemetry_results = exporter_config.telemetry_results
 
     async def export(self, console: Console) -> None:
-        """Export telemetry data to console if verbose mode is enabled.
+        """Export telemetry data to console if --gpu-telemetry flag is present.
 
-        Only displays telemetry data when verbose mode is enabled in service config.
+        Only displays telemetry data when --gpu-telemetry flag is explicitly provided.
         Skips display if no telemetry data is available.
 
         Args:
             console: Rich Console instance for formatted output
         """
 
-        if not self._service_config.verbose:
+        if self._user_config.gpu_telemetry is None:
             return
 
         if not self._telemetry_results:
