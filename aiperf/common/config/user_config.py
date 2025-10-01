@@ -240,7 +240,7 @@ class UserConfig(BaseConfig):
         # Preprocess Huggingface model names that include '/' in their model name.
         if "/" in model_name:
             filtered_name = "_".join(model_name.split("/"))
-            from aiperf.common.logging import AIPerfLogger
+            from aiperf.common.aiperf_logger import AIPerfLogger
 
             _logger = AIPerfLogger(__name__)
             _logger.info(

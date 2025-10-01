@@ -25,6 +25,7 @@ from aiperf.ui.dashboard import (
     RealtimeMetricsDashboard,
     RealtimeMetricsTable,
     RichLogViewer,
+    UILogHandler,
     WorkerDashboard,
     WorkerStatusTable,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "RealtimeMetricsTable",
     "RichLogViewer",
     "TQDMProgressUI",
+    "UILogHandler",
     "WORKER_STATUS_STYLES",
     "WorkerDashboard",
     "WorkerStatusTable",

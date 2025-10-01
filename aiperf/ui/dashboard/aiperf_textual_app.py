@@ -77,6 +77,7 @@ class AIPerfTextualApp(App):
         ("escape", "restore_all_panels", "Restore View"),
         Binding("ctrl+s", "screenshot", "Save Screenshot", show=False),
         Binding("l", "toggle_hide_log_viewer", "Toggle Logs", show=False),
+        Binding("s", "toggle_auto_scroll", "Toggle Auto Scroll", show=False),
     ]
 
     def __init__(
@@ -167,6 +168,11 @@ class AIPerfTextualApp(App):
             self.screen.minimize()
         else:
             self.screen.maximize(panel)
+
+    async def action_toggle_auto_scroll(self) -> None:
+        """Toggle the auto scroll state of the log viewer."""
+        if self.log_viewer:
+            self.log_viewer.auto_scroll = not self.log_viewer.auto_scroll
 
     async def on_warmup_progress(self, warmup_stats: RequestsStats) -> None:
         """Forward warmup progress updates to the Textual App."""

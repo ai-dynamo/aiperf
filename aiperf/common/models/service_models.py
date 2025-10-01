@@ -24,6 +24,10 @@ class ServiceRunInfo(AIPerfBaseModel):
         ...,
         description="The registration status of the service",
     )
+    required: bool = Field(
+        default=True,
+        description="Whether the service is required for the system to start",
+    )
     service_id: str = Field(
         ...,
         description="The ID of the service",

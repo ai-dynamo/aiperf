@@ -32,7 +32,6 @@ from aiperf.common.factories import (
     ServiceManagerFactory,
 )
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
-from aiperf.common.logging import get_global_log_queue
 from aiperf.common.messages import (
     CommandErrorResponse,
     CommandResponse,
@@ -109,14 +108,12 @@ class SystemController(SignalHandlerMixin, BaseService):
                 required_services=self.required_services,
                 user_config=self.user_config,
                 service_config=self.service_config,
-                log_queue=get_global_log_queue(),
             )
         )
         self.ui: AIPerfUIProtocol = AIPerfUIFactory.create_instance(
             self.service_config.ui_type,
             service_config=self.service_config,
             user_config=self.user_config,
-            log_queue=get_global_log_queue(),
             controller=self,
         )
         self.attach_child_lifecycle(self.ui)

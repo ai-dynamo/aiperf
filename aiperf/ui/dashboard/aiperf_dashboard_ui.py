@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import multiprocessing
 
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
@@ -38,7 +37,6 @@ class AIPerfDashboardUI(BaseAIPerfUI):
 
     def __init__(
         self,
-        log_queue: multiprocessing.Queue,
         service_config: ServiceConfig,
         user_config: UserConfig,
         controller: SystemController,
@@ -55,8 +53,9 @@ class AIPerfDashboardUI(BaseAIPerfUI):
         self.app: AIPerfTextualApp = AIPerfTextualApp(
             service_config=service_config, controller=controller
         )
+
         # Setup the log consumer to consume log records from the shared log queue
-        self.log_consumer: LogConsumer = LogConsumer(log_queue=log_queue, app=self.app)
+        self.log_consumer: LogConsumer = LogConsumer(app=self.app)
         self.attach_child_lifecycle(self.log_consumer)  # type: ignore
 
         # Attach the hooks directly to the function on the app, to avoid the extra function call overhead

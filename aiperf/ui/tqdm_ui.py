@@ -62,7 +62,7 @@ class TQDMProgressUI(BaseAIPerfUI):
     """A UI that shows progress bars for the records and requests phases."""
 
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(id="tqdm_ui", **kwargs)
         self._warmup_bar: ProgressBar | None = None
         self._requests_bar: ProgressBar | None = None
         self._records_bar: ProgressBar | None = None

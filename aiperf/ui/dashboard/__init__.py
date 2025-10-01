@@ -34,6 +34,7 @@ from aiperf.ui.dashboard.realtime_metrics_dashboard import (
 from aiperf.ui.dashboard.rich_log_viewer import (
     LogConsumer,
     RichLogViewer,
+    UILogHandler,
 )
 from aiperf.ui.dashboard.worker_dashboard import (
     WorkerDashboard,
@@ -55,6 +56,7 @@ __all__ = [
     "RealtimeMetricsDashboard",
     "RealtimeMetricsTable",
     "RichLogViewer",
+    "UILogHandler",
     "WORKER_STATUS_STYLES",
     "WorkerDashboard",
     "WorkerStatusTable",

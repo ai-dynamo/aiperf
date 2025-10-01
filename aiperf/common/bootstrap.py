@@ -3,7 +3,6 @@
 
 import asyncio
 import contextlib
-import multiprocessing
 import random
 
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -15,7 +14,6 @@ def bootstrap_and_run_service(
     service_config: ServiceConfig | None = None,
     user_config: UserConfig | None = None,
     service_id: str | None = None,
-    log_queue: "multiprocessing.Queue | None" = None,
     **kwargs,
 ):
     """Bootstrap the service and run it.
@@ -30,8 +28,6 @@ def bootstrap_and_run_service(
             configuration will be loaded from the environment variables.
         user_config: The user configuration to use. If not provided, the user configuration
             will be loaded from the environment variables.
-        log_queue: Optional multiprocessing queue for child process logging. If provided,
-            the child process logging will be set up.
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
 
@@ -41,20 +37,9 @@ def bootstrap_and_run_service(
 
         service_config = load_service_config()
 
-    # Load the user configuration
-    if user_config is None:
-        from aiperf.common.config import load_user_config
-
-        # TODO: Add support for loading user config from a file/environment variables
-        user_config = load_user_config()
-
     async def _run_service():
         if service_config.developer.enable_yappi:
             _start_yappi_profiling()
-
-        from aiperf.module_loader import ensure_modules_loaded
-
-        ensure_modules_loaded()
 
         service = service_class(
             service_config=service_config,
@@ -63,13 +48,7 @@ def bootstrap_and_run_service(
             **kwargs,
         )
 
-        from aiperf.common.logging import setup_child_process_logging
-
-        setup_child_process_logging(
-            log_queue, service.service_id, service_config, user_config
-        )
-
-        if user_config.input.random_seed is not None:
+        if user_config and user_config.input.random_seed is not None:
             random.seed(user_config.input.random_seed)
             # Try and set the numpy random seed
             # https://numpy.org/doc/stable/reference/random/index.html#random-quick-start

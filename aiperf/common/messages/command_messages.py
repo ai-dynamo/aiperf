@@ -350,3 +350,12 @@ class ConnectionProbeMessage(TargetedServiceMessage):
     """Message containing a connection probe from a service. This is used to probe the connection to the service."""
 
     message_type: MessageTypeT = MessageType.CONNECTION_PROBE
+
+
+class ServiceFailedMessage(TargetedServiceMessage):
+    """Message containing information about a service that has failed.
+    This is sent by the service manager to the system controller whenever a required service stops."""
+
+    message_type: MessageTypeT = MessageType.SERVICE_FAILED
+
+    error: ErrorDetails = Field(..., description="Error information")
