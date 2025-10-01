@@ -78,13 +78,13 @@ class TelemetryManager(BaseComponentService):
             # Handle tuples, lists, and other sequences
             user_endpoints = list(user_endpoints)
 
-        # Filter to keep only valid URLs (has http/https scheme and netloc)
+        # Filter to keep only valid URLs (has http/https scheme because DCGM exporter endpoints are always Prometheus and netloc)
         valid_endpoints = []
         for endpoint in user_endpoints:
             try:
                 parsed = urlparse(endpoint)
                 if parsed.scheme in ("http", "https") and parsed.netloc:
-                    valid_endpoints.append(endpoint)
+                    valid_endpoints.append(self._normalize_dcgm_url(endpoint))
             except Exception:
                 # Skip invalid URLs
                 continue
@@ -96,6 +96,21 @@ class TelemetryManager(BaseComponentService):
             self._dcgm_endpoints = user_endpoints
 
         self._collection_interval = DEFAULT_COLLECTION_INTERVAL
+
+    @staticmethod
+    def _normalize_dcgm_url(url: str) -> str:
+        """Ensure DCGM URL ends with /metrics endpoint.
+
+        Args:
+            url: Base URL or full metrics URL
+
+        Returns:
+            str: URL ending with /metrics
+        """
+        url = url.rstrip("/")
+        if not url.endswith("/metrics"):
+            url = f"{url}/metrics"
+        return url
 
     @on_init
     async def _initialize(self) -> None:
