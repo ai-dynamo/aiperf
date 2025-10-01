@@ -4,14 +4,16 @@
 Shared fixtures for testing AIPerf controller.
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommandType
+from aiperf.common.enums import CommandType, ServiceType
 from aiperf.common.messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails
+from aiperf.controller.multiprocess_service_manager import AsyncSubprocessRunInfo
 from aiperf.controller.system_controller import SystemController
 
 
@@ -79,3 +81,46 @@ def error_response(error_details: ErrorDetails) -> CommandErrorResponse:
         command_id="test_command_id",
         error=error_details,
     )
+
+
+@pytest.fixture
+def mock_subprocess_process() -> MagicMock:
+    """Create a mock asyncio subprocess process."""
+    mock_process = MagicMock()
+    mock_process.pid = 12345
+    mock_process.returncode = None
+    mock_process.wait = AsyncMock(return_value=0)
+    mock_process.terminate = MagicMock()
+    mock_process.kill = MagicMock()
+    mock_process.stdout = AsyncMock()
+    mock_process.stderr = AsyncMock()
+    return mock_process
+
+
+@pytest.fixture
+def create_subprocess_info():
+    """Factory fixture to create AsyncSubprocessRunInfo instances."""
+
+    def _create(
+        service_type: ServiceType = ServiceType.DATASET_MANAGER,
+        service_id: str = "test_service",
+        process: MagicMock | None = None,
+        user_config_file: Path | None = None,
+        service_config_file: Path | None = None,
+    ) -> AsyncSubprocessRunInfo:
+        if process is None:
+            return AsyncSubprocessRunInfo(
+                service_type=service_type,
+                service_id=service_id,
+                user_config_file=user_config_file,
+                service_config_file=service_config_file,
+            )
+        return AsyncSubprocessRunInfo.model_construct(
+            process=process,
+            service_type=service_type,
+            service_id=service_id,
+            user_config_file=user_config_file,
+            service_config_file=service_config_file,
+        )
+
+    return _create

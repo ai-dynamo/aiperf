@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,7 +11,6 @@ from aiperf.common.enums import ServiceRegistrationStatus, ServiceType
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.models.service_models import ServiceRunInfo
 from aiperf.controller.multiprocess_service_manager import (
-    AsyncSubprocessRunInfo,
     MultiProcessServiceManager,
 )
 
@@ -20,37 +18,35 @@ from aiperf.controller.multiprocess_service_manager import (
 class TestAsyncSubprocessRunInfo:
     """Test AsyncSubprocessRunInfo Pydantic model."""
 
-    def test_async_subprocess_run_info_creation(self):
+    def test_async_subprocess_run_info_creation(self, create_subprocess_info):
         """Test creating AsyncSubprocessRunInfo with required fields."""
-        service_type = ServiceType.DATASET_MANAGER
-        service_id = "test_service_123"
-
-        info = AsyncSubprocessRunInfo(
-            service_type=service_type,
-            service_id=service_id,
+        info = create_subprocess_info(
+            service_type=ServiceType.DATASET_MANAGER,
+            service_id="test_service_123",
         )
 
-        assert info.service_type == service_type
-        assert info.service_id == service_id
+        assert info.service_type == ServiceType.DATASET_MANAGER
+        assert info.service_id == "test_service_123"
         assert info.process is None
         assert info.user_config_file is None
         assert info.service_config_file is None
 
-    def test_async_subprocess_run_info_with_all_fields(self):
+    def test_async_subprocess_run_info_with_all_fields(
+        self, create_subprocess_info, mock_subprocess_process
+    ):
         """Test creating AsyncSubprocessRunInfo with all fields."""
-        mock_process = MagicMock()
         user_config_file = Path("/tmp/user_config.json")
         service_config_file = Path("/tmp/service_config.json")
 
-        info = AsyncSubprocessRunInfo.model_construct(
-            process=mock_process,
+        info = create_subprocess_info(
+            process=mock_subprocess_process,
             service_type=ServiceType.TIMING_MANAGER,
             service_id="test_service_456",
             user_config_file=user_config_file,
             service_config_file=service_config_file,
         )
 
-        assert info.process == mock_process
+        assert info.process == mock_subprocess_process
         assert info.service_type == ServiceType.TIMING_MANAGER
         assert info.service_id == "test_service_456"
         assert info.user_config_file == user_config_file
@@ -59,19 +55,6 @@ class TestAsyncSubprocessRunInfo:
 
 class TestMultiProcessServiceManager:
     """Test MultiProcessServiceManager async subprocess management."""
-
-    @pytest.fixture
-    def mock_subprocess_process(self) -> MagicMock:
-        """Create a mock asyncio subprocess process."""
-        mock_process = MagicMock()
-        mock_process.pid = 12345
-        mock_process.returncode = None
-        mock_process.wait = AsyncMock(return_value=0)
-        mock_process.terminate = MagicMock()
-        mock_process.kill = MagicMock()
-        mock_process.stdout = AsyncMock()
-        mock_process.stderr = AsyncMock()
-        return mock_process
 
     @pytest.fixture
     def service_manager(
@@ -94,48 +77,38 @@ class TestMultiProcessServiceManager:
         assert service_manager.subprocess_map_lock is not None
 
     @pytest.mark.asyncio
-    async def test_remove_subprocess_info(self, service_manager):
+    async def test_remove_subprocess_info(
+        self, service_manager, create_subprocess_info
+    ):
         """Test _remove_subprocess_info method."""
         service_id = "test_service_123"
-        info = AsyncSubprocessRunInfo(
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id=service_id,
-        )
+        info = create_subprocess_info(service_id=service_id)
 
-        # Add the info to the map
         service_manager.subprocess_info_map[service_id] = info
         assert service_id in service_manager.subprocess_info_map
 
-        # Remove it
         await service_manager._remove_subprocess_info(info)
         assert service_id not in service_manager.subprocess_info_map
 
     @pytest.mark.asyncio
-    async def test_wait_for_subprocess_already_terminated(self, service_manager):
+    async def test_wait_for_subprocess_already_terminated(
+        self, service_manager, create_subprocess_info
+    ):
         """Test _wait_for_subprocess when process is already terminated."""
         mock_process = MagicMock()
-        mock_process.returncode = 0  # Already terminated
+        mock_process.returncode = 0
 
-        info = AsyncSubprocessRunInfo.model_construct(
-            process=mock_process,
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id="test_service",
-        )
+        info = create_subprocess_info(process=mock_process)
 
-        # Should return early without calling terminate
         await service_manager._wait_for_subprocess(info)
         mock_process.terminate.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_wait_for_subprocess_graceful_termination(
-        self, service_manager, mock_subprocess_process
+        self, service_manager, create_subprocess_info, mock_subprocess_process
     ):
         """Test _wait_for_subprocess with graceful termination."""
-        info = AsyncSubprocessRunInfo.model_construct(
-            process=mock_subprocess_process,
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id="test_service",
-        )
+        info = create_subprocess_info(process=mock_subprocess_process)
 
         await service_manager._wait_for_subprocess(info)
 
@@ -144,19 +117,16 @@ class TestMultiProcessServiceManager:
 
     @pytest.mark.asyncio
     async def test_wait_for_subprocess_with_config_file_cleanup(
-        self, service_manager, mock_subprocess_process
+        self, service_manager, create_subprocess_info, mock_subprocess_process, tmp_path
     ):
         """Test _wait_for_subprocess cleans up config files."""
-        # Create temporary files
-        with tempfile.NamedTemporaryFile(delete=False) as user_config_file:
-            user_config_path = Path(user_config_file.name)
-        with tempfile.NamedTemporaryFile(delete=False) as service_config_file:
-            service_config_path = Path(service_config_file.name)
+        user_config_path = tmp_path / "user_config.json"
+        service_config_path = tmp_path / "service_config.json"
+        user_config_path.touch()
+        service_config_path.touch()
 
-        info = AsyncSubprocessRunInfo.model_construct(
+        info = create_subprocess_info(
             process=mock_subprocess_process,
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id="test_service",
             user_config_file=user_config_path,
             service_config_file=service_config_path,
         )
@@ -166,7 +136,6 @@ class TestMultiProcessServiceManager:
 
         await service_manager._wait_for_subprocess(info)
 
-        # Files should be cleaned up
         assert not user_config_path.exists()
         assert not service_config_path.exists()
 
@@ -177,12 +146,13 @@ class TestMultiProcessServiceManager:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_kill_all_services(self, service_manager, mock_subprocess_process):
+    async def test_kill_all_services(
+        self, service_manager, create_subprocess_info, mock_subprocess_process
+    ):
         """Test kill_all_services method."""
         service_id = "test_service"
-        info = AsyncSubprocessRunInfo.model_construct(
+        info = create_subprocess_info(
             process=mock_subprocess_process,
-            service_type=ServiceType.DATASET_MANAGER,
             service_id=service_id,
         )
         service_manager.subprocess_info_map[service_id] = info
@@ -192,37 +162,33 @@ class TestMultiProcessServiceManager:
         mock_subprocess_process.kill.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_stop_service_by_type(self, service_manager, mock_subprocess_process):
+    async def test_stop_service_by_type(
+        self, service_manager, create_subprocess_info, mock_subprocess_process
+    ):
         """Test stop_service method filtering by service type."""
-        dataset_service_id = "dataset_service"
-        timing_service_id = "timing_service"
-
-        dataset_info = AsyncSubprocessRunInfo.model_construct(
+        dataset_info = create_subprocess_info(
             process=mock_subprocess_process,
             service_type=ServiceType.DATASET_MANAGER,
-            service_id=dataset_service_id,
+            service_id="dataset_service",
         )
-        timing_info = AsyncSubprocessRunInfo.model_construct(
+        timing_info = create_subprocess_info(
             process=MagicMock(),
             service_type=ServiceType.TIMING_MANAGER,
-            service_id=timing_service_id,
+            service_id="timing_service",
         )
 
-        service_manager.subprocess_info_map[dataset_service_id] = dataset_info
-        service_manager.subprocess_info_map[timing_service_id] = timing_info
+        service_manager.subprocess_info_map["dataset_service"] = dataset_info
+        service_manager.subprocess_info_map["timing_service"] = timing_info
 
-        # Stop only dataset services
         results = await service_manager.stop_service(ServiceType.DATASET_MANAGER)
 
-        # Should only affect the dataset service
         assert len(results) == 1
 
     @pytest.mark.asyncio
-    async def test_wait_for_all_services_registration_timeout(self, service_manager):
+    async def test_wait_for_all_services_registration_timeout(
+        self, service_manager, create_subprocess_info
+    ):
         """Test wait_for_all_services_registration timeout behavior."""
-        stop_event = asyncio.Event()
-
-        # Create a service info that's not registered
         service_info = ServiceRunInfo(
             service_type=ServiceType.DATASET_MANAGER,
             service_id="test_service",
@@ -231,10 +197,8 @@ class TestMultiProcessServiceManager:
         )
         service_manager.service_id_map["test_service"] = service_info
 
-        # Add subprocess info
-        subprocess_info = AsyncSubprocessRunInfo.model_construct(
+        subprocess_info = create_subprocess_info(
             process=MagicMock(),
-            service_type=ServiceType.DATASET_MANAGER,
             service_id="test_service",
         )
         service_manager.subprocess_info_map["test_service"] = subprocess_info
@@ -243,18 +207,15 @@ class TestMultiProcessServiceManager:
             AIPerfError, match="Some services failed to register within timeout"
         ):
             await service_manager.wait_for_all_services_registration(
-                stop_event=stop_event,
-                timeout_seconds=0.1,  # Very short timeout
+                stop_event=asyncio.Event(),
+                timeout_seconds=0.1,
             )
 
     @pytest.mark.asyncio
     async def test_wait_for_all_services_start_not_implemented(self, service_manager):
         """Test that wait_for_all_services_start logs not implemented warning."""
-        stop_event = asyncio.Event()
-
-        # Should complete without error but log a warning
         await service_manager.wait_for_all_services_start(
-            stop_event=stop_event,
+            stop_event=asyncio.Event(),
             timeout_seconds=1.0,
         )
 
@@ -285,19 +246,13 @@ class TestMultiProcessServiceManager:
         mock_tempfile.side_effect = [mock_user_file, mock_service_file]
         mock_create_subprocess.return_value = mock_subprocess_process
 
-        # Create async mock functions that can be called without creating unawaited coroutines
         async def mock_watch_subprocess(*args, **kwargs):
             pass
 
         async def mock_handle_output(*args, **kwargs):
             pass
 
-        # Track calls to execute_async
-        execute_async_calls = []
-
         def mock_execute_async(coro):
-            execute_async_calls.append(coro)
-            # Close the coroutine to prevent warning
             coro.close()
 
         with (
@@ -322,19 +277,13 @@ class TestMultiProcessServiceManager:
                 current_dir=Path("/test"),
             )
 
-        # Verify subprocess was created with correct arguments
         mock_create_subprocess.assert_called_once()
         args = mock_create_subprocess.call_args[0]
         assert args[0] == "aiperf"
         assert args[1] == "service"
         assert args[2] == ServiceType.DATASET_MANAGER
 
-        # Verify async tasks were started
-        assert (
-            mock_execute.call_count == 2
-        )  # _watch_subprocess and _handle_subprocess_output
-
-        # Verify the async methods were called (but not awaited due to execute_async)
+        assert mock_execute.call_count == 2
         mock_watch.assert_called_once()
         mock_handle.assert_called_once()
 
@@ -342,7 +291,6 @@ class TestMultiProcessServiceManager:
     async def test_run_service_multiple_replicas(self, service_manager):
         """Test run_service with multiple replicas."""
 
-        # Create async mock functions
         async def mock_run_replica(*args, **kwargs):
             pass
 
@@ -362,7 +310,6 @@ class TestMultiProcessServiceManager:
                 service_type=ServiceType.DATASET_MANAGER, num_replicas=3
             )
 
-        # Should create 3 replicas
         assert mock_run_replica_patch.call_count == 3
         mock_gather_patch.assert_called_once()
 
@@ -373,7 +320,6 @@ class TestMultiProcessServiceManager:
         mock_stdout = AsyncMock()
         mock_stderr = AsyncMock()
 
-        # Mock stream.read to return empty data (EOF)
         mock_stdout.read = AsyncMock(return_value=b"")
         mock_stderr.read = AsyncMock(return_value=b"")
 
@@ -383,32 +329,27 @@ class TestMultiProcessServiceManager:
 
         await service_manager._handle_subprocess_output(mock_process, "test_service")
 
-        # Verify both streams were read
         mock_stdout.read.assert_called()
         mock_stderr.read.assert_called()
 
     @pytest.mark.asyncio
     async def test_watch_subprocess_completion(
-        self, service_manager, mock_subprocess_process
+        self, service_manager, create_subprocess_info, mock_subprocess_process
     ):
         """Test _watch_subprocess when subprocess completes."""
-        service_id = "test_service"
-        info = AsyncSubprocessRunInfo.model_construct(
+        info = create_subprocess_info(
             process=mock_subprocess_process,
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id=service_id,
+            service_id="test_service",
         )
 
-        # Mock the process wait to complete successfully
         mock_subprocess_process.wait.return_value = 0
         mock_subprocess_process.returncode = 0
 
         with patch.object(
             service_manager, "publish", new_callable=AsyncMock
         ) as mock_publish:
-            service_manager.stop_requested = True  # Prevent failure message
+            service_manager.stop_requested = True
             await service_manager._watch_subprocess(info)
 
         mock_subprocess_process.wait.assert_called_once()
-        # Should not publish failure message when stop_requested is True
         mock_publish.assert_not_called()
