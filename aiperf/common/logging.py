@@ -44,7 +44,8 @@ def setup_logging(
         level = _DEBUG
 
     # Set the root logger level to ensure logs are passed to handlers
-    level = level.upper()
+    if isinstance(level, str):
+        level = level.upper()
     root_logger.setLevel(level)
 
     # Remove all existing handlers to avoid duplicate logs
@@ -176,6 +177,10 @@ def handle_subprocess_log_line(line: str, fallback_service_id: str) -> None:
         line: The log line from subprocess output
         fallback_service_id: Service ID to use if line is not structured
     """
+    # Skip empty lines
+    if not line.strip():
+        return
+
     # Try structured parsing first
     parsed_record = parse_subprocess_log_line(line)
 
