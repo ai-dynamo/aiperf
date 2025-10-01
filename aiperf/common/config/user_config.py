@@ -6,14 +6,15 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from orjson import JSONDecodeError
-from pydantic import Field, model_validator
+from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
-from aiperf.common.config.cli_parameter import DisableCLI
-from aiperf.common.config.config_validators import coerce_value
+from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
+from aiperf.common.config.config_validators import coerce_value, parse_str_or_list
 from aiperf.common.config.endpoint_config import EndpointConfig
+from aiperf.common.config.groups import Groups
 from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
@@ -209,6 +210,20 @@ class UserConfig(BaseConfig):
         ),
         DisableCLI(reason="This is automatically set by the CLI"),
     ] = None
+
+    server_metrics_url: Annotated[
+        list[str],
+        Field(
+            default_factory=lambda: ["http://localhost:9401/metrics"],
+            description="List of DCGM exporter endpoint URLs for GPU telemetry collection",
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--server-metrics-url",),
+            consume_multiple=True,
+            group=Groups.TELEMETRY,
+        ),
+    ]
 
     @model_validator(mode="after")
     def _compute_config(self) -> Self:

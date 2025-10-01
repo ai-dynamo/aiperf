@@ -6,6 +6,7 @@ from pydantic import Field
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.record_models import MetricResult
 
 
@@ -48,9 +49,6 @@ class TelemetryRecord(AIPerfBaseModel):
     gpu_power_usage: float | None = Field(
         default=None, description="Current GPU power usage in W"
     )
-    gpu_power_limit: float | None = Field(
-        default=None, description="GPU power limit in W"
-    )
     energy_consumption: float | None = Field(
         default=None, description="Cumulative energy consumption in MJ"
     )
@@ -59,9 +57,6 @@ class TelemetryRecord(AIPerfBaseModel):
     )
     gpu_memory_used: float | None = Field(
         default=None, description="GPU memory used in GB"
-    )
-    total_gpu_memory: float | None = Field(
-        default=None, description="Total GPU memory in GB"
     )
     sm_clock_frequency: float | None = Field(
         default=None, description="SM clock frequency in MHz"
@@ -216,18 +211,15 @@ class GpuTelemetryData(AIPerfBaseModel):
         """
         metric_mapping = {
             "gpu_power_usage": record.gpu_power_usage,
-            "gpu_power_limit": record.gpu_power_limit,
             "energy_consumption": record.energy_consumption,
             "gpu_utilization": record.gpu_utilization,
             "gpu_memory_used": record.gpu_memory_used,
-            "total_gpu_memory": record.total_gpu_memory,
             "sm_clock_frequency": record.sm_clock_frequency,
             "memory_clock_frequency": record.memory_clock_frequency,
             "memory_temperature": record.memory_temperature,
             "gpu_temperature": record.gpu_temperature,
         }
 
-        # Filter out None values and add as single snapshot
         valid_metrics = {k: v for k, v in metric_mapping.items() if v is not None}
         if valid_metrics:
             self.time_series.append_snapshot(valid_metrics, record.timestamp_ns)
@@ -300,3 +292,45 @@ class TelemetryHierarchy(AIPerfBaseModel):
             dcgm_data[record.gpu_uuid] = GpuTelemetryData(metadata=metadata)
 
         dcgm_data[record.gpu_uuid].add_record(record)
+
+
+class TelemetryResults(AIPerfBaseModel):
+    """Results from GPU telemetry collection during a profile run.
+
+    This class contains all telemetry data and metadata collected during
+    a benchmarking session, separate from inference performance results.
+    """
+
+    telemetry_data: TelemetryHierarchy = Field(
+        description="Hierarchical telemetry data organized by DCGM endpoint and GPU"
+    )
+    start_ns: int = Field(
+        description="Start time of telemetry collection in nanoseconds"
+    )
+    end_ns: int = Field(description="End time of telemetry collection in nanoseconds")
+    endpoints_tested: list[str] = Field(
+        default_factory=list,
+        description="List of DCGM endpoint URLs that were tested for reachability",
+    )
+    endpoints_successful: list[str] = Field(
+        default_factory=list,
+        description="List of DCGM endpoint URLs that successfully provided telemetry data",
+    )
+    error_summary: list[ErrorDetailsCount] = Field(
+        default_factory=list,
+        description="A list of the unique error details and their counts",
+    )
+
+
+class ProcessTelemetryResult(AIPerfBaseModel):
+    """Result of telemetry processing - mirrors ProcessRecordsResult pattern.
+
+    This provides a parallel structure to ProcessRecordsResult for the telemetry pipeline,
+    maintaining complete separation while following the same architectural patterns.
+    """
+
+    results: TelemetryResults = Field(description="The processed telemetry results")
+    errors: list[ErrorDetails] = Field(
+        default_factory=list,
+        description="Any errors that occurred while processing telemetry data",
+    )

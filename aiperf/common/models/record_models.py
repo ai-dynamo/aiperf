@@ -93,6 +93,10 @@ class ProcessRecordsResult(AIPerfBaseModel):
     """Result of the process records command."""
 
     results: ProfileResults = Field(..., description="The profile results")
+    # telemetry_results: "TelemetryResults | None" = Field(
+    #     default=None,
+    #     description="GPU telemetry results collected during the profile run"
+    # )
     errors: list[ErrorDetails] = Field(
         default_factory=list,
         description="Any error that occurred while processing the profile results",

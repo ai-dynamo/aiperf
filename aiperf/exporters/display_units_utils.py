@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Iterable
+from urllib.parse import urlparse
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import MetricUnitError
@@ -24,6 +25,28 @@ STAT_KEYS = [
     "p99",
     "std",
 ]
+
+
+def normalize_endpoint_display(url: str) -> str:
+    """Normalize endpoint URL for display by removing scheme and trimming /metrics suffix.
+
+    Args:
+        url: The full URL to normalize (e.g., "https://host:9400/api/metrics")
+
+    Returns:
+        Normalized display string with netloc and trimmed path (e.g., "host:9400/api")
+    """
+    parsed = urlparse(url)
+    path = parsed.path
+
+    if path.endswith("/metrics"):
+        path = path[: -len("/metrics")]
+
+    display = parsed.netloc
+    if path:
+        display += path
+
+    return display
 
 
 def to_display_unit(result: MetricResult, registry: MetricRegistry) -> MetricResult:
