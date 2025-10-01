@@ -14,7 +14,10 @@ from aiperf.common.config import (
     InputDefaults,
     PromptConfig,
 )
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, MetricFlags, MetricTimeUnit
+from aiperf.common.exceptions import MetricTypeError
+from aiperf.metrics.metric_registry import MetricRegistry
+from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 
 
 def test_input_config_defaults():
@@ -32,6 +35,7 @@ def test_input_config_defaults():
     assert config.file == InputDefaults.FILE
     assert config.random_seed == InputDefaults.RANDOM_SEED
     assert config.custom_dataset_type == InputDefaults.CUSTOM_DATASET_TYPE
+    assert config.goodput == InputDefaults.GOODPUT
     assert isinstance(config.audio, AudioConfig)
     assert isinstance(config.image, ImageConfig)
     assert isinstance(config.prompt, PromptConfig)
@@ -71,27 +75,41 @@ def test_input_config_file_validation():
         InputConfig(file=12345)  # Invalid file (non-string value)
 
 
-def test_input_config_goodput_default():
-    cfg = InputConfig()
-    # Whatever InputDefaults.GOODPUT is set to (likely None) is the truth
-    assert cfg.goodput == InputDefaults.GOODPUT
-
-
 def test_input_config_goodput_success():
     cfg = InputConfig(goodput="request_latency:250 inter_token_latency:10")
     assert cfg.goodput == {"request_latency": 250.0, "inter_token_latency": 10.0}
 
 
-def test_input_config_goodput_empty_raises_validation_error():
+def test_input_config_goodput_validation_raises_error():
     with pytest.raises(ValidationError):
-        InputConfig(goodput="   ")
+        InputConfig(goodput=123)  # not a string
 
 
-def test_input_config_goodput_missing_colon_raises_validation_error():
-    with pytest.raises(ValidationError):
-        InputConfig(goodput="request_latency250")
+@pytest.mark.parametrize(
+    "goodput_str, unknown_tag",
+    [
+        ("foo:1", "foo"),
+        ("request_latency:250 bar:10", "bar"),
+    ],
+)
+def test_goodput_unknown_raises(monkeypatch, goodput_str, unknown_tag):
+    def get_class(tag):
+        if tag == "request_latency":
+            return type(
+                "MockRequestLatencyMetric",
+                (),
+                {
+                    "tag": RequestLatencyMetric.tag,
+                    "unit": MetricTimeUnit.MILLISECONDS,
+                    "display_unit": None,
+                    "flags": MetricFlags.NONE,
+                },
+            )
+        raise MetricTypeError(f"Metric class with tag '{tag}' not found")
 
+    monkeypatch.setattr(MetricRegistry, "get_class", get_class)
 
-def test_input_config_goodput_non_numeric_value_raises_validation_error():
-    with pytest.raises(ValidationError):
-        InputConfig(goodput="request_latency:abc")
+    with pytest.raises(ValidationError) as exc:
+        InputConfig(goodput=goodput_str)
+
+    assert f"Unknown metric tag in --goodput: {unknown_tag}" in str(exc.value)

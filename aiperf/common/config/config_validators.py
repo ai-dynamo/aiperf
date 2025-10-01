@@ -224,7 +224,7 @@ def parse_file(value: str | None) -> Path | None:
             raise ValueError(f"'{value}' is not a valid file or directory")
 
 
-def parse_str_as_dict(input_string: str | None) -> dict[str, float] | None:
+def parse_str_as_numeric_dict(input_string: str | None) -> dict[str, float] | None:
     """
     Parse a string of key:value pairs such as 'k:v x:y' into {k: v, x: y}.
     """

@@ -36,6 +36,31 @@ class BaseMetricsProcessor(AIPerfLoggerMixin, ABC):
             disallowed_flags |= MetricFlags.STREAMING_ONLY
         return required_flags, disallowed_flags
 
+    def _configure_goodput(self, applicable_tags: set[str]) -> None:
+        """
+        If --goodput SLOs are provided, wire the SLOs into the GoodRequestCountMetric.
+        """
+        if not self.user_config.input.goodput:
+            return
+        if GOOD_REQUEST_COUNT_TAG not in applicable_tags:
+            return
+
+        slo_tags = set((self.user_config.input.goodput or {}).keys())
+        missing_tags = slo_tags - set(applicable_tags)
+        if missing_tags:
+            raise RuntimeError(
+                "Invalid --goodput: metric(s) "
+                + ", ".join(sorted(missing_tags))
+                + " are not applicable to the current endpoint/configuration."
+            )
+
+        try:
+            MetricRegistry.get_class(GOOD_REQUEST_COUNT_TAG).set_slos(
+                self.user_config.input.goodput
+            )
+        except ValueError as e:
+            raise RuntimeError(f"Invalid --goodput: {e}") from e
+
     def _setup_metrics(
         self,
         *metric_types: MetricType,
@@ -62,13 +87,7 @@ class BaseMetricsProcessor(AIPerfLoggerMixin, ABC):
             disallowed_flags,
             *metric_types,
         )
-        if self.user_config.input.goodput and GOOD_REQUEST_COUNT_TAG in supported_tags:
-            try:
-                MetricRegistry.get_class(GOOD_REQUEST_COUNT_TAG).set_slos(
-                    self.user_config.input.goodput
-                )
-            except ValueError as e:
-                raise RuntimeError(f"Invalid --goodput: {e}") from e
+        self._configure_goodput(supported_tags)
 
         ordered_tags = MetricRegistry.create_dependency_order_for(
             supported_tags,

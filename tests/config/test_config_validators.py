@@ -7,7 +7,7 @@ import pytest
 
 from aiperf.common.config import (
     coerce_value,
-    parse_str_as_dict,
+    parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list_of_positive_values,
 )
@@ -286,24 +286,27 @@ class TestParseStrOrListOfPositiveValues:
         with pytest.raises(ValueError):
             parse_str_or_list_of_positive_values(invalid_input)
 
-    def test_parse_str_as_dict_simple(self):
-        assert parse_str_as_dict("request_latency:250 inter_token_latency:10") == {
+    def test_parse_str_as_numeric_dict_simple(self):
+        assert parse_str_as_numeric_dict(
+            "request_latency:250 inter_token_latency:10"
+        ) == {
             "request_latency": 250.0,
             "inter_token_latency": 10.0,
         }
 
-    def test_parse_str_as_dict_empty_string_raises_error(self):
-        with pytest.raises(ValueError):
-            parse_str_as_dict("   ")
-
-    def test_parse_str_as_dict_non_string_raises_error(self):
-        with pytest.raises(ValueError):
-            parse_str_as_dict(123)  # type: ignore[arg-type]
-
-    def test_parse_str_as_dict_missing_colon_raises_error(self):
-        with pytest.raises(ValueError):
-            parse_str_as_dict("request_latency250")
-
-    def test_parse_str_as_dict_non_numeric_value_raises_error(self):
-        with pytest.raises(ValueError):
-            parse_str_as_dict("request_latency:abc")
+    @pytest.mark.parametrize(
+        "error_message,pattern",
+        [
+            ("", "expected space-separated 'key:value' pairs"),
+            ("   ", "expected space-separated 'key:value' pairs"),
+            (123, "expected a string"),
+            ("request_latency250", "not in 'key:value'"),
+            ("a:", "empty value"),
+            (":1", "empty key"),
+            ("a:b", "must be numeric"),
+            ("a:1 badpair b:2", "not in 'key:value'"),
+        ],
+    )
+    def test_parse_str_as_numeric_dict_error_param(self, error_message, pattern):
+        with pytest.raises(ValueError, match=pattern):
+            parse_str_as_numeric_dict(error_message)

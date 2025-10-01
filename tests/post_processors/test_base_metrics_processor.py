@@ -242,10 +242,9 @@ class TestBaseMetricsProcessor:
         mock_metric_registry.tags_applicable_to.return_value = set()
         processor = BaseMetricsProcessor(mock_user_config)
         processor._setup_metrics(MetricType.RECORD)
+        required_flags = mock_metric_registry.tags_applicable_to.call_args[0][0]
+        disallowed_flags = mock_metric_registry.tags_applicable_to.call_args[0][1]
 
-        (required_flags, disallowed_flags, *types), _ = (
-            mock_metric_registry.tags_applicable_to.call_args
-        )
         assert required_flags == MetricFlags.NONE
         assert disallowed_flags & MetricFlags.GOODPUT
 
@@ -280,23 +279,6 @@ class TestBaseMetricsProcessor:
         GoodReqCountClass.set_slos.assert_called_once_with({"request_latency": 250.0})
         assert [m.tag for m in metrics] == ["request_latency", GOOD_REQUEST_COUNT_TAG]
 
-    def test_setup_metrics_does_not_call_set_slos_if_tag_not_supported(
-        self,
-        mock_metric_registry: Mock,
-        mock_user_config,
-    ):
-        mock_user_config.input.goodput = {"request_latency": 250.0}
-
-        mock_metric_registry.tags_applicable_to.return_value = {"request_latency"}
-        mock_metric_registry.create_dependency_order_for.return_value = [
-            "request_latency"
-        ]
-
-        processor = BaseMetricsProcessor(mock_user_config)
-        processor._setup_metrics(MetricType.RECORD)
-
-        mock_metric_registry.get_class.assert_not_called()
-
     def test_setup_metrics_raises_runtimeerror_when_set_slos_invalid(
         self,
         mock_metric_registry: Mock,
@@ -309,12 +291,31 @@ class TestBaseMetricsProcessor:
             GOOD_REQUEST_COUNT_TAG
         ]
 
-        class BadGoodReqCountClass:
+        class GoodReqCountInvalidSLO:
             @classmethod
             def set_slos(cls, _):
                 raise ValueError("Unknown metric tag(s) in --goodput: unknown_metric")
 
-        mock_metric_registry.get_class.return_value = BadGoodReqCountClass
+        mock_metric_registry.get_class.return_value = GoodReqCountInvalidSLO
 
         with pytest.raises(RuntimeError, match="Invalid --goodput:"):
             BaseMetricsProcessor(mock_user_config)._setup_metrics(MetricType.RECORD)
+
+    def test_setup_metrics_raises_when_goodput_slo_tag_not_applicable(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config,
+    ):
+        mock_user_config.input.goodput = {"inter_token_latency": 10.0}
+
+        mock_metric_registry.tags_applicable_to.return_value = {GOOD_REQUEST_COUNT_TAG}
+        mock_metric_registry.create_dependency_order_for.return_value = [
+            GOOD_REQUEST_COUNT_TAG
+        ]
+        GoodReqCountClass = type("GoodReqCountClass", (), {"set_slos": Mock()})
+        mock_metric_registry.get_class.return_value = GoodReqCountClass
+
+        with pytest.raises(RuntimeError, match="not applicable"):
+            BaseMetricsProcessor(mock_user_config)._setup_metrics(MetricType.RECORD)
+
+        GoodReqCountClass.set_slos.assert_not_called()

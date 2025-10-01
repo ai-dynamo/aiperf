@@ -14,7 +14,7 @@ class GoodputMetric(BaseDerivedMetric[float]):
     Postprocessor for calculating the Goodput metric.
 
     Formula:
-    Goodput = Good request count / Benchmark Duration(s)
+    Goodput = Good request count / Benchmark Duration (seconds)
     """
 
     tag = "goodput"
