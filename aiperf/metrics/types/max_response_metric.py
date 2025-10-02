@@ -22,7 +22,7 @@ class MaxResponseTimestampMetric(BaseAggregateMetric[int]):
     short_header_hide_unit = True
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricDateTimeUnit.DATE_TIME
-    flags = MetricFlags.HIDDEN
+    flags = MetricFlags.NO_CONSOLE
     required_metrics = {
         RequestLatencyMetric.tag,
     }

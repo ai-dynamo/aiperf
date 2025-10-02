@@ -27,7 +27,7 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 400
-    flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER
+    flags = MetricFlags.STREAMING_TOKENS_ONLY
     required_metrics = {
         RequestLatencyMetric.tag,
         TTFTMetric.tag,
