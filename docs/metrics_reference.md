@@ -68,7 +68,7 @@ Aggregate Metrics are computed by **tracking** or **accumulating** values across
 `request_count`, `error_request_count`, `min_request_timestamp`, `max_response_timestamp`
 
 #### Dependencies
-Aggregate Metrics can depend on Record Metrics and other Aggregate Metrics.
+Aggregate Metrics can depend on raw request/response data, Record Metrics and other Aggregate Metrics.
 
 #### Example Scenario
 `request_count` increments by 1 for each successful request. At the end of a benchmark with 100 successful requests, this metric equals 100 (a single value, not a distribution).
@@ -81,7 +81,8 @@ Derived Metrics are computed by applying **mathematical formulas** to other metr
 `request_throughput`, `output_token_throughput`, `benchmark_duration`
 
 #### Dependencies
-Derived Metrics can depend on Record Metrics, Aggregate Metrics, and other Derived Metrics.
+Derived Metrics can depend on Record Metrics, Aggregate Metrics, and other Derived Metrics, but do not have
+any knowledge of the individual request/response data.
 
 #### Example Scenario
 `request_throughput` is computed from `request_count / benchmark_duration_seconds`. This requires both `request_count` and `benchmark_duration` to be available first, then applies a formula to produce a single throughput value (e.g., 10.5 requests/sec).
