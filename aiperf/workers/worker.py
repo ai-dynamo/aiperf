@@ -42,6 +42,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins import ProcessHealthMixin, PullClientMixin
 from aiperf.common.models import (
+    Conversation,
     ErrorDetails,
     RequestRecord,
     Text,
@@ -204,20 +205,20 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         if not self.inference_client:
             raise NotInitializedError("Inference server client not initialized.")
 
-        conversation_response = await self._retrieve_conversation_response(
+        conversation = await self._retrieve_conversation_response(
             service_id=self.service_id,
             conversation_id=message.conversation_id,
             phase=message.phase,
         )
 
         turn_list = []
-        for turn_index in range(len(conversation_response.conversation.turns)):
+        for turn_index in range(len(conversation.turns)):
             self.task_stats.total += 1
-            turn = conversation_response.conversation.turns[turn_index]
+            turn = conversation.turns[turn_index]
             turn_list.append(turn)
             # TODO: how do we handle errors in the middle of a conversation?
             record = await self._build_response_record(
-                conversation_response.conversation.session_id,
+                conversation.session_id,
                 message,
                 turn,
                 turn_index,
@@ -233,13 +234,16 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         service_id: str,
         conversation_id: str | None,
         phase: CreditPhase,
-    ) -> ConversationResponseMessage:
-        """Retrieve the conversation response from the dataset manager."""
+    ) -> Conversation:
+        """Retrieve the conversation from the dataset manager. If a conversation
+        cannot be retrieved, an error message will be sent to the
+        inference results client and an Exception is raised.
+        """
         # retrieve the prompt from the dataset
         conversation_response: ConversationResponseMessage = (
             await self.conversation_request_client.request(
                 ConversationRequestMessage(
-                    service_id=self.service_id,
+                    service_id=service_id,
                     conversation_id=conversation_id,
                     credit_phase=phase,
                 )
@@ -264,7 +268,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             )
             raise ValueError("Failed to retrieve conversation response")
 
-        return conversation_response
+        return conversation_response.conversation
 
     async def _build_response_record(
         self,
