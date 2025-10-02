@@ -58,29 +58,12 @@ The sections below provide detailed descriptions, requirements, and notes for ea
 
 # Detailed Metric Descriptions
 
-## Latency & Timing Metrics
+## Streaming Metrics
 
-These metrics measure time and latency characteristics of requests and responses.
+These metrics are specific to streaming requests and measure real-time token generation characteristics.
 
-### Request Latency
-
-| Tag | Type | Flags | Depends On |
-|-----|------|-------|------------|
-| `request_latency` | Record Metric | [`NONE`](#flag-none) | - |
-
-**Description:** Measures the total end-to-end time from sending a request until receiving the final response. For streaming requests with multiple responses, this measures until the last response is received. This is the complete time experienced by the client for a single request.
-
-**Formula Details:**
-```
-Request Latency = responses[-1].perf_ns - start_perf_ns
-```
-
-**Notes:**
-- Available for all request types (streaming and non-streaming); no special requirements.
-- Includes all components: network time, queuing, prompt processing, token generation, and response transmission.
-- For streaming requests, measures from request start to the final chunk received.
-
----
+> [!NOTE]
+> **Requirements:** All metrics in this section require the `--streaming` flag with a token-producing endpoint and at least one non-empty response chunk.
 
 ### Time to First Token (TTFT)
 
@@ -90,13 +73,12 @@ Request Latency = responses[-1].perf_ns - start_perf_ns
 
 **Description:** Measures how long it takes to receive the first token (or chunk of tokens) after sending a request. This is critical for user-perceived responsiveness in streaming scenarios, as it represents how quickly the model begins generating output.
 
-**Formula Details:**
-```
-TTFT = responses[0].perf_ns - request.start_perf_ns
+**Formula:**
+```python
+ttft = responses[0].perf_ns - request.start_perf_ns
 ```
 
 **Notes:**
-- Requires `--streaming` flag, with a token-producing endpoint, and at least 1 response chunk.
 - Includes network latency, queuing time, prompt processing, and generation of the first token (or chunk of tokens).
 
 ---
@@ -109,13 +91,13 @@ TTFT = responses[0].perf_ns - request.start_perf_ns
 
 **Description:** Measures the time gap between the first and second chunk of tokens (SSE messages). This metric helps identify generation startup overhead separate from steady-state streaming throughput.
 
-**Formula Details:**
-```
-TTST = responses[1].perf_ns - responses[0].perf_ns
+**Formula:**
+```python
+ttst = responses[1].perf_ns - responses[0].perf_ns
 ```
 
 **Notes:**
-- Requires `--streaming` flag, with a token-producing endpoint, and at least 2 response chunks (tokens).
+- Requires at least 2 non-empty response chunks to compute the time between first and second tokens.
 
 ---
 
@@ -127,13 +109,13 @@ TTST = responses[1].perf_ns - responses[0].perf_ns
 
 **Description:** Measures the average time between consecutive tokens during generation, excluding the initial TTFT overhead. This represents the steady-state token generation rate.
 
-**Formula Details:**
-```
-ITL = (request_latency - ttft) / (output_sequence_length - 1)
+**Formula:**
+```python
+inter_token_latency = (request_latency - ttft) / (output_sequence_length - 1)
 ```
 
 **Notes:**
-- Requires `--streaming` flag, with a token-producing endpoint, at least 2 output tokens, and valid `ttft`, `request_latency`, and `output_sequence_length` metrics.
+- Requires at least 2 non-empty response chunks and valid `ttft`, `request_latency`, and `output_sequence_length` metrics.
 
 ---
 
@@ -145,22 +127,49 @@ ITL = (request_latency - ttft) / (output_sequence_length - 1)
 
 **Description:** Captures the time gaps between all consecutive response chunks (SSE messages) in a streaming response, providing a distribution of chunk arrival times rather than a single average. Note that this is different from the ITL metric, which measures the time between consecutive tokens regardless of chunk size.
 
-**Formula Details:**
-```
-ICL = [responses[i].perf_ns - responses[i-1].perf_ns for i in range(1, len(responses))]
+**Formula:**
+```python
+inter_chunk_latency = [responses[i].perf_ns - responses[i-1].perf_ns for i in range(1, len(responses))]
 ```
 
 **Notes:**
-- Requires `--streaming` flag, with a token-producing endpoint, and at least 2 response chunks.
+- Requires at least 2 response chunks.
 - Unlike ITL (which produces a single average), ICL provides the full distribution of inter-chunk times.
 - Useful for detecting variability, jitter, or issues in streaming delivery.
 - Analyzing ICL distributions can reveal batching behavior, scheduling issues, or network variability.
 
 ---
 
-## Token Count Metrics
+### Output Token Throughput Per User
 
-These metrics track token counts for individual requests and aggregated across all requests.
+> [!IMPORTANT]
+> This metric is computed per-request, and it excludes the TTFT from the equation, so it is **not** directly comparable to the [Output Token Throughput](#output-token-throughput) metric.
+
+
+| Tag | Type | Flags | Depends On |
+|-----|------|-------|------------|
+| `output_token_throughput_per_user` | Record Metric | [`STREAMING_TOKENS_ONLY`](#flag-streaming-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) | `inter_token_latency` |
+
+**Description:** The token generation rate experienced by an individual user/request, measured as the inverse of inter-token latency. This represents single-request streaming performance.
+
+**Formula:**
+```python
+output_token_throughput_per_user = 1.0 / inter_token_latency_seconds
+```
+
+**Notes:**
+- Computes the inverse of ITL to show tokens per second from an individual user's perspective.
+- Differs from Output Token Throughput (aggregate across all concurrent requests) by focusing on single-request experience.
+- Useful for understanding the user experience independent of concurrency effects.
+
+---
+
+## Token Based Metrics
+
+These metrics track token counts and throughput for token-producing endpoints.
+
+> [!NOTE]
+> **Requirements:** All metrics in this section require token-producing endpoints that return text content (chat, completion, etc.). These metrics are not available for embeddings or other non-generative endpoints.
 
 ### Output Token Count
 
@@ -170,39 +179,15 @@ These metrics track token counts for individual requests and aggregated across a
 
 **Description:** The number of output tokens generated for a single request, _excluding reasoning tokens_. This represents the visible output tokens returned to the user across all responses for the request.
 
-**Formula Details:**
-```
-Output Token Count = output_token_count
+**Formula:**
+```python
+output_token_count = len(tokenizer.encode(content))
 ```
 
 **Notes:**
-- Requires token-producing endpoints that return actual token content (text); excludes embeddings and other non-generative endpoints.
-- AIPerf counts tokens from the returned content using a tokenizer.
 - For streaming requests with multiple responses, the responses are joined together and then tokens are counted.
-- For models and endpoints that support reasoning tokens, this metric counts only the non-reasoning output tokens.
+- For models that support reasoning tokens, this metric counts only the non-reasoning output tokens.
 - This **will** count tokens inside of the `<think>` tags, if they are present in the `content` field of the response.
-
----
-
-### Reasoning Token Count
-
-| Tag | Type | Flags | Depends On |
-|-----|------|-------|------------|
-| `reasoning_token_count` | Record Metric | [`SUPPORTS_REASONING`](#flag-supports-reasoning), [`LARGER_IS_BETTER`](#flag-larger-is-better) | - |
-
-**Description:** The number of reasoning tokens generated for a single request. These are tokens used for "thinking" or chain-of-thought reasoning before generating the final output.
-
-**Formula Details:**
-```
-Reasoning Token Count = reasoning_token_count
-```
-
-**Notes:**
-- Requires models/backends that support reasoning output with reasoning content separated into a `reasoning_content` field, distinct from the regular `content` field in the response(s).
-- AIPerf counts tokens from the `reasoning_content` field using a tokenizer, just like other token metrics.
-- Does NOT differentiate `<think>` tags or extract reasoning from within the regular `content` field.
-- The backend must provide reasoning as a separate field in the response.
-- Standard models/backends that don't expose reasoning content separately will skip this metric.
 
 ---
 
@@ -214,15 +199,13 @@ Reasoning Token Count = reasoning_token_count
 
 **Description:** The total number of completion tokens (output + reasoning) generated for a single request across all its responses. This represents the complete token generation workload for the request.
 
-**Formula Details:**
-```
-OSL = (output_token_count or 0) + (reasoning_token_count or 0)
+**Formula:**
+```python
+output_sequence_length = (output_token_count or 0) + (reasoning_token_count or 0)
 ```
 
 **Notes:**
-- Requires token-producing endpoints that return text content; excludes embeddings and other non-generative endpoints.
-- AIPerf counts tokens from the generated text content across all responses.
-- For models and endpoints that do not support/separate reasoning tokens, OSL equals the output token count.
+- For models that do not support/separate reasoning tokens, OSL equals the output token count.
 
 ---
 
@@ -234,14 +217,12 @@ OSL = (output_token_count or 0) + (reasoning_token_count or 0)
 
 **Description:** The number of input/prompt tokens for a single request. This represents the size of the input sent to the model.
 
-**Formula Details:**
-```
-Input Sequence Length = input_token_count
+**Formula:**
+```python
+input_sequence_length = len(tokenizer.encode(prompt))
 ```
 
 **Notes:**
-- Requires token-producing endpoints (chat, completion, etc.).
-- AIPerf tokenizes the input prompt to compute the count using the appropriate tokenizer for the model.
 - Useful for understanding the relationship between input size and latency/throughput.
 
 ---
@@ -254,37 +235,14 @@ Input Sequence Length = input_token_count
 
 **Description:** The sum of all output tokens (excluding reasoning tokens) generated across all requests. This represents the total visible output token workload.
 
-**Formula Details:**
-```
-Total Output Tokens = sum(output_token_count for record in records)
+**Formula:**
+```python
+total_output_tokens = sum(output_token_count for record in records)
 ```
 
 **Notes:**
-- Requires token-producing endpoints that return text content, with valid `output_token_count` for processed records.
-- AIPerf counts tokens from the returned content using a tokenizer.
 - Aggregates output tokens across all successful requests.
 - Useful for capacity planning and cost estimation.
-
----
-
-### Total Reasoning Tokens
-
-| Tag | Type | Flags | Depends On |
-|-----|------|-------|------------|
-| `total_reasoning_tokens` | Derived Metric | [`SUPPORTS_REASONING`](#flag-supports-reasoning), [`LARGER_IS_BETTER`](#flag-larger-is-better) | `reasoning_token_count` |
-
-**Description:** The sum of all reasoning tokens generated across all requests. This represents the total reasoning/thinking workload.
-
-**Formula Details:**
-```
-Total Reasoning Tokens = sum(reasoning_token_count for record in records)
-```
-
-**Notes:**
-- Requires models/backends that support reasoning output with `reasoning_content` as a separate field, and valid `reasoning_token_count` for processed records.
-- AIPerf counts tokens from the `reasoning_content` field.
-- Only available for models like OpenAI o1 that expose reasoning tokens separately.
-- Useful for understanding the reasoning overhead and cost for reasoning-enabled models.
 
 ---
 
@@ -296,16 +254,14 @@ Total Reasoning Tokens = sum(reasoning_token_count for record in records)
 
 **Description:** The sum of all completion tokens (output + reasoning) generated across all requests. This represents the complete token generation workload.
 
-**Formula Details:**
-```
-Total Output Sequence Length = sum(output_sequence_length for record in records)
+**Formula:**
+```python
+total_osl = sum(output_sequence_length for record in records)
 ```
 
 **Notes:**
-- Requires token-producing endpoints that return text content, with valid `output_sequence_length` for processed records.
 - Aggregates the complete token generation workload including both output and reasoning tokens.
 - For models without reasoning tokens, this equals Total Output Tokens.
-- Numerator for Output Token Throughput calculations.
 
 ---
 
@@ -317,39 +273,13 @@ Total Output Sequence Length = sum(output_sequence_length for record in records)
 
 **Description:** The sum of all input/prompt tokens processed across all requests. This represents the total input workload sent to the model.
 
-**Formula Details:**
-```
-Total Input Sequence Length = sum(input_sequence_length for record in records)
+**Formula:**
+```python
+total_isl = sum(input_sequence_length for record in records)
 ```
 
 **Notes:**
-- Requires token-producing endpoints, with valid `input_sequence_length` for processed records.
-- AIPerf tokenizes input prompts to compute token counts.
 - Useful for understanding the input workload, capacity planning, and analyzing the relationship between input size and system performance.
-
----
-
-## Throughput Metrics
-
-These metrics measure the rate of requests and token generation.
-
-### Request Throughput
-
-| Tag | Type | Flags | Depends On |
-|-----|------|-------|------------|
-| `request_throughput` | Derived Metric | [`LARGER_IS_BETTER`](#flag-larger-is-better) | `request_count`, `benchmark_duration` |
-
-**Description:** The overall rate of completed requests per second across the entire benchmark. This represents the system's ability to process requests under the given concurrency and load.
-
-**Formula Details:**
-```
-Request Throughput = request_count / benchmark_duration_seconds
-```
-
-**Notes:**
-- Requires valid `request_count` and `benchmark_duration` metrics.
-- Captures the aggregate request processing rate; higher values indicate better system throughput.
-- Affected by concurrency level, request complexity, and system capacity.
 
 ---
 
@@ -366,47 +296,102 @@ Request Throughput = request_count / benchmark_duration_seconds
 
 **Description:** The aggregate token generation rate across all concurrent requests, measured as total tokens per second. This represents the system's overall token generation capacity.
 
-**Formula Details:**
-```
-Output Token Throughput = total_osl / benchmark_duration_seconds
+**Formula:**
+```python
+output_token_throughput = total_osl / benchmark_duration_seconds
 ```
 
 **Notes:**
-- Requires token-producing endpoints that generate text content, with valid `total_osl` and `benchmark_duration` metrics.
 - Measures aggregate throughput across all concurrent requests; represents the overall system token generation rate.
-- Not applicable to embeddings or other non-generative endpoints.
 - Higher values indicate better system utilization and capacity.
 
 ---
 
-### Output Token Throughput Per User
+## Reasoning Metrics
 
-> [!IMPORTANT]
-> This metric is computed per-request, and it excludes the TTFT from the equation, so it is **not** directly comparable to the [Output Token Throughput](#output-token-throughput) metric.
+These metrics are specific to models that support reasoning/thinking tokens.
 
+> [!NOTE]
+> **Requirements:** All metrics in this section require models and backends that expose reasoning content in a separate `reasoning_content` field, distinct from the regular `content` field.
+
+### Reasoning Token Count
 
 | Tag | Type | Flags | Depends On |
 |-----|------|-------|------------|
-| `output_token_throughput_per_user` | Record Metric | [`STREAMING_TOKENS_ONLY`](#flag-streaming-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) | `inter_token_latency` |
+| `reasoning_token_count` | Record Metric | [`SUPPORTS_REASONING`](#flag-supports-reasoning), [`LARGER_IS_BETTER`](#flag-larger-is-better) | - |
 
-**Description:** The token generation rate experienced by an individual user/request, measured as the inverse of inter-token latency. This represents single-request streaming performance.
+**Description:** The number of reasoning tokens generated for a single request. These are tokens used for "thinking" or chain-of-thought reasoning before generating the final output.
 
-**Formula Details:**
-```
-Output Token Throughput Per User = 1.0 / inter_token_latency_seconds
+**Formula:**
+```python
+reasoning_token_count = len(tokenizer.encode(reasoning_content))
 ```
 
 **Notes:**
-- Requires `--streaming` flag, with a token-producing endpoint, and valid `inter_token_latency` metric.
-- Computes the inverse of ITL to show tokens per second from an individual user's perspective.
-- Differs from Output Token Throughput (aggregate across all concurrent requests) by focusing on single-request experience.
-- Useful for understanding the user experience independent of concurrency effects.
+- Does **not** differentiate `<think>` tags or extract reasoning from within the regular `content` field.
 
 ---
 
-## System & Benchmark Metrics
+### Total Reasoning Tokens
 
-These metrics track overall benchmark execution and system-level counters.
+| Tag | Type | Flags | Depends On |
+|-----|------|-------|------------|
+| `total_reasoning_tokens` | Derived Metric | [`SUPPORTS_REASONING`](#flag-supports-reasoning), [`LARGER_IS_BETTER`](#flag-larger-is-better) | `reasoning_token_count` |
+
+**Description:** The sum of all reasoning tokens generated across all requests. This represents the total reasoning/thinking workload.
+
+**Formula:**
+```python
+total_reasoning_tokens = sum(reasoning_token_count for record in records)
+```
+
+**Notes:**
+- Useful for understanding the reasoning overhead and cost for reasoning-enabled models.
+
+---
+
+## General Metrics
+
+> [!NOTE]
+> **Requirements:** Metrics in this section are available for all benchmark runs with no special requirements.
+
+### Request Latency
+
+| Tag | Type | Flags | Depends On |
+|-----|------|-------|------------|
+| `request_latency` | Record Metric | [`NONE`](#flag-none) | - |
+
+**Description:** Measures the total end-to-end time from sending a request until receiving the final response. For streaming requests with multiple responses, this measures until the last response is received. This is the complete time experienced by the client for a single request.
+
+**Formula:**
+```python
+request_latency = responses[-1].perf_ns - start_perf_ns
+```
+
+**Notes:**
+- Includes all components: network time, queuing, prompt processing, token generation, and response transmission.
+- For streaming requests, measures from request start to the final chunk received.
+
+---
+
+### Request Throughput
+
+| Tag | Type | Flags | Depends On |
+|-----|------|-------|------------|
+| `request_throughput` | Derived Metric | [`LARGER_IS_BETTER`](#flag-larger-is-better) | `request_count`, `benchmark_duration` |
+
+**Description:** The overall rate of completed requests per second across the entire benchmark. This represents the system's ability to process requests under the given concurrency and load.
+
+**Formula:**
+```python
+request_throughput = request_count / benchmark_duration_seconds
+```
+
+**Notes:**
+- Captures the aggregate request processing rate; higher values indicate better system throughput.
+- Affected by concurrency level, request complexity, output sequence length, and system capacity.
+
+---
 
 ### Request Count
 
@@ -416,9 +401,9 @@ These metrics track overall benchmark execution and system-level counters.
 
 **Description:** The total number of **successfully completed** requests in the benchmark. This includes all requests that received valid responses, regardless of streaming mode.
 
-**Formula Details:**
-```
-Request Count = sum(1 for request in valid_requests)
+**Formula:**
+```python
+request_count = sum(1 for record if record.valid)
 ```
 
 ---
@@ -431,9 +416,9 @@ Request Count = sum(1 for request in valid_requests)
 
 **Description:** The total number of failed/error requests encountered during the benchmark. This includes network errors, HTTP errors, timeout errors, and other failures.
 
-**Formula Details:**
-```
-Error Request Count = sum(1 for request in error_requests)
+**Formula:**
+```python
+error_request_count = sum(1 for record if not record.valid)
 ```
 
 **Notes:**
@@ -449,9 +434,9 @@ Error Request Count = sum(1 for request in error_requests)
 
 **Description:** The wall-clock timestamp of the first request sent in the benchmark. This is used to calculate the benchmark duration and represents the start of the benchmark run.
 
-**Formula Details:**
-```
-Minimum Request Timestamp = min(timestamp_ns for record in records)
+**Formula:**
+```python
+min_request_timestamp = min(timestamp_ns for record in records)
 ```
 
 ---
@@ -464,9 +449,9 @@ Minimum Request Timestamp = min(timestamp_ns for record in records)
 
 **Description:** The wall-clock timestamp of the last response received in the benchmark. This is used to calculate the benchmark duration and represents the end of the benchmark run.
 
-**Formula Details:**
-```
-Maximum Response Timestamp = max(timestamp_ns + request_latency for record in records)
+**Formula:**
+```python
+max_response_timestamp = max(timestamp_ns + request_latency for record in records)
 ```
 
 ---
@@ -479,15 +464,14 @@ Maximum Response Timestamp = max(timestamp_ns + request_latency for record in re
 
 **Description:** The total elapsed time from the first request sent to the last response received. This represents the complete wall-clock duration of the benchmark run.
 
-**Formula Details:**
-```
-Benchmark Duration = max_response_timestamp - min_request_timestamp
+**Formula:**
+```python
+benchmark_duration = max_response_timestamp - min_request_timestamp
 ```
 
 **Notes:**
-- Requires valid `min_request_timestamp` and `max_response_timestamp` metrics.
 - Uses wall-clock timestamps representing real calendar time.
-- Denominator for throughput calculations; represents the effective measurement window.
+- Used as the denominator for throughput calculations; represents the effective measurement window.
 
 ---
 
