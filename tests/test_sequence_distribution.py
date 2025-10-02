@@ -356,7 +356,7 @@ class TestPromptConfigIntegration(unittest.TestCase):
         self.assertEqual(dist.pairs[1], SequenceLengthPair(512, 256, 40.0))
 
     def test_get_sequence_distribution_fallback_to_isl_osl(self):
-        """Test fallback to ISL/OSL when no distribution is set."""
+        """Test that None is returned when no distribution is set."""
         from aiperf.common.config.prompt_config import PromptConfig
 
         config = PromptConfig()
@@ -366,11 +366,10 @@ class TestPromptConfigIntegration(unittest.TestCase):
 
         dist = config.get_sequence_distribution()
 
-        self.assertEqual(len(dist.pairs), 1)
-        self.assertEqual(dist.pairs[0], SequenceLengthPair(512, 256, 100.0))
+        self.assertIsNone(dist)
 
     def test_get_sequence_distribution_default_osl(self):
-        """Test default OSL calculation when not specified."""
+        """Test that None is returned when no distribution is specified."""
         from aiperf.common.config.prompt_config import PromptConfig
 
         config = PromptConfig()
@@ -380,9 +379,7 @@ class TestPromptConfigIntegration(unittest.TestCase):
 
         dist = config.get_sequence_distribution()
 
-        self.assertEqual(len(dist.pairs), 1)
-        # Should use max(128, 512//2) = 256
-        self.assertEqual(dist.pairs[0], SequenceLengthPair(512, 256, 100.0))
+        self.assertIsNone(dist)
 
 
 if __name__ == "__main__":
