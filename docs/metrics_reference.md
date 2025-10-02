@@ -14,39 +14,39 @@ AIPerf computes metrics in three distinct phases during benchmark execution: **R
 
 Record Metrics are computed **individually** for **each request** and its **response(s)** during the benchmark run. A single request may have one response (non-streaming) or multiple responses (streaming). These metrics capture **per-request characteristics** such as latency, token counts, and streaming behavior. Record metrics produce **statistical distributions** (min, max, mean, median, p90, p99, etc.) that reveal performance variability across requests.
 
-### Example Metrics
+#### Example Metrics
 `request_latency`, `ttft`, `inter_token_latency`, `output_token_count`, `input_sequence_length`
 
-### Dependencies
+#### Dependencies
 Record Metrics can depend on raw request/response data and other Record Metrics from the same request.
 
-### Example Scenario
+#### Example Scenario
 `request_latency` measures the time for each individual request from start to final response. If you send 100 requests, you get 100 latency values that form a distribution showing how latency varies across requests.
 
 ## Aggregate Metrics
 
 Aggregate Metrics are computed by **tracking** or **accumulating** values across **all requests** in **real-time** during the benchmark. These include counters, min/max timestamps, and other global statistics. Aggregate metrics produce a **single value** representing the entire benchmark run.
 
-### Example Metrics
+#### Example Metrics
 `request_count`, `error_request_count`, `min_request_timestamp`, `max_response_timestamp`
 
-### Dependencies
+#### Dependencies
 Aggregate Metrics can depend on Record Metrics and other Aggregate Metrics.
 
-### Example Scenario
+#### Example Scenario
 `request_count` increments by 1 for each successful request. At the end of a benchmark with 100 successful requests, this metric equals 100 (a single value, not a distribution).
 
 ## Derived Metrics
 
 Derived Metrics are computed by applying **mathematical formulas** to other metric results, but are **not** computed per-record like Record Metrics. Instead, these metrics depend on one or more **prerequisite metrics** being available first and are calculated either **after the benchmark completes** for final results or in **real-time** across **all current data** for live metrics display. Derived metrics can produce either single values or distributions depending on their dependencies.
 
-### Example Metrics
+#### Example Metrics
 `request_throughput`, `output_token_throughput`, `benchmark_duration`
 
-### Dependencies
+#### Dependencies
 Derived Metrics can depend on Record Metrics, Aggregate Metrics, and other Derived Metrics.
 
-### Example Scenario
+#### Example Scenario
 `request_throughput` is computed from `request_count / benchmark_duration_seconds`. This requires both `request_count` and `benchmark_duration` to be available first, then applies a formula to produce a single throughput value (e.g., 10.5 requests/sec).
 
 ---
