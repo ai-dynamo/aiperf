@@ -166,7 +166,7 @@ AIPerf provides comprehensive metrics organized into three categories. For detai
 
 ### Record Metrics
 
-Computed individually for each request and its response(s). Record metrics produce statistical distributions (min, max, mean, p50, p90, p99, etc.).
+Computed **individually** for **each request** and its **response(s)**. Record metrics produce **statistical distributions** (min, max, mean, p50, p90, p99, etc.).
 
 | Metric | Tag | Formula | Unit |
 |--------|-----|---------|------|
@@ -183,7 +183,7 @@ Computed individually for each request and its response(s). Record metrics produ
 
 ### Aggregate Metrics
 
-Computed by tracking values across all requests in real-time. Aggregate metrics produce single scalar values.
+Computed by **tracking** values across **all requests** in **real-time**. Aggregate metrics produce **single scalar values**.
 
 | Metric | Tag | Formula | Unit |
 |--------|-----|---------|------|
@@ -194,7 +194,7 @@ Computed by tracking values across all requests in real-time. Aggregate metrics 
 
 ### Derived Metrics
 
-Computed using formulas based on other metrics, but **not** computed per-record. These are calculated either after the benchmark completes for final results or in real-time across all current data for live metrics display.
+Computed using **formulas** based on other metrics, but **not** computed per-record. These are calculated either **after the benchmark completes** for final results or in **real-time** across **all current data** for live metrics display.
 
 | Metric | Tag | Formula | Unit |
 |--------|-----|---------|------|
