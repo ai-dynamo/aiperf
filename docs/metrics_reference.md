@@ -14,6 +14,10 @@ AIPerf computes metrics in three distinct phases during benchmark execution:
 
 Record Metrics are computed **individually** for **each request** and its **response(s)** during the benchmark run. A single request may have one response (non-streaming) or multiple responses (streaming). These metrics capture **per-request characteristics** such as latency, token counts, and streaming behavior. Record metrics produce **statistical distributions** (min, max, mean, median, p90, p99) that reveal performance variability across requests.
 
+**Examples:** `request_latency`, `ttft`, `inter_token_latency`, `output_token_count`, `input_sequence_length`
+
+**Dependencies:** Record Metrics can depend on raw request/response data and other Record Metrics from the same request.
+
 #### Example:
 
 `request_latency` measures the time for each individual request from start to final response. If you send 100 requests, you get 100 latency values that form a distribution showing how latency varies across requests.
@@ -22,6 +26,9 @@ Record Metrics are computed **individually** for **each request** and its **resp
 
 Aggregate Metrics are computed by **tracking** or **accumulating** values across **all requests** in **real-time** during the benchmark. These include counters, min/max timestamps, and other global statistics. Aggregate metrics produce a **single value** representing the entire benchmark run.
 
+**Examples:** `request_count`, `error_request_count`, `min_request_timestamp`, `max_response_timestamp`
+
+**Dependencies:** Aggregate Metrics can depend on Record Metrics and other Aggregate Metrics.
 
 #### Example:
 
@@ -30,6 +37,10 @@ Aggregate Metrics are computed by **tracking** or **accumulating** values across
 ### Derived Metrics
 
 Derived Metrics are computed by applying **mathematical formulas** to other metric results, but are **not** computed per-record like Record Metrics. Instead, these metrics depend on one or more **prerequisite metrics** being available first and are calculated either **after the benchmark completes** for final results or in **real-time** across **all current data** for live metrics display. Derived metrics can produce either single values or distributions depending on their dependencies.
+
+**Examples:** `request_throughput`, `output_token_throughput`, `benchmark_duration`
+
+**Dependencies:** Derived Metrics can depend on Record Metrics, Aggregate Metrics, and other Derived Metrics.
 
 #### Example:
 
@@ -53,8 +64,9 @@ These metrics measure time and latency characteristics of requests and responses
 
 #### Request Latency
 
-**Tag:** `request_latency`
-**Type:** Record Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `request_latency` | Record Metric | [`NONE`](#flag-none) |
 
 **Description:** Measures the total end-to-end time from sending a request until receiving the final response. For streaming requests with multiple responses, this measures until the last response is received. This is the complete time experienced by the client for a single request.
 
@@ -67,8 +79,9 @@ These metrics measure time and latency characteristics of requests and responses
 
 #### Time to First Token (TTFT)
 
-**Tag:** `ttft`
-**Type:** Record Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `ttft` | Record Metric | [`STREAMING_TOKENS_ONLY`](#flag-streaming-tokens-only) |
 
 **Description:** Measures how long it takes to receive the first token (or chunk of tokens) after sending a request. This is critical for user-perceived responsiveness in streaming scenarios, as it represents how quickly the model begins generating output.
 
@@ -80,8 +93,9 @@ These metrics measure time and latency characteristics of requests and responses
 
 #### Time to Second Token (TTST)
 
-**Tag:** `ttst`
-**Type:** Record Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `ttst` | Record Metric | [`STREAMING_TOKENS_ONLY`](#flag-streaming-tokens-only) |
 
 **Description:** Measures the time gap between the first and second chunk of tokens (SSE messages). This metric helps identify generation startup overhead separate from steady-state streaming throughput.
 
@@ -92,8 +106,9 @@ These metrics measure time and latency characteristics of requests and responses
 
 #### Inter Token Latency (ITL)
 
-**Tag:** `inter_token_latency`
-**Type:** Record Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `inter_token_latency` | Record Metric | [`STREAMING_TOKENS_ONLY`](#flag-streaming-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** Measures the average time between consecutive tokens during generation, excluding the initial TTFT overhead. This represents the steady-state token generation rate.
 
@@ -109,8 +124,9 @@ ITL = (request_latency - ttft) / (output_sequence_length - 1)
 
 #### Inter Chunk Latency (ICL)
 
-**Tag:** `inter_chunk_latency`
-**Type:** Record Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `inter_chunk_latency` | Record Metric | [`STREAMING_TOKENS_ONLY`](#flag-streaming-tokens-only), [`EXPERIMENTAL`](#flag-experimental) |
 
 **Description:** Captures the time gaps between all consecutive response chunks (SSE messages) in a streaming response, providing a distribution of chunk arrival times rather than a single average. Note that this is different from the ITL metric, which measures the time between consecutive tokens regardless of chunk size.
 
@@ -133,8 +149,9 @@ These metrics track token counts for individual requests and aggregated across a
 
 #### Output Token Count
 
-**Tag:** `output_token_count`
-**Type:** Record Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `output_token_count` | Record Metric | [`PRODUCES_TOKENS_ONLY`](#flag-produces-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The number of output tokens generated for a single request, _excluding reasoning tokens_. This represents the visible output tokens returned to the user across all responses for the request.
 
@@ -149,8 +166,9 @@ These metrics track token counts for individual requests and aggregated across a
 
 #### Reasoning Token Count
 
-**Tag:** `reasoning_token_count`
-**Type:** Record Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `reasoning_token_count` | Record Metric | [`SUPPORTS_REASONING`](#flag-supports-reasoning), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The number of reasoning tokens generated for a single request. These are tokens used for "thinking" or chain-of-thought reasoning before generating the final output.
 
@@ -165,8 +183,9 @@ These metrics track token counts for individual requests and aggregated across a
 
 #### Output Sequence Length (OSL)
 
-**Tag:** `output_sequence_length`
-**Type:** Record Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `output_sequence_length` | Record Metric | [`PRODUCES_TOKENS_ONLY`](#flag-produces-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The total number of completion tokens (output + reasoning) generated for a single request across all its responses. This represents the complete token generation workload for the request.
 
@@ -184,8 +203,9 @@ OSL = (output_token_count or 0) + (reasoning_token_count or 0)
 
 #### Input Sequence Length (ISL)
 
-**Tag:** `input_sequence_length`
-**Type:** Record Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `input_sequence_length` | Record Metric | [`PRODUCES_TOKENS_ONLY`](#flag-produces-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The number of input/prompt tokens for a single request. This represents the size of the input sent to the model.
 
@@ -198,8 +218,9 @@ OSL = (output_token_count or 0) + (reasoning_token_count or 0)
 
 #### Total Output Tokens
 
-**Tag:** `total_output_tokens`
-**Type:** Derived Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `total_output_tokens` | Derived Metric | [`PRODUCES_TOKENS_ONLY`](#flag-produces-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The sum of all output tokens (excluding reasoning tokens) generated across all requests. This represents the total visible output token workload.
 
@@ -218,8 +239,9 @@ Total Output Tokens = sum(output_token_count for record in records)
 
 #### Total Reasoning Tokens
 
-**Tag:** `total_reasoning_tokens`
-**Type:** Derived Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `total_reasoning_tokens` | Derived Metric | [`SUPPORTS_REASONING`](#flag-supports-reasoning), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The sum of all reasoning tokens generated across all requests. This represents the total reasoning/thinking workload.
 
@@ -238,8 +260,9 @@ Total Reasoning Tokens = sum(reasoning_token_count for record in records)
 
 #### Total Output Sequence Length
 
-**Tag:** `total_osl`
-**Type:** Derived Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `total_osl` | Derived Metric | [`PRODUCES_TOKENS_ONLY`](#flag-produces-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The sum of all completion tokens (output + reasoning) generated across all requests. This represents the complete token generation workload.
 
@@ -258,8 +281,9 @@ Total Output Sequence Length = sum(output_sequence_length for record in records)
 
 #### Total Input Sequence Length
 
-**Tag:** `total_isl`
-**Type:** Derived Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `total_isl` | Derived Metric | [`PRODUCES_TOKENS_ONLY`](#flag-produces-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The sum of all input/prompt tokens processed across all requests. This represents the total input workload sent to the model.
 
@@ -281,8 +305,9 @@ These metrics measure the rate of requests and token generation.
 
 #### Request Throughput
 
-**Tag:** `request_throughput`
-**Type:** Derived Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `request_throughput` | Derived Metric | [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The overall rate of completed requests per second across the entire benchmark. This represents the system's ability to process requests under the given concurrency and load.
 
@@ -300,8 +325,9 @@ Request Throughput = request_count / benchmark_duration_seconds
 
 #### Output Token Throughput
 
-**Tag:** `output_token_throughput`
-**Type:** Derived Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `output_token_throughput` | Derived Metric | [`PRODUCES_TOKENS_ONLY`](#flag-produces-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The aggregate token generation rate across all concurrent requests, measured as total tokens per second. This represents the system's overall token generation capacity.
 
@@ -322,8 +348,9 @@ Output Token Throughput = total_osl / benchmark_duration_seconds
 
 #### Output Token Throughput Per User
 
-**Tag:** `output_token_throughput_per_user`
-**Type:** Record Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `output_token_throughput_per_user` | Record Metric | [`STREAMING_TOKENS_ONLY`](#flag-streaming-tokens-only), [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The token generation rate experienced by an individual user/request, measured as the inverse of inter-token latency. This represents single-request streaming performance.
 
@@ -348,8 +375,9 @@ These metrics track overall benchmark execution and system-level counters.
 
 #### Request Count
 
-**Tag:** `request_count`
-**Type:** Aggregate Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `request_count` | Aggregate Metric | [`LARGER_IS_BETTER`](#flag-larger-is-better) |
 
 **Description:** The total number of **successfully completed** requests in the benchmark. This includes all requests that received valid responses, regardless of streaming mode.
 
@@ -357,8 +385,9 @@ These metrics track overall benchmark execution and system-level counters.
 
 #### Error Request Count
 
-**Tag:** `error_request_count`
-**Type:** Aggregate Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `error_request_count` | Aggregate Metric | [`ERROR_ONLY`](#flag-error-only) |
 
 **Description:** The total number of failed/error requests encountered during the benchmark. This includes network errors, HTTP errors, timeout errors, and other failures.
 
@@ -369,8 +398,9 @@ These metrics track overall benchmark execution and system-level counters.
 
 #### Minimum Request Timestamp
 
-**Tag:** `min_request_timestamp`
-**Type:** Aggregate Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `min_request_timestamp` | Aggregate Metric | [`NO_CONSOLE`](#flag-no-console) |
 
 **Description:** The wall-clock timestamp of the first request sent in the benchmark. This is used to calculate the benchmark duration and represents the start of the benchmark run.
 
@@ -378,8 +408,9 @@ These metrics track overall benchmark execution and system-level counters.
 
 #### Maximum Response Timestamp
 
-**Tag:** `max_response_timestamp`
-**Type:** Aggregate Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `max_response_timestamp` | Aggregate Metric | [`NO_CONSOLE`](#flag-no-console) |
 
 **Description:** The wall-clock timestamp of the last response received in the benchmark. This is used to calculate the benchmark duration and represents the end of the benchmark run.
 
@@ -387,8 +418,9 @@ These metrics track overall benchmark execution and system-level counters.
 
 #### Benchmark Duration
 
-**Tag:** `benchmark_duration`
-**Type:** Derived Metric
+| Tag | Type | Flags |
+|-----|------|-------|
+| `benchmark_duration` | Derived Metric | [`NO_CONSOLE`](#flag-no-console) |
 
 **Description:** The total elapsed time from the first request sent to the last response received. This represents the complete wall-clock duration of the benchmark run.
 
@@ -401,5 +433,26 @@ Benchmark Duration = max_response_timestamp - min_request_timestamp
 - Requires valid `min_request_timestamp` and `max_response_timestamp` metrics.
 - Uses wall-clock timestamps representing real calendar time.
 - Denominator for throughput calculations; represents the effective measurement window.
+
+---
+
+## Metric Flags Reference
+
+Metric flags are used to control when and how metrics are computed, displayed, and grouped. Flags can be combined using bitwise operations to create composite behaviors.
+
+| Flag | Description | Impact |
+|------|-------------|--------|
+| <a id="flag-none"></a>`NONE` | No flags set | Metric has default behavior with no special restrictions |
+| <a id="flag-streaming-only"></a>`STREAMING_ONLY` | Only computed for streaming responses | Requires Server-Sent Events (SSE) with multiple response chunks; skipped for non-streaming requests |
+| <a id="flag-error-only"></a>`ERROR_ONLY` | Only computed for error requests | Tracks error-specific information; skipped for successful requests |
+| <a id="flag-produces-tokens-only"></a>`PRODUCES_TOKENS_ONLY` | Only computed for token-producing endpoints | Requires endpoints that return text/token content; skipped for embeddings and non-generative endpoints |
+| <a id="flag-no-console"></a>`NO_CONSOLE` | Not displayed in console output | Metric computed but excluded from terminal display; available in JSON/CSV exports |
+| <a id="flag-larger-is-better"></a>`LARGER_IS_BETTER` | Higher values indicate better performance | Used for throughput and count metrics to indicate optimization direction |
+| <a id="flag-internal"></a>`INTERNAL` | Internal system metric (also `NO_CONSOLE`) | Not user-facing; used for internal processing and debugging |
+| <a id="flag-supports-audio-only"></a>`SUPPORTS_AUDIO_ONLY` | Only applicable to audio endpoints | Requires audio-based input/output; skipped for text-only endpoints |
+| <a id="flag-supports-image-only"></a>`SUPPORTS_IMAGE_ONLY` | Only applicable to image endpoints | Requires image-based input/output; skipped for text-only endpoints |
+| <a id="flag-supports-reasoning"></a>`SUPPORTS_REASONING` | Requires reasoning token support | Only available for models that expose reasoning content in separate fields (e.g., OpenAI o1) |
+| <a id="flag-experimental"></a>`EXPERIMENTAL` | Experimental feature (also `NO_CONSOLE`) | Not production-ready; subject to change; excluded from default display |
+| <a id="flag-streaming-tokens-only"></a>`STREAMING_TOKENS_ONLY` | Combination: `STREAMING_ONLY` + `PRODUCES_TOKENS_ONLY` | Requires both streaming support and token-producing endpoints |
 
 ---
