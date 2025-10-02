@@ -4,6 +4,8 @@
 import random
 from abc import ABC, abstractmethod
 
+import numpy as np
+
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
@@ -28,6 +30,10 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         # Initialize sequence distribution
         self._seq_distribution = config.input.prompt.get_sequence_distribution()
+
+        # Initialize RNG for sequence distribution sampling (avoid reseeding on each sample)
+        seed = getattr(self.config.input, "random_seed", None)
+        self._seq_rng = np.random.default_rng(seed) if seed is not None else None
 
     @abstractmethod
     def create_dataset(self) -> list[Conversation]:
@@ -73,9 +79,8 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 or max(128, self.config.input.prompt.input_tokens.mean // 2),
             )
 
-        # Use random seed from config if available for reproducible results
-        random_seed = getattr(self.config.input, "random_seed", None)
-        return self._seq_distribution.sample(random_state=random_seed)
+        # Use pre-seeded RNG to avoid reseeding on each sample
+        return self._seq_distribution.sample(random_state=self._seq_rng)
 
     def _set_max_tokens(self, turn: Turn) -> None:
         """Set max_tokens for the turn based on the sequence distribution or output configuration.
