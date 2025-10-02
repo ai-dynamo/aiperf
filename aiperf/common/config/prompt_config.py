@@ -3,7 +3,8 @@
 
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, model_validator
+from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
@@ -187,6 +188,71 @@ class PromptConfig(BaseConfig):
         ),
     ] = PromptDefaults.BATCH_SIZE
 
+    sequence_distribution: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Distribution specification for ISL/OSL pairs.\n"
+            "Formats:\n"
+            "  Semicolon: '256,128:0.4;512,256:0.6'\n"
+            "  Bracket: '[(256,128):0.4,(512,256):0.6]'\n"
+            '  JSON: \'{"pairs": [{"isl": 256, "osl": 128, "prob": 0.4}, ...]}\'\n'
+            "When specified, overrides individual --isl and --osl settings.",
+        ),
+        CLIParameter(
+            name=(
+                "--seq-dist",
+                "--seq-distribution",
+                "--sequence-distribution",
+            ),
+            group=Groups.INPUT_SEQUENCE_LENGTH,
+        ),
+    ] = None
+
+    @model_validator(mode="after")
+    def validate_sequence_configuration(self) -> Self:
+        """Validate that sequence distribution and individual ISL/OSL settings don't conflict."""
+        if self.sequence_distribution is not None and (
+            self.input_tokens.mean != InputTokensDefaults.MEAN
+            or self.input_tokens.stddev != InputTokensDefaults.STDDEV
+            or self.output_tokens.mean is not None
+        ):
+            import warnings
+
+            warnings.warn(
+                "When --seq-dist is specified, individual --isl, --isl-stddev, and --osl "
+                "settings are ignored. The distribution will be used instead.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return self
+
     input_tokens: InputTokensConfig = InputTokensConfig()
     output_tokens: OutputTokensConfig = OutputTokensConfig()
     prefix_prompt: PrefixPromptConfig = PrefixPromptConfig()
+
+    def get_sequence_distribution(self):
+        """
+        Get the sequence length distribution for sampling ISL/OSL pairs.
+
+        Returns:
+            SequenceLengthDistribution: Distribution for sampling sequence lengths
+        """
+        from aiperf.common.sequence_distribution import (
+            DistributionParser,
+            create_uniform_distribution,
+        )
+
+        if self.sequence_distribution is not None:
+            # Use explicit distribution specification
+            return DistributionParser.parse(self.sequence_distribution)
+        else:
+            # Fallback to individual ISL/OSL settings for backward compatibility
+            isl_mean = self.input_tokens.mean
+            osl_mean = self.output_tokens.mean
+
+            # Use reasonable default OSL if not specified (half of ISL)
+            if osl_mean is None:
+                osl_mean = max(128, isl_mean // 2)
+
+            return create_uniform_distribution(isl_mean, osl_mean)

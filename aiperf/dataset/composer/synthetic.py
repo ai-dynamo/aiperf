@@ -67,8 +67,13 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         """
         turn = Turn()
 
+        # Generate a unique turn ID for sequence length caching
+        turn_id = f"{uuid.uuid4()}_turn_{self.turn_count}"
+        turn._turn_id = turn_id  # Store for later use in _set_max_tokens
+        self.turn_count += 1
+
         if self.include_prompt:
-            turn.texts.append(self._generate_text_payloads(is_first))
+            turn.texts.append(self._generate_text_payloads(is_first, turn_id))
         if self.include_image:
             turn.images.append(self._generate_image_payloads())
         if self.include_audio:
@@ -92,7 +97,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         return turn
 
-    def _generate_text_payloads(self, is_first: bool) -> Text:
+    def _generate_text_payloads(self, is_first: bool, turn_id: str) -> Text:
         """Generate synthetic text payloads.
 
         If the turn is the first turn in the conversation, it could add a prefix prompt
@@ -100,15 +105,21 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         Args:
             is_first: Whether the turn is the first turn in the conversation.
+            turn_id: Unique identifier for the turn to sample sequence lengths.
 
         Returns:
             Text: A text payload object.
         """
         text = Text(name="text")
+
+        # Sample ISL/OSL pair for this turn
+        isl, osl = self._sample_sequence_lengths(turn_id)
+
         for _ in range(self.config.input.prompt.batch_size):
+            # Use sampled ISL from sequence distribution, no stddev (exact length)
             prompt = self.prompt_generator.generate(
-                mean=self.config.input.prompt.input_tokens.mean,
-                stddev=self.config.input.prompt.input_tokens.stddev,
+                mean=isl,
+                stddev=0,  # Use exact length from distribution
             )
 
             if self.prefix_prompt_enabled and is_first:
