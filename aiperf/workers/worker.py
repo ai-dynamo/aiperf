@@ -380,9 +380,6 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                         code=499,  # Client Closed Request
                     ),
                 )
-        except asyncio.CancelledError:
-            # If a task is cancelled (e.g. during shutdown), propagate the cancellation.
-            raise
         except Exception as e:
             self.error(
                 f"Error calling inference server API at {self.model_endpoint.url}: {e!r}"
