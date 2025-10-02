@@ -105,10 +105,15 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Text: A text payload object.
         """
         text = Text(name="text")
+
+        # Sample ISL/OSL pair for this request
+        isl, osl = self._sample_sequence_lengths()
+
         for _ in range(self.config.input.prompt.batch_size):
+            # Use sampled ISL from sequence distribution, no stddev (exact length)
             prompt = self.prompt_generator.generate(
-                mean=self.config.input.prompt.input_tokens.mean,
-                stddev=self.config.input.prompt.input_tokens.stddev,
+                mean=isl,
+                stddev=0,  # Use exact length from distribution
             )
 
             if self.prefix_prompt_enabled and is_first:

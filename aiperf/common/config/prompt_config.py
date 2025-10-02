@@ -190,3 +190,23 @@ class PromptConfig(BaseConfig):
     input_tokens: InputTokensConfig = InputTokensConfig()
     output_tokens: OutputTokensConfig = OutputTokensConfig()
     prefix_prompt: PrefixPromptConfig = PrefixPromptConfig()
+
+    sequence_distribution: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Sequence length distribution specification for varying ISL/OSL pairs",
+        ),
+        CLIParameter(
+            name=("--seq-dist", "--sequence-distribution"),
+            group=Groups.INPUT_SEQUENCE_LENGTH,
+        ),
+    ] = None
+
+    def get_sequence_distribution(self):
+        """Get sequence distribution object, returning None if not specified."""
+        if self.sequence_distribution is not None:
+            from aiperf.common.sequence_distribution import DistributionParser
+
+            return DistributionParser.parse(self.sequence_distribution)
+        return None
