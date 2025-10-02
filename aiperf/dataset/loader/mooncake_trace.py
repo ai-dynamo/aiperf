@@ -76,11 +76,7 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
                     self._skipped_traces += 1
                     continue  # Skip traces before or after the fixed schedule offset
 
-                session_id = (
-                    str(uuid.uuid4())
-                    if trace_data.session_id is None
-                    else trace_data.session_id
-                )
+                session_id = trace_data.session_id or str(uuid.uuid4())
                 data[session_id].append(trace_data)
 
         if self._skipped_traces > 0:

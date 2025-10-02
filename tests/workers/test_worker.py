@@ -9,7 +9,7 @@ import pytest
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
-from aiperf.common.messages import ConversationResponseMessage, CreditDropMessage
+from aiperf.common.messages import CreditDropMessage
 from aiperf.common.models import ParsedResponse, TextResponseData
 from aiperf.common.models.record_models import RequestRecord
 from aiperf.workers.worker import Worker
@@ -200,12 +200,6 @@ class TestWorker:
         conversation = sample_conversations["session_1"]
         first_turn = conversation.turns[0]
 
-        # Create real message objects instead of dummy classes
-        conversation_response = ConversationResponseMessage(
-            service_id="test-service",
-            conversation=conversation,
-        )
-
         message = CreditDropMessage(
             service_id="test-service",
             conversation_id=conversation.session_id,
@@ -232,7 +226,7 @@ class TestWorker:
         drop_perf_ns = 900
 
         result = await worker._build_response_record(
-            conversation_response=conversation_response,
+            conversation_id=conversation.session_id,
             message=message,
             turn=first_turn,
             turn_index=turn_index,
@@ -254,12 +248,6 @@ class TestWorker:
 
         conversation = sample_conversations["session_1"]
         first_turn = conversation.turns[0]
-
-        # Create real message objects instead of dummy classes
-        conversation_response = ConversationResponseMessage(
-            service_id="test-service",
-            conversation=conversation,
-        )
 
         message = CreditDropMessage(
             service_id="test-service",
@@ -287,7 +275,7 @@ class TestWorker:
         drop_perf_ns = 900
 
         result = await worker._build_response_record(
-            conversation_response=conversation_response,
+            conversation_id=conversation.session_id,
             message=message,
             turn=first_turn,
             turn_index=turn_index,

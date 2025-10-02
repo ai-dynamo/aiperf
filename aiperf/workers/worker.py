@@ -14,7 +14,13 @@ from aiperf.common.constants import (
     DEFAULT_WORKER_HEALTH_CHECK_INTERVAL,
     NANOS_PER_SECOND,
 )
-from aiperf.common.enums import CommAddress, CommandType, MessageType, ServiceType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    CreditPhase,
+    MessageType,
+    ServiceType,
+)
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.factories import (
     InferenceClientFactory,
@@ -173,12 +179,11 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         This is to ensure that the max concurrency is respected via the semaphore of the pull client.
         The way this is enforced is by requiring that this method returns a CreditReturnMessage.
         """
-        if self.is_trace_enabled:
-            self.trace(f"Processing credit drop: {message}")
-
-        self.task_stats.total += 1
 
         try:
+            if self.is_trace_enabled:
+                self.trace(f"Processing credit drop: {message}")
+
             await self._execute_single_credit_internal(message)
         finally:
             # Need to return the credit here to ensure it is always returned
@@ -199,13 +204,44 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         if not self.inference_client:
             raise NotInitializedError("Inference server client not initialized.")
 
+        conversation_response = await self._retrieve_conversation_response(
+            service_id=self.service_id,
+            conversation_id=message.conversation_id,
+            phase=message.phase,
+        )
+
+        turn_list = []
+        for turn_index in range(len(conversation_response.conversation.turns)):
+            self.task_stats.total += 1
+            turn = conversation_response.conversation.turns[turn_index]
+            turn_list.append(turn)
+            # TODO: how do we handle errors in the middle of a conversation?
+            record = await self._build_response_record(
+                conversation_response.conversation.session_id,
+                message,
+                turn,
+                turn_index,
+                drop_perf_ns,
+            )
+            await self._send_inference_result_message(record)
+            resp_turn = await self._process_response(record)
+            if resp_turn:
+                turn_list.append(resp_turn)
+
+    async def _retrieve_conversation_response(
+        self,
+        service_id: str,
+        conversation_id: str | None,
+        phase: CreditPhase,
+    ) -> ConversationResponseMessage:
+        """Retrieve the conversation response from the dataset manager."""
         # retrieve the prompt from the dataset
         conversation_response: ConversationResponseMessage = (
             await self.conversation_request_client.request(
                 ConversationRequestMessage(
                     service_id=self.service_id,
-                    conversation_id=message.conversation_id,
-                    credit_phase=message.phase,
+                    conversation_id=conversation_id,
+                    credit_phase=phase,
                 )
             )
         )
@@ -217,7 +253,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             await self._send_inference_result_message(
                 RequestRecord(
                     model_name=self.model_endpoint.primary_model_name,
-                    conversation_id=message.conversation_id,
+                    conversation_id=conversation_id,
                     turn_index=0,
                     turn=None,
                     timestamp_ns=time.time_ns(),
@@ -226,31 +262,22 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                     error=conversation_response.error,
                 )
             )
-            return
-        turn_list = []
-        for turn_index in range(len(conversation_response.conversation.turns)):
-            turn = conversation_response.conversation.turns[turn_index]
-            turn_list.append(turn)
-            # TODO: how do we handle errors in the middle of a conversation?
-            record = await self._build_response_record(
-                conversation_response, message, turn, turn_index, drop_perf_ns
-            )
-            await self._send_inference_result_message(record)
-            resp_turn = await self._process_response(record)
-            if resp_turn:
-                turn_list.append(resp_turn)
+            raise ValueError("Failed to retrieve conversation response")
+
+        return conversation_response
 
     async def _build_response_record(
         self,
-        conversation_response: ConversationResponseMessage,
+        conversation_id: str,
         message: CreditDropMessage,
         turn: Turn,
         turn_index: int,
         drop_perf_ns: int,
     ) -> RequestRecord:
+        """Build a RequestRecord from an inference API call for the given turn."""
         record = await self._call_inference_api_internal(message, turn)
         record.model_name = turn.model or self.model_endpoint.primary_model_name
-        record.conversation_id = conversation_response.conversation.session_id
+        record.conversation_id = conversation_id
         record.turn_index = turn_index
         record.credit_phase = message.phase
         record.cancel_after_ns = message.cancel_after_ns
@@ -260,6 +287,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         return record
 
     async def _process_response(self, record: RequestRecord) -> Turn | None:
+        """Process the response from the inference API call and convert it to a Turn object."""
         resp = await self.extractor.extract_response_data(record)
         # TODO how do we handle reasoning responses in multi turn?
         resp_text = "".join([r.data.get_text() for r in resp])
