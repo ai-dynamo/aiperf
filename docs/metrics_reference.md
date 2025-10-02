@@ -6,6 +6,43 @@
 
 This document provides a comprehensive reference of all metrics available in AIPerf for benchmarking LLM inference performance. Metrics are organized by computation type to help you understand when and how each metric is calculated.
 
+## Table of Contents
+
+- [Understanding Metric Types](#understanding-metric-types)
+  - [Record Metrics](#record-metrics)
+  - [Aggregate Metrics](#aggregate-metrics)
+  - [Derived Metrics](#derived-metrics)
+- [Quick Reference](#quick-reference)
+- [Detailed Metric Descriptions](#detailed-metric-descriptions)
+  - [Streaming Metrics](#streaming-metrics)
+    - [Time to First Token (TTFT)](#time-to-first-token-ttft)
+    - [Time to Second Token (TTST)](#time-to-second-token-ttst)
+    - [Inter Token Latency (ITL)](#inter-token-latency-itl)
+    - [Inter Chunk Latency (ICL)](#inter-chunk-latency-icl)
+    - [Output Token Throughput Per User](#output-token-throughput-per-user)
+  - [Token Based Metrics](#token-based-metrics)
+    - [Output Token Count](#output-token-count)
+    - [Output Sequence Length (OSL)](#output-sequence-length-osl)
+    - [Input Sequence Length (ISL)](#input-sequence-length-isl)
+    - [Total Output Tokens](#total-output-tokens)
+    - [Total Output Sequence Length](#total-output-sequence-length)
+    - [Total Input Sequence Length](#total-input-sequence-length)
+    - [Output Token Throughput](#output-token-throughput)
+  - [Reasoning Metrics](#reasoning-metrics)
+    - [Reasoning Token Count](#reasoning-token-count)
+    - [Total Reasoning Tokens](#total-reasoning-tokens)
+  - [General Metrics](#general-metrics)
+    - [Request Latency](#request-latency)
+    - [Request Throughput](#request-throughput)
+    - [Request Count](#request-count)
+    - [Error Request Count](#error-request-count)
+    - [Minimum Request Timestamp](#minimum-request-timestamp)
+    - [Maximum Response Timestamp](#maximum-response-timestamp)
+    - [Benchmark Duration](#benchmark-duration)
+- [Metric Flags Reference](#metric-flags-reference)
+
+---
+
 ## Understanding Metric Types
 
 AIPerf computes metrics in three distinct phases during benchmark execution: **Record Metrics**, **Aggregate Metrics**, and **Derived Metrics**.
