@@ -10,13 +10,19 @@ SPDX-License-Identifier: Apache-2.0
             "request": "launch",
             "cwd": "${workspaceFolder}",
             "module": "aiperf.cli",
+            "preLaunchTask": "clean-artifacts",
             "args": [
                 "profile",
                 "-m",
-                "gpt2",
-                "--log-level",
-                "DEBUG",
+                "Qwen/Qwen3-0.6B",
+                // "--log-level",
+                // "DEBUG",
                 "--max-workers",
+                "1",
+                "--request-count",
+                "1",
+                "--streaming",
+                "--slice-duration",
                 "1"
             ]
         },

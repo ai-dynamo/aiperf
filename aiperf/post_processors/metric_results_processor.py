@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from aiperf.common.config import UserConfig
+from aiperf.common.config import UserConfig, user_config
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import MetricType, ResultsProcessorType
 from aiperf.common.enums.metric_enums import MetricDictValueTypeT, MetricValueTypeT
@@ -11,11 +11,12 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol
-from aiperf.common.types import MetricTagT
+from aiperf.common.types import MetricTagT, TimeSliceT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
+from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
@@ -41,6 +42,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         # Create the results dict, which will be used to store the results of non-derived metrics,
         # and then be updated with the derived metrics.
         self._results: MetricResultsDict = MetricResultsDict()
+        self._timeslice_results: dict[TimeSliceT, MetricResultsDict] = {}
 
         # Get all of the metric classes.
         _all_metric_classes: list[type[BaseMetric]] = MetricRegistry.all_classes()
@@ -68,6 +70,10 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         """Process a result from the metric record processor."""
         if self.is_trace_enabled:
             self.trace(f"Processing incoming metrics: {incoming_metrics}")
+
+        if user_config.output.slice_duration:
+            timeslice_index = incoming_metrics[MinRequestTimestampMetric.tag]
+            pass
 
         for tag, value in incoming_metrics.items():
             try:

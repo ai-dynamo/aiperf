@@ -1,0 +1,23 @@
+/*
+SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "clean-artifacts",
+            "type": "shell",
+            "command": "rm -rf artifacts",
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": false
+            }
+        }
+    ]
+}

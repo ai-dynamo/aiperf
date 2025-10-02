@@ -89,6 +89,9 @@ class CsvExporter(AIPerfLoggerMixin):
         if system_metrics:
             self._write_system_metrics(writer, system_metrics)
 
+        # if time_slices:
+        #     self._write_time_slice_metrics(writer, time_slice_metrics)
+
         return buf.getvalue()
 
     def _split_metrics(
