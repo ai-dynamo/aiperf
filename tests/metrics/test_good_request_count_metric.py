@@ -3,6 +3,7 @@
 
 import pytest
 
+from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import MetricTypeError
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.good_request_count_metric import GoodRequestCountMetric
@@ -30,6 +31,22 @@ class TestGoodRequestCountMetric:
             }
         )
         assert GoodRequestCountMetric.required_metrics == {RequestLatencyMetric.tag}
+
+    def test_set_slos_converts_display_to_native_units(self, monkeypatch):
+        class MockLatencyMetric:
+            tag = "mock_latency"
+            unit = MetricTimeUnit.SECONDS  # native unit (s)
+            display_unit = MetricTimeUnit.MILLISECONDS
+            flags = MetricFlags.NONE
+
+        monkeypatch.setattr(MetricRegistry, "get_class", lambda tag: MockLatencyMetric)
+        GoodRequestCountMetric.set_slos({"mock_latency": 250})  # 250 ms
+
+        # 250 ms -> 0.25 s stored in thresholds
+        assert (
+            pytest.approx(GoodRequestCountMetric._thresholds["mock_latency"], rel=1e-6)
+            == 0.25
+        )
 
     def test_counts_good_requests(self):
         GoodRequestCountMetric.set_slos({RequestLatencyMetric.tag: 250.0})

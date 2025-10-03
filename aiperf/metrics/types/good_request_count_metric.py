@@ -20,7 +20,7 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
     header = "GoodRequestCount"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.GOODPUT | MetricFlags.HIDDEN
+    flags = MetricFlags.GOODPUT | MetricFlags.NO_CONSOLE
     required_metrics: set[str] | None = None
 
     _thresholds: ClassVar[dict[str, float]] = {}
@@ -31,18 +31,34 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
         Configure SLO thresholds and update dependencies.
         """
         slos = slos or {}
+        if not slos:
+            cls._thresholds = {}
+            cls.required_metrics = None
+            return
 
-        for metric_tag in slos:
+        normalized_slos: dict[str, float] = {}
+
+        for metric_tag, value in slos.items():
             try:
-                MetricRegistry.get_class(metric_tag)
+                metric_cls = MetricRegistry.get_class(metric_tag)
             except MetricTypeError as e:
                 raise ValueError(
                     f"Unknown metric tag(s) in --goodput: {metric_tag}."
                 ) from e
+            unit = getattr(metric_cls, "unit", None)
+            display_unit = getattr(metric_cls, "display_unit", None)
+            if display_unit is not None and unit is not None and display_unit != unit:
+                try:
+                    value = display_unit.convert_to(unit, float(value))
+                except Exception as e:
+                    raise ValueError(
+                        f"Failed to convert from {display_unit} to "
+                        f"{unit} for '{metric_tag}': {e}"
+                    ) from e
+            normalized_slos[metric_tag] = value
 
-        cls._thresholds = {k: float(v) for k, v in slos.items()}
-
-        cls.required_metrics = set(cls._thresholds.keys()) if cls._thresholds else None
+        cls._thresholds = normalized_slos
+        cls.required_metrics = set(cls._thresholds) if cls._thresholds else None
 
     def _parse_record(
         self,
@@ -68,7 +84,7 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
         for metric_tag, threshold in self._thresholds.items():
             metric_cls = MetricRegistry.get_class(metric_tag)
 
-            target_unit = getattr(metric_cls, "display_unit", None) or metric_cls.unit
+            target_unit = metric_cls.unit
             try:
                 value = record_metrics.get_converted_or_raise(metric_cls, target_unit)
             except NoMetricValue:
