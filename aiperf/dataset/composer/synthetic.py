@@ -74,12 +74,12 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if self.include_audio:
             turn.audios.append(self._generate_audio_payloads())
 
-        # Add randomized delays between each turn. Skip if first turn.
         if not is_first:
-            turn.delay = utils.sample_positive_normal_integer(
+            delay = utils.sample_positive_normal_integer(
                 self.config.input.conversation.turn.delay.mean,
                 self.config.input.conversation.turn.delay.stddev,
             )
+            turn.delay = delay * self.config.input.conversation.turn.delay.ratio
 
         if not turn.texts and not turn.images and not turn.audios:
             self.logger.warning(
