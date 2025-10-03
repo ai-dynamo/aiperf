@@ -275,6 +275,32 @@ docker run -d --name vllm-server \
 ```
 <!-- /setup-vllm-gpu-telemetry-openai-endpoint-server -->
 
+```bash
+# Set up AIPerf
+docker run \
+  -it \
+  --rm \
+  --gpus all \
+  --network host \
+  -e AIPERF_REPO_TAG=${AIPERF_REPO_TAG} \
+  -e MODEL=${MODEL} \
+  ubuntu:24.04
+
+apt update && apt install -y curl git
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+source $HOME/.local/bin/env
+
+uv venv --python 3.10
+
+source .venv/bin/activate
+
+git clone -b ${AIPERF_REPO_TAG} --depth 1 https://github.com/ai-dynamo/aiperf.git
+
+uv pip install ./aiperf
+```
+
 > [!NOTE]
 > Replace the vLLM command above with your preferred backend (SGLang, TRT-LLM, etc.). The DCGM setup works with any server.
 
