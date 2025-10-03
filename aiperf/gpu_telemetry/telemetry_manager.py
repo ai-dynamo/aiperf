@@ -137,7 +137,7 @@ class TelemetryManager(BaseComponentService):
         """
 
         reachable_count = 0
-        for _i, dcgm_url in enumerate(self._dcgm_endpoints):
+        for dcgm_url in self._dcgm_endpoints:
             collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
             collector = TelemetryDataCollector(
                 dcgm_url=dcgm_url,
@@ -206,18 +206,6 @@ class TelemetryManager(BaseComponentService):
 
         Args:
             message: Profile cancel command from SystemController
-        """
-        await self._stop_all_collectors()
-
-    @on_command(CommandType.SHUTDOWN)
-    async def _handle_shutdown_command(self, message) -> None:
-        """Handle shutdown command from SystemController.
-
-        Called during graceful system shutdown. Stops all telemetry collectors
-        and releases resources before service terminates.
-
-        Args:
-            message: Shutdown command from SystemController
         """
         await self._stop_all_collectors()
 

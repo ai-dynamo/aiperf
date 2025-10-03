@@ -20,4 +20,4 @@ class MemoryTemperatureMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
-        return record.memory_temperature
+        return record.telemetry_data.memory_temperature

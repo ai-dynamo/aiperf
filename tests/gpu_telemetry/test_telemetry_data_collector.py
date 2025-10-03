@@ -104,11 +104,13 @@ class TestPrometheusMetricParsing:
         assert record.gpu_index == 0
         assert record.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
-        assert record.gpu_power_usage == 22.582000
+        assert record.telemetry_data.gpu_power_usage == 22.582000
 
         # Test unit scaling applied correctly
-        assert abs(record.energy_consumption - 0.955287014) < 0.001  # mJ to MJ
-        assert abs(record.gpu_memory_used - 48.878) < 0.001  # MiB to GB
+        assert (
+            abs(record.telemetry_data.energy_consumption - 0.955287014) < 0.001
+        )  # mJ to MJ
+        assert abs(record.telemetry_data.gpu_memory_used - 48.878) < 0.001  # MiB to GB
 
     def test_complete_parsing_multi_gpu(self, multi_gpu_dcgm_data):
         """Test parsing complete DCGM response for multiple GPUs.

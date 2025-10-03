@@ -285,7 +285,11 @@ class TestRecordsManagerTelemetry:
         from unittest.mock import AsyncMock, MagicMock
 
         from aiperf.common.messages import TelemetryRecordsMessage
-        from aiperf.common.models import TelemetryHierarchy, TelemetryRecord
+        from aiperf.common.models import (
+            TelemetryHierarchy,
+            TelemetryMetrics,
+            TelemetryRecord,
+        )
 
         # Create sample telemetry records
         records = [
@@ -295,7 +299,9 @@ class TestRecordsManagerTelemetry:
                 gpu_index=0,
                 gpu_uuid="GPU-123",
                 gpu_model_name="Test GPU",
-                gpu_power_usage=100.0,
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=100.0,
+                ),
             )
         ]
 
@@ -360,7 +366,7 @@ class TestRecordsManagerTelemetry:
         """Test sending telemetry records to processors."""
         from unittest.mock import AsyncMock, Mock
 
-        from aiperf.common.models import TelemetryRecord
+        from aiperf.common.models import TelemetryMetrics, TelemetryRecord
 
         # Create mock telemetry processor
         mock_processor = Mock()
@@ -373,6 +379,7 @@ class TestRecordsManagerTelemetry:
                 gpu_index=0,
                 gpu_uuid="GPU-123",
                 gpu_model_name="Test GPU",
+                telemetry_data=TelemetryMetrics(),
             ),
             TelemetryRecord(
                 timestamp_ns=1000001,
@@ -380,6 +387,7 @@ class TestRecordsManagerTelemetry:
                 gpu_index=1,
                 gpu_uuid="GPU-456",
                 gpu_model_name="Test GPU",
+                telemetry_data=TelemetryMetrics(),
             ),
         ]
 

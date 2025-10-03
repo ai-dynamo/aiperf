@@ -6,7 +6,7 @@ Shared fixtures for testing GPU telemetry components.
 
 import pytest
 
-from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.common.models.telemetry_models import TelemetryMetrics, TelemetryRecord
 
 
 @pytest.fixture
@@ -75,10 +75,12 @@ def sample_telemetry_records():
             pci_bus_id="00000000:02:00.0",
             device="nvidia0",
             hostname="ed7e7a5e585f",
-            gpu_power_usage=22.582,
-            energy_consumption=955287014,
-            gpu_utilization=1.0,
-            gpu_memory_used=45.521,  # 46614 MiB / 1024 ≈ 45.521 GB
+            telemetry_data=TelemetryMetrics(
+                gpu_power_usage=22.582,
+                energy_consumption=955287014,
+                gpu_utilization=1.0,
+                gpu_memory_used=45.521,  # 46614 MiB / 1024 ≈ 45.521 GB
+            ),
         ),
     ]
 
@@ -104,10 +106,12 @@ def multi_gpu_telemetry_records():
                 pci_bus_id="00000000:02:00.0",
                 device="nvidia0",
                 hostname="ed7e7a5e585f",
-                gpu_power_usage=70.0 + (i % 30),  # Varying power 70-99W
-                energy_consumption=280000000 + (i * 2000000),  # Increasing energy
-                gpu_utilization=float(80 + (i % 20)),  # 80-99%
-                gpu_memory_used=15.0 + (i % 5),  # 15-19 GB
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=70.0 + (i % 30),  # Varying power 70-99W
+                    energy_consumption=280000000 + (i * 2000000),  # Increasing energy
+                    gpu_utilization=float(80 + (i % 20)),  # 80-99%
+                    gpu_memory_used=15.0 + (i % 5),  # 15-19 GB
+                ),
             )
         )
 
@@ -122,10 +126,12 @@ def multi_gpu_telemetry_records():
                 pci_bus_id="00000000:03:00.0",
                 device="nvidia1",
                 hostname="ed7e7a5e585f",
-                gpu_power_usage=42.0 + (i % 3),  # Idle power 42-44W
-                energy_consumption=230000000 + (i * 500000),  # Slower energy growth
-                gpu_utilization=0.0,
-                gpu_memory_used=0.0,
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=42.0 + (i % 3),  # Idle power 42-44W
+                    energy_consumption=230000000 + (i * 500000),  # Slower energy growth
+                    gpu_utilization=0.0,
+                    gpu_memory_used=0.0,
+                ),
             )
         )
 
@@ -140,10 +146,12 @@ def multi_gpu_telemetry_records():
                 pci_bus_id="00000000:04:00.0",
                 device="nvidia2",
                 hostname="ed7e7a5e585f",
-                gpu_power_usage=200.0 + (i % 50),  # Higher power 200-249W
-                energy_consumption=250000000 + (i * 3000000),
-                gpu_utilization=float(50 + (i % 30)),  # 50-79%
-                gpu_memory_used=40.0 + (i % 10),  # 40-49 GB
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=200.0 + (i % 50),  # Higher power 200-249W
+                    energy_consumption=250000000 + (i * 3000000),
+                    gpu_utilization=float(50 + (i % 30)),  # 50-79%
+                    gpu_memory_used=40.0 + (i % 10),  # 40-49 GB
+                ),
             )
         )
 

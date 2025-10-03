@@ -656,15 +656,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             ]
 
     async def get_telemetry_error_summary(self) -> list[ErrorDetailsCount]:
-        """Generate a summary of the telemetry error records from GPU collection.
-
-        Thread-safe method that returns aggregated error counts for all errors
-        encountered during GPU telemetry collection.
-
-        Returns:
-            list[ErrorDetailsCount]: List of error details with occurrence counts from
-                telemetry collection, sorted by error type
-        """
+        """Generate a summary of the telemetry error records."""
         async with self._telemetry_error_counts_lock:
             return [
                 ErrorDetailsCount(error_details=error_details, count=count)

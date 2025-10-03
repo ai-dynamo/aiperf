@@ -18,6 +18,7 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult, TelemetryResults
 from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.display_units_utils import (
+    GPU_TELEMETRY_METRICS_CONFIG,
     STAT_KEYS,
     convert_all_metrics_to_display_units,
     normalize_endpoint_display,
@@ -35,16 +36,6 @@ def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
 @implements_protocol(DataExporterProtocol)
 class CsvExporter(AIPerfLoggerMixin):
     """Exports records to a CSV file in a legacy, two-section format."""
-
-    TELEMETRY_METRICS_CONFIG = [
-        ("GPU Power Usage", "gpu_power_usage", "W"),
-        ("Energy Consumption", "energy_consumption", "MJ"),
-        ("GPU Utilization", "gpu_utilization", "%"),
-        ("GPU Memory Used", "gpu_memory_used", "GB"),
-        ("GPU Temperature", "gpu_temperature", "°C"),
-        ("SM Clock Frequency", "sm_clock_frequency", "MHz"),
-        ("Memory Clock Frequency", "memory_clock_frequency", "MHz"),
-    ]
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -237,7 +228,7 @@ class CsvExporter(AIPerfLoggerMixin):
             writer.writerow([f"=== GPU Telemetry: {endpoint_display} ==="])
             writer.writerow([])
 
-            for metric_display, metric_key, unit in self.TELEMETRY_METRICS_CONFIG:
+            for metric_display, metric_key, unit in GPU_TELEMETRY_METRICS_CONFIG:
                 has_metric_data = any(
                     self._gpu_has_metric(gpu_data, metric_key)
                     for gpu_data in gpus_data.values()
@@ -247,20 +238,9 @@ class CsvExporter(AIPerfLoggerMixin):
                     continue
 
                 writer.writerow([f"=== {metric_display} ({unit}) ==="])
-                writer.writerow(
-                    [
-                        "GPU Index",
-                        "GPU Name",
-                        "GPU UUID",
-                        "Avg",
-                        "Min",
-                        "Max",
-                        "P99",
-                        "P90",
-                        "P75",
-                        "Std",
-                    ]
-                )
+                header_row = ["GPU Index", "GPU Name", "GPU UUID"]
+                header_row.extend([stat.upper() for stat in STAT_KEYS])
+                writer.writerow(header_row)
 
                 for gpu_uuid, gpu_data in gpus_data.items():
                     self._write_gpu_metric_row(
@@ -275,7 +255,7 @@ class CsvExporter(AIPerfLoggerMixin):
         """Write a single GPU metric row to CSV with statistical summaries.
 
         Retrieves metric statistics from gpu_data and writes a row with GPU info
-        and statistical values (avg, min, max, p99, p90, p75, std).
+        and statistical values for all stats in STAT_KEYS.
 
         Args:
             writer: CSV writer object
@@ -290,22 +270,18 @@ class CsvExporter(AIPerfLoggerMixin):
                 metric_key, metric_key, metric_display, unit
             )
 
-            writer.writerow(
-                [
-                    str(gpu_data.metadata.gpu_index),
-                    gpu_data.metadata.model_name,
-                    gpu_uuid,
-                    self._format_number(metric_result.avg),
-                    self._format_number(metric_result.min),
-                    self._format_number(metric_result.max),
-                    self._format_number(metric_result.p99),
-                    self._format_number(metric_result.p90),
-                    self._format_number(metric_result.p75),
-                    self._format_number(metric_result.std),
-                ]
-            )
+            row = [
+                str(gpu_data.metadata.gpu_index),
+                gpu_data.metadata.model_name,
+                gpu_uuid,
+            ]
+            for stat in STAT_KEYS:
+                value = getattr(metric_result, stat, None)
+                row.append(self._format_number(value))
+
+            writer.writerow(row)
         except Exception as e:
-            self.debug(
+            self.warning(
                 f"Failed to write metric row for GPU {gpu_uuid}, metric {metric_key}: {e}"
             )
 

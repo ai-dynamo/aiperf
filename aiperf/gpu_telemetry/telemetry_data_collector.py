@@ -11,7 +11,7 @@ from prometheus_client.parser import text_string_to_metric_families
 
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
-from aiperf.common.models import ErrorDetails, TelemetryRecord
+from aiperf.common.models import ErrorDetails, TelemetryMetrics, TelemetryRecord
 from aiperf.gpu_telemetry.constants import (
     DCGM_TO_FIELD_MAPPING,
     DEFAULT_COLLECTION_INTERVAL,
@@ -252,7 +252,7 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                     labels = sample.labels
                     value = sample.value
 
-                    # Skip non-finite values early
+                    # Skip non-finite values early (value != value checks for NaN)
                     if isinstance(value, float) and (
                         value != value or value in (float("inf"), float("-inf"))
                     ):
@@ -297,14 +297,7 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                 pci_bus_id=metadata.get("pci_bus_id"),
                 device=metadata.get("device"),
                 hostname=metadata.get("hostname"),
-                gpu_power_usage=scaled_metrics.get("gpu_power_usage"),
-                energy_consumption=scaled_metrics.get("energy_consumption"),
-                gpu_utilization=scaled_metrics.get("gpu_utilization"),
-                gpu_memory_used=scaled_metrics.get("gpu_memory_used"),
-                sm_clock_frequency=scaled_metrics.get("sm_clock_frequency"),
-                memory_clock_frequency=scaled_metrics.get("memory_clock_frequency"),
-                memory_temperature=scaled_metrics.get("memory_temperature"),
-                gpu_temperature=scaled_metrics.get("gpu_temperature"),
+                telemetry_data=TelemetryMetrics(**scaled_metrics),
             )
             records.append(record)
 

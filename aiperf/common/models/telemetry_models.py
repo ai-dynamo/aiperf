@@ -10,6 +10,39 @@ from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.record_models import MetricResult
 
 
+class TelemetryMetrics(AIPerfBaseModel):
+    """GPU metrics collected at a single point in time.
+
+    All fields are optional to handle cases where specific metrics are not available
+    from the DCGM exporter or are filtered out due to invalid values.
+    """
+
+    gpu_power_usage: float | None = Field(
+        default=None, description="Current GPU power usage in W"
+    )
+    energy_consumption: float | None = Field(
+        default=None, description="Cumulative energy consumption in MJ"
+    )
+    gpu_utilization: float | None = Field(
+        default=None, description="GPU utilization percentage (0-100)"
+    )
+    gpu_memory_used: float | None = Field(
+        default=None, description="GPU memory used in GB"
+    )
+    sm_clock_frequency: float | None = Field(
+        default=None, description="SM clock frequency in MHz"
+    )
+    memory_clock_frequency: float | None = Field(
+        default=None, description="Memory clock frequency in MHz"
+    )
+    memory_temperature: float | None = Field(
+        default=None, description="Memory temperature in °C"
+    )
+    gpu_temperature: float | None = Field(
+        default=None, description="GPU temperature in °C"
+    )
+
+
 class TelemetryRecord(AIPerfBaseModel):
     """Single telemetry data point from GPU monitoring.
 
@@ -46,29 +79,8 @@ class TelemetryRecord(AIPerfBaseModel):
         default=None, description="Hostname where GPU is located"
     )
 
-    gpu_power_usage: float | None = Field(
-        default=None, description="Current GPU power usage in W"
-    )
-    energy_consumption: float | None = Field(
-        default=None, description="Cumulative energy consumption in MJ"
-    )
-    gpu_utilization: float | None = Field(
-        default=None, description="GPU utilization percentage (0-100)"
-    )
-    gpu_memory_used: float | None = Field(
-        default=None, description="GPU memory used in GB"
-    )
-    sm_clock_frequency: float | None = Field(
-        default=None, description="SM clock frequency in MHz"
-    )
-    memory_clock_frequency: float | None = Field(
-        default=None, description="Memory clock frequency in MHz"
-    )
-    memory_temperature: float | None = Field(
-        default=None, description="Memory temperature in °C"
-    )
-    gpu_temperature: float | None = Field(
-        default=None, description="GPU temperature in °C"
+    telemetry_data: TelemetryMetrics = Field(
+        description="GPU metrics snapshot collected at this timestamp"
     )
 
 
@@ -209,17 +221,7 @@ class GpuTelemetryData(AIPerfBaseModel):
 
         Note: Groups all metric values from the record into a single snapshot
         """
-        metric_mapping = {
-            "gpu_power_usage": record.gpu_power_usage,
-            "energy_consumption": record.energy_consumption,
-            "gpu_utilization": record.gpu_utilization,
-            "gpu_memory_used": record.gpu_memory_used,
-            "sm_clock_frequency": record.sm_clock_frequency,
-            "memory_clock_frequency": record.memory_clock_frequency,
-            "memory_temperature": record.memory_temperature,
-            "gpu_temperature": record.gpu_temperature,
-        }
-
+        metric_mapping = record.telemetry_data.model_dump()
         valid_metrics = {k: v for k, v in metric_mapping.items() if v is not None}
         if valid_metrics:
             self.time_series.append_snapshot(valid_metrics, record.timestamp_ns)
