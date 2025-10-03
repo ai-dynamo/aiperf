@@ -14,7 +14,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.models.record_models import TextResponseData
 from aiperf.common.types import MetricTagT
-from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 
 
@@ -108,3 +108,11 @@ def run_simple_metrics_pipeline(
             metric_results[metric.tag] = metric.derive_value(metric_results)
 
     return metric_results
+
+
+def create_metric_array(values):
+    """Create a MetricArray with test values."""
+    array = MetricArray()
+    if values:
+        array.extend(values)
+    return array

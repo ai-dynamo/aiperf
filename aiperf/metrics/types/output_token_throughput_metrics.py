@@ -7,7 +7,9 @@ from aiperf.metrics import BaseDerivedMetric, BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
-from aiperf.metrics.types.output_sequence_length_metric import BenchmarkTokenCountMetric
+from aiperf.metrics.types.output_sequence_length_metric import (
+    TotalOutputSequenceLengthMetric,
+)
 
 
 class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
@@ -26,7 +28,7 @@ class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
     display_order = 800
     flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER
     required_metrics = {
-        BenchmarkTokenCountMetric.tag,
+        TotalOutputSequenceLengthMetric.tag,
         BenchmarkDurationMetric.tag,
     }
 
@@ -34,12 +36,12 @@ class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
         self,
         metric_results: MetricResultsDict,
     ) -> float:
-        benchmark_token_count = metric_results.get_or_raise(BenchmarkTokenCountMetric)
+        total_osl = metric_results.get_or_raise(TotalOutputSequenceLengthMetric)
         benchmark_duration_converted = metric_results.get_converted_or_raise(
             BenchmarkDurationMetric,
             self.unit.time_unit,  # type: ignore
         )
-        return benchmark_token_count / benchmark_duration_converted  # type: ignore
+        return total_osl / benchmark_duration_converted  # type: ignore
 
 
 class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):

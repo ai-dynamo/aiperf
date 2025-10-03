@@ -24,7 +24,7 @@ class BenchmarkDurationMetric(BaseDerivedMetric[int]):
     short_header_hide_unit = True
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.SECONDS
-    flags = MetricFlags.HIDDEN
+    flags = MetricFlags.NO_CONSOLE
     required_metrics = {
         MinRequestTimestampMetric.tag,
         MaxResponseTimestampMetric.tag,
