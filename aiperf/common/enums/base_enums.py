@@ -7,27 +7,50 @@ from pydantic import BaseModel, Field
 from typing_extensions import Self
 
 
+def _normalize_enum_value(value: str) -> str:
+    """Normalize the the enum value by converting to lowercase and converting _ to -."""
+    return value.lower().replace("_", "-")
+
+
 class CaseInsensitiveStrEnum(str, Enum):
     """
-    CaseInsensitiveStrEnum is a custom enumeration class that extends `str` and `Enum` to provide case-insensitive
-    lookup functionality for its members.
+    CaseInsensitiveStrEnum is a custom enumeration class that extends `str` and `Enum` to provide:
+
+    - case-insensitive equality comparison
+    - direct string usage
+    - insensitive to - vs _ differences
     """
 
     def __str__(self) -> str:
+        """Return the string representation of the enum member. This is the value as it was originally defined in the enum."""
         return self.value
 
     def __repr__(self) -> str:
+        """Return the representation of the enum member. This is the <EnumName>.<EnumMemberName> format."""
         return f"{self.__class__.__name__}.{self.name}"
 
     def __eq__(self, other: object) -> bool:
+        """Check if the enum member is equal to another object. This is case-insensitive and insensitive to - vs _ differences."""
+        if other is None:
+            return False
+
+        normalized_value = self.normalized_value
         if isinstance(other, str):
-            return self.value.lower() == other.lower()
+            return normalized_value == _normalize_enum_value(other)
         if isinstance(other, Enum):
-            return self.value.lower() == other.value.lower()
-        return super().__eq__(other)
+            if isinstance(other.value, str):
+                return normalized_value == _normalize_enum_value(other.value)
+            return False
+        return super().__eq__(str(other))
 
     def __hash__(self) -> int:
-        return hash(self.value.lower())
+        """Hash the enum member by hashing the normalized string representation."""
+        return hash(self.normalized_value)
+
+    @cached_property
+    def normalized_value(self) -> str:
+        """Return the normalized value of the enum member."""
+        return _normalize_enum_value(self.value)
 
     @classmethod
     def _missing_(cls, value):
@@ -40,11 +63,12 @@ class CaseInsensitiveStrEnum(str, Enum):
 
         Returns:
             The matching enumeration member if a case-insensitive match is found
-            for string values; otherwise, returns None.
+            for string values with underscore/hyphen normalization; otherwise, returns None.
         """
         if isinstance(value, str):
+            normalized_value = _normalize_enum_value(value)
             for member in cls:
-                if member.value.lower() == value.lower():
+                if member == normalized_value:
                     return member
         return None
 
