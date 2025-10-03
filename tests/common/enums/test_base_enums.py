@@ -113,6 +113,20 @@ class TestCaseInsensitiveStrEnum:
         assert SampleEnum.OPTION_ONE == DifferentEnum.OPTION_ONE
         assert SampleEnum.OPTION_ONE is not DifferentEnum.OPTION_ONE
 
+    def test_comparison_with_non_string_enum(self):
+        """Test that comparing with an Enum that has non-string values returns False."""
+        from enum import Enum
+
+        class IntEnum(Enum):
+            VALUE = 42
+
+        assert SampleEnum.OPTION_ONE != IntEnum.VALUE
+
+        class TupleEnum(Enum):
+            VALUE = ("a", "b")
+
+        assert SampleEnum.OPTION_ONE != TupleEnum.VALUE
+
     @pytest.mark.parametrize(
         "enum_member,non_matching",
         [

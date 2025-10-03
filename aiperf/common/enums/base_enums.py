@@ -38,7 +38,9 @@ class CaseInsensitiveStrEnum(str, Enum):
         if isinstance(other, str):
             return normalized_value == _normalize_enum_value(other)
         if isinstance(other, Enum):
-            return normalized_value == _normalize_enum_value(other.value)
+            if isinstance(other.value, str):
+                return normalized_value == _normalize_enum_value(other.value)
+            return False
         return super().__eq__(str(other))
 
     def __hash__(self) -> int:
