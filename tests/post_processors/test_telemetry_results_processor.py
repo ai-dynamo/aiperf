@@ -13,6 +13,7 @@ from aiperf.common.models.telemetry_models import (
     GpuMetadata,
     GpuTelemetryData,
     TelemetryHierarchy,
+    TelemetryMetrics,
     TelemetryRecord,
 )
 from aiperf.post_processors.telemetry_results_processor import (
@@ -44,14 +45,16 @@ def sample_telemetry_record() -> TelemetryRecord:
         pci_bus_id="00000000:02:00.0",
         device="nvidia0",
         hostname="node1",
-        gpu_power_usage=75.5,
-        energy_consumption=1000.0,
-        gpu_utilization=85.0,
-        gpu_memory_used=15.26,
-        sm_clock_frequency=1500.0,
-        memory_clock_frequency=800.0,
-        memory_temperature=65.0,
-        gpu_temperature=70.0,
+        telemetry_data=TelemetryMetrics(
+            gpu_power_usage=75.5,
+            energy_consumption=1000.0,
+            gpu_utilization=85.0,
+            gpu_memory_used=15.26,
+            sm_clock_frequency=1500.0,
+            memory_clock_frequency=800.0,
+            memory_temperature=65.0,
+            gpu_temperature=70.0,
+        ),
     )
 
 
@@ -98,10 +101,12 @@ class TestTelemetryResultsProcessor:
                 gpu_index=sample_telemetry_record.gpu_index,
                 gpu_uuid=sample_telemetry_record.gpu_uuid,
                 gpu_model_name=sample_telemetry_record.gpu_model_name,
-                gpu_power_usage=75.0 + i,
-                energy_consumption=1000.0 + i * 10,
-                gpu_utilization=80.0 + i,
-                gpu_memory_used=15.0 + i * 0.1,
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=75.0 + i,
+                    energy_consumption=1000.0 + i * 10,
+                    gpu_utilization=80.0 + i,
+                    gpu_memory_used=15.0 + i * 0.1,
+                ),
             )
             await processor.process_telemetry_record(record)
 
@@ -258,7 +263,9 @@ class TestTelemetryResultsProcessor:
                 gpu_index=0,
                 gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
                 gpu_model_name="NVIDIA RTX 6000",
-                gpu_power_usage=75.0 + i,
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=75.0 + i,
+                ),
             )
             await processor.process_telemetry_record(record)
 
@@ -289,7 +296,9 @@ class TestTelemetryResultsProcessor:
                     gpu_index=gpu_index,
                     gpu_uuid=f"GPU-0000000{gpu_index}-0000-0000-0000-000000000000",
                     gpu_model_name="NVIDIA RTX 6000",
-                    gpu_power_usage=75.0 + gpu_index * 10 + i,
+                    telemetry_data=TelemetryMetrics(
+                        gpu_power_usage=75.0 + gpu_index * 10 + i,
+                    ),
                 )
                 await processor.process_telemetry_record(record)
 

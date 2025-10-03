@@ -27,8 +27,10 @@ def mock_endpoint_config():
 
 @pytest.fixture
 def mock_user_config(mock_endpoint_config):
-    """Create a mock user configuration."""
-    return UserConfig(endpoint=mock_endpoint_config)
+    """Create a mock user configuration with gpu_telemetry enabled."""
+    return UserConfig(
+        endpoint=mock_endpoint_config, gpu_telemetry=["http://localhost:9400/metrics"]
+    )
 
 
 @pytest.fixture
@@ -47,13 +49,19 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_verbose_disabled_no_output(
-        self, mock_profile_results, mock_user_config, sample_telemetry_results, capsys
+        self,
+        mock_profile_results,
+        mock_endpoint_config,
+        sample_telemetry_results,
+        capsys,
     ):
-        """Test that export does not print when verbose mode is disabled."""
+        """Test that export does not print when gpu_telemetry is not enabled."""
+        # Create user config without gpu_telemetry
+        user_config = UserConfig(endpoint=mock_endpoint_config)
         service_config = ServiceConfig(verbose=False)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
+            user_config=user_config,
             service_config=service_config,
             telemetry_results=sample_telemetry_results,
         )
@@ -197,7 +205,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        renderable = exporter.get_renderable(sample_telemetry_results)
+        renderable = exporter.get_renderable()
 
         # Verify renderable is created without errors
         assert renderable is not None
@@ -432,7 +440,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        renderable = exporter.get_renderable(telemetry_results)
+        renderable = exporter.get_renderable()
 
         # Should show no data message
         assert renderable is not None

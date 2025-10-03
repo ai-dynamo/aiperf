@@ -400,7 +400,11 @@ class TestRecordsManagerTelemetry:
 
     def test_telemetry_hierarchy_add_record(self):
         """Test that telemetry hierarchy adds records correctly."""
-        from aiperf.common.models import TelemetryHierarchy, TelemetryRecord
+        from aiperf.common.models import (
+            TelemetryHierarchy,
+            TelemetryMetrics,
+            TelemetryRecord,
+        )
 
         hierarchy = TelemetryHierarchy()
 
@@ -410,7 +414,9 @@ class TestRecordsManagerTelemetry:
             gpu_index=0,
             gpu_uuid="GPU-123",
             gpu_model_name="Test GPU",
-            gpu_power_usage=100.0,
+            telemetry_data=TelemetryMetrics(
+                gpu_power_usage=100.0,
+            ),
         )
 
         # Add record to hierarchy
