@@ -10,6 +10,7 @@ from aiperf.common.enums import CreditPhase, MessageType, MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models import MetricResult
+from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
@@ -44,9 +45,12 @@ class TestMetricResultsProcessor:
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
             record_id="test-1",
-            timestamp_ns=1_000_000_000,
-            worker_id="worker-1",
-            credit_phase=CreditPhase.PROFILING,
+            metadata=MetricRecordMetadata(
+                timestamp_ns=1_000_000_000,
+                worker_id="worker-1",
+                record_processor_id="test-processor",
+                credit_phase=CreditPhase.PROFILING,
+            ),
             results=[{"test_record": 42.0}],
             error=None,
         )
@@ -61,9 +65,12 @@ class TestMetricResultsProcessor:
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
             record_id="test-2",
-            timestamp_ns=1_000_000_001,
-            worker_id="worker-1",
-            credit_phase=CreditPhase.PROFILING,
+            metadata=MetricRecordMetadata(
+                timestamp_ns=1_000_000_001,
+                worker_id="worker-1",
+                record_processor_id="test-processor",
+                credit_phase=CreditPhase.PROFILING,
+            ),
             results=[{"test_record": 84.0}],
             error=None,
         )
@@ -83,9 +90,12 @@ class TestMetricResultsProcessor:
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
             record_id="test-1",
-            timestamp_ns=1_000_000_000,
-            worker_id="worker-1",
-            credit_phase=CreditPhase.PROFILING,
+            metadata=MetricRecordMetadata(
+                timestamp_ns=1_000_000_000,
+                worker_id="worker-1",
+                record_processor_id="test-processor",
+                credit_phase=CreditPhase.PROFILING,
+            ),
             results=[{"test_record": [10.0, 20.0, 30.0]}],
             error=None,
         )
@@ -109,9 +119,12 @@ class TestMetricResultsProcessor:
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
             record_id="test-1",
-            timestamp_ns=1_000_000_000,
-            worker_id="worker-1",
-            credit_phase=CreditPhase.PROFILING,
+            metadata=MetricRecordMetadata(
+                timestamp_ns=1_000_000_000,
+                worker_id="worker-1",
+                record_processor_id="test-processor",
+                credit_phase=CreditPhase.PROFILING,
+            ),
             results=[{RequestCountMetric.tag: 5}],
             error=None,
         )
@@ -122,9 +135,12 @@ class TestMetricResultsProcessor:
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
             record_id="test-2",
-            timestamp_ns=1_000_000_001,
-            worker_id="worker-1",
-            credit_phase=CreditPhase.PROFILING,
+            metadata=MetricRecordMetadata(
+                timestamp_ns=1_000_000_001,
+                worker_id="worker-1",
+                record_processor_id="test-processor",
+                credit_phase=CreditPhase.PROFILING,
+            ),
             results=[{RequestCountMetric.tag: 3}],
             error=None,
         )

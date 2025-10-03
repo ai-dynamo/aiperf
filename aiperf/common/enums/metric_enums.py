@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Callable
-from datetime import datetime
 from enum import Flag
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
@@ -175,9 +174,7 @@ class MetricTimeUnit(BaseMetricUnit):
             return super().convert_to(other_unit, value)
 
         if isinstance(other_unit, MetricDateTimeUnit):
-            return datetime.fromtimestamp(
-                self.convert_to(MetricTimeUnit.SECONDS, value)
-            )
+            return self.convert_to(MetricTimeUnit.SECONDS, value)
 
         return value * (other_unit.per_second / self.per_second)
 

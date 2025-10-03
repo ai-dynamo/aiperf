@@ -11,6 +11,7 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.metrics.metric_dicts import MetricArray
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
@@ -47,9 +48,12 @@ class TestPostProcessorIntegration:
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
             record_id="test-1",
-            timestamp_ns=1_000_000_000,
-            worker_id="worker-1",
-            credit_phase=CreditPhase.PROFILING,
+            metadata=MetricRecordMetadata(
+                timestamp_ns=1_000_000_000,
+                worker_id="worker-1",
+                record_processor_id="test-processor",
+                credit_phase=CreditPhase.PROFILING,
+            ),
             results=[{RequestLatencyMetric.tag: 100.0, RequestCountMetric.tag: 1}],
             error=None,
         )
@@ -81,9 +85,12 @@ class TestPostProcessorIntegration:
                 message_type=MessageType.METRIC_RECORDS,
                 service_id="test-processor",
                 record_id=f"test-{idx}",
-                timestamp_ns=1_000_000_000 + idx,
-                worker_id="worker-1",
-                credit_phase=CreditPhase.PROFILING,
+                metadata=MetricRecordMetadata(
+                    timestamp_ns=1_000_000_000 + idx,
+                    worker_id="worker-1",
+                    record_processor_id="test-processor",
+                    credit_phase=CreditPhase.PROFILING,
+                ),
                 results=[{RequestLatencyMetric.tag: value}],
                 error=None,
             )

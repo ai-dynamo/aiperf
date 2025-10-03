@@ -10,7 +10,7 @@ from aiperf.common.enums import ExportLevel, ResultsProcessorType
 from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.hooks import on_stop
 from aiperf.common.messages.inference_messages import MetricRecordsMessage
-from aiperf.common.models.record_models import MetricRecordInfo, MetricRecordMetadata
+from aiperf.common.models.record_models import MetricRecordInfo, MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.metric_registry import MetricRegistry
@@ -62,15 +62,7 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
 
                 record_info = MetricRecordInfo(
                     record_id=message.record_id,
-                    metadata=MetricRecordMetadata(
-                        conversation_id=message.conversation_id,
-                        turn_index=message.turn_index,
-                        timestamp_ns=message.timestamp_ns,
-                        worker_id=message.worker_id,
-                        record_processor_id=message.service_id,
-                        credit_phase=message.credit_phase,
-                        error=message.error,
-                    ),
+                    metadata=message.metadata,
                     metrics=display_metrics,
                 )
                 json_str = record_info.model_dump_json()
@@ -88,8 +80,9 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
             except Exception as e:
                 self.error(f"Failed to write record metrics: {e}")
 
-    async def summarize(self) -> dict:
-        return {}
+    async def summarize(self) -> list[MetricResult]:
+        """Summarize the results. For this processor, we don't need to summarize anything."""
+        return []
 
     @on_stop
     async def _shutdown(self) -> None:

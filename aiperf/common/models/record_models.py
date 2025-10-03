@@ -27,7 +27,7 @@ class MetricResult(AIPerfBaseModel):
     tag: MetricTagT = Field(description="The unique identifier of the metric")
     # NOTE: We do not use a MetricUnitT here, as that is harder to de-serialize from JSON strings with pydantic.
     #       If we need an instance of a MetricUnitT, lookup the unit based on the tag in the MetricRegistry.
-    unit: str = Field(description="The unit of the metric, e.g. 'ms'")
+    unit: str = Field(description="The unit of the metric, e.g. 'ms' or 'requests/sec'")
     header: str = Field(
         description="The user friendly name of the metric (e.g. 'Inter Token Latency')"
     )

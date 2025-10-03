@@ -85,11 +85,15 @@ def sample_metric_records_message() -> MetricRecordsMessage:
         message_type=MessageType.METRIC_RECORDS,
         service_id="processor-1",
         record_id="test-record-123",
-        conversation_id="conv-456",
-        turn_index=0,
-        timestamp_ns=1_000_000_000,
-        worker_id="worker-1",
-        credit_phase=CreditPhase.PROFILING,
+        metadata=MetricRecordMetadata(
+            conversation_id="conv-456",
+            turn_index=0,
+            timestamp_ns=1_000_000_000,
+            worker_id="worker-1",
+            record_processor_id="processor-1",
+            credit_phase=CreditPhase.PROFILING,
+            error=None,
+        ),
         results=[
             {"request_latency_ns": 1_000_000, "output_token_count": 10},
             {"ttft_ns": 500_000},
@@ -261,6 +265,7 @@ class TestRecordExportResultsProcessorProcessResult:
             assert record.metadata.worker_id == "worker-1"
             assert record.metadata.record_processor_id == "processor-1"
             assert record.metadata.credit_phase == CreditPhase.PROFILING
+            assert record.metadata.timestamp_ns == 1_000_000_000
             assert record.metadata.error is None
             assert "request_latency" in record.metrics
             assert "output_token_count" in record.metrics
@@ -349,11 +354,15 @@ class TestRecordExportResultsProcessorProcessResult:
                     message_type=MessageType.METRIC_RECORDS,
                     service_id="processor-1",
                     record_id=f"record-{i}",
-                    conversation_id=f"conv-{i}",
-                    turn_index=i,
-                    timestamp_ns=1_000_000_000 + i,
-                    worker_id="worker-1",
-                    credit_phase=CreditPhase.PROFILING,
+                    metadata=MetricRecordMetadata(
+                        conversation_id=f"conv-{i}",
+                        turn_index=i,
+                        timestamp_ns=1_000_000_000 + i,
+                        worker_id="worker-1",
+                        record_processor_id="processor-1",
+                        credit_phase=CreditPhase.PROFILING,
+                        error=None,
+                    ),
                     results=[{"metric1": 100}, {"metric2": 200}],
                     error=None,
                 )
@@ -493,11 +502,15 @@ class TestRecordExportResultsProcessorLogging:
                     message_type=MessageType.METRIC_RECORDS,
                     service_id="processor-1",
                     record_id=f"record-{i}",
-                    conversation_id=f"conv-{i}",
-                    turn_index=i,
-                    timestamp_ns=1_000_000_000 + i,
-                    worker_id="worker-1",
-                    credit_phase=CreditPhase.PROFILING,
+                    metadata=MetricRecordMetadata(
+                        conversation_id=f"conv-{i}",
+                        turn_index=i,
+                        timestamp_ns=1_000_000_000 + i,
+                        worker_id="worker-1",
+                        record_processor_id="processor-1",
+                        credit_phase=CreditPhase.PROFILING,
+                        error=None,
+                    ),
                     results=[{"metric1": 100}, {"metric2": 200}],
                     error=None,
                 )
@@ -566,11 +579,15 @@ class TestRecordExportResultsProcessorShutdown:
                     message_type=MessageType.METRIC_RECORDS,
                     service_id="processor-1",
                     record_id=f"record-{i}",
-                    conversation_id=f"conv-{i}",
-                    turn_index=i,
-                    timestamp_ns=1_000_000_000 + i,
-                    worker_id="worker-1",
-                    credit_phase=CreditPhase.PROFILING,
+                    metadata=MetricRecordMetadata(
+                        conversation_id=f"conv-{i}",
+                        turn_index=i,
+                        timestamp_ns=1_000_000_000 + i,
+                        worker_id="worker-1",
+                        record_processor_id="processor-1",
+                        credit_phase=CreditPhase.PROFILING,
+                        error=None,
+                    ),
                     results=[{"metric1": 100}],
                     error=None,
                 )
