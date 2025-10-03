@@ -30,7 +30,6 @@ from aiperf.common.types import (
     MessageOutputT,
     MessageT,
     MessageTypeT,
-    MetricTagT,
     ModelEndpointInfoT,
     RequestInputT,
     RequestOutputT,
@@ -41,7 +40,7 @@ if TYPE_CHECKING:
     from rich.console import Console
 
     from aiperf.common.config import ServiceConfig, UserConfig
-    from aiperf.common.enums.metric_enums import MetricValueTypeT
+    from aiperf.common.messages.inference_messages import MetricRecordsMessage
     from aiperf.common.models.record_models import MetricResult
     from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
     from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -373,6 +372,8 @@ class InferenceClientProtocol(Protocol):
         self,
         model_endpoint: ModelEndpointInfoT,
         payload: RequestInputT,
+        x_request_id: str | None = None,
+        x_correlation_id: str | None = None,
     ) -> RequestRecord:
         """Send a request to the inference server.
 
@@ -381,6 +382,8 @@ class InferenceClientProtocol(Protocol):
         Args:
             model_endpoint: The endpoint to send the request to.
             payload: The payload to send to the inference server.
+            x_request_id: The X-Request-ID header to send to the inference server.
+            x_correlation_id: The X-Correlation-ID header to send to the inference server.
         Returns:
             The raw response from the inference server.
         """
@@ -499,9 +502,7 @@ class ResultsProcessorProtocol(Protocol):
     """Protocol for a results processor that processes the results of multiple
     record processors, and provides the ability to summarize the results."""
 
-    async def process_result(
-        self, result: dict[MetricTagT, "MetricValueTypeT"]
-    ) -> None: ...
+    async def process_result(self, message: "MetricRecordsMessage") -> None: ...
 
     async def summarize(self) -> list["MetricResult"]: ...
 

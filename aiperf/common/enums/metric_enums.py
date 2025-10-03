@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Callable
-from datetime import datetime
 from enum import Flag
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
@@ -169,15 +168,8 @@ class MetricTimeUnit(BaseMetricUnit):
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
-        if not isinstance(
-            other_unit, MetricTimeUnit | MetricTimeUnitInfo | MetricDateTimeUnit
-        ):
+        if not isinstance(other_unit, MetricTimeUnit | MetricTimeUnitInfo):
             return super().convert_to(other_unit, value)
-
-        if isinstance(other_unit, MetricDateTimeUnit):
-            return datetime.fromtimestamp(
-                self.convert_to(MetricTimeUnit.SECONDS, value)
-            )
 
         return value * (other_unit.per_second / self.per_second)
 
@@ -195,12 +187,6 @@ class GenericMetricUnit(BaseMetricUnit):
     TOKENS = _unit("tokens")
     RATIO = _unit("ratio")
     USER = _unit("user")
-
-
-class MetricDateTimeUnit(BaseMetricUnit):
-    """Defines the various date time units that can be used for metrics."""
-
-    DATE_TIME = _unit("datetime")
 
 
 class MetricOverTimeUnitInfo(BaseMetricUnitInfo):

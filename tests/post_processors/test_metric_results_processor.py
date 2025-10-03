@@ -9,11 +9,12 @@ from aiperf.common.config import UserConfig
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
-from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
+from tests.post_processors.conftest import create_metric_records_message
 
 
 class TestMetricResultsProcessor:
@@ -39,14 +40,23 @@ class TestMetricResultsProcessor:
         processor = MetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
-        await processor.process_result(MetricRecordDict({"test_record": 42.0}))
+        message = create_metric_records_message(
+            x_request_id="test-1",
+            results=[{"test_record": 42.0}],
+        )
+        await processor.process_result(message)
 
         assert "test_record" in processor._results
         assert isinstance(processor._results["test_record"], MetricArray)
         assert list(processor._results["test_record"].data) == [42.0]
 
         # New data should expand the array
-        await processor.process_result(MetricRecordDict({"test_record": 84.0}))
+        message2 = create_metric_records_message(
+            x_request_id="test-2",
+            timestamp_ns=1_000_000_001,
+            results=[{"test_record": 84.0}],
+        )
+        await processor.process_result(message2)
         assert list(processor._results["test_record"].data) == [42.0, 84.0]
 
     @pytest.mark.asyncio
@@ -58,9 +68,11 @@ class TestMetricResultsProcessor:
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         # Process list of values
-        await processor.process_result(
-            MetricRecordDict({"test_record": [10.0, 20.0, 30.0]})
+        message = create_metric_records_message(
+            x_request_id="test-1",
+            results=[{"test_record": [10.0, 20.0, 30.0]}],
         )
+        await processor.process_result(message)
 
         assert "test_record" in processor._results
         assert isinstance(processor._results["test_record"], MetricArray)
@@ -76,10 +88,19 @@ class TestMetricResultsProcessor:
         processor._instances_map = {RequestCountMetric.tag: RequestCountMetric()}
 
         # Process two values and ensure they are accumulated
-        await processor.process_result(MetricRecordDict({RequestCountMetric.tag: 5}))
+        message1 = create_metric_records_message(
+            x_request_id="test-1",
+            results=[{RequestCountMetric.tag: 5}],
+        )
+        await processor.process_result(message1)
         assert processor._results[RequestCountMetric.tag] == 5
 
-        await processor.process_result(MetricRecordDict({RequestCountMetric.tag: 3}))
+        message2 = create_metric_records_message(
+            x_request_id="test-2",
+            timestamp_ns=1_000_000_001,
+            results=[{RequestCountMetric.tag: 3}],
+        )
+        await processor.process_result(message2)
         assert processor._results[RequestCountMetric.tag] == 8
 
     @pytest.mark.asyncio

@@ -7,7 +7,9 @@ from unittest.mock import Mock
 import pytest
 
 from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.enums import EndpointType
+from aiperf.common.enums import CreditPhase, EndpointType, MessageType
+from aiperf.common.enums.metric_enums import MetricValueTypeT
+from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
@@ -15,6 +17,8 @@ from aiperf.common.models import (
     RequestRecord,
     TextResponseData,
 )
+from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.types import MetricTagT
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 
@@ -191,3 +195,84 @@ def mock_metric_registry(monkeypatch):
     )
 
     return mock_registry
+
+
+def create_metric_metadata(
+    conversation_id: str | None = None,
+    turn_index: int = 0,
+    timestamp_ns: int = 1_000_000_000,
+    worker_id: str = "worker-1",
+    record_processor_id: str = "processor-1",
+    credit_phase: CreditPhase = CreditPhase.PROFILING,
+    x_request_id: str | None = None,
+    x_correlation_id: str | None = None,
+    error: ErrorDetails | None = None,
+) -> MetricRecordMetadata:
+    """
+    Create a MetricRecordMetadata object with sensible defaults.
+
+    Args:
+        conversation_id: Conversation ID (optional)
+        turn_index: Turn index in conversation
+        timestamp_ns: Timestamp in nanoseconds
+        worker_id: Worker ID
+        record_processor_id: Record processor ID
+        credit_phase: Credit phase
+        x_request_id: X-Request-ID header value (optional)
+        x_correlation_id: X-Correlation-ID header value (optional)
+        error: Error details if any
+
+    Returns:
+        MetricRecordMetadata object
+    """
+    return MetricRecordMetadata(
+        conversation_id=conversation_id,
+        turn_index=turn_index,
+        timestamp_ns=timestamp_ns,
+        worker_id=worker_id,
+        record_processor_id=record_processor_id,
+        credit_phase=credit_phase,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        error=error,
+    )
+
+
+def create_metric_records_message(
+    service_id: str = "test-processor",
+    results: list[dict[MetricTagT, MetricValueTypeT]] | None = None,
+    error: ErrorDetails | None = None,
+    metadata: MetricRecordMetadata | None = None,
+    x_request_id: str | None = None,
+    **metadata_kwargs,
+) -> MetricRecordsMessage:
+    """
+    Create a MetricRecordsMessage with sensible defaults.
+
+    Args:
+        service_id: Service ID
+        results: List of metric result dictionaries
+        error: Error details if any
+        metadata: Pre-built metadata, or None to build from kwargs
+        x_request_id: Record ID (will be set as x_request_id in metadata if provided)
+        **metadata_kwargs: Arguments to pass to create_metric_metadata if metadata is None
+
+    Returns:
+        MetricRecordsMessage object
+    """
+    if results is None:
+        results = []
+
+    if metadata is None:
+        # If x_request_id is provided, use it as x_request_id
+        if x_request_id is not None and "x_request_id" not in metadata_kwargs:
+            metadata_kwargs["x_request_id"] = x_request_id
+        metadata = create_metric_metadata(**metadata_kwargs)
+
+    return MetricRecordsMessage(
+        message_type=MessageType.METRIC_RECORDS,
+        service_id=service_id,
+        metadata=metadata,
+        results=results,
+        error=error,
+    )

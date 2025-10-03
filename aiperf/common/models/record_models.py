@@ -14,6 +14,7 @@ from pydantic import (
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, SSEFieldType
+from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
@@ -26,7 +27,7 @@ class MetricResult(AIPerfBaseModel):
     tag: MetricTagT = Field(description="The unique identifier of the metric")
     # NOTE: We do not use a MetricUnitT here, as that is harder to de-serialize from JSON strings with pydantic.
     #       If we need an instance of a MetricUnitT, lookup the unit based on the tag in the MetricRegistry.
-    unit: str = Field(description="The unit of the metric, e.g. 'ms'")
+    unit: str = Field(description="The unit of the metric, e.g. 'ms' or 'requests/sec'")
     header: str = Field(
         description="The user friendly name of the metric (e.g. 'Inter Token Latency')"
     )
@@ -53,6 +54,60 @@ class MetricResult(AIPerfBaseModel):
         from aiperf.metrics.metric_registry import MetricRegistry
 
         return to_display_unit(self, MetricRegistry)
+
+
+class MetricValue(AIPerfBaseModel):
+    """The value of a metric converted to display units for export."""
+
+    value: MetricValueTypeT
+    unit: str
+
+
+class MetricRecordMetadata(AIPerfBaseModel):
+    """The metadata of a metric record for export."""
+
+    x_request_id: str | None = Field(
+        default=None, description="The X-Request-ID header of the request."
+    )
+    x_correlation_id: str | None = Field(
+        default=None, description="The X-Correlation-ID header of the request."
+    )
+    conversation_id: str | None = Field(
+        default=None, description="The ID of the conversation (if applicable)."
+    )
+    turn_index: int | None = Field(
+        default=None,
+        description="The index of the turn in the conversation (if applicable).",
+    )
+    timestamp_ns: int = Field(
+        ...,
+        description="The wall clock timestamp of the request start time in nanoseconds.",
+    )
+    worker_id: str = Field(
+        ..., description="The ID of the worker that processed the request."
+    )
+    record_processor_id: str = Field(
+        ..., description="The ID of the record processor that processed the record."
+    )
+    credit_phase: CreditPhase = Field(
+        ..., description="The credit phase of the record."
+    )
+
+
+class MetricRecordInfo(AIPerfBaseModel):
+    """The full info of a metric record including the metadata, metrics, and error for export."""
+
+    metadata: MetricRecordMetadata = Field(
+        ...,
+        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
+    )
+    metrics: dict[str, MetricValue] = Field(
+        ...,
+        description="A dictionary containing all metric values along with their units.",
+    )
+    error: ErrorDetails | None = Field(
+        default=None, description="The error details if the request failed."
+    )
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -253,6 +308,14 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
+    )
+    x_request_id: str | None = Field(
+        default=None,
+        description="The X-Request-ID header of the request. This is a unique ID for the request.",
+    )
+    x_correlation_id: str | None = Field(
+        default=None,
+        description="The X-Correlation-ID header of the request. This is the ID of the credit drop.",
     )
 
     @property

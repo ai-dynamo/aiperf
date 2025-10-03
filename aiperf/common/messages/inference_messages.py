@@ -1,19 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import (
-    Field,
-    SerializeAsAny,
-)
+from pydantic import Field, SerializeAsAny
 
-from aiperf.common.enums import (
-    CreditPhase,
-    MessageType,
-)
+from aiperf.common.enums import MessageType
 from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetails, ParsedResponseRecord, RequestRecord
-from aiperf.common.models.record_models import MetricResult
+from aiperf.common.models import ErrorDetails, RequestRecord
+from aiperf.common.models.record_models import MetricRecordMetadata, MetricResult
 from aiperf.common.types import MessageTypeT, MetricTagT
 
 
@@ -27,33 +21,17 @@ class InferenceResultsMessage(BaseServiceMessage):
     )
 
 
-class ParsedInferenceResultsMessage(BaseServiceMessage):
-    """Message for a parsed inference results."""
-
-    message_type: MessageTypeT = MessageType.PARSED_INFERENCE_RESULTS
-
-    worker_id: str = Field(
-        ..., description="The ID of the worker that processed the request."
-    )
-    record: SerializeAsAny[ParsedResponseRecord] = Field(
-        ..., description="The post process results record"
-    )
-
-
 class MetricRecordsMessage(BaseServiceMessage):
     """Message from the result parser to the records manager to notify it
     of the metric records for a single request."""
 
     message_type: MessageTypeT = MessageType.METRIC_RECORDS
 
-    worker_id: str = Field(
-        ..., description="The ID of the worker that processed the request."
-    )
-    credit_phase: CreditPhase = Field(
-        ..., description="The credit phase of the request."
+    metadata: MetricRecordMetadata = Field(
+        ..., description="The metadata of the request record."
     )
     results: list[dict[MetricTagT, MetricValueTypeT]] = Field(
-        ..., description="The record processor results"
+        ..., description="The record processor metric results"
     )
     error: ErrorDetails | None = Field(
         default=None, description="The error details if the request failed."

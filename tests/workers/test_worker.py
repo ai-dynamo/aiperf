@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from aiperf.common.config.endpoint_config import EndpointConfig
+from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import CreditDropMessage
@@ -19,15 +22,34 @@ class MockWorker(Worker):
     """Mock implementation of Worker for testing."""
 
     def __init__(self):
-        self.inference_client = Mock()
-        self.inference_client.send_request = AsyncMock()
-        self.id = self.service_id
-        self.extractor = Mock()
-        self.extractor.extract_response_data = AsyncMock(return_value=[])
+        with (
+            patch(
+                "aiperf.clients.http.aiohttp_client.create_tcp_connector"
+            ) as mock_tcp_connector,
+            patch(
+                "aiperf.common.factories.ResponseExtractorFactory.create_instance"
+            ) as mock_extractor_factory,
+            patch(
+                "aiperf.common.factories.InferenceClientFactory.create_instance"
+            ) as mock_client_factory,
+        ):
+            mock_tcp_connector.return_value = Mock()
 
-    @property
-    def service_id(self):
-        return "mock-service-id"
+            mock_extractor = Mock()
+            mock_extractor.extract_response_data = AsyncMock(return_value=[])
+            mock_extractor_factory.return_value = mock_extractor
+
+            mock_client = Mock()
+            mock_client.send_request = AsyncMock()
+            mock_client_factory.return_value = mock_client
+
+            super().__init__(
+                service_config=ServiceConfig(),
+                user_config=UserConfig(
+                    endpoint=EndpointConfig(model_names=["test-model"]),
+                ),
+                service_id="mock-service-id",
+            )
 
 
 @pytest.mark.asyncio
@@ -291,3 +313,36 @@ class TestWorker:
             not hasattr(result, "credit_drop_latency")
             or result.credit_drop_latency is None
         )
+
+    @pytest.mark.asyncio
+    async def test_x_request_id_and_x_correlation_id_passed_to_client(self, worker):
+        """Test that x_request_id and x_correlation_id are passed to the inference client."""
+        import uuid
+
+        from aiperf.common.models import Text, Turn
+
+        message = CreditDropMessage(
+            service_id="test-service",
+            phase=CreditPhase.PROFILING,
+        )
+        turn = Turn(texts=[Text(contents=["test"])], model="test-model")
+        x_request_id = str(uuid.uuid4())
+
+        captured_args = {}
+
+        async def mock_send_request(*args, **kwargs):
+            captured_args.update(kwargs)
+            return RequestRecord(start_perf_ns=1000)
+
+        worker.inference_client.send_request = mock_send_request
+        worker.request_converter = Mock()
+        worker.request_converter.format_payload = AsyncMock(
+            return_value={"test": "payload"}
+        )
+
+        await worker._call_inference_api_internal(message, turn, x_request_id)
+
+        assert "x_request_id" in captured_args
+        assert captured_args["x_request_id"] == x_request_id
+        assert "x_correlation_id" in captured_args
+        assert captured_args["x_correlation_id"] == message.request_id

@@ -6,7 +6,13 @@ from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
-from aiperf.common.enums import CommAddress, CommandType, MessageType, ServiceType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    MessageType,
+    ServiceType,
+)
+from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.factories import (
     RecordProcessorFactory,
     ServiceFactory,
@@ -18,7 +24,7 @@ from aiperf.common.messages import (
     ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
-from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
 from aiperf.common.protocols import (
     PushClientProtocol,
     RecordProcessorProtocol,
@@ -75,15 +81,20 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Initialize record processor-specific components."""
         self.debug("Initializing record processor")
 
-        # Initialize all the records streamers
+        # Initialize all the records streamers that are enabled
         for processor_type in RecordProcessorFactory.get_all_class_types():
-            self.records_processors.append(
-                RecordProcessorFactory.create_instance(
-                    processor_type,
-                    service_config=self.service_config,
-                    user_config=self.user_config,
+            try:
+                self.records_processors.append(
+                    RecordProcessorFactory.create_instance(
+                        processor_type,
+                        service_config=self.service_config,
+                        user_config=self.user_config,
+                    )
                 )
-            )
+            except PostProcessorDisabled:
+                self.debug(
+                    f"Record processor {processor_type} is disabled and will not be used"
+                )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -116,11 +127,20 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 self.warning(f"Error processing record: {result}")
             else:
                 results.append(result)
+
         await self.records_push_client.push(
             MetricRecordsMessage(
                 service_id=self.service_id,
-                worker_id=message.service_id,
-                credit_phase=message.record.credit_phase,
+                metadata=MetricRecordMetadata(
+                    timestamp_ns=message.record.timestamp_ns,
+                    conversation_id=message.record.conversation_id,
+                    turn_index=message.record.turn_index,
+                    record_processor_id=self.service_id,
+                    x_request_id=message.record.x_request_id,
+                    x_correlation_id=message.record.x_correlation_id,
+                    credit_phase=message.record.credit_phase,
+                    worker_id=message.service_id,
+                ),
                 results=results,
                 error=message.record.error,
             )
