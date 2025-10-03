@@ -45,9 +45,9 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
                 raise ValueError(
                     f"Unknown metric tag(s) in --goodput: {metric_tag}."
                 ) from e
-            unit = getattr(metric_cls, "unit", None)
-            display_unit = getattr(metric_cls, "display_unit", None)
-            if display_unit is not None and unit is not None and display_unit != unit:
+            unit = metric_cls.unit
+            display_unit = metric_cls.display_unit
+            if display_unit != unit:
                 try:
                     value = display_unit.convert_to(unit, float(value))
                 except Exception as e:
