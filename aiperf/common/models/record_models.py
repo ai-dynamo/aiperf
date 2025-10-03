@@ -14,6 +14,7 @@ from pydantic import (
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, SSEFieldType
+from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
@@ -53,6 +54,58 @@ class MetricResult(AIPerfBaseModel):
         from aiperf.metrics.metric_registry import MetricRegistry
 
         return to_display_unit(self, MetricRegistry)
+
+
+class MetricValue(AIPerfBaseModel):
+    """The value of a metric converted to display units for export."""
+
+    value: MetricValueTypeT
+    unit: str
+
+
+class MetricRecordMetadata(AIPerfBaseModel):
+    """The metadata of a metric record for export."""
+
+    conversation_id: str | None = Field(
+        default=None, description="The ID of the conversation (if applicable)."
+    )
+    turn_index: int | None = Field(
+        default=None,
+        description="The index of the turn in the conversation (if applicable).",
+    )
+    timestamp_ns: int = Field(
+        ...,
+        description="The wall clock timestamp of the request start time in nanoseconds.",
+    )
+    worker_id: str = Field(
+        ..., description="The ID of the worker that processed the request."
+    )
+    record_processor_id: str = Field(
+        ..., description="The ID of the record processor that processed the record."
+    )
+    credit_phase: CreditPhase = Field(
+        ..., description="The credit phase of the record."
+    )
+    error: ErrorDetails | None = Field(
+        default=None, description="The error details if the request failed."
+    )
+
+
+class MetricRecordInfo(AIPerfBaseModel):
+    """The full info of a metric record including the record id, metadata, and metrics for export."""
+
+    record_id: str = Field(
+        ...,
+        description="The ID of the record used to uniquely identify the record. Should match the record_id in the MetricRecordsMessage.",
+    )
+    metadata: MetricRecordMetadata = Field(
+        ...,
+        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
+    )
+    metrics: dict[str, MetricValue] = Field(
+        ...,
+        description="A dictionary containing all metric values along with their units.",
+    )
 
 
 class ProfileResults(AIPerfBaseModel):

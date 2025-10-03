@@ -6,7 +6,13 @@ from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
-from aiperf.common.enums import CommAddress, CommandType, MessageType, ServiceType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    ExportLevel,
+    MessageType,
+    ServiceType,
+)
 from aiperf.common.factories import (
     RecordProcessorFactory,
     ResponseExtractorFactory,
@@ -16,6 +22,7 @@ from aiperf.common.hooks import (
     on_command,
     on_init,
     on_pull_message,
+    on_stop,
 )
 from aiperf.common.messages import (
     InferenceResultsMessage,
@@ -32,6 +39,7 @@ from aiperf.common.protocols import (
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.parsers.inference_result_parser import InferenceResultParser
+from aiperf.records.raw_record_writer import RawRecordWriter
 
 
 @ServiceFactory.register(ServiceType.RECORD_PROCESSOR)
@@ -74,6 +82,21 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             user_config=user_config,
         )
         self.records_processors: list[RecordProcessorProtocol] = []
+
+        # Initialize raw record writer if export is enabled
+        self.raw_record_writer: RawRecordWriter | None = None
+        if (
+            user_config.output.profile_export_file
+            and user_config.output.profile_export_file.export_level == ExportLevel.RAW
+        ):
+            self.raw_record_writer = RawRecordWriter(
+                service_id=service_id,
+                user_config=user_config,
+            )
+            self.info(
+                "Raw record export enabled - writing to "
+                f"{self.raw_record_writer.output_file}"
+            )
 
     @on_init
     async def _initialize(self) -> None:
@@ -126,8 +149,21 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 self.warning(f"Error processing record: {result}")
             else:
                 results.append(result)
+
+        # Export raw record data if enabled
+        if self.raw_record_writer:
+            await self.raw_record_writer.write_record(
+                parsed_record=parsed_record,
+                metric_results=results,
+                worker_id=message.service_id,
+            )
+
         await self.records_push_client.push(
             MetricRecordsMessage(
+                record_id=message.request_id or "",
+                timestamp_ns=message.record.timestamp_ns,
+                conversation_id=message.record.conversation_id,
+                turn_index=message.record.turn_index,
                 service_id=self.service_id,
                 worker_id=message.service_id,
                 credit_phase=message.record.credit_phase,
@@ -147,6 +183,12 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             *tasks, return_exceptions=True
         )
         return results
+
+    @on_stop
+    async def _shutdown_record_processor(self) -> None:
+        """Shutdown record processor and close raw record writer."""
+        if self.raw_record_writer:
+            await self.raw_record_writer.close()
 
 
 def main() -> None:

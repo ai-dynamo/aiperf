@@ -26,6 +26,7 @@ from aiperf.common.enums.communication_enums import (
 from aiperf.common.enums.data_exporter_enums import (
     ConsoleExporterType,
     DataExporterType,
+    ExportLevel,
 )
 from aiperf.common.enums.dataset_enums import (
     AudioFormat,
@@ -122,6 +123,7 @@ __all__ = [
     "EndpointServiceKind",
     "EndpointType",
     "EndpointTypeInfo",
+    "ExportLevel",
     "GenericMetricUnit",
     "ImageFormat",
     "LifecycleState",

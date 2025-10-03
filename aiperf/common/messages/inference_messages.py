@@ -46,14 +46,25 @@ class MetricRecordsMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.METRIC_RECORDS
 
+    record_id: str = Field(..., description="The ID of the request record.")
+    conversation_id: str | None = Field(
+        default=None, description="The ID of the conversation (if applicable)."
+    )
+    turn_index: int | None = Field(
+        default=None,
+        description="The index of the turn in the conversation (if applicable).",
+    )
+    timestamp_ns: int = Field(
+        ..., description="The wall clock timestamp of the request in nanoseconds."
+    )
     worker_id: str = Field(
         ..., description="The ID of the worker that processed the request."
     )
     credit_phase: CreditPhase = Field(
         ..., description="The credit phase of the request."
     )
-    results: list[dict[MetricTagT, MetricValueTypeT]] = Field(
-        ..., description="The record processor results"
+    results: SerializeAsAny[list[dict[MetricTagT, MetricValueTypeT]]] = Field(
+        ..., description="The record processor metric results"
     )
     error: ErrorDetails | None = Field(
         default=None, description="The error details if the request failed."

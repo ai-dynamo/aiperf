@@ -85,6 +85,10 @@ from aiperf.common.config.loadgen_config import (
 from aiperf.common.config.output_config import (
     OutputConfig,
 )
+from aiperf.common.config.profile_export_config import (
+    ProfileExportConfig,
+    parse_profile_export_file,
+)
 from aiperf.common.config.prompt_config import (
     InputTokensConfig,
     OutputTokensConfig,
@@ -147,6 +151,7 @@ __all__ = [
     "OutputTokensDefaults",
     "PrefixPromptConfig",
     "PrefixPromptDefaults",
+    "ProfileExportConfig",
     "PromptConfig",
     "PromptDefaults",
     "ServiceConfig",
@@ -169,6 +174,7 @@ __all__ = [
     "load_service_config",
     "load_user_config",
     "parse_file",
+    "parse_profile_export_file",
     "parse_service_types",
     "parse_str_or_csv_list",
     "parse_str_or_dict_as_tuple_list",

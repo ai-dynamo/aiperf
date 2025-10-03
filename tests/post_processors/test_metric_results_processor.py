@@ -6,10 +6,11 @@ from unittest.mock import Mock, patch
 import pytest
 
 from aiperf.common.config import UserConfig
-from aiperf.common.enums import MetricType
+from aiperf.common.enums import CreditPhase, MessageType, MetricType
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models import MetricResult
-from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
@@ -39,14 +40,34 @@ class TestMetricResultsProcessor:
         processor = MetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
-        await processor.process_result(MetricRecordDict({"test_record": 42.0}))
+        message = MetricRecordsMessage(
+            message_type=MessageType.METRIC_RECORDS,
+            service_id="test-processor",
+            record_id="test-1",
+            timestamp_ns=1_000_000_000,
+            worker_id="worker-1",
+            credit_phase=CreditPhase.PROFILING,
+            results=[{"test_record": 42.0}],
+            error=None,
+        )
+        await processor.process_result(message)
 
         assert "test_record" in processor._results
         assert isinstance(processor._results["test_record"], MetricArray)
         assert list(processor._results["test_record"].data) == [42.0]
 
         # New data should expand the array
-        await processor.process_result(MetricRecordDict({"test_record": 84.0}))
+        message2 = MetricRecordsMessage(
+            message_type=MessageType.METRIC_RECORDS,
+            service_id="test-processor",
+            record_id="test-2",
+            timestamp_ns=1_000_000_001,
+            worker_id="worker-1",
+            credit_phase=CreditPhase.PROFILING,
+            results=[{"test_record": 84.0}],
+            error=None,
+        )
+        await processor.process_result(message2)
         assert list(processor._results["test_record"].data) == [42.0, 84.0]
 
     @pytest.mark.asyncio
@@ -58,9 +79,17 @@ class TestMetricResultsProcessor:
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         # Process list of values
-        await processor.process_result(
-            MetricRecordDict({"test_record": [10.0, 20.0, 30.0]})
+        message = MetricRecordsMessage(
+            message_type=MessageType.METRIC_RECORDS,
+            service_id="test-processor",
+            record_id="test-1",
+            timestamp_ns=1_000_000_000,
+            worker_id="worker-1",
+            credit_phase=CreditPhase.PROFILING,
+            results=[{"test_record": [10.0, 20.0, 30.0]}],
+            error=None,
         )
+        await processor.process_result(message)
 
         assert "test_record" in processor._results
         assert isinstance(processor._results["test_record"], MetricArray)
@@ -76,10 +105,30 @@ class TestMetricResultsProcessor:
         processor._instances_map = {RequestCountMetric.tag: RequestCountMetric()}
 
         # Process two values and ensure they are accumulated
-        await processor.process_result(MetricRecordDict({RequestCountMetric.tag: 5}))
+        message1 = MetricRecordsMessage(
+            message_type=MessageType.METRIC_RECORDS,
+            service_id="test-processor",
+            record_id="test-1",
+            timestamp_ns=1_000_000_000,
+            worker_id="worker-1",
+            credit_phase=CreditPhase.PROFILING,
+            results=[{RequestCountMetric.tag: 5}],
+            error=None,
+        )
+        await processor.process_result(message1)
         assert processor._results[RequestCountMetric.tag] == 5
 
-        await processor.process_result(MetricRecordDict({RequestCountMetric.tag: 3}))
+        message2 = MetricRecordsMessage(
+            message_type=MessageType.METRIC_RECORDS,
+            service_id="test-processor",
+            record_id="test-2",
+            timestamp_ns=1_000_000_001,
+            worker_id="worker-1",
+            credit_phase=CreditPhase.PROFILING,
+            results=[{RequestCountMetric.tag: 3}],
+            error=None,
+        )
+        await processor.process_result(message2)
         assert processor._results[RequestCountMetric.tag] == 8
 
     @pytest.mark.asyncio

@@ -14,3 +14,16 @@ class ConsoleExporterType(CaseInsensitiveStrEnum):
 class DataExporterType(CaseInsensitiveStrEnum):
     JSON = "json"
     CSV = "csv"
+
+
+class ExportLevel(CaseInsensitiveStrEnum):
+    """Export level for benchmark data.
+
+    - SUMMARY: Export only aggregated/summarized metrics (default, most compact)
+    - RECORDS: Export per-record metrics after aggregation with display unit conversion
+    - RAW: Export raw parsed records with full request/response data (most detailed)
+    """
+
+    SUMMARY = "summary"
+    RECORDS = "records"
+    RAW = "raw"

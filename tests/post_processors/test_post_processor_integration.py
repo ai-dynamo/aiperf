@@ -8,8 +8,10 @@ import pytest
 
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.enums import CreditPhase, MessageType
+from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict
+from aiperf.metrics.metric_dicts import MetricArray
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
@@ -41,11 +43,18 @@ class TestPostProcessorIntegration:
         results_processor = create_results_processor_with_metrics(
             mock_user_config, RequestLatencyMetric, RequestCountMetric
         )
-        test_record_dict = MetricRecordDict(
-            {RequestLatencyMetric.tag: 100.0, RequestCountMetric.tag: 1}
+        message = MetricRecordsMessage(
+            message_type=MessageType.METRIC_RECORDS,
+            service_id="test-processor",
+            record_id="test-1",
+            timestamp_ns=1_000_000_000,
+            worker_id="worker-1",
+            credit_phase=CreditPhase.PROFILING,
+            results=[{RequestLatencyMetric.tag: 100.0, RequestCountMetric.tag: 1}],
+            error=None,
         )
 
-        await results_processor.process_result(test_record_dict)
+        await results_processor.process_result(message)
 
         assert RequestLatencyMetric.tag in results_processor._results
         assert isinstance(
@@ -67,12 +76,18 @@ class TestPostProcessorIntegration:
             mock_user_config, RequestLatencyMetric
         )
 
-        batches = [
-            MetricRecordDict({RequestLatencyMetric.tag: value})
-            for value in TEST_LATENCY_VALUES
-        ]
-        for batch in batches:
-            await results_processor.process_result(batch)
+        for idx, value in enumerate(TEST_LATENCY_VALUES):
+            message = MetricRecordsMessage(
+                message_type=MessageType.METRIC_RECORDS,
+                service_id="test-processor",
+                record_id=f"test-{idx}",
+                timestamp_ns=1_000_000_000 + idx,
+                worker_id="worker-1",
+                credit_phase=CreditPhase.PROFILING,
+                results=[{RequestLatencyMetric.tag: value}],
+                error=None,
+            )
+            await results_processor.process_result(message)
 
         assert RequestLatencyMetric.tag in results_processor._results
         accumulated_data = list(

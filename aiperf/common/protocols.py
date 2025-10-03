@@ -30,7 +30,6 @@ from aiperf.common.types import (
     MessageOutputT,
     MessageT,
     MessageTypeT,
-    MetricTagT,
     ModelEndpointInfoT,
     RequestInputT,
     RequestOutputT,
@@ -41,7 +40,7 @@ if TYPE_CHECKING:
     from rich.console import Console
 
     from aiperf.common.config import ServiceConfig, UserConfig
-    from aiperf.common.enums.metric_enums import MetricValueTypeT
+    from aiperf.common.messages.inference_messages import MetricRecordsMessage
     from aiperf.common.models.record_models import MetricResult
     from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
     from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -499,9 +498,7 @@ class ResultsProcessorProtocol(Protocol):
     """Protocol for a results processor that processes the results of multiple
     record processors, and provides the ability to summarize the results."""
 
-    async def process_result(
-        self, result: dict[MetricTagT, "MetricValueTypeT"]
-    ) -> None: ...
+    async def process_result(self, message: "MetricRecordsMessage") -> None: ...
 
     async def summarize(self) -> list["MetricResult"]: ...
 

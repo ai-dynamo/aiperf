@@ -16,6 +16,9 @@ from aiperf.records.phase_completion import (
     PhaseCompletionCondition,
     PhaseCompletionContext,
 )
+from aiperf.records.raw_record_writer import (
+    RawRecordWriter,
+)
 from aiperf.records.record_processor_service import (
     RecordProcessor,
 )
@@ -30,6 +33,7 @@ __all__ = [
     "PhaseCompletionChecker",
     "PhaseCompletionCondition",
     "PhaseCompletionContext",
+    "RawRecordWriter",
     "RecordProcessor",
     "RecordsManager",
 ]
