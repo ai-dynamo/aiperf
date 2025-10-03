@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import uuid
+
 from pydantic import Field
 
 from aiperf.common.enums import CreditPhase, MessageType
@@ -16,6 +18,10 @@ class CreditDropMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.CREDIT_DROP
 
+    request_id: str = Field(  # type: ignore
+        default_factory=lambda: str(uuid.uuid4()),
+        description="The ID of the credit drop, that will be used as the X-Correlation-ID header.",
+    )
     phase: CreditPhase = Field(..., description="The type of credit phase")
     conversation_id: str | None = Field(
         default=None, description="The ID of the conversation, if applicable."
@@ -46,6 +52,10 @@ class CreditReturnMessage(BaseServiceMessage):
     phase: CreditPhase = Field(
         ...,
         description="The Credit Phase of the credit drop. This is so the TimingManager can track the progress of the credit phase.",
+    )
+    credit_drop_id: str = Field(
+        ...,
+        description="ID of the credit drop, that defines the X-Correlation-ID header.",
     )
     delayed_ns: int | None = Field(
         default=None,
