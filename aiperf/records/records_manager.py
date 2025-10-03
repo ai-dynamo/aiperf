@@ -425,6 +425,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return_exceptions=True,
         )
 
+        timeslice_results = await asyncio.gather(
+            *[
+                results_processor.summarize()
+                for results_processor in self._results_processors
+            ],
+            return_exceptions=True,
+        )
+
         records_results, error_results = [], []
         for result in results:
             if isinstance(result, list):

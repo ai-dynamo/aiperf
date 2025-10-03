@@ -13,11 +13,14 @@ SPDX-License-Identifier: Apache-2.0
             "args": [
                 "profile",
                 "-m",
-                "gpt2",
-                "--log-level",
-                "DEBUG",
-                "--max-workers",
-                "1"
+                "Qwen/Qwen3-0.6B",
+                "--slice-duration",
+                "1000",
+                "--streaming",
+                // "--log-level",
+                // "DEBUG",
+                // "--max-workers",
+                // "1"
             ]
         },
         {

@@ -12,11 +12,12 @@ from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol
-from aiperf.common.types import MetricTagT
+from aiperf.common.types import MetricTagT, TimeSliceT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
+from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
@@ -42,6 +43,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         # Create the results dict, which will be used to store the results of non-derived metrics,
         # and then be updated with the derived metrics.
         self._results: MetricResultsDict = MetricResultsDict()
+        self._timeslice_results: dict[TimeSliceT, MetricResultsDict] = {}
 
         # Get all of the metric classes.
         _all_metric_classes: list[type[BaseMetric]] = MetricRegistry.all_classes()
@@ -75,13 +77,28 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 metric_type = self._tags_to_types[tag]
                 if metric_type == MetricType.RECORD:
                     if tag not in self._results:
-                        self._results[tag] = MetricArray()
+                        self.get_results()[tag] = MetricArray()
                     if isinstance(value, list):
                         # NOTE: Right now we only support list-based metrics by extending the array.
                         #       In the future, we possibly could support having nested arrays.
-                        self._results[tag].extend(value)  # type: ignore
+                        self.get_results()[tag].extend(value)  # type: ignore
                     else:
-                        self._results[tag].append(value)  # type: ignore
+                        self.get_results()[tag].append(value)  # type: ignore
+
+                    # if timeslice_index is not None:
+                    #     if timeslice_index not in self._timeslice_results:
+                    #         self._timeslice_results[timeslice_index] = {}
+
+                    #     if tag not in self._timeslice_results[timeslice_index]:
+                    #         self._timeslice_results[timeslice_index][tag] = (
+                    #             MetricArray()
+                    #         )
+                    #     if isinstance(value, list):
+                    #         # NOTE: Right now we only support list-based metrics by extending the array.
+                    #         #       In the future, we possibly could support having nested arrays.
+                    #         self._timeslice_results[timeslice_index][tag].extend(value)  # type: ignore
+                    #     else:
+                    #         self._timeslice_results[timeslice_index][tag].append(value)  # type: ignore
 
                 elif metric_type == MetricType.AGGREGATE:
                     metric: BaseAggregateMetric = self._instances_map[tag]  # type: ignore
