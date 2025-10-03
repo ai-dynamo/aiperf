@@ -17,13 +17,13 @@ class DataExporterType(CaseInsensitiveStrEnum):
 
 
 class ExportLevel(CaseInsensitiveStrEnum):
-    """Export level for benchmark data.
-
-    - SUMMARY: Export only aggregated/summarized metrics (default, most compact)
-    - RECORDS: Export per-record metrics after aggregation with display unit conversion
-    - RAW: Export raw parsed records with full request/response data (most detailed)
-    """
+    """Export level for benchmark data."""
 
     SUMMARY = "summary"
+    """Export only aggregated/summarized metrics (default, most compact)"""
+
     RECORDS = "records"
+    """Export per-record metrics after aggregation with display unit conversion"""
+
     RAW = "raw"
+    """Export raw parsed records with full request/response data (most detailed)"""
