@@ -2,18 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
-from pydantic import BeforeValidator, Field
+from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.config.groups import Groups
-from aiperf.common.config.profile_export_config import (
-    ExportLevel,
-    parse_profile_export_file,
-)
+from aiperf.common.enums import ExportLevel
 
 
 class OutputConfig(BaseConfig):
@@ -37,33 +34,6 @@ class OutputConfig(BaseConfig):
         ),
     ] = OutputDefaults.ARTIFACT_DIRECTORY
 
-    profile_export_file: Annotated[
-        Any | None,
-        Field(
-            description="Profile export file path and/or export level. "
-            "Accepts: 'summary'|'records'|'raw' (level only), "
-            "'path/to/file.json' (path only), or 'level:path' (both). "
-            "Examples: 'records', 'custom.json', 'raw:debug_export.json'",
-        ),
-        CLIParameter(
-            name="--profile-export-file",
-            group=_CLI_GROUP,
-        ),
-        BeforeValidator(parse_profile_export_file),
-    ] = None
-
     @property
     def export_level(self) -> ExportLevel:
-        return (
-            self.profile_export_file.export_level
-            if self.profile_export_file
-            else OutputDefaults.EXPORT_LEVEL
-        )
-
-    @property
-    def export_file_path(self) -> Path:
-        return (
-            self.profile_export_file.file_path
-            if self.profile_export_file
-            else OutputDefaults.PROFILE_EXPORT_FILE
-        )
+        return ExportLevel.RECORDS

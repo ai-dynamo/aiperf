@@ -10,12 +10,10 @@ import pytest
 from aiperf.common.config import (
     EndpointConfig,
     OutputConfig,
-    ProfileExportConfig,
     ServiceConfig,
     UserConfig,
 )
-from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.enums import CreditPhase, EndpointType, ExportLevel
+from aiperf.common.enums import CreditPhase, EndpointType
 from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models.record_models import (
     MetricRecordInfo,
@@ -47,10 +45,6 @@ def user_config_records_export(tmp_artifact_dir: Path) -> UserConfig:
         ),
         output=OutputConfig(
             artifact_directory=tmp_artifact_dir,
-            profile_export_file=ProfileExportConfig(
-                export_level=ExportLevel.RECORDS,
-                file_path=OutputDefaults.PROFILE_EXPORT_FILE,
-            ),
         ),
     )
 
@@ -65,10 +59,6 @@ def user_config_summary_export(tmp_artifact_dir: Path) -> UserConfig:
         ),
         output=OutputConfig(
             artifact_directory=tmp_artifact_dir,
-            profile_export_file=ProfileExportConfig(
-                export_level=ExportLevel.SUMMARY,
-                file_path=OutputDefaults.PROFILE_EXPORT_FILE,
-            ),
         ),
     )
 
