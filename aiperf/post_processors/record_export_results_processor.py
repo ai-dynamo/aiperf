@@ -31,7 +31,7 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
     ):
         super().__init__(user_config=user_config, **kwargs)
         export_level = user_config.output.export_level
-        export_file_path = user_config.output.export_file_path
+        export_file_path = user_config.output.profile_export_file
         self.enabled = export_level in (ExportLevel.RECORDS, ExportLevel.RAW)
 
         if not self.enabled:

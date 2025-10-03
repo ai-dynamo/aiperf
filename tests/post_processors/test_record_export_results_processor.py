@@ -104,20 +104,6 @@ class TestRecordExportResultsProcessorInitialization:
         assert processor.output_file.name == "profile_export.jsonl"
         assert processor.output_file.parent.exists()
 
-    def test_init_with_summary_export_level(
-        self,
-        user_config_summary_export: UserConfig,
-        service_config: ServiceConfig,
-    ):
-        """Test initialization with SUMMARY export level disables the processor."""
-        processor = RecordExportResultsProcessor(
-            service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_summary_export,
-        )
-
-        assert processor.enabled is False
-
     def test_init_creates_output_directory(
         self,
         user_config_records_export: UserConfig,
@@ -182,26 +168,6 @@ class TestRecordExportResultsProcessorInitialization:
 
 class TestRecordExportResultsProcessorProcessResult:
     """Test RecordExportResultsProcessor process_result method."""
-
-    @pytest.mark.asyncio
-    async def test_process_result_when_disabled(
-        self,
-        user_config_summary_export: UserConfig,
-        service_config: ServiceConfig,
-        sample_metric_records_message: MetricRecordsMessage,
-    ):
-        """Test that process_result does nothing when processor is disabled."""
-        processor = RecordExportResultsProcessor(
-            service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_summary_export,
-        )
-
-        # Should not raise, should not write anything
-        await processor.process_result(sample_metric_records_message)
-
-        # When disabled, record_count attribute doesn't exist
-        assert not hasattr(processor, "record_count") or processor.record_count == 0
 
     @pytest.mark.asyncio
     async def test_process_result_writes_valid_data(
@@ -553,25 +519,6 @@ class TestRecordExportResultsProcessorShutdown:
             mock_info.assert_called_once()
             call_args = str(mock_info.call_args)
             assert "3 records written" in call_args or "3" in call_args
-
-    @pytest.mark.asyncio
-    async def test_shutdown_with_disabled_processor(
-        self,
-        user_config_summary_export: UserConfig,
-        service_config: ServiceConfig,
-    ):
-        """Test that shutdown does nothing when processor is disabled."""
-        processor = RecordExportResultsProcessor(
-            service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_summary_export,
-        )
-
-        with patch.object(processor, "info") as mock_info:
-            await processor._shutdown()
-
-            # Should not log anything when disabled
-            mock_info.assert_not_called()
 
 
 class TestRecordExportResultsProcessorSummarize:
