@@ -198,6 +198,7 @@ class MetricDateTimeUnit(BaseMetricUnit):
     """Defines the various date time units that can be used for metrics."""
 
     DATE_TIME = _unit("datetime")
+    """Unit for representing a date time. Measured in floating point seconds since the Unix epoch."""
 
 
 class MetricOverTimeUnitInfo(BaseMetricUnitInfo):
