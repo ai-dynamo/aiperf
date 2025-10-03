@@ -28,7 +28,12 @@ class OpenAIClientAioHttp(AioHttpClientMixin, AIPerfLoggerMixin, ABC):
         super().__init__(model_endpoint, **kwargs)
         self.model_endpoint = model_endpoint
 
-    def get_headers(self, model_endpoint: ModelEndpointInfo) -> dict[str, str]:
+    def get_headers(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        x_request_id: str | None = None,
+        x_correlation_id: str | None = None,
+    ) -> dict[str, str]:
         """Get the headers for the given endpoint."""
 
         accept = (
@@ -44,6 +49,11 @@ class OpenAIClientAioHttp(AioHttpClientMixin, AIPerfLoggerMixin, ABC):
         }
         if model_endpoint.endpoint.api_key:
             headers["Authorization"] = f"Bearer {model_endpoint.endpoint.api_key}"
+        if x_request_id:
+            headers["X-Request-ID"] = x_request_id
+        if x_correlation_id:
+            headers["X-Correlation-ID"] = x_correlation_id
+
         if model_endpoint.endpoint.headers:
             headers.update(model_endpoint.endpoint.headers)
         return headers
@@ -59,6 +69,8 @@ class OpenAIClientAioHttp(AioHttpClientMixin, AIPerfLoggerMixin, ABC):
         self,
         model_endpoint: ModelEndpointInfo,
         payload: dict[str, Any],
+        x_request_id: str | None = None,
+        x_correlation_id: str | None = None,
     ) -> RequestRecord:
         """Send OpenAI request using aiohttp."""
 
@@ -72,7 +84,11 @@ class OpenAIClientAioHttp(AioHttpClientMixin, AIPerfLoggerMixin, ABC):
             record = await self.post_request(
                 self.get_url(model_endpoint),
                 json.dumps(payload),
-                self.get_headers(model_endpoint),
+                self.get_headers(
+                    model_endpoint,
+                    x_request_id=x_request_id,
+                    x_correlation_id=x_correlation_id,
+                ),
             )
 
         except Exception as e:

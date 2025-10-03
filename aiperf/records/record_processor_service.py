@@ -119,10 +119,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         await self.records_push_client.push(
             MetricRecordsMessage(
                 service_id=self.service_id,
-                worker_id=message.service_id,
+                timestamp_ns=message.record.timestamp_ns,
+                x_request_id=message.record.x_request_id,
+                x_correlation_id=message.record.x_correlation_id,
                 credit_phase=message.record.credit_phase,
                 results=results,
                 error=message.record.error,
+                worker_id=message.service_id,
             )
         )
 

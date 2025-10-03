@@ -12,7 +12,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetails, ParsedResponseRecord, RequestRecord
+from aiperf.common.models import ErrorDetails, RequestRecord
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.types import MessageTypeT, MetricTagT
 
@@ -27,25 +27,21 @@ class InferenceResultsMessage(BaseServiceMessage):
     )
 
 
-class ParsedInferenceResultsMessage(BaseServiceMessage):
-    """Message for a parsed inference results."""
-
-    message_type: MessageTypeT = MessageType.PARSED_INFERENCE_RESULTS
-
-    worker_id: str = Field(
-        ..., description="The ID of the worker that processed the request."
-    )
-    record: SerializeAsAny[ParsedResponseRecord] = Field(
-        ..., description="The post process results record"
-    )
-
-
 class MetricRecordsMessage(BaseServiceMessage):
     """Message from the result parser to the records manager to notify it
     of the metric records for a single request."""
 
     message_type: MessageTypeT = MessageType.METRIC_RECORDS
 
+    timestamp_ns: int = Field(
+        ..., description="The wall clock timestamp of the request in nanoseconds."
+    )
+    x_request_id: str | None = Field(
+        default=None, description="The X-Request-ID header of the request."
+    )
+    x_correlation_id: str | None = Field(
+        default=None, description="The X-Correlation-ID header of the request."
+    )
     worker_id: str = Field(
         ..., description="The ID of the worker that processed the request."
     )

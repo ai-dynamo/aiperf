@@ -373,6 +373,8 @@ class InferenceClientProtocol(Protocol):
         self,
         model_endpoint: ModelEndpointInfoT,
         payload: RequestInputT,
+        x_request_id: str | None = None,
+        x_correlation_id: str | None = None,
     ) -> RequestRecord:
         """Send a request to the inference server.
 
@@ -381,6 +383,8 @@ class InferenceClientProtocol(Protocol):
         Args:
             model_endpoint: The endpoint to send the request to.
             payload: The payload to send to the inference server.
+            x_request_id: The X-Request-ID header to send to the inference server.
+            x_correlation_id: The X-Correlation-ID header to send to the inference server.
         Returns:
             The raw response from the inference server.
         """

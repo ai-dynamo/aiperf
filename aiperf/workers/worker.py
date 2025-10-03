@@ -4,6 +4,7 @@
 
 import asyncio
 import time
+import uuid
 from collections.abc import Awaitable
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
@@ -136,6 +137,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                 CreditReturnMessage(
                     service_id=self.service_id,
                     phase=message.phase,
+                    credit_drop_id=message.request_id,
                 )
             )
 
@@ -191,6 +193,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             return_message = CreditReturnMessage(
                 service_id=self.service_id,
                 phase=message.phase,
+                credit_drop_id=message.request_id,
                 delayed_ns=None,  # TODO: set this properly (from record if available?)
             )
             if self.is_trace_enabled:
@@ -279,12 +282,15 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         drop_perf_ns: int,
     ) -> RequestRecord:
         """Build a RequestRecord from an inference API call for the given turn."""
-        record = await self._call_inference_api_internal(message, turn)
+        x_request_id = str(uuid.uuid4())
+        record = await self._call_inference_api_internal(message, turn, x_request_id)
         record.model_name = turn.model or self.model_endpoint.primary_model_name
         record.conversation_id = conversation_id
         record.turn_index = turn_index
         record.credit_phase = message.phase
         record.cancel_after_ns = message.cancel_after_ns
+        record.x_request_id = x_request_id
+        record.x_correlation_id = message.request_id
         # If this is the first turn, calculate the credit drop latency
         if turn_index == 0:
             record.credit_drop_latency = record.start_perf_ns - drop_perf_ns
@@ -306,6 +312,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         self,
         message: CreditDropMessage,
         turn: Turn,
+        x_request_id: str,
     ) -> RequestRecord:
         """Make a single call to the inference API. Will return an error record if the call fails."""
         if self.is_trace_enabled:
@@ -344,6 +351,8 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             send_coroutine = self.inference_client.send_request(
                 model_endpoint=self.model_endpoint,
                 payload=formatted_payload,
+                x_request_id=x_request_id,
+                x_correlation_id=message.request_id,  # CreditDropMessage request_id is the X-Correlation-ID header
             )
 
             maybe_result: RequestRecord | None = await self._send_with_optional_cancel(

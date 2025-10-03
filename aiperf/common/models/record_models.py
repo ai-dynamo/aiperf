@@ -254,6 +254,14 @@ class RequestRecord(AIPerfBaseModel):
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
     )
+    x_request_id: str | None = Field(
+        default=None,
+        description="The X-Request-ID header of the request. This is a unique ID for the request.",
+    )
+    x_correlation_id: str | None = Field(
+        default=None,
+        description="The X-Correlation-ID header of the request. This is the ID of the credit drop.",
+    )
 
     @property
     def delayed(self) -> bool:
