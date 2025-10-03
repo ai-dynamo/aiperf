@@ -30,7 +30,7 @@ from aiperf.common.messages import (
     ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
-from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
 from aiperf.common.protocols import (
     PushClientProtocol,
     RecordProcessorProtocol,
@@ -160,13 +160,17 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
         await self.records_push_client.push(
             MetricRecordsMessage(
-                record_id=message.request_id or "",
-                timestamp_ns=message.record.timestamp_ns,
-                conversation_id=message.record.conversation_id,
-                turn_index=message.record.turn_index,
                 service_id=self.service_id,
-                worker_id=message.service_id,
-                credit_phase=message.record.credit_phase,
+                record_id=message.request_id or "",
+                metadata=MetricRecordMetadata(
+                    timestamp_ns=message.record.timestamp_ns,
+                    conversation_id=message.record.conversation_id,
+                    turn_index=message.record.turn_index,
+                    record_processor_id=self.service_id,
+                    worker_id=message.service_id,
+                    credit_phase=message.record.credit_phase,
+                    error=message.record.error,
+                ),
                 results=results,
                 error=message.record.error,
             )

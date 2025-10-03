@@ -1,19 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import (
-    Field,
-    SerializeAsAny,
-)
+from pydantic import Field, SerializeAsAny
 
-from aiperf.common.enums import (
-    CreditPhase,
-    MessageType,
-)
+from aiperf.common.enums import MessageType
 from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetails, ParsedResponseRecord, RequestRecord
-from aiperf.common.models.record_models import MetricResult
+from aiperf.common.models.record_models import MetricRecordMetadata, MetricResult
 from aiperf.common.types import MessageTypeT, MetricTagT
 
 
@@ -47,23 +41,10 @@ class MetricRecordsMessage(BaseServiceMessage):
     message_type: MessageTypeT = MessageType.METRIC_RECORDS
 
     record_id: str = Field(..., description="The ID of the request record.")
-    conversation_id: str | None = Field(
-        default=None, description="The ID of the conversation (if applicable)."
+    metadata: MetricRecordMetadata = Field(
+        ..., description="The metadata of the request record."
     )
-    turn_index: int | None = Field(
-        default=None,
-        description="The index of the turn in the conversation (if applicable).",
-    )
-    timestamp_ns: int = Field(
-        ..., description="The wall clock timestamp of the request in nanoseconds."
-    )
-    worker_id: str = Field(
-        ..., description="The ID of the worker that processed the request."
-    )
-    credit_phase: CreditPhase = Field(
-        ..., description="The credit phase of the request."
-    )
-    results: SerializeAsAny[list[dict[MetricTagT, MetricValueTypeT]]] = Field(
+    results: list[dict[MetricTagT, MetricValueTypeT]] = Field(
         ..., description="The record processor metric results"
     )
     error: ErrorDetails | None = Field(

@@ -122,8 +122,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 
-        if message.credit_phase != CreditPhase.PROFILING:
-            self.debug(lambda: f"Skipping non-profiling record: {message.credit_phase}")
+        if message.metadata.credit_phase != CreditPhase.PROFILING:
+            self.debug(
+                lambda: f"Skipping non-profiling record: {message.metadata.credit_phase}"
+            )
             return
 
         record_dicts = [MetricRecordDict(result) for result in message.results]
@@ -133,7 +135,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if should_include_request:
             await self._send_results_to_results_processors(message)
 
-        worker_id = message.worker_id
+        worker_id = message.metadata.worker_id
 
         if message.valid and should_include_request:
             # Valid record
