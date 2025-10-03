@@ -49,7 +49,7 @@ def print_record_info(file_path: Path, records: list[MetricRecordInfo]) -> None:
         f"\n✓ Loaded [bold cyan]{len(records)}[/] records from [bold]{file_path.name}[/]\n"
     )
 
-    record = next(record for record in records if not record.error)
+    record = next((record for record in records if not record.error), None)
     if record:
         console.rule("[bold]Example Metadata[/]")
         for key, value in record.metadata.model_dump().items():
@@ -62,7 +62,7 @@ def print_record_info(file_path: Path, records: list[MetricRecordInfo]) -> None:
                 f"[bold cyan]{metric_cls.header} ({metric_tag})[/]: [green]{metric_value.value} ({metric_value.unit})[/]"
             )
 
-    error_record = next(record for record in records if record.error)
+    error_record = next((record for record in records if record.error), None)
     if error_record:
         console.rule("[bold]Example Error[/]")
         console.print_json(data=error_record.error.model_dump(), indent=2)
