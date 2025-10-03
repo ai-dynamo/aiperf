@@ -100,10 +100,6 @@ class MetricRecordMetadata(AIPerfBaseModel):
 class MetricRecordInfo(AIPerfBaseModel):
     """The full info of a metric record including the record id, metadata, and metrics for export."""
 
-    record_id: str = Field(
-        ...,
-        description="The ID of the record used to uniquely identify the record. Should match the record_id in the MetricRecordsMessage.",
-    )
     metadata: MetricRecordMetadata = Field(
         ...,
         description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",

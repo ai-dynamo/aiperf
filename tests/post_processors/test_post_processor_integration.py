@@ -8,10 +8,7 @@ import pytest
 
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase, MessageType
-from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.metrics.metric_dicts import MetricArray
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
@@ -21,6 +18,7 @@ from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetr
 from aiperf.post_processors.metric_record_processor import MetricRecordProcessor
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from tests.post_processors.conftest import (
+    create_metric_records_message,
     create_results_processor_with_metrics,
     setup_mock_registry_sequences,
 )
@@ -44,17 +42,9 @@ class TestPostProcessorIntegration:
         results_processor = create_results_processor_with_metrics(
             mock_user_config, RequestLatencyMetric, RequestCountMetric
         )
-        message = MetricRecordsMessage(
-            message_type=MessageType.METRIC_RECORDS,
-            service_id="test-processor",
-            metadata=MetricRecordMetadata(
-                timestamp_ns=1_000_000_000,
-                worker_id="worker-1",
-                record_processor_id="test-processor",
-                credit_phase=CreditPhase.PROFILING,
-            ),
+        message = create_metric_records_message(
+            x_request_id="test-1",
             results=[{RequestLatencyMetric.tag: 100.0, RequestCountMetric.tag: 1}],
-            error=None,
         )
 
         await results_processor.process_result(message)
@@ -80,19 +70,11 @@ class TestPostProcessorIntegration:
         )
 
         for idx, value in enumerate(TEST_LATENCY_VALUES):
-            message = MetricRecordsMessage(
-                message_type=MessageType.METRIC_RECORDS,
-                service_id="test-processor",
-                metadata=MetricRecordMetadata(
-                    timestamp_ns=1_000_000_000 + idx,
-                    x_request_id=f"test-request-{idx}",
-                    x_correlation_id=f"test-correlation-{idx}",
-                    worker_id="worker-1",
-                    record_processor_id="test-processor",
-                    credit_phase=CreditPhase.PROFILING,
-                ),
+            message = create_metric_records_message(
+                x_request_id=f"test-{idx}",
+                timestamp_ns=1_000_000_000 + idx,
+                x_correlation_id=f"test-correlation-{idx}",
                 results=[{RequestLatencyMetric.tag: value}],
-                error=None,
             )
             await results_processor.process_result(message)
 

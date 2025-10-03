@@ -6,16 +6,15 @@ from unittest.mock import Mock, patch
 import pytest
 
 from aiperf.common.config import UserConfig
-from aiperf.common.enums import CreditPhase, MessageType, MetricType
+from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models import MetricResult
-from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
+from tests.post_processors.conftest import create_metric_records_message
 
 
 class TestMetricResultsProcessor:
@@ -41,17 +40,9 @@ class TestMetricResultsProcessor:
         processor = MetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
-        message = MetricRecordsMessage(
-            message_type=MessageType.METRIC_RECORDS,
-            service_id="test-processor",
-            metadata=MetricRecordMetadata(
-                timestamp_ns=1_000_000_000,
-                worker_id="worker-1",
-                record_processor_id="test-processor",
-                credit_phase=CreditPhase.PROFILING,
-            ),
+        message = create_metric_records_message(
+            x_request_id="test-1",
             results=[{"test_record": 42.0}],
-            error=None,
         )
         await processor.process_result(message)
 
@@ -60,17 +51,10 @@ class TestMetricResultsProcessor:
         assert list(processor._results["test_record"].data) == [42.0]
 
         # New data should expand the array
-        message2 = MetricRecordsMessage(
-            message_type=MessageType.METRIC_RECORDS,
-            service_id="test-processor",
-            metadata=MetricRecordMetadata(
-                timestamp_ns=1_000_000_001,
-                worker_id="worker-1",
-                record_processor_id="test-processor",
-                credit_phase=CreditPhase.PROFILING,
-            ),
+        message2 = create_metric_records_message(
+            x_request_id="test-2",
+            timestamp_ns=1_000_000_001,
             results=[{"test_record": 84.0}],
-            error=None,
         )
         await processor.process_result(message2)
         assert list(processor._results["test_record"].data) == [42.0, 84.0]
@@ -84,17 +68,9 @@ class TestMetricResultsProcessor:
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         # Process list of values
-        message = MetricRecordsMessage(
-            message_type=MessageType.METRIC_RECORDS,
-            service_id="test-processor",
-            metadata=MetricRecordMetadata(
-                timestamp_ns=1_000_000_000,
-                worker_id="worker-1",
-                record_processor_id="test-processor",
-                credit_phase=CreditPhase.PROFILING,
-            ),
+        message = create_metric_records_message(
+            x_request_id="test-1",
             results=[{"test_record": [10.0, 20.0, 30.0]}],
-            error=None,
         )
         await processor.process_result(message)
 
@@ -112,32 +88,17 @@ class TestMetricResultsProcessor:
         processor._instances_map = {RequestCountMetric.tag: RequestCountMetric()}
 
         # Process two values and ensure they are accumulated
-        message1 = MetricRecordsMessage(
-            message_type=MessageType.METRIC_RECORDS,
-            service_id="test-processor",
-            metadata=MetricRecordMetadata(
-                timestamp_ns=1_000_000_000,
-                worker_id="worker-1",
-                record_processor_id="test-processor",
-                credit_phase=CreditPhase.PROFILING,
-            ),
+        message1 = create_metric_records_message(
+            x_request_id="test-1",
             results=[{RequestCountMetric.tag: 5}],
-            error=None,
         )
         await processor.process_result(message1)
         assert processor._results[RequestCountMetric.tag] == 5
 
-        message2 = MetricRecordsMessage(
-            message_type=MessageType.METRIC_RECORDS,
-            service_id="test-processor",
-            metadata=MetricRecordMetadata(
-                timestamp_ns=1_000_000_001,
-                worker_id="worker-1",
-                record_processor_id="test-processor",
-                credit_phase=CreditPhase.PROFILING,
-            ),
+        message2 = create_metric_records_message(
+            x_request_id="test-2",
+            timestamp_ns=1_000_000_001,
             results=[{RequestCountMetric.tag: 3}],
-            error=None,
         )
         await processor.process_result(message2)
         assert processor._results[RequestCountMetric.tag] == 8

@@ -15,7 +15,7 @@ from aiperf.common.config import (
     UserConfig,
 )
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.enums import CreditPhase, EndpointType, ExportLevel, MessageType
+from aiperf.common.enums import CreditPhase, EndpointType, ExportLevel
 from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models.record_models import (
     MetricRecordInfo,
@@ -26,6 +26,7 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.post_processors.record_export_results_processor import (
     RecordExportResultsProcessor,
 )
+from tests.post_processors.conftest import create_metric_records_message
 
 
 @pytest.fixture
@@ -79,27 +80,17 @@ def service_config() -> ServiceConfig:
 
 
 @pytest.fixture
-def sample_metric_records_message() -> MetricRecordsMessage:
+def sample_metric_records_message():
     """Create a sample MetricRecordsMessage for testing."""
-    return MetricRecordsMessage(
-        message_type=MessageType.METRIC_RECORDS,
+    return create_metric_records_message(
         service_id="processor-1",
-        metadata=MetricRecordMetadata(
-            conversation_id="conv-456",
-            turn_index=0,
-            timestamp_ns=1_000_000_000,
-            worker_id="worker-1",
-            record_processor_id="processor-1",
-            credit_phase=CreditPhase.PROFILING,
-            x_request_id="test-request-123",
-            x_correlation_id="test-correlation-123",
-            error=None,
-        ),
+        x_request_id="test-record-123",
+        conversation_id="conv-456",
+        x_correlation_id="test-correlation-123",
         results=[
             {"request_latency_ns": 1_000_000, "output_token_count": 10},
             {"ttft_ns": 500_000},
         ],
-        error=None,
     )
 
 
@@ -260,7 +251,7 @@ class TestRecordExportResultsProcessorProcessResult:
         for line in lines:
             record_dict = orjson.loads(line)
             record = MetricRecordInfo.model_validate(record_dict)
-            assert record.record_id == "test-record-123"
+            assert record.metadata.x_request_id == "test-record-123"
             assert record.metadata.conversation_id == "conv-456"
             assert record.metadata.turn_index == 0
             assert record.metadata.worker_id == "worker-1"
@@ -351,20 +342,12 @@ class TestRecordExportResultsProcessorProcessResult:
         ):
             # Process 5 messages, each with 2 results
             for i in range(5):
-                message = MetricRecordsMessage(
-                    message_type=MessageType.METRIC_RECORDS,
-                    service_id="processor-1",
-                    metadata=MetricRecordMetadata(
-                        conversation_id=f"conv-{i}",
-                        turn_index=i,
-                        timestamp_ns=1_000_000_000 + i,
-                        worker_id="worker-1",
-                        record_processor_id="processor-1",
-                        credit_phase=CreditPhase.PROFILING,
-                        error=None,
-                    ),
+                message = create_metric_records_message(
+                    x_request_id=f"record-{i}",
+                    conversation_id=f"conv-{i}",
+                    turn_index=i,
+                    timestamp_ns=1_000_000_000 + i,
                     results=[{"metric1": 100}, {"metric2": 200}],
-                    error=None,
                 )
                 await processor.process_result(message)
 
@@ -381,7 +364,7 @@ class TestRecordExportResultsProcessorProcessResult:
             record_dict = orjson.loads(line)
             record = MetricRecordInfo.model_validate(record_dict)
             assert isinstance(record, MetricRecordInfo)
-            assert record.record_id.startswith("record-")
+            assert record.metadata.x_request_id.startswith("record-")  # type: ignore[union-attr]
             assert "request_latency" in record.metrics
 
 
@@ -452,7 +435,6 @@ class TestRecordExportResultsProcessorFileFormat:
         record = MetricRecordInfo.model_validate(record_dict)
 
         # Check top-level structure
-        assert isinstance(record.record_id, str)
         assert isinstance(record.metadata, MetricRecordMetadata)
         assert isinstance(record.metrics, dict)
 
@@ -498,20 +480,12 @@ class TestRecordExportResultsProcessorLogging:
         ):
             # Process 100 records (50 messages with 2 results each)
             for i in range(50):
-                message = MetricRecordsMessage(
-                    message_type=MessageType.METRIC_RECORDS,
-                    service_id="processor-1",
-                    metadata=MetricRecordMetadata(
-                        conversation_id=f"conv-{i}",
-                        turn_index=i,
-                        timestamp_ns=1_000_000_000 + i,
-                        worker_id="worker-1",
-                        record_processor_id="processor-1",
-                        credit_phase=CreditPhase.PROFILING,
-                        error=None,
-                    ),
+                message = create_metric_records_message(
+                    x_request_id=f"record-{i}",
+                    conversation_id=f"conv-{i}",
+                    turn_index=i,
+                    timestamp_ns=1_000_000_000 + i,
                     results=[{"metric1": 100}, {"metric2": 200}],
-                    error=None,
                 )
                 await processor.process_result(message)
 
@@ -574,20 +548,12 @@ class TestRecordExportResultsProcessorShutdown:
         ):
             # Process some records
             for i in range(3):
-                message = MetricRecordsMessage(
-                    message_type=MessageType.METRIC_RECORDS,
-                    service_id="processor-1",
-                    metadata=MetricRecordMetadata(
-                        conversation_id=f"conv-{i}",
-                        turn_index=i,
-                        timestamp_ns=1_000_000_000 + i,
-                        worker_id="worker-1",
-                        record_processor_id="processor-1",
-                        credit_phase=CreditPhase.PROFILING,
-                        error=None,
-                    ),
+                message = create_metric_records_message(
+                    x_request_id=f"record-{i}",
+                    conversation_id=f"conv-{i}",
+                    turn_index=i,
+                    timestamp_ns=1_000_000_000 + i,
                     results=[{"metric1": 100}],
-                    error=None,
                 )
                 await processor.process_result(message)
 
@@ -622,12 +588,12 @@ class TestRecordExportResultsProcessorSummarize:
     """Test RecordExportResultsProcessor summarize method."""
 
     @pytest.mark.asyncio
-    async def test_summarize_returns_empty_dict(
+    async def test_summarize_returns_empty_list(
         self,
         user_config_records_export: UserConfig,
         service_config: ServiceConfig,
     ):
-        """Test that summarize returns an empty dict (no aggregation needed)."""
+        """Test that summarize returns an empty list (no aggregation needed)."""
         processor = RecordExportResultsProcessor(
             service_id="records-manager",
             service_config=service_config,
@@ -636,5 +602,5 @@ class TestRecordExportResultsProcessorSummarize:
 
         result = await processor.summarize()
 
-        assert result == {}
-        assert isinstance(result, dict)
+        assert result == []
+        assert isinstance(result, list)

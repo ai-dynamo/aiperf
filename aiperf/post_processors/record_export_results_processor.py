@@ -61,7 +61,6 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
                     continue
 
                 record_info = MetricRecordInfo(
-                    record_id=message.record_id,
                     metadata=message.metadata,
                     metrics=display_metrics,
                 )
