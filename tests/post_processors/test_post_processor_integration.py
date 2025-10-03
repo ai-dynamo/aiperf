@@ -47,7 +47,6 @@ class TestPostProcessorIntegration:
         message = MetricRecordsMessage(
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
-            record_id="test-1",
             metadata=MetricRecordMetadata(
                 timestamp_ns=1_000_000_000,
                 worker_id="worker-1",
@@ -84,9 +83,10 @@ class TestPostProcessorIntegration:
             message = MetricRecordsMessage(
                 message_type=MessageType.METRIC_RECORDS,
                 service_id="test-processor",
-                record_id=f"test-{idx}",
                 metadata=MetricRecordMetadata(
                     timestamp_ns=1_000_000_000 + idx,
+                    x_request_id=f"test-request-{idx}",
+                    x_correlation_id=f"test-correlation-{idx}",
                     worker_id="worker-1",
                     record_processor_id="test-processor",
                     credit_phase=CreditPhase.PROFILING,

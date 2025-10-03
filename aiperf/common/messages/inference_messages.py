@@ -6,7 +6,7 @@ from pydantic import Field, SerializeAsAny
 from aiperf.common.enums import MessageType
 from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetails, ParsedResponseRecord, RequestRecord
+from aiperf.common.models import ErrorDetails, RequestRecord
 from aiperf.common.models.record_models import MetricRecordMetadata, MetricResult
 from aiperf.common.types import MessageTypeT, MetricTagT
 
@@ -21,26 +21,12 @@ class InferenceResultsMessage(BaseServiceMessage):
     )
 
 
-class ParsedInferenceResultsMessage(BaseServiceMessage):
-    """Message for a parsed inference results."""
-
-    message_type: MessageTypeT = MessageType.PARSED_INFERENCE_RESULTS
-
-    worker_id: str = Field(
-        ..., description="The ID of the worker that processed the request."
-    )
-    record: SerializeAsAny[ParsedResponseRecord] = Field(
-        ..., description="The post process results record"
-    )
-
-
 class MetricRecordsMessage(BaseServiceMessage):
     """Message from the result parser to the records manager to notify it
     of the metric records for a single request."""
 
     message_type: MessageTypeT = MessageType.METRIC_RECORDS
 
-    record_id: str = Field(..., description="The ID of the request record.")
     metadata: MetricRecordMetadata = Field(
         ..., description="The metadata of the request record."
     )

@@ -15,7 +15,6 @@ from aiperf.common.enums import (
 )
 from aiperf.common.factories import (
     RecordProcessorFactory,
-    ResponseExtractorFactory,
     ServiceFactory,
 )
 from aiperf.common.hooks import (
@@ -103,11 +102,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Initialize record processor-specific components."""
         self.debug("Initializing record processor")
 
-        self.extractor = ResponseExtractorFactory.create_instance(
-            self.model_endpoint.endpoint.type,
-            model_endpoint=self.model_endpoint,
-        )
-
         # Initialize all the records streamers
         for processor_type in RecordProcessorFactory.get_all_class_types():
             self.records_processors.append(
@@ -161,14 +155,15 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         await self.records_push_client.push(
             MetricRecordsMessage(
                 service_id=self.service_id,
-                record_id=message.request_id or "",
                 metadata=MetricRecordMetadata(
                     timestamp_ns=message.record.timestamp_ns,
                     conversation_id=message.record.conversation_id,
                     turn_index=message.record.turn_index,
                     record_processor_id=self.service_id,
-                    worker_id=message.service_id,
+                    x_request_id=message.record.x_request_id,
+                    x_correlation_id=message.record.x_correlation_id,
                     credit_phase=message.record.credit_phase,
+                    worker_id=message.service_id,
                     error=message.record.error,
                 ),
                 results=results,

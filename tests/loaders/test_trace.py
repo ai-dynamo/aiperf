@@ -403,3 +403,49 @@ class TestMooncakeTraceDatasetLoader:
         assert len(conversation.turns) == 2
         assert conversation.turns[0].texts[0].contents[0] == "Hello, how are you?"
         assert conversation.turns[1].texts[0].contents[0] == "What is the weather like?"
+
+    def test_load_dataset_with_session_ids(
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
+    ):
+        """Test loading JSONL file with session_id fields."""
+        content = [
+            '{"session_id": "session-1", "input_length": 100, "output_length": 50, "hash_ids": [123], "timestamp": 1000}',
+            '{"session_id": "session-1", "input_length": 150, "output_length": 60, "hash_ids": [456], "timestamp": 2000}',
+            '{"session_id": "session-2", "text_input": "This is session 2 input", "timestamp": 3000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename, mock_prompt_generator, default_user_config
+        )
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 2
+
+        assert len(dataset["session-1"]) == 2
+        assert dataset["session-1"][0].input_length == 100
+        assert dataset["session-1"][1].input_length == 150
+
+        assert len(dataset["session-2"]) == 1
+        assert dataset["session-2"][0].text_input == "This is session 2 input"
+
+    def test_load_dataset_with_delay_field(
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
+    ):
+        """Test loading JSONL file with delay fields."""
+        content = [
+            '{"session_id": "abc", "input_length": 100, "output_length": 50, "delay": 500}',
+            '{"session_id": "def", "text_input": "This is test input", "delay": 1000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename, mock_prompt_generator, default_user_config
+        )
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 2
+        traces = list(dataset.values())
+
+        assert traces[0][0].delay == 500
+        assert traces[1][0].delay == 1000

@@ -84,7 +84,6 @@ def sample_metric_records_message() -> MetricRecordsMessage:
     return MetricRecordsMessage(
         message_type=MessageType.METRIC_RECORDS,
         service_id="processor-1",
-        record_id="test-record-123",
         metadata=MetricRecordMetadata(
             conversation_id="conv-456",
             turn_index=0,
@@ -92,6 +91,8 @@ def sample_metric_records_message() -> MetricRecordsMessage:
             worker_id="worker-1",
             record_processor_id="processor-1",
             credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-request-123",
+            x_correlation_id="test-correlation-123",
             error=None,
         ),
         results=[
@@ -353,7 +354,6 @@ class TestRecordExportResultsProcessorProcessResult:
                 message = MetricRecordsMessage(
                     message_type=MessageType.METRIC_RECORDS,
                     service_id="processor-1",
-                    record_id=f"record-{i}",
                     metadata=MetricRecordMetadata(
                         conversation_id=f"conv-{i}",
                         turn_index=i,
@@ -501,7 +501,6 @@ class TestRecordExportResultsProcessorLogging:
                 message = MetricRecordsMessage(
                     message_type=MessageType.METRIC_RECORDS,
                     service_id="processor-1",
-                    record_id=f"record-{i}",
                     metadata=MetricRecordMetadata(
                         conversation_id=f"conv-{i}",
                         turn_index=i,
@@ -578,7 +577,6 @@ class TestRecordExportResultsProcessorShutdown:
                 message = MetricRecordsMessage(
                     message_type=MessageType.METRIC_RECORDS,
                     service_id="processor-1",
-                    record_id=f"record-{i}",
                     metadata=MetricRecordMetadata(
                         conversation_id=f"conv-{i}",
                         turn_index=i,

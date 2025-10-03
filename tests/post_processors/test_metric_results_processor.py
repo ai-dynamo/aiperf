@@ -44,7 +44,6 @@ class TestMetricResultsProcessor:
         message = MetricRecordsMessage(
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
-            record_id="test-1",
             metadata=MetricRecordMetadata(
                 timestamp_ns=1_000_000_000,
                 worker_id="worker-1",
@@ -64,7 +63,6 @@ class TestMetricResultsProcessor:
         message2 = MetricRecordsMessage(
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
-            record_id="test-2",
             metadata=MetricRecordMetadata(
                 timestamp_ns=1_000_000_001,
                 worker_id="worker-1",
@@ -89,7 +87,6 @@ class TestMetricResultsProcessor:
         message = MetricRecordsMessage(
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
-            record_id="test-1",
             metadata=MetricRecordMetadata(
                 timestamp_ns=1_000_000_000,
                 worker_id="worker-1",
@@ -118,7 +115,6 @@ class TestMetricResultsProcessor:
         message1 = MetricRecordsMessage(
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
-            record_id="test-1",
             metadata=MetricRecordMetadata(
                 timestamp_ns=1_000_000_000,
                 worker_id="worker-1",
@@ -134,7 +130,6 @@ class TestMetricResultsProcessor:
         message2 = MetricRecordsMessage(
             message_type=MessageType.METRIC_RECORDS,
             service_id="test-processor",
-            record_id="test-2",
             metadata=MetricRecordMetadata(
                 timestamp_ns=1_000_000_001,
                 worker_id="worker-1",
