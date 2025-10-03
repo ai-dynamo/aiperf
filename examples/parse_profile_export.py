@@ -51,6 +51,10 @@ def print_record_info(file_path: Path, records: list[MetricRecordInfo]) -> None:
 
     record = next(record for record in records if not record.metadata.error)
     if record:
+        console.rule("[bold]Example Metadata[/]")
+        for key, value in record.metadata.model_dump().items():
+            console.print(f"[bold cyan]{key}[/]: [green]{value}[/]")
+
         console.rule("[bold]Example Metrics[/]")
         for metric_tag, metric_value in record.metrics.items():
             metric_cls = MetricRegistry.get_class(metric_tag)
@@ -65,7 +69,13 @@ def print_record_info(file_path: Path, records: list[MetricRecordInfo]) -> None:
 
 
 @app.default
-def main(file_path: Path, _async: bool = False) -> None:
+def main(
+    file_path: Path = Path(__file__).parent
+    / "artifacts"
+    / "run1"
+    / "profile_export.jsonl",
+    _async: bool = False,
+) -> None:
     if _async:
         import asyncio
 
