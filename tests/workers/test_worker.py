@@ -276,6 +276,44 @@ class TestWorker:
             or result.credit_drop_latency is None
         )
 
+    @patch("asyncio.wait_for")
+    async def test_timeout_conversion_precision(self, mock_wait_for, worker):
+        """Test that nanoseconds are correctly converted to seconds with proper precision."""
+        # Test various nanosecond values
+        test_cases = [
+            (int(0.5 * NANOS_PER_SECOND), 0.5),
+            (int(1.0 * NANOS_PER_SECOND), 1.0),
+            (int(2.5 * NANOS_PER_SECOND), 2.5),
+            (int(10.123456789 * NANOS_PER_SECOND), 10.123456789),
+        ]
+
+        for cancel_after_ns, expected_timeout in test_cases:
+            mock_wait_for.reset_mock()
+
+            async def simple_coroutine():
+                return RequestRecord(timestamp_ns=time.time_ns())
+
+            # Mock wait_for to properly consume the coroutine and return result
+            async def mock_wait_for_impl(coro, timeout):
+                # Properly consume the coroutine to avoid warnings
+                await coro
+                return RequestRecord(timestamp_ns=time.time_ns())
+
+            mock_wait_for.side_effect = mock_wait_for_impl
+
+            await worker._send_with_optional_cancel(
+                send_coroutine=simple_coroutine(),
+                should_cancel=True,
+                cancel_after_ns=cancel_after_ns,
+            )
+
+            # Verify the timeout was converted correctly
+            call_args = mock_wait_for.call_args
+            actual_timeout = call_args[1]["timeout"]
+            assert abs(actual_timeout - expected_timeout) < 1e-9, (
+                f"Expected timeout {expected_timeout}, got {actual_timeout}"
+            )
+
     @pytest.mark.asyncio
     async def test_x_request_id_and_x_correlation_id_passed_to_client(self, worker):
         """Test that x_request_id and x_correlation_id are passed to the inference client."""
