@@ -65,3 +65,4 @@ ResponseT = TypeVar("ResponseT", bound=Any, covariant=True)
 SelfT = TypeVar("SelfT", bound=Any)
 ServiceProtocolT = TypeVar("ServiceProtocolT", bound="ServiceProtocol")
 ServiceTypeT: TypeAlias = ServiceType | str
+TimeSliceT: TypeAlias = int
