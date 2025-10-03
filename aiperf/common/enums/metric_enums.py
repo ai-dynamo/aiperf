@@ -428,6 +428,9 @@ class MetricFlags(Flag):
     """Metrics that are only applicable to streamed responses and token-based endpoints.
     This is a convenience flag that is the combination of the `STREAMING_ONLY` and `PRODUCES_TOKENS_ONLY` flags."""
 
+    GOODPUT = 1 << 10
+    """Metrics that are only applicable when goodput feature is enabled"""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.

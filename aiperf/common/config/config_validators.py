@@ -224,6 +224,42 @@ def parse_file(value: str | None) -> Path | None:
             raise ValueError(f"'{value}' is not a valid file or directory")
 
 
+def parse_str_as_numeric_dict(input_string: str | None) -> dict[str, float] | None:
+    """
+    Parse a string of key:value pairs such as 'k:v x:y' into {k: v, x: y}.
+    """
+    if input_string is None:
+        return None
+    if not isinstance(input_string, str):
+        raise ValueError(
+            f"User Config: expected a string of space-separated 'key:value' pairs, got {type(input_string).__name__}"
+        )
+
+    input_string = input_string.strip()
+    if not input_string:
+        raise ValueError(
+            "User Config: expected space-separated 'key:value' pairs (e.g., 'k:v x:y'), got empty string"
+        )
+
+    output: dict[str, float] = {}
+    for item in input_string.split():
+        if not item or ":" not in item:
+            raise ValueError(f"User Config: '{item}' is not in 'key:value' format")
+        key, val = item.split(":", 1)
+        key, val = key.strip(), val.strip()
+        if not key:
+            raise ValueError(f"User Config: '{item}' has an empty key")
+        if not val:
+            raise ValueError(f"User Config: '{item}' has an empty value")
+        try:
+            output[key] = float(val)
+        except ValueError as e:
+            raise ValueError(
+                f"User Config: value for '{key}' must be numeric, got '{val}'"
+            ) from e
+    return output
+
+
 def custom_enum_converter(type_: Any, value: Sequence[Token]) -> Any:
     """This is a custom converter for cyclopts that allows us to use our custom enum types"""
     if len(value) != 1:
