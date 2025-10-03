@@ -21,7 +21,7 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.enums.ui_enums import AIPerfUIType
-from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.exceptions import FactoryCreationError, PostProcessorDisabled
 from aiperf.common.factories import ResultsProcessorFactory, ServiceFactory
 from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
 from aiperf.common.messages import (
@@ -138,10 +138,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self.debug(
                     f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
                 )
-            except PostProcessorDisabled:
-                self.debug(
-                    f"Results processor {results_processor_type} is disabled and will not be used"
-                )
+            except FactoryCreationError as e:
+                if isinstance(e.__cause__, PostProcessorDisabled):
+                    self.debug(
+                        f"Results processor {results_processor_type} is disabled and will not be used"
+                    )
 
     @on_pull_message(MessageType.METRIC_RECORDS)
     async def _on_metric_records(self, message: MetricRecordsMessage) -> None:
@@ -485,10 +486,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return_exceptions=True,
         )
 
-        records_results, error_results = [], []
+        records_results, timeslice_metric_results, error_results = [], {}, []
         for result in results:
             if isinstance(result, list):
                 records_results.extend(result)
+            elif isinstance(result, dict):
+                timeslice_metric_results = result
             elif isinstance(result, ErrorDetails):
                 error_results.append(result)
             elif isinstance(result, BaseException):
@@ -497,6 +500,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=records_results,
+                timeslice_metric_results=timeslice_metric_results,
                 completed=len(records_results),
                 start_ns=self.start_time_ns or time.time_ns(),
                 end_ns=self.end_time_ns or time.time_ns(),

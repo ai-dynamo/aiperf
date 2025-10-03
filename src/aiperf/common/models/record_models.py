@@ -19,7 +19,7 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
-from aiperf.common.types import MetricTagT
+from aiperf.common.types import MetricTagT, TimeSliceT
 
 
 class MetricResult(JsonMetricResult):
@@ -138,6 +138,10 @@ class MetricRecordInfo(AIPerfBaseModel):
 class ProfileResults(AIPerfBaseModel):
     records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
+    )
+    timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
+        default=None,
+        description="The timeslice metric results of the profile (if using timeslice mode)",
     )
     total_expected: int | None = Field(
         default=None,
