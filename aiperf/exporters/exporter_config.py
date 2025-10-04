@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.models import ProfileResults
+from aiperf.common.models import ProfileResults, TelemetryResults
 
 
 @dataclass
@@ -13,6 +13,7 @@ class ExporterConfig:
     results: ProfileResults
     user_config: UserConfig
     service_config: ServiceConfig
+    telemetry_results: TelemetryResults | None
 
 
 @dataclass

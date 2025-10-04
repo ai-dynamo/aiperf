@@ -6,7 +6,55 @@ from pydantic import Field
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.record_models import MetricResult
+
+
+class TelemetryMetrics(AIPerfBaseModel):
+    """GPU metrics collected at a single point in time.
+
+    All fields are optional to handle cases where specific metrics are not available
+    from the DCGM exporter or are filtered out due to invalid values.
+    """
+
+    gpu_power_usage: float | None = Field(
+        default=None, description="Current GPU power usage in W"
+    )
+    energy_consumption: float | None = Field(
+        default=None, description="Cumulative energy consumption in MJ"
+    )
+    gpu_utilization: float | None = Field(
+        default=None, description="GPU utilization percentage (0-100)"
+    )
+    gpu_memory_used: float | None = Field(
+        default=None, description="GPU memory used in GB"
+    )
+    sm_clock_frequency: float | None = Field(
+        default=None, description="SM clock frequency in MHz"
+    )
+    memory_clock_frequency: float | None = Field(
+        default=None, description="Memory clock frequency in MHz"
+    )
+    memory_temperature: float | None = Field(
+        default=None, description="Memory temperature in °C"
+    )
+    gpu_temperature: float | None = Field(
+        default=None, description="GPU temperature in °C"
+    )
+    memory_copy_utilization: float | None = Field(
+        default=None, description="Memory copy utilization percentage (0-100)"
+    )
+    xid_errors: float | None = Field(
+        default=None, description="Value of the last XID error encountered"
+    )
+    power_violation: float | None = Field(
+        default=None,
+        description="Throttling duration due to power constraints in microseconds",
+    )
+    thermal_violation: float | None = Field(
+        default=None,
+        description="Throttling duration due to thermal constraints in microseconds",
+    )
 
 
 class TelemetryRecord(AIPerfBaseModel):
@@ -45,35 +93,8 @@ class TelemetryRecord(AIPerfBaseModel):
         default=None, description="Hostname where GPU is located"
     )
 
-    gpu_power_usage: float | None = Field(
-        default=None, description="Current GPU power usage in W"
-    )
-    gpu_power_limit: float | None = Field(
-        default=None, description="GPU power limit in W"
-    )
-    energy_consumption: float | None = Field(
-        default=None, description="Cumulative energy consumption in MJ"
-    )
-    gpu_utilization: float | None = Field(
-        default=None, description="GPU utilization percentage (0-100)"
-    )
-    gpu_memory_used: float | None = Field(
-        default=None, description="GPU memory used in GB"
-    )
-    total_gpu_memory: float | None = Field(
-        default=None, description="Total GPU memory in GB"
-    )
-    sm_clock_frequency: float | None = Field(
-        default=None, description="SM clock frequency in MHz"
-    )
-    memory_clock_frequency: float | None = Field(
-        default=None, description="Memory clock frequency in MHz"
-    )
-    memory_temperature: float | None = Field(
-        default=None, description="Memory temperature in °C"
-    )
-    gpu_temperature: float | None = Field(
-        default=None, description="GPU temperature in °C"
+    telemetry_data: TelemetryMetrics = Field(
+        description="GPU metrics snapshot collected at this timestamp"
     )
 
 
@@ -214,20 +235,7 @@ class GpuTelemetryData(AIPerfBaseModel):
 
         Note: Groups all metric values from the record into a single snapshot
         """
-        metric_mapping = {
-            "gpu_power_usage": record.gpu_power_usage,
-            "gpu_power_limit": record.gpu_power_limit,
-            "energy_consumption": record.energy_consumption,
-            "gpu_utilization": record.gpu_utilization,
-            "gpu_memory_used": record.gpu_memory_used,
-            "total_gpu_memory": record.total_gpu_memory,
-            "sm_clock_frequency": record.sm_clock_frequency,
-            "memory_clock_frequency": record.memory_clock_frequency,
-            "memory_temperature": record.memory_temperature,
-            "gpu_temperature": record.gpu_temperature,
-        }
-
-        # Filter out None values and add as single snapshot
+        metric_mapping = record.telemetry_data.model_dump()
         valid_metrics = {k: v for k, v in metric_mapping.items() if v is not None}
         if valid_metrics:
             self.time_series.append_snapshot(valid_metrics, record.timestamp_ns)
@@ -300,3 +308,45 @@ class TelemetryHierarchy(AIPerfBaseModel):
             dcgm_data[record.gpu_uuid] = GpuTelemetryData(metadata=metadata)
 
         dcgm_data[record.gpu_uuid].add_record(record)
+
+
+class TelemetryResults(AIPerfBaseModel):
+    """Results from GPU telemetry collection during a profile run.
+
+    This class contains all telemetry data and metadata collected during
+    a benchmarking session, separate from inference performance results.
+    """
+
+    telemetry_data: TelemetryHierarchy = Field(
+        description="Hierarchical telemetry data organized by DCGM endpoint and GPU"
+    )
+    start_ns: int = Field(
+        description="Start time of telemetry collection in nanoseconds"
+    )
+    end_ns: int = Field(description="End time of telemetry collection in nanoseconds")
+    endpoints_tested: list[str] = Field(
+        default_factory=list,
+        description="List of DCGM endpoint URLs that were tested for reachability",
+    )
+    endpoints_successful: list[str] = Field(
+        default_factory=list,
+        description="List of DCGM endpoint URLs that successfully provided telemetry data",
+    )
+    error_summary: list[ErrorDetailsCount] = Field(
+        default_factory=list,
+        description="A list of the unique error details and their counts",
+    )
+
+
+class ProcessTelemetryResult(AIPerfBaseModel):
+    """Result of telemetry processing - mirrors ProcessRecordsResult pattern.
+
+    This provides a parallel structure to ProcessRecordsResult for the telemetry pipeline,
+    maintaining complete separation while following the same architectural patterns.
+    """
+
+    results: TelemetryResults = Field(description="The processed telemetry results")
+    errors: list[ErrorDetails] = Field(
+        default_factory=list,
+        description="Any errors that occurred while processing telemetry data",
+    )

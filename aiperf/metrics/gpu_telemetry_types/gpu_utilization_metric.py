@@ -15,4 +15,4 @@ class GpuUtilizationMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
-        return record.gpu_utilization
+        return record.telemetry_data.gpu_utilization

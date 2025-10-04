@@ -9,10 +9,10 @@ from aiperf.metrics.base_telemetry_metric import BaseTelemetryMetric
 class EnergyConsumptionMetric(BaseTelemetryMetric[float]):
     tag = "energy_consumption"
     header = "Energy Consumption"
-    unit = EnergyMetricUnit.MILLIJOULE
+    unit = EnergyMetricUnit.MEGAJOULE
     display_order = None
     required_metrics = None
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
-        return record.energy_consumption
+        return record.telemetry_data.energy_consumption
