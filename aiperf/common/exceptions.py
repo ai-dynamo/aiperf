@@ -143,6 +143,10 @@ class NoMetricValue(AIPerfError):
     """Raised when a metric value is not available."""
 
 
+class PostProcessorDisabled(AIPerfError):
+    """Raised when initializing a post processor to indicate to the caller that it is disabled and should not be used."""
+
+
 class ProxyError(AIPerfError):
     """Exception raised when a proxy encounters an error."""
 

@@ -20,8 +20,8 @@ from aiperf.common.enums import (
     MessageType,
     ServiceType,
 )
-from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.enums.ui_enums import AIPerfUIType
+from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.factories import (
     ResultsProcessorFactory,
     ServiceFactory,
@@ -50,7 +50,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol, ServiceProtocol
-from aiperf.common.types import MetricTagT
+from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.records.phase_completion import (
@@ -106,16 +106,21 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._results_processors: list[ResultsProcessorProtocol] = []
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
-            results_processor = ResultsProcessorFactory.create_instance(
-                class_type=results_processor_type,
-                service_id=self.service_id,
-                service_config=self.service_config,
-                user_config=self.user_config,
-            )
-            self.debug(
-                f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
-            )
-            self._results_processors.append(results_processor)
+            try:
+                results_processor = ResultsProcessorFactory.create_instance(
+                    class_type=results_processor_type,
+                    service_id=self.service_id,
+                    service_config=self.service_config,
+                    user_config=self.user_config,
+                )
+                self.debug(
+                    f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
+                )
+                self._results_processors.append(results_processor)
+            except PostProcessorDisabled:
+                self.debug(
+                    f"Results processor {results_processor_type} is disabled and will not be used"
+                )
 
     @on_pull_message(MessageType.METRIC_RECORDS)
     async def _on_metric_records(self, message: MetricRecordsMessage) -> None:
@@ -123,18 +128,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 
-        if message.credit_phase != CreditPhase.PROFILING:
-            self.debug(lambda: f"Skipping non-profiling record: {message.credit_phase}")
+        if message.metadata.credit_phase != CreditPhase.PROFILING:
+            self.debug(
+                lambda: f"Skipping non-profiling record: {message.metadata.credit_phase}"
+            )
             return
 
-        should_include_request = self._should_include_request_by_duration(
-            message.results
-        )
+        record_dicts = [MetricRecordDict(result) for result in message.results]
+
+        should_include_request = self._should_include_request_by_duration(record_dicts)
 
         if should_include_request:
-            await self._send_results_to_results_processors(message.results)
+            await self._send_results_to_results_processors(message)
 
-        worker_id = message.worker_id
+        worker_id = message.metadata.worker_id
 
         if message.valid and should_include_request:
             # Valid record
@@ -168,12 +175,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         await self._check_if_all_records_received()
 
     def _should_include_request_by_duration(
-        self, results: list[dict[MetricTagT, MetricValueTypeT]]
+        self, record_dicts: list[MetricRecordDict]
     ) -> bool:
         """Determine if the request should be included based on benchmark duration.
 
         Args:
-            results: List of metric results for a single request
+            record_dicts: List of metric record dicts for a single request
 
         Returns:
             True if the request should be included, else False
@@ -188,7 +195,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         # Check if any response in this request was received after the duration
         # If so, filter out the entire request (all-or-nothing approach)
-        for result_dict in results:
+        for result_dict in record_dicts:
             request_timestamp = result_dict.get(MinRequestTimestampMetric.tag)
             request_latency = result_dict.get(RequestLatencyMetric.tag)
 
@@ -255,14 +262,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._process_results(cancelled=cancelled)
 
     async def _send_results_to_results_processors(
-        self, results: list[dict[MetricTagT, MetricValueTypeT]]
+        self, message: MetricRecordsMessage
     ) -> None:
         """Send the results to each of the results processors."""
         await asyncio.gather(
             *[
-                results_processor.process_result(result)
+                results_processor.process_result(message)
                 for results_processor in self._results_processors
-                for result in results
             ]
         )
 

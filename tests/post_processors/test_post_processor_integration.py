@@ -9,7 +9,7 @@ import pytest
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict
+from aiperf.metrics.metric_dicts import MetricArray
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
@@ -18,6 +18,7 @@ from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetr
 from aiperf.post_processors.metric_record_processor import MetricRecordProcessor
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from tests.post_processors.conftest import (
+    create_metric_records_message,
     create_results_processor_with_metrics,
     setup_mock_registry_sequences,
 )
@@ -41,11 +42,12 @@ class TestPostProcessorIntegration:
         results_processor = create_results_processor_with_metrics(
             mock_user_config, RequestLatencyMetric, RequestCountMetric
         )
-        test_record_dict = MetricRecordDict(
-            {RequestLatencyMetric.tag: 100.0, RequestCountMetric.tag: 1}
+        message = create_metric_records_message(
+            x_request_id="test-1",
+            results=[{RequestLatencyMetric.tag: 100.0, RequestCountMetric.tag: 1}],
         )
 
-        await results_processor.process_result(test_record_dict)
+        await results_processor.process_result(message)
 
         assert RequestLatencyMetric.tag in results_processor._results
         assert isinstance(
@@ -67,12 +69,14 @@ class TestPostProcessorIntegration:
             mock_user_config, RequestLatencyMetric
         )
 
-        batches = [
-            MetricRecordDict({RequestLatencyMetric.tag: value})
-            for value in TEST_LATENCY_VALUES
-        ]
-        for batch in batches:
-            await results_processor.process_result(batch)
+        for idx, value in enumerate(TEST_LATENCY_VALUES):
+            message = create_metric_records_message(
+                x_request_id=f"test-{idx}",
+                timestamp_ns=1_000_000_000 + idx,
+                x_correlation_id=f"test-correlation-{idx}",
+                results=[{RequestLatencyMetric.tag: value}],
+            )
+            await results_processor.process_result(message)
 
         assert RequestLatencyMetric.tag in results_processor._results
         accumulated_data = list(

@@ -1,19 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import (
-    Field,
-    SerializeAsAny,
-)
+from pydantic import Field, SerializeAsAny
 
-from aiperf.common.enums import (
-    CreditPhase,
-    MessageType,
-)
+from aiperf.common.enums import MessageType
 from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetails, RequestRecord
-from aiperf.common.models.record_models import MetricResult
+from aiperf.common.models.record_models import MetricRecordMetadata, MetricResult
 from aiperf.common.types import MessageTypeT, MetricTagT
 
 
@@ -33,23 +27,11 @@ class MetricRecordsMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.METRIC_RECORDS
 
-    timestamp_ns: int = Field(
-        ..., description="The wall clock timestamp of the request in nanoseconds."
-    )
-    x_request_id: str | None = Field(
-        default=None, description="The X-Request-ID header of the request."
-    )
-    x_correlation_id: str | None = Field(
-        default=None, description="The X-Correlation-ID header of the request."
-    )
-    worker_id: str = Field(
-        ..., description="The ID of the worker that processed the request."
-    )
-    credit_phase: CreditPhase = Field(
-        ..., description="The credit phase of the request."
+    metadata: MetricRecordMetadata = Field(
+        ..., description="The metadata of the request record."
     )
     results: list[dict[MetricTagT, MetricValueTypeT]] = Field(
-        ..., description="The record processor results"
+        ..., description="The record processor metric results"
     )
     error: ErrorDetails | None = Field(
         default=None, description="The error details if the request failed."
