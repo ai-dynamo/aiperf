@@ -8,6 +8,7 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
+    CommAddress,
     CommandType,
     ServiceType,
 )
@@ -21,6 +22,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import (
+    PushClientProtocol,
     ServiceProtocol,
 )
 from aiperf.gpu_telemetry.constants import (
@@ -64,6 +66,10 @@ class TelemetryManager(BaseComponentService):
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+        )
+
+        self.records_push_client: PushClientProtocol = self.comms.create_push_client(
+            CommAddress.RECORDS,
         )
 
         self._collectors: dict[str, TelemetryDataCollector] = {}
@@ -280,7 +286,7 @@ class TelemetryManager(BaseComponentService):
                 error=None,
             )
 
-            await self.publish(message)
+            await self.records_push_client.push(message)
 
         except Exception as e:
             self.error(f"Failed to send telemetry records: {e}")
@@ -304,7 +310,7 @@ class TelemetryManager(BaseComponentService):
                 error=error,
             )
 
-            await self.publish(error_message)
+            await self.records_push_client.push(error_message)
 
         except Exception as e:
             self.error(f"Failed to send telemetry error message: {e}")

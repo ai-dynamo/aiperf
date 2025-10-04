@@ -31,6 +31,18 @@ DCGM_FI_DEV_GPU_UTIL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci
 # HELP DCGM_FI_DEV_FB_USED Framebuffer memory used (in MiB)
 # TYPE DCGM_FI_DEV_FB_USED gauge
 DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 46614
+# HELP DCGM_FI_DEV_MEM_COPY_UTIL Memory copy utilization (in %)
+# TYPE DCGM_FI_DEV_MEM_COPY_UTIL gauge
+DCGM_FI_DEV_MEM_COPY_UTIL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 15
+# HELP DCGM_FI_DEV_XID_ERRORS Value of the last XID error encountered
+# TYPE DCGM_FI_DEV_XID_ERRORS gauge
+DCGM_FI_DEV_XID_ERRORS{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+# HELP DCGM_FI_DEV_POWER_VIOLATION Throttling duration due to power constraints (in us)
+# TYPE DCGM_FI_DEV_POWER_VIOLATION counter
+DCGM_FI_DEV_POWER_VIOLATION{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 12000
+# HELP DCGM_FI_DEV_THERMAL_VIOLATION Throttling duration due to thermal constraints (in us)
+# TYPE DCGM_FI_DEV_THERMAL_VIOLATION counter
+DCGM_FI_DEV_THERMAL_VIOLATION{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 5000
 """
 
 
@@ -58,6 +70,26 @@ DCGM_FI_DEV_GPU_UTIL{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci
 DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 15640
 DCGM_FI_DEV_FB_USED{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
 DCGM_FI_DEV_FB_USED{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 0
+# HELP DCGM_FI_DEV_MEM_COPY_UTIL Memory copy utilization (in %)
+# TYPE DCGM_FI_DEV_MEM_COPY_UTIL gauge
+DCGM_FI_DEV_MEM_COPY_UTIL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 20
+DCGM_FI_DEV_MEM_COPY_UTIL{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+DCGM_FI_DEV_MEM_COPY_UTIL{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 10
+# HELP DCGM_FI_DEV_XID_ERRORS Value of the last XID error encountered
+# TYPE DCGM_FI_DEV_XID_ERRORS gauge
+DCGM_FI_DEV_XID_ERRORS{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+DCGM_FI_DEV_XID_ERRORS{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+DCGM_FI_DEV_XID_ERRORS{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 0
+# HELP DCGM_FI_DEV_POWER_VIOLATION Throttling duration due to power constraints (in us)
+# TYPE DCGM_FI_DEV_POWER_VIOLATION counter
+DCGM_FI_DEV_POWER_VIOLATION{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 15000
+DCGM_FI_DEV_POWER_VIOLATION{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+DCGM_FI_DEV_POWER_VIOLATION{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 8000
+# HELP DCGM_FI_DEV_THERMAL_VIOLATION Throttling duration due to thermal constraints (in us)
+# TYPE DCGM_FI_DEV_THERMAL_VIOLATION counter
+DCGM_FI_DEV_THERMAL_VIOLATION{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 3000
+DCGM_FI_DEV_THERMAL_VIOLATION{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+DCGM_FI_DEV_THERMAL_VIOLATION{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 5000
 """
 
 

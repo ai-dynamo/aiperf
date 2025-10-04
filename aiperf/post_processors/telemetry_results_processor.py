@@ -35,6 +35,10 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
             "memory_clock_frequency": "MHz",
             "memory_temperature": "°C",
             "gpu_temperature": "°C",
+            "memory_copy_utilization": "%",
+            "xid_errors": "count",
+            "power_violation": "us",
+            "thermal_violation": "us",
         }
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:

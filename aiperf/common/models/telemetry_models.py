@@ -41,6 +41,20 @@ class TelemetryMetrics(AIPerfBaseModel):
     gpu_temperature: float | None = Field(
         default=None, description="GPU temperature in °C"
     )
+    memory_copy_utilization: float | None = Field(
+        default=None, description="Memory copy utilization percentage (0-100)"
+    )
+    xid_errors: float | None = Field(
+        default=None, description="Value of the last XID error encountered"
+    )
+    power_violation: float | None = Field(
+        default=None,
+        description="Throttling duration due to power constraints in microseconds",
+    )
+    thermal_violation: float | None = Field(
+        default=None,
+        description="Throttling duration due to thermal constraints in microseconds",
+    )
 
 
 class TelemetryRecord(AIPerfBaseModel):

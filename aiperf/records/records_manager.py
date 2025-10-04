@@ -196,7 +196,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         await self._check_if_all_records_received()
 
-    @on_message(MessageType.TELEMETRY_RECORDS)
+    @on_pull_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
         """Handle telemetry records message from Telemetry Manager.
         The RecordsManager acts as the central hub for all record processing,

@@ -176,7 +176,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                     metric_key, metric_key, metric_display, unit
                 )
 
-                row = [metric_display]
+                row = [f"{metric_display} ({unit})"]
                 for stat in self.STAT_COLUMN_KEYS:
                     value = getattr(metric_result, stat, None)
                     row.append(f"{value:.2f}" if value is not None else "N/A")
