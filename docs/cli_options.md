@@ -145,8 +145,7 @@ Use these options to profile with AIPerf.
 │ IMAGE-WIDTH-STDDEV --image-width-stddev                 The standard deviation of width of images when generating synthetic image data. [default: 0.0]                                │
 │ IMAGE-HEIGHT-MEAN --image-height-mean                   The mean height of images when generating synthetic image data. [default: 0.0]                                                │
 │ IMAGE-HEIGHT-STDDEV --image-height-stddev               The standard deviation of height of images when generating synthetic image data. [default: 0.0]                               │
-│ IMAGE-BATCH-SIZE --image-batch-size --batch-size-image  The image batch size of the requests AIPerf should send. This is currently supported with the image retrieval endpoint type.  │
-│                                                         [default: 1]                                                                                                                  │
+│ IMAGE-BATCH-SIZE --image-batch-size --batch-size-image  The image batch size of the requests AIPerf should send.  [default: 1]                                                        │
 │ IMAGE-FORMAT --image-format                             The compression format of the images. [choices: png, jpeg, random] [default: png]                                             │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```

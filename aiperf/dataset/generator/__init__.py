@@ -23,6 +23,9 @@ from aiperf.dataset.generator.prompt import (
     DEFAULT_CORPUS_FILE,
     PromptGenerator,
 )
+from aiperf.dataset.generator.video import (
+    VideoGenerator,
+)
 
 __all__ = [
     "AudioGenerator",
@@ -32,4 +35,5 @@ __all__ = [
     "MP3_SUPPORTED_SAMPLE_RATES",
     "PromptGenerator",
     "SUPPORTED_BIT_DEPTHS",
+    "VideoGenerator",
 ]

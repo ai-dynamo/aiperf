@@ -6,7 +6,7 @@ import uuid
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import ComposerType
 from aiperf.common.factories import ComposerFactory
-from aiperf.common.models import Audio, Conversation, Image, Text, Turn
+from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset import utils
 from aiperf.dataset.composer.base import BaseDatasetComposer
@@ -73,6 +73,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             turn.images.append(self._generate_image_payloads())
         if self.include_audio:
             turn.audios.append(self._generate_audio_payloads())
+        if self.include_video:
+            turn.videos.append(self._generate_video_payloads())
 
         if not is_first:
             delay = utils.sample_positive_normal_integer(
@@ -81,7 +83,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             )
             turn.delay = delay * self.config.input.conversation.turn.delay.ratio
 
-        if not turn.texts and not turn.images and not turn.audios:
+        if not turn.texts and not turn.images and not turn.audios and not turn.videos:
             self.logger.warning(
                 "There were no synthetic payloads generated. "
                 "Please enable at least one of prompt, image, or audio by "
@@ -145,6 +147,20 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             audio.contents.append(data)
         return audio
 
+    def _generate_video_payloads(self) -> Video:
+        """
+        Generate synthetic videos if the video width and height are specified.
+
+        Returns:
+            Video: A video payload object.
+        """
+        video = Video(name="video_url")
+        for _ in range(self.config.input.video.batch_size):
+            data = self.video_generator.generate()
+            if data:  # Only append if video was actually generated
+                video.contents.append(data)
+        return video
+
     @property
     def include_prompt(self) -> bool:
         return self.config.input.prompt.input_tokens.mean > 0
@@ -159,3 +175,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
     @property
     def include_audio(self) -> bool:
         return self.config.input.audio.length.mean > 0
+
+    @property
+    def include_video(self) -> bool:
+        return self.config.input.video.width > 0 and self.config.input.video.height > 0

@@ -5,8 +5,9 @@ from aiperf.common.enums import CaseInsensitiveStrEnum
 
 
 class MediaType(CaseInsensitiveStrEnum):
-    """The various types of media (e.g. text, image, audio)."""
+    """The various types of media (e.g. text, image, audio, video)."""
 
     TEXT = "text"
     IMAGE = "image"
     AUDIO = "audio"
+    VIDEO = "video"

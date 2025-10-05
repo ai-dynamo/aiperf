@@ -39,6 +39,7 @@ from aiperf.common.config.config_defaults import (
     TokenizerDefaults,
     TurnDefaults,
     TurnDelayDefaults,
+    VideoDefaults,
     WorkersDefaults,
 )
 from aiperf.common.config.config_validators import (
@@ -101,6 +102,9 @@ from aiperf.common.config.tokenizer_config import (
 from aiperf.common.config.user_config import (
     UserConfig,
 )
+from aiperf.common.config.video_config import (
+    VideoConfig,
+)
 from aiperf.common.config.worker_config import (
     WorkersConfig,
 )
@@ -159,6 +163,8 @@ __all__ = [
     "TurnDelayConfig",
     "TurnDelayDefaults",
     "UserConfig",
+    "VideoConfig",
+    "VideoDefaults",
     "WorkersConfig",
     "WorkersDefaults",
     "ZMQIPCConfig",
