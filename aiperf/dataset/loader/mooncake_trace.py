@@ -27,9 +27,15 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
     converted to a separate conversation with a unique session ID.
 
     Example:
-    Fixed schedule version (Each line is a distinct session. Multi-turn is NOT supported)
+    Fixed schedule version
     ```json
     {"timestamp": 1000, "input_length": 300, "output_length": 40, "hash_ids": [123, 456]}
+    ```
+
+    Multi-turn version
+    ```json
+    {"session_id": "abc-123", "input_length": 300, "output_length": 40},
+    {"session_id": "abc-123", "delay": 2, "input_length": 150, "output_length": 20}
     ```
     """
 
@@ -70,7 +76,7 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
                     self._skipped_traces += 1
                     continue  # Skip traces before or after the fixed schedule offset
 
-                session_id = str(uuid.uuid4())
+                session_id = trace_data.session_id or str(uuid.uuid4())
                 data[session_id].append(trace_data)
 
         if self._skipped_traces > 0:
@@ -116,6 +122,7 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
 
                 turn = Turn(
                     timestamp=trace.timestamp,
+                    delay=trace.delay,
                     texts=[Text(name="text", contents=[prompt])],
                     max_tokens=trace.output_length,
                 )

@@ -5,6 +5,7 @@ from aiperf.common.enums import GenericMetricUnit, MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_record_metric import BaseRecordMetric
+from aiperf.metrics.derived_sum_metric import DerivedSumMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 
 
@@ -39,3 +40,24 @@ class InputSequenceLengthMetric(BaseRecordMetric[int]):
             raise NoMetricValue("Input Token Count is not available for the record.")
 
         return record.input_token_count
+
+
+class TotalInputSequenceLengthMetric(DerivedSumMetric[int, InputSequenceLengthMetric]):
+    """
+    This is the total number of input tokens processed by the benchmark.
+
+    Formula:
+        ```
+        Total Input Sequence Length = Sum(Input Sequence Lengths)
+        ```
+    """
+
+    tag = "total_isl"
+    header = "Total Input Sequence Length"
+    short_header = "Total ISL"
+    short_header_hide_unit = True
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.LARGER_IS_BETTER
+        | MetricFlags.NO_CONSOLE
+    )

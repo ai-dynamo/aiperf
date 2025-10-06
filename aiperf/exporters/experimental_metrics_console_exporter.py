@@ -39,12 +39,8 @@ class ConsoleExperimentalMetricsExporter(ConsoleMetricsExporter):
 
     def _should_show(self, record: MetricResult) -> bool:
         metric_class = MetricRegistry.get_class(record.tag)
-        # Only show experimental or hidden metrics that are not internal
-        return (
-            metric_class.has_flags(MetricFlags.EXPERIMENTAL)
-            or metric_class.has_flags(MetricFlags.HIDDEN)
-            and metric_class.missing_flags(MetricFlags.INTERNAL)
-        )
+        # Only show experimental metrics
+        return metric_class.has_flags(MetricFlags.EXPERIMENTAL)
 
     def _get_title(self) -> str:
         return "[yellow]NVIDIA AIPerf | Experimental Metrics[/yellow]"

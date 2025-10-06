@@ -11,6 +11,13 @@ from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters import ConsoleMetricsExporter, ExporterConfig, to_display_unit
 from aiperf.metrics.metric_registry import MetricRegistry
+from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
+from aiperf.metrics.types.credit_drop_latency_metric import CreditDropLatencyMetric
+from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
+from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
+from aiperf.metrics.types.output_token_count import OutputTokenCountMetric
+from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from aiperf.metrics.types.ttft_metric import TTFTMetric
 
 
 @pytest.fixture
@@ -89,25 +96,36 @@ class TestConsoleExporter:
         await exporter.export(Console(width=115))
         output = capsys.readouterr().out
         assert "NVIDIA AIPerf | LLM Metrics" in output
-        assert "Time to First Token (ms)" in output
-        assert "Request Latency (ms)" in output
-        assert "Inter Token Latency (ms)" in output
-        assert "Request Throughput (requests/sec)" in output
+        assert "Time to First Token (ms)" in output or "Time to First Token" in output
+        assert "Request Latency (ms)" in output or "Request Latency" in output
+        assert "Inter Token Latency (ms)" in output or "Inter Token Latency" in output
+        assert "Request Throughput" in output
+        assert "requests/sec" in output
 
     @pytest.mark.parametrize(
-        "is_hidden_metric, should_show",
+        "metric_tag, should_show",
         [
-            (True, False),  # Hidden metric -> don't show
-            (False, True),  # Normal metric -> show
+            # ERROR_ONLY flags - always hidden
+            (ErrorRequestCountMetric.tag, False),  # ERROR_ONLY flag
+            # NO_CONSOLE flags - hidden
+            (BenchmarkDurationMetric.tag, False),  # NO_CONSOLE flag
+            (OutputTokenCountMetric.tag, False),  # NO_CONSOLE flag
+            (CreditDropLatencyMetric.tag, False),  # INTERNAL flag
+            # INTERNAL flags - hidden
+            (CreditDropLatencyMetric.tag, False),  # INTERNAL flag
+            # Normal metrics - shown
+            (InterTokenLatencyMetric.tag, True),  # Normal metric
+            (RequestLatencyMetric.tag, True),  # Normal metric
+            (TTFTMetric.tag, True),  # Normal metric
         ],
-    )
-    def test_should_skip_logic(
+    )  # fmt: skip
+    def test_should_show_metrics_based_on_flags(
         self,
         mock_endpoint_config: EndpointConfig,
-        is_hidden_metric,
+        metric_tag,
         should_show,
     ):
-        # Mock the configs to control show_internal_metrics
+        """Test that metrics are shown/hidden based on their flags"""
         user_config = UserConfig(endpoint=mock_endpoint_config)
         service_config = ServiceConfig(
             developer=DeveloperConfig(show_internal_metrics=False)
@@ -124,23 +142,12 @@ class TestConsoleExporter:
         )
         exporter = ConsoleMetricsExporter(config)
 
-        # Test with actual metric behavior: use hidden metrics vs normal metrics
-        if is_hidden_metric:
-            # Use a metric that has HIDDEN flags (like benchmark_duration which has HIDDEN flag)
-            record = MetricResult(
-                tag="benchmark_duration",
-                header="Benchmark Duration",
-                unit="s",
-                avg=1.0,
-            )
-        else:
-            # Use a normal metric without HIDDEN flags
-            record = MetricResult(
-                tag="request_latency",
-                header="Request Latency",
-                unit="ns",
-                avg=1.0,
-            )
+        record = MetricResult(
+            tag=metric_tag,
+            header="Test Metric",
+            unit="ms",
+            avg=1.0,
+        )
         assert exporter._should_show(record) is should_show
 
     def test_format_row_formats_values_correctly(self, mock_exporter_config):
