@@ -56,6 +56,7 @@ aiperf = "aiperf.cli:app"
 [project.optional-dependencies]
 dev = [
   "black>=25.1.0",
+  "fakeai==0.3.1",
   "mkinit>=1.1.0",
   "pre-commit>=4.2.0",
   "pytest-asyncio",
@@ -97,3 +98,7 @@ ignore = ["E501"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: marks tests as integration tests (deselected by default)",
+    "performance: marks tests as performance tests (deselected by default)",
+]
