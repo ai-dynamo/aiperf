@@ -177,33 +177,6 @@ class TestBaseDatasetComposer:
         assert turn_id in composer._turn_sequence_cache
         assert composer._turn_sequence_cache[turn_id] == expected
 
-    def test_sample_sequence_lengths_with_distribution(
-        self, sequence_dist_config, mock_tokenizer
-    ):
-        """Test deprecated _sample_sequence_lengths method with distribution."""
-        composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)
-
-        with patch.object(composer._seq_distribution, "sample") as mock_sample:
-            mock_sample.return_value = (180, 90)
-
-            result = composer._sample_sequence_lengths()
-            assert result == (180, 90)
-            mock_sample.assert_called_once_with(random_state=composer._seq_rng)
-
-    def test_sample_sequence_lengths_without_distribution(
-        self, base_config, mock_tokenizer
-    ):
-        """Test deprecated _sample_sequence_lengths method without distribution."""
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
-
-        result = composer._sample_sequence_lengths()
-
-        expected = (
-            base_config.input.prompt.input_tokens.mean,
-            base_config.input.prompt.output_tokens.mean,
-        )
-        assert result == expected
-
     def test_clear_turn_cache(self, sequence_dist_config, mock_tokenizer):
         """Test clearing turn cache."""
         composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)

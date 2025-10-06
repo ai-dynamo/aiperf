@@ -22,12 +22,13 @@ with different ISL and OSL pairings.
 Add variance to make workloads more realistic:
 
 ```bash
-aiperf benchmark \
-    --model nvidia/llama-3.1-nemotron-70b-instruct \
-    --dataset synthetic \
-    --sequence-distribution "256|20,128|10:60;512|40,256|20:40" \
-    --concurrency 10 \
-    --num-requests 100
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --endpoint /v1/chat/completions \
+    --streaming \
+    --url localhost:8000 \
+    --sequence-distribution "64|10,32|8:70;256|40,128|20:20;1024|100,512|50:10" \
 ```
 
 This creates:
@@ -77,198 +78,24 @@ Values are automatically clamped to be at least 1.
 ]}
 ```
 
-## Practical Examples
+## Examples
 
-### Example 1: Chatbot Workload Simulation
+### Example Case: Chatbot Workload Simulation
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Simulate typical chatbot traffic:
 # - 70% short queries (quick questions)
 # - 20% medium queries (explanations)
 # - 10% long queries (complex tasks)
 
-aiperf benchmark \
-    --model nvidia/llama-3.1-nemotron-70b-instruct \
-    --dataset synthetic \
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --endpoint /v1/chat/completions \
+    --streaming \
+    --url localhost:8000 \
     --sequence-distribution "64|10,32|8:70;256|40,128|20:20;1024|100,512|50:10" \
-    --request-rate 2.0 \
-    --duration 300s
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-### Example 2: Code Generation Workload
-
-```bash
-# Simulate code generation patterns:
-# - 40% simple functions (short context, medium output)
-# - 35% refactoring tasks (medium context, medium output)
-# - 25% complex implementations (long context, long output)
-
-aiperf benchmark \
-    --model nvidia/llama-3.1-nemotron-70b-instruct \
-    --dataset synthetic \
-    --sequence-distribution "128|20,256|40:40;512|80,384|60:35;2048|200,1024|100:25" \
-    --request-rate 1.0 \
-    --duration 600s
-```
-
-### Example 3: Mixed Production Workload
-
-```bash
-# Replicate observed production patterns with realistic variance
-aiperf benchmark \
-    --model nvidia/llama-3.1-nemotron-70b-instruct \
-    --dataset synthetic \
-    --sequence-distribution "[(128|25,64|15):45,(512|100,256|50):30,(1024|150,512|80):20,(2048|300,1024|150):5]" \
-    --concurrency 20 \
-    --num-requests 1000
-```
-
-## Advanced Usage
-
-### Working with Configuration Files
-
-Create a configuration file `workload.jsonl`:
-
-```json
-{
-  "model": "nvidia/llama-3.1-nemotron-70b-instruct",
-  "dataset": "synthetic",
-  "sequence_distribution": "256|20,128|10:50;512|40,256|20:30;1024|80,512|40:20",
-  "request_rate": 2.0,
-  "duration": "300s"
-}
-```
-
-Run with:
-```bash
-aiperf benchmark --config workload.jsonl
-```
-
-### Validating Distributions
-
-Test your distribution before running full benchmarks:
-
-```bash
-# Quick validation run
-aiperf benchmark \
-    --model nvidia/llama-3.1-nemotron-70b-instruct \
-    --dataset synthetic \
-    --sequence-distribution "your-distribution-here" \
-    --num-requests 10 \
-    --verbose
-```
-
-### Performance Considerations
-
-- **Standard deviations** add computational overhead during sampling
-- **Large distributions** (many pairs) may impact startup time slightly
-- **Extreme variance** (large stddev) may produce unexpected sequence lengths
-
-## Integration with Other Features
-
-### With Custom Datasets
-
-```bash
-# Use distributions with custom prompts
-aiperf benchmark \
-    --model nvidia/llama-3.1-nemotron-70b-instruct \
-    --dataset-path my_prompts.jsonl \
-    --sequence-distribution "256|20,128|10:60;512|40,256|20:40"
-```
-
-### With Rate Limiting
-
-```bash
-# Combine with sophisticated scheduling
-aiperf benchmark \
-    --model nvidia/llama-3.1-nemotron-70b-instruct \
-    --dataset synthetic \
-    --sequence-distribution "256|15,128|8:80;1024|50,512|25:20" \
-    --request-rate 1.5 \
-    --ramp-up-duration 60s \
-    --duration 300s
-```
-
-### With Multiple Endpoints
-
-```bash
-# Test distribution across different model sizes
-aiperf benchmark \
-    --model nvidia/llama-3.1-nemotron-70b-instruct \
-    --endpoint-urls http://server1:8000/v1 http://server2:8000/v1 \
-    --sequence-distribution "128|10,64|5:70;512|30,256|15:30" \
-    --load-balancing round-robin
-```
-
-## Monitoring and Analysis
-
-### Understanding Results
-
-The benchmark results will show:
-
-- **Average ISL/OSL**: Weighted averages across the distribution
-- **ISL/OSL Variance**: How much actual values varied from means
-- **Probability Adherence**: Whether the sampling matched expected ratios
-
-### Key Metrics to Monitor
-
-- **Latency by Sequence Length**: How performance varies with request size
-- **Throughput Stability**: Whether mixed workloads affect overall throughput
-- **Memory Usage**: Impact of varying sequence lengths on GPU memory
-- **Queue Depth**: How request size distribution affects batching
-
-## Best Practices
-
-### Designing Realistic Distributions
-
-1. **Analyze Production Logs**: Base distributions on real traffic patterns
-2. **Start Simple**: Begin with 2-3 pairs, add complexity gradually
-3. **Test Variance**: Use moderate standard deviations initially (10-20% of mean)
-4. **Validate Probabilities**: Ensure probabilities sum to 100% or 1.0
-
-### Performance Testing Strategy
-
-1. **Baseline First**: Test with uniform distributions for comparison
-2. **Gradual Complexity**: Start with basic distributions, add stddev later
-3. **Monitor Extremes**: Watch for outlier sequence lengths affecting performance
-4. **Statistical Significance**: Use enough requests for reliable probability sampling
-
-### Common Pitfalls
-
-- **Probability Sum**: Forgetting probabilities must sum to 100% (or 1.0)
-- **Excessive Variance**: Too-large stddev creating unrealistic sequence lengths
-- **Single-Pair Testing**: Using distributions with only one pair (use fixed ISL/OSL instead)
-- **Format Confusion**: Mixing probability formats (percentages vs fractions)
-
-## Troubleshooting
-
-### Validation Errors
-
-**"Probabilities must sum to 100.0"**
-```bash
-# Wrong: 256,128:50;512,256:40  (sums to 90)
-# Right: 256,128:55;512,256:45   (sums to 100)
-```
-
-**"Invalid format"**
-```bash
-# Wrong: "256,128|10:60"  (stddev on wrong value)
-# Right: "256|10,128:60"   (stddev after ISL)
-```
-
-### Performance Issues
-
-**Slow sampling with stddev:**
-- Reduce standard deviations or number of pairs
-- Consider simpler distributions for high-throughput testing
-
-**Unexpected sequence lengths:**
-- Check that stddev values are reasonable relative to means
-- Monitor for negative values being clamped to 1
-
-### Getting Help
-
-For advanced use cases or integration questions:
-- Check the [AIPerf documentation](../index.md)
-- Review [CLI options](../cli_options.md) for all available parameters
-- See [architecture guide](../architecture.md) for implementation details

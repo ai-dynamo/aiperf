@@ -84,39 +84,16 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             return self._turn_sequence_cache[turn_id]
 
         if self._seq_distribution is None:
-            # Fallback to original behavior if no distribution specified
             seq_lengths = (
                 self.config.input.prompt.input_tokens.mean,
                 self.config.input.prompt.output_tokens.mean
                 or max(128, self.config.input.prompt.input_tokens.mean // 2),
             )
         else:
-            # Sample new ISL/OSL pair using pre-seeded RNG
             seq_lengths = self._seq_distribution.sample(random_state=self._seq_rng)
 
-        # Cache for this turn
         self._turn_sequence_cache[turn_id] = seq_lengths
         return seq_lengths
-
-    def _sample_sequence_lengths(self) -> tuple[int, int]:
-        """Sample ISL/OSL pair from the sequence distribution.
-
-        DEPRECATED: Use _get_turn_sequence_lengths() with a turn ID to ensure
-        consistency between prompt generation and max_tokens setting.
-
-        Returns:
-            Tuple of (input_seq_len, output_seq_len)
-        """
-        if self._seq_distribution is None:
-            # Fallback to original behavior if no distribution specified
-            return (
-                self.config.input.prompt.input_tokens.mean,
-                self.config.input.prompt.output_tokens.mean
-                or max(128, self.config.input.prompt.input_tokens.mean // 2),
-            )
-
-        # Use pre-seeded RNG to avoid reseeding on each sample
-        return self._seq_distribution.sample(random_state=self._seq_rng)
 
     def _clear_turn_cache(self, turn_id: int) -> None:
         """Clear cached sequence lengths for a specific turn.
@@ -138,7 +115,6 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             _, osl = self._get_turn_sequence_lengths(turn_id)
             turn.max_tokens = osl
         else:
-            # Fallback to legacy behavior
             output_tokens_config = self.config.input.prompt.output_tokens
             if output_tokens_config.mean is not None:
                 stddev = output_tokens_config.stddev
