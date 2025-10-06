@@ -32,8 +32,9 @@ aiperf profile \
 ```
 
 This creates:
-- 60% of requests with ISL ~ Normal(256, 20), OSL ~ Normal(128, 10)
-- 40% of requests with ISL ~ Normal(512, 40), OSL ~ Normal(256, 20)
+- 70% of requests with ISL ~ Normal(64, 10), OSL ~ Normal(32, 8)
+- 20% of requests with ISL ~ Normal(256, 40), OSL ~ Normal(128, 20)
+- 10% of requests with ISL ~ Normal(1024, 100), OSL ~ Normal(512, 50)
 
 Values are automatically clamped to be at least 1.
 

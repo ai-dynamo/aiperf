@@ -106,11 +106,18 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         # Sample ISL/OSL pair for this request (cached for consistency)
         turn_id = id(turn)
-        isl, osl = self._get_turn_sequence_lengths(turn_id)
+        isl, _ = self._get_turn_sequence_lengths(turn_id)
+
+        # Preserve original variance unless sequence distribution is active
+        stddev = (
+            0
+            if self._seq_distribution is not None
+            else self.config.input.prompt.input_tokens.stddev
+        )
 
         for _ in range(self.config.input.prompt.batch_size):
             # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(mean=isl, stddev=0)
+            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
 
             # Add prefix prompt if this is the first turn and prefix is enabled
             if is_first and self.prefix_prompt_enabled:

@@ -209,10 +209,26 @@ class SequenceLengthDistribution:
         indices = np.searchsorted(self._cumulative_probs, rand_vals, side="right")
         indices = np.clip(indices, 0, len(self._pairs) - 1)
 
-        return [
-            (self._pairs[idx].input_seq_len, self._pairs[idx].output_seq_len)
-            for idx in indices
-        ]
+        samples: list[tuple[int, int]] = []
+        for idx in indices:
+            pair = self._pairs[idx]
+            if pair.input_seq_len_stddev > 0:
+                isl = _sample_positive_normal_integer(
+                    pair.input_seq_len, pair.input_seq_len_stddev
+                )
+            else:
+                isl = pair.input_seq_len
+
+            if pair.output_seq_len_stddev > 0:
+                osl = _sample_positive_normal_integer(
+                    pair.output_seq_len, pair.output_seq_len_stddev
+                )
+            else:
+                osl = pair.output_seq_len
+
+            samples.append((isl, osl))
+
+        return samples
 
     @property
     def pairs(self) -> tuple[SequenceLengthPair, ...]:

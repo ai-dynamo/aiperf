@@ -156,7 +156,8 @@ class TestSequenceLengthDistribution:
         dist = SequenceLengthDistribution(self.stddev_pairs)
 
         # Sample many times to test variance
-        samples = [dist.sample(random_state=42) for _ in range(1000)]
+        rng = np.random.default_rng(42)
+        samples = [dist.sample(random_state=rng) for _ in range(1000)]
 
         isl_values = [s[0] for s in samples]
         osl_values = [s[1] for s in samples]
