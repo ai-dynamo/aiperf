@@ -223,7 +223,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             record = await self._build_response_record(
                 conversation.session_id,
                 message,
-                turn,
+                turn_list,
                 turn_index,
                 drop_perf_ns,
             )
@@ -277,14 +277,18 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         self,
         conversation_id: str,
         message: CreditDropMessage,
-        turn: Turn,
+        turn_list: list[Turn],
         turn_index: int,
         drop_perf_ns: int,
     ) -> RequestRecord:
         """Build a RequestRecord from an inference API call for the given turn."""
         x_request_id = str(uuid.uuid4())
-        record = await self._call_inference_api_internal(message, turn, x_request_id)
-        record.model_name = turn.model or self.model_endpoint.primary_model_name
+        record = await self._call_inference_api_internal(
+            message, turn_list, x_request_id
+        )
+        record.model_name = (
+            turn_list[-1].model or self.model_endpoint.primary_model_name
+        )
         record.conversation_id = conversation_id
         record.turn_index = turn_index
         record.credit_phase = message.phase
@@ -311,12 +315,12 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
     async def _call_inference_api_internal(
         self,
         message: CreditDropMessage,
-        turn: Turn,
+        turn_list: list[Turn],
         x_request_id: str,
     ) -> RequestRecord:
         """Make a single call to the inference API. Will return an error record if the call fails."""
         if self.is_trace_enabled:
-            self.trace(f"Calling inference API for turn: {turn}")
+            self.trace(f"Calling inference API for turn: {turn_list[-1]}")
         formatted_payload = None
         pre_send_perf_ns = None
         timestamp_ns = None
@@ -324,7 +328,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             # Format payload for the API request
             formatted_payload = await self.request_converter.format_payload(
                 model_endpoint=self.model_endpoint,
-                turn=turn,
+                turn=turn_list,
             )
 
             # NOTE: Current implementation of the TimingManager bypasses this, it is for future use.
@@ -375,9 +379,9 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                 if self.is_debug_enabled:
                     delay_s = message.cancel_after_ns / NANOS_PER_SECOND
                     self.debug(f"Request cancelled after {delay_s:.3f}s")
-
+                # TODO what do i do with the turn here?
                 return RequestRecord(
-                    turn=turn,
+                    turn=turn_list[-1],
                     timestamp_ns=timestamp_ns,
                     start_perf_ns=pre_send_perf_ns,
                     end_perf_ns=cancellation_perf_ns,
@@ -398,7 +402,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                 f"Error calling inference server API at {self.model_endpoint.url}: {e!r}"
             )
             return RequestRecord(
-                turn=turn,
+                turn=turn_list[-1],
                 timestamp_ns=timestamp_ns or time.time_ns(),
                 # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
                 start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),
