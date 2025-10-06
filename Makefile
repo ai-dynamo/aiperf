@@ -18,7 +18,7 @@
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install docker docker-run first-time-setup \
 		test-verbose init-files setup-venv setup-mkinit \
-		test-integration test-integration-verbose test-integration-coverage \
+		test-integration test-integration-verbose \
 		internal-help help
 
 
@@ -177,16 +177,11 @@ first-time-setup: #? convenience command to setup the environment for the first 
 
 test-integration: #? run integration tests with with FakeAI server.
 	@printf "$(bold)$(blue)Running integration tests with FakeAI server...$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -q $(args)
+	$(activate_venv) && pytest tests/integration/ -n auto -v $(args)
 	@printf "$(bold)$(green)Integration tests passed!$(reset)\n"
 
 test-integration-verbose: #? run integration tests with verbose output with FakeAI server.
 	@printf "$(bold)$(blue)Running integration tests (verbose, sequential) with FakeAI server...$(reset)\n"
 	@printf "$(yellow)Note: Sequential mode shows real-time AIPerf output$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -v -s --log-cli-level=INFO $(args)
-	@printf "$(bold)$(green)Integration tests passed!$(reset)\n"
-
-test-integration-coverage: #? run integration tests and generate coverage report.
-	@printf "$(bold)$(blue)Running integration tests with FakeAI server and generating coverage report...$(reset)\n"
-	$(activate_venv) && pytest -n auto --cov=aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not performance' $(args)
 	@printf "$(bold)$(green)Integration tests passed!$(reset)\n"
