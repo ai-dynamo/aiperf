@@ -48,11 +48,6 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
             record: TelemetryRecord containing GPU metrics and hierarchical metadata
         """
 
-        if self.is_trace_enabled:
-            self.trace(
-                f"Processing telemetry for GPU {record.gpu_uuid} from {record.dcgm_url}"
-            )
-
         self._telemetry_hierarchy.add_record(record)
 
     async def summarize(self) -> list[MetricResult]:

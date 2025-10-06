@@ -144,7 +144,9 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         for endpoint in endpoints_tested:
             clean_endpoint = normalize_endpoint_display(endpoint)
             if endpoint in endpoints_successful:
-                title_lines.append(f"[green]• {clean_endpoint} ✅[/green]")
+                title_lines.append(
+                    f"[green]• {clean_endpoint} :heavy_check_mark:[/green]"
+                )
             else:
                 title_lines.append(f"[red]• {clean_endpoint} ❌ (unreachable)[/red]")
 

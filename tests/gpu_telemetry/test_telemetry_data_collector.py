@@ -378,7 +378,6 @@ class TestCollectionLifecycle:
                 )
             else:
                 assert all(isinstance(r, TelemetryRecord) for r in records_received)
-                print(f"Successfully collected {len(records_received)} records")
 
     @pytest.mark.asyncio
     async def test_error_handling_in_collection_loop(self):
