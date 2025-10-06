@@ -223,7 +223,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|
-| **Goodput Constraints** | `--goodput -g` | ✅ | ❌ | |
+| **Goodput Constraints** | `--goodput -g` | ✅ | ✅ | |
 | **Verbose** | `-v --verbose` | ✅ | ✅ | |
 | **Extra Verbose** | `-vv` | ✅ | ✅ | |
 | **Log Level** | `--log-level` | ❌ | ✅ | `{trace,debug,info,notice,warning,success,error,critical}` |
