@@ -19,20 +19,20 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
     async def format_payload(
         self,
         model_endpoint: ModelEndpointInfo,
-        turn: Turn,
+        turns: list[Turn],
     ) -> dict[str, Any]:
         """Format payload for a chat completion request."""
 
-        messages = self._create_messages(turn)
+        messages = self._create_messages(turns)
 
         payload = {
             "messages": messages,
-            "model": turn.model or model_endpoint.primary_model_name,
+            "model": turns[-1].model or model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }
 
-        if turn.max_tokens is not None:
-            payload["max_completion_tokens"] = turn.max_tokens
+        if turns[-1].max_tokens is not None:
+            payload["max_completion_tokens"] = turns[-1].max_tokens
 
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
@@ -40,11 +40,12 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
         self.debug(lambda: f"Formatted payload: {payload}")
         return payload
 
-    def _create_messages(self, turn: Turn) -> list[dict[str, Any]]:
+    def _create_messages(self, turns: list[Turn]) -> list[dict[str, Any]]:
         message = {
-            "role": turn.role or DEFAULT_ROLE,
+            "role": turns[-1].role or DEFAULT_ROLE,
         }
-
+        ### count the number of texts in the turns here
+        text_count = sum(len(turn.texts) for turn in turns)
         if (
             len(turn.texts) == 1
             and len(turn.texts[0].contents) == 1
