@@ -68,7 +68,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn = Turn()
 
         if self.include_prompt:
-            turn.texts.append(self._generate_text_payloads(is_first))
+            turn.texts.append(self._generate_text_payloads(turn, is_first))
         if self.include_image:
             turn.images.append(self._generate_image_payloads())
         if self.include_audio:
@@ -92,13 +92,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         return turn
 
-    def _generate_text_payloads(self, is_first: bool) -> Text:
-        """Generate synthetic text payloads.
-
-        If the turn is the first turn in the conversation, it could add a prefix prompt
-        to the prompt.
+    def _generate_text_payloads(self, turn: Turn, is_first: bool) -> Text:
+        """Generate text payloads for a single turn.
 
         Args:
+            turn: The turn object (used for caching sequence lengths)
             is_first: Whether the turn is the first turn in the conversation.
 
         Returns:
@@ -106,22 +104,21 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         """
         text = Text(name="text")
 
-        # Sample ISL/OSL pair for this request
-        isl, osl = self._sample_sequence_lengths()
+        # Sample ISL/OSL pair for this request (cached for consistency)
+        turn_id = id(turn)
+        isl, osl = self._get_turn_sequence_lengths(turn_id)
 
         for _ in range(self.config.input.prompt.batch_size):
-            # Use sampled ISL from sequence distribution, no stddev (exact length)
-            prompt = self.prompt_generator.generate(
-                mean=isl,
-                stddev=0,  # Use exact length from distribution
-            )
+            # Generate prompt content using the sampled input sequence length
+            content = self.prompt_generator.generate(mean=isl, stddev=0)
 
-            if self.prefix_prompt_enabled and is_first:
-                # TODO: Rename
-                prefix_prompt = self.prompt_generator.get_random_prefix_prompt()
-                prompt = f"{prefix_prompt} {prompt}"
+            # Add prefix prompt if this is the first turn and prefix is enabled
+            if is_first and self.prefix_prompt_enabled:
+                prefix = self.prompt_generator.get_random_prefix_prompt()
+                content = f"{prefix} {content}"
 
-            text.contents.append(prompt)
+            text.contents.append(content)
+
         return text
 
     def _generate_image_payloads(self) -> Image:

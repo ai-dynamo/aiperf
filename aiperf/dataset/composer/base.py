@@ -35,6 +35,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         seed = getattr(self.config.input, "random_seed", None)
         self._seq_rng = np.random.default_rng(seed) if seed is not None else None
 
+        # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
+        self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
+
     @abstractmethod
     def create_dataset(self) -> list[Conversation]:
         """
@@ -65,8 +68,41 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 f"Invalid model selection strategy: {self.config.endpoint.model_selection_strategy}."
             )
 
+    def _get_turn_sequence_lengths(self, turn_id: int) -> tuple[int, int]:
+        """Get or sample ISL/OSL pair for a specific turn, ensuring consistency.
+
+        This method caches the sequence lengths per turn to ensure that the same
+        ISL/OSL pair is used for both prompt generation and max_tokens setting.
+
+        Args:
+            turn_id: Unique identifier for the turn
+
+        Returns:
+            Tuple of (input_seq_len, output_seq_len)
+        """
+        if turn_id in self._turn_sequence_cache:
+            return self._turn_sequence_cache[turn_id]
+
+        if self._seq_distribution is None:
+            # Fallback to original behavior if no distribution specified
+            seq_lengths = (
+                self.config.input.prompt.input_tokens.mean,
+                self.config.input.prompt.output_tokens.mean
+                or max(128, self.config.input.prompt.input_tokens.mean // 2),
+            )
+        else:
+            # Sample new ISL/OSL pair using pre-seeded RNG
+            seq_lengths = self._seq_distribution.sample(random_state=self._seq_rng)
+
+        # Cache for this turn
+        self._turn_sequence_cache[turn_id] = seq_lengths
+        return seq_lengths
+
     def _sample_sequence_lengths(self) -> tuple[int, int]:
         """Sample ISL/OSL pair from the sequence distribution.
+
+        DEPRECATED: Use _get_turn_sequence_lengths() with a turn ID to ensure
+        consistency between prompt generation and max_tokens setting.
 
         Returns:
             Tuple of (input_seq_len, output_seq_len)
@@ -82,6 +118,14 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         # Use pre-seeded RNG to avoid reseeding on each sample
         return self._seq_distribution.sample(random_state=self._seq_rng)
 
+    def _clear_turn_cache(self, turn_id: int) -> None:
+        """Clear cached sequence lengths for a specific turn.
+
+        Args:
+            turn_id: Turn identifier to remove from cache
+        """
+        self._turn_sequence_cache.pop(turn_id, None)
+
     def _set_max_tokens(self, turn: Turn) -> None:
         """Set max_tokens for the turn based on the sequence distribution or output configuration.
 
@@ -89,8 +133,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             turn: The turn object to finalize.
         """
         if self._seq_distribution is not None:
-            # Use sequence distribution to get OSL
-            _, osl = self._sample_sequence_lengths()
+            # Use cached sequence distribution to get OSL (ensures ISL/OSL pairing consistency)
+            turn_id = id(turn)
+            _, osl = self._get_turn_sequence_lengths(turn_id)
             turn.max_tokens = osl
         else:
             # Fallback to legacy behavior
@@ -114,6 +159,10 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         turn.model = self._select_model_name()
         self._set_max_tokens(turn)
+
+        # Clear cached sequence lengths for this turn to free memory
+        turn_id = id(turn)
+        self._clear_turn_cache(turn_id)
 
     @property
     def prefix_prompt_enabled(self) -> bool:

@@ -551,3 +551,94 @@ class TestPromptConfigIntegration:
         dist = config.get_sequence_distribution()
 
         assert dist is None
+
+
+class TestSequenceCaching:
+    """Test turn-level sequence length caching for ISL/OSL consistency."""
+
+    def test_turn_sequence_caching(self):
+        """Test that sequence lengths are cached per turn for consistency."""
+        import numpy as np
+
+        from aiperf.common.models import Turn
+        from aiperf.dataset.composer.base import BaseDatasetComposer
+
+        # Create mock composer
+        class MockComposer(BaseDatasetComposer):
+            def create_dataset(self):
+                return []
+
+        # Set up composer with distribution
+        composer = MockComposer.__new__(MockComposer)
+        dist = DistributionParser.parse("128,64:50;256,128:50")
+        composer._seq_distribution = dist
+        composer._turn_sequence_cache = {}
+        composer._seq_rng = np.random.default_rng(42)
+
+        # Create a turn and get its ID
+        turn = Turn()
+        turn_id = id(turn)
+
+        # Sample multiple times - should get same result due to caching
+        isl1, osl1 = composer._get_turn_sequence_lengths(turn_id)
+        isl2, osl2 = composer._get_turn_sequence_lengths(turn_id)
+        isl3, osl3 = composer._get_turn_sequence_lengths(turn_id)
+
+        # All calls should return the same cached result
+        assert isl1 == isl2 == isl3
+        assert osl1 == osl2 == osl3
+
+        # Result should be a valid pair from the distribution
+        valid_pairs = [(128, 64), (256, 128)]
+        assert (isl1, osl1) in valid_pairs
+
+        # Test cache clearing
+        composer._clear_turn_cache(turn_id)
+
+        # After clearing, can sample again (may get different result)
+        isl4, osl4 = composer._get_turn_sequence_lengths(turn_id)
+        assert (isl4, osl4) in valid_pairs
+
+    def test_different_turns_get_different_cache_entries(self):
+        """Test that different turns can have different cached sequence lengths."""
+        import numpy as np
+
+        from aiperf.common.models import Turn
+        from aiperf.dataset.composer.base import BaseDatasetComposer
+
+        # Create mock composer
+        class MockComposer(BaseDatasetComposer):
+            def create_dataset(self):
+                return []
+
+        # Set up composer with distribution
+        composer = MockComposer.__new__(MockComposer)
+        dist = DistributionParser.parse(
+            "100,50:100"
+        )  # Single pair for predictable results
+        composer._seq_distribution = dist
+        composer._turn_sequence_cache = {}
+        composer._seq_rng = np.random.default_rng(42)
+
+        # Create two different turns
+        turn1 = Turn()
+        turn2 = Turn()
+        turn1_id = id(turn1)
+        turn2_id = id(turn2)
+
+        # Get sequence lengths for both turns
+        isl1, osl1 = composer._get_turn_sequence_lengths(turn1_id)
+        isl2, osl2 = composer._get_turn_sequence_lengths(turn2_id)
+
+        # Both should be the same since there's only one pair in the distribution
+        assert (isl1, osl1) == (100, 50)
+        assert (isl2, osl2) == (100, 50)
+
+        # But they should be cached separately
+        assert turn1_id in composer._turn_sequence_cache
+        assert turn2_id in composer._turn_sequence_cache
+
+        # Clearing one shouldn't affect the other
+        composer._clear_turn_cache(turn1_id)
+        assert turn1_id not in composer._turn_sequence_cache
+        assert turn2_id in composer._turn_sequence_cache

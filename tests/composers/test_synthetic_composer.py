@@ -298,7 +298,7 @@ class TestSyntheticDatasetComposer:
 
         # Test text payload generation
         turn = Turn()
-        text = composer._generate_text_payloads(is_first=True)
+        text = composer._generate_text_payloads(turn, is_first=True)
         turn.texts.append(text)
 
         # Test correct number of text payloads based on batch_size
@@ -323,7 +323,7 @@ class TestSyntheticDatasetComposer:
 
         # Test prefix prompt is added to first turn
         turn = Turn()
-        text = composer._generate_text_payloads(is_first=True)
+        text = composer._generate_text_payloads(turn, is_first=True)
         turn.texts.append(text)
 
         text_payload = turn.texts[0]
@@ -341,7 +341,7 @@ class TestSyntheticDatasetComposer:
 
         # Test no prefix prompt is added to subsequent turns
         turn = Turn()
-        text = composer._generate_text_payloads(is_first=False)
+        text = composer._generate_text_payloads(turn, is_first=False)
         turn.texts.append(text)
 
         text_payload = turn.texts[0]
@@ -359,7 +359,7 @@ class TestSyntheticDatasetComposer:
 
         # Test multiple text payloads are generated per turn
         turn = Turn()
-        text = composer._generate_text_payloads(is_first=True)
+        text = composer._generate_text_payloads(turn, is_first=True)
         turn.texts.append(text)
 
         assert len(turn.texts) == 1  # single text field per turn
