@@ -1,33 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-Sequence length distribution models for AIPerf benchmarking.
+Sequence Length Distribution Module
 
-This module provides data models and parsers for specifying distributions of input sequence
-length (ISL) and output sequence length (OSL) pairs with optional standard deviations,
-allowing for more realistic LLM benchmarking scenarios.
-
-The sequence distribution feature allows users to specify multiple ISL/OSL pairs with
-different probabilities, enabling simulation of mixed workloads that better represent
-production traffic patterns.
-
-        Supported formats (probabilities must be percentages 0-100):
-        - Semicolon: "256,128:40;512,256:60" or "256|10,128|5:40;512|20,256|10:60"
-        - Bracket: "[(256,128):40,(512,256):60]" or "[(256|10,128|5):40,(512|20,256|10):60]"
-        - JSON: '{"pairs": [{"isl": 256, "isl_stddev": 10, "osl": 128, "osl_stddev": 5, "prob": 40}, ...]}'
-
-Note: Probabilities must be specified as percentages (0-100), not fractions (0-1).
-This prevents common errors from mixing different probability formats.
-
-Examples:
-    Basic usage:
-        >>> from aiperf.common.models.sequence_distribution import DistributionParser
-        >>> dist = DistributionParser.parse("256,128:60;512,256:40")
-        >>> isl, osl = dist.sample()
-
-    With standard deviations:
-        >>> dist = DistributionParser.parse("256|10,128|5:60;512|20,256|10:40")
-        >>> isl, osl = dist.sample()  # Will vary around means based on stddev
+Provides configurable distributions of input/output sequence length pairs
+for realistic LLM benchmarking workloads.
 """
 
 from __future__ import annotations
@@ -39,19 +16,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from aiperf.dataset import utils
+
 logger = logging.getLogger(__name__)
-
-
-def _sample_positive_normal_integer(mean: float, stddev: float) -> int:
-    """Sample a positive integer from normal distribution, clamped to be at least 1."""
-    if stddev <= 0:
-        return int(round(mean))
-
-    # Sample from normal distribution
-    sample = np.random.normal(mean, stddev)
-
-    # Ensure result is at least 1
-    return max(1, int(round(sample)))
 
 
 @dataclass(frozen=True)
@@ -134,7 +101,6 @@ class SequenceLengthDistribution:
 
     def _compute_cumulative_probabilities(self) -> np.ndarray:
         """Compute cumulative probability distribution for efficient sampling."""
-        # Convert percentages to fractions for internal calculation
         probs = [pair.probability / 100.0 for pair in self._pairs]
         return np.cumsum(probs, dtype=np.float64)
 
@@ -167,14 +133,14 @@ class SequenceLengthDistribution:
 
         # Sample from normal distribution if stddev is specified
         if pair.input_seq_len_stddev > 0:
-            isl = _sample_positive_normal_integer(
+            isl = utils.sample_positive_normal_integer(
                 pair.input_seq_len, pair.input_seq_len_stddev
             )
         else:
             isl = pair.input_seq_len
 
         if pair.output_seq_len_stddev > 0:
-            osl = _sample_positive_normal_integer(
+            osl = utils.sample_positive_normal_integer(
                 pair.output_seq_len, pair.output_seq_len_stddev
             )
         else:
@@ -227,7 +193,6 @@ class SequenceLengthDistribution:
             Dictionary with distribution statistics including expected values,
             variance, and individual pair information.
         """
-        # Expected values (convert percentages to fractions for calculation)
         exp_isl = sum(p.input_seq_len * (p.probability / 100.0) for p in self._pairs)
         exp_osl = sum(p.output_seq_len * (p.probability / 100.0) for p in self._pairs)
 

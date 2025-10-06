@@ -1,56 +1,86 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Comprehensive tests for sequence length distribution functionality."""
+"""
+Comprehensive tests for sequence length distribution functionality.
 
-import unittest
+This test suite covers all aspects of the sequence distribution feature including:
+- Basic sequence length pair validation and behavior
+- Distribution sampling with probabilistic validation
+- Multi-format parsing (semicolon, bracket, JSON) with and without standard deviations
+- Statistical validation of sampling behavior including variance testing
+- Integration with PromptConfig and CLI parameter validation
+- Edge cases, error handling, and boundary conditions
+"""
 
 import numpy as np
+import pytest
 
 from aiperf.common.models.sequence_distribution import (
     DistributionParser,
     SequenceLengthDistribution,
     SequenceLengthPair,
+    _sample_positive_normal_integer,
     create_balanced_distribution,
     create_uniform_distribution,
 )
 
 
-class TestSequenceLengthPair(unittest.TestCase):
+class TestSequenceLengthPair:
     """Test SequenceLengthPair validation and behavior."""
 
     def test_valid_pair_creation(self):
         """Test creating valid sequence length pairs."""
         pair = SequenceLengthPair(256, 128, 50.0)
-        self.assertEqual(pair.input_seq_len, 256)
-        self.assertEqual(pair.output_seq_len, 128)
-        self.assertEqual(pair.probability, 50.0)
+        assert pair.input_seq_len == 256
+        assert pair.output_seq_len == 128
+        assert pair.probability == 50.0
+
+    def test_valid_pair_with_stddev(self):
+        """Test creating valid sequence length pairs with standard deviations."""
+        pair = SequenceLengthPair(256, 128, 50.0, 10.0, 5.0)
+        assert pair.input_seq_len == 256
+        assert pair.output_seq_len == 128
+        assert pair.probability == 50.0
+        assert pair.input_seq_len_stddev == 10.0
+        assert pair.output_seq_len_stddev == 5.0
 
     def test_invalid_input_length(self):
         """Test validation of input sequence length."""
-        with self.assertRaises(ValueError) as cm:
+        with pytest.raises(ValueError, match="Input sequence length must be positive"):
             SequenceLengthPair(0, 128, 50.0)
-        self.assertIn("Input sequence length must be positive", str(cm.exception))
 
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             SequenceLengthPair(-1, 128, 50.0)
 
     def test_invalid_output_length(self):
         """Test validation of output sequence length."""
-        with self.assertRaises(ValueError) as cm:
+        with pytest.raises(ValueError, match="Output sequence length must be positive"):
             SequenceLengthPair(256, 0, 50.0)
-        self.assertIn("Output sequence length must be positive", str(cm.exception))
 
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             SequenceLengthPair(256, -1, 50.0)
 
     def test_invalid_probability(self):
         """Test validation of probability values."""
-        with self.assertRaises(ValueError) as cm:
+        with pytest.raises(ValueError, match="Probability must be in \\[0,100\\]"):
             SequenceLengthPair(256, 128, -10.0)
-        self.assertIn("Probability must be in [0,100]", str(cm.exception))
 
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             SequenceLengthPair(256, 128, 110.0)
+
+    def test_invalid_input_stddev(self):
+        """Test validation of negative input sequence length standard deviation."""
+        with pytest.raises(
+            ValueError, match="Input sequence length stddev must be non-negative"
+        ):
+            SequenceLengthPair(256, 128, 50.0, input_seq_len_stddev=-1.0)
+
+    def test_invalid_output_stddev(self):
+        """Test validation of negative output sequence length standard deviation."""
+        with pytest.raises(
+            ValueError, match="Output sequence length stddev must be non-negative"
+        ):
+            SequenceLengthPair(256, 128, 50.0, output_seq_len_stddev=-2.0)
 
     def test_boundary_probabilities(self):
         """Test boundary probability values."""
@@ -61,24 +91,39 @@ class TestSequenceLengthPair(unittest.TestCase):
     def test_immutability(self):
         """Test that pairs are immutable."""
         pair = SequenceLengthPair(256, 128, 50.0)
-        with self.assertRaises(AttributeError):
+        with pytest.raises(AttributeError):
             pair.input_seq_len = 512
 
-    def test_string_representation(self):
-        """Test string representation."""
+    def test_string_representation_no_stddev(self):
+        """Test string representation without standard deviations."""
         pair = SequenceLengthPair(256, 128, 40.0)
-        self.assertEqual(str(pair), "(256,128):40.0%")
+        assert str(pair) == "(256,128):40.0%"
+
+    def test_string_representation_with_stddev(self):
+        """Test string representation with standard deviations."""
+        pair = SequenceLengthPair(256, 128, 40.0, 10.0, 5.0)
+        assert str(pair) == "(256|10.0,128|5.0):40.0%"
+
+    def test_string_representation_partial_stddev(self):
+        """Test string representation with only input stddev."""
+        pair = SequenceLengthPair(256, 128, 40.0, 10.0, 0.0)
+        assert str(pair) == "(256|10.0,128|0.0):40.0%"
 
 
-class TestSequenceLengthDistribution(unittest.TestCase):
+class TestSequenceLengthDistribution:
     """Test SequenceLengthDistribution functionality."""
 
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def setup_distributions(self):
         """Set up test distributions."""
         self.single_pair = [SequenceLengthPair(256, 128, 100.0)]
         self.multi_pair = [
             SequenceLengthPair(256, 128, 60.0),
             SequenceLengthPair(512, 256, 40.0),
+        ]
+        self.stddev_pairs = [
+            SequenceLengthPair(256, 128, 60.0, 20.0, 10.0),
+            SequenceLengthPair(512, 256, 40.0, 30.0, 15.0),
         ]
 
     def test_single_pair_distribution(self):
@@ -88,8 +133,8 @@ class TestSequenceLengthDistribution(unittest.TestCase):
         # Should always return the same pair
         for _ in range(100):
             isl, osl = dist.sample()
-            self.assertEqual(isl, 256)
-            self.assertEqual(osl, 128)
+            assert isl == 256
+            assert osl == 128
 
     def test_multi_pair_distribution_sampling(self):
         """Test sampling from multi-pair distribution."""
@@ -103,19 +148,37 @@ class TestSequenceLengthDistribution(unittest.TestCase):
         count_512_256 = sum(1 for s in samples if s == (512, 256))
 
         # Should be approximately 60/40 split (±5%)
-        self.assertAlmostEqual(count_256_128 / len(samples), 0.6, delta=0.05)
-        self.assertAlmostEqual(count_512_256 / len(samples), 0.4, delta=0.05)
+        assert abs(count_256_128 / len(samples) - 0.6) < 0.05
+        assert abs(count_512_256 / len(samples) - 0.4) < 0.05
+
+    def test_stddev_distribution_sampling(self):
+        """Test sampling from distribution with standard deviations."""
+        dist = SequenceLengthDistribution(self.stddev_pairs)
+
+        # Sample many times to test variance
+        samples = [dist.sample(random_state=42) for _ in range(1000)]
+
+        isl_values = [s[0] for s in samples]
+        osl_values = [s[1] for s in samples]
+
+        # Should have variance > 0 due to stddev
+        assert np.std(isl_values) > 5, "ISL should vary due to standard deviation"
+        assert np.std(osl_values) > 3, "OSL should vary due to standard deviation"
+
+        # All values should be positive (clamped)
+        assert all(isl > 0 for isl in isl_values)
+        assert all(osl > 0 for osl in osl_values)
 
     def test_batch_sampling(self):
         """Test efficient batch sampling."""
         dist = SequenceLengthDistribution(self.multi_pair)
 
         batch = dist.sample_batch(1000, random_state=42)
-        self.assertEqual(len(batch), 1000)
+        assert len(batch) == 1000
 
         # Verify all samples are valid
         for isl, osl in batch:
-            self.assertIn((isl, osl), [(256, 128), (512, 256)])
+            assert (isl, osl) in [(256, 128), (512, 256)]
 
     def test_reproducible_sampling(self):
         """Test that sampling is reproducible with same seed."""
@@ -124,13 +187,12 @@ class TestSequenceLengthDistribution(unittest.TestCase):
         samples1 = [dist.sample(random_state=123) for _ in range(100)]
         samples2 = [dist.sample(random_state=123) for _ in range(100)]
 
-        self.assertEqual(samples1, samples2)
+        assert samples1 == samples2
 
     def test_empty_pairs_validation(self):
         """Test validation of empty pairs list."""
-        with self.assertRaises(ValueError) as cm:
+        with pytest.raises(ValueError, match="at least one sequence length pair"):
             SequenceLengthDistribution([])
-        self.assertIn("at least one sequence length pair", str(cm.exception))
 
     def test_probability_sum_validation(self):
         """Test validation of probability sum."""
@@ -140,9 +202,8 @@ class TestSequenceLengthDistribution(unittest.TestCase):
             SequenceLengthPair(512, 256, 40.0),  # Sum = 70.0
         ]
 
-        with self.assertRaises(ValueError) as cm:
+        with pytest.raises(ValueError, match="must sum to 100.0"):
             SequenceLengthDistribution(invalid_pairs)
-        self.assertIn("must sum to 100.0", str(cm.exception))
 
     def test_probability_sum_tolerance(self):
         """Test that small floating-point errors are tolerated."""
@@ -154,7 +215,7 @@ class TestSequenceLengthDistribution(unittest.TestCase):
 
         # Should not raise exception
         dist = SequenceLengthDistribution(pairs)
-        self.assertIsNotNone(dist)
+        assert dist is not None
 
     def test_statistics_calculation(self):
         """Test distribution statistics calculation."""
@@ -162,24 +223,60 @@ class TestSequenceLengthDistribution(unittest.TestCase):
         stats = dist.get_statistics()
 
         # Expected ISL: 256*0.6 + 512*0.4 = 358.4
-        self.assertAlmostEqual(stats["expected_isl"], 358.4, places=1)
+        assert abs(stats["expected_isl"] - 358.4) < 0.1
 
         # Expected OSL: 128*0.6 + 256*0.4 = 179.2
-        self.assertAlmostEqual(stats["expected_osl"], 179.2, places=1)
+        assert abs(stats["expected_osl"] - 179.2) < 0.1
 
-        self.assertEqual(stats["num_pairs"], 2)
-        self.assertAlmostEqual(stats["total_probability"], 100.0)
+        assert stats["num_pairs"] == 2
+        assert abs(stats["total_probability"] - 100.0) < 1e-10
 
     def test_string_representation(self):
         """Test string representation."""
         dist = SequenceLengthDistribution(self.multi_pair)
         str_repr = str(dist)
 
-        self.assertIn("(256,128):60.0%", str_repr)
-        self.assertIn("(512,256):40.0%", str_repr)
+        assert "(256,128):60.0%" in str_repr
+        assert "(512,256):40.0%" in str_repr
 
 
-class TestDistributionParser(unittest.TestCase):
+class TestSamplePositiveNormalInteger:
+    """Test the internal _sample_positive_normal_integer function."""
+
+    def test_zero_stddev_returns_mean(self):
+        """Test that zero stddev returns the mean value."""
+        result = _sample_positive_normal_integer(100.0, 0.0)
+        assert result == 100
+
+    def test_negative_stddev_returns_mean(self):
+        """Test that negative stddev returns the mean value."""
+        result = _sample_positive_normal_integer(100.0, -5.0)
+        assert result == 100
+
+    def test_positive_stddev_varies(self):
+        """Test that positive stddev produces variance around mean."""
+        np.random.seed(42)
+        samples = [_sample_positive_normal_integer(100.0, 20.0) for _ in range(1000)]
+
+        # Should have variance > 0
+        assert np.std(samples) > 5
+
+        # All values should be positive
+        assert all(s > 0 for s in samples)
+
+        # Mean should be approximately 100
+        assert abs(np.mean(samples) - 100.0) < 5.0
+
+    def test_clamping_to_positive(self):
+        """Test that negative samples are clamped to 1."""
+        np.random.seed(123)  # Seed that might produce negative values
+        samples = [_sample_positive_normal_integer(2.0, 10.0) for _ in range(1000)]
+
+        # All values must be at least 1
+        assert all(s >= 1 for s in samples)
+
+
+class TestDistributionParser:
     """Test distribution string parsing."""
 
     def test_semicolon_format_parsing(self):
@@ -187,58 +284,103 @@ class TestDistributionParser(unittest.TestCase):
         dist_str = "256,128:60;512,256:40"
         dist = DistributionParser.parse(dist_str)
 
-        self.assertEqual(len(dist.pairs), 2)
-        self.assertEqual(dist.pairs[0], SequenceLengthPair(256, 128, 60.0))
-        self.assertEqual(dist.pairs[1], SequenceLengthPair(512, 256, 40.0))
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0)
+        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0)
 
-    def test_semicolon_format_backward_compatibility(self):
-        """Test parsing semicolon-separated format with fractions (backward compatibility)."""
-        dist_str = "256,128:0.6;512,256:0.4"
+    def test_semicolon_format_with_stddev(self):
+        """Test parsing semicolon-separated format with standard deviations."""
+        dist_str = "256|10,128|5:60;512|20,256|15:40"
         dist = DistributionParser.parse(dist_str)
 
-        self.assertEqual(len(dist.pairs), 2)
-        self.assertEqual(dist.pairs[0], SequenceLengthPair(256, 128, 60.0))
-        self.assertEqual(dist.pairs[1], SequenceLengthPair(512, 256, 40.0))
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 10.0, 5.0)
+        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 20.0, 15.0)
+
+    def test_semicolon_format_mixed_stddev(self):
+        """Test parsing with some pairs having stddev and others not."""
+        dist_str = "256|10,128:60;512,256|15:40"
+        dist = DistributionParser.parse(dist_str)
+
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 10.0, 0.0)
+        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 0.0, 15.0)
+
+    def test_semicolon_format_invalid_fractions(self):
+        """Test that fractions are properly rejected (percentage-only enforcement)."""
+        dist_str = "256,128:0.6;512,256:0.4"
+        with pytest.raises(ValueError, match="Probabilities must sum to 100.0"):
+            DistributionParser.parse(dist_str)
 
     def test_bracket_format_parsing(self):
         """Test parsing bracket format with percentages."""
         dist_str = "[(256,128):60,(512,256):40]"
         dist = DistributionParser.parse(dist_str)
 
-        self.assertEqual(len(dist.pairs), 2)
-        self.assertEqual(dist.pairs[0], SequenceLengthPair(256, 128, 60.0))
-        self.assertEqual(dist.pairs[1], SequenceLengthPair(512, 256, 40.0))
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0)
+        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0)
+
+    def test_bracket_format_with_stddev(self):
+        """Test parsing bracket format with standard deviations."""
+        dist_str = "[(256|10,128|5):60,(512|20,256|15):40]"
+        dist = DistributionParser.parse(dist_str)
+
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 10.0, 5.0)
+        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 20.0, 15.0)
 
     def test_json_format_parsing(self):
         """Test parsing JSON format with percentages."""
         dist_str = '{"pairs": [{"isl": 256, "osl": 128, "prob": 60}, {"isl": 512, "osl": 256, "prob": 40}]}'
         dist = DistributionParser.parse(dist_str)
 
-        self.assertEqual(len(dist.pairs), 2)
-        self.assertEqual(dist.pairs[0], SequenceLengthPair(256, 128, 60.0))
-        self.assertEqual(dist.pairs[1], SequenceLengthPair(512, 256, 40.0))
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0)
+        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0)
+
+    def test_json_format_with_stddev(self):
+        """Test parsing JSON format with standard deviations."""
+        dist_str = '{"pairs": [{"isl": 256, "isl_stddev": 10, "osl": 128, "osl_stddev": 5, "prob": 60}, {"isl": 512, "isl_stddev": 20, "osl": 256, "osl_stddev": 15, "prob": 40}]}'
+        dist = DistributionParser.parse(dist_str)
+
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 10.0, 5.0)
+        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 20.0, 15.0)
 
     def test_single_pair_parsing(self):
         """Test parsing single pair."""
         dist_str = "1024,512:100"
         dist = DistributionParser.parse(dist_str)
 
-        self.assertEqual(len(dist.pairs), 1)
-        self.assertEqual(dist.pairs[0], SequenceLengthPair(1024, 512, 100.0))
+        assert len(dist.pairs) == 1
+        assert dist.pairs[0] == SequenceLengthPair(1024, 512, 100.0)
+
+    def test_single_pair_with_stddev(self):
+        """Test parsing single pair with standard deviations."""
+        dist_str = "1024|50,512|25:100"
+        dist = DistributionParser.parse(dist_str)
+
+        assert len(dist.pairs) == 1
+        assert dist.pairs[0] == SequenceLengthPair(1024, 512, 100.0, 50.0, 25.0)
 
     def test_invalid_format_parsing(self):
         """Test parsing invalid formats."""
         invalid_formats = [
             "",
             "256,128",  # Missing probability
-            "256:0.5",  # Missing OSL
+            "256:50",  # Missing OSL
             "invalid",
-            "256,128:110",  # Invalid probability
+            "256,128:110",  # Invalid probability (>100)
+            "256,128:-10",  # Invalid probability (<0)
+            "256,128:0.6",  # Fraction not allowed (percentage-only)
             '{"invalid": "json"}',  # Invalid JSON structure
+            "256|,128:100",  # Empty stddev
+            "256|-5,128:100",  # Negative stddev
         ]
 
         for invalid_str in invalid_formats:
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 DistributionParser.parse(invalid_str)
 
     def test_decimal_probabilities(self):
@@ -246,52 +388,52 @@ class TestDistributionParser(unittest.TestCase):
         dist_str = "256,128:33.3;512,256:66.7"
         dist = DistributionParser.parse(dist_str)
 
-        self.assertAlmostEqual(dist.pairs[0].probability, 33.3)
-        self.assertAlmostEqual(dist.pairs[1].probability, 66.7)
+        assert abs(dist.pairs[0].probability - 33.3) < 1e-10
+        assert abs(dist.pairs[1].probability - 66.7) < 1e-10
 
     def test_whitespace_handling(self):
         """Test parsing with various whitespace."""
         dist_str = "  256 , 128 : 60 ; 512 , 256 : 40  "
         dist = DistributionParser.parse(dist_str)
 
-        self.assertEqual(len(dist.pairs), 2)
-        self.assertEqual(dist.pairs[0], SequenceLengthPair(256, 128, 60.0))
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0)
 
 
-class TestUtilityFunctions(unittest.TestCase):
+class TestUtilityFunctions:
     """Test utility functions."""
 
     def test_create_uniform_distribution(self):
         """Test creating uniform single-pair distribution."""
         dist = create_uniform_distribution(512, 256)
 
-        self.assertEqual(len(dist.pairs), 1)
-        self.assertEqual(dist.pairs[0], SequenceLengthPair(512, 256, 100.0))
+        assert len(dist.pairs) == 1
+        assert dist.pairs[0] == SequenceLengthPair(512, 256, 100.0)
 
         # Should always return the same values
         for _ in range(10):
             isl, osl = dist.sample()
-            self.assertEqual(isl, 512)
-            self.assertEqual(osl, 256)
+            assert isl == 512
+            assert osl == 256
 
     def test_create_balanced_distribution(self):
         """Test creating balanced distribution."""
         pairs = [(256, 128), (512, 256), (1024, 512)]
         dist = create_balanced_distribution(pairs)
 
-        self.assertEqual(len(dist.pairs), 3)
+        assert len(dist.pairs) == 3
 
         # All probabilities should be 100/3 ≈ 33.33%
         for pair in dist.pairs:
-            self.assertAlmostEqual(pair.probability, 100.0 / 3.0, places=10)
+            assert abs(pair.probability - 100.0 / 3.0) < 1e-10
 
     def test_create_balanced_empty_pairs(self):
         """Test creating balanced distribution with empty pairs."""
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             create_balanced_distribution([])
 
 
-class TestIntegration(unittest.TestCase):
+class TestIntegration:
     """Integration tests combining multiple components."""
 
     def test_end_to_end_workflow(self):
@@ -309,9 +451,29 @@ class TestIntegration(unittest.TestCase):
             counts[sample] = counts.get(sample, 0) + 1
 
         total = len(samples)
-        self.assertAlmostEqual(counts[(128, 64)] / total, 0.3, delta=0.05)
-        self.assertAlmostEqual(counts[(256, 128)] / total, 0.5, delta=0.05)
-        self.assertAlmostEqual(counts[(512, 256)] / total, 0.2, delta=0.05)
+        assert abs(counts[(128, 64)] / total - 0.3) < 0.05
+        assert abs(counts[(256, 128)] / total - 0.5) < 0.05
+        assert abs(counts[(512, 256)] / total - 0.2) < 0.05
+
+    def test_end_to_end_workflow_with_stddev(self):
+        """Test complete workflow with standard deviations from string to sampling."""
+        # Parse distribution with stddev
+        dist_str = "128|20,64|10:30;256|30,128|15:70"
+        dist = DistributionParser.parse(dist_str)
+
+        # Sample many times
+        samples = dist.sample_batch(5000, random_state=42)
+
+        # Check that we have variance (due to stddev)
+        isl_values = [s[0] for s in samples]
+        osl_values = [s[1] for s in samples]
+
+        assert np.std(isl_values) > 10, "Should have ISL variance due to stddev"
+        assert np.std(osl_values) > 5, "Should have OSL variance due to stddev"
+
+        # All values should still be positive
+        assert all(isl > 0 for isl in isl_values)
+        assert all(osl > 0 for osl in osl_values)
 
     def test_statistics_accuracy(self):
         """Test that calculated statistics match empirical results."""
@@ -331,15 +493,11 @@ class TestIntegration(unittest.TestCase):
         empirical_osl = np.mean([s[1] for s in samples])
 
         # Should match within 1%
-        self.assertAlmostEqual(
-            empirical_isl, stats["expected_isl"], delta=stats["expected_isl"] * 0.01
-        )
-        self.assertAlmostEqual(
-            empirical_osl, stats["expected_osl"], delta=stats["expected_osl"] * 0.01
-        )
+        assert abs(empirical_isl - stats["expected_isl"]) < stats["expected_isl"] * 0.01
+        assert abs(empirical_osl - stats["expected_osl"]) < stats["expected_osl"] * 0.01
 
 
-class TestPromptConfigIntegration(unittest.TestCase):
+class TestPromptConfigIntegration:
     """Test integration with PromptConfig."""
 
     def test_get_sequence_distribution_with_explicit_dist(self):
@@ -351,9 +509,22 @@ class TestPromptConfigIntegration(unittest.TestCase):
 
         dist = config.get_sequence_distribution()
 
-        self.assertEqual(len(dist.pairs), 2)
-        self.assertEqual(dist.pairs[0], SequenceLengthPair(256, 128, 60.0))
-        self.assertEqual(dist.pairs[1], SequenceLengthPair(512, 256, 40.0))
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0)
+        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0)
+
+    def test_get_sequence_distribution_with_stddev(self):
+        """Test getting distribution with standard deviations."""
+        from aiperf.common.config.prompt_config import PromptConfig
+
+        config = PromptConfig()
+        config.sequence_distribution = "256|20,128|10:60;512|30,256|15:40"
+
+        dist = config.get_sequence_distribution()
+
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 20.0, 10.0)
+        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 30.0, 15.0)
 
     def test_get_sequence_distribution_fallback_to_isl_osl(self):
         """Test that None is returned when no distribution is set."""
@@ -366,7 +537,7 @@ class TestPromptConfigIntegration(unittest.TestCase):
 
         dist = config.get_sequence_distribution()
 
-        self.assertIsNone(dist)
+        assert dist is None
 
     def test_get_sequence_distribution_default_osl(self):
         """Test that None is returned when no distribution is specified."""
@@ -379,8 +550,4 @@ class TestPromptConfigIntegration(unittest.TestCase):
 
         dist = config.get_sequence_distribution()
 
-        self.assertIsNone(dist)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert dist is None
