@@ -37,6 +37,16 @@ def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
 class CsvExporter(AIPerfLoggerMixin):
     """Exports records to a CSV file in a legacy, two-section format."""
 
+    TELEMETRY_METRICS_CONFIG = [
+        ("GPU Power Usage", "gpu_power_usage", "W"),
+        ("Energy Consumption", "energy_consumption", "MJ"),
+        ("GPU Utilization", "gpu_utilization", "%"),
+        ("GPU Memory Used", "gpu_memory_used", "GB"),
+        ("GPU Temperature", "gpu_temperature", "°C"),
+        ("SM Clock Frequency", "sm_clock_frequency", "MHz"),
+        ("Memory Clock Frequency", "memory_clock_frequency", "MHz"),
+    ]
+
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self.debug(lambda: f"Initializing CsvExporter with config: {exporter_config}")

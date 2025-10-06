@@ -8,7 +8,6 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
-    CommAddress,
     CommandType,
     ServiceType,
 )
@@ -74,14 +73,12 @@ class TelemetryManager(BaseComponentService):
 
         self._collectors: dict[str, TelemetryDataCollector] = {}
 
-        # Normalize user_endpoints to always be a list
         user_endpoints = user_config.gpu_telemetry
         if user_endpoints is None:
             user_endpoints = []
         elif isinstance(user_endpoints, str):
             user_endpoints = [user_endpoints]
         else:
-            # Handle tuples, lists, and other sequences
             user_endpoints = list(user_endpoints)
 
         # Filter to keep only valid URLs (has http/https scheme because DCGM exporter endpoints are always Prometheus and netloc)
@@ -143,7 +140,7 @@ class TelemetryManager(BaseComponentService):
         """
 
         reachable_count = 0
-        for dcgm_url in self._dcgm_endpoints:
+        for _i, dcgm_url in enumerate(self._dcgm_endpoints):
             collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
             collector = TelemetryDataCollector(
                 dcgm_url=dcgm_url,
@@ -198,7 +195,10 @@ class TelemetryManager(BaseComponentService):
 
         if started_count == 0:
             self.warning("No telemetry collectors successfully started")
-            await self._disable_telemetry_and_stop("all collectors failed to start")
+            await self.
+            
+            
+            ("all collectors failed to start")
             return
 
     @on_command(CommandType.PROFILE_CANCEL)
@@ -252,6 +252,9 @@ class TelemetryManager(BaseComponentService):
         Errors during individual collector shutdown do not prevent other collectors
         from being stopped.
         """
+
+        if not self._collectors:
+            return
 
         if not self._collectors:
             return

@@ -128,6 +128,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
         self._telemetry_results_processors: list[TelemetryResultsProcessorProtocol] = []
 
+        self._metric_results_processors: list[ResultsProcessorProtocol] = []
+        self._telemetry_results_processors: list[TelemetryResultsProcessorProtocol] = []
+
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
             results_processor = ResultsProcessorFactory.create_instance(
                 class_type=results_processor_type,
@@ -140,6 +143,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
 
             self._results_processors.append(results_processor)
+
+            if isinstance(results_processor, TelemetryResultsProcessorProtocol):
+                self._telemetry_results_processors.append(results_processor)
+            else:
+                self._metric_results_processors.append(results_processor)
 
             if isinstance(results_processor, TelemetryResultsProcessorProtocol):
                 self._telemetry_results_processors.append(results_processor)
@@ -196,7 +204,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         await self._check_if_all_records_received()
 
-    @on_pull_message(MessageType.TELEMETRY_RECORDS)
+    @on_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
         """Handle telemetry records message from Telemetry Manager.
         The RecordsManager acts as the central hub for all record processing,
@@ -331,7 +339,24 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             *[
                 results_processor.process_result(result)
                 for results_processor in self._metric_results_processors
+                for results_processor in self._metric_results_processors
                 for result in results
+            ]
+        )
+
+    async def _send_telemetry_to_results_processors(
+        self, telemetry_records: list[TelemetryRecord]
+    ) -> None:
+        """Send individual telemetry records to telemetry results processors only.
+
+        Args:
+            telemetry_records: Batch of records from single collection cycle
+        """
+        await asyncio.gather(
+            *[
+                processor.process_telemetry_record(record)
+                for processor in self._telemetry_results_processors
+                for record in telemetry_records  # Process each record individually
             ]
         )
 

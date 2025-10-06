@@ -207,7 +207,6 @@ class TestGPUTelemetryConsoleExporter:
         exporter = GPUTelemetryConsoleExporter(exporter_config)
         renderable = exporter.get_renderable()
 
-        # Verify renderable is created without errors
         assert renderable is not None
 
     def test_normalize_endpoint_display(self):
