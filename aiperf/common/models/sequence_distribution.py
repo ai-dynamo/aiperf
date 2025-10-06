@@ -1,10 +1,31 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-Sequence Length Distribution Module
+Sequence length distribution models for AIPerf benchmarking.
 
-Provides configurable distributions of input/output sequence length pairs
-for realistic LLM benchmarking workloads.
+This module provides data models and parsers for specifying distributions of input sequence
+length (ISL) and output sequence length (OSL) pairs with optional standard deviations,
+allowing for more realistic LLM benchmarking scenarios.
+
+The sequence distribution feature allows users to specify multiple ISL/OSL pairs with
+different probabilities, enabling simulation of mixed workloads that better represent
+production traffic patterns.
+
+Supported formats:
+- Simple: "256,128:60;512,256:40" (exact values, percentages)
+- With stddev: "256|10,128|5:60;512|20,256|10:40" (mean|stddev format)
+- Bracket: "[(256|10,128|5):60,(512,256):40]" (bracket notation)
+- JSON: {"pairs": [{"isl": 256, "isl_stddev": 10, "osl": 128, "osl_stddev": 5, "prob": 60}]}
+
+Examples:
+    Basic usage:
+        >>> from aiperf.common.models.sequence_distribution import DistributionParser
+        >>> dist = DistributionParser.parse("256,128:60;512,256:40")
+        >>> isl, osl = dist.sample()
+
+    With standard deviations:
+        >>> dist = DistributionParser.parse("256|10,128|5:60;512|20,256|10:40")
+        >>> isl, osl = dist.sample()  # Will vary around means based on stddev
 """
 
 from __future__ import annotations
@@ -19,16 +40,30 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def _sample_positive_normal_integer(mean: float, stddev: float) -> int:
+    """Sample a positive integer from normal distribution, clamped to be at least 1."""
+    if stddev <= 0:
+        return int(round(mean))
+
+    # Sample from normal distribution
+    sample = np.random.normal(mean, stddev)
+
+    # Ensure result is at least 1
+    return max(1, int(round(sample)))
+
+
 @dataclass(frozen=True)
 class SequenceLengthPair:
-    """Immutable representation of an ISL/OSL pair with probability weight."""
+    """Immutable representation of an ISL/OSL pair with probability weight and optional stddevs."""
 
     input_seq_len: int
     output_seq_len: int
     probability: float
+    input_seq_len_stddev: float = 0.0
+    output_seq_len_stddev: float = 0.0
 
     def __post_init__(self) -> None:
-        """Validate sequence lengths and probability on construction."""
+        """Validate sequence lengths, standard deviations, and probability on construction."""
         if self.input_seq_len <= 0:
             raise ValueError(
                 f"Input sequence length must be positive, got {self.input_seq_len}"
@@ -39,9 +74,20 @@ class SequenceLengthPair:
             )
         if not 0.0 <= self.probability <= 100.0:
             raise ValueError(f"Probability must be in [0,100], got {self.probability}")
+        if self.input_seq_len_stddev < 0.0:
+            raise ValueError(
+                f"Input sequence length stddev must be non-negative, got {self.input_seq_len_stddev}"
+            )
+        if self.output_seq_len_stddev < 0.0:
+            raise ValueError(
+                f"Output sequence length stddev must be non-negative, got {self.output_seq_len_stddev}"
+            )
 
     def __str__(self) -> str:
-        return f"({self.input_seq_len},{self.output_seq_len}):{self.probability}%"
+        if self.input_seq_len_stddev > 0 or self.output_seq_len_stddev > 0:
+            return f"({self.input_seq_len}|{self.input_seq_len_stddev},{self.output_seq_len}|{self.output_seq_len_stddev}):{self.probability}%"
+        else:
+            return f"({self.input_seq_len},{self.output_seq_len}):{self.probability}%"
 
 
 class SequenceLengthDistribution:
@@ -116,7 +162,23 @@ class SequenceLengthDistribution:
         idx = min(idx, len(self._pairs) - 1)  # Handle edge case
 
         pair = self._pairs[idx]
-        return (pair.input_seq_len, pair.output_seq_len)
+
+        # Sample from normal distribution if stddev is specified
+        if pair.input_seq_len_stddev > 0:
+            isl = _sample_positive_normal_integer(
+                pair.input_seq_len, pair.input_seq_len_stddev
+            )
+        else:
+            isl = pair.input_seq_len
+
+        if pair.output_seq_len_stddev > 0:
+            osl = _sample_positive_normal_integer(
+                pair.output_seq_len, pair.output_seq_len_stddev
+            )
+        else:
+            osl = pair.output_seq_len
+
+        return (isl, osl)
 
     def sample_batch(
         self, batch_size: int, random_state: int | np.random.Generator | None = None
@@ -219,9 +281,13 @@ def _normalize_probability(prob: float) -> float:
 class DistributionParser:
     """Parser for various sequence length distribution string formats."""
 
-    # Regex patterns for different formats (allow whitespace)
-    SEMICOLON_PATTERN = re.compile(r"(\d+)\s*,\s*(\d+)\s*:\s*([0-9]*\.?[0-9]+)")
-    BRACKET_PATTERN = re.compile(r"\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*:\s*([0-9]*\.?[0-9]+)")
+    # Regex patterns for different formats (allow whitespace and optional stddev)
+    SEMICOLON_PATTERN = re.compile(
+        r"(\d+)(?:\|([0-9]*\.?[0-9]+))?\s*,\s*(\d+)(?:\|([0-9]*\.?[0-9]+))?\s*:\s*([0-9]*\.?[0-9]+)"
+    )
+    BRACKET_PATTERN = re.compile(
+        r"\(\s*(\d+)(?:\|([0-9]*\.?[0-9]+))?\s*,\s*(\d+)(?:\|([0-9]*\.?[0-9]+))?\s*\)\s*:\s*([0-9]*\.?[0-9]+)"
+    )
 
     @classmethod
     def parse(cls, dist_str: str) -> SequenceLengthDistribution:
@@ -230,8 +296,9 @@ class DistributionParser:
 
         Supported formats:
         - Semicolon: "256,128:40;512,256:60" (percentages) or "256,128:0.4;512,256:0.6" (fractions)
-        - Bracket: "[(256,128):40,(512,256):60]" (percentages) or "[(256,128):0.4,(512,256):0.6]" (fractions)
-        - JSON: '{"pairs": [{"isl": 256, "osl": 128, "prob": 40}, ...]}' (percentages)
+        - With stddev: "256|10,128|5:40;512|20,256|10:60" (mean|stddev format)
+        - Bracket: "[(256,128):40,(512,256):60]" or "[(256|10,128|5):40,(512|20,256|10):60]"
+        - JSON: '{"pairs": [{"isl": 256, "isl_stddev": 10, "osl": 128, "osl_stddev": 5, "prob": 40}, ...]}'
 
         Args:
             dist_str: Distribution specification string
@@ -266,7 +333,7 @@ class DistributionParser:
 
     @classmethod
     def _parse_json_format(cls, json_str: str) -> SequenceLengthDistribution:
-        """Parse JSON format: {"pairs": [{"isl": 256, "osl": 128, "prob": 0.4}, ...]}"""
+        """Parse JSON format: {"pairs": [{"isl": 256, "isl_stddev": 10, "osl": 128, "osl_stddev": 5, "prob": 40}, ...]}"""
         try:
             data = json.loads(json_str)
         except json.JSONDecodeError as e:
@@ -289,6 +356,8 @@ class DistributionParser:
                         input_seq_len=int(pair_data["isl"]),
                         output_seq_len=int(pair_data["osl"]),
                         probability=_normalize_probability(float(pair_data["prob"])),
+                        input_seq_len_stddev=float(pair_data.get("isl_stddev", 0.0)),
+                        output_seq_len_stddev=float(pair_data.get("osl_stddev", 0.0)),
                     )
                 )
 
@@ -299,16 +368,18 @@ class DistributionParser:
 
     @classmethod
     def _parse_bracket_format(cls, content: str) -> SequenceLengthDistribution:
-        """Parse bracket format: (256,128):0.4,(512,256):0.6"""
+        """Parse bracket format: (256|10,128|5):40,(512|20,256|10):60 or (256,128):40,(512,256):60"""
         pairs = []
 
         for match in cls.BRACKET_PATTERN.finditer(content):
-            isl, osl, prob = match.groups()
+            isl, isl_stddev, osl, osl_stddev, prob = match.groups()
             pairs.append(
                 SequenceLengthPair(
                     input_seq_len=int(isl),
                     output_seq_len=int(osl),
                     probability=_normalize_probability(float(prob)),
+                    input_seq_len_stddev=float(isl_stddev) if isl_stddev else 0.0,
+                    output_seq_len_stddev=float(osl_stddev) if osl_stddev else 0.0,
                 )
             )
 
@@ -319,7 +390,7 @@ class DistributionParser:
 
     @classmethod
     def _parse_semicolon_format(cls, dist_str: str) -> SequenceLengthDistribution:
-        """Parse semicolon format: 256,128:0.4;512,256:0.6"""
+        """Parse semicolon format: 256|10,128|5:40;512|20,256|10:60 or 256,128:40;512,256:60"""
         pairs = []
 
         for pair_str in dist_str.split(";"):
@@ -330,15 +401,17 @@ class DistributionParser:
             match = cls.SEMICOLON_PATTERN.fullmatch(pair_str)
             if not match:
                 raise ValueError(
-                    f"Invalid pair format: '{pair_str}'. Expected 'ISL,OSL:PROB'"
+                    f"Invalid pair format: '{pair_str}'. Expected 'ISL[|ISL_STDDEV],OSL[|OSL_STDDEV]:PROB'"
                 )
 
-            isl, osl, prob = match.groups()
+            isl, isl_stddev, osl, osl_stddev, prob = match.groups()
             pairs.append(
                 SequenceLengthPair(
                     input_seq_len=int(isl),
                     output_seq_len=int(osl),
                     probability=_normalize_probability(float(prob)),
+                    input_seq_len_stddev=float(isl_stddev) if isl_stddev else 0.0,
+                    output_seq_len_stddev=float(osl_stddev) if osl_stddev else 0.0,
                 )
             )
 

@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from aiperf.common.sequence_distribution import (
+from aiperf.common.models.sequence_distribution import (
     DistributionParser,
     SequenceLengthDistribution,
     SequenceLengthPair,
