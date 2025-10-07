@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from urllib.parse import urlparse
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -20,6 +21,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import (
+    PushClientProtocol,
     ServiceProtocol,
 )
 from aiperf.gpu_telemetry.constants import (
@@ -34,7 +36,8 @@ __all__ = ["TelemetryManager"]
 @implements_protocol(ServiceProtocol)
 @ServiceFactory.register(ServiceType.TELEMETRY_MANAGER)
 class TelemetryManager(BaseComponentService):
-    """
+    """Coordinates multiple TelemetryDataCollector instances for GPU telemetry collection.
+
     The TelemetryManager coordinates multiple TelemetryDataCollector instances
     to collect GPU telemetry from multiple DCGM endpoints and send unified
     TelemetryRecordsMessage to RecordsManager.
@@ -45,6 +48,11 @@ class TelemetryManager(BaseComponentService):
     - Sends TelemetryRecordsMessage to RecordsManager via message system
     - Handles errors gracefully with ErrorDetails
     - Follows centralized architecture patterns
+
+    Args:
+        service_config: Service-level configuration (logging, communication, etc.)
+        user_config: User-provided configuration including gpu_telemetry list
+        service_id: Optional unique identifier for this service instance
     """
 
     def __init__(
@@ -59,14 +67,31 @@ class TelemetryManager(BaseComponentService):
             service_id=service_id,
         )
 
+        self.records_push_client: PushClientProtocol = self.comms.create_push_client(
+            CommAddress.RECORDS,
+        )
+
         self._collectors: dict[str, TelemetryDataCollector] = {}
 
-        # Normalize user_endpoints to always be a list
-        user_endpoints = user_config.server_metrics_url
-        if not user_endpoints:
+        user_endpoints = user_config.gpu_telemetry
+        if user_endpoints is None:
             user_endpoints = []
         elif isinstance(user_endpoints, str):
             user_endpoints = [user_endpoints]
+        else:
+            user_endpoints = list(user_endpoints)
+
+        # Filter to keep only valid URLs (has http/https scheme because DCGM exporter endpoints are always Prometheus and netloc)
+        valid_endpoints = []
+        for endpoint in user_endpoints:
+            try:
+                parsed = urlparse(endpoint)
+                if parsed.scheme in ("http", "https") and parsed.netloc:
+                    valid_endpoints.append(self._normalize_dcgm_url(endpoint))
+            except Exception:
+                # Skip invalid URLs
+                continue
+        user_endpoints = valid_endpoints
 
         if DEFAULT_DCGM_ENDPOINT not in user_endpoints:
             self._dcgm_endpoints = [DEFAULT_DCGM_ENDPOINT] + user_endpoints
@@ -75,16 +100,44 @@ class TelemetryManager(BaseComponentService):
 
         self._collection_interval = DEFAULT_COLLECTION_INTERVAL
 
+    @staticmethod
+    def _normalize_dcgm_url(url: str) -> str:
+        """Ensure DCGM URL ends with /metrics endpoint.
+
+        Args:
+            url: Base URL or full metrics URL
+
+        Returns:
+            str: URL ending with /metrics
+        """
+        url = url.rstrip("/")
+        if not url.endswith("/metrics"):
+            url = f"{url}/metrics"
+        return url
+
     @on_init
     async def _initialize(self) -> None:
-        """Initialize telemetry manager."""
+        """Initialize telemetry manager.
+
+        Called automatically during service startup via @on_init hook.
+        Actual collector initialization happens in _profile_configure_command
+        after configuration is received from SystemController.
+        """
         pass
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
         self, message: ProfileConfigureCommand
     ) -> None:
-        """Configure the telemetry collectors but don't start them yet."""
+        """Configure the telemetry collectors but don't start them yet.
+
+        Creates TelemetryDataCollector instances for each configured DCGM endpoint,
+        tests reachability, and sends status message to RecordsManager.
+        If no endpoints are reachable, disables telemetry and stops the service.
+
+        Args:
+            message: Profile configuration command from SystemController
+        """
 
         reachable_count = 0
         for _i, dcgm_url in enumerate(self._dcgm_endpoints):
@@ -118,7 +171,14 @@ class TelemetryManager(BaseComponentService):
 
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, message) -> None:
-        """Start all telemetry collectors."""
+        """Start all telemetry collectors.
+
+        Initializes and starts each configured collector, checking reachability first.
+        If no collectors start successfully, disables telemetry and stops the service.
+
+        Args:
+            message: Profile start command from SystemController
+        """
 
         if not self._collectors:
             return
@@ -135,24 +195,34 @@ class TelemetryManager(BaseComponentService):
 
         if started_count == 0:
             self.warning("No telemetry collectors successfully started")
-            await self._disable_telemetry_and_stop("all collectors failed to start")
+            await self.
+            
+            
+            ("all collectors failed to start")
             return
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _handle_profile_cancel_command(
         self, message: ProfileCancelCommand
     ) -> None:
-        """Stop all telemetry collectors when profiling is cancelled."""
-        await self._stop_all_collectors()
+        """Stop all telemetry collectors when profiling is cancelled.
 
-    @on_command(CommandType.SHUTDOWN)
-    async def _handle_shutdown_command(self, message) -> None:
-        """Handle shutdown command from SystemController."""
+        Called when user cancels profiling or an error occurs during profiling.
+        Stops all running collectors gracefully and cleans up resources.
+
+        Args:
+            message: Profile cancel command from SystemController
+        """
         await self._stop_all_collectors()
 
     @on_stop
     async def _telemetry_manager_stop(self) -> None:
-        """Stop all telemetry collectors during service shutdown."""
+        """Stop all telemetry collectors during service shutdown.
+
+        Called automatically by BaseComponentService lifecycle management via @on_stop hook.
+        Ensures all collectors are properly stopped and cleaned up even if shutdown
+        command was not received.
+        """
         await self._stop_all_collectors()
 
     async def _disable_telemetry_and_stop(self, reason: str) -> None:
@@ -173,7 +243,18 @@ class TelemetryManager(BaseComponentService):
         asyncio.create_task(self.stop())
 
     async def _stop_all_collectors(self) -> None:
-        """Stop all telemetry collectors."""
+        """Stop all telemetry collectors.
+
+        Attempts to stop each collector gracefully, logging errors but continuing with
+        remaining collectors to ensure all resources are released. Does nothing if no
+        collectors are configured.
+
+        Errors during individual collector shutdown do not prevent other collectors
+        from being stopped.
+        """
+
+        if not self._collectors:
+            return
 
         if not self._collectors:
             return
@@ -190,6 +271,11 @@ class TelemetryManager(BaseComponentService):
         """Async callback for receiving telemetry records from collectors.
 
         Sends TelemetryRecordsMessage to RecordsManager via message system.
+        Empty record lists are ignored.
+
+        Args:
+            records: List of TelemetryRecord objects from a collector
+            collector_id: Unique identifier of the collector that sent the records
         """
 
         if not records:
@@ -203,7 +289,7 @@ class TelemetryManager(BaseComponentService):
                 error=None,
             )
 
-            await self.publish(message)
+            await self.records_push_client.push(message)
 
         except Exception as e:
             self.error(f"Failed to send telemetry records: {e}")
@@ -212,6 +298,11 @@ class TelemetryManager(BaseComponentService):
         """Async callback for receiving telemetry errors from collectors.
 
         Sends error TelemetryRecordsMessage to RecordsManager via message system.
+        The message contains an empty records list and the error details.
+
+        Args:
+            error: ErrorDetails describing the collection error
+            collector_id: Unique identifier of the collector that encountered the error
         """
 
         try:
@@ -222,7 +313,7 @@ class TelemetryManager(BaseComponentService):
                 error=error,
             )
 
-            await self.publish(error_message)
+            await self.records_push_client.push(error_message)
 
         except Exception as e:
             self.error(f"Failed to send telemetry error message: {e}")
@@ -234,7 +325,18 @@ class TelemetryManager(BaseComponentService):
         endpoints_tested: list[str] | None = None,
         endpoints_reachable: list[str] | None = None,
     ) -> None:
-        """Send telemetry status message directly to SystemController."""
+        """Send telemetry status message to SystemController.
+
+        Publishes TelemetryStatusMessage to inform SystemController about telemetry
+        availability and endpoint reachability. Used during configuration phase and
+        when telemetry is disabled due to errors.
+
+        Args:
+            enabled: Whether telemetry collection is enabled/available
+            reason: Optional human-readable reason for status (e.g., "no DCGM endpoints reachable")
+            endpoints_tested: List of all DCGM endpoint URLs that were tested
+            endpoints_reachable: List of DCGM endpoint URLs that are accessible
+        """
         try:
             status_message = TelemetryStatusMessage(
                 service_id=self.service_id,

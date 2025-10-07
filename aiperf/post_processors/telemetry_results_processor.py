@@ -35,6 +35,10 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
             "memory_clock_frequency": "MHz",
             "memory_temperature": "°C",
             "gpu_temperature": "°C",
+            "memory_copy_utilization": "%",
+            "xid_errors": "count",
+            "power_violation": "us",
+            "thermal_violation": "us",
         }
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
@@ -43,11 +47,6 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
         Args:
             record: TelemetryRecord containing GPU metrics and hierarchical metadata
         """
-
-        if self.is_trace_enabled:
-            self.trace(
-                f"Processing telemetry for GPU {record.gpu_uuid} from {record.dcgm_url}"
-            )
 
         self._telemetry_hierarchy.add_record(record)
 

@@ -5,7 +5,7 @@ from pydantic import Field
 
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetails, TelemetryRecord, ProcessTelemetryResult
+from aiperf.common.models import ErrorDetails, ProcessTelemetryResult, TelemetryRecord
 from aiperf.common.types import MessageTypeT
 
 

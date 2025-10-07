@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Iterable
+from urllib.parse import urlparse
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import MetricUnitError
@@ -24,6 +25,43 @@ STAT_KEYS = [
     "p99",
     "std",
 ]
+
+GPU_TELEMETRY_METRICS_CONFIG = [
+    ("GPU Power Usage", "gpu_power_usage", "W"),
+    ("Energy Consumption", "energy_consumption", "MJ"),
+    ("GPU Utilization", "gpu_utilization", "%"),
+    ("Memory Copy Utilization", "memory_copy_utilization", "%"),
+    ("GPU Memory Used", "gpu_memory_used", "GB"),
+    ("SM Clock Frequency", "sm_clock_frequency", "MHz"),
+    ("Memory Clock Frequency", "memory_clock_frequency", "MHz"),
+    ("Memory Temperature", "memory_temperature", "°C"),
+    ("GPU Temperature", "gpu_temperature", "°C"),
+    ("XID Errors", "xid_errors", "count"),
+    ("Power Violation", "power_violation", "us"),
+    ("Thermal Violation", "thermal_violation", "us"),
+]
+
+
+def normalize_endpoint_display(url: str) -> str:
+    """Normalize endpoint URL for display by removing scheme and trimming /metrics suffix.
+
+    Args:
+        url: The full URL to normalize (e.g., "https://host:9400/api/metrics")
+
+    Returns:
+        Normalized display string with netloc and trimmed path (e.g., "host:9400/api")
+    """
+    parsed = urlparse(url)
+    path = parsed.path
+
+    if path.endswith("/metrics"):
+        path = path[: -len("/metrics")]
+
+    display = parsed.netloc
+    if path:
+        display += path
+
+    return display
 
 
 def to_display_unit(result: MetricResult, registry: MetricRegistry) -> MetricResult:

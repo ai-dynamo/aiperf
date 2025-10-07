@@ -6,7 +6,7 @@ Shared fixtures for testing GPU telemetry components.
 
 import pytest
 
-from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.common.models.telemetry_models import TelemetryMetrics, TelemetryRecord
 
 
 @pytest.fixture
@@ -31,6 +31,18 @@ DCGM_FI_DEV_GPU_UTIL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci
 # HELP DCGM_FI_DEV_FB_USED Framebuffer memory used (in MiB)
 # TYPE DCGM_FI_DEV_FB_USED gauge
 DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 46614
+# HELP DCGM_FI_DEV_MEM_COPY_UTIL Memory copy utilization (in %)
+# TYPE DCGM_FI_DEV_MEM_COPY_UTIL gauge
+DCGM_FI_DEV_MEM_COPY_UTIL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 15
+# HELP DCGM_FI_DEV_XID_ERRORS Value of the last XID error encountered
+# TYPE DCGM_FI_DEV_XID_ERRORS gauge
+DCGM_FI_DEV_XID_ERRORS{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+# HELP DCGM_FI_DEV_POWER_VIOLATION Throttling duration due to power constraints (in us)
+# TYPE DCGM_FI_DEV_POWER_VIOLATION counter
+DCGM_FI_DEV_POWER_VIOLATION{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 12000
+# HELP DCGM_FI_DEV_THERMAL_VIOLATION Throttling duration due to thermal constraints (in us)
+# TYPE DCGM_FI_DEV_THERMAL_VIOLATION counter
+DCGM_FI_DEV_THERMAL_VIOLATION{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 5000
 """
 
 
@@ -58,6 +70,26 @@ DCGM_FI_DEV_GPU_UTIL{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci
 DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 15640
 DCGM_FI_DEV_FB_USED{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
 DCGM_FI_DEV_FB_USED{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 0
+# HELP DCGM_FI_DEV_MEM_COPY_UTIL Memory copy utilization (in %)
+# TYPE DCGM_FI_DEV_MEM_COPY_UTIL gauge
+DCGM_FI_DEV_MEM_COPY_UTIL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 20
+DCGM_FI_DEV_MEM_COPY_UTIL{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+DCGM_FI_DEV_MEM_COPY_UTIL{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 10
+# HELP DCGM_FI_DEV_XID_ERRORS Value of the last XID error encountered
+# TYPE DCGM_FI_DEV_XID_ERRORS gauge
+DCGM_FI_DEV_XID_ERRORS{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+DCGM_FI_DEV_XID_ERRORS{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+DCGM_FI_DEV_XID_ERRORS{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 0
+# HELP DCGM_FI_DEV_POWER_VIOLATION Throttling duration due to power constraints (in us)
+# TYPE DCGM_FI_DEV_POWER_VIOLATION counter
+DCGM_FI_DEV_POWER_VIOLATION{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 15000
+DCGM_FI_DEV_POWER_VIOLATION{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+DCGM_FI_DEV_POWER_VIOLATION{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 8000
+# HELP DCGM_FI_DEV_THERMAL_VIOLATION Throttling duration due to thermal constraints (in us)
+# TYPE DCGM_FI_DEV_THERMAL_VIOLATION counter
+DCGM_FI_DEV_THERMAL_VIOLATION{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 3000
+DCGM_FI_DEV_THERMAL_VIOLATION{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
+DCGM_FI_DEV_THERMAL_VIOLATION{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 5000
 """
 
 
@@ -75,10 +107,12 @@ def sample_telemetry_records():
             pci_bus_id="00000000:02:00.0",
             device="nvidia0",
             hostname="ed7e7a5e585f",
-            gpu_power_usage=22.582,
-            energy_consumption=955287014,
-            gpu_utilization=1.0,
-            gpu_memory_used=45.531,  # 46614 MiB / 1024 ≈ 45.52 GB
+            telemetry_data=TelemetryMetrics(
+                gpu_power_usage=22.582,
+                energy_consumption=955287014,
+                gpu_utilization=1.0,
+                gpu_memory_used=45.521,  # 46614 MiB / 1024 ≈ 45.521 GB
+            ),
         ),
     ]
 
@@ -104,10 +138,12 @@ def multi_gpu_telemetry_records():
                 pci_bus_id="00000000:02:00.0",
                 device="nvidia0",
                 hostname="ed7e7a5e585f",
-                gpu_power_usage=70.0 + (i % 30),  # Varying power 70-99W
-                energy_consumption=280000000 + (i * 2000000),  # Increasing energy
-                gpu_utilization=float(80 + (i % 20)),  # 80-99%
-                gpu_memory_used=15.0 + (i % 5),  # 15-19 GB
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=70.0 + (i % 30),  # Varying power 70-99W
+                    energy_consumption=280000000 + (i * 2000000),  # Increasing energy
+                    gpu_utilization=float(80 + (i % 20)),  # 80-99%
+                    gpu_memory_used=15.0 + (i % 5),  # 15-19 GB
+                ),
             )
         )
 
@@ -122,10 +158,12 @@ def multi_gpu_telemetry_records():
                 pci_bus_id="00000000:03:00.0",
                 device="nvidia1",
                 hostname="ed7e7a5e585f",
-                gpu_power_usage=42.0 + (i % 3),  # Idle power 42-44W
-                energy_consumption=230000000 + (i * 500000),  # Slower energy growth
-                gpu_utilization=0.0,
-                gpu_memory_used=0.0,
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=42.0 + (i % 3),  # Idle power 42-44W
+                    energy_consumption=230000000 + (i * 500000),  # Slower energy growth
+                    gpu_utilization=0.0,
+                    gpu_memory_used=0.0,
+                ),
             )
         )
 
@@ -140,10 +178,12 @@ def multi_gpu_telemetry_records():
                 pci_bus_id="00000000:04:00.0",
                 device="nvidia2",
                 hostname="ed7e7a5e585f",
-                gpu_power_usage=200.0 + (i % 50),  # Higher power 200-249W
-                energy_consumption=250000000 + (i * 3000000),
-                gpu_utilization=float(50 + (i % 30)),  # 50-79%
-                gpu_memory_used=40.0 + (i % 10),  # 40-49 GB
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=200.0 + (i % 50),  # Higher power 200-249W
+                    energy_consumption=250000000 + (i * 3000000),
+                    gpu_utilization=float(50 + (i % 30)),  # 50-79%
+                    gpu_memory_used=40.0 + (i % 10),  # 40-49 GB
+                ),
             )
         )
 

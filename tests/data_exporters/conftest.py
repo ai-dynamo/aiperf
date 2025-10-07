@@ -7,6 +7,7 @@ import pytest
 
 from aiperf.common.models.telemetry_models import (
     TelemetryHierarchy,
+    TelemetryMetrics,
     TelemetryRecord,
     TelemetryResults,
 )
@@ -24,14 +25,16 @@ def sample_telemetry_record():
         pci_bus_id="00000000:01:00.0",
         device="nvidia0",
         hostname="test-node-01",
-        gpu_power_usage=300.0,
-        energy_consumption=1000.5,
-        gpu_utilization=85.0,
-        gpu_memory_used=72.5,
-        sm_clock_frequency=1410.0,
-        memory_clock_frequency=1215.0,
-        memory_temperature=65.0,
-        gpu_temperature=70.0,
+        telemetry_data=TelemetryMetrics(
+            gpu_power_usage=300.0,
+            energy_consumption=1000.5,
+            gpu_utilization=85.0,
+            gpu_memory_used=72.5,
+            sm_clock_frequency=1410.0,
+            memory_clock_frequency=1215.0,
+            memory_temperature=65.0,
+            gpu_temperature=70.0,
+        ),
     )
 
 
@@ -52,14 +55,16 @@ def sample_telemetry_results():
                 pci_bus_id=f"00000000:0{gpu_idx + 1}:00.0",
                 device=f"nvidia{gpu_idx}",
                 hostname="test-node-01",
-                gpu_power_usage=280.0 + gpu_idx * 20 + time_offset * 5,
-                energy_consumption=1000.0 + time_offset * 100,
-                gpu_utilization=80.0 + time_offset * 2,
-                gpu_memory_used=70.0 + gpu_idx * 5 + time_offset * 1,
-                sm_clock_frequency=1410.0,
-                memory_clock_frequency=1215.0,
-                memory_temperature=60.0 + time_offset,
-                gpu_temperature=65.0 + time_offset * 2,
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=280.0 + gpu_idx * 20 + time_offset * 5,
+                    energy_consumption=1000.0 + time_offset * 100,
+                    gpu_utilization=80.0 + time_offset * 2,
+                    gpu_memory_used=70.0 + gpu_idx * 5 + time_offset * 1,
+                    sm_clock_frequency=1410.0,
+                    memory_clock_frequency=1215.0,
+                    memory_temperature=60.0 + time_offset,
+                    gpu_temperature=65.0 + time_offset * 2,
+                ),
             )
             hierarchy.add_record(record)
 
@@ -74,14 +79,16 @@ def sample_telemetry_results():
             pci_bus_id="00000000:01:00.0",
             device="nvidia0",
             hostname="test-node-02",
-            gpu_power_usage=250.0 + time_offset * 10,
-            energy_consumption=800.0 + time_offset * 80,
-            gpu_utilization=75.0 + time_offset * 3,
-            gpu_memory_used=60.0 + time_offset * 2,
-            sm_clock_frequency=1350.0,
-            memory_clock_frequency=1200.0,
-            memory_temperature=58.0 + time_offset,
-            gpu_temperature=63.0 + time_offset * 2,
+            telemetry_data=TelemetryMetrics(
+                gpu_power_usage=250.0 + time_offset * 10,
+                energy_consumption=800.0 + time_offset * 80,
+                gpu_utilization=75.0 + time_offset * 3,
+                gpu_memory_used=60.0 + time_offset * 2,
+                sm_clock_frequency=1350.0,
+                memory_clock_frequency=1200.0,
+                memory_temperature=58.0 + time_offset,
+                gpu_temperature=63.0 + time_offset * 2,
+            ),
         )
         hierarchy.add_record(record)
 
@@ -114,10 +121,12 @@ def sample_telemetry_results_with_failures():
             gpu_index=0,
             gpu_model_name="NVIDIA H100",
             gpu_uuid="GPU-12345678-1234-1234-1234-123456789abc",
-            gpu_power_usage=300.0 + time_offset * 10,
-            gpu_utilization=85.0,
-            gpu_memory_used=72.5,
-            gpu_temperature=70.0,
+            telemetry_data=TelemetryMetrics(
+                gpu_power_usage=300.0 + time_offset * 10,
+                gpu_utilization=85.0,
+                gpu_memory_used=72.5,
+                gpu_temperature=70.0,
+            ),
         )
         hierarchy.add_record(record)
 

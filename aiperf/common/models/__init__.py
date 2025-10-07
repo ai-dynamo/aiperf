@@ -73,6 +73,7 @@ from aiperf.common.models.telemetry_models import (
     GpuTelemetrySnapshot,
     ProcessTelemetryResult,
     TelemetryHierarchy,
+    TelemetryMetrics,
     TelemetryRecord,
     TelemetryResults,
 )
@@ -137,6 +138,7 @@ __all__ = [
     "SessionPayloads",
     "StatsProtocol",
     "TelemetryHierarchy",
+    "TelemetryMetrics",
     "TelemetryRecord",
     "TelemetryResults",
     "Text",
