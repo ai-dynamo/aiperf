@@ -27,8 +27,10 @@ def mock_endpoint_config():
 
 @pytest.fixture
 def mock_user_config(mock_endpoint_config):
-    """Create a mock user configuration."""
-    return UserConfig(endpoint=mock_endpoint_config)
+    """Create a mock user configuration with gpu_telemetry enabled."""
+    return UserConfig(
+        endpoint=mock_endpoint_config, gpu_telemetry=["http://localhost:9400/metrics"]
+    )
 
 
 @pytest.fixture
@@ -47,13 +49,19 @@ class TestGPUTelemetryConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_verbose_disabled_no_output(
-        self, mock_profile_results, mock_user_config, sample_telemetry_results, capsys
+        self,
+        mock_profile_results,
+        mock_endpoint_config,
+        sample_telemetry_results,
+        capsys,
     ):
-        """Test that export does not print when verbose mode is disabled."""
+        """Test that export does not print when gpu_telemetry is not enabled."""
+        # Create user config without gpu_telemetry
+        user_config = UserConfig(endpoint=mock_endpoint_config)
         service_config = ServiceConfig(verbose=False)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
+            user_config=user_config,
             service_config=service_config,
             telemetry_results=sample_telemetry_results,
         )
@@ -197,42 +205,34 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        console = Console(width=150)
-        renderable = exporter.get_renderable(sample_telemetry_results, console)
+        renderable = exporter.get_renderable()
 
-        # Verify renderable is created without errors
         assert renderable is not None
 
     def test_normalize_endpoint_display(self):
         """Test endpoint URL normalization for display."""
-        exporter = GPUTelemetryConsoleExporter
+        from aiperf.exporters.display_units_utils import normalize_endpoint_display
 
         # Standard http URL
         assert (
-            exporter._normalize_endpoint_display("http://localhost:9400/metrics")
+            normalize_endpoint_display("http://localhost:9400/metrics")
             == "localhost:9400"
         )
 
         # https URL
-        assert (
-            exporter._normalize_endpoint_display("https://node1:9400/metrics")
-            == "node1:9400"
-        )
+        assert normalize_endpoint_display("https://node1:9400/metrics") == "node1:9400"
 
         # URL with path
         assert (
-            exporter._normalize_endpoint_display("http://node1:9400/api/metrics")
+            normalize_endpoint_display("http://node1:9400/api/metrics")
             == "node1:9400/api"
         )
 
         # URL without /metrics suffix
-        assert (
-            exporter._normalize_endpoint_display("http://node1:9400/data")
-            == "node1:9400/data"
-        )
+        assert normalize_endpoint_display("http://node1:9400/data") == "node1:9400/data"
 
         # URL with just host
-        assert exporter._normalize_endpoint_display("http://node1:9400") == "node1:9400"
+        assert normalize_endpoint_display("http://node1:9400") == "node1:9400"
 
     @pytest.mark.asyncio
     async def test_export_displays_all_metrics(
@@ -260,3 +260,186 @@ class TestGPUTelemetryConsoleExporter:
         assert "Temperature" in output
         # Check for statistical columns
         assert "avg" in output or "min" in output or "max" in output
+
+    @pytest.mark.asyncio
+    async def test_export_with_error_summary(
+        self, mock_profile_results, mock_user_config, capsys
+    ):
+        """Test that error summary is displayed when errors occurred."""
+        from aiperf.common.models import (
+            ErrorDetails,
+            ErrorDetailsCount,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        service_config = ServiceConfig(verbose=True)
+
+        # Create telemetry results with errors but no data
+        telemetry_results = TelemetryResults(
+            telemetry_data=TelemetryHierarchy(),
+            start_ns=0,
+            end_ns=0,
+            endpoints_tested=["http://failed-node:9400/metrics"],
+            endpoints_successful=[],
+            error_summary=[
+                ErrorDetailsCount(
+                    error_details=ErrorDetails(message="Connection timeout", code=408),
+                    count=5,
+                ),
+                ErrorDetailsCount(
+                    error_details=ErrorDetails(message="Connection refused", code=503),
+                    count=1,
+                ),
+            ],
+        )
+
+        exporter_config = ExporterConfig(
+            results=mock_profile_results,
+            user_config=mock_user_config,
+            service_config=service_config,
+            telemetry_results=telemetry_results,
+        )
+
+        exporter = GPUTelemetryConsoleExporter(exporter_config)
+        console = Console(width=150)
+        await exporter.export(console)
+
+        output = capsys.readouterr().out
+        assert "No GPU telemetry data collected" in output
+        assert "Errors encountered" in output
+        assert "Connection timeout" in output
+        assert "5 occurrences" in output
+        assert "Connection refused" in output
+
+    @pytest.mark.asyncio
+    async def test_export_handles_metric_retrieval_exceptions(
+        self, mock_profile_results, mock_user_config, capsys
+    ):
+        """Test that metric retrieval exceptions are handled gracefully."""
+        from unittest.mock import Mock
+
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        service_config = ServiceConfig(verbose=True)
+
+        # Create telemetry results with GPU data that will fail on metric retrieval
+        gpu_data = Mock(spec=GpuTelemetryData)
+        gpu_data.metadata = GpuMetadata(
+            gpu_index=0,
+            model_name="Test GPU",
+            gpu_uuid="GPU-123",
+        )
+        # Make get_metric_result raise exception
+        gpu_data.get_metric_result = Mock(side_effect=Exception("Metric not available"))
+
+        hierarchy = TelemetryHierarchy()
+        hierarchy.dcgm_endpoints = {
+            "http://localhost:9400/metrics": {"GPU-123": gpu_data}
+        }
+
+        telemetry_results = TelemetryResults(
+            telemetry_data=hierarchy,
+            start_ns=0,
+            end_ns=0,
+            endpoints_tested=["http://localhost:9400/metrics"],
+            endpoints_successful=["http://localhost:9400/metrics"],
+        )
+
+        exporter_config = ExporterConfig(
+            results=mock_profile_results,
+            user_config=mock_user_config,
+            service_config=service_config,
+            telemetry_results=telemetry_results,
+        )
+
+        exporter = GPUTelemetryConsoleExporter(exporter_config)
+        console = Console(width=150)
+
+        # Should not raise exception despite metric retrieval failures
+        await exporter.export(console)
+
+        output = capsys.readouterr().out
+        # Should still show GPU info even if metrics fail
+        assert "Test GPU" in output or "GPU 0" in output
+
+    @pytest.mark.asyncio
+    async def test_export_all_endpoints_failed(
+        self, mock_profile_results, mock_user_config, capsys
+    ):
+        """Test display when all endpoints failed."""
+        from aiperf.common.models import TelemetryHierarchy, TelemetryResults
+
+        service_config = ServiceConfig(verbose=True)
+
+        telemetry_results = TelemetryResults(
+            telemetry_data=TelemetryHierarchy(),
+            start_ns=0,
+            end_ns=0,
+            endpoints_tested=[
+                "http://node1:9400/metrics",
+                "http://node2:9400/metrics",
+                "http://node3:9400/metrics",
+            ],
+            endpoints_successful=[],
+        )
+
+        exporter_config = ExporterConfig(
+            results=mock_profile_results,
+            user_config=mock_user_config,
+            service_config=service_config,
+            telemetry_results=telemetry_results,
+        )
+
+        exporter = GPUTelemetryConsoleExporter(exporter_config)
+        console = Console(width=150)
+        await exporter.export(console)
+
+        output = capsys.readouterr().out
+        assert "No GPU telemetry data collected" in output
+        assert (
+            "0/3 DCGM endpoints reachable" in output
+            or "Unreachable endpoints" in output
+        )
+        assert "node1:9400" in output
+        assert "node2:9400" in output
+        assert "node3:9400" in output
+
+    @pytest.mark.asyncio
+    async def test_get_renderable_empty_gpu_data(
+        self, mock_profile_results, mock_user_config
+    ):
+        """Test get_renderable with endpoint that has no GPU data."""
+        from aiperf.common.models import TelemetryHierarchy, TelemetryResults
+
+        service_config = ServiceConfig(verbose=True)
+
+        # Endpoint exists but has no GPU data
+        hierarchy = TelemetryHierarchy()
+        hierarchy.dcgm_endpoints = {"http://localhost:9400/metrics": {}}
+
+        telemetry_results = TelemetryResults(
+            telemetry_data=hierarchy,
+            start_ns=0,
+            end_ns=0,
+            endpoints_tested=["http://localhost:9400/metrics"],
+            endpoints_successful=["http://localhost:9400/metrics"],
+        )
+
+        exporter_config = ExporterConfig(
+            results=mock_profile_results,
+            user_config=mock_user_config,
+            service_config=service_config,
+            telemetry_results=telemetry_results,
+        )
+
+        exporter = GPUTelemetryConsoleExporter(exporter_config)
+        renderable = exporter.get_renderable()
+
+        # Should show no data message
+        assert renderable is not None

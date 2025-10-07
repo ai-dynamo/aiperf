@@ -16,7 +16,12 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ErrorDetailsCount, MetricResult
 from aiperf.common.protocols import DataExporterProtocol
 from aiperf.common.types import MetricTagT
-from aiperf.exporters.display_units_utils import convert_all_metrics_to_display_units
+from aiperf.exporters.display_units_utils import (
+    GPU_TELEMETRY_METRICS_CONFIG,
+    STAT_KEYS,
+    convert_all_metrics_to_display_units,
+    normalize_endpoint_display,
+)
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.metrics.metric_registry import MetricRegistry
 
@@ -68,6 +73,18 @@ class JsonExporter(AIPerfLoggerMixin):
         return res
 
     async def export(self) -> None:
+        """Export inference and telemetry data to JSON file.
+
+        Creates a JSON file containing:
+        - Input configuration
+        - Inference metric results (converted to display units)
+        - Telemetry data with statistical summaries per endpoint/GPU
+        - Error summaries
+        - Timestamps
+
+        Raises:
+            Exception: If file writing fails
+        """
         self._output_directory.mkdir(parents=True, exist_ok=True)
 
         start_time = (
@@ -122,7 +139,18 @@ class JsonExporter(AIPerfLoggerMixin):
             await f.write(export_data_json)
 
     def _generate_telemetry_statistical_summary(self) -> dict:
-        """Generate clean statistical summary of telemetry data for JSON export."""
+        """Generate clean statistical summary of telemetry data for JSON export.
+
+        Processes telemetry hierarchy into a structured dict with:
+        - Endpoints organized by normalized display name (e.g., "localhost:9400")
+        - GPU data with metadata (index, name, UUID, hostname)
+        - Metric statistics (avg, min, max, p99, p90, p75, std, count) per GPU
+        - Only includes metrics with available data
+
+        Returns:
+            dict: Nested structure of endpoints -> gpus -> metrics with statistics.
+                Empty dict if no telemetry data available.
+        """
         summary = {}
 
         if not self._telemetry_results or not self._telemetry_results.telemetry_data:
@@ -132,18 +160,8 @@ class JsonExporter(AIPerfLoggerMixin):
             dcgm_url,
             gpus_data,
         ) in self._telemetry_results.telemetry_data.dcgm_endpoints.items():
-            endpoint_display = dcgm_url.replace("http://", "").replace("/metrics", "")
+            endpoint_display = normalize_endpoint_display(dcgm_url)
             summary[endpoint_display] = {"gpus": {}}
-
-            metrics_to_export = [
-                ("gpu_power_usage", "W"),
-                ("energy_consumption", "MJ"),
-                ("gpu_utilization", "%"),
-                ("gpu_memory_used", "GB"),
-                ("gpu_temperature", "°C"),
-                ("sm_clock_frequency", "MHz"),
-                ("memory_clock_frequency", "MHz"),
-            ]
 
             for gpu_uuid, gpu_data in gpus_data.items():
                 gpu_summary = {
@@ -154,36 +172,20 @@ class JsonExporter(AIPerfLoggerMixin):
                     "metrics": {},
                 }
 
-                for metric_key, unit in metrics_to_export:
+                for _metric_display, metric_key, unit in GPU_TELEMETRY_METRICS_CONFIG:
                     try:
                         metric_result = gpu_data.get_metric_result(
                             metric_key, metric_key, metric_key, unit
                         )
-                        gpu_summary["metrics"][metric_key] = {
-                            "avg": round(metric_result.avg, 2)
-                            if metric_result.avg is not None
-                            else None,
-                            "min": round(metric_result.min, 2)
-                            if metric_result.min is not None
-                            else None,
-                            "max": round(metric_result.max, 2)
-                            if metric_result.max is not None
-                            else None,
-                            "p99": round(metric_result.p99, 2)
-                            if metric_result.p99 is not None
-                            else None,
-                            "p90": round(metric_result.p90, 2)
-                            if metric_result.p90 is not None
-                            else None,
-                            "p75": round(metric_result.p75, 2)
-                            if metric_result.p75 is not None
-                            else None,
-                            "std": round(metric_result.std, 2)
-                            if metric_result.std is not None
-                            else None,
-                            "count": metric_result.count,
-                            "unit": unit,
-                        }
+                        stats_dict = {}
+                        for stat in STAT_KEYS:
+                            value = getattr(metric_result, stat, None)
+                            stats_dict[stat] = (
+                                round(value, 2) if value is not None else None
+                            )
+                        stats_dict["count"] = metric_result.count
+                        stats_dict["unit"] = unit
+                        gpu_summary["metrics"][metric_key] = stats_dict
                     except Exception:
                         continue
 

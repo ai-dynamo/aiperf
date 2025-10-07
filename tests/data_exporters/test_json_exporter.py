@@ -245,3 +245,306 @@ class TestJsonExporterTelemetry:
             assert "min" in first_metric
             assert "max" in first_metric
             assert "unit" in first_metric
+
+    @pytest.mark.asyncio
+    async def test_json_export_telemetry_exception_handling(
+        self, mock_results, mock_user_config
+    ):
+        """Test that telemetry export handles metric retrieval exceptions."""
+        from unittest.mock import Mock
+
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            # Create GPU data that will fail on metric retrieval
+            gpu_data = Mock(spec=GpuTelemetryData)
+            gpu_data.metadata = GpuMetadata(
+                gpu_index=0,
+                model_name="Test GPU",
+                gpu_uuid="GPU-123",
+            )
+            gpu_data.get_metric_result = Mock(
+                side_effect=Exception("Metric not available")
+            )
+
+            hierarchy = TelemetryHierarchy()
+            hierarchy.dcgm_endpoints = {
+                "http://localhost:9400/metrics": {"GPU-123": gpu_data}
+            }
+
+            telemetry_results = TelemetryResults(
+                telemetry_data=hierarchy,
+                start_ns=0,
+                end_ns=0,
+                endpoints_tested=["http://localhost:9400/metrics"],
+                endpoints_successful=["http://localhost:9400/metrics"],
+            )
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=telemetry_results,
+            )
+
+            exporter = JsonExporter(exporter_config)
+            # Should not raise exception despite metric retrieval failures
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            assert expected_file.exists()
+
+            with open(expected_file) as f:
+                data = json.load(f)
+
+            # Should still have telemetry structure even if metrics fail
+            assert "telemetry_data" in data
+
+    @pytest.mark.asyncio
+    async def test_json_export_telemetry_with_none_values(
+        self, mock_results, mock_user_config
+    ):
+        """Test JSON export when metric values are None."""
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            # Create GPU data with None values (no snapshots = no data)
+            gpu_data = GpuTelemetryData(
+                metadata=GpuMetadata(
+                    gpu_index=0,
+                    model_name="Test GPU",
+                    gpu_uuid="GPU-123",
+                )
+            )
+            # No snapshots added = empty metrics
+
+            hierarchy = TelemetryHierarchy()
+            hierarchy.dcgm_endpoints = {
+                "http://localhost:9400/metrics": {"GPU-123": gpu_data}
+            }
+
+            telemetry_results = TelemetryResults(
+                telemetry_data=hierarchy,
+                start_ns=0,
+                end_ns=0,
+                endpoints_tested=["http://localhost:9400/metrics"],
+                endpoints_successful=["http://localhost:9400/metrics"],
+            )
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=telemetry_results,
+            )
+
+            exporter = JsonExporter(exporter_config)
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            with open(expected_file) as f:
+                data = json.load(f)
+
+            # Should handle None values gracefully
+            assert "telemetry_data" in data
+
+    @pytest.mark.asyncio
+    async def test_json_export_telemetry_empty_hierarchy(
+        self, mock_results, mock_user_config
+    ):
+        """Test JSON export with empty telemetry hierarchy."""
+        from aiperf.common.models import TelemetryHierarchy, TelemetryResults
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            # Empty hierarchy
+            telemetry_results = TelemetryResults(
+                telemetry_data=TelemetryHierarchy(),
+                start_ns=0,
+                end_ns=0,
+                endpoints_tested=[],
+                endpoints_successful=[],
+            )
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=telemetry_results,
+            )
+
+            exporter = JsonExporter(exporter_config)
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            with open(expected_file) as f:
+                data = json.load(f)
+
+            # Should have telemetry_data section but empty
+            assert "telemetry_data" in data
+            endpoints = data["telemetry_data"]["endpoints"]
+            assert endpoints == {}
+
+    @pytest.mark.asyncio
+    async def test_json_export_telemetry_endpoint_normalization(
+        self, mock_results, mock_user_config
+    ):
+        """Test that endpoint URLs are normalized in JSON output."""
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            gpu_data = GpuTelemetryData(
+                metadata=GpuMetadata(
+                    gpu_index=0,
+                    model_name="Test GPU",
+                    gpu_uuid="GPU-123",
+                )
+            )
+            gpu_data.time_series.append_snapshot(
+                {"gpu_power_usage": 100.0}, timestamp_ns=1000000000
+            )
+
+            hierarchy = TelemetryHierarchy()
+            hierarchy.dcgm_endpoints = {
+                "http://node1.example.com:9400/metrics": {"GPU-123": gpu_data}
+            }
+
+            telemetry_results = TelemetryResults(
+                telemetry_data=hierarchy,
+                start_ns=0,
+                end_ns=0,
+                endpoints_tested=["http://node1.example.com:9400/metrics"],
+                endpoints_successful=["http://node1.example.com:9400/metrics"],
+            )
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=telemetry_results,
+            )
+
+            exporter = JsonExporter(exporter_config)
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            with open(expected_file) as f:
+                data = json.load(f)
+
+            endpoints = data["telemetry_data"]["endpoints"]
+            # Check that endpoint was normalized (removed http:// and /metrics)
+            assert "node1.example.com:9400" in endpoints
+
+    @pytest.mark.asyncio
+    async def test_json_export_telemetry_multi_endpoint(
+        self, mock_results, mock_user_config
+    ):
+        """Test JSON export with multiple DCGM endpoints."""
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            # Create two endpoints with GPU data
+            gpu1_data = GpuTelemetryData(
+                metadata=GpuMetadata(
+                    gpu_index=0,
+                    model_name="GPU Model 1",
+                    gpu_uuid="GPU-111",
+                )
+            )
+            gpu1_data.time_series.append_snapshot(
+                {"gpu_power_usage": 100.0}, timestamp_ns=1000000000
+            )
+            gpu1_data.time_series.append_snapshot(
+                {"gpu_power_usage": 110.0}, timestamp_ns=2000000000
+            )
+
+            gpu2_data = GpuTelemetryData(
+                metadata=GpuMetadata(
+                    gpu_index=0,
+                    model_name="GPU Model 2",
+                    gpu_uuid="GPU-222",
+                )
+            )
+            gpu2_data.time_series.append_snapshot(
+                {"gpu_power_usage": 200.0}, timestamp_ns=1000000000
+            )
+            gpu2_data.time_series.append_snapshot(
+                {"gpu_power_usage": 210.0}, timestamp_ns=2000000000
+            )
+
+            hierarchy = TelemetryHierarchy()
+            hierarchy.dcgm_endpoints = {
+                "http://node1:9400/metrics": {"GPU-111": gpu1_data},
+                "http://node2:9400/metrics": {"GPU-222": gpu2_data},
+            }
+
+            telemetry_results = TelemetryResults(
+                telemetry_data=hierarchy,
+                start_ns=0,
+                end_ns=0,
+                endpoints_tested=[
+                    "http://node1:9400/metrics",
+                    "http://node2:9400/metrics",
+                ],
+                endpoints_successful=[
+                    "http://node1:9400/metrics",
+                    "http://node2:9400/metrics",
+                ],
+            )
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=telemetry_results,
+            )
+
+            exporter = JsonExporter(exporter_config)
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            with open(expected_file) as f:
+                data = json.load(f)
+
+            endpoints = data["telemetry_data"]["endpoints"]
+            # Should have both endpoints
+            assert "node1:9400" in endpoints
+            assert "node2:9400" in endpoints
+
+            # Check GPU data exists for both
+            assert "gpus" in endpoints["node1:9400"]
+            assert "gpus" in endpoints["node2:9400"]

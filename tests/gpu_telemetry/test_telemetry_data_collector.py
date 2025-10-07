@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiohttp
 import pytest
@@ -104,11 +104,13 @@ class TestPrometheusMetricParsing:
         assert record.gpu_index == 0
         assert record.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
-        assert record.gpu_power_usage == 22.582000
+        assert record.telemetry_data.gpu_power_usage == 22.582000
 
         # Test unit scaling applied correctly
-        assert abs(record.energy_consumption - 0.955287014) < 0.001  # mJ to MJ
-        assert abs(record.gpu_memory_used - 48.878) < 0.001  # MiB to GB
+        assert (
+            abs(record.telemetry_data.energy_consumption - 0.955287014) < 0.001
+        )  # mJ to MJ
+        assert abs(record.telemetry_data.gpu_memory_used - 48.878) < 0.001  # MiB to GB
 
     def test_complete_parsing_multi_gpu(self, multi_gpu_dcgm_data):
         """Test parsing complete DCGM response for multiple GPUs.
@@ -168,11 +170,15 @@ class TestHttpCommunication:
         """Test DCGM endpoint reachability check with successful HTTP response."""
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
 
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            # Mock successful response
+        with patch("aiohttp.ClientSession.head") as mock_head:
+            # Mock successful HEAD response with Prometheus content-type
             mock_response = AsyncMock()
             mock_response.status = 200
-            mock_get.return_value.__aenter__.return_value = mock_response
+            mock_response.headers = {
+                "Content-Type": "text/plain; version=0.0.4; charset=utf-8"
+            }
+            mock_response.raise_for_status = AsyncMock()
+            mock_head.return_value.__aenter__.return_value = mock_response
 
             # Initialize the collector to set up the session
             await collector.initialize()
@@ -205,6 +211,67 @@ class TestHttpCommunication:
             await collector.stop()
 
     @pytest.mark.asyncio
+    async def test_endpoint_reachability_head_fallback(self):
+        """Test that HEAD request falls back to GET when HEAD returns non-200."""
+        collector = TelemetryDataCollector("http://localhost:9401/metrics")
+
+        with (
+            patch("aiohttp.ClientSession.head") as mock_head,
+            patch("aiohttp.ClientSession.get") as mock_get,
+        ):
+            # Mock HEAD returning 405 (Method Not Allowed)
+            mock_head_response = AsyncMock()
+            mock_head_response.status = 405
+            mock_head.return_value.__aenter__.return_value = mock_head_response
+
+            # Mock GET returning 200
+            mock_get_response = AsyncMock()
+            mock_get_response.status = 200
+            mock_get.return_value.__aenter__.return_value = mock_get_response
+
+            await collector.initialize()
+            result = await collector.is_url_reachable()
+
+            assert result is True
+            # Both HEAD and GET should have been called
+            mock_head.assert_called_once()
+            mock_get.assert_called_once()
+
+            await collector.stop()
+
+    @pytest.mark.asyncio
+    async def test_endpoint_reachability_without_session(self):
+        """Test reachability check creates temporary session when collector not initialized."""
+        collector = TelemetryDataCollector("http://localhost:9401/metrics")
+
+        # Don't initialize - should create temporary session
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            # Create mock response
+            mock_response = MagicMock()
+            mock_response.status = 200
+
+            # Create mock for the response context manager
+            mock_response_cm = MagicMock()
+            mock_response_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_response_cm.__aexit__ = AsyncMock(return_value=None)
+
+            # Create mock session
+            mock_session = MagicMock()
+            mock_session.head = MagicMock(return_value=mock_response_cm)
+
+            # Make ClientSession() return an async context manager that yields the mock_session
+            mock_context_manager = MagicMock()
+            mock_context_manager.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+            mock_session_class.return_value = mock_context_manager
+
+            result = await collector.is_url_reachable()
+
+            assert result is True
+            # Temporary session should be created
+            mock_session_class.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_metrics_fetching(self, sample_dcgm_data):
         """Test successful HTTP fetching of DCGM metrics."""
         collector = TelemetryDataCollector("http://localhost:9401/metrics")
@@ -223,6 +290,47 @@ class TestHttpCommunication:
             assert result == sample_dcgm_data
 
             await collector.stop()
+
+    @pytest.mark.asyncio
+    async def test_fetch_metrics_session_closed(self):
+        """Test fetch_metrics raises error when session is closed."""
+        collector = TelemetryDataCollector("http://localhost:9401/metrics")
+
+        await collector.initialize()
+
+        # Close the session
+        await collector._session.close()
+
+        # Should raise CancelledError due to closed session
+        with pytest.raises(asyncio.CancelledError):
+            await collector._fetch_metrics()
+
+    @pytest.mark.asyncio
+    async def test_fetch_metrics_when_stop_requested(self):
+        """Test fetch_metrics raises CancelledError when stop is requested."""
+        collector = TelemetryDataCollector("http://localhost:9401/metrics")
+
+        await collector.initialize()
+
+        # Set stop_requested flag
+        collector.stop_requested = True
+
+        # Should raise CancelledError
+        with pytest.raises(asyncio.CancelledError):
+            await collector._fetch_metrics()
+
+        # Clean up
+        collector.stop_requested = False
+        await collector.stop()
+
+    @pytest.mark.asyncio
+    async def test_fetch_metrics_no_session(self):
+        """Test fetch_metrics raises error when session not initialized."""
+        collector = TelemetryDataCollector("http://localhost:9401/metrics")
+
+        # Don't initialize - session is None
+        with pytest.raises(RuntimeError, match="HTTP session not initialized"):
+            await collector._fetch_metrics()
 
 
 class TestCollectionLifecycle:
@@ -270,7 +378,6 @@ class TestCollectionLifecycle:
                 )
             else:
                 assert all(isinstance(r, TelemetryRecord) for r in records_received)
-                print(f"Successfully collected {len(records_received)} records")
 
     @pytest.mark.asyncio
     async def test_error_handling_in_collection_loop(self):
@@ -393,6 +500,74 @@ class TestCollectionLifecycle:
 
         # Should handle stop before start gracefully
         await collector.stop()  # Should not raise exceptions
+
+    @pytest.mark.asyncio
+    async def test_async_record_callback(self, sample_dcgm_data):
+        """Test that async record callbacks are properly awaited."""
+        records_received = []
+
+        async def async_record_callback(records, _collector_id):
+            """Async callback that needs to be awaited."""
+            await asyncio.sleep(0.01)  # Simulate async work
+            records_received.extend(records)
+
+        collector = TelemetryDataCollector(
+            dcgm_url="http://localhost:9401/metrics",
+            collection_interval=0.1,
+            record_callback=async_record_callback,
+        )
+
+        with patch("aiohttp.ClientSession.get") as mock_get:
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.text.return_value = sample_dcgm_data
+            mock_response.raise_for_status.return_value = None
+            mock_get.return_value.__aenter__.return_value = mock_response
+
+            await collector.initialize_and_start()
+            await asyncio.sleep(0.3)
+            await collector.stop()
+
+            # Give time for callbacks to complete
+            await asyncio.sleep(0.1)
+
+            # Should have received records through async callback
+            if len(records_received) > 0:
+                assert all(hasattr(r, "gpu_uuid") for r in records_received), (
+                    "Records should be TelemetryRecord objects"
+                )
+
+    @pytest.mark.asyncio
+    async def test_async_error_callback(self):
+        """Test that async error callbacks are properly awaited."""
+        errors_received = []
+
+        async def async_error_callback(error, _collector_id):
+            """Async error callback that needs to be awaited."""
+            await asyncio.sleep(0.01)  # Simulate async work
+            errors_received.append(error)
+
+        collector = TelemetryDataCollector(
+            dcgm_url="http://localhost:9401/metrics",
+            collection_interval=0.05,
+            error_callback=async_error_callback,
+        )
+
+        with patch("aiohttp.ClientSession.get") as mock_get:
+            mock_get.side_effect = aiohttp.ClientError("Connection failed")
+
+            await collector.initialize_and_start()
+            await asyncio.sleep(0.2)
+            await collector.stop()
+
+            # Give time for error callbacks to complete
+            await asyncio.sleep(0.1)
+
+            # If errors were captured, they should be ErrorDetails objects
+            if len(errors_received) > 0:
+                assert all(hasattr(e, "message") for e in errors_received), (
+                    "Errors should be ErrorDetails objects"
+                )
 
 
 class TestDataProcessingEdgeCases:

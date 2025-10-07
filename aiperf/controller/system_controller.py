@@ -94,7 +94,6 @@ class SystemController(SignalHandlerMixin, BaseService):
             ServiceType.TIMING_MANAGER: 1,
             ServiceType.WORKER_MANAGER: 1,
             ServiceType.RECORDS_MANAGER: 1,
-            ServiceType.TELEMETRY_MANAGER: 1,
         }
         if self.service_config.record_processor_service_count is not None:
             self.required_services[ServiceType.RECORD_PROCESSOR] = (
@@ -200,8 +199,7 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _profile_configure_all_services(self) -> None:
         """Configure all services to start profiling.
 
-        This is a blocking call that will wait for all registered services to be configured before returning.
-        Timeout ensures we don't wait forever for optional services that may shut down.
+        This is a blocking call that will wait for all services to be configured before returning. This way we can ensure that all services are configured before we start profiling.
         """
         self.info("Configuring all services to start profiling")
         begin = time.perf_counter()
@@ -375,6 +373,14 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._endpoints_tested = message.endpoints_tested
         self._endpoints_reachable = message.endpoints_reachable
         self._should_wait_for_telemetry = message.enabled
+
+        if not message.enabled:
+            reason_msg = f" - {message.reason}" if message.reason else ""
+            self.info(f"GPU telemetry disabled{reason_msg}")
+        else:
+            self.info(
+                f"GPU telemetry enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_tested)} endpoint(s) reachable"
+            )
 
     @on_message(MessageType.COMMAND_RESPONSE)
     async def _process_command_response_message(self, message: CommandResponse) -> None:

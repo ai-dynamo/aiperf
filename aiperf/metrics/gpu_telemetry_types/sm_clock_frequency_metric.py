@@ -20,4 +20,4 @@ class SmClockFrequencyMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
-        return record.sm_clock_frequency
+        return record.telemetry_data.sm_clock_frequency

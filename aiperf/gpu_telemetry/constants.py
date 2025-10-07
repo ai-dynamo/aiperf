@@ -27,4 +27,8 @@ DCGM_TO_FIELD_MAPPING = {
     "DCGM_FI_DEV_MEM_CLOCK": "memory_clock_frequency",
     "DCGM_FI_DEV_MEMORY_TEMP": "memory_temperature",
     "DCGM_FI_DEV_GPU_TEMP": "gpu_temperature",
+    "DCGM_FI_DEV_MEM_COPY_UTIL": "memory_copy_utilization",
+    "DCGM_FI_DEV_XID_ERRORS": "xid_errors",
+    "DCGM_FI_DEV_POWER_VIOLATION": "power_violation",
+    "DCGM_FI_DEV_THERMAL_VIOLATION": "thermal_violation",
 }

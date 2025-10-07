@@ -4,7 +4,7 @@
 import pytest
 
 from aiperf.common.enums.metric_enums import MetricType
-from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.common.models.telemetry_models import TelemetryMetrics, TelemetryRecord
 from aiperf.metrics.base_telemetry_metric import BaseTelemetryMetric
 from aiperf.metrics.gpu_telemetry_types.gpu_power_usage_metric import (
     GpuPowerUsageMetric,
@@ -57,7 +57,7 @@ class TestBaseTelemetryMetric:
             unit = "units"
 
             def _extract_value(self, record: TelemetryRecord) -> float | None:
-                return record.gpu_power_usage
+                return record.telemetry_data.gpu_power_usage
 
         metric = TestTelemetryMetric()
         assert metric.type == MetricType.TELEMETRY
@@ -79,7 +79,7 @@ class TestBaseTelemetryMetric:
             unit = "W"
 
             def _extract_value(self, record: TelemetryRecord) -> float | None:
-                return record.gpu_power_usage
+                return record.telemetry_data.gpu_power_usage
 
         metric = TestMetric()
 
@@ -91,7 +91,9 @@ class TestBaseTelemetryMetric:
                 gpu_index=0,
                 gpu_model_name="Test GPU",
                 gpu_uuid="GPU-test-uuid",
-                gpu_power_usage=100.0 + i * 10.0,
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=100.0 + i * 10.0,
+                ),
             )
             for i in range(3)
         ]
@@ -116,7 +118,7 @@ class TestBaseTelemetryMetric:
             unit = "W"
 
             def _extract_value(self, record: TelemetryRecord) -> float | None:
-                return record.gpu_power_usage
+                return record.telemetry_data.gpu_power_usage
 
         metric = TestMetric()
 
@@ -127,7 +129,9 @@ class TestBaseTelemetryMetric:
                 gpu_index=0,
                 gpu_model_name="Test GPU",
                 gpu_uuid="GPU-test-uuid",
-                gpu_power_usage=100.0,
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=100.0,
+                ),
             ),
             TelemetryRecord(
                 timestamp_ns=1000033000,
@@ -135,7 +139,9 @@ class TestBaseTelemetryMetric:
                 gpu_index=0,
                 gpu_model_name="Test GPU",
                 gpu_uuid="GPU-test-uuid",
-                gpu_power_usage=None,  # Missing data point
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=None,  # Missing data point
+                ),
             ),
             TelemetryRecord(
                 timestamp_ns=1000066000,
@@ -143,7 +149,9 @@ class TestBaseTelemetryMetric:
                 gpu_index=0,
                 gpu_model_name="Test GPU",
                 gpu_uuid="GPU-test-uuid",
-                gpu_power_usage=125.0,
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=125.0,
+                ),
             ),
         ]
 
@@ -209,7 +217,9 @@ class TestSpecificTelemetryMetrics:
             gpu_index=0,
             gpu_model_name="Test GPU",
             gpu_uuid="GPU-test-uuid",
-            gpu_power_usage=22.582,
+            telemetry_data=TelemetryMetrics(
+                gpu_power_usage=22.582,
+            ),
         )
         assert metric._extract_value(record_with_value) == 22.582
 
@@ -220,7 +230,9 @@ class TestSpecificTelemetryMetrics:
             gpu_index=0,
             gpu_model_name="Test GPU",
             gpu_uuid="GPU-test-uuid",
-            gpu_power_usage=None,
+            telemetry_data=TelemetryMetrics(
+                gpu_power_usage=None,
+            ),
         )
         assert metric._extract_value(record_with_none) is None
 
@@ -254,7 +266,9 @@ class TestSpecificTelemetryMetrics:
             gpu_index=0,
             gpu_model_name="Test GPU",
             gpu_uuid="GPU-test-uuid",
-            gpu_utilization=85.0,
+            telemetry_data=TelemetryMetrics(
+                gpu_utilization=85.0,
+            ),
         )
         assert metric._extract_value(record_with_value) == 85.0
 
@@ -265,6 +279,8 @@ class TestSpecificTelemetryMetrics:
             gpu_index=0,
             gpu_model_name="Test GPU",
             gpu_uuid="GPU-test-uuid",
-            gpu_utilization=None,
+            telemetry_data=TelemetryMetrics(
+                gpu_utilization=None,
+            ),
         )
         assert metric._extract_value(record_with_none) is None
