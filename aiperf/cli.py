@@ -8,8 +8,6 @@
 # will cause a performance penalty during this process.
 ################################################################################
 
-import sys
-
 from cyclopts import App
 
 from aiperf.cli_utils import exit_on_error
@@ -34,9 +32,4 @@ def profile(
         from aiperf.common.config import load_service_config
 
         service_config = service_config or load_service_config()
-
         run_system_controller(user_config, service_config)
-
-
-if __name__ == "__main__":
-    sys.exit(app())
