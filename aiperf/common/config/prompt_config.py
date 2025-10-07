@@ -3,7 +3,8 @@
 
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, model_validator
+from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
@@ -170,6 +171,21 @@ class PromptConfig(BaseConfig):
 
     _CLI_GROUP = Groups.PROMPT
 
+    @model_validator(mode="after")
+    def validate_sequence_distribution_format(self) -> Self:
+        """Validate sequence distribution format and ensure percentages sum correctly."""
+        if self.sequence_distribution is not None:
+            try:
+                from aiperf.common.models.sequence_distribution import (
+                    DistributionParser,
+                )
+
+                # This will parse and validate the distribution, including probability sums
+                DistributionParser.parse(self.sequence_distribution)
+            except Exception as e:
+                raise ValueError(f"Invalid sequence distribution format: {e}") from e
+        return self
+
     batch_size: Annotated[
         int,
         Field(
@@ -190,3 +206,23 @@ class PromptConfig(BaseConfig):
     input_tokens: InputTokensConfig = InputTokensConfig()
     output_tokens: OutputTokensConfig = OutputTokensConfig()
     prefix_prompt: PrefixPromptConfig = PrefixPromptConfig()
+
+    sequence_distribution: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Sequence length distribution specification for varying ISL/OSL pairs",
+        ),
+        CLIParameter(
+            name=("--seq-dist", "--sequence-distribution"),
+            group=Groups.INPUT_SEQUENCE_LENGTH,
+        ),
+    ] = None
+
+    def get_sequence_distribution(self):
+        """Get sequence distribution object, returning None if not specified."""
+        if self.sequence_distribution is not None:
+            from aiperf.common.models.sequence_distribution import DistributionParser
+
+            return DistributionParser.parse(self.sequence_distribution)
+        return None
