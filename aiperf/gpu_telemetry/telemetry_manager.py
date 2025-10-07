@@ -8,6 +8,7 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
+    CommAddress,
     CommandType,
     ServiceType,
 )
@@ -195,10 +196,7 @@ class TelemetryManager(BaseComponentService):
 
         if started_count == 0:
             self.warning("No telemetry collectors successfully started")
-            await self.
-            
-            
-            ("all collectors failed to start")
+            await self._disable_telemetry_and_stop("all collectors failed to start")
             return
 
     @on_command(CommandType.PROFILE_CANCEL)
