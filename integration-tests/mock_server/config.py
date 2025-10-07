@@ -104,6 +104,13 @@ class MockServerConfig(BaseSettings):
         ),
     ] = []
 
+    fallback_tokenizer: Annotated[
+        str,
+        Field(
+            description="Fallback tokenizer to use if the requested tokenizer is not found",
+        ),
+    ] = "Qwen/Qwen3-0.6B"
+
     access_logs: Annotated[
         bool,
         Field(

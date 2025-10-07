@@ -2,10 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tokenizer service for handling different model tokenizers."""
 
+import contextlib
+import io
 import logging
 
-from transformers import AutoTokenizer
-from transformers.tokenization_utils import PreTrainedTokenizer
+# Silence tokenizer warning on import and first use
+with (
+    contextlib.redirect_stdout(io.StringIO()) as _,
+    contextlib.redirect_stderr(io.StringIO()),
+):
+    from transformers import AutoTokenizer
+    from transformers.tokenization_utils import PreTrainedTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +22,7 @@ class TokenizerService:
 
     def __init__(self):
         self._tokenizers: dict[str, PreTrainedTokenizer] = {}
+        self._fallback_tokenizer: str | None = None
 
     def load_tokenizers(self, model_names: list[str]) -> None:
         """Pre-load tokenizers for one or more models.
@@ -34,7 +42,11 @@ class TokenizerService:
     def get_tokenizer(self, model_name: str) -> PreTrainedTokenizer:
         """Get or create a tokenizer for the specified model."""
         if model_name not in self._tokenizers:
-            raise ValueError(f"No tokenizer loaded for {model_name}")
+            if self._fallback_tokenizer not in self._tokenizers:
+                raise ValueError(
+                    f"No tokenizer loaded for {model_name} or {self._fallback_tokenizer}"
+                )
+            model_name = self._fallback_tokenizer
 
         return self._tokenizers[model_name]
 
@@ -56,6 +68,10 @@ class TokenizerService:
         """Count the number of tokens in the text for the specified model."""
         tokenizer = self.get_tokenizer(model_name)
         return len(tokenizer.encode(text, add_special_tokens=False))
+
+    def set_fallback_tokenizer(self, fallback_tokenizer: str) -> None:
+        """Set the fallback tokenizer to use if the requested tokenizer is not found."""
+        self._fallback_tokenizer = fallback_tokenizer
 
 
 # Global tokenizer service instance

@@ -20,6 +20,10 @@ class ConfigureMessage(BaseModel):
     tokenizer_models: list[str] | None = Field(
         default=None, description="List of tokenizer models to load"
     )
+    fallback_tokenizer: str | None = Field(
+        default=None,
+        description="Fallback tokenizer to use if the requested tokenizer is not found",
+    )
 
 
 class Role(str, Enum):

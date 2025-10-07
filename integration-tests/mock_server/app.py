@@ -40,10 +40,15 @@ async def lifespan(_: FastAPI):
     """Initialize tokenizers and other startup tasks."""
     logger.info("Server configuration: %s", server_config.model_dump())
 
-    if server_config.tokenizer_models:
-        logger.info(f"Pre-loading tokenizer models: {server_config.tokenizer_models}")
-        tokenizer_service.load_tokenizers(server_config.tokenizer_models)
-        logger.info("Tokenizer models loaded successfully")
+    tokenizer_models = [
+        *server_config.tokenizer_models,
+        server_config.fallback_tokenizer,
+    ]
+
+    logger.info(f"Pre-loading tokenizer models: {tokenizer_models}")
+    tokenizer_service.set_fallback_tokenizer(server_config.fallback_tokenizer)
+    tokenizer_service.load_tokenizers(tokenizer_models)
+    logger.info("Tokenizer models loaded successfully")
 
     yield
 
@@ -71,6 +76,7 @@ def set_server_config(config: MockServerConfig) -> None:
     os.environ["MOCK_SERVER_PORT"] = str(config.port)
     os.environ["MOCK_SERVER_WORKERS"] = str(config.workers)
     os.environ["MOCK_SERVER_ACCESS_LOGS"] = str(config.access_logs)
+    os.environ["MOCK_SERVER_FALLBACK_TOKENIZER"] = str(config.fallback_tokenizer)
 
 
 def extract_user_prompt(messages: list[ChatMessage]) -> str:
@@ -135,7 +141,10 @@ async def configure(request: ConfigureMessage):
         logger.info(f"Loading tokenizer models: {request.tokenizer_models}")
         tokenizer_service.load_tokenizers(request.tokenizer_models)
         logger.info("Tokenizer models loaded successfully")
-
+    if request.fallback_tokenizer is not None:
+        tokenizer_service.load_tokenizers([request.fallback_tokenizer])
+        tokenizer_service.set_fallback_tokenizer(request.fallback_tokenizer)
+        logger.info(f"Fallback tokenizer set to {request.fallback_tokenizer}")
     return {"status": "configured", "config": server_config.model_dump()}
 
 
