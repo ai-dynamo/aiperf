@@ -22,7 +22,15 @@ class CreditDropMessage(BaseServiceMessage):
         default_factory=lambda: str(uuid.uuid4()),
         description="The ID of the credit drop, that will be used as the X-Correlation-ID header.",
     )
-    phase: CreditPhase = Field(..., description="The type of credit phase")
+    phase: CreditPhase = Field(
+        ..., description="The type of credit phase, such as warmup or profiling."
+    )
+    credit_num: int = Field(
+        ...,
+        ge=0,
+        description="The sequential number of the credit in the credit phase. This is used to track the progress of the credit phase,"
+        " as well as the order that requests are sent in.",
+    )
     conversation_id: str | None = Field(
         default=None, description="The ID of the conversation, if applicable."
     )

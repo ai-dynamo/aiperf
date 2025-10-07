@@ -151,8 +151,8 @@ class MetricRegistry:
         applicable to non-streaming endpoints, etc.
 
         Arguments:
-            required_flags: The flags that the metric must have.
-            disallowed_flags: The flags that the metric must not have.
+            required_flags: The flags that the metric must have ALL of. If MetricFlags.NONE, no flags are required.
+            disallowed_flags: The flags that the metric must not have ANY of.
             types: The types of metrics to include. If not provided, all types will be included.
 
         Returns:
@@ -161,7 +161,10 @@ class MetricRegistry:
         return [
             tag
             for tag, metric_class in cls._metrics_map.items()
-            if metric_class.has_flags(required_flags)
+            if (
+                required_flags == MetricFlags.NONE
+                or metric_class.has_flags(required_flags)
+            )
             and metric_class.missing_flags(disallowed_flags)
             and (not types or metric_class.type in types)
         ]

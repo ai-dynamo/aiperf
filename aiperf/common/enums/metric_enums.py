@@ -431,6 +431,10 @@ class MetricFlags(Flag):
     GOODPUT = 1 << 10
     """Metrics that are only applicable when goodput feature is enabled"""
 
+    NO_INDIVIDUAL_RECORDS = 1 << 11
+    """Metrics that should not be exported for individual records. These are typically aggregate metrics.
+    This is used to filter out metrics such as request count or min/max timestamps that are not relevant to individual records."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.

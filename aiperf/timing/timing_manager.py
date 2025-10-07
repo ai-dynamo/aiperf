@@ -175,6 +175,8 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
     async def drop_credit(
         self,
         credit_phase: CreditPhase,
+        credit_num: int,
+        *,
         conversation_id: str | None = None,
         credit_drop_ns: int | None = None,
         should_cancel: bool = False,
@@ -186,6 +188,7 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
                 message=CreditDropMessage(
                     service_id=self.service_id,
                     phase=credit_phase,
+                    credit_num=credit_num,
                     credit_drop_ns=credit_drop_ns,
                     conversation_id=conversation_id,
                     should_cancel=should_cancel,

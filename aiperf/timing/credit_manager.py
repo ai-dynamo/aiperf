@@ -26,6 +26,7 @@ class CreditManagerProtocol(PubClientProtocol, Protocol):
     async def drop_credit(
         self,
         credit_phase: CreditPhase,
+        credit_num: int,
         conversation_id: str | None = None,
         credit_drop_ns: int | None = None,
         *,

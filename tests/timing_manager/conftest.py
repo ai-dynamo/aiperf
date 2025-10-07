@@ -109,6 +109,7 @@ class MockCreditManager(AIPerfLifecycleMixin):
     async def drop_credit(
         self,
         credit_phase: CreditPhase,
+        credit_num: int,
         conversation_id: str | None = None,
         credit_drop_ns: int | None = None,
         should_cancel: bool = False,
@@ -121,6 +122,7 @@ class MockCreditManager(AIPerfLifecycleMixin):
             CreditDropMessage(
                 service_id="test-service",
                 phase=credit_phase,
+                credit_num=credit_num,
                 conversation_id=conversation_id,
                 credit_drop_ns=credit_drop_ns,
                 should_cancel=should_cancel,

@@ -198,43 +198,49 @@ def mock_metric_registry(monkeypatch):
 
 
 def create_metric_metadata(
+    session_num: int = 0,
     conversation_id: str | None = None,
     turn_index: int = 0,
-    timestamp_ns: int = 1_000_000_000,
+    request_start_ns: int = 1_000_000_000,
+    request_ack_ns: int | None = None,
+    request_end_ns: int | None = None,
     worker_id: str = "worker-1",
     record_processor_id: str = "processor-1",
-    credit_phase: CreditPhase = CreditPhase.PROFILING,
+    benchmark_phase: CreditPhase = CreditPhase.PROFILING,
     x_request_id: str | None = None,
     x_correlation_id: str | None = None,
-    error: ErrorDetails | None = None,
 ) -> MetricRecordMetadata:
     """
     Create a MetricRecordMetadata object with sensible defaults.
 
     Args:
+        session_num: Sequential session number in the benchmark
         conversation_id: Conversation ID (optional)
         turn_index: Turn index in conversation
-        timestamp_ns: Timestamp in nanoseconds
+        request_start_ns: Request start timestamp in nanoseconds
+        request_ack_ns: Request acknowledgement timestamp in nanoseconds (optional)
+        request_end_ns: Request end timestamp in nanoseconds (optional)
         worker_id: Worker ID
         record_processor_id: Record processor ID
-        credit_phase: Credit phase
+        benchmark_phase: Benchmark phase (warmup or profiling)
         x_request_id: X-Request-ID header value (optional)
         x_correlation_id: X-Correlation-ID header value (optional)
-        error: Error details if any
 
     Returns:
         MetricRecordMetadata object
     """
     return MetricRecordMetadata(
+        session_num=session_num,
         conversation_id=conversation_id,
         turn_index=turn_index,
-        timestamp_ns=timestamp_ns,
+        request_start_ns=request_start_ns,
+        request_ack_ns=request_ack_ns,
+        request_end_ns=request_end_ns,
         worker_id=worker_id,
         record_processor_id=record_processor_id,
-        credit_phase=credit_phase,
+        benchmark_phase=benchmark_phase,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
-        error=error,
     )
 
 

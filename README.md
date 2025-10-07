@@ -53,6 +53,9 @@ Features
 | **[Fixed Schedule](docs/tutorials/fixed-schedule.md)** | Precise timestamp-based request execution | Traffic replay, temporal analysis, burst testing |
 | **[Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md)** | Duration-based testing with grace period control | Stability testing, sustained performance |
 
+### Working with Benchmark Data
+- **[Profile Exports](docs/profile_exports.md)** - Parse and analyze `profile_export.jsonl` with Pydantic models, custom metrics, and async processing
+
 ### Quick Navigation
 ```bash
 # Basic profiling

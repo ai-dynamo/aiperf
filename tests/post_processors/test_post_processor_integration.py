@@ -72,7 +72,7 @@ class TestPostProcessorIntegration:
         for idx, value in enumerate(TEST_LATENCY_VALUES):
             message = create_metric_records_message(
                 x_request_id=f"test-{idx}",
-                timestamp_ns=1_000_000_000 + idx,
+                request_start_ns=1_000_000_000 + idx,
                 x_correlation_id=f"test-correlation-{idx}",
                 results=[{RequestLatencyMetric.tag: value}],
             )

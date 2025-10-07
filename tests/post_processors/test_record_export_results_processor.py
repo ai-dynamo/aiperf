@@ -239,8 +239,8 @@ class TestRecordExportResultsProcessorProcessResult:
             assert record.metadata.turn_index == 0
             assert record.metadata.worker_id == "worker-1"
             assert record.metadata.record_processor_id == "processor-1"
-            assert record.metadata.credit_phase == CreditPhase.PROFILING
-            assert record.metadata.timestamp_ns == 1_000_000_000
+            assert record.metadata.benchmark_phase == CreditPhase.PROFILING
+            assert record.metadata.request_start_ns == 1_000_000_000
             assert record.error is None
             assert "request_latency" in record.metrics
             assert "output_token_count" in record.metrics
@@ -329,7 +329,7 @@ class TestRecordExportResultsProcessorProcessResult:
                     x_request_id=f"record-{i}",
                     conversation_id=f"conv-{i}",
                     turn_index=i,
-                    timestamp_ns=1_000_000_000 + i,
+                    request_start_ns=1_000_000_000 + i,
                     results=[{"metric1": 100}, {"metric2": 200}],
                 )
                 await processor.process_result(message)
@@ -424,10 +424,10 @@ class TestRecordExportResultsProcessorFileFormat:
         # Check metadata structure
         assert record.metadata.conversation_id is not None
         assert isinstance(record.metadata.turn_index, int)
-        assert isinstance(record.metadata.timestamp_ns, int)
+        assert isinstance(record.metadata.request_start_ns, int)
         assert isinstance(record.metadata.worker_id, str)
         assert isinstance(record.metadata.record_processor_id, str)
-        assert isinstance(record.metadata.credit_phase, CreditPhase)
+        assert isinstance(record.metadata.benchmark_phase, CreditPhase)
 
         # Check metrics structure
         assert "test_metric" in record.metrics
@@ -467,7 +467,7 @@ class TestRecordExportResultsProcessorLogging:
                     x_request_id=f"record-{i}",
                     conversation_id=f"conv-{i}",
                     turn_index=i,
-                    timestamp_ns=1_000_000_000 + i,
+                    request_start_ns=1_000_000_000 + i,
                     results=[{"metric1": 100}, {"metric2": 200}],
                 )
                 await processor.process_result(message)
@@ -535,7 +535,7 @@ class TestRecordExportResultsProcessorShutdown:
                     x_request_id=f"record-{i}",
                     conversation_id=f"conv-{i}",
                     turn_index=i,
-                    timestamp_ns=1_000_000_000 + i,
+                    request_start_ns=1_000_000_000 + i,
                     results=[{"metric1": 100}],
                 )
                 await processor.process_result(message)

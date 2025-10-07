@@ -62,6 +62,7 @@ class MetricRecordDict(BaseMetricDict[MetricValueTypeT]):
         self, registry: "type[MetricRegistry]", show_internal: bool = False
     ) -> dict[str, MetricValue]:
         """Convert to display units with filtering applied.
+        NOTE: This will not include metrics with the `NO_INDIVIDUAL_RECORDS` flag.
 
         Args:
             registry: MetricRegistry class for looking up metric definitions
@@ -83,6 +84,9 @@ class MetricRecordDict(BaseMetricDict[MetricValueTypeT]):
             if not show_internal and not metric_class.missing_flags(
                 MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
             ):
+                continue
+
+            if metric_class.has_flags(MetricFlags.NO_INDIVIDUAL_RECORDS):
                 continue
 
             display_unit = metric_class.display_unit or metric_class.unit

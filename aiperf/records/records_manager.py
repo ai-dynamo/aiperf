@@ -128,9 +128,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 
-        if message.metadata.credit_phase != CreditPhase.PROFILING:
+        if message.metadata.benchmark_phase != CreditPhase.PROFILING:
             self.debug(
-                lambda: f"Skipping non-profiling record: {message.metadata.credit_phase}"
+                lambda: f"Skipping non-profiling record: {message.metadata.benchmark_phase}"
             )
             return
 

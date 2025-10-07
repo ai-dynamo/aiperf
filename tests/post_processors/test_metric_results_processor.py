@@ -53,7 +53,7 @@ class TestMetricResultsProcessor:
         # New data should expand the array
         message2 = create_metric_records_message(
             x_request_id="test-2",
-            timestamp_ns=1_000_000_001,
+            request_start_ns=1_000_000_001,
             results=[{"test_record": 84.0}],
         )
         await processor.process_result(message2)
@@ -97,7 +97,7 @@ class TestMetricResultsProcessor:
 
         message2 = create_metric_records_message(
             x_request_id="test-2",
-            timestamp_ns=1_000_000_001,
+            request_start_ns=1_000_000_001,
             results=[{RequestCountMetric.tag: 3}],
         )
         await processor.process_result(message2)
