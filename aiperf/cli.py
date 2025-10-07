@@ -34,7 +34,6 @@ def profile(
         from aiperf.common.config import load_service_config
 
         service_config = service_config or load_service_config()
-
         run_system_controller(user_config, service_config)
 
 
