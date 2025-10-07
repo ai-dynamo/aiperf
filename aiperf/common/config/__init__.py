@@ -171,11 +171,11 @@ __all__ = [
     "load_user_config",
     "parse_file",
     "parse_service_types",
+    "parse_str_as_numeric_dict",
     "parse_str_or_csv_list",
     "parse_str_or_dict_as_tuple_list",
     "parse_str_or_list",
     "parse_str_or_list_of_positive_values",
-    "parse_str_as_numeric_dict",
     "print_developer_mode_warning",
     "print_str_or_list",
 ]

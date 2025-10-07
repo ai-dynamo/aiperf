@@ -18,9 +18,13 @@ class OpenAIResponsesRequestConverter(AIPerfLoggerMixin):
     async def format_payload(
         self,
         model_endpoint: ModelEndpointInfo,
-        turn: Turn,
+        turns: list[Turn],
     ) -> dict[str, Any]:
         """Format payload for a responses request."""
+
+        # This converter does not support mutli-turn responses. Only the last turn is used.
+        # When this is fully supported, we can remove this limitation.
+        turn = turns[-1]
 
         # TODO: Add support for image and audio inputs.
         prompts = [

@@ -328,7 +328,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             # Format payload for the API request
             formatted_payload = await self.request_converter.format_payload(
                 model_endpoint=self.model_endpoint,
-                turn=turn_list,
+                turns=turn_list,
             )
 
             # NOTE: Current implementation of the TimingManager bypasses this, it is for future use.
@@ -372,7 +372,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                         f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
                     )
                 result.delayed_ns = delayed_ns
-                result.turn = turn
+                result.turn = turn_list[-1]
                 return result
             else:
                 cancellation_perf_ns = time.perf_counter_ns()

@@ -18,14 +18,15 @@ class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
     async def format_payload(
         self,
         model_endpoint: ModelEndpointInfo,
-        turn: Turn,
+        turns: list[Turn],
     ) -> dict[str, Any]:
         """Format payload for a completion request."""
 
+        # This converter does not support mutli-turn completions. Only the last turn is used.
+        turn = turns[-1]
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]
-
         extra = model_endpoint.endpoint.extra or []
 
         payload = {

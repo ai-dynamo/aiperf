@@ -17,10 +17,12 @@ class OpenAIEmbeddingsRequestConverter(AIPerfLoggerMixin):
     async def format_payload(
         self,
         model_endpoint: ModelEndpointInfo,
-        turn: Turn,
+        turns: list[Turn],
     ) -> dict[str, Any]:
         """Format payload for an embeddings request."""
 
+        # This converter does not support mutli-turn completions. Only the last turn is used.
+        turn = turns[-1]
         if turn.max_tokens:
             self.error("Max_tokens is provided but is not supported for embeddings.")
 

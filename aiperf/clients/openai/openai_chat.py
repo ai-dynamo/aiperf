@@ -22,7 +22,6 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
         turns: list[Turn],
     ) -> dict[str, Any]:
         """Format payload for a chat completion request."""
-
         messages = self._create_messages(turns)
 
         payload = {
@@ -41,59 +40,59 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
         return payload
 
     def _create_messages(self, turns: list[Turn]) -> list[dict[str, Any]]:
-        message = {
-            "role": turns[-1].role or DEFAULT_ROLE,
-        }
-        ### count the number of texts in the turns here
-        text_count = sum(len(turn.texts) for turn in turns)
-        if (
-            len(turn.texts) == 1
-            and len(turn.texts[0].contents) == 1
-            and len(turn.images) == 0
-            and len(turn.audios) == 0
-        ):
-            # Hotfix for Dynamo API which does not yet support a list of messages
-            message["name"] = turn.texts[0].name
-            message["content"] = (
-                turn.texts[0].contents[0] if turn.texts[0].contents else ""
-            )
-            return [message]
-
-        message_content = []
-
-        for text in turn.texts:
-            for content in text.contents:
-                if not content:
-                    continue
-                message_content.append({"type": "text", "text": content})
-
-        for image in turn.images:
-            for content in image.contents:
-                if not content:
-                    continue
-                message_content.append(
-                    {"type": "image_url", "image_url": {"url": content}}
+        messages = []
+        for turn in turns:
+            message = {
+                "role": turn.role or DEFAULT_ROLE,
+            }
+            if (
+                len(turn.texts) == 1
+                and len(turn.texts[0].contents) == 1
+                and len(turn.images) == 0
+                and len(turn.audios) == 0
+            ):
+                # Hotfix for Dynamo API which does not yet support a list of messages
+                message["name"] = turn.texts[0].name
+                message["content"] = (
+                    turn.texts[0].contents[0] if turn.texts[0].contents else ""
                 )
+                messages.append(message)
+                continue
 
-        for audio in turn.audios:
-            for content in audio.contents:
-                if not content:
-                    continue
-                if "," not in content:
-                    raise ValueError(
-                        "Audio content must be in the format 'format,b64_audio'."
+            message_content: list[dict[str, Any]] = []
+
+            for text in turn.texts:
+                for content in text.contents:
+                    if not content:
+                        continue
+                    message_content.append({"type": "text", "text": content})
+
+            for image in turn.images:
+                for content in image.contents:
+                    if not content:
+                        continue
+                    message_content.append(
+                        {"type": "image_url", "image_url": {"url": content}}
                     )
-                format, b64_audio = content.split(",", 1)
-                message_content.append(
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": b64_audio,
-                            "format": format,
-                        },
-                    }
-                )
 
-        message["content"] = message_content
-
-        return [message]
+            for audio in turn.audios:
+                for content in audio.contents:
+                    if not content:
+                        continue
+                    if "," not in content:
+                        raise ValueError(
+                            "Audio content must be in the format 'format,b64_audio'."
+                        )
+                    format, b64_audio = content.split(",", 1)
+                    message_content.append(
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": b64_audio,
+                                "format": format,
+                            },
+                        }
+                    )
+            message["content"] = message_content
+            messages.append(message)
+        return messages
