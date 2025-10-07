@@ -38,7 +38,7 @@ class AIPerfBaseModel(BaseModel):
     """
 
     # Allow extras by default to be more flexible for end users
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
     @model_serializer
     def _serialize_model(self) -> dict[str, Any]:
