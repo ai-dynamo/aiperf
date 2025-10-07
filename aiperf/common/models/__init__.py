@@ -63,6 +63,14 @@ from aiperf.common.models.record_models import (
     TextResponse,
     TextResponseData,
 )
+from aiperf.common.models.sequence_distribution import (
+    DistributionParser,
+    SequenceLengthDistribution,
+    SequenceLengthPair,
+    create_balanced_distribution,
+    create_uniform_distribution,
+    logger,
+)
 from aiperf.common.models.service_models import (
     ServiceRunInfo,
 )
@@ -76,17 +84,6 @@ from aiperf.common.models.telemetry_models import (
     TelemetryMetrics,
     TelemetryRecord,
     TelemetryResults,
-)
-from aiperf.common.models.sequence_distribution import (
-    DistributionParser,
-    SequenceLengthDistribution,
-    SequenceLengthPair,
-    create_balanced_distribution,
-    create_uniform_distribution,
-    logger,
-)
-from aiperf.common.models.service_models import (
-    ServiceRunInfo,
 )
 from aiperf.common.models.worker_models import (
     WorkerTaskStats,
