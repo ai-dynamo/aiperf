@@ -22,6 +22,9 @@ DCGM_FI_DEV_MEM_CLOCK{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pc
 # HELP DCGM_FI_DEV_POWER_USAGE Power draw (in W)
 # TYPE DCGM_FI_DEV_POWER_USAGE gauge
 DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 22.582000
+# HELP DCGM_FI_DEV_POWER_MGMT_LIMIT Power management limit (in W)
+# TYPE DCGM_FI_DEV_POWER_MGMT_LIMIT gauge
+DCGM_FI_DEV_POWER_MGMT_LIMIT{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 300.0
 # HELP DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION Total energy consumption since boot (in mJ)
 # TYPE DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION counter
 DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 955287014
@@ -31,6 +34,12 @@ DCGM_FI_DEV_GPU_UTIL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci
 # HELP DCGM_FI_DEV_FB_USED Framebuffer memory used (in MiB)
 # TYPE DCGM_FI_DEV_FB_USED gauge
 DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 46614
+# HELP DCGM_FI_DEV_FB_FREE Framebuffer memory free (in MiB)
+# TYPE DCGM_FI_DEV_FB_FREE gauge
+DCGM_FI_DEV_FB_FREE{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 2048
+# HELP DCGM_FI_DEV_FB_TOTAL Total framebuffer memory (in MiB)
+# TYPE DCGM_FI_DEV_FB_TOTAL gauge
+DCGM_FI_DEV_FB_TOTAL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 48662
 # HELP DCGM_FI_DEV_MEM_COPY_UTIL Memory copy utilization (in %)
 # TYPE DCGM_FI_DEV_MEM_COPY_UTIL gauge
 DCGM_FI_DEV_MEM_COPY_UTIL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 15
@@ -55,6 +64,11 @@ def multi_gpu_dcgm_data():
 DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 79.60
 DCGM_FI_DEV_POWER_USAGE{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 42.09
 DCGM_FI_DEV_POWER_USAGE{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 43.99
+# HELP DCGM_FI_DEV_POWER_MGMT_LIMIT Power management limit (in W)
+# TYPE DCGM_FI_DEV_POWER_MGMT_LIMIT gauge
+DCGM_FI_DEV_POWER_MGMT_LIMIT{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 300.0
+DCGM_FI_DEV_POWER_MGMT_LIMIT{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 300.0
+DCGM_FI_DEV_POWER_MGMT_LIMIT{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 700.0
 # HELP DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION Total energy consumption since boot (in mJ)
 # TYPE DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION counter
 DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 280000000
@@ -70,6 +84,16 @@ DCGM_FI_DEV_GPU_UTIL{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci
 DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 15640
 DCGM_FI_DEV_FB_USED{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 0
 DCGM_FI_DEV_FB_USED{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 0
+# HELP DCGM_FI_DEV_FB_FREE Framebuffer memory free (in MiB)
+# TYPE DCGM_FI_DEV_FB_FREE gauge
+DCGM_FI_DEV_FB_FREE{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 33022
+DCGM_FI_DEV_FB_FREE{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 48662
+DCGM_FI_DEV_FB_FREE{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 81920
+# HELP DCGM_FI_DEV_FB_TOTAL Total framebuffer memory (in MiB)
+# TYPE DCGM_FI_DEV_FB_TOTAL gauge
+DCGM_FI_DEV_FB_TOTAL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 48662
+DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-12345678-1234-1234-1234-123456789abc",pci_bus_id="00000000:03:00.0",device="nvidia1",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 48662
+DCGM_FI_DEV_FB_TOTAL{gpu="2",UUID="GPU-87654321-4321-4321-4321-cba987654321",pci_bus_id="00000000:04:00.0",device="nvidia2",modelName="NVIDIA H100 PCIe",Hostname="ed7e7a5e585f"} 81920
 # HELP DCGM_FI_DEV_MEM_COPY_UTIL Memory copy utilization (in %)
 # TYPE DCGM_FI_DEV_MEM_COPY_UTIL gauge
 DCGM_FI_DEV_MEM_COPY_UTIL{gpu="0",UUID="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",pci_bus_id="00000000:02:00.0",device="nvidia0",modelName="NVIDIA RTX 6000 Ada Generation",Hostname="ed7e7a5e585f"} 20

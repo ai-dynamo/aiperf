@@ -15,6 +15,8 @@ THREAD_JOIN_TIMEOUT = 5.0
 SCALING_FACTORS = {
     "energy_consumption": 1e-9,  # mJ to MJ
     "gpu_memory_used": 1.048576 * 1e-3,  # MiB to GB
+    "gpu_memory_free": 1.048576 * 1e-3,  # MiB to GB
+    "gpu_memory_total": 1.048576 * 1e-3,  # MiB to GB
 }
 
 # DCGM field mapping to telemetry record fields
@@ -31,4 +33,7 @@ DCGM_TO_FIELD_MAPPING = {
     "DCGM_FI_DEV_XID_ERRORS": "xid_errors",
     "DCGM_FI_DEV_POWER_VIOLATION": "power_violation",
     "DCGM_FI_DEV_THERMAL_VIOLATION": "thermal_violation",
+    "DCGM_FI_DEV_POWER_MGMT_LIMIT": "power_management_limit",
+    "DCGM_FI_DEV_FB_FREE": "gpu_memory_free",
+    "DCGM_FI_DEV_FB_TOTAL": "gpu_memory_total",
 }

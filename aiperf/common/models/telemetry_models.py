@@ -55,6 +55,15 @@ class TelemetryMetrics(AIPerfBaseModel):
         default=None,
         description="Throttling duration due to thermal constraints in microseconds",
     )
+    power_management_limit: float | None = Field(
+        default=None, description="Power management limit in W"
+    )
+    gpu_memory_free: float | None = Field(
+        default=None, description="GPU memory free in GB"
+    )
+    gpu_memory_total: float | None = Field(
+        default=None, description="Total GPU memory in GB"
+    )
 
 
 class TelemetryRecord(AIPerfBaseModel):

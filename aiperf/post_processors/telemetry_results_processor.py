@@ -39,6 +39,9 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
             "xid_errors": "count",
             "power_violation": "us",
             "thermal_violation": "us",
+            "power_management_limit": "W",
+            "gpu_memory_free": "GB",
+            "gpu_memory_total": "GB",
         }
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
