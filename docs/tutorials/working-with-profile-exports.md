@@ -96,14 +96,11 @@ The JSONL output contains one record per line, for each request sent during the 
   "metrics": {
     "input_sequence_length": {"value": 550, "unit": "tokens"},
     "ttft": {"value": 255.88656799999998, "unit": "ms"},
-    "request_count": {"value": 1, "unit": "requests"},
     "request_latency": {"value": 297.52522799999997, "unit": "ms"},
-    "min_request_timestamp": {"value": 1759813207532900363, "unit": "ns"},
     "output_token_count": {"value": 9, "unit": "tokens"},
     "ttst": {"value": 4.8984369999999995, "unit": "ms"},
     "inter_chunk_latency": {"value": [4.898437, 5.316006, 4.801489, 5.674918, 4.811467, 5.097998, 5.504797, 5.533548], "unit": "ms"},
     "output_sequence_length": {"value": 9, "unit": "tokens"},
-    "max_response_timestamp": {"value": 1759813207830425591, "unit": "ns"},
     "inter_token_latency": {"value": 5.2048325, "unit": "ms"},
     "output_token_throughput_per_user": {"value": 192.1291415237666, "unit": "tokens/sec/user"}
   },
@@ -136,22 +133,22 @@ See the [Complete Metrics Reference](../metrics_reference.md) page for a list of
 ```json
 {
   "metadata": {
-    "session_num": 18,
-    "x_request_id": "b54c487e-7fcd-4a69-9ceb-9b71f419a236",
-    "x_correlation_id": "27ecc8af-2b70-45ec-b9a7-fcabf109e26a",
-    "conversation_id": "65fa3614-cf6a-4e57-a82a-3e5953ac3c19",
+    "session_num": 80,
+    "x_request_id": "c35e4b1b-6775-4750-b875-94cd68e5ec15",
+    "x_correlation_id": "77ecf78d-b848-4efc-9579-cd695c6e89c4",
+    "conversation_id": "9526b41d-5dbc-41a5-a353-99ae06a53bc5",
     "turn_index": 0,
-    "request_start_ns": 1759813207531990596,
+    "request_start_ns": 1759879161119147826,
     "request_ack_ns": null,
-    "request_end_ns": null,
-    "worker_id": "worker_8e556c42",
-    "record_processor_id": "record_processor_2279e08e",
+    "request_end_ns": 1759879161119772754,
+    "worker_id": "worker_6006099d",
+    "record_processor_id": "record_processor_fdeeec8f",
     "benchmark_phase": "profiling",
     "was_cancelled": true,
-    "cancellation_time_ns": 1759813207650730976
+    "cancellation_time_ns": 1759879161119772754
   },
   "metrics": {
-    "error_request_count": {"value": 1, "unit": "requests"}
+    "error_isl": {"value": 550, "unit": "tokens"}
   },
   "error": {
     "code": 499,
