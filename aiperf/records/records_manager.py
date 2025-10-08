@@ -207,7 +207,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """
 
         if message.valid:
-            await self._send_telemetry_to_results_processors(message.records)
+            try:
+                await self._send_telemetry_to_results_processors(message.records)
+            except Exception as e:
+                error_details = ErrorDetails(
+                    message=f"Telemetry processor error: {str(e)}"
+                )
+                async with self._telemetry_error_counts_lock:
+                    self._telemetry_error_counts[error_details] = (
+                        self._telemetry_error_counts.get(error_details, 0) + 1
+                    )
+                self.debug(f"Failed to process telemetry batch: {e}")
 
             async with self._telemetry_hierarchy_lock:
                 for record in message.records:

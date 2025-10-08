@@ -648,15 +648,15 @@ class MetricFlags(Flag):
     """Metrics that are experimental and are not yet ready for production use, and may be subject to change.
     They will not be displayed in the console output or exported to files without developer mode enabled."""
 
-    GPU_TELEMETRY = 1 << 10
-    """Metrics that collect GPU telemetry data such as power usage, memory, and utilization."""
-
     STREAMING_TOKENS_ONLY = STREAMING_ONLY | PRODUCES_TOKENS_ONLY
     """Metrics that are only applicable to streamed responses and token-based endpoints.
     This is a convenience flag that is the combination of the `STREAMING_ONLY` and `PRODUCES_TOKENS_ONLY` flags."""
 
     GOODPUT = 1 << 10
     """Metrics that are only applicable when goodput feature is enabled"""
+
+    GPU_TELEMETRY = 1 << 11
+    """Metrics that collect GPU telemetry data such as power usage, memory, and utilization."""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""

@@ -237,7 +237,7 @@ class TelemetryManager(BaseComponentService):
             endpoints_reachable=[],
         )
 
-        asyncio.create_task(self.stop())
+        self._stop_task = asyncio.create_task(self.stop())
 
     async def _stop_all_collectors(self) -> None:
         """Stop all telemetry collectors.

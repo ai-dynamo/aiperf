@@ -504,7 +504,7 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
             mock_context_manager = AsyncMock()
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200
-            mock_response_obj.raise_for_status = AsyncMock()
+            mock_response_obj.raise_for_status = Mock()
             mock_response_obj.text.return_value = mock_response
 
             mock_context_manager.__aenter__.return_value = mock_response_obj

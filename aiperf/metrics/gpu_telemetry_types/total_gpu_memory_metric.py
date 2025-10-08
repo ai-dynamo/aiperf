@@ -7,7 +7,7 @@ from aiperf.metrics.base_telemetry_metric import BaseTelemetryMetric
 
 
 class TotalGpuMemoryMetric(BaseTelemetryMetric[float]):
-    tag = "total_gpu_memory"
+    tag = "gpu_memory_total"
     header = "Total GPU Memory"
     unit = MetricSizeUnit.GIGABYTES
     display_order = None
@@ -15,4 +15,4 @@ class TotalGpuMemoryMetric(BaseTelemetryMetric[float]):
     flags = MetricFlags.GPU_TELEMETRY
 
     def _extract_value(self, record: TelemetryRecord) -> float | None:
-        return record.total_gpu_memory
+        return record.telemetry_data.gpu_memory_total
