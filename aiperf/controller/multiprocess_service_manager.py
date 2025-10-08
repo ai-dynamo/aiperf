@@ -21,6 +21,7 @@ from aiperf.common.exceptions import AIPerfError
 from aiperf.common.factories import ServiceFactory, ServiceManagerFactory
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
+from aiperf.common.utils import yield_to_event_loop
 from aiperf.controller.base_service_manager import BaseServiceManager
 
 
@@ -58,6 +59,8 @@ class MultiProcessServiceManager(BaseServiceManager):
         super().__init__(required_services, service_config, user_config, **kwargs)
         self.multi_process_info: list[MultiProcessRunInfo] = []
         self.log_queue = log_queue
+        self.subprocess_info_map: dict[str, MultiProcessRunInfo] = {}
+        self.subprocess_map_lock = asyncio.Lock()
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
@@ -94,6 +97,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                     service_id=service_id,
                 )
             )
+            await yield_to_event_loop()
 
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None
@@ -148,55 +152,57 @@ class MultiProcessServiceManager(BaseServiceManager):
             timeout_seconds: Maximum time to wait in seconds
 
         Raises:
-            Exception if any service failed to register, None otherwise
+            AIPerfError if any service failed to register or died before registering
         """
         self.debug("Waiting for all required services to register...")
 
-        # Get the set of required service types for checking completion
-        required_types = set(self.required_services.keys())
+        await asyncio.sleep(2)
 
         # TODO: Can this be done better by using asyncio.Event()?
 
         async def _wait_for_registration():
             while not stop_event.is_set():
-                # Get all registered service types from the id map
-                registered_types = {
-                    service_info.service_type
-                    for service_info in self.service_id_map.values()
-                    if service_info.registration_status
-                    == ServiceRegistrationStatus.REGISTERED
-                }
+                # Get a snapshot of started service IDs from subprocess_info_map
+                async with self.subprocess_map_lock:
+                    started_ids = list(self.subprocess_info_map.keys())
 
-                # Check if all required types are registered
-                if required_types.issubset(registered_types):
-                    return
-
-                for process in self.multi_process_info:
-                    if not process.process or not process.process.is_alive():
-                        raise AIPerfError(
-                            f"Service process {process.service_id} died before registering"
+                # Check if all started services are registered
+                all_started_services_registered = True
+                for service_id in started_ids:
+                    service_info = self.service_id_map.get(service_id)
+                    if not service_info:
+                        # Service hasn't registered yet
+                        all_started_services_registered = False
+                        self.debug(f"Service {service_id} has not registered yet...")
+                        break
+                    if (
+                        service_info.registration_status
+                        != ServiceRegistrationStatus.REGISTERED
+                    ):
+                        # Service registered but not completed registration
+                        all_started_services_registered = False
+                        self.debug(
+                            f"Service {service_id} registration status: {service_info.registration_status}"
                         )
+                        break
 
-                # Wait a bit before checking again
-                await asyncio.sleep(0.5)
+                if all_started_services_registered:
+                    self.debug("All started services are registered")
+                    return
+                else:
+                    self.debug("Waiting for started services to register...")
+                    await asyncio.sleep(0.5)
 
         try:
             await asyncio.wait_for(_wait_for_registration(), timeout=timeout_seconds)
         except asyncio.TimeoutError as e:
             # Log which services didn't register in time
-            registered_types_set = set(
+            _ = set(
                 service_info.service_type
                 for service_info in self.service_id_map.values()
                 if service_info.registration_status
                 == ServiceRegistrationStatus.REGISTERED
             )
-
-            for service_type in required_types:
-                if service_type not in registered_types_set:
-                    self.error(
-                        f"Service {service_type} failed to register within timeout"
-                    )
-
             raise AIPerfError("Some services failed to register within timeout") from e
 
     async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:

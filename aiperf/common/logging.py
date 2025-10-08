@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import multiprocessing
+import os
 import queue
+from asyncio.streams import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -45,6 +47,10 @@ def _is_service_in_types(service_id: str, service_types: set[ServiceType]) -> bo
         if ServiceFactory.get_class_from_type(service_type).__name__ == service_id:
             return True
     return False
+
+
+_stdout = sys.stdout
+_stderr = sys.stderr
 
 
 def setup_child_process_logging(
@@ -96,6 +102,9 @@ def setup_child_process_logging(
         queue_handler = MultiProcessLogHandler(log_queue, service_id)
         queue_handler.setLevel(level)
         root_logger.addHandler(queue_handler)
+        if service_id != "system_controller":
+            sys.stdout = open(os.devnull, "w")
+            sys.stderr = open(os.devnull, "w")
     else:
         # For all other cases, set up rich logging to the console
         rich_handler = RichHandler(
@@ -116,6 +125,18 @@ def setup_child_process_logging(
             user_config.output.artifact_directory / OutputDefaults.LOG_FOLDER, level
         )
         root_logger.addHandler(file_handler)
+
+
+def restore_stdout_stderr() -> None:
+    """Restore the stdout and stderr streams."""
+    # if sys.stdout is not None:
+    #     sys.stdout.close()
+    global _stdout
+    global _stderr
+    sys.stdout = _stdout
+    # if sys.stderr is not None:
+    #     sys.stderr.close()
+    sys.stderr = _stderr
 
 
 # TODO: Integrate with the subprocess logging instead of being separate

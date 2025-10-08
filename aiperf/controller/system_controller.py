@@ -32,7 +32,7 @@ from aiperf.common.factories import (
     ServiceManagerFactory,
 )
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
-from aiperf.common.logging import get_global_log_queue
+from aiperf.common.logging import get_global_log_queue, restore_stdout_stderr
 from aiperf.common.messages import (
     CommandErrorResponse,
     CommandResponse,
@@ -457,6 +457,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.comms.stop()
         await self.proxy_manager.stop()
 
+        restore_stdout_stderr()
         # Wait for the UI to stop before exporting any results to the console
         await self.ui.stop()
         await self.ui.wait_for_tasks()
