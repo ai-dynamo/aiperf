@@ -626,8 +626,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=self.end_time_ns or time.time_ns(),
             )
 
+        async with self._telemetry_hierarchy_lock:
+            # Reset hierarchy once we've captured a snapshot for this result
+            self._telemetry_hierarchy = TelemetryHierarchy()
+
         async with self._telemetry_error_counts_lock:
             unique_errors = list(self._telemetry_error_counts.keys())
+            self._telemetry_error_counts.clear()
 
         return ProcessTelemetryResult(
             results=telemetry_results,
