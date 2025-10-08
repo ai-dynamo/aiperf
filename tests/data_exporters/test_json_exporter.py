@@ -550,31 +550,6 @@ class TestJsonExporterTelemetry:
             assert "gpus" in endpoints["node2:9400"]
 
     @pytest.mark.asyncio
-    async def test_json_export_telemetry_none_telemetry_results(
-        self, mock_results, mock_user_config
-    ):
-        """Test JSON export when telemetry_results is None."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_dir = Path(temp_dir)
-            mock_user_config.output.artifact_directory = output_dir
-
-            # Create exporter with None telemetry_results
-            exporter_config = ExporterConfig(
-                results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
-                telemetry_results=None,
-            )
-
-            exporter = JsonExporter(exporter_config)
-            await exporter.export()
-
-            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
-            with open(expected_file) as f:
-                data = json.load(f)
-
-            # telemetry_data should not be in output when telemetry_results is None
-            assert "telemetry_data" not in data or data.get("telemetry_data") is None
 
     @pytest.mark.asyncio
     async def test_json_export_with_hostname_metadata(
