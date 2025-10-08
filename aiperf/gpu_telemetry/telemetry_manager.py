@@ -92,7 +92,8 @@ class TelemetryManager(BaseComponentService):
             except Exception:
                 # Skip invalid URLs
                 continue
-        user_endpoints = valid_endpoints
+        # Deduplicate normalized endpoints while preserving order
+        user_endpoints = list(dict.fromkeys(valid_endpoints))
 
         if DEFAULT_DCGM_ENDPOINT not in user_endpoints:
             self._dcgm_endpoints = [DEFAULT_DCGM_ENDPOINT] + user_endpoints
