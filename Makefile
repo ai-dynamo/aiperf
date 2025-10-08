@@ -64,7 +64,7 @@ dim := $(shell tput dim)
 
 
 help: #? show this help
-	@$(MAKE) internal-help --no-print-directory | less
+	@$(MAKE) internal-help --no-print-directory
 
 #
 # Help command is automatically generated based on the comments in the Makefile.

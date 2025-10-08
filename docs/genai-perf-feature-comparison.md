@@ -40,7 +40,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **completions** | Text completion API for prompt completion | ✅ | ✅ | |
 | **embeddings** | Text embedding generation for similarity/search | ✅ | ✅ | |
 | **rankings** | Text ranking/re-ranking for search relevance | ✅ | ✅ | |
-| **responses** | OpenAI responses endpoint | ❌ | 🟡 | Not fully supported yet |
+| **responses** | OpenAI responses endpoint | ❌ | ❌ | |
 | **dynamic_grpc** | Dynamic gRPC service calls | ✅ | ❌ | |
 | **huggingface_generate** | HuggingFace transformers generate API | ✅ | ❌ | |
 | **image_retrieval** | Image search and retrieval endpoints | ✅ | ❌ | |
