@@ -19,7 +19,6 @@ from aiperf.common.models import ErrorDetails, RequestRecord
     EndpointType.COMPLETIONS,
     EndpointType.EMBEDDINGS,
     EndpointType.RANKINGS,
-    EndpointType.RESPONSES,
 )
 class OpenAIClientAioHttp(AioHttpClientMixin, AIPerfLoggerMixin, ABC):
     """Inference client for OpenAI based requests using aiohttp."""

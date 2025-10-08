@@ -458,7 +458,7 @@ class MetricValueType(BasePydanticBackedStrEnum):
 
     @cached_property
     def dtype(self) -> Any:
-        """Get the dtype for the metric value type (for pandas/numpy)."""
+        """Get the dtype for the metric value type (for numpy)."""
         return self.info.dtype
 
     @classmethod
