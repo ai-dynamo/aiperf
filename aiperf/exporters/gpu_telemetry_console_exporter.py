@@ -154,6 +154,25 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         title_lines.append(table_title_base)
         return "\n".join(title_lines)
 
+    def _format_number(self, value) -> str:
+        """Format a number for console output with adaptive formatting.
+
+        Args:
+            value: The value to format
+
+        Returns:
+            Formatted string representation of the value
+        """
+        if value is None:
+            return "N/A"
+
+        # Use scientific notation for very large numbers (> 1 million)
+        if abs(value) >= 1_000_000:
+            return f"{value:.2e}"
+
+        # Use comma-separated format for smaller numbers
+        return f"{value:,.2f}"
+
     def _create_gpu_metrics_table(
         self, table_title: str, gpu_data, gpu_index: int
     ) -> Table:
@@ -181,7 +200,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                 row = [f"{metric_display} ({unit})"]
                 for stat in self.STAT_COLUMN_KEYS:
                     value = getattr(metric_result, stat, None)
-                    row.append(f"{value:,.2f}" if value is not None else "N/A")
+                    row.append(self._format_number(value))
 
                 metrics_table.add_row(*row)
             except Exception as e:

@@ -367,12 +367,13 @@ async def test_csv_exporter_logs_and_raises_on_write_failure(
         (142357, "142357"),
         (0, "0"),
         (-7, "-7"),
-        (123456.14159, "123456.14"),
+        (123456.14159, "123456.14"),  # Numbers < 1M use standard format
         (2.0, "2.00"),
         (-1.234, "-1.23"),
         ("string", "string"),
         (True, "True"),
         (False, "False"),
+        (1234567.89, "1.23e+06"),  # Numbers >= 1M use scientific notation
     ],
 )
 @pytest.mark.asyncio
@@ -440,10 +441,11 @@ class TestCsvExporterTelemetry:
             assert csv_file.exists()
 
             content = csv_file.read_text()
-            # Check for telemetry section
-            assert "GPU Telemetry" in content
-            assert "GPU Power Usage" in content or "Power Usage" in content
-            assert "GPU Utilization" in content or "Utilization" in content
+            # Check for telemetry section with structured table format
+            assert "Endpoint" in content
+            assert "GPU_Index" in content
+            assert "GPU Power Usage (W)" in content or "GPU Power Usage" in content
+            assert "GPU Utilization (%)" in content or "GPU Utilization" in content
 
     @pytest.mark.asyncio
     async def test_csv_export_without_telemetry_data(self, mock_user_config):
@@ -482,8 +484,9 @@ class TestCsvExporterTelemetry:
             assert csv_file.exists()
 
             content = csv_file.read_text()
-            # Should not have telemetry section
-            assert "GPU Telemetry" not in content
+            # Should not have telemetry section (check for telemetry-specific columns)
+            assert "GPU_Index" not in content
+            assert "GPU_UUID" not in content
 
     @pytest.mark.asyncio
     async def test_csv_export_telemetry_multi_gpu(
@@ -513,8 +516,8 @@ class TestCsvExporterTelemetry:
 
             # Check for both GPU models in the test data
             assert "H100" in content or "A100" in content
-            # Check that multiple GPU indices appear
-            assert "GPU Index" in content
+            # Check that GPU index column appears
+            assert "GPU_Index" in content
 
     @pytest.mark.asyncio
     async def test_csv_export_telemetry_metric_row_exceptions(self, mock_user_config):
@@ -770,7 +773,8 @@ class TestCsvExporterTelemetry:
             csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
             content = csv_file.read_text()
 
-            # Should still have telemetry section header
-            assert "GPU Telemetry" in content
-            # But no metric data rows
-            assert "Empty GPU" not in content or content.count("Empty GPU") <= 1
+            # Should still have telemetry table header columns
+            assert "Endpoint" in content
+            assert "GPU_Index" in content
+            # But no metric data rows (GPU name should not appear since no metrics)
+            assert "Empty GPU" not in content

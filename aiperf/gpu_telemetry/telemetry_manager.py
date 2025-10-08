@@ -229,8 +229,6 @@ class TelemetryManager(BaseComponentService):
         Args:
             reason: Human-readable reason for disabling telemetry
         """
-        self.info(f"GPU telemetry disabled - {reason}")
-
         await self._send_telemetry_status(
             enabled=False,
             reason=reason,

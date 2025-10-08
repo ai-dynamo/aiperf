@@ -196,8 +196,16 @@ class CsvExporter(AIPerfLoggerMixin):
             name = f"{name} ({metric.unit})" if name else f"({metric.unit})"
         return name
 
-    def _format_number(self, value) -> str:
-        """Format a number for CSV output."""
+    def _format_number(self, value, precision: int = 2) -> str:
+        """Format a number for CSV output with adaptive formatting.
+
+        Args:
+            value: The value to format
+            precision: Number of decimal places for regular numbers
+
+        Returns:
+            Formatted string representation of the value
+        """
         if value is None:
             return ""
         # Handle bools explicitly (bool is a subclass of int)
@@ -208,16 +216,25 @@ class CsvExporter(AIPerfLoggerMixin):
             return f"{int(value)}"
         # Real numbers (covers built-in float and many Real implementations) and Decimal
         if isinstance(value, numbers.Real | Decimal):
-            return f"{float(value):.2f}"
+            num = float(value)
+            # Use scientific notation for very large numbers (> 1 million)
+            if abs(num) >= 1_000_000:
+                return f"{num:.2e}"
+            # Show fewer decimals if the value is very small or near-zero
+            if abs(num) < 0.01 and num != 0:
+                return f"{num:.4f}"
+            # Use standard precision
+            return f"{num:.{precision}f}"
 
         return str(value)
 
     def _write_telemetry_section(self, writer, telemetry_results) -> None:
-        """Write GPU telemetry data section to CSV with statistical aggregation.
+        """Write GPU telemetry data section to CSV in structured table format.
 
-        Creates a section for each DCGM endpoint with GPU telemetry metrics.
-        For each metric (power, utilization, etc.), writes a subsection with
-        statistical summaries (avg, min, max, percentiles) for each GPU.
+        Creates a single flat table with all GPU telemetry metrics that's easy to
+        parse programmatically for visualization platforms (pandas, Tableau, Excel, etc.).
+
+        Each row represents one metric for one GPU with all statistics in columns.
 
         Args:
             writer: CSV writer object
@@ -227,6 +244,17 @@ class CsvExporter(AIPerfLoggerMixin):
         writer.writerow([])
         writer.writerow([])
 
+        # Write header row for GPU telemetry table
+        header_row = [
+            "Endpoint",
+            "GPU_Index",
+            "GPU_Name",
+            "GPU_UUID",
+            "Metric",
+        ]
+        header_row.extend(STAT_KEYS)
+        writer.writerow(header_row)
+
         for (
             dcgm_url,
             gpus_data,
@@ -235,40 +263,40 @@ class CsvExporter(AIPerfLoggerMixin):
                 continue
 
             endpoint_display = normalize_endpoint_display(dcgm_url)
-            writer.writerow([f"=== GPU Telemetry: {endpoint_display} ==="])
-            writer.writerow([])
 
-            for metric_display, metric_key, unit in GPU_TELEMETRY_METRICS_CONFIG:
-                has_metric_data = any(
-                    self._gpu_has_metric(gpu_data, metric_key)
-                    for gpu_data in gpus_data.values()
-                )
+            for gpu_uuid, gpu_data in gpus_data.items():
+                for metric_display, metric_key, unit in GPU_TELEMETRY_METRICS_CONFIG:
+                    if not self._gpu_has_metric(gpu_data, metric_key):
+                        continue
 
-                if not has_metric_data:
-                    continue
-
-                writer.writerow([f"=== {metric_display} ({unit}) ==="])
-                header_row = ["GPU Index", "GPU Name", "GPU UUID"]
-                header_row.extend([stat.upper() for stat in STAT_KEYS])
-                writer.writerow(header_row)
-
-                for gpu_uuid, gpu_data in gpus_data.items():
-                    self._write_gpu_metric_row(
-                        writer, gpu_data, gpu_uuid, metric_key, metric_display, unit
+                    self._write_gpu_metric_row_structured(
+                        writer,
+                        endpoint_display,
+                        gpu_data,
+                        gpu_uuid,
+                        metric_key,
+                        metric_display,
+                        unit,
                     )
 
-                writer.writerow([])
-
-    def _write_gpu_metric_row(
-        self, writer, gpu_data, gpu_uuid, metric_key, metric_display, unit
+    def _write_gpu_metric_row_structured(
+        self,
+        writer,
+        endpoint_display,
+        gpu_data,
+        gpu_uuid,
+        metric_key,
+        metric_display,
+        unit,
     ):
-        """Write a single GPU metric row to CSV with statistical summaries.
+        """Write a single GPU metric row in structured table format.
 
-        Retrieves metric statistics from gpu_data and writes a row with GPU info
-        and statistical values for all stats in STAT_KEYS.
+        Each row contains: endpoint, GPU info, metric name with unit, and all stats.
+        This format is optimized for programmatic extraction and visualization.
 
         Args:
             writer: CSV writer object
+            endpoint_display: Display name of the DCGM endpoint
             gpu_data: GpuTelemetryData containing metric time series
             gpu_uuid: UUID identifier for the GPU
             metric_key: Internal metric name (e.g., "gpu_power_usage")
@@ -280,11 +308,17 @@ class CsvExporter(AIPerfLoggerMixin):
                 metric_key, metric_key, metric_display, unit
             )
 
+            # Format metric name with unit like inference metrics
+            metric_with_unit = f"{metric_display} ({unit})"
+
             row = [
+                endpoint_display,
                 str(gpu_data.metadata.gpu_index),
                 gpu_data.metadata.model_name,
                 gpu_uuid,
+                metric_with_unit,
             ]
+
             for stat in STAT_KEYS:
                 value = getattr(metric_result, stat, None)
                 row.append(self._format_number(value))
