@@ -276,24 +276,36 @@ class MultiProcessServiceManager(BaseServiceManager, MessageBusClientMixin):
 
         async def _wait_for_registration():
             while not stop_event.is_set():
-                # Get all registered service types from the id map
-                missing_required_services = False
-                for service_info in self.service_id_map.values():
-                    process = self.subprocess_info_map.get(service_info.service_id)
+                # Get a snapshot of started service IDs from subprocess_info_map
+                async with self.subprocess_map_lock:
+                    started_ids = list(self.subprocess_info_map.keys())
+
+                # Check if all started services are registered
+                all_started_services_registered = True
+                for service_id in started_ids:
+                    service_info = self.service_id_map.get(service_id)
+                    if not service_info:
+                        # Service hasn't registered yet
+                        all_started_services_registered = False
+                        self.debug(f"Service {service_id} has not registered yet...")
+                        break
                     if (
-                        not process
-                        or service_info.registration_status
+                        service_info.registration_status
                         != ServiceRegistrationStatus.REGISTERED
-                        and service_info.required
                     ):
-                        missing_required_services = True
+                        # Service registered but not completed registration
+                        all_started_services_registered = False
+                        self.debug(
+                            f"Service {service_id} registration status: {service_info.registration_status}"
+                        )
                         break
 
-                if missing_required_services:
-                    self.debug("Waiting for required services to register...")
-                    await asyncio.sleep(0.5)
-                else:
+                if all_started_services_registered:
+                    self.debug("All started services are registered")
                     return
+                else:
+                    self.debug("Waiting for started services to register...")
+                    await asyncio.sleep(0.5)
 
         try:
             await asyncio.wait_for(_wait_for_registration(), timeout=timeout_seconds)
