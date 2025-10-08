@@ -3,10 +3,18 @@
 
 import pytest
 
+from aiperf.common.enums import MetricFlags
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.metrics.metric_dicts import MetricRecordDict
-from aiperf.metrics.types.input_sequence_length_metric import InputSequenceLengthMetric
-from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
+from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
+from aiperf.metrics.types.input_sequence_length_metric import (
+    InputSequenceLengthMetric,
+    TotalInputSequenceLengthMetric,
+)
+from tests.metrics.conftest import (
+    create_metric_array,
+    create_record,
+    run_simple_metrics_pipeline,
+)
 
 
 class TestInputSequenceLengthMetric:
@@ -44,3 +52,34 @@ class TestInputSequenceLengthMetric:
             InputSequenceLengthMetric.tag,
         )
         assert metric_results[InputSequenceLengthMetric.tag] == isl_values
+
+
+class TestTotalInputSequenceLengthMetric:
+    @pytest.mark.parametrize(
+        "values, expected_sum",
+        [
+            ([10, 20, 30], 60),
+            ([100], 100),
+            ([], 0),
+            ([1], 1),
+            ([0, 0, 0], 0),
+        ],
+    )
+    def test_sum_calculation(self, values, expected_sum):
+        """Test that TotalInputSequenceLengthMetric correctly sums all input tokens"""
+        metric = TotalInputSequenceLengthMetric()
+        metric_results = MetricResultsDict()
+        metric_results[InputSequenceLengthMetric.tag] = create_metric_array(values)
+
+        result = metric.derive_value(metric_results)
+        assert result == expected_sum
+
+    def test_metric_metadata(self):
+        """Test that TotalInputSequenceLengthMetric has correct metadata"""
+        assert TotalInputSequenceLengthMetric.tag == "total_isl"
+        assert TotalInputSequenceLengthMetric.has_flags(
+            MetricFlags.PRODUCES_TOKENS_ONLY
+        )
+        assert TotalInputSequenceLengthMetric.has_flags(MetricFlags.LARGER_IS_BETTER)
+        assert TotalInputSequenceLengthMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert TotalInputSequenceLengthMetric.missing_flags(MetricFlags.INTERNAL)

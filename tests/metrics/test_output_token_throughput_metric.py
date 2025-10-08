@@ -6,7 +6,9 @@ import pytest
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
-from aiperf.metrics.types.output_sequence_length_metric import BenchmarkTokenCountMetric
+from aiperf.metrics.types.output_sequence_length_metric import (
+    TotalOutputSequenceLengthMetric,
+)
 from aiperf.metrics.types.output_token_throughput_metrics import (
     OutputTokenThroughputMetric,
 )
@@ -19,7 +21,7 @@ class TestOutputTokenThroughputMetric:
 
         # 1000 tokens in 2 seconds = 500 tokens/second
         metric_results = MetricResultsDict()
-        metric_results[BenchmarkTokenCountMetric.tag] = 1000
+        metric_results[TotalOutputSequenceLengthMetric.tag] = 1000
         metric_results[BenchmarkDurationMetric.tag] = (
             2_000_000_000  # 2 seconds in nanoseconds
         )
@@ -33,7 +35,7 @@ class TestOutputTokenThroughputMetric:
 
         # 750 tokens in 1.5 seconds = 500 tokens/second
         metric_results = MetricResultsDict()
-        metric_results[BenchmarkTokenCountMetric.tag] = 750
+        metric_results[TotalOutputSequenceLengthMetric.tag] = 750
         metric_results[BenchmarkDurationMetric.tag] = (
             1_500_000_000  # 1.5 seconds in nanoseconds
         )
@@ -46,7 +48,7 @@ class TestOutputTokenThroughputMetric:
         metric = OutputTokenThroughputMetric()
 
         metric_results = MetricResultsDict()
-        metric_results[BenchmarkTokenCountMetric.tag] = 1000
+        metric_results[TotalOutputSequenceLengthMetric.tag] = 1000
         metric_results[BenchmarkDurationMetric.tag] = 0.0
 
         with pytest.raises(NoMetricValue):
@@ -57,7 +59,7 @@ class TestOutputTokenThroughputMetric:
         metric = OutputTokenThroughputMetric()
 
         metric_results = MetricResultsDict()
-        metric_results[BenchmarkTokenCountMetric.tag] = 1000
+        metric_results[TotalOutputSequenceLengthMetric.tag] = 1000
         metric_results[BenchmarkDurationMetric.tag] = None
 
         with pytest.raises(NoMetricValue):

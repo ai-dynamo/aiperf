@@ -65,7 +65,9 @@ class RealtimeMetricsTable(Widget):
         if metric_class.has_flags(MetricFlags.ERROR_ONLY):
             return True
         return (
-            metric_class.has_flags(MetricFlags.HIDDEN)
+            metric_class.has_any_flags(
+                MetricFlags.NO_CONSOLE | MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
+            )
             and not self.service_config.developer.show_internal_metrics
         )
 

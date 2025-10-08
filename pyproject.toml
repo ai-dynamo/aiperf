@@ -33,7 +33,6 @@ dependencies = [
   "numpy~=2.2.6",
   "openai[aiohttp]~=1.92.2",
   "orjson~=3.10.18",
-  "pandas~=2.3.0",
   "pillow~=11.1.0",
   "psutil~=7.0.0",
   "pydantic~=2.11.4",

@@ -48,22 +48,24 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
         return (record.output_token_count or 0) + (record.reasoning_token_count or 0)
 
 
-class BenchmarkTokenCountMetric(DerivedSumMetric[int, OutputSequenceLengthMetric]):
+class TotalOutputSequenceLengthMetric(
+    DerivedSumMetric[int, OutputSequenceLengthMetric]
+):
     """
     This is the total number of completion tokens processed by the benchmark.
 
     Formula:
         ```
-        Benchmark Token Count = Sum(Output Sequence Lengths)
+        Total Output Sequence Length = Sum(Output Sequence Lengths)
         ```
     """
 
-    tag = "benchmark_token_count"
-    header = "Benchmark Token Count"
-    short_header = "Tokens"
+    tag = "total_osl"
+    header = "Total Output Sequence Length"
+    short_header = "Total OSL"
     short_header_hide_unit = True
     flags = (
         MetricFlags.PRODUCES_TOKENS_ONLY
         | MetricFlags.LARGER_IS_BETTER
-        | MetricFlags.HIDDEN
+        | MetricFlags.NO_CONSOLE
     )

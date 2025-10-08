@@ -12,6 +12,7 @@ from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
+    parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,
 )
 from aiperf.common.config.conversation_config import ConversationConfig
@@ -19,6 +20,7 @@ from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.enums import CustomDatasetType, PublicDatasetType
+from aiperf.common.exceptions import MetricTypeError
 
 
 class InputConfig(BaseConfig):
@@ -67,6 +69,23 @@ class InputConfig(BaseConfig):
             raise ValueError(
                 "The --public-dataset and --custom-dataset-type options cannot be set together"
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_goodput(self) -> Self:
+        """
+        Validate that all keys provided to --goodput are known metric tags.
+        Runs after the model is constructed so we can inspect self.goodput directly.
+        """
+        if self.goodput:
+            from aiperf.metrics.metric_registry import MetricRegistry
+
+            for tag in self.goodput:
+                try:
+                    MetricRegistry.get_class(tag)
+                except MetricTypeError as e:
+                    raise ValueError(f"Unknown metric tag in --goodput: {tag}") from e
+
         return self
 
     extra: Annotated[
@@ -205,7 +224,6 @@ class InputConfig(BaseConfig):
     random_seed: Annotated[
         int | None,
         Field(
-            default=None,
             description="The seed used to generate random values.\n"
             "Set to some value to make the synthetic data generation deterministic.\n"
             "It will use system default if not provided.",
@@ -217,6 +235,27 @@ class InputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.RANDOM_SEED
+
+    goodput: Annotated[
+        Any | None,
+        Field(
+            default=None,
+            description="Specify service level objectives (SLOs) for goodput as space-separated "
+            "'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the "
+            "metric’s display unit (falls back to its base unit if no display unit is defined). "
+            "Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), "
+            "`output_token_throughput_per_user:600` (tokens/s).\n"
+            "Only metrics applicable to the current endpoint/config are considered. "
+            "For more context on the definition of goodput, "
+            "refer to DistServe paper: https://arxiv.org/pdf/2401.09670 "
+            "and the blog: https://hao-ai-lab.github.io/blogs/distserve",
+        ),
+        BeforeValidator(parse_str_as_numeric_dict),
+        CLIParameter(
+            name=("--goodput",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.GOODPUT
 
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()

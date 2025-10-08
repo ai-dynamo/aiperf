@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
+
 from aiperf.common.config import (
     InputTokensConfig,
     InputTokensDefaults,
@@ -107,3 +109,55 @@ def test_prefix_prompt_config_custom_values():
 
     for key, value in custom_values.items():
         assert getattr(config, key) == value
+
+
+def test_prompt_config_sequence_distribution_defaults():
+    """Test that sequence_distribution defaults to None."""
+    config = PromptConfig()
+    assert config.sequence_distribution is None
+    assert config.get_sequence_distribution() is None
+
+
+def test_prompt_config_sequence_distribution_valid():
+    """Test setting a valid sequence distribution."""
+    config = PromptConfig()
+    config.sequence_distribution = "256,128:60;512,256:40"
+
+    # Should not raise an exception during validation
+    assert config.sequence_distribution == "256,128:60;512,256:40"
+
+    # Should return a proper distribution object
+    dist = config.get_sequence_distribution()
+    assert dist is not None
+    assert len(dist.pairs) == 2
+
+
+def test_prompt_config_sequence_distribution_invalid_format():
+    """Test that invalid sequence distribution formats are rejected."""
+    with pytest.raises(ValueError, match="Invalid sequence distribution format"):
+        PromptConfig(sequence_distribution="invalid_format")
+
+
+def test_prompt_config_sequence_distribution_invalid_probabilities():
+    """Test that invalid probability sums are rejected."""
+    with pytest.raises(ValueError, match="Invalid sequence distribution format"):
+        PromptConfig(sequence_distribution="256,128:30;512,256:40")  # Sum = 70
+
+
+def test_prompt_config_get_sequence_distribution_with_stddev():
+    """Test getting sequence distribution with standard deviations."""
+    config = PromptConfig()
+    config.sequence_distribution = "256|10,128|5:60;512|20,256|15:40"
+
+    dist = config.get_sequence_distribution()
+    assert dist is not None
+    assert len(dist.pairs) == 2
+    assert dist.pairs[0].input_seq_len_stddev == 10.0
+    assert dist.pairs[0].output_seq_len_stddev == 5.0
+
+
+def test_prompt_config_sequence_distribution_none_handling():
+    """Test that None sequence_distribution is handled correctly."""
+    config = PromptConfig(sequence_distribution=None)
+    assert config.sequence_distribution is None
+    assert config.get_sequence_distribution() is None

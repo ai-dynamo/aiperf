@@ -359,7 +359,7 @@ class MetricValueType(BasePydanticBackedStrEnum):
 
     @cached_property
     def dtype(self) -> Any:
-        """Get the dtype for the metric value type (for pandas/numpy)."""
+        """Get the dtype for the metric value type (for numpy)."""
         return self.info.dtype
 
     @classmethod
@@ -381,21 +381,21 @@ class MetricFlags(Flag):
     These flags are intended to be an easy way to group metrics, or turn on/off certain features.
 
     Note that the flags are a bitmask, so they can be combined using the bitwise OR operator (`|`).
-    For example, to create a flag that is both `STREAMING_ONLY` and `HIDDEN`, you can do:
+    For example, to create a flag that is both `STREAMING_ONLY` and `NO_CONSOLE`, you can do:
     ```python
-    MetricFlags.STREAMING_ONLY | MetricFlags.HIDDEN
+    MetricFlags.STREAMING_ONLY | MetricFlags.NO_CONSOLE
     ```
 
     To check if a metric has a flag, you can use the `has_flags` method.
-    For example, to check if a metric has both the `STREAMING_ONLY` and `HIDDEN` flags, you can do:
+    For example, to check if a metric has both the `STREAMING_ONLY` and `NO_CONSOLE` flags, you can do:
     ```python
-    metric.has_flags(MetricFlags.STREAMING_ONLY | MetricFlags.HIDDEN)
+    metric.has_flags(MetricFlags.STREAMING_ONLY | MetricFlags.NO_CONSOLE)
     ```
 
     To check if a metric does not have a flag(s), you can use the `missing_flags` method.
-    For example, to check if a metric does not have either the `STREAMING_ONLY` or `HIDDEN` flags, you can do:
+    For example, to check if a metric does not have either the `STREAMING_ONLY` or `NO_CONSOLE` flags, you can do:
     ```python
-    metric.missing_flags(MetricFlags.STREAMING_ONLY | MetricFlags.HIDDEN)
+    metric.missing_flags(MetricFlags.STREAMING_ONLY | MetricFlags.NO_CONSOLE)
     ```
     """
 
@@ -414,16 +414,16 @@ class MetricFlags(Flag):
     PRODUCES_TOKENS_ONLY = 1 << 2
     """Metrics that are only applicable when profiling an endpoint that produces tokens."""
 
-    HIDDEN = 1 << 3
-    """Metrics that should not be displayed in the UI."""
+    NO_CONSOLE = 1 << 3
+    """Metrics that should not be displayed in the console output, but still exported to files."""
 
     LARGER_IS_BETTER = 1 << 4
     """Metrics that are better when the value is larger. By default, it is assumed that metrics are
     better when the value is smaller."""
 
-    INTERNAL = (1 << 5) | HIDDEN
-    """Metrics that are internal to the system and not applicable to the user. This inherently means that the metric
-    is HIDDEN as well."""
+    INTERNAL = 1 << 5
+    """Metrics that are internal to the system and not applicable to the user.
+    They will not be displayed in the console output or exported to files without developer mode enabled."""
 
     SUPPORTS_AUDIO_ONLY = 1 << 6
     """Metrics that are only applicable to audio-based endpoints."""
@@ -434,13 +434,16 @@ class MetricFlags(Flag):
     SUPPORTS_REASONING = 1 << 8
     """Metrics that are only applicable to reasoning-based models and endpoints."""
 
-    EXPERIMENTAL = (1 << 9) | HIDDEN
+    EXPERIMENTAL = 1 << 9
     """Metrics that are experimental and are not yet ready for production use, and may be subject to change.
-    This inherently means that the metric is HIDDEN as well."""
+    They will not be displayed in the console output or exported to files without developer mode enabled."""
 
     STREAMING_TOKENS_ONLY = STREAMING_ONLY | PRODUCES_TOKENS_ONLY
     """Metrics that are only applicable to streamed responses and token-based endpoints.
     This is a convenience flag that is the combination of the `STREAMING_ONLY` and `PRODUCES_TOKENS_ONLY` flags."""
+
+    GOODPUT = 1 << 10
+    """Metrics that are only applicable when goodput feature is enabled"""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""

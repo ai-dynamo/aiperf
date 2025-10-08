@@ -11,7 +11,7 @@ import pytest
 
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import EndpointType
-from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models import Conversation
 from aiperf.dataset.dataset_manager import DatasetManager
 
 
@@ -26,40 +26,6 @@ def user_config(tmp_path: Path) -> UserConfig:
         ),
         output=OutputConfig(artifact_directory=tmp_path),
     )
-
-
-@pytest.fixture
-def sample_conversations() -> dict[str, Conversation]:
-    """Create sample conversations for testing."""
-    conversations = {
-        "session_1": Conversation(
-            session_id="session_1",
-            turns=[
-                Turn(
-                    texts=[Text(contents=["Hello, world!"])],
-                    role="user",
-                    model="test-model",
-                ),
-                Turn(
-                    texts=[Text(contents=["How can I help you?"])],
-                    role="assistant",
-                    model="test-model",
-                ),
-            ],
-        ),
-        "session_2": Conversation(
-            session_id="session_2",
-            turns=[
-                Turn(
-                    texts=[Text(contents=["What is AI?"])],
-                    role="user",
-                    model="test-model",
-                    max_tokens=100,
-                ),
-            ],
-        ),
-    }
-    return conversations
 
 
 @pytest.fixture

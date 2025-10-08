@@ -63,6 +63,14 @@ from aiperf.common.models.record_models import (
     TextResponse,
     TextResponseData,
 )
+from aiperf.common.models.sequence_distribution import (
+    DistributionParser,
+    SequenceLengthDistribution,
+    SequenceLengthPair,
+    create_balanced_distribution,
+    create_uniform_distribution,
+    logger,
+)
 from aiperf.common.models.service_models import (
     ServiceRunInfo,
 )
@@ -80,6 +88,7 @@ __all__ = [
     "CreditPhaseConfig",
     "CreditPhaseStats",
     "CtxSwitches",
+    "DistributionParser",
     "EmbeddingResponseData",
     "ErrorDetails",
     "ErrorDetailsCount",
@@ -104,6 +113,8 @@ __all__ = [
     "RequestsStats",
     "SSEField",
     "SSEMessage",
+    "SequenceLengthDistribution",
+    "SequenceLengthPair",
     "ServiceRunInfo",
     "SessionPayloads",
     "StatsProtocol",
@@ -113,5 +124,8 @@ __all__ = [
     "Turn",
     "WorkerStats",
     "WorkerTaskStats",
+    "create_balanced_distribution",
+    "create_uniform_distribution",
     "exclude_if_none",
+    "logger",
 ]

@@ -31,7 +31,7 @@ class ReasoningTokenCountMetric(BaseRecordMetric[int]):
         MetricFlags.PRODUCES_TOKENS_ONLY
         | MetricFlags.LARGER_IS_BETTER
         | MetricFlags.SUPPORTS_REASONING
-        | MetricFlags.EXPERIMENTAL
+        | MetricFlags.NO_CONSOLE
     )
     required_metrics = None
 
@@ -66,3 +66,9 @@ class TotalReasoningTokensMetric(DerivedSumMetric[int, ReasoningTokenCountMetric
     tag = "total_reasoning_tokens"
     header = "Total Reasoning Tokens"
     short_header = "Total Reasoning"
+    short_header_hide_unit = True
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.LARGER_IS_BETTER
+        | MetricFlags.NO_CONSOLE
+    )
