@@ -53,6 +53,7 @@ Features
 | **[Fixed Schedule](docs/tutorials/fixed-schedule.md)** | Precise timestamp-based request execution | Traffic replay, temporal analysis, burst testing |
 | **[Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md)** | Duration-based testing with grace period control | Stability testing, sustained performance |
 | **[Sequence Distributions](docs/tutorials/sequence-distributions.md)** | Mixed ISL/OSL pairings | Benchmarking mixed use cases |
+| **[Goodput](docs/tutorials/goodput.md)** | Goodput Metric | Measure requests per second that satisfy user-provided SLOs | SLO validation, capacity planning, runtime/model comparisons |
 
 ### Quick Navigation
 ```bash
