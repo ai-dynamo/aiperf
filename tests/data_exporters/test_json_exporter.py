@@ -548,3 +548,89 @@ class TestJsonExporterTelemetry:
             # Check GPU data exists for both
             assert "gpus" in endpoints["node1:9400"]
             assert "gpus" in endpoints["node2:9400"]
+
+    @pytest.mark.asyncio
+    async def test_json_export_telemetry_none_telemetry_results(
+        self, mock_results, mock_user_config
+    ):
+        """Test JSON export when telemetry_results is None."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            # Create exporter with None telemetry_results
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+
+            exporter = JsonExporter(exporter_config)
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            with open(expected_file) as f:
+                data = json.load(f)
+
+            # telemetry_data should not be in output when telemetry_results is None
+            assert "telemetry_data" not in data or data.get("telemetry_data") is None
+
+    @pytest.mark.asyncio
+    async def test_json_export_with_hostname_metadata(
+        self, mock_results, mock_user_config
+    ):
+        """Test JSON export includes hostname metadata."""
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            gpu_data = GpuTelemetryData(
+                metadata=GpuMetadata(
+                    gpu_index=0,
+                    model_name="Test GPU",
+                    gpu_uuid="GPU-123",
+                    hostname="test-hostname",
+                )
+            )
+            gpu_data.time_series.append_snapshot(
+                {"gpu_power_usage": 100.0}, timestamp_ns=1000000000
+            )
+
+            hierarchy = TelemetryHierarchy()
+            hierarchy.dcgm_endpoints = {
+                "http://localhost:9400/metrics": {"GPU-123": gpu_data}
+            }
+
+            telemetry_results = TelemetryResults(
+                telemetry_data=hierarchy,
+                start_ns=0,
+                end_ns=0,
+                endpoints_tested=["http://localhost:9400/metrics"],
+                endpoints_successful=["http://localhost:9400/metrics"],
+            )
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=telemetry_results,
+            )
+
+            exporter = JsonExporter(exporter_config)
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            with open(expected_file) as f:
+                data = json.load(f)
+
+            endpoints = data["telemetry_data"]["endpoints"]
+            gpu_summary = endpoints["localhost:9400"]["gpus"]["gpu_0"]
+            assert gpu_summary["hostname"] == "test-hostname"

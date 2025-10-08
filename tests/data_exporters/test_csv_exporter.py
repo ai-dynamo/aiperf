@@ -778,3 +778,47 @@ class TestCsvExporterTelemetry:
             assert "GPU_Index" in content
             # But no metric data rows (GPU name should not appear since no metrics)
             assert "Empty GPU" not in content
+
+    @pytest.mark.asyncio
+    async def test_csv_format_number_small_values(self, mock_user_config):
+        """Test _format_number with very small values."""
+        from aiperf.common.models import ProfileResults
+
+        results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+        cfg = ExporterConfig(
+            results=results,
+            user_config=mock_user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=None,
+        )
+
+        exporter = CsvExporter(cfg)
+
+        # Test very small value (< 0.01)
+        result = exporter._format_number(0.00123)
+        assert result == "0.0012"
+
+        # Test zero
+        result = exporter._format_number(0.0)
+        assert result == "0.00"
+
+    @pytest.mark.asyncio
+    async def test_csv_format_number_decimal_type(self, mock_user_config):
+        """Test _format_number with Decimal type."""
+        from decimal import Decimal
+
+        from aiperf.common.models import ProfileResults
+
+        results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+        cfg = ExporterConfig(
+            results=results,
+            user_config=mock_user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=None,
+        )
+
+        exporter = CsvExporter(cfg)
+
+        # Test Decimal type
+        result = exporter._format_number(Decimal("123.456"))
+        assert result == "123.46"

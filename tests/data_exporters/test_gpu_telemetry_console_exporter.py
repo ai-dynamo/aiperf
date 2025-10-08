@@ -443,3 +443,112 @@ class TestGPUTelemetryConsoleExporter:
 
         # Should show no data message
         assert renderable is not None
+
+    @pytest.mark.asyncio
+    async def test_format_number_with_none(
+        self, mock_profile_results, mock_user_config
+    ):
+        """Test _format_number with None value."""
+        service_config = ServiceConfig(verbose=True)
+        exporter_config = ExporterConfig(
+            results=mock_profile_results,
+            user_config=mock_user_config,
+            service_config=service_config,
+            telemetry_results=None,
+        )
+
+        exporter = GPUTelemetryConsoleExporter(exporter_config)
+        result = exporter._format_number(None)
+        assert result == "N/A"
+
+    @pytest.mark.asyncio
+    async def test_format_number_with_large_value(
+        self, mock_profile_results, mock_user_config
+    ):
+        """Test _format_number with large values (scientific notation)."""
+        service_config = ServiceConfig(verbose=True)
+        exporter_config = ExporterConfig(
+            results=mock_profile_results,
+            user_config=mock_user_config,
+            service_config=service_config,
+            telemetry_results=None,
+        )
+
+        exporter = GPUTelemetryConsoleExporter(exporter_config)
+        result = exporter._format_number(2_500_000.0)
+        assert "2.50e+06" in result or "2.5e+06" in result
+
+    @pytest.mark.asyncio
+    async def test_format_number_with_small_value(
+        self, mock_profile_results, mock_user_config
+    ):
+        """Test _format_number with normal values."""
+        service_config = ServiceConfig(verbose=True)
+        exporter_config = ExporterConfig(
+            results=mock_profile_results,
+            user_config=mock_user_config,
+            service_config=service_config,
+            telemetry_results=None,
+        )
+
+        exporter = GPUTelemetryConsoleExporter(exporter_config)
+        result = exporter._format_number(123.456)
+        assert result == "123.46"
+
+    @pytest.mark.asyncio
+    async def test_export_with_mixed_successful_failed_endpoints(
+        self, mock_profile_results, mock_user_config, capsys
+    ):
+        """Test display with mix of successful and failed endpoints."""
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        service_config = ServiceConfig(verbose=True)
+
+        # Create one successful endpoint with GPU data
+        gpu_data = GpuTelemetryData(
+            metadata=GpuMetadata(
+                gpu_index=0,
+                model_name="Test GPU",
+                gpu_uuid="GPU-123",
+            )
+        )
+        gpu_data.time_series.append_snapshot(
+            {"gpu_power_usage": 100.0}, timestamp_ns=1000000000
+        )
+
+        hierarchy = TelemetryHierarchy()
+        hierarchy.dcgm_endpoints = {"http://node1:9400/metrics": {"GPU-123": gpu_data}}
+
+        telemetry_results = TelemetryResults(
+            telemetry_data=hierarchy,
+            start_ns=0,
+            end_ns=0,
+            endpoints_tested=[
+                "http://node1:9400/metrics",
+                "http://node2:9400/metrics",
+            ],
+            endpoints_successful=["http://node1:9400/metrics"],
+        )
+
+        exporter_config = ExporterConfig(
+            results=mock_profile_results,
+            user_config=mock_user_config,
+            service_config=service_config,
+            telemetry_results=telemetry_results,
+        )
+
+        exporter = GPUTelemetryConsoleExporter(exporter_config)
+        console = Console(width=150)
+        await exporter.export(console)
+
+        output = capsys.readouterr().out
+        # Should show 1/2 endpoints reachable
+        assert "1/2 DCGM endpoints reachable" in output
+        # Should show both endpoints with status
+        assert "node1:9400" in output
+        assert "node2:9400" in output

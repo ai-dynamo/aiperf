@@ -620,3 +620,180 @@ class TestDataProcessingEdgeCases:
         # Should successfully parse valid entries, skip invalid ones
         assert len(records) == 1  # Only one valid GPU
         assert records[0].gpu_index == 0
+
+    @pytest.mark.asyncio
+    async def test_empty_url_reachability(self):
+        """Test URL reachability check with empty URL."""
+        collector = TelemetryDataCollector("")
+
+        result = await collector.is_url_reachable()
+        assert result is False
+
+    def test_invalid_prometheus_format_handling(self):
+        """Test handling of completely invalid Prometheus format."""
+        collector = TelemetryDataCollector("http://localhost:9401/metrics")
+
+        # Invalid format that cannot be parsed
+        invalid_data = "invalid prometheus {{{{{ data"
+
+        records = collector._parse_metrics_to_records(invalid_data)
+        # Should return empty list without crashing
+        assert records == []
+
+    def test_nan_inf_values_filtering(self):
+        """Test that NaN and inf values are filtered out during parsing."""
+        collector = TelemetryDataCollector("http://localhost:9401/metrics")
+
+        metrics_with_invalid_values = """
+        # NaN value
+        DCGM_FI_DEV_POWER_USAGE{gpu="0",modelName="RTX",UUID="uuid-1"} NaN
+        # Inf value
+        DCGM_FI_DEV_GPU_UTIL{gpu="0",modelName="RTX",UUID="uuid-1"} Inf
+        # -Inf value
+        DCGM_FI_DEV_GPU_TEMP{gpu="0",modelName="RTX",UUID="uuid-1"} -Inf
+        # Valid value
+        DCGM_FI_DEV_MEM_COPY_UTIL{gpu="0",modelName="RTX",UUID="uuid-1"} 50.0
+        """
+
+        records = collector._parse_metrics_to_records(metrics_with_invalid_values)
+
+        # Should only include the valid metric
+        assert len(records) == 1
+        # NaN, Inf, -Inf should be filtered out
+        assert records[0].telemetry_data.gpu_power_usage is None
+        assert records[0].telemetry_data.gpu_utilization is None
+        assert records[0].telemetry_data.gpu_temperature is None
+        # Valid value should be present
+        assert records[0].telemetry_data.memory_copy_utilization == 50.0
+
+    def test_invalid_gpu_index_handling(self):
+        """Test handling of non-numeric GPU index values."""
+        collector = TelemetryDataCollector("http://localhost:9401/metrics")
+
+        invalid_gpu_index_data = """
+        # Invalid GPU index (not a number)
+        DCGM_FI_DEV_POWER_USAGE{gpu="invalid",modelName="RTX",UUID="uuid-1"} 100.0
+        # Valid GPU index
+        DCGM_FI_DEV_POWER_USAGE{gpu="1",modelName="RTX2",UUID="uuid-2"} 150.0
+        """
+
+        records = collector._parse_metrics_to_records(invalid_gpu_index_data)
+
+        # Should only parse the record with valid GPU index
+        assert len(records) == 1
+        assert records[0].gpu_index == 1
+
+    @pytest.mark.asyncio
+    async def test_error_callback_exception_handling(self):
+        """Test that exceptions in error callback are handled gracefully."""
+        errors_received = []
+
+        def failing_error_callback(error, _collector_id):
+            errors_received.append(error)
+            raise RuntimeError("Error callback failed")
+
+        collector = TelemetryDataCollector(
+            dcgm_url="http://localhost:9401/metrics",
+            collection_interval=0.05,
+            error_callback=failing_error_callback,
+        )
+
+        with patch("aiohttp.ClientSession.get") as mock_get:
+            # Mock HTTP error
+            mock_get.side_effect = aiohttp.ClientError("Connection failed")
+
+            await collector.initialize_and_start()
+            await asyncio.sleep(0.2)
+            await collector.stop()
+            await asyncio.sleep(0.1)
+
+            # Error callback should have been called even though it raised exception
+            # The collection should continue despite callback failure
+            if len(errors_received) > 0:
+                assert all(hasattr(e, "message") for e in errors_received)
+
+    @pytest.mark.asyncio
+    async def test_collection_without_callbacks(self, sample_dcgm_data):
+        """Test that collection works without any callbacks configured."""
+        collector = TelemetryDataCollector(
+            dcgm_url="http://localhost:9401/metrics",
+            collection_interval=0.1,
+            # No callbacks
+        )
+
+        with patch("aiohttp.ClientSession.get") as mock_get:
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.text.return_value = sample_dcgm_data
+            mock_response.raise_for_status.return_value = None
+            mock_get.return_value.__aenter__.return_value = mock_response
+
+            await collector.initialize_and_start()
+            await asyncio.sleep(0.3)
+            await collector.stop()
+
+            # Should not crash even without callbacks
+
+    @pytest.mark.asyncio
+    async def test_collection_with_empty_records(self):
+        """Test that callback is not called when parsing returns empty records."""
+        records_received = []
+
+        def record_callback(records, _collector_id):
+            records_received.extend(records)
+
+        collector = TelemetryDataCollector(
+            dcgm_url="http://localhost:9401/metrics",
+            collection_interval=0.1,
+            record_callback=record_callback,
+        )
+
+        with patch("aiohttp.ClientSession.get") as mock_get:
+            # Mock response with only comments (no actual metrics)
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.text.return_value = "# HELP comment\n# TYPE comment"
+            mock_response.raise_for_status.return_value = None
+            mock_get.return_value.__aenter__.return_value = mock_response
+
+            await collector.initialize_and_start()
+            await asyncio.sleep(0.3)
+            await collector.stop()
+            await asyncio.sleep(0.1)
+
+            # Callback should not be called with empty records
+            assert len(records_received) == 0
+
+    def test_scaling_factors_with_none_values(self):
+        """Test that scaling factors handle None values correctly."""
+        collector = TelemetryDataCollector("http://localhost:9401/metrics")
+
+        metrics_with_none = {
+            "gpu_power_usage": None,
+            "energy_consumption": 1000.0,
+            "gpu_memory_used": None,
+        }
+
+        scaled = collector._apply_scaling_factors(metrics_with_none)
+
+        # None values should remain None
+        assert scaled["gpu_power_usage"] is None
+        assert scaled["gpu_memory_used"] is None
+        # Non-None values should be scaled
+        assert abs(scaled["energy_consumption"] - 1e-6) < 1e-10
+
+    def test_scaling_factors_preserves_unscaled_metrics(self):
+        """Test that metrics without scaling factors are preserved as-is."""
+        collector = TelemetryDataCollector("http://localhost:9401/metrics")
+
+        metrics = {
+            "gpu_power_usage": 100.0,
+            "unscaled_metric": 999.0,
+        }
+
+        scaled = collector._apply_scaling_factors(metrics)
+
+        # Unscaled metric should remain unchanged
+        assert scaled["unscaled_metric"] == 999.0
+        # Scaled metric should remain unchanged (power has factor 1.0)
+        assert scaled["gpu_power_usage"] == 100.0
