@@ -253,9 +253,6 @@ class TelemetryManager(BaseComponentService):
         if not self._collectors:
             return
 
-        if not self._collectors:
-            return
-
         for dcgm_url, collector in self._collectors.items():
             try:
                 await collector.stop()
