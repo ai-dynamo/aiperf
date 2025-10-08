@@ -101,8 +101,8 @@ class TestBaseTelemetryMetric:
         gpu_values = metric.process_telemetry_batch(records)
 
         assert len(gpu_values) == 1  # Single GPU
-        assert 0 in gpu_values
-        assert gpu_values[0] == [100.0, 110.0, 120.0]
+        assert "GPU-test-uuid" in gpu_values
+        assert gpu_values["GPU-test-uuid"] == [100.0, 110.0, 120.0]
 
     def test_batch_processing_none_value_filtering(self):
         """Test that None values are properly filtered during batch processing.
@@ -158,8 +158,8 @@ class TestBaseTelemetryMetric:
         gpu_values = metric.process_telemetry_batch(records)
 
         assert len(gpu_values) == 1
-        assert 0 in gpu_values
-        assert gpu_values[0] == [100.0, 125.0]  # None value filtered out
+        assert "GPU-test-uuid" in gpu_values
+        assert gpu_values["GPU-test-uuid"] == [100.0, 125.0]  # None value filtered out
 
     def test_abstract_method_enforcement(self):
         """Test that abstract method _extract_value must be implemented.

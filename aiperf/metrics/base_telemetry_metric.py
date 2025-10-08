@@ -30,13 +30,13 @@ class BaseTelemetryMetric(
 
     def process_telemetry_batch(
         self, telemetry_records: list[TelemetryRecord]
-    ) -> dict[int, list[MetricValueTypeVarT]]:
-        """Process batch of telemetry records, returning values grouped by GPU index."""
+    ) -> dict[str, list[MetricValueTypeVarT]]:
+        """Process batch of telemetry records, returning values grouped by GPU UUID."""
         gpu_values = {}
         for record in telemetry_records:
             value = self._extract_value(record)
             if value is not None:
-                gpu_values.setdefault(record.gpu_index, []).append(value)
+                gpu_values.setdefault(record.gpu_uuid, []).append(value)
         return gpu_values
 
     @abstractmethod
