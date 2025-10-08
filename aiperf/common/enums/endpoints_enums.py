@@ -76,16 +76,6 @@ class EndpointType(BasePydanticBackedStrEnum):
         endpoint_path="/v1/ranking",
         metrics_title="Rankings Metrics",
     )
-    RESPONSES = EndpointTypeInfo(
-        tag="responses",
-        service_kind=EndpointServiceKind.OPENAI,
-        supports_streaming=True,
-        produces_tokens=True,
-        supports_audio=False,  # Not yet supported by OpenAI
-        supports_images=True,
-        endpoint_path="/v1/responses",
-        metrics_title="LLM Metrics",
-    )
 
     @cached_property
     def info(self) -> EndpointTypeInfo:

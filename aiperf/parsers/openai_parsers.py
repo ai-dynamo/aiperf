@@ -34,7 +34,6 @@ from aiperf.common.utils import load_json_str
     EndpointType.COMPLETIONS,
     EndpointType.EMBEDDINGS,
     EndpointType.RANKINGS,
-    EndpointType.RESPONSES,
 )
 class OpenAIResponseExtractor(AIPerfLoggerMixin):
     """Extractor for OpenAI responses."""

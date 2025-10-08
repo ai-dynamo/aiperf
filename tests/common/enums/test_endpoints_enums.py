@@ -104,7 +104,6 @@ class TestEndpointType:
                 False,
                 "/v1/ranking",
             ),
-            (EndpointType.RESPONSES, "responses", True, True, "/v1/responses"),
         ],
     )
     def test_endpoint_type_properties(
@@ -129,7 +128,6 @@ class TestEndpointType:
             (EndpointType.COMPLETIONS, "LLM Metrics"),
             (EndpointType.EMBEDDINGS, "Embeddings Metrics"),
             (EndpointType.RANKINGS, "Rankings Metrics"),
-            (EndpointType.RESPONSES, "LLM Metrics"),
         ],
     )
     def test_metrics_title_property(self, endpoint_type, expected_title):
@@ -148,7 +146,7 @@ class TestEndpointType:
 
     @pytest.mark.parametrize(
         "tag_value",
-        ["chat", "completions", "embeddings", "responses"],
+        ["chat", "completions", "embeddings"],
     )
     def test_enum_string_comparison(self, tag_value):
         """Test that enum values can be compared with strings."""
