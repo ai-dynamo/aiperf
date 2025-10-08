@@ -114,7 +114,7 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
     """
 
     _logger: AIPerfLogger
-    _registry: dict[ClassEnumT | str, type[ClassProtocolT]]
+    _registry: dict[ClassEnumT | str, type[ClassProtocolT] | str]
     _override_priorities: dict[ClassEnumT | str, int]
 
     def __init_subclass__(cls) -> None:
@@ -122,6 +122,20 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
         cls._override_priorities = {}
         cls._logger = AIPerfLogger(cls.__name__)
         super().__init_subclass__()
+
+    @classmethod
+    def _resolve_class(
+        cls, class_or_path: type[ClassProtocolT] | str
+    ) -> type[ClassProtocolT]:
+        """Resolve a class from either a class object or a module:class string path."""
+        if isinstance(class_or_path, str):
+            # Lazy import: "module.path:ClassName"
+            module_path, class_name = class_or_path.rsplit(":", 1)
+            import importlib
+
+            module = importlib.import_module(module_path)
+            return getattr(module, class_name)
+        return class_or_path
 
     @classmethod
     def register_all(
@@ -154,24 +168,41 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
             Decorator for the class that implements the class protocol
         """
 
-        def decorator(class_cls: type[ClassProtocolT]) -> type[ClassProtocolT]:
+        def decorator(
+            class_cls: type[ClassProtocolT] | str,
+        ) -> type[ClassProtocolT] | str:
             existing_priority = cls._override_priorities.get(class_type, -1)
             if class_type in cls._registry and existing_priority >= override_priority:
+                # Get name for logging
+                existing_name = (
+                    cls._registry[class_type]
+                    if isinstance(cls._registry[class_type], str)
+                    else cls._registry[class_type].__name__
+                )
+                new_name = (
+                    class_cls if isinstance(class_cls, str) else class_cls.__name__
+                )
                 cls._logger.warning(
-                    f"{class_type!r} class {cls._registry[class_type].__name__} already registered with same or higher priority "
-                    f"({existing_priority}). The new registration of class {class_cls.__name__} with priority "
+                    f"{class_type!r} class {existing_name} already registered with same or higher priority "
+                    f"({existing_priority}). The new registration of class {new_name} with priority "
                     f"{override_priority} will be ignored.",
                 )
                 return class_cls
 
+            class_name = class_cls if isinstance(class_cls, str) else class_cls.__name__
             if class_type not in cls._registry:
                 cls._logger.debug(
-                    lambda: f"{class_type!r} class {class_cls.__name__} registered with priority {override_priority}.",
+                    lambda: f"{class_type!r} class {class_name} registered with priority {override_priority}.",
                 )
             else:
+                existing_name = (
+                    cls._registry[class_type]
+                    if isinstance(cls._registry[class_type], str)
+                    else cls._registry[class_type].__name__
+                )
                 cls._logger.warning(
-                    f"{class_type!r} class {class_cls.__name__} with priority {override_priority} overrides "
-                    f"already registered class {cls._registry[class_type].__name__} with lower priority ({existing_priority}).",
+                    f"{class_type!r} class {class_name} with priority {override_priority} overrides "
+                    f"already registered class {existing_name} with lower priority ({existing_priority}).",
                 )
             cls._registry[class_type] = class_cls
             cls._override_priorities[class_type] = override_priority
@@ -202,7 +233,12 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
                 f"No implementation registered for {class_type!r} in {cls.__name__}."
             )
         try:
-            return cls._registry[class_type](**kwargs)
+            class_or_path = cls._registry[class_type]
+            resolved_class = cls._resolve_class(class_or_path)
+            # Cache the resolved class to avoid repeated imports
+            if isinstance(class_or_path, str):
+                cls._registry[class_type] = resolved_class
+            return resolved_class(**kwargs)
         except Exception as e:
             raise FactoryCreationError(
                 f"Error creating {class_type!r} instance for {cls.__name__}: {e}"
@@ -225,7 +261,12 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
             raise TypeError(
                 f"No class found for {class_type!r}. Please register the class first."
             )
-        return cls._registry[class_type]
+        class_or_path = cls._registry[class_type]
+        resolved_class = cls._resolve_class(class_or_path)
+        # Cache the resolved class to avoid repeated imports
+        if isinstance(class_or_path, str):
+            cls._registry[class_type] = resolved_class
+        return resolved_class
 
     @classmethod
     def get_all_classes(cls) -> list[type[ClassProtocolT]]:
@@ -234,7 +275,10 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
         Returns:
             A list of all registered class types implementing the expected protocol
         """
-        return list(cls._registry.values())
+        return [
+            cls._resolve_class(class_or_path)
+            for class_or_path in cls._registry.values()
+        ]
 
     @classmethod
     def get_all_class_types(cls) -> list[ClassEnumT | str]:
@@ -246,7 +290,10 @@ class AIPerfFactory(Generic[ClassEnumT, ClassProtocolT]):
         cls,
     ) -> list[tuple[type[ClassProtocolT], ClassEnumT | str]]:
         """Get all registered classes and their corresponding class types."""
-        return [(cls, class_type) for class_type, cls in cls._registry.items()]
+        return [
+            (cls._resolve_class(class_or_path), class_type)
+            for class_type, class_or_path in cls._registry.items()
+        ]
 
 
 class AIPerfSingletonFactory(AIPerfFactory[ClassEnumT, ClassProtocolT]):
@@ -519,12 +566,39 @@ class ServiceFactory(AIPerfFactory[ServiceType, "ServiceProtocol"]):
         # Override the register method to set the service_type on the class
         original_decorator = super().register(class_type, override_priority)
 
-        def decorator(class_cls: type[ServiceProtocolT]) -> type[ServiceProtocolT]:
+        def decorator(
+            class_cls: type[ServiceProtocolT] | str,
+        ) -> type[ServiceProtocolT] | str:
+            # If it's a string path (lazy loading), just register it
+            # The service_type will be set when the class is resolved
+            if isinstance(class_cls, str):
+                original_decorator(class_cls)
+                return class_cls
+
+            # For actual class objects, set the service_type attribute
             class_cls.service_type = class_type
             original_decorator(class_cls)
             return class_cls
 
         return decorator
+
+    @classmethod
+    def _resolve_class(
+        cls, class_or_path: type[ServiceProtocolT] | str
+    ) -> type[ServiceProtocolT]:
+        """Resolve a class and set its service_type attribute if it was registered via string path."""
+        resolved_class = super()._resolve_class(class_or_path)
+
+        # Find the service_type for this resolved class and set it if not already set
+        if isinstance(class_or_path, str) and not hasattr(
+            resolved_class, "service_type"
+        ):
+            for service_type, registered_class in cls._registry.items():
+                if registered_class == class_or_path:
+                    resolved_class.service_type = service_type
+                    break
+
+        return resolved_class
 
 
 class ServiceManagerFactory(AIPerfFactory[ServiceRunType, "ServiceManagerProtocol"]):

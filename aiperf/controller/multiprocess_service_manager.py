@@ -17,9 +17,8 @@ from aiperf.common.constants import (
     TASK_CANCEL_TIMEOUT_SHORT,
 )
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ServiceRegistrationStatus, ServiceRunType, ServiceType
+from aiperf.common.enums import ServiceRegistrationStatus, ServiceType
 from aiperf.common.exceptions import AIPerfError
-from aiperf.common.factories import ServiceManagerFactory
 from aiperf.common.logging import handle_subprocess_log_line
 from aiperf.common.messages import ServiceFailedMessage
 from aiperf.common.mixins import MessageBusClientMixin
@@ -55,7 +54,6 @@ class AsyncSubprocessRunInfo(BaseModel):
 
 
 @implements_protocol(ServiceManagerProtocol)
-@ServiceManagerFactory.register(ServiceRunType.MULTIPROCESSING)
 class MultiProcessServiceManager(BaseServiceManager, MessageBusClientMixin):
     """
     Service Manager for starting and stopping services as asyncio subprocesses.
@@ -144,7 +142,7 @@ class MultiProcessServiceManager(BaseServiceManager, MessageBusClientMixin):
 
             self.execute_async(self._watch_subprocess(info))
             self.execute_async(self._handle_subprocess_output(info.process, service_id))
-            await yield_to_event_loop()
+            # await yield_to_event_loop()
 
         except Exception:
             if info.user_config_file and info.user_config_file.exists():
@@ -194,7 +192,7 @@ class MultiProcessServiceManager(BaseServiceManager, MessageBusClientMixin):
                 )
             )
             tasks.append(task)
-            await yield_to_event_loop()
+            # await yield_to_event_loop()
 
         await asyncio.gather(*tasks, return_exceptions=True)
 

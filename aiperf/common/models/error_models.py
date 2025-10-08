@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import Any
 
+from aiohttp.client import ClientOSError
 from pydantic import Field
 
 from aiperf.common.exceptions import LifecycleOperationError
@@ -41,7 +42,9 @@ class ErrorDetails(AIPerfBaseModel):
     @classmethod
     def from_exception(cls, e: BaseException) -> "ErrorDetails":
         """Create an error details object from an exception."""
+        code = e.errno if isinstance(e, ClientOSError) else None
         return cls(
+            code=code,
             type=e.__class__.__name__,
             message=str(e),
         )

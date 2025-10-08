@@ -51,7 +51,9 @@ def ensure_modules_loaded() -> None:
         if not _modules_loaded:
             start_time = time.perf_counter()
             _logger.debug("Loading all modules")
-            _load_all_modules()
+            # _load_all_modules()
+            from aiperf import registrations as registrations
+
             _logger.debug(
                 f"Modules loaded in {time.perf_counter() - start_time:.2f} seconds"
             )

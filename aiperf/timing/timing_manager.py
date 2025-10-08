@@ -10,10 +10,8 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
-    ServiceType,
 )
 from aiperf.common.exceptions import InvalidStateError
-from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_command,
     on_pull_message,
@@ -47,7 +45,6 @@ from aiperf.timing.credit_manager import CreditPhaseMessagesMixin
 
 
 @implements_protocol(ServiceProtocol)
-@ServiceFactory.register(ServiceType.TIMING_MANAGER)
 class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMixin):
     """
     The TimingManager service is responsible to generate the schedule and issuing

@@ -8,9 +8,8 @@ from typing import Any
 import zmq.asyncio
 
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import CommClientType, MessageType
+from aiperf.common.enums import MessageType
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task
 from aiperf.common.messages import CommandMessage, CommandResponse, Message
 from aiperf.common.protocols import SubClientProtocol
@@ -25,7 +24,6 @@ from aiperf.zmq.zmq_defaults import (
 
 
 @implements_protocol(SubClientProtocol)
-@CommunicationClientFactory.register(CommClientType.SUB)
 class ZMQSubClient(BaseZMQClient):
     """
     ZMQ SUB socket client for subscribing to messages from PUB sockets.

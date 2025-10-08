@@ -20,7 +20,6 @@ from aiperf.common.constants import (
 )
 from aiperf.common.enums import MessageType, ServiceType
 from aiperf.common.enums.worker_enums import WorkerStatus
-from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import background_task, on_message, on_start, on_stop
 from aiperf.common.messages import (
     ShutdownWorkersCommand,
@@ -45,7 +44,6 @@ class WorkerStatusInfo(WorkerStats):
     )
 
 
-@ServiceFactory.register(ServiceType.WORKER_MANAGER)
 class WorkerManager(BaseComponentService):
     """
     The WorkerManager service is primary responsibility to manage the worker processes.

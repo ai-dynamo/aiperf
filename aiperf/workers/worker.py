@@ -20,14 +20,12 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
-    ServiceType,
 )
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.factories import (
     InferenceClientFactory,
     RequestConverterFactory,
     ResponseExtractorFactory,
-    ServiceFactory,
 )
 from aiperf.common.hooks import background_task, on_command, on_pull_message, on_stop
 from aiperf.common.messages import (
@@ -57,7 +55,6 @@ from aiperf.common.protocols import (
 )
 
 
-@ServiceFactory.register(ServiceType.WORKER)
 class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
     """Worker is primarily responsible for making API calls to the inference server.
     It also manages the conversation between turns and returns the results to the Inference Results Parsers.

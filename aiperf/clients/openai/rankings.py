@@ -4,13 +4,10 @@
 from typing import Any
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.enums import EndpointType
-from aiperf.common.factories import RequestConverterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Turn
 
 
-@RequestConverterFactory.register(EndpointType.RANKINGS)
 class RankingsRequestConverter(AIPerfLoggerMixin):
     """Request converter for rankings requests.
 

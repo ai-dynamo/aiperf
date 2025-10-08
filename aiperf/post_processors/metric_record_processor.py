@@ -6,9 +6,8 @@ from typing import Any
 
 from aiperf.common.config import UserConfig
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import MetricType, RecordProcessorType
+from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.factories import RecordProcessorFactory
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.protocols import RecordProcessorProtocol
 from aiperf.common.types import MetricTagT
@@ -17,7 +16,6 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
 @implements_protocol(RecordProcessorProtocol)
-@RecordProcessorFactory.register(RecordProcessorType.METRIC_RECORD)
 class MetricRecordProcessor(BaseMetricsProcessor):
     """Processor for metric records.
 

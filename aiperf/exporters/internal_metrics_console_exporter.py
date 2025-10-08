@@ -7,8 +7,6 @@ from rich.console import Console
 from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import MetricFlags
-from aiperf.common.enums.data_exporter_enums import ConsoleExporterType
-from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ConsoleExporterProtocol
 from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
@@ -17,7 +15,6 @@ from aiperf.metrics.metric_registry import MetricRegistry
 
 
 @implements_protocol(ConsoleExporterProtocol)
-@ConsoleExporterFactory.register(ConsoleExporterType.INTERNAL_METRICS)
 class ConsoleInternalMetricsExporter(ConsoleMetricsExporter):
     """A class that exports internal metrics to the console.
 

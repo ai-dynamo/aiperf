@@ -5,15 +5,12 @@ from rich.console import Console
 from rich.table import Table
 
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ConsoleExporterType
-from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.models import ErrorDetailsCount
 from aiperf.common.protocols import ConsoleExporterProtocol
 from aiperf.exporters.exporter_config import ExporterConfig
 
 
 @implements_protocol(ConsoleExporterProtocol)
-@ConsoleExporterFactory.register(ConsoleExporterType.ERRORS)
 class ConsoleErrorExporter:
     """A class that exports error data to the console"""
 

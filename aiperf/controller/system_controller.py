@@ -28,7 +28,6 @@ from aiperf.common.enums import (
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.factories import (
     AIPerfUIFactory,
-    ServiceFactory,
     ServiceManagerFactory,
 )
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
@@ -62,7 +61,6 @@ from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.exporters.exporter_manager import ExporterManager
 
 
-@ServiceFactory.register(ServiceType.SYSTEM_CONTROLLER)
 class SystemController(SignalHandlerMixin, BaseService):
     """System Controller service.
 

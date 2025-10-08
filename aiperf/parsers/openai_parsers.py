@@ -6,11 +6,10 @@ from typing import Any
 import orjson
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.enums import EndpointType, OpenAIObjectType
+from aiperf.common.enums import OpenAIObjectType
 from aiperf.common.factories import (
     FactoryCreationError,
     OpenAIObjectParserFactory,
-    ResponseExtractorFactory,
 )
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
@@ -29,13 +28,6 @@ from aiperf.common.protocols import OpenAIObjectParserProtocol
 from aiperf.common.utils import load_json_str
 
 
-@ResponseExtractorFactory.register_all(
-    EndpointType.CHAT,
-    EndpointType.COMPLETIONS,
-    EndpointType.EMBEDDINGS,
-    EndpointType.RANKINGS,
-    EndpointType.RESPONSES,
-)
 class OpenAIResponseExtractor(AIPerfLoggerMixin):
     """Extractor for OpenAI responses."""
 
@@ -135,7 +127,6 @@ def _parse_chat_common(sub_obj: dict[str, Any]) -> BaseResponseData | None:
     )
 
 
-@OpenAIObjectParserFactory.register(OpenAIObjectType.CHAT_COMPLETION)
 class ChatCompletionParser(OpenAIObjectParserProtocol):
     """Parser for ChatCompletion objects."""
 
@@ -144,7 +135,6 @@ class ChatCompletionParser(OpenAIObjectParserProtocol):
         return _parse_chat_common(obj.get("choices", [{}])[0].get("message", {}))
 
 
-@OpenAIObjectParserFactory.register(OpenAIObjectType.CHAT_COMPLETION_CHUNK)
 class ChatCompletionChunkParser(OpenAIObjectParserProtocol):
     """Parser for ChatCompletionChunk objects."""
 
@@ -153,7 +143,6 @@ class ChatCompletionChunkParser(OpenAIObjectParserProtocol):
         return _parse_chat_common(obj.get("choices", [{}])[0].get("delta", {}))
 
 
-@OpenAIObjectParserFactory.register(OpenAIObjectType.COMPLETION)
 class CompletionParser(OpenAIObjectParserProtocol):
     """Parser for Completion objects."""
 
@@ -162,7 +151,6 @@ class CompletionParser(OpenAIObjectParserProtocol):
         return _make_text_response_data(obj.get("choices", [{}])[0].get("text"))
 
 
-@OpenAIObjectParserFactory.register(OpenAIObjectType.LIST)
 class ListParser(OpenAIObjectParserProtocol):
     """Parser for List objects."""
 
@@ -178,7 +166,6 @@ class ListParser(OpenAIObjectParserProtocol):
             raise ValueError(f"Received invalid list in response: {obj}")
 
 
-@OpenAIObjectParserFactory.register(OpenAIObjectType.RANKINGS)
 class RankingsParser(OpenAIObjectParserProtocol):
     """Parser for Rankings objects."""
 
@@ -190,7 +177,6 @@ class RankingsParser(OpenAIObjectParserProtocol):
         return RankingsResponseData(rankings=rankings)
 
 
-@OpenAIObjectParserFactory.register(OpenAIObjectType.RESPONSE)
 class ResponseParser(OpenAIObjectParserProtocol):
     """Parser for OpenAI Responses objects."""
 
@@ -199,7 +185,6 @@ class ResponseParser(OpenAIObjectParserProtocol):
         return _make_text_response_data(obj.get("output_text"))
 
 
-@OpenAIObjectParserFactory.register(OpenAIObjectType.TEXT_COMPLETION)
 class TextCompletionParser(OpenAIObjectParserProtocol):
     """Parser for TextCompletion objects."""
 

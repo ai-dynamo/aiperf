@@ -5,8 +5,6 @@ import asyncio
 import random
 
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import TimingMode
-from aiperf.common.enums.timing_enums import RequestRateMode
 from aiperf.common.factories import RequestRateGeneratorFactory
 from aiperf.common.messages import CreditReturnMessage
 from aiperf.common.models import CreditPhaseStats
@@ -14,12 +12,10 @@ from aiperf.common.protocols import RequestRateGeneratorProtocol
 from aiperf.timing.config import TimingManagerConfig
 from aiperf.timing.credit_issuing_strategy import (
     CreditIssuingStrategy,
-    CreditIssuingStrategyFactory,
     CreditManagerProtocol,
 )
 
 
-@CreditIssuingStrategyFactory.register(TimingMode.REQUEST_RATE)
 class RequestRateStrategy(CreditIssuingStrategy):
     """
     Strategy for issuing credits based on a specified request rate. Optionally, a max concurrency limit can be specified.
@@ -95,7 +91,6 @@ class RequestRateStrategy(CreditIssuingStrategy):
 
 
 @implements_protocol(RequestRateGeneratorProtocol)
-@RequestRateGeneratorFactory.register(RequestRateMode.POISSON)
 class PoissonRateGenerator:
     """
     Generator for Poisson process (exponential inter-arrival times).
@@ -129,7 +124,6 @@ class PoissonRateGenerator:
 
 
 @implements_protocol(RequestRateGeneratorProtocol)
-@RequestRateGeneratorFactory.register(RequestRateMode.CONSTANT)
 class ConstantRateGenerator:
     """
     Generator for constant rate (fixed inter-arrival times).
@@ -152,7 +146,6 @@ class ConstantRateGenerator:
 
 
 @implements_protocol(RequestRateGeneratorProtocol)
-@RequestRateGeneratorFactory.register(RequestRateMode.CONCURRENCY_BURST)
 class ConcurrencyBurstRateGenerator:
     """
     Generator for concurrency-burst rate (no delay between requests).

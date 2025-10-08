@@ -4,14 +4,11 @@
 from typing import Any
 
 from aiperf.clients.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.enums import EndpointType
-from aiperf.common.factories import RequestConverterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Turn
 
 
 # TODO: Not fully implemented yet.
-@RequestConverterFactory.register(EndpointType.RESPONSES)
 class OpenAIResponsesRequestConverter(AIPerfLoggerMixin):
     """Request converter for OpenAI Responses requests."""
 

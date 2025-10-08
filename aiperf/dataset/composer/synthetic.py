@@ -4,15 +4,12 @@
 import uuid
 
 from aiperf.common.config import UserConfig
-from aiperf.common.enums import ComposerType
-from aiperf.common.factories import ComposerFactory
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset import utils
 from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
-@ComposerFactory.register(ComposerType.SYNTHETIC)
 class SyntheticDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: UserConfig, tokenizer: Tokenizer):
         super().__init__(config, tokenizer)

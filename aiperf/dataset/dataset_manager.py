@@ -17,13 +17,11 @@ from aiperf.common.enums import (
     CommandType,
     ComposerType,
     MessageType,
-    ServiceType,
 )
 from aiperf.common.enums.dataset_enums import CustomDatasetType
 from aiperf.common.factories import (
     ComposerFactory,
     RequestConverterFactory,
-    ServiceFactory,
 )
 from aiperf.common.hooks import on_command, on_request
 from aiperf.common.messages import (
@@ -48,7 +46,6 @@ _logger = AIPerfLogger(__name__)
 
 
 @implements_protocol(ServiceProtocol)
-@ServiceFactory.register(ServiceType.DATASET_MANAGER)
 class DatasetManager(ReplyClientMixin, BaseComponentService):
     """
     The DatasetManager primary responsibility is to manage the data generation or acquisition.

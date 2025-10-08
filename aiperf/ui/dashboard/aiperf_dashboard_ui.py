@@ -5,8 +5,6 @@
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import AIPerfUIType
-from aiperf.common.factories import AIPerfUIFactory
 from aiperf.common.hooks import (
     AIPerfHook,
     on_start,
@@ -20,7 +18,6 @@ from aiperf.ui.dashboard.rich_log_viewer import LogConsumer
 
 
 @implements_protocol(AIPerfUIProtocol)
-@AIPerfUIFactory.register(AIPerfUIType.DASHBOARD)
 class AIPerfDashboardUI(BaseAIPerfUI):
     """
     AIPerf Dashboard UI.

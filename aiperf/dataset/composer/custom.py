@@ -3,8 +3,8 @@
 
 from aiperf.common.config import UserConfig
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ComposerType, CustomDatasetType
-from aiperf.common.factories import ComposerFactory, CustomDatasetFactory
+from aiperf.common.enums import CustomDatasetType
+from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.models import Conversation
 from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
@@ -13,7 +13,6 @@ from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
 @implements_protocol(ServiceProtocol)
-@ComposerFactory.register(ComposerType.CUSTOM)
 class CustomDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: UserConfig, tokenizer: Tokenizer):
         super().__init__(config, tokenizer)

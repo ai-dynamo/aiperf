@@ -6,10 +6,9 @@ from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
-from aiperf.common.enums import CommAddress, CommandType, MessageType, ServiceType
+from aiperf.common.enums import CommAddress, CommandType, MessageType
 from aiperf.common.factories import (
     RecordProcessorFactory,
-    ServiceFactory,
 )
 from aiperf.common.hooks import on_command, on_init, on_pull_message
 from aiperf.common.messages import (
@@ -29,7 +28,6 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.parsers.inference_result_parser import InferenceResultParser
 
 
-@ServiceFactory.register(ServiceType.RECORD_PROCESSOR)
 class RecordProcessor(PullClientMixin, BaseComponentService):
     """RecordProcessor is responsible for processing the records and pushing them to the RecordsManager.
     This service is meant to be run in a distributed fashion, where the amount of record processors can be scaled

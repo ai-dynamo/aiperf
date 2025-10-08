@@ -10,8 +10,6 @@ from aiperf.common.constants import (
     DEFAULT_SERVICE_START_TIMEOUT,
 )
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ServiceRunType
-from aiperf.common.factories import ServiceManagerFactory
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.base_service_manager import BaseServiceManager
@@ -26,7 +24,6 @@ class ServiceKubernetesRunInfo(BaseModel):
 
 
 @implements_protocol(ServiceManagerProtocol)
-@ServiceManagerFactory.register(ServiceRunType.KUBERNETES)
 class KubernetesServiceManager(BaseServiceManager):
     """
     Service Manager for starting and stopping services in a Kubernetes cluster.

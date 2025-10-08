@@ -14,11 +14,10 @@ from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
     CommClientType,
-    CommunicationBackend,
     LifecycleState,
 )
 from aiperf.common.exceptions import InvalidStateError
-from aiperf.common.factories import CommunicationClientFactory, CommunicationFactory
+from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import on_stop
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol
@@ -96,7 +95,6 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
         return client
 
 
-@CommunicationFactory.register(CommunicationBackend.ZMQ_TCP)
 @implements_protocol(CommunicationProtocol)
 class ZMQTCPCommunication(BaseZMQCommunication):
     """ZeroMQ-based implementation of the Communication interface using TCP transport."""
@@ -110,7 +108,6 @@ class ZMQTCPCommunication(BaseZMQCommunication):
         super().__init__(config or ZMQTCPConfig())
 
 
-@CommunicationFactory.register(CommunicationBackend.ZMQ_IPC)
 @implements_protocol(CommunicationProtocol)
 class ZMQIPCCommunication(BaseZMQCommunication):
     """ZeroMQ-based implementation of the Communication interface using IPC transport."""
