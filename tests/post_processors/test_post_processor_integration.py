@@ -47,7 +47,7 @@ class TestPostProcessorIntegration:
             results=[{RequestLatencyMetric.tag: 100.0, RequestCountMetric.tag: 1}],
         )
 
-        await results_processor.process_result(message)
+        await results_processor.process_result(message.to_data())
 
         assert RequestLatencyMetric.tag in results_processor._results
         assert isinstance(
@@ -76,7 +76,7 @@ class TestPostProcessorIntegration:
                 x_correlation_id=f"test-correlation-{idx}",
                 results=[{RequestLatencyMetric.tag: value}],
             )
-            await results_processor.process_result(message)
+            await results_processor.process_result(message.to_data())
 
         assert RequestLatencyMetric.tag in results_processor._results
         accumulated_data = list(

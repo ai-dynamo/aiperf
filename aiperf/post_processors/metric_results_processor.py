@@ -9,13 +9,13 @@ from aiperf.common.enums import MetricType, ResultsProcessorType
 from aiperf.common.enums.metric_enums import MetricDictValueTypeT, MetricValueTypeT
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.factories import ResultsProcessorFactory
-from aiperf.common.messages.inference_messages import MetricRecordsMessage
+from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol
 from aiperf.common.types import MetricTagT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
-from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
@@ -65,36 +65,35 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             if metric.type == MetricType.AGGREGATE
         }
 
-    async def process_result(self, message: MetricRecordsMessage) -> None:
+    async def process_result(self, record_data: MetricRecordsData) -> None:
         """Process a result from the metric record processor."""
         if self.is_trace_enabled:
-            self.trace(f"Processing incoming metrics: {message.results}")
-        record_dicts = [MetricRecordDict(result) for result in message.results]
-        for record_dict in record_dicts:
-            for tag, value in record_dict.items():
-                try:
-                    metric_type = self._tags_to_types[tag]
-                    if metric_type == MetricType.RECORD:
-                        if tag not in self._results:
-                            self._results[tag] = MetricArray()
-                        if isinstance(value, list):
-                            # NOTE: Right now we only support list-based metrics by extending the array.
-                            #       In the future, we possibly could support having nested arrays.
-                            self._results[tag].extend(value)  # type: ignore
-                        else:
-                            self._results[tag].append(value)  # type: ignore
+            self.trace(f"Processing incoming metrics: {record_data.metrics}")
 
-                    elif metric_type == MetricType.AGGREGATE:
-                        metric: BaseAggregateMetric = self._instances_map[tag]  # type: ignore
-                        metric.aggregate_value(value)
-                        self._results[tag] = metric.current_value
-
+        for tag, value in record_data.metrics.items():
+            try:
+                metric_type = self._tags_to_types[tag]
+                if metric_type == MetricType.RECORD:
+                    if tag not in self._results:
+                        self._results[tag] = MetricArray()
+                    if isinstance(value, list):
+                        # NOTE: Right now we only support list-based metrics by extending the array.
+                        #       In the future, we possibly could support having nested arrays.
+                        self._results[tag].extend(value)  # type: ignore
                     else:
-                        raise ValueError(f"Metric '{tag}' is not a valid metric type")
-                except NoMetricValue as e:
-                    self.debug(f"No metric value for metric '{tag}': {e!r}")
-                except Exception as e:
-                    self.warning(f"Error processing metric '{tag}': {e!r}")
+                        self._results[tag].append(value)  # type: ignore
+
+                elif metric_type == MetricType.AGGREGATE:
+                    metric: BaseAggregateMetric = self._instances_map[tag]  # type: ignore
+                    metric.aggregate_value(value)
+                    self._results[tag] = metric.current_value
+
+                else:
+                    raise ValueError(f"Metric '{tag}' is not a valid metric type")
+            except NoMetricValue as e:
+                self.debug(f"No metric value for metric '{tag}': {e!r}")
+            except Exception as e:
+                self.warning(f"Error processing metric '{tag}': {e!r}")
 
         if self.is_trace_enabled:
             self.trace(f"Results after processing incoming metrics: {self._results}")

@@ -44,7 +44,7 @@ class TestMetricResultsProcessor:
             x_request_id="test-1",
             results=[{"test_record": 42.0}],
         )
-        await processor.process_result(message)
+        await processor.process_result(message.to_data())
 
         assert "test_record" in processor._results
         assert isinstance(processor._results["test_record"], MetricArray)
@@ -56,7 +56,7 @@ class TestMetricResultsProcessor:
             request_start_ns=1_000_000_001,
             results=[{"test_record": 84.0}],
         )
-        await processor.process_result(message2)
+        await processor.process_result(message2.to_data())
         assert list(processor._results["test_record"].data) == [42.0, 84.0]
 
     @pytest.mark.asyncio
@@ -72,7 +72,7 @@ class TestMetricResultsProcessor:
             x_request_id="test-1",
             results=[{"test_record": [10.0, 20.0, 30.0]}],
         )
-        await processor.process_result(message)
+        await processor.process_result(message.to_data())
 
         assert "test_record" in processor._results
         assert isinstance(processor._results["test_record"], MetricArray)
@@ -92,7 +92,7 @@ class TestMetricResultsProcessor:
             x_request_id="test-1",
             results=[{RequestCountMetric.tag: 5}],
         )
-        await processor.process_result(message1)
+        await processor.process_result(message1.to_data())
         assert processor._results[RequestCountMetric.tag] == 5
 
         message2 = create_metric_records_message(
@@ -100,7 +100,7 @@ class TestMetricResultsProcessor:
             request_start_ns=1_000_000_001,
             results=[{RequestCountMetric.tag: 3}],
         )
-        await processor.process_result(message2)
+        await processor.process_result(message2.to_data())
         assert processor._results[RequestCountMetric.tag] == 8
 
     @pytest.mark.asyncio

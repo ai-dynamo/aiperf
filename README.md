@@ -54,7 +54,7 @@ Features
 | **[Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md)** | Duration-based testing with grace period control | Stability testing, sustained performance |
 
 ### Working with Benchmark Data
-- **[Profile Exports](docs/profile_exports.md)** - Parse and analyze `profile_export.jsonl` with Pydantic models, custom metrics, and async processing
+- **[Profile Exports](docs/tutorials/working-with-profile-exports.md)** - Parse and analyze `profile_export.jsonl` with Pydantic models, custom metrics, and async processing
 
 ### Quick Navigation
 ```bash

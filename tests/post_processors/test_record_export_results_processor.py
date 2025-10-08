@@ -216,34 +216,36 @@ class TestRecordExportResultsProcessorProcessResult:
             user_config=user_config_records_export,
         )
 
+        await processor._open_file()
+
         with patch.object(
             MetricRecordDict,
             "to_display_dict",
             return_value=mock_display_dict,
         ):
-            await processor.process_result(sample_metric_records_message)
+            await processor.process_result(sample_metric_records_message.to_data())
 
-        assert processor.record_count == 2  # Two result dicts in the message
+        await processor._shutdown()
+
+        assert processor.record_count == 1
         assert processor.output_file.exists()
 
-        # Verify file content
         with open(processor.output_file, "rb") as f:
             lines = f.readlines()
 
-        assert len(lines) == 2
-        for line in lines:
-            record_dict = orjson.loads(line)
-            record = MetricRecordInfo.model_validate(record_dict)
-            assert record.metadata.x_request_id == "test-record-123"
-            assert record.metadata.conversation_id == "conv-456"
-            assert record.metadata.turn_index == 0
-            assert record.metadata.worker_id == "worker-1"
-            assert record.metadata.record_processor_id == "processor-1"
-            assert record.metadata.benchmark_phase == CreditPhase.PROFILING
-            assert record.metadata.request_start_ns == 1_000_000_000
-            assert record.error is None
-            assert "request_latency" in record.metrics
-            assert "output_token_count" in record.metrics
+        assert len(lines) == 1
+        record_dict = orjson.loads(lines[0])
+        record = MetricRecordInfo.model_validate(record_dict)
+        assert record.metadata.x_request_id == "test-record-123"
+        assert record.metadata.conversation_id == "conv-456"
+        assert record.metadata.turn_index == 0
+        assert record.metadata.worker_id == "worker-1"
+        assert record.metadata.record_processor_id == "processor-1"
+        assert record.metadata.benchmark_phase == CreditPhase.PROFILING
+        assert record.metadata.request_start_ns == 1_000_000_000
+        assert record.error is None
+        assert "request_latency" in record.metrics
+        assert "output_token_count" in record.metrics
 
     @pytest.mark.asyncio
     async def test_process_result_with_empty_display_metrics(
@@ -262,7 +264,7 @@ class TestRecordExportResultsProcessorProcessResult:
 
         # Mock to_display_dict to return empty dict
         with patch.object(MetricRecordDict, "to_display_dict", return_value={}):
-            await processor.process_result(sample_metric_records_message)
+            await processor.process_result(sample_metric_records_message.to_data())
 
         # Should not write anything since display_metrics is empty
         assert processor.record_count == 0
@@ -293,7 +295,7 @@ class TestRecordExportResultsProcessorProcessResult:
             patch.object(processor, "error") as mock_error,
         ):
             # Should not raise
-            await processor.process_result(sample_metric_records_message)
+            await processor.process_result(sample_metric_records_message.to_data())
 
             # Should log the error
             assert mock_error.call_count >= 1
@@ -320,10 +322,11 @@ class TestRecordExportResultsProcessorProcessResult:
             user_config=user_config_records_export,
         )
 
+        await processor._open_file()
+
         with patch.object(
             MetricRecordDict, "to_display_dict", return_value=mock_display_dict
         ):
-            # Process 5 messages, each with 2 results
             for i in range(5):
                 message = create_metric_records_message(
                     x_request_id=f"record-{i}",
@@ -332,17 +335,18 @@ class TestRecordExportResultsProcessorProcessResult:
                     request_start_ns=1_000_000_000 + i,
                     results=[{"metric1": 100}, {"metric2": 200}],
                 )
-                await processor.process_result(message)
+                await processor.process_result(message.to_data())
 
-        assert processor.record_count == 10  # 5 messages * 2 results each
+        await processor._shutdown()
+
+        assert processor.record_count == 5
         assert processor.output_file.exists()
 
         with open(processor.output_file, "rb") as f:
             lines = f.readlines()
 
-        assert len(lines) == 10
+        assert len(lines) == 5
 
-        # Verify each line is a valid MetricRecordInfo
         for line in lines:
             record_dict = orjson.loads(line)
             record = MetricRecordInfo.model_validate(record_dict)
@@ -371,23 +375,25 @@ class TestRecordExportResultsProcessorFileFormat:
             user_config=user_config_records_export,
         )
 
+        await processor._open_file()
+
         with patch.object(
             MetricRecordDict, "to_display_dict", return_value=mock_display_dict
         ):
-            await processor.process_result(sample_metric_records_message)
+            await processor.process_result(sample_metric_records_message.to_data())
+
+        await processor._shutdown()
 
         with open(processor.output_file, "rb") as f:
             lines = f.readlines()
 
         for line in lines:
-            # Each line should be valid JSON
-            record_dict = orjson.loads(line)
-            assert isinstance(record_dict, dict)
-            # Validate it can be parsed as MetricRecordInfo
-            record = MetricRecordInfo.model_validate(record_dict)
-            assert isinstance(record, MetricRecordInfo)
-            # Check for newline at end
-            assert line.endswith(b"\n")
+            if line.strip():
+                record_dict = orjson.loads(line)
+                assert isinstance(record_dict, dict)
+                record = MetricRecordInfo.model_validate(record_dict)
+                assert isinstance(record, MetricRecordInfo)
+                assert line.endswith(b"\n")
 
     @pytest.mark.asyncio
     async def test_record_structure_is_complete(
@@ -406,22 +412,23 @@ class TestRecordExportResultsProcessorFileFormat:
             user_config=user_config_records_export,
         )
 
+        await processor._open_file()
+
         with patch.object(
             MetricRecordDict, "to_display_dict", return_value=mock_display_dict
         ):
-            await processor.process_result(sample_metric_records_message)
+            await processor.process_result(sample_metric_records_message.to_data())
+
+        await processor._shutdown()
 
         with open(processor.output_file, "rb") as f:
             record_dict = orjson.loads(f.readline())
 
-        # Validate using Pydantic model
         record = MetricRecordInfo.model_validate(record_dict)
 
-        # Check top-level structure
         assert isinstance(record.metadata, MetricRecordMetadata)
         assert isinstance(record.metrics, dict)
 
-        # Check metadata structure
         assert record.metadata.conversation_id is not None
         assert isinstance(record.metadata.turn_index, int)
         assert isinstance(record.metadata.request_start_ns, int)
@@ -429,7 +436,6 @@ class TestRecordExportResultsProcessorFileFormat:
         assert isinstance(record.metadata.record_processor_id, str)
         assert isinstance(record.metadata.benchmark_phase, CreditPhase)
 
-        # Check metrics structure
         assert "test_metric" in record.metrics
         assert isinstance(record.metrics["test_metric"], MetricValue)
         assert record.metrics["test_metric"].value == 42
@@ -446,7 +452,7 @@ class TestRecordExportResultsProcessorLogging:
         service_config: ServiceConfig,
         mock_metric_registry: Mock,
     ):
-        """Test that debug logging occurs every 100 records."""
+        """Test that debug logging occurs when buffer is flushed."""
         mock_display_dict = {"test_metric": MetricValue(value=42, unit="ms")}
 
         processor = RecordExportResultsProcessor(
@@ -455,14 +461,15 @@ class TestRecordExportResultsProcessorLogging:
             user_config=user_config_records_export,
         )
 
+        await processor._open_file()
+
         with (
             patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ),
             patch.object(processor, "debug") as mock_debug,
         ):
-            # Process 100 records (50 messages with 2 results each)
-            for i in range(50):
+            for i in range(processor._batch_size):
                 message = create_metric_records_message(
                     x_request_id=f"record-{i}",
                     conversation_id=f"conv-{i}",
@@ -470,12 +477,9 @@ class TestRecordExportResultsProcessorLogging:
                     request_start_ns=1_000_000_000 + i,
                     results=[{"metric1": 100}, {"metric2": 200}],
                 )
-                await processor.process_result(message)
+                await processor.process_result(message.to_data())
 
-            # Should be called once at record 100
-            assert mock_debug.call_count == 1
-            call_args = str(mock_debug.call_args)
-            assert "100" in call_args
+            assert mock_debug.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_error_logging_on_write_failure(
@@ -498,9 +502,8 @@ class TestRecordExportResultsProcessorLogging:
             ),
             patch.object(processor, "error") as mock_error,
         ):
-            await processor.process_result(sample_metric_records_message)
+            await processor.process_result(sample_metric_records_message.to_data())
 
-            # Should log errors (one per result in message)
             assert mock_error.call_count >= 1
             call_args = str(mock_error.call_args_list[0])
             assert "Failed to write record metrics" in call_args
@@ -538,7 +541,7 @@ class TestRecordExportResultsProcessorShutdown:
                     request_start_ns=1_000_000_000 + i,
                     results=[{"metric1": 100}],
                 )
-                await processor.process_result(message)
+                await processor.process_result(message.to_data())
 
         with patch.object(processor, "info") as mock_info:
             await processor._shutdown()

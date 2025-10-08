@@ -217,35 +217,15 @@ async def process_streaming_records_async(file_path: Path) -> None:
 Load and analyze the `inputs.json` file to understand what data was sent during the benchmark:
 
 ```python
-import json
 from pathlib import Path
 from aiperf.common.models import InputsFile
 
 def load_inputs_file(file_path: Path) -> InputsFile:
     """Load inputs.json file into structured Pydantic model."""
     with open(file_path, encoding="utf-8") as f:
-        data = json.load(f)
-    return InputsFile.model_validate(data)
+        return InputsFile.model_validate_json(f.read())
 
-# Load inputs
 inputs = load_inputs_file(Path("artifacts/my-run/inputs.json"))
-
-# Analyze input characteristics
-total_sessions = len(inputs.data)
-total_turns = sum(len(session.payloads) for session in inputs.data)
-multi_turn_sessions = sum(1 for session in inputs.data if len(session.payloads) > 1)
-
-print(f"Total sessions: {total_sessions}")
-print(f"Total turns: {total_turns}")
-print(f"Multi-turn conversations: {multi_turn_sessions}")
-
-# Extract prompt lengths for chat endpoints
-for session in inputs.data:
-    for turn_idx, payload in enumerate(session.payloads):
-        if "messages" in payload:
-            for message in payload["messages"]:
-                content_length = len(message["content"])
-                print(f"Session {session.session_id}, Turn {turn_idx}: {content_length} characters")
 ```
 
 ### Correlating Inputs with Results
@@ -255,13 +235,12 @@ Combine `artifacts/my-run/inputs.json` with `artifacts/my-run/profile_export.jso
 ```python
 from pathlib import Path
 from aiperf.common.models import InputsFile, MetricRecordInfo
-import json
 
 def correlate_inputs_and_results(inputs_path: Path, results_path: Path):
     """Correlate input prompts with performance metrics."""
     # Load inputs
     with open(inputs_path, encoding="utf-8") as f:
-        inputs = InputsFile.model_validate(json.load(f))
+        inputs = InputsFile.model_validate_json(f.read())
 
     # Create session lookup
     session_inputs = {session.session_id: session for session in inputs.data}
@@ -269,43 +248,30 @@ def correlate_inputs_and_results(inputs_path: Path, results_path: Path):
     # Process results and correlate
     with open(results_path, encoding="utf-8") as f:
         for line in f:
-            if line.strip():
-                record = MetricRecordInfo.model_validate_json(line)
+          if not line.strip():
+            continue
 
-                # Skip failed requests
-                if record.error is not None:
-                    continue
+          record = MetricRecordInfo.model_validate_json(line)
 
-                # Find corresponding input
-                conv_id = record.metadata.conversation_id
-                if conv_id in session_inputs:
-                    session = session_inputs[conv_id]
-                    turn_idx = record.metadata.turn_index
+          # Find corresponding input
+          conv_id = record.metadata.conversation_id
+          if conv_id not in session_inputs:
+              raise ValueError(f"Conversation ID {conv_id} not found in inputs")
 
-                    if turn_idx < len(session.payloads):
-                        payload = session.payloads[turn_idx]
-                        input_tokens = record.metrics.get("input_sequence_length", {}).get("value", 0)
-                        latency = record.metrics.get("request_latency", {}).get("value", 0)
+          session = session_inputs[conv_id]
+          turn_idx = record.metadata.turn_index
 
-                        print(f"Conv {conv_id}, Turn {turn_idx}: "
-                              f"{input_tokens} tokens, {latency:.2f}ms latency")
+          if turn_idx >= len(session.payloads):
+              raise ValueError(f"Turn index {turn_idx} is out of range for session {conv_id}")
+
+          # Assign the raw request payload to the record, and print it out
+          # You can do this because AIPerf models allow extra fields to be added to the model.
+          payload = session.payloads[turn_idx]
+          record.payload = payload
+          print(record.model_dump_json(indent=2))
 
 correlate_inputs_and_results(
     Path("artifacts/my-run/inputs.json"),
     Path("artifacts/my-run/profile_export.jsonl")
 )
-```
-
-## Best Practices
-
-### Data Validation
-
-Always use Pydantic models for type-safe parsing and automatic validation:
-
-```python
-from aiperf.common.models import MetricRecordInfo, InputsFile
-
-# Recommended: Type-safe parsing with validation
-record = MetricRecordInfo.model_validate_json(line)
-inputs = InputsFile.model_validate_json(f.read())
 ```
