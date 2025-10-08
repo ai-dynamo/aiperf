@@ -31,7 +31,19 @@ class BaseTelemetryMetric(
     def process_telemetry_batch(
         self, telemetry_records: list[TelemetryRecord]
     ) -> dict[str, list[MetricValueTypeVarT]]:
-        """Process batch of telemetry records, returning values grouped by GPU UUID."""
+        """Process batch of telemetry records, returning values grouped by GPU UUID.
+
+        Results are keyed by gpu_uuid (e.g., "GPU-ef6ef310-...") which is globally unique
+        across all nodes. This prevents incorrectly merging telemetry data from different
+        nodes that may have GPUs with the same gpu_index (e.g., both node1 and node2 have
+        a "GPU 0").
+
+        Args:
+            telemetry_records: List of telemetry records to process
+
+        Returns:
+            Dictionary mapping gpu_uuid to list of extracted metric values for that GPU.
+        """
         gpu_values = {}
         for record in telemetry_records:
             value = self._extract_value(record)
