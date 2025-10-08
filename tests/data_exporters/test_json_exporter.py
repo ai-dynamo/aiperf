@@ -550,8 +550,6 @@ class TestJsonExporterTelemetry:
             assert "gpus" in endpoints["node2:9400"]
 
     @pytest.mark.asyncio
-
-    @pytest.mark.asyncio
     async def test_json_export_with_hostname_metadata(
         self, mock_results, mock_user_config
     ):
