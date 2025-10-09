@@ -190,9 +190,54 @@ def get_container_id_by_filter(filter_criteria: str) -> str | None:
         return None
 
 
-def cleanup_docker_resources(force: bool = False) -> None:
+def cleanup_docker_resources(
+    force: bool = False, exclude_containers: list[str] = None
+) -> None:
     """Clean up Docker resources (containers, networks, volumes)"""
     try:
+        if exclude_containers is None:
+            exclude_containers = []
+
+        # Stop all running containers except excluded ones
+        logger.info("Stopping all running containers (except excluded)...")
+        result = subprocess.run(
+            "docker ps -q",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            container_ids = result.stdout.strip().split("\n")
+            for container_id in container_ids:
+                # Check if this container should be excluded
+                should_exclude = False
+                for exclude_pattern in exclude_containers:
+                    name_check = subprocess.run(
+                        f"docker ps --filter id={container_id} --format '{{{{.Names}}}}'",
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if (
+                        name_check.returncode == 0
+                        and exclude_pattern in name_check.stdout
+                    ):
+                        should_exclude = True
+                        logger.info(f"Skipping container {container_id} (excluded)")
+                        break
+
+                if not should_exclude:
+                    logger.info(f"Stopping container {container_id}")
+                    subprocess.run(
+                        f"docker stop {container_id}",
+                        shell=True,
+                        capture_output=True,
+                        timeout=30,
+                    )
+
         commands = [
             "docker container prune -f",
             "docker network prune -f",
