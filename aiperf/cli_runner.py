@@ -16,17 +16,22 @@ def run_system_controller(
 ) -> None:
     """Run the system controller with the given configuration."""
 
-    # CRITICAL FIX: On macOS, force 'fork' start method when using dashboard UI
-    # to prevent terminal corruption with Textual. The default 'spawn' mode on
-    # macOS causes severe terminal interference issues with Textual's terminal control.
-    # This must happen before ANY multiprocessing operations.
+    # CRITICAL FIX: On macOS with dashboard UI, we have a catch-22:
+    # - 'spawn' mode: Safe for asyncio/uvloop but causes terminal corruption with Textual
+    # - 'fork' mode: Works with Textual but deadlocks with uvloop on macOS
+    #
+    # Solution: Force fork mode + disable uvloop on macOS when using dashboard.
+    # This prevents both terminal corruption and fork+uvloop deadlocks.
     if (
         platform.system() == "Darwin"
         and service_config.ui_type == AIPerfUIType.DASHBOARD
     ):
-        # Ignore RuntimeError if start method already set
+        # Force fork mode for Textual compatibility
         with contextlib.suppress(RuntimeError):
             multiprocessing.set_start_method("fork", force=True)
+
+        # Disable uvloop to prevent fork deadlocks (use standard asyncio instead)
+        service_config.developer.disable_uvloop = True
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service

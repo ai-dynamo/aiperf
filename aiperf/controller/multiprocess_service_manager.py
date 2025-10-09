@@ -53,9 +53,9 @@ class MultiProcessServiceManager(BaseServiceManager):
     - Windows: Uses 'spawn' start method by default
 
     Terminal handling for dashboard UI:
-    On macOS, we force 'fork' mode instead of the default 'spawn' mode to prevent
-    terminal corruption with Textual. This is set in cli_runner.py before any
-    multiprocessing operations occur.
+    On macOS, we force 'fork' mode instead of 'spawn' to prevent terminal corruption
+    with Textual. However, fork + uvloop causes deadlocks on macOS, so we also disable
+    uvloop and use standard asyncio instead. This configuration is set in cli_runner.py.
     """
 
     def __init__(
