@@ -92,16 +92,28 @@ def setup_child_process_logging(
         and service_config.ui_type == AIPerfUIType.DASHBOARD
     ):
         # For dashboard UI, we want to log to the queue, so it can be displayed in the UI
-        # log viewer, instead of the console directly.
+        # log viewer, instead of the console directly. ONLY use the queue handler to
+        # prevent any terminal writes from child processes.
         queue_handler = MultiProcessLogHandler(log_queue, service_id)
         queue_handler.setLevel(level)
         root_logger.addHandler(queue_handler)
     else:
         # For all other cases, set up rich logging to the console
+        # Import StringIO to create a non-terminal console for child processes
+        import sys
+        from io import StringIO
+
+        # Check if we're in a child process with redirected stdout
+        # If so, use StringIO instead of the real console
+        if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
+            console = Console(file=StringIO(), force_terminal=False)
+        else:
+            console = Console()
+
         rich_handler = RichHandler(
             rich_tracebacks=True,
             show_path=True,
-            console=Console(),
+            console=console,
             show_time=True,
             show_level=True,
             tracebacks_show_locals=False,
