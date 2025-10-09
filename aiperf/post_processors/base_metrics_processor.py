@@ -82,15 +82,15 @@ class BaseMetricsProcessor(AIPerfLoggerMixin, ABC):
             disallowed_flags |= MetricFlags.GOODPUT
 
         metrics: list[BaseMetric] = []
-        supported_tags = MetricRegistry.tags_applicable_to(
+        applicable_tags = MetricRegistry.tags_applicable_to(
             required_flags,
             disallowed_flags,
             *metric_types,
         )
-        self._configure_goodput(supported_tags)
+        self._configure_goodput(applicable_tags)
 
         ordered_tags = MetricRegistry.create_dependency_order_for(
-            supported_tags,
+            applicable_tags,
         )
         for metric_tag in ordered_tags:
             metric = MetricRegistry.get_instance(metric_tag)

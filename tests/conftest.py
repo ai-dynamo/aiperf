@@ -18,7 +18,15 @@ from aiperf.common.aiperf_logger import _TRACE
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType
 from aiperf.common.messages import Message
-from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models import (
+    Conversation,
+    ParsedResponse,
+    ParsedResponseRecord,
+    RequestRecord,
+    Text,
+    TextResponseData,
+    Turn,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
 from tests.comms.mock_zmq import (
@@ -33,6 +41,13 @@ from tests.utils.time_traveler import (  # noqa: E402
 )
 
 logging.basicConfig(level=_TRACE)
+
+# Shared test constants for request/response records
+DEFAULT_START_TIME_NS = 1_000_000
+DEFAULT_FIRST_RESPONSE_NS = 1_050_000
+DEFAULT_LAST_RESPONSE_NS = 1_100_000
+DEFAULT_INPUT_TOKENS = 5
+DEFAULT_OUTPUT_TOKENS = 2
 
 
 def pytest_addoption(parser):
@@ -315,3 +330,39 @@ def sample_conversations() -> dict[str, Conversation]:
         ),
     }
     return conversations
+
+
+@pytest.fixture
+def sample_request_record() -> RequestRecord:
+    """Create a sample RequestRecord for testing."""
+    return RequestRecord(
+        conversation_id="test-conversation",
+        turn_index=0,
+        model_name="test-model",
+        start_perf_ns=DEFAULT_START_TIME_NS,
+        timestamp_ns=DEFAULT_START_TIME_NS,
+        end_perf_ns=DEFAULT_LAST_RESPONSE_NS,
+        error=None,
+    )
+
+
+@pytest.fixture
+def sample_parsed_record(sample_request_record: RequestRecord) -> ParsedResponseRecord:
+    """Create a valid ParsedResponseRecord for testing."""
+    responses = [
+        ParsedResponse(
+            perf_ns=DEFAULT_FIRST_RESPONSE_NS,
+            data=TextResponseData(text="Hello"),
+        ),
+        ParsedResponse(
+            perf_ns=DEFAULT_LAST_RESPONSE_NS,
+            data=TextResponseData(text=" world"),
+        ),
+    ]
+
+    return ParsedResponseRecord(
+        request=sample_request_record,
+        responses=responses,
+        input_token_count=DEFAULT_INPUT_TOKENS,
+        output_token_count=DEFAULT_OUTPUT_TOKENS,
+    )

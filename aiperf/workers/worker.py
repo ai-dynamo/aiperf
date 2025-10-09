@@ -221,11 +221,11 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             turn_list.append(turn)
             # TODO: how do we handle errors in the middle of a conversation?
             record = await self._build_response_record(
-                conversation.session_id,
-                message,
-                turn,
-                turn_index,
-                drop_perf_ns,
+                conversation_id=conversation.session_id,
+                message=message,
+                turn=turn,
+                turn_index=turn_index,
+                drop_perf_ns=drop_perf_ns,
             )
             await self._send_inference_result_message(record)
             resp_turn = await self._process_response(record)
@@ -234,6 +234,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
 
     async def _retrieve_conversation_response(
         self,
+        *,
         service_id: str,
         conversation_id: str | None,
         phase: CreditPhase,
@@ -275,6 +276,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
 
     async def _build_response_record(
         self,
+        *,
         conversation_id: str,
         message: CreditDropMessage,
         turn: Turn,
@@ -291,6 +293,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         record.cancel_after_ns = message.cancel_after_ns
         record.x_request_id = x_request_id
         record.x_correlation_id = message.request_id
+        record.credit_num = message.credit_num
         # If this is the first turn, calculate the credit drop latency
         if turn_index == 0:
             record.credit_drop_latency = record.start_perf_ns - drop_perf_ns

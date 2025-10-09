@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import sys
 
-from aiperf.common.enums import MetricDateTimeUnit, MetricFlags, MetricTimeUnit
+from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -21,8 +21,7 @@ class MinRequestTimestampMetric(BaseAggregateMetric[int]):
     short_header = "Min Req"
     short_header_hide_unit = True
     unit = MetricTimeUnit.NANOSECONDS
-    display_unit = MetricDateTimeUnit.DATE_TIME
-    flags = MetricFlags.NO_CONSOLE
+    flags = MetricFlags.NO_CONSOLE | MetricFlags.NO_INDIVIDUAL_RECORDS
     required_metrics = None
 
     def __init__(self) -> None:

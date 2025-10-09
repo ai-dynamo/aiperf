@@ -11,7 +11,7 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 
 class InputSequenceLengthMetric(BaseRecordMetric[int]):
     """
-    Post-processor for calculating Input Sequence Length (ISL) metrics from records.
+    Post-processor for calculating Input Sequence Length (ISL) metrics from valid records.
 
     Formula:
         Input Sequence Length = Sum of Input Token Counts
@@ -44,7 +44,7 @@ class InputSequenceLengthMetric(BaseRecordMetric[int]):
 
 class TotalInputSequenceLengthMetric(DerivedSumMetric[int, InputSequenceLengthMetric]):
     """
-    This is the total number of input tokens processed by the benchmark.
+    This is the total number of input tokens processed by the benchmark for valid records.
 
     Formula:
         ```
@@ -60,4 +60,45 @@ class TotalInputSequenceLengthMetric(DerivedSumMetric[int, InputSequenceLengthMe
         MetricFlags.PRODUCES_TOKENS_ONLY
         | MetricFlags.LARGER_IS_BETTER
         | MetricFlags.NO_CONSOLE
+    )
+
+
+class ErrorInputSequenceLengthMetric(InputSequenceLengthMetric):
+    """
+    Post-processor for calculating Input Sequence Length (ISL) metrics from error records.
+    """
+
+    tag = "error_isl"
+    header = "Error Input Sequence Length"
+    short_header = "Error ISL"
+    unit = GenericMetricUnit.TOKENS
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.LARGER_IS_BETTER
+        | MetricFlags.NO_CONSOLE
+        | MetricFlags.ERROR_ONLY
+    )
+
+
+class TotalErrorInputSequenceLengthMetric(
+    DerivedSumMetric[int, ErrorInputSequenceLengthMetric]
+):
+    """
+    This is the total number of input tokens processed in the benchmark for error records.
+
+    Formula:
+        ```
+        Total Error Input Sequence Length = Sum(Error Input Sequence Lengths)
+        ```
+    """
+
+    tag = "total_error_isl"
+    header = "Total Error Input Sequence Length"
+    short_header = "Total Error ISL"
+    short_header_hide_unit = True
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.LARGER_IS_BETTER
+        | MetricFlags.NO_CONSOLE
+        | MetricFlags.ERROR_ONLY
     )

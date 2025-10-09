@@ -229,6 +229,7 @@ class TestWorker:
             credit_drop_ns=None,
             should_cancel=False,
             cancel_after_ns=123456789,
+            credit_num=1,
         )
 
         dummy_record = RequestRecord()
@@ -278,6 +279,7 @@ class TestWorker:
             credit_drop_ns=None,
             should_cancel=False,
             cancel_after_ns=123456789,
+            credit_num=1,
         )
 
         dummy_record = RequestRecord()
@@ -324,6 +326,7 @@ class TestWorker:
         message = CreditDropMessage(
             service_id="test-service",
             phase=CreditPhase.PROFILING,
+            credit_num=1,
         )
         turn = Turn(texts=[Text(contents=["test"])], model="test-model")
         x_request_id = str(uuid.uuid4())

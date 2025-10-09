@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import MetricType
 from aiperf.common.enums.metric_enums import (
     MetricDictValueTypeT,
@@ -11,17 +12,20 @@ from aiperf.common.enums.metric_enums import (
     MetricValueTypeT,
     MetricValueTypeVarT,
 )
-from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models.record_models import MetricResult
+from aiperf.common.exceptions import MetricTypeError, MetricUnitError, NoMetricValue
+from aiperf.common.models.record_models import MetricResult, MetricValue
 from aiperf.common.types import MetricTagT
 
 if TYPE_CHECKING:
     from aiperf.metrics.base_metric import BaseMetric
+    from aiperf.metrics.metric_registry import MetricRegistry
 
 
 MetricDictValueTypeVarT = TypeVar(
     "MetricDictValueTypeVarT", bound="MetricValueTypeT | MetricDictValueTypeT"
 )
+
+_logger = AIPerfLogger(__name__)
 
 
 class BaseMetricDict(
@@ -54,7 +58,57 @@ class MetricRecordDict(BaseMetricDict[MetricValueTypeT]):
     - No `BaseDerivedMetric`s will be included.
     """
 
-    pass  # Everything is handled by the BaseMetricDict class.
+    def to_display_dict(
+        self, registry: "type[MetricRegistry]", show_internal: bool = False
+    ) -> dict[str, MetricValue]:
+        """Convert to display units with filtering applied.
+        NOTE: This will not include metrics with the `NO_INDIVIDUAL_RECORDS` flag.
+
+        Args:
+            registry: MetricRegistry class for looking up metric definitions
+            show_internal: If True, include experimental/internal metrics
+
+        Returns:
+            Dictionary of {tag: MetricValue} for export
+        """
+        from aiperf.common.enums import MetricFlags
+
+        result = {}
+        for tag, value in self.items():
+            try:
+                metric_class = registry.get_class(tag)
+            except MetricTypeError:
+                _logger.warning(f"Metric {tag} not found in registry")
+                continue
+
+            if not show_internal and not metric_class.missing_flags(
+                MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
+            ):
+                continue
+
+            if metric_class.has_flags(MetricFlags.NO_INDIVIDUAL_RECORDS):
+                continue
+
+            display_unit = metric_class.display_unit or metric_class.unit
+            if display_unit != metric_class.unit:
+                try:
+                    if isinstance(value, list):
+                        value = [
+                            metric_class.unit.convert_to(display_unit, v) for v in value
+                        ]
+                    else:
+                        value = metric_class.unit.convert_to(display_unit, value)
+                except MetricUnitError as e:
+                    _logger.warning(
+                        f"Error converting {tag} from {metric_class.unit} to {display_unit}: {e}"
+                    )
+
+            result[tag] = MetricValue(
+                value=value,
+                unit=str(display_unit),
+            )
+
+        return result
 
 
 class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):

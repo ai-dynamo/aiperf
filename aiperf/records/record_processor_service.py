@@ -6,7 +6,13 @@ from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
-from aiperf.common.enums import CommAddress, CommandType, MessageType, ServiceType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    MessageType,
+    ServiceType,
+)
+from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.factories import (
     RecordProcessorFactory,
     ServiceFactory,
@@ -18,13 +24,14 @@ from aiperf.common.messages import (
     ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
-from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
 from aiperf.common.protocols import (
     PushClientProtocol,
     RecordProcessorProtocol,
     RequestClientProtocol,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.parsers.inference_result_parser import InferenceResultParser
 
@@ -75,15 +82,20 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Initialize record processor-specific components."""
         self.debug("Initializing record processor")
 
-        # Initialize all the records streamers
+        # Initialize all the records streamers that are enabled
         for processor_type in RecordProcessorFactory.get_all_class_types():
-            self.records_processors.append(
-                RecordProcessorFactory.create_instance(
-                    processor_type,
-                    service_config=self.service_config,
-                    user_config=self.user_config,
+            try:
+                self.records_processors.append(
+                    RecordProcessorFactory.create_instance(
+                        processor_type,
+                        service_config=self.service_config,
+                        user_config=self.user_config,
+                    )
                 )
-            )
+            except PostProcessorDisabled:
+                self.debug(
+                    f"Record processor {processor_type} is disabled and will not be used"
+                )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -103,6 +115,43 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 )
             return self.tokenizers[model]
 
+    def _create_metric_record_metadata(
+        self, record: ParsedResponseRecord, worker_id: str
+    ) -> MetricRecordMetadata:
+        """Create a metric record metadata based on a parsed response record."""
+
+        start_time_ns = record.timestamp_ns
+        start_perf_ns = record.start_perf_ns
+
+        # Convert all timestamps from perf_ns to time_ns for the user
+        request_end_ns = compute_time_ns(
+            start_time_ns,
+            start_perf_ns,
+            record.responses[-1].perf_ns if record.responses else record.end_perf_ns,
+        )
+        request_ack_ns = compute_time_ns(
+            start_time_ns, start_perf_ns, record.recv_start_perf_ns
+        )
+        cancellation_time_ns = compute_time_ns(
+            start_time_ns, start_perf_ns, record.cancellation_perf_ns
+        )
+
+        return MetricRecordMetadata(
+            request_start_ns=start_time_ns,
+            request_ack_ns=request_ack_ns,
+            request_end_ns=request_end_ns,
+            conversation_id=record.conversation_id,
+            turn_index=record.turn_index,
+            record_processor_id=self.service_id,
+            benchmark_phase=record.credit_phase,
+            x_request_id=record.x_request_id,
+            x_correlation_id=record.x_correlation_id,
+            session_num=record.credit_num,
+            worker_id=worker_id,
+            was_cancelled=record.was_cancelled,
+            cancellation_time_ns=cancellation_time_ns,
+        )
+
     @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
         """Handle an inference results message."""
@@ -116,16 +165,15 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 self.warning(f"Error processing record: {result}")
             else:
                 results.append(result)
+
         await self.records_push_client.push(
             MetricRecordsMessage(
                 service_id=self.service_id,
-                timestamp_ns=message.record.timestamp_ns,
-                x_request_id=message.record.x_request_id,
-                x_correlation_id=message.record.x_correlation_id,
-                credit_phase=message.record.credit_phase,
+                metadata=self._create_metric_record_metadata(
+                    message.record, message.service_id
+                ),
                 results=results,
                 error=message.record.error,
-                worker_id=message.service_id,
             )
         )
 
