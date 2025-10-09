@@ -26,21 +26,6 @@ STAT_KEYS = [
     "std",
 ]
 
-GPU_TELEMETRY_METRICS_CONFIG = [
-    ("GPU Power Usage", "gpu_power_usage", "W"),
-    ("Energy Consumption", "energy_consumption", "MJ"),
-    ("GPU Utilization", "gpu_utilization", "%"),
-    ("Memory Copy Utilization", "memory_copy_utilization", "%"),
-    ("GPU Memory Used", "gpu_memory_used", "GB"),
-    ("SM Clock Frequency", "sm_clock_frequency", "MHz"),
-    ("Memory Clock Frequency", "memory_clock_frequency", "MHz"),
-    ("Memory Temperature", "memory_temperature", "°C"),
-    ("GPU Temperature", "gpu_temperature", "°C"),
-    ("XID Errors", "xid_errors", "count"),
-    ("Power Violation", "power_violation", "us"),
-    ("Thermal Violation", "thermal_violation", "us"),
-]
-
 
 def normalize_endpoint_display(url: str) -> str:
     """Normalize endpoint URL for display by removing scheme and trimming /metrics suffix.

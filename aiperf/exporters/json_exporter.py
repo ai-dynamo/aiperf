@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
+from typing import Any
 
 import aiofiles
 from pydantic import BaseModel
@@ -17,13 +18,45 @@ from aiperf.common.models import ErrorDetailsCount, MetricResult
 from aiperf.common.protocols import DataExporterProtocol
 from aiperf.common.types import MetricTagT
 from aiperf.exporters.display_units_utils import (
-    GPU_TELEMETRY_METRICS_CONFIG,
     STAT_KEYS,
     convert_all_metrics_to_display_units,
     normalize_endpoint_display,
 )
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 from aiperf.metrics.metric_registry import MetricRegistry
+
+
+class TelemetrySummary(BaseModel):
+    """Summary information for telemetry collection."""
+
+    endpoints_tested: list[str]
+    endpoints_successful: list[str]
+    start_time: datetime
+    end_time: datetime
+
+
+class GpuSummary(BaseModel):
+    """Summary of GPU telemetry data."""
+
+    gpu_index: int
+    gpu_name: str
+    gpu_uuid: str
+    hostname: str | None
+    metrics: dict[str, dict[str, Any]]  # metric_key -> {stat_key -> value}
+
+
+class EndpointData(BaseModel):
+    """Data for a single endpoint."""
+
+    gpus: dict[str, GpuSummary]
+
+
+class TelemetryExportData(BaseModel):
+    """Telemetry data structure for JSON export."""
+
+    summary: TelemetrySummary
+    endpoints: dict[str, EndpointData]
 
 
 class JsonExportData(BaseModel):
@@ -35,7 +68,7 @@ class JsonExportData(BaseModel):
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None
-    telemetry_data: dict | None = None  # Raw telemetry data for JSON export
+    telemetry_data: TelemetryExportData | None = None
 
 
 @DataExporterFactory.register(DataExporterType.JSON)
@@ -109,19 +142,20 @@ class JsonExporter(AIPerfLoggerMixin):
 
         telemetry_export_data = None
         if self._telemetry_results:
-            telemetry_export_data = {
-                "summary": {
-                    "endpoints_tested": self._telemetry_results.endpoints_tested,
-                    "endpoints_successful": self._telemetry_results.endpoints_successful,
-                    "start_time": datetime.fromtimestamp(
-                        self._telemetry_results.start_ns / NANOS_PER_SECOND
-                    ),
-                    "end_time": datetime.fromtimestamp(
-                        self._telemetry_results.end_ns / NANOS_PER_SECOND
-                    ),
-                },
-                "endpoints": self._generate_telemetry_statistical_summary(),
-            }
+            summary = TelemetrySummary(
+                endpoints_tested=self._telemetry_results.endpoints_tested,
+                endpoints_successful=self._telemetry_results.endpoints_successful,
+                start_time=datetime.fromtimestamp(
+                    self._telemetry_results.start_ns / NANOS_PER_SECOND
+                ),
+                end_time=datetime.fromtimestamp(
+                    self._telemetry_results.end_ns / NANOS_PER_SECOND
+                ),
+            )
+            telemetry_export_data = TelemetryExportData(
+                summary=summary,
+                endpoints=self._generate_telemetry_statistical_summary(),
+            )
 
         export_data = JsonExportData(
             input_config=self._input_config,
@@ -138,7 +172,7 @@ class JsonExporter(AIPerfLoggerMixin):
         async with aiofiles.open(self._file_path, "w") as f:
             await f.write(export_data_json)
 
-    def _generate_telemetry_statistical_summary(self) -> dict:
+    def _generate_telemetry_statistical_summary(self) -> dict[str, EndpointData]:
         """Generate clean statistical summary of telemetry data for JSON export.
 
         Processes telemetry hierarchy into a structured dict with:
@@ -161,36 +195,41 @@ class JsonExporter(AIPerfLoggerMixin):
             gpus_data,
         ) in self._telemetry_results.telemetry_data.dcgm_endpoints.items():
             endpoint_display = normalize_endpoint_display(dcgm_url)
-            summary[endpoint_display] = {"gpus": {}}
+            gpus_dict = {}
 
             for gpu_uuid, gpu_data in gpus_data.items():
-                gpu_summary = {
-                    "gpu_index": gpu_data.metadata.gpu_index,
-                    "gpu_name": gpu_data.metadata.model_name,
-                    "gpu_uuid": gpu_uuid,
-                    "hostname": gpu_data.metadata.hostname,
-                    "metrics": {},
-                }
+                metrics_dict = {}
 
-                for _metric_display, metric_key, unit in GPU_TELEMETRY_METRICS_CONFIG:
+                for (
+                    _metric_display,
+                    metric_key,
+                    unit_enum,
+                ) in GPU_TELEMETRY_METRICS_CONFIG:
                     try:
+                        unit = unit_enum.value
                         metric_result = gpu_data.get_metric_result(
                             metric_key, metric_key, metric_key, unit
                         )
                         stats_dict = {}
                         for stat in STAT_KEYS:
                             value = getattr(metric_result, stat, None)
-                            stats_dict[stat] = (
-                                round(value, 2) if value is not None else None
-                            )
+                            stats_dict[stat] = value
                         stats_dict["count"] = metric_result.count
                         stats_dict["unit"] = unit
-                        gpu_summary["metrics"][metric_key] = stats_dict
+                        metrics_dict[metric_key] = stats_dict
                     except Exception:
                         continue
 
-                summary[endpoint_display]["gpus"][
-                    f"gpu_{gpu_data.metadata.gpu_index}"
-                ] = gpu_summary
+                gpu_summary = GpuSummary(
+                    gpu_index=gpu_data.metadata.gpu_index,
+                    gpu_name=gpu_data.metadata.model_name,
+                    gpu_uuid=gpu_uuid,
+                    hostname=gpu_data.metadata.hostname,
+                    metrics=metrics_dict,
+                )
+
+                gpus_dict[f"gpu_{gpu_data.metadata.gpu_index}"] = gpu_summary
+
+            summary[endpoint_display] = EndpointData(gpus=gpus_dict)
 
         return summary

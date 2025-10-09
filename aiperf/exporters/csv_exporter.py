@@ -18,12 +18,12 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult, TelemetryResults
 from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.display_units_utils import (
-    GPU_TELEMETRY_METRICS_CONFIG,
     STAT_KEYS,
     convert_all_metrics_to_display_units,
     normalize_endpoint_display,
 )
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 from aiperf.metrics.metric_registry import MetricRegistry
 
 
@@ -186,12 +186,12 @@ class CsvExporter(AIPerfLoggerMixin):
             name = f"{name} ({metric.unit})" if name else f"({metric.unit})"
         return name
 
-    def _format_number(self, value, precision: int = 2) -> str:
-        """Format a number for CSV output with adaptive formatting.
+    def _format_number(self, value, precision: int = 10) -> str:
+        """Format a number for CSV output preserving numeric precision.
 
         Args:
             value: The value to format
-            precision: Number of decimal places for regular numbers
+            precision: Number of decimal places for regular numbers (default: 10)
 
         Returns:
             Formatted string representation of the value
@@ -207,13 +207,7 @@ class CsvExporter(AIPerfLoggerMixin):
         # Real numbers (covers built-in float and many Real implementations) and Decimal
         if isinstance(value, numbers.Real | Decimal):
             num = float(value)
-            # Use scientific notation for very large numbers (> 1 million)
-            if abs(num) >= 1_000_000:
-                return f"{num:.2e}"
-            # Show fewer decimals if the value is very small or near-zero
-            if abs(num) < 0.01 and num != 0:
-                return f"{num:.4f}"
-            # Use standard precision
+            # Use standard precision for all values
             return f"{num:.{precision}f}"
 
         return str(value)
@@ -255,7 +249,11 @@ class CsvExporter(AIPerfLoggerMixin):
             endpoint_display = normalize_endpoint_display(dcgm_url)
 
             for gpu_uuid, gpu_data in gpus_data.items():
-                for metric_display, metric_key, unit in GPU_TELEMETRY_METRICS_CONFIG:
+                for (
+                    metric_display,
+                    metric_key,
+                    unit_enum,
+                ) in GPU_TELEMETRY_METRICS_CONFIG:
                     if not self._gpu_has_metric(gpu_data, metric_key):
                         continue
 
@@ -266,7 +264,7 @@ class CsvExporter(AIPerfLoggerMixin):
                         gpu_uuid,
                         metric_key,
                         metric_display,
-                        unit,
+                        unit_enum.value,
                     )
 
     def _write_gpu_metric_row_structured(

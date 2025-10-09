@@ -13,6 +13,7 @@ from aiperf.common.models.telemetry_models import TelemetryHierarchy, TelemetryR
 from aiperf.common.protocols import (
     TelemetryResultsProcessorProtocol,
 )
+from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
@@ -25,24 +26,6 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
         super().__init__(user_config=user_config, **kwargs)
 
         self._telemetry_hierarchy = TelemetryHierarchy()
-
-        self._metric_units = {
-            "gpu_power_usage": "W",
-            "energy_consumption": "MJ",
-            "gpu_utilization": "%",
-            "gpu_memory_used": "GB",
-            "sm_clock_frequency": "MHz",
-            "memory_clock_frequency": "MHz",
-            "memory_temperature": "°C",
-            "gpu_temperature": "°C",
-            "memory_copy_utilization": "%",
-            "xid_errors": "count",
-            "power_violation": "us",
-            "thermal_violation": "us",
-            "power_management_limit": "W",
-            "gpu_memory_free": "GB",
-            "gpu_memory_total": "GB",
-        }
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
         """Process individual telemetry record into hierarchical storage.
@@ -72,8 +55,11 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
             for gpu_uuid, telemetry_data in gpu_data.items():
                 gpu_index = telemetry_data.metadata.gpu_index
 
-                # Iterate through available metrics from the metric units we track
-                for metric_name in self._metric_units:
+                for (
+                    metric_display,
+                    metric_name,
+                    unit_enum,
+                ) in GPU_TELEMETRY_METRICS_CONFIG:
                     try:
                         dcgm_tag = (
                             dcgm_url.replace(":", "_")
@@ -83,12 +69,11 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
                         # Use first 12 chars of UUID for readability while maintaining uniqueness
                         tag = f"{metric_name}_dcgm_{dcgm_tag}_gpu{gpu_index}_{gpu_uuid[:12]}"
 
-                        metric_display = metric_name.replace("_", " ").title()
                         header = (
                             f"{metric_display} (GPU {gpu_index}, {gpu_uuid[:12]}...)"
                         )
 
-                        unit = self._metric_units.get(metric_name, "")
+                        unit = unit_enum.value
 
                         result = telemetry_data.get_metric_result(
                             metric_name, tag, header, unit

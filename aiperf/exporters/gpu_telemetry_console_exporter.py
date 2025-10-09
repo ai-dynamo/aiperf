@@ -10,11 +10,9 @@ from aiperf.common.enums.data_exporter_enums import ConsoleExporterType
 from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.protocols import ConsoleExporterProtocol
-from aiperf.exporters.display_units_utils import (
-    GPU_TELEMETRY_METRICS_CONFIG,
-    normalize_endpoint_display,
-)
+from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 
 
 @implements_protocol(ConsoleExporterProtocol)
@@ -144,11 +142,11 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         for endpoint in endpoints_tested:
             clean_endpoint = normalize_endpoint_display(endpoint)
             if endpoint in endpoints_successful:
-                title_lines.append(
-                    f"[green]• {clean_endpoint} :heavy_check_mark:[/green]"
-                )
+                title_lines.append(f"[green]• {clean_endpoint} \u2714 [/green]")
             else:
-                title_lines.append(f"[red]• {clean_endpoint} ❌ (unreachable)[/red]")
+                title_lines.append(
+                    f"[red]• {clean_endpoint} \u2718 (unreachable)[/red]"
+                )
 
         title_lines.append("")
         title_lines.append(table_title_base)
@@ -191,8 +189,9 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         for stat in self.STAT_COLUMN_KEYS:
             metrics_table.add_column(stat, justify="right", style="green")
 
-        for metric_display, metric_key, unit in GPU_TELEMETRY_METRICS_CONFIG:
+        for metric_display, metric_key, unit_enum in GPU_TELEMETRY_METRICS_CONFIG:
             try:
+                unit = unit_enum.value
                 metric_result = gpu_data.get_metric_result(
                     metric_key, metric_key, metric_display, unit
                 )

@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 from urllib.parse import urlparse
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -237,7 +236,7 @@ class TelemetryManager(BaseComponentService):
             endpoints_reachable=[],
         )
 
-        self._stop_task = asyncio.create_task(self.stop())
+        await self.stop()
 
     async def _stop_all_collectors(self) -> None:
         """Stop all telemetry collectors.

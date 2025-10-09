@@ -66,10 +66,6 @@ class TestTelemetryResultsProcessor:
         processor = TelemetryResultsProcessor(mock_user_config)
 
         assert isinstance(processor._telemetry_hierarchy, TelemetryHierarchy)
-        assert isinstance(processor._metric_units, dict)
-        assert "gpu_power_usage" in processor._metric_units
-        assert "energy_consumption" in processor._metric_units
-        assert processor._metric_units["gpu_power_usage"] == "W"
 
     @pytest.mark.asyncio
     async def test_process_telemetry_record(

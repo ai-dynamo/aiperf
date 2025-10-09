@@ -6,7 +6,6 @@
 This module provides GPU telemetry collection capabilities through DCGM endpoints.
 """
 
-# Import the main classes to ensure they're registered when the module is imported
 from aiperf.gpu_telemetry.constants import (
     DCGM_TO_FIELD_MAPPING,
     DEFAULT_COLLECTION_INTERVAL,
@@ -21,6 +20,9 @@ from aiperf.gpu_telemetry.telemetry_data_collector import (
 from aiperf.gpu_telemetry.telemetry_manager import (
     TelemetryManager,
 )
+from aiperf.gpu_telemetry.telemetry_metric_generator import (
+    register_telemetry_metrics,
+)
 
 __all__ = [
     "DCGM_TO_FIELD_MAPPING",
@@ -31,4 +33,5 @@ __all__ = [
     "TelemetryDataCollector",
     "TelemetryManager",
     "URL_REACHABILITY_TIMEOUT",
+    "register_telemetry_metrics",
 ]

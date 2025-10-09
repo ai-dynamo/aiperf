@@ -18,7 +18,6 @@ from aiperf.exporters.csv_exporter import (
     CsvExporter,
 )
 from aiperf.exporters.display_units_utils import (
-    GPU_TELEMETRY_METRICS_CONFIG,
     STAT_KEYS,
     convert_all_metrics_to_display_units,
     normalize_endpoint_display,
@@ -41,8 +40,12 @@ from aiperf.exporters.internal_metrics_console_exporter import (
     ConsoleInternalMetricsExporter,
 )
 from aiperf.exporters.json_exporter import (
+    EndpointData,
+    GpuSummary,
     JsonExportData,
     JsonExporter,
+    TelemetryExportData,
+    TelemetrySummary,
 )
 
 __all__ = [
@@ -51,14 +54,17 @@ __all__ = [
     "ConsoleInternalMetricsExporter",
     "ConsoleMetricsExporter",
     "CsvExporter",
+    "EndpointData",
     "ExporterConfig",
     "ExporterManager",
     "FileExportInfo",
     "GPUTelemetryConsoleExporter",
-    "GPU_TELEMETRY_METRICS_CONFIG",
+    "GpuSummary",
     "JsonExportData",
     "JsonExporter",
     "STAT_KEYS",
+    "TelemetryExportData",
+    "TelemetrySummary",
     "convert_all_metrics_to_display_units",
     "normalize_endpoint_display",
     "to_display_unit",

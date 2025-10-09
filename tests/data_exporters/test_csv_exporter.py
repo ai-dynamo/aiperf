@@ -251,7 +251,7 @@ async def test_csv_exporter_deterministic_sort_order(
 
         # System section present and contains GPU Util
         assert "Metric,Value" in text
-        assert "GPU Util (percent),80" in text or "GPU Util (percent),80.0" in text
+        assert "GPU Util (percent),80.0000000000" in text
 
 
 @pytest.mark.asyncio
@@ -298,8 +298,8 @@ async def test_csv_exporter_unit_aware_number_formatting(
         # counts: integer
         assert re.search(r"Input Sequence Length \(tokens\),\s*4096\b", text)
 
-        # ms floats should not collapse to integer; allow 2 fixed integers
-        assert re.search(r"Request Latency \(ms\).*(1\.23)", text)
+        # ms floats preserve full precision (10 decimal places)
+        assert re.search(r"Request Latency \(ms\).*(1\.2345000000)", text)
 
 
 @pytest.mark.asyncio
@@ -367,13 +367,16 @@ async def test_csv_exporter_logs_and_raises_on_write_failure(
         (142357, "142357"),
         (0, "0"),
         (-7, "-7"),
-        (123456.14159, "123456.14"),  # Numbers < 1M use standard format
-        (2.0, "2.00"),
-        (-1.234, "-1.23"),
+        (123456.14159, "123456.1415900000"),  # Preserves precision with 10 decimals
+        (2.0, "2.0000000000"),
+        (-1.234, "-1.2340000000"),
         ("string", "string"),
         (True, "True"),
         (False, "False"),
-        (1234567.89, "1.23e+06"),  # Numbers >= 1M use scientific notation
+        (
+            1234567.89,
+            "1234567.8899999999",
+        ),  # No scientific notation, preserves actual floating point representation
     ],
 )
 @pytest.mark.asyncio
@@ -381,11 +384,12 @@ async def test_format_number_various_types(
     monkeypatch, mock_user_config, value, expected
 ):
     """
-    Test the `_format_number` method of `DummyExporter` with various input types.
+    Test the `_format_number` method with various input types.
 
     This parameterized test verifies that the method correctly formats:
     - None as an empty string
-    - Integers and floats as strings, with floats rounded to two decimal places
+    - Integers as strings without decimals
+    - Floats with 10 decimal places (preserving precision)
     - Strings as themselves
     - Boolean values as their string representation
     """
@@ -794,13 +798,13 @@ class TestCsvExporterTelemetry:
 
         exporter = CsvExporter(cfg)
 
-        # Test very small value (< 0.01)
+        # Test very small value
         result = exporter._format_number(0.00123)
-        assert result == "0.0012"
+        assert result == "0.0012300000"
 
         # Test zero
         result = exporter._format_number(0.0)
-        assert result == "0.00"
+        assert result == "0.0000000000"
 
     @pytest.mark.asyncio
     async def test_csv_format_number_decimal_type(self, mock_user_config):
@@ -821,4 +825,4 @@ class TestCsvExporterTelemetry:
 
         # Test Decimal type
         result = exporter._format_number(Decimal("123.456"))
-        assert result == "123.46"
+        assert result == "123.4560000000"

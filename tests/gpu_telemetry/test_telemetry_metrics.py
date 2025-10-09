@@ -6,12 +6,11 @@ import pytest
 from aiperf.common.enums.metric_enums import MetricType
 from aiperf.common.models.telemetry_models import TelemetryMetrics, TelemetryRecord
 from aiperf.metrics.base_telemetry_metric import BaseTelemetryMetric
-from aiperf.metrics.gpu_telemetry_types.gpu_power_usage_metric import (
-    GpuPowerUsageMetric,
-)
-from aiperf.metrics.gpu_telemetry_types.gpu_utilization_metric import (
-    GpuUtilizationMetric,
-)
+from aiperf.metrics.metric_registry import MetricRegistry
+
+# Get dynamically generated metric classes from registry
+GpuPowerUsageMetric = MetricRegistry.get_class("gpu_power_usage")
+GpuUtilizationMetric = MetricRegistry.get_class("gpu_utilization")
 
 
 class TestBaseTelemetryMetric:
