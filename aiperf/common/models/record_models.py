@@ -96,10 +96,10 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The wall clock timestamp of the request acknowledgement from the server, measured as time.time_ns(), if applicable. "
         "This is only applicable to streaming requests, and servers that send 200 OK back immediately after the request is received.",
     )
-    request_end_ns: int | None = Field(
-        default=None,
+    request_end_ns: int = Field(
+        ...,
         description="The wall clock timestamp of the request end time measured as time.time_ns(). If the request failed, "
-        "this will be the time of the error. May be None if the request did not complete.",
+        "this will be the time of the error.",
     )
     worker_id: str = Field(
         ..., description="The ID of the AIPerf worker that processed the request."

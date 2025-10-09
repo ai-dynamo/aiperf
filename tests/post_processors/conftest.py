@@ -203,7 +203,7 @@ def create_metric_metadata(
     turn_index: int = 0,
     request_start_ns: int = 1_000_000_000,
     request_ack_ns: int | None = None,
-    request_end_ns: int | None = None,
+    request_end_ns: int = 1_100_000_000,
     worker_id: str = "worker-1",
     record_processor_id: str = "processor-1",
     benchmark_phase: CreditPhase = CreditPhase.PROFILING,
