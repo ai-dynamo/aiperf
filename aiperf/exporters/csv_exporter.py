@@ -186,16 +186,8 @@ class CsvExporter(AIPerfLoggerMixin):
             name = f"{name} ({metric.unit})" if name else f"({metric.unit})"
         return name
 
-    def _format_number(self, value, precision: int = 10) -> str:
-        """Format a number for CSV output preserving numeric precision.
-
-        Args:
-            value: The value to format
-            precision: Number of decimal places for regular numbers (default: 10)
-
-        Returns:
-            Formatted string representation of the value
-        """
+    def _format_number(self, value) -> str:
+        """Format a number for CSV output."""
         if value is None:
             return ""
         # Handle bools explicitly (bool is a subclass of int)
@@ -206,9 +198,7 @@ class CsvExporter(AIPerfLoggerMixin):
             return f"{int(value)}"
         # Real numbers (covers built-in float and many Real implementations) and Decimal
         if isinstance(value, numbers.Real | Decimal):
-            num = float(value)
-            # Use standard precision for all values
-            return f"{num:.{precision}f}"
+            return f"{float(value):.2f}"
 
         return str(value)
 
