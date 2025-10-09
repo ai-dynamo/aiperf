@@ -13,6 +13,7 @@ from aiperf.common.config import (
     ServiceConfig,
     UserConfig,
 )
+from aiperf.common.constants import DEFAULT_RECORD_EXPORT_BATCH_SIZE
 from aiperf.common.enums import CreditPhase, EndpointType
 from aiperf.common.enums.data_exporter_enums import ExportLevel
 from aiperf.common.exceptions import PostProcessorDisabled
@@ -571,3 +572,54 @@ class TestRecordExportResultsProcessorSummarize:
 
         assert result == []
         assert isinstance(result, list)
+
+
+class TestRecordExportResultsProcessorLifecycle:
+    """Test RecordExportResultsProcessor lifecycle."""
+
+    @pytest.mark.asyncio
+    async def test_lifecycle(
+        self,
+        user_config_records_export: UserConfig,
+        service_config: ServiceConfig,
+        mock_metric_registry: Mock,
+        mock_aiofiles_stringio,
+    ):
+        """Test that the processor can be initialized, processed, and shutdown."""
+        processor = RecordExportResultsProcessor(
+            service_id="records-manager",
+            service_config=service_config,
+            user_config=user_config_records_export,
+        )
+
+        assert processor._file_handle is None
+        await processor.initialize()
+        assert processor._file_handle is not None
+        await processor.start()
+
+        for i in range(DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2):
+            await processor.process_result(
+                create_metric_records_message(
+                    x_request_id=f"record-{i}",
+                    conversation_id=f"conv-{i}",
+                    turn_index=0,
+                    request_start_ns=1_000_000_000 + i,
+                    results=[{"inter_token_latency": 100}],
+                ).to_data()
+            )
+
+        await processor.stop()
+
+        assert processor.record_count == DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2
+
+        contents = mock_aiofiles_stringio.getvalue()
+        lines = contents.splitlines()
+        assert contents.endswith("\n")
+        assert len(lines) == DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2
+
+        for i, line in enumerate(lines):
+            record = MetricRecordInfo.model_validate_json(line)
+            assert record.metadata.x_request_id == f"record-{i}"
+            assert record.metadata.conversation_id == f"conv-{i}"
+            assert record.metadata.turn_index == 0
+            assert "inter_token_latency" in record.metrics

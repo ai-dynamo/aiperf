@@ -10,7 +10,8 @@ and made available to test functions in the same directory and subdirectories.
 import asyncio
 import logging
 from collections.abc import Callable, Generator
-from unittest.mock import MagicMock, patch
+from io import StringIO
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -366,3 +367,35 @@ def sample_parsed_record(sample_request_record: RequestRecord) -> ParsedResponse
         input_token_count=DEFAULT_INPUT_TOKENS,
         output_token_count=DEFAULT_OUTPUT_TOKENS,
     )
+
+
+@pytest.fixture
+def mock_aiofiles_stringio():
+    """Mock aiofiles.open to write to a StringIO buffer instead of a file.
+
+    Automatically patches aiofiles.open for the duration of the test.
+
+    Returns:
+        StringIO: Buffer that captures all writes
+
+    Example:
+        def test_something(mock_aiofiles_stringio):
+            # aiofiles.open is already patched
+            # ... test code that writes to files ...
+
+            # Verify contents
+            contents = mock_aiofiles_stringio.getvalue()
+            assert "expected" in contents
+    """
+    string_buffer = StringIO()
+
+    mock_file = AsyncMock()
+    mock_file.write = AsyncMock(side_effect=lambda data: string_buffer.write(data))
+    mock_file.flush = AsyncMock()
+    mock_file.close = AsyncMock()
+
+    async def mock_aiofiles_open(*args, **kwargs):
+        return mock_file
+
+    with patch("aiofiles.open", side_effect=mock_aiofiles_open):
+        yield string_buffer
