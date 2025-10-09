@@ -19,15 +19,7 @@ from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
-from tests.conftest import (  # noqa: F401
-    DEFAULT_FIRST_RESPONSE_NS,
-    DEFAULT_INPUT_TOKENS,
-    DEFAULT_LAST_RESPONSE_NS,
-    DEFAULT_OUTPUT_TOKENS,
-    DEFAULT_START_TIME_NS,
-    sample_parsed_record,
-    sample_request_record,
-)
+from tests.conftest import DEFAULT_START_TIME_NS
 
 
 @pytest.fixture

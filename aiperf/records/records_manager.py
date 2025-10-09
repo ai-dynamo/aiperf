@@ -111,10 +111,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     service_config=self.service_config,
                     user_config=self.user_config,
                 )
+                self._results_processors.append(results_processor)
+                self.attach_child_lifecycle(results_processor)
                 self.debug(
                     f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
                 )
-                self._results_processors.append(results_processor)
             except PostProcessorDisabled:
                 self.debug(
                     f"Results processor {results_processor_type} is disabled and will not be used"

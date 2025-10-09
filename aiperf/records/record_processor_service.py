@@ -17,7 +17,7 @@ from aiperf.common.factories import (
     RecordProcessorFactory,
     ServiceFactory,
 )
-from aiperf.common.hooks import on_command, on_init, on_pull_message
+from aiperf.common.hooks import on_command, on_pull_message
 from aiperf.common.messages import (
     InferenceResultsMessage,
     MetricRecordsMessage,
@@ -75,22 +75,21 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             service_config=service_config,
             user_config=user_config,
         )
+
         self.records_processors: list[RecordProcessorProtocol] = []
-
-    @on_init
-    async def _initialize(self) -> None:
-        """Initialize record processor-specific components."""
-        self.debug("Initializing record processor")
-
-        # Initialize all the records streamers that are enabled
         for processor_type in RecordProcessorFactory.get_all_class_types():
             try:
-                self.records_processors.append(
+                processor: RecordProcessorProtocol = (
                     RecordProcessorFactory.create_instance(
                         processor_type,
                         service_config=self.service_config,
                         user_config=self.user_config,
                     )
+                )
+                self.records_processors.append(processor)
+                self.attach_child_lifecycle(processor)
+                self.debug(
+                    f"Created record processor: {processor_type}: {processor.__class__.__name__}"
                 )
             except PostProcessorDisabled:
                 self.debug(
