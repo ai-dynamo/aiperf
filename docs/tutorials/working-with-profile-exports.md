@@ -95,10 +95,10 @@ The JSONL output contains one record per line, for each request sent during the 
   },
   "metrics": {
     "input_sequence_length": {"value": 550, "unit": "tokens"},
-    "ttft": {"value": 255.88656799999998, "unit": "ms"},
+    "time_to_first_token": {"value": 255.88656799999998, "unit": "ms"},
     "request_latency": {"value": 297.52522799999997, "unit": "ms"},
     "output_token_count": {"value": 9, "unit": "tokens"},
-    "ttst": {"value": 4.8984369999999995, "unit": "ms"},
+    "time_to_first_token": {"value": 4.8984369999999995, "unit": "ms"},
     "inter_chunk_latency": {"value": [4.898437, 5.316006, 4.801489, 5.674918, 4.811467, 5.097998, 5.504797, 5.533548], "unit": "ms"},
     "output_sequence_length": {"value": 9, "unit": "tokens"},
     "inter_token_latency": {"value": 5.2048325, "unit": "ms"},

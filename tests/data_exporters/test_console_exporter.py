@@ -33,7 +33,7 @@ def mock_endpoint_config():
 def sample_records():
     return [
         MetricResult(
-            tag="ttft",
+            tag="time_to_first_token",
             header="Time to First Token",
             unit="ms",
             avg=120.5,

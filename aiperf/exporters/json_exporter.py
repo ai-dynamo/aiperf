@@ -4,32 +4,20 @@
 from datetime import datetime
 
 import aiofiles
-from pydantic import BaseModel
 
-from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DataExporterType, MetricFlags
 from aiperf.common.factories import DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models import ErrorDetailsCount, MetricResult
+from aiperf.common.models import MetricResult
+from aiperf.common.models.export_models import JsonExportData
 from aiperf.common.protocols import DataExporterProtocol
 from aiperf.common.types import MetricTagT
 from aiperf.exporters.display_units_utils import convert_all_metrics_to_display_units
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.metrics.metric_registry import MetricRegistry
-
-
-class JsonExportData(BaseModel):
-    """Data to be exported to a JSON file."""
-
-    records: dict[MetricTagT, MetricResult] | None = None
-    input_config: UserConfig | None = None
-    was_cancelled: bool | None = None
-    error_summary: list[ErrorDetailsCount] | None = None
-    start_time: datetime | None = None
-    end_time: datetime | None = None
 
 
 @DataExporterFactory.register(DataExporterType.JSON)
@@ -90,12 +78,13 @@ class JsonExporter(AIPerfLoggerMixin):
 
         export_data = JsonExportData(
             input_config=self._input_config,
-            records=converted_records,
             was_cancelled=self._results.was_cancelled,
             error_summary=self._results.error_summary,
             start_time=start_time,
             end_time=end_time,
         )
+        for metric, result in converted_records.items():
+            setattr(export_data, metric, result.to_json_result())
 
         self.debug(lambda: f"Exporting data to JSON file: {export_data}")
         export_data_json = export_data.model_dump_json(indent=2, exclude_unset=True)
