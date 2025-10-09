@@ -26,7 +26,12 @@ from aiperf.common.factories import (
     ResultsProcessorFactory,
     ServiceFactory,
 )
-from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
+from aiperf.common.hooks import (
+    background_task,
+    on_command,
+    on_message,
+    on_pull_message,
+)
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
     CreditPhaseCompleteMessage,
@@ -105,16 +110,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._results_processors: list[ResultsProcessorProtocol] = []
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
             try:
-                results_processor = ResultsProcessorFactory.create_instance(
-                    class_type=results_processor_type,
-                    service_id=self.service_id,
-                    service_config=self.service_config,
-                    user_config=self.user_config,
+                results_processor: ResultsProcessorProtocol = (
+                    ResultsProcessorFactory.create_instance(
+                        class_type=results_processor_type,
+                        service_id=self.service_id,
+                        service_config=self.service_config,
+                        user_config=self.user_config,
+                    )
                 )
+                self._results_processors.append(results_processor)
+                self.attach_child_lifecycle(results_processor)
                 self.debug(
                     f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
                 )
-                self._results_processors.append(results_processor)
             except PostProcessorDisabled:
                 self.debug(
                     f"Results processor {results_processor_type} is disabled and will not be used"

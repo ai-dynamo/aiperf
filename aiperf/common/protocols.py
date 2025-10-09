@@ -489,7 +489,7 @@ class ServiceProtocol(MessageBusClientProtocol, Protocol):
 
 
 @runtime_checkable
-class RecordProcessorProtocol(Protocol):
+class RecordProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for a record processor that processes the incoming records and returns the results of the post processing."""
 
     async def process_record(
@@ -498,7 +498,7 @@ class RecordProcessorProtocol(Protocol):
 
 
 @runtime_checkable
-class ResultsProcessorProtocol(Protocol):
+class ResultsProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for a results processor that processes the results of multiple
     record processors, and provides the ability to summarize the results."""
 
