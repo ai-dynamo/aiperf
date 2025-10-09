@@ -48,14 +48,14 @@ class MultiProcessServiceManager(BaseServiceManager):
 
     Platform-specific behavior:
     - Linux: Uses 'fork' start method by default
-    - macOS: Uses 'spawn' start method by default (Apple's recommendation)
+    - macOS: Uses 'fork' start method when dashboard UI is enabled (forced in cli_runner.py)
+      to prevent terminal interference with Textual. Otherwise uses 'spawn' (default).
     - Windows: Uses 'spawn' start method by default
 
     Terminal handling for dashboard UI:
-    On macOS with dashboard UI, child processes redirect stdout/stderr to /dev/null
-    AFTER successful initialization to prevent terminal interference with Textual.
-    This redirection happens post-startup to ensure initialization errors are visible.
-    All logging goes through the log_queue to the main process.
+    On macOS, we force 'fork' mode instead of the default 'spawn' mode to prevent
+    terminal corruption with Textual. This is set in cli_runner.py before any
+    multiprocessing operations occur.
     """
 
     def __init__(

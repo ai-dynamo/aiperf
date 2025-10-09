@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import contextlib
+import multiprocessing
+import platform
+
 from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums.ui_enums import AIPerfUIType
@@ -11,6 +15,18 @@ def run_system_controller(
     service_config: ServiceConfig,
 ) -> None:
     """Run the system controller with the given configuration."""
+
+    # CRITICAL FIX: On macOS, force 'fork' start method when using dashboard UI
+    # to prevent terminal corruption with Textual. The default 'spawn' mode on
+    # macOS causes severe terminal interference issues with Textual's terminal control.
+    # This must happen before ANY multiprocessing operations.
+    if (
+        platform.system() == "Darwin"
+        and service_config.ui_type == AIPerfUIType.DASHBOARD
+    ):
+        # Ignore RuntimeError if start method already set
+        with contextlib.suppress(RuntimeError):
+            multiprocessing.set_start_method("fork", force=True)
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service

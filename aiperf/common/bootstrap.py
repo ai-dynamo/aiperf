@@ -4,10 +4,7 @@
 import asyncio
 import contextlib
 import multiprocessing
-import os
-import platform
 import random
-import sys
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.protocols import ServiceProtocol
@@ -65,36 +62,6 @@ def bootstrap_and_run_service(
             service_id=service_id,
             **kwargs,
         )
-
-        # Redirect stdout/stderr to devnull IMMEDIATELY when using dashboard UI
-        # to prevent terminal interference with Textual. This is critical on macOS
-        # where multiprocessing uses 'spawn' mode and child processes can corrupt
-        # the terminal state. Must happen BEFORE any other code runs.
-        if log_queue is not None:
-            from aiperf.common.enums.ui_enums import AIPerfUIType
-
-            if (
-                service_config.ui_type == AIPerfUIType.DASHBOARD
-                and platform.system() == "Darwin"  # macOS only
-            ):
-                try:
-                    # Open devnull for read and write
-                    devnull_fd = os.open(os.devnull, os.O_RDWR)
-
-                    # Redirect stdin, stdout, stderr to devnull
-                    # This prevents ANY terminal interaction from child processes
-                    os.dup2(devnull_fd, sys.stdin.fileno())
-                    os.dup2(devnull_fd, sys.stdout.fileno())
-                    os.dup2(devnull_fd, sys.stderr.fileno())
-                    os.close(devnull_fd)
-
-                    # Set environment variables to disable terminal features
-                    os.environ["TERM"] = "dumb"
-                    os.environ["NO_COLOR"] = "1"
-                except Exception:
-                    # If redirection fails, continue anyway
-                    # Can't log this because logging isn't set up yet
-                    pass
 
         from aiperf.common.logging import setup_child_process_logging
 
