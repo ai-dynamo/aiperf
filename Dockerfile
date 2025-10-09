@@ -54,9 +54,9 @@ RUN mkdir -p /home/$USERNAME/.cache/
 ENTRYPOINT ["/bin/bash"]
 
 ############################################
-############# Final Build ##################
+############# Env Builder ##################
 ############################################
-FROM base AS final
+FROM base AS env-builder
 
 # Create virtual environment
 RUN mkdir /opt/$APP_NAME \
@@ -79,7 +79,18 @@ RUN uv sync --active --no-install-project
 COPY . .
 
 # Install the project
-RUN uv sync --active --no-dev
+RUN uv pip install --no-deps .
+
+############################################
+############# Final Build ##################
+############################################
+FROM nvcr.io/nvidia/distroless/python:3.12-v3.4.17-dev AS final
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin
+COPY --from=env-builder /opt/aiperf/venv /opt/aiperf/venv
+
+ENV VIRTUAL_ENV=/opt/aiperf/venv \
+    PATH="/opt/aiperf/venv/bin:${PATH}"
 
 # Command to run the application
-ENTRYPOINT ["aiperf"]
+# ENTRYPOINT ["aiperf"]
