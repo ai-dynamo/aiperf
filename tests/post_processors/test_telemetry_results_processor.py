@@ -210,7 +210,7 @@ class TestTelemetryResultsProcessor:
         # First metric raises NoMetricValue, second succeeds, third raises unexpected error
         call_count = 0
 
-        def side_effect_func(metric_name, tag, header, unit):
+        def side_effect_func(_metric_name, tag, header, unit):
             nonlocal call_count
             call_count += 1
             if call_count == 1:

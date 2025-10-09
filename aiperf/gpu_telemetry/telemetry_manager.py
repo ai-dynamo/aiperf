@@ -141,6 +141,7 @@ class TelemetryManager(BaseComponentService):
         """
 
         reachable_count = 0
+        self._collectors.clear()
         for _i, dcgm_url in enumerate(self._dcgm_endpoints):
             collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
             collector = TelemetryDataCollector(

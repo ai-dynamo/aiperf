@@ -8,10 +8,6 @@ from aiperf.common.models.telemetry_models import TelemetryMetrics, TelemetryRec
 from aiperf.metrics.base_telemetry_metric import BaseTelemetryMetric
 from aiperf.metrics.metric_registry import MetricRegistry
 
-# Get dynamically generated metric classes from registry
-GpuPowerUsageMetric = MetricRegistry.get_class("gpu_power_usage")
-GpuUtilizationMetric = MetricRegistry.get_class("gpu_utilization")
-
 
 class TestBaseTelemetryMetric:
     """Test the abstract base class for telemetry metrics.
@@ -267,7 +263,7 @@ class TestSpecificTelemetryMetrics:
         Verifies that the power usage metric has correct identifying properties
         for dashboard display and data processing pipeline routing.
         """
-
+        GpuPowerUsageMetric = MetricRegistry.get_class("gpu_power_usage")
         metric = GpuPowerUsageMetric()
 
         assert metric.tag == "gpu_power_usage"
@@ -281,7 +277,7 @@ class TestSpecificTelemetryMetrics:
         Verifies that the metric correctly extracts the gpu_power_usage field
         from TelemetryRecord objects and handles None values appropriately.
         """
-
+        GpuPowerUsageMetric = MetricRegistry.get_class("gpu_power_usage")
         metric = GpuPowerUsageMetric()
 
         # Test successful extraction
@@ -316,7 +312,7 @@ class TestSpecificTelemetryMetrics:
         Verifies that the utilization metric has correct identifying properties
         for dashboard display and data processing pipeline routing.
         """
-
+        GpuUtilizationMetric = MetricRegistry.get_class("gpu_utilization")
         metric = GpuUtilizationMetric()
 
         assert metric.tag == "gpu_utilization"
@@ -330,7 +326,7 @@ class TestSpecificTelemetryMetrics:
         Verifies that the metric correctly extracts the gpu_utilization field
         from TelemetryRecord objects and handles None values appropriately.
         """
-
+        GpuUtilizationMetric = MetricRegistry.get_class("gpu_utilization")
         metric = GpuUtilizationMetric()
 
         # Test successful extraction
