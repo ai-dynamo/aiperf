@@ -93,4 +93,4 @@ ENV VIRTUAL_ENV=/opt/aiperf/venv \
     PATH="/opt/aiperf/venv/bin:${PATH}"
 
 # Command to run the application
-# ENTRYPOINT ["aiperf"]
+ENTRYPOINT ["aiperf"]
