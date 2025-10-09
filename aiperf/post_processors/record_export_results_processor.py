@@ -105,6 +105,7 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
         try:
             self.debug(lambda: f"Flushing {len(buffer_to_flush)} records to file")
             await self._file_handle.write("\n".join(buffer_to_flush))
+            await self._file_handle.write("\n")
             await self._file_handle.flush()
         except Exception as e:
             self.error(f"Failed to flush buffer: {e}")
@@ -118,8 +119,6 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
 
         try:
             await self._flush_buffer(buffer_to_flush)
-            await self._file_handle.write("\n")
-            await self._file_handle.flush()
         except Exception as e:
             self.error(f"Failed to flush remaining buffer during shutdown: {e}")
 
