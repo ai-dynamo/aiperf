@@ -45,6 +45,17 @@ class MultiProcessRunInfo(BaseModel):
 class MultiProcessServiceManager(BaseServiceManager):
     """
     Service Manager for starting and stopping services as multiprocessing processes.
+
+    Platform-specific behavior:
+    - Linux: Uses 'fork' start method by default
+    - macOS: Uses 'spawn' start method by default (Apple's recommendation)
+    - Windows: Uses 'spawn' start method by default
+
+    Terminal handling for dashboard UI:
+    On macOS with dashboard UI, child processes redirect stdout/stderr to /dev/null
+    AFTER successful initialization to prevent terminal interference with Textual.
+    This redirection happens post-startup to ensure initialization errors are visible.
+    All logging goes through the log_queue to the main process.
     """
 
     def __init__(

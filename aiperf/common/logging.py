@@ -172,8 +172,13 @@ def create_file_handler(
     return file_handler
 
 
-class MultiProcessLogHandler(RichHandler):
-    """Custom logging handler that forwards log records to a multiprocessing queue."""
+class MultiProcessLogHandler(logging.Handler):
+    """Custom logging handler that forwards log records to a multiprocessing queue.
+
+    This handler is used in child processes to forward logs to the main process
+    via a queue. It does NOT extend RichHandler to avoid creating Console instances
+    that would interfere with the main process's terminal control (especially with Textual).
+    """
 
     def __init__(
         self, log_queue: multiprocessing.Queue, service_id: str | None = None
