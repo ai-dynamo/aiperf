@@ -86,7 +86,6 @@ RUN uv pip install --no-deps .
 ############################################
 FROM nvcr.io/nvidia/distroless/python:3.12-v3.4.17-dev AS final
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin
 COPY --from=env-builder /opt/aiperf/venv /opt/aiperf/venv
 
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
