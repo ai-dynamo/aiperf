@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+
 import aiofiles
 
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -47,10 +49,11 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
         self.info(f"Record metrics export enabled: {self.output_file}")
         self.output_file.unlink(missing_ok=True)
 
-        # File handle for persistent writes
+        # File handle for persistent writes with batching
         self._file_handle = None
         self._buffer: list[str] = []
         self._batch_size = DEFAULT_RECORD_EXPORT_BATCH_SIZE
+        self._buffer_lock = asyncio.Lock()
 
     @on_init
     async def _open_file(self) -> None:
@@ -58,20 +61,6 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
         self._file_handle = await aiofiles.open(
             self.output_file, mode="w", encoding="utf-8"
         )
-
-    async def _flush_buffer(self) -> None:
-        """Write buffered records to disk."""
-        if not self._buffer:
-            return
-
-        try:
-            self.debug(lambda: f"Flushing {len(self._buffer)} records to file")
-            await self._file_handle.write("\n".join(self._buffer))
-            await self._file_handle.flush()
-            self._buffer.clear()
-        except Exception as e:
-            self.error(f"Failed to flush buffer: {e}")
-            raise
 
     async def process_result(self, record_data: MetricRecordsData) -> None:
         try:
@@ -89,13 +78,17 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
             )
             json_str = record_info.model_dump_json()
 
-            self._buffer.append(json_str)
+            buffer_to_flush = None
+            async with self._buffer_lock:
+                self._buffer.append(json_str)
+                self.record_count += 1
 
-            self.record_count += 1
+                if len(self._buffer) >= self._batch_size:
+                    buffer_to_flush = self._buffer
+                    self._buffer = []
 
-            # Flush buffer when batch size is reached
-            if len(self._buffer) >= self._batch_size:
-                await self._flush_buffer()
+            if buffer_to_flush:
+                await self._flush_buffer(buffer_to_flush)
 
         except Exception as e:
             self.error(f"Failed to write record metrics: {e}")
@@ -104,18 +97,32 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
         """Summarize the results. For this processor, we don't need to summarize anything."""
         return []
 
+    async def _flush_buffer(self, buffer_to_flush: list[str]) -> None:
+        """Write buffered records to disk."""
+        if not buffer_to_flush:
+            return
+
+        try:
+            self.debug(lambda: f"Flushing {len(buffer_to_flush)} records to file")
+            await self._file_handle.write("\n".join(buffer_to_flush))
+            await self._file_handle.flush()
+        except Exception as e:
+            self.error(f"Failed to flush buffer: {e}")
+            raise
+
     @on_stop
     async def _shutdown(self) -> None:
-        # Flush any remaining buffered records
+        async with self._buffer_lock:
+            buffer_to_flush = self._buffer
+            self._buffer = []
+
         try:
-            await self._flush_buffer()
-            # Add a newline to the end of the file
+            await self._flush_buffer(buffer_to_flush)
             await self._file_handle.write("\n")
             await self._file_handle.flush()
         except Exception as e:
             self.error(f"Failed to flush remaining buffer during shutdown: {e}")
 
-        # Close the file handle
         if self._file_handle is not None:
             try:
                 await self._file_handle.close()
