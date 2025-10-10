@@ -131,7 +131,8 @@ class ConversationConfig(BaseConfig):
                 "--conversation-num",
                 "--num-conversations",
                 "--num-sessions",  # GenAI-Perf
-                "--num-dataset-entries",  # GenAI-Perf
+                "--num-dataset-entries",  # GenAI-Perf,
+                "--num-prompts",  # GenAI-Perf
             ),
             group=_CLI_GROUP,
         ),
