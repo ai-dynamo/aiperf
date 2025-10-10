@@ -195,8 +195,8 @@ def _add_parameter_details(lines: list[str], param: ParameterInfo) -> None:
     if param.default_value and param.default_value != "False":
         description_parts.append(f"\n<br>**Default:** `{param.default_value}`.")
 
-    full_description = ">" + " ".join(description_parts)
-    lines.extend([full_description.strip() + " \n"])
+    full_description = " ".join(description_parts)
+    lines.extend([full_description.strip() + "\n<hr>\n"])
 
 
 def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> str:
