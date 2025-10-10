@@ -69,6 +69,10 @@ class CreditPhaseStats(CreditPhaseConfig):
         default=0,
         description="The number of completed credits (returned from the workers)",
     )
+    requests_sent: int = Field(
+        default=0,
+        description="The total number of requests sent for all credits for a given phase.",
+    )
 
     @property
     def is_sending_complete(self) -> bool:

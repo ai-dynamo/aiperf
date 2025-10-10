@@ -133,13 +133,6 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             await self._process_credit_drop_internal(message)
         except Exception as e:
             self.error(f"Error processing credit drop: {e!r}")
-            await self.credit_return_push_client.push(
-                CreditReturnMessage(
-                    service_id=self.service_id,
-                    phase=message.phase,
-                    credit_drop_id=message.request_id,
-                )
-            )
 
     @on_stop
     async def _shutdown_worker(self) -> None:
@@ -182,26 +175,29 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         This is to ensure that the max concurrency is respected via the semaphore of the pull client.
         The way this is enforced is by requiring that this method returns a CreditReturnMessage.
         """
+        return_message = CreditReturnMessage(
+            service_id=self.service_id,
+            phase=message.phase,
+            credit_drop_id=message.request_id,
+            delayed_ns=None,  # TODO: set this properly (from record if available?)
+            requests_sent=0,
+        )
 
         try:
             if self.is_trace_enabled:
                 self.trace(f"Processing credit drop: {message}")
 
-            await self._execute_single_credit_internal(message)
+            await self._execute_single_credit_internal(message, return_message)
         finally:
             # Need to return the credit here to ensure it is always returned
-            return_message = CreditReturnMessage(
-                service_id=self.service_id,
-                phase=message.phase,
-                credit_drop_id=message.request_id,
-                delayed_ns=None,  # TODO: set this properly (from record if available?)
-            )
             if self.is_trace_enabled:
                 self.trace(f"Returning credit {return_message}")
             # NOTE: Do not do this execute_async, as we want to give the credit back as soon as possible.
             await self.credit_return_push_client.push(return_message)
 
-    async def _execute_single_credit_internal(self, message: CreditDropMessage) -> None:
+    async def _execute_single_credit_internal(
+        self, message: CreditDropMessage, return_message: CreditReturnMessage
+    ) -> None:
         """Run a credit task for a single credit."""
         drop_perf_ns = time.perf_counter_ns()  # The time the credit was received
 
@@ -219,7 +215,6 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             self.task_stats.total += 1
             turn = conversation.turns[turn_index]
             turn_list.append(turn)
-            # TODO: how do we handle errors in the middle of a conversation?
             record = await self._build_response_record(
                 conversation_id=conversation.session_id,
                 message=message,
@@ -227,6 +222,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                 turn_index=turn_index,
                 drop_perf_ns=drop_perf_ns,
             )
+            return_message.requests_sent += 1
             await self._send_inference_result_message(record)
             resp_turn = await self._process_response(record)
             if resp_turn:

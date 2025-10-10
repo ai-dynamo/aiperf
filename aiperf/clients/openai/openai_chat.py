@@ -59,7 +59,6 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
                 )
                 messages.append(message)
                 continue
-
             message_content: list[dict[str, Any]] = []
 
             for text in turn.texts:

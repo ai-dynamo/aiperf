@@ -57,6 +57,7 @@ class CreditManagerProtocol(PubClientProtocol, Protocol):
         phase: CreditPhase,
         completed: int,
         end_ns: int,
+        final_request_count: int,
         timeout_triggered: bool = False,
     ) -> None: ...
 
@@ -126,6 +127,7 @@ class CreditPhaseMessagesMixin(MessageBusClientMixin, CreditPhaseMessagesRequire
         phase: CreditPhase,
         completed: int,
         end_ns: int,
+        final_request_count: int,
         timeout_triggered: bool = False,
     ) -> None:
         """Publish the phase complete message."""
@@ -137,6 +139,7 @@ class CreditPhaseMessagesMixin(MessageBusClientMixin, CreditPhaseMessagesRequire
                     completed=completed,
                     end_ns=end_ns,
                     timeout_triggered=timeout_triggered,
+                    final_request_count=final_request_count,
                 )
             )
         )

@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from unittest import mock
 
 import pytest
 
@@ -40,11 +39,33 @@ class TestOpenAICompletionRequestConverter:
         # Use the first turn from the sample_conversations fixture
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
-        with mock.patch.object(converter, "debug") as debug_mock:
-            payload = await converter.format_payload(model_endpoint, turns)
-            print(f"Payload: {payload}")
-        assert payload["prompt"] == ["Hello, world!"]
-        assert payload["model"] == "test-model"
-        assert payload["stream"] is True
-        debug_mock.assert_called_once()
-        assert "Formatted payload" in debug_mock.call_args[0][0]()
+        payload = await converter.format_payload(model_endpoint, turns)
+        print(f"Payload: {payload}")
+        expected_payload = {
+            "prompt": ["Hello, world!"],
+            "model": "test-model",
+            "stream": False,
+        }
+        assert payload == expected_payload
+
+    @pytest.mark.asyncio
+    async def test_format_payload_with_extra_options(
+        self, model_endpoint, sample_conversations
+    ):
+        converter = OpenAICompletionRequestConverter()
+        # Use the first turn from the sample_conversations fixture
+        turn = sample_conversations["session_1"].turns[0]
+        turns = [turn]
+        turns[0].max_tokens = 50
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.extra = [("ignore_eos", True)]
+        payload = await converter.format_payload(model_endpoint, turns)
+        print(f"Payload: {payload}")
+        expected_payload = {
+            "prompt": ["Hello, world!"],
+            "model": "test-model",
+            "stream": True,
+            "max_tokens": 50,
+            "ignore_eos": True,
+        }
+        assert payload == expected_payload

@@ -260,6 +260,7 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
                     phase_stats.type,
                     phase_stats.completed,
                     phase_stats.end_ns,
+                    phase_stats.requests_sent,
                     timeout_triggered=True,
                 )
             )
@@ -292,6 +293,7 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
 
         phase_stats = self.phase_stats[message.phase]
         phase_stats.completed += 1
+        phase_stats.requests_sent += message.requests_sent
 
         # Check if this phase is complete
         is_phase_complete = False
@@ -312,7 +314,10 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
 
             self.execute_async(
                 self.credit_manager.publish_phase_complete(
-                    message.phase, phase_stats.completed, phase_stats.end_ns
+                    message.phase,
+                    phase_stats.completed,
+                    phase_stats.end_ns,
+                    phase_stats.requests_sent,
                 )
             )
 
