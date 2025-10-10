@@ -177,8 +177,8 @@ def _format_parameter_options(param: ParameterInfo) -> str:
     if not options:
         return ""
 
-    # Use <br> tags to put each option on a new line
-    return "<br>".join(f"`{opt}`" for opt in options)
+    # Wrap each option in <nobr> to prevent line breaks within the option
+    return "<br>".join(f"<nobr>`{opt}`</nobr>" for opt in options)
 
 
 def _format_parameter_description(param: ParameterInfo) -> str:
@@ -194,6 +194,24 @@ def _format_parameter_description(param: ParameterInfo) -> str:
         description_parts.append(f"<br>**Default:** `{param.default_value}`")
 
     return " ".join(description_parts)
+
+
+def _generate_anchor_id(param: ParameterInfo) -> str:
+    """Generate an anchor ID from the parameter's primary option name."""
+    # Get the first long option, or short option if no long option exists
+    if param.long_options:
+        # Take the first long option
+        first_long = param.long_options.split()[0]
+        # Remove leading dashes and convert to lowercase
+        anchor_id = first_long.lstrip("-").lower()
+    elif param.short:
+        # Use short option if no long option
+        anchor_id = param.short.lstrip("-").lower()
+    else:
+        # Fallback to display name converted to slug
+        anchor_id = param.display_name.lower().replace(" ", "-").replace("_", "-")
+
+    return anchor_id
 
 
 def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> str:
@@ -216,9 +234,13 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
 
         # Add each parameter as a table row
         for param in parameters:
+            anchor_id = _generate_anchor_id(param)
             option_col = _format_parameter_options(param)
             description_col = _format_parameter_description(param)
-            lines.append(f"| {option_col} | {description_col} |")
+            # Add anchor ID at the start of the option column
+            lines.append(
+                f"| <a id='{anchor_id}'></a>{option_col} | {description_col} |"
+            )
 
         lines.append("")  # Empty line after table
 
