@@ -158,80 +158,45 @@ def extract_help_data(subcommand: str) -> dict[str, list[ParameterInfo]]:
     return _extract_parameter_groups(argument_collection)
 
 
-def _format_parameter_options(param: ParameterInfo) -> str:
-    """Format parameter options for table display without type suffix."""
+def _format_parameter_options(param: ParameterInfo) -> list[str]:
+    """Format parameter options for display."""
     options = []
 
     if param.short:
-        options.append(param.short)
+        options.append(f"{param.short}{param.type_suffix}")
 
     for option in param.long_options.split(" --"):
         option = option.strip()
         if option:
             if not option.startswith("--"):
                 option = "--" + option.lower().replace(" ", "-")
-            if option not in options:
-                options.append(option)
+            formatted = f"{option}{param.type_suffix}"
+            if formatted not in options:
+                options.append(formatted)
 
     if not options:
-        return ""
+        return []
 
-    # Format each option with code tags
-    return "<br>".join(f"<code>{opt}</code>" for opt in options)
-
-
-def _format_parameter_type(param: ParameterInfo) -> str:
-    """Format the parameter type for display."""
-    if not param.type_suffix:
-        return ""
-    # Remove leading space and angle brackets, capitalize
-    type_str = param.type_suffix.strip().strip("<>")
-    return f"<code>{type_str}</code>" if type_str else ""
+    combined = "<br>".join(f"`{opt}`" for opt in options)
+    if param.display_name:
+        return [f"#### {param.display_name}", "", f"{combined}", ""]
+    else:
+        return [f"#### {combined}", ""]
 
 
-def _format_parameter_description(param: ParameterInfo) -> str:
-    """Format description with choices and default value inline, converting markdown to HTML."""
-    description_text = param.description.replace("\n", " ")
-
-    # Convert backticks to code tags in description
-    import re
-
-    description_text = re.sub(r"`([^`]+)`", r"<code>\1</code>", description_text)
-
-    description_parts = [description_text.rstrip(".") + "."]
+def _add_parameter_details(lines: list[str], param: ParameterInfo) -> None:
+    """Add description with choices and default value inline."""
+    description_parts = [param.description.rstrip(".") + "."]
 
     if param.choices:
-        # Convert backticks in choices to code tags
-        choices_list = [
-            re.sub(r"`([^`]+)`", r"<code>\1</code>", choice) for choice in param.choices
-        ]
-        choices_str = ", ".join(choices_list)
-        description_parts.append(f"<br><strong>Choices:</strong> {choices_str}")
+        choices_str = ", ".join(param.choices)
+        description_parts.append(f"\n<br>**Choices:** {choices_str}.")
 
     if param.default_value and param.default_value != "False":
-        description_parts.append(
-            f"<br><strong>Default:</strong> <code>{param.default_value}</code>"
-        )
+        description_parts.append(f"\n<br>**Default:** `{param.default_value}`.")
 
-    return " ".join(description_parts)
-
-
-def _generate_anchor_id(param: ParameterInfo) -> str:
-    """Generate an anchor ID from the parameter's primary option name."""
-    # Get the first long option, or short option if no long option exists
-    if param.long_options:
-        # Take the first long option
-        first_long = param.long_options.split()[0]
-        # Remove leading dashes and convert to lowercase
-        anchor_id = first_long.lstrip("-").lower()
-    elif param.short:
-        # Use short option if no long option
-        anchor_id = param.short.lstrip("-").lower()
-    else:
-        # Fallback to display name converted to slug
-        anchor_id = param.display_name.lower().replace(" ", "-").replace("_", "-")
-
-    return anchor_id
+    full_description = " ".join(description_parts)
+    lines.extend([full_description, ""])
 
 
 def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> str:
@@ -249,41 +214,9 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
     for group_name, parameters in parameter_groups.items():
         lines.extend([f"### {group_name} Options", ""])
 
-        # Create HTML table with width constraints
-        lines.append("<table>")
-        lines.append("<thead>")
-        lines.append("<tr>")
-        lines.append(
-            "<th style='white-space: nowrap; width: 20%; min-width: 150px;'>Option</th>"
-        )
-        lines.append("<th style='width: 10%; min-width: 80px;'>Type</th>")
-        lines.append("<th style='width: 70%;'>Description</th>")
-        lines.append("</tr>")
-        lines.append("</thead>")
-        lines.append("<tbody>")
-
-        # Add each parameter as a table row
         for param in parameters:
-            anchor_id = _generate_anchor_id(param)
-            option_col = _format_parameter_options(param)
-            type_col = _format_parameter_type(param)
-            description_col = _format_parameter_description(param)
-
-            lines.append("<tr>")
-            lines.append(
-                f"<td style='white-space: nowrap; width: 20%; min-width: 150px; vertical-align: top;'><a id='{anchor_id}'></a>{option_col}</td>"
-            )
-            lines.append(
-                f"<td style='width: 10%; min-width: 80px; vertical-align: top;'>{type_col}</td>"
-            )
-            lines.append(
-                f"<td style='width: 70%; vertical-align: top;'>{description_col}</td>"
-            )
-            lines.append("</tr>")
-
-        lines.append("</tbody>")
-        lines.append("</table>")
-        lines.append("")  # Empty line after table
+            lines.extend(_format_parameter_options(param))
+            _add_parameter_details(lines, param)
 
     return "\n".join(lines)
 
