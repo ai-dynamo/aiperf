@@ -64,10 +64,13 @@ def register_telemetry_metrics():
     """Register all GPU telemetry metric classes with MetricRegistry.
 
     This function generates and registers metric classes dynamically based on
-    GPU_TELEMETRY_METRICS_CONFIG. It is safe to call multiple times (idempotent).
+    GPU_TELEMETRY_METRICS_CONFIG.
     """
     global _metrics_registered
     if _metrics_registered:
         return
     _generate_metric_classes()
     _metrics_registered = True
+
+
+register_telemetry_metrics()

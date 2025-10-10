@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from urllib.parse import urlparse
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -14,6 +15,7 @@ from aiperf.common.enums import (
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
+    CommandAcknowledgedResponse,
     ProfileCancelCommand,
     ProfileConfigureCommand,
     TelemetryRecordsMessage,
@@ -161,7 +163,9 @@ class TelemetryManager(BaseComponentService):
                 self.error(f"Exception testing {dcgm_url}: {e}")
 
         if reachable_count == 0:
-            await self._disable_telemetry_and_stop("no DCGM endpoints reachable")
+            await self._send_telemetry_disabled_status_and_shutdown(
+                "no DCGM endpoints reachable"
+            )
             return
 
         reachable_endpoints = list(self._collectors)
@@ -175,8 +179,8 @@ class TelemetryManager(BaseComponentService):
     async def _on_start_profiling(self, message) -> None:
         """Start all telemetry collectors.
 
-        Initializes and starts each configured collector, checking reachability first.
-        If no collectors start successfully, disables telemetry and stops the service.
+        Initializes and starts each configured collector.
+        If no collectors start successfully, sends disabled status to SystemController.
 
         Args:
             message: Profile start command from SystemController
@@ -197,7 +201,14 @@ class TelemetryManager(BaseComponentService):
 
         if started_count == 0:
             self.warning("No telemetry collectors successfully started")
-            await self._disable_telemetry_and_stop("all collectors failed to start")
+            await self.publish(
+                CommandAcknowledgedResponse.from_command_message(
+                    message, self.service_id
+                )
+            )
+            await self._send_telemetry_disabled_status_and_shutdown(
+                "all collectors failed to start"
+            )
             return
 
     @on_command(CommandType.PROFILE_CANCEL)
@@ -224,8 +235,20 @@ class TelemetryManager(BaseComponentService):
         """
         await self._stop_all_collectors()
 
-    async def _disable_telemetry_and_stop(self, reason: str) -> None:
-        """Disable telemetry by sending status update and stopping service.
+    async def _delayed_shutdown(self) -> None:
+        """Shutdown service after a delay to allow command response to be sent.
+
+        Waits 5 seconds before calling stop() to ensure the command response
+        has time to be published and transmitted to the SystemController.
+        """
+        await asyncio.sleep(5.0)
+        await self.stop()
+
+    async def _send_telemetry_disabled_status_and_shutdown(self, reason: str) -> None:
+        """Send telemetry disabled status to SystemController and schedule delayed shutdown.
+
+        Sends status message immediately, then schedules service shutdown after a delay
+        to ensure command response is sent before service stops.
 
         Args:
             reason: Human-readable reason for disabling telemetry
@@ -237,7 +260,8 @@ class TelemetryManager(BaseComponentService):
             endpoints_reachable=[],
         )
 
-        await self.stop()
+        # Schedule delayed shutdown to allow command response to be sent
+        asyncio.create_task(self._delayed_shutdown())
 
     async def _stop_all_collectors(self) -> None:
         """Stop all telemetry collectors.
