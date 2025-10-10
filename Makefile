@@ -17,7 +17,7 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install docker docker-run first-time-setup \
-		test-verbose init-files setup-venv setup-mkinit \
+		test-verbose init-files setup-venv setup-mkinit generate-cli-docs \
 		internal-help help
 
 
@@ -64,7 +64,7 @@ dim := $(shell tput dim)
 
 
 help: #? show this help
-	@$(MAKE) internal-help --no-print-directory
+	@$(MAKE) internal-help --no-print-directory | less
 
 #
 # Help command is automatically generated based on the comments in the Makefile.
@@ -173,3 +173,6 @@ first-time-setup: #? convenience command to setup the environment for the first 
 
 	@# Print a success message
 	@printf "$(bold)$(green)Done!$(reset)\n"
+
+generate-cli-docs: #? generate the CLI documentation.
+	$(activate_venv) && tools/generate_cli_docs.py
