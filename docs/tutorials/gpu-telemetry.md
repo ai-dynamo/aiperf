@@ -56,7 +56,6 @@ Dynamo includes DCGM out of the box on port 9401 - no extra setup needed!
 
 ## Setup Dynamo Server
 
-<!-- setup-dynamo-gpu-telemetry-openai-endpoint-server -->
 ```bash
 # Set environment variables
 export AIPERF_REPO_TAG="main"
@@ -80,7 +79,6 @@ docker run \
   ${DYNAMO_PREBUILT_IMAGE_TAG} \
     /bin/bash -c "python3 -m dynamo.frontend & python3 -m dynamo.vllm --model ${MODEL} --enforce-eager --no-enable-prefix-caching" > server.log 2>&1 &
 ```
-<!-- /setup-dynamo-gpu-telemetry-openai-endpoint-server -->
 
 ```bash
 # Set up AIPerf
@@ -110,21 +108,19 @@ uv pip install ./aiperf
 
 ## Verify Dynamo is Running
 
-<!-- health-check-dynamo-gpu-telemetry-openai-endpoint-server -->
 ```bash
 # Wait for Dynamo API to be ready (up to 15 minutes)
 timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"a\"}],\"max_completion_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "Dynamo not ready after 15min"; exit 1; }
-
+```
+```bash
 # Wait for DCGM Exporter to be ready (up to 2 minutes after Dynamo is ready)
 echo "Dynamo ready, waiting for DCGM metrics to be available..."
 timeout 120 bash -c 'while true; do STATUS=$(curl -s -o /dev/null -w "%{http_code}" localhost:9401/metrics); if [ "$STATUS" = "200" ]; then if curl -s localhost:9401/metrics | grep -q "DCGM_FI_DEV_GPU_UTIL"; then break; fi; fi; echo "Waiting for DCGM metrics..."; sleep 5; done' || { echo "GPU utilization metrics not found after 2min"; exit 1; }
 echo "DCGM GPU metrics are now available"
 ```
-<!-- /health-check-dynamo-gpu-telemetry-openai-endpoint-server -->
 
 ## Run AIPerf Benchmark
 
-<!-- aiperf-run-dynamo-gpu-telemetry-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -145,7 +141,6 @@ aiperf profile \
     --random-seed 100 \
     --gpu-telemetry
 ```
-<!-- /aiperf-run-dynamo-gpu-telemetry-openai-endpoint-server -->
 
 ---
 
@@ -157,7 +152,6 @@ This path works with **vLLM, SGLang, TRT-LLM, or any inference server**. We'll u
 
 The setup includes three steps: creating a custom metrics configuration, starting the DCGM Exporter, and launching the vLLM server.
 
-<!-- setup-vllm-gpu-telemetry-openai-endpoint-server -->
 ```bash
 # Step 1: Create a custom metrics configuration
 cat > custom_gpu_metrics.csv << 'EOF'
@@ -221,7 +215,6 @@ docker run -d --name vllm-server \
   --host 0.0.0.0 \
   --port 8000
 ```
-<!-- /setup-vllm-gpu-telemetry-openai-endpoint-server -->
 
 > [!TIP]
 > You can customize the `custom_gpu_metrics.csv` file by commenting out metrics you don't need. Lines starting with `#` are ignored.
@@ -264,7 +257,6 @@ uv pip install ./aiperf
 
 ## Verify Everything is Running
 
-<!-- health-check-vllm-gpu-telemetry-openai-endpoint-server -->
 ```bash
 # Wait for vLLM inference server to be ready (up to 15 minutes)
 timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
@@ -274,11 +266,9 @@ echo "vLLM ready, waiting for DCGM metrics to be available..."
 timeout 120 bash -c 'while true; do OUTPUT=$(curl -s localhost:9401/metrics); if echo "$OUTPUT" | grep -q "DCGM_FI_DEV_GPU_UTIL"; then break; fi; echo "Waiting for DCGM metrics..."; sleep 5; done' || { echo "GPU utilization metrics not found after 2min"; exit 1; }
 echo "DCGM GPU metrics are now available"
 ```
-<!-- /health-check-vllm-gpu-telemetry-openai-endpoint-server -->
 
 ## Run AIPerf Benchmark
 
-<!-- aiperf-run-vllm-gpu-telemetry-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -299,7 +289,6 @@ aiperf profile \
     --random-seed 100 \
     --gpu-telemetry
 ```
-<!-- /aiperf-run-vllm-gpu-telemetry-openai-endpoint-server -->
 
 ## Example output:
 

@@ -7,7 +7,6 @@ Test runner for executing server setup, health checks, and AIPerf tests.
 import logging
 import os
 import subprocess
-import time
 
 from constants import (
     AIPERF_UI_TYPE,
@@ -171,17 +170,6 @@ class EndToEndTestRunner:
         """Test a single server: setup + health check + aiperf runs"""
         logger.info(f"Setting up server: {server.name}")
 
-        # Clean up any leftover containers from previous tests to free up ports
-        logger.info("Cleaning up any leftover containers before starting server...")
-        exclude_list = []
-        if self.aiperf_container_id:
-            exclude_list.append(self.aiperf_container_id)
-        cleanup_docker_resources(exclude_containers=exclude_list)
-
-        # Wait a moment for containers to fully stop and ports to be released
-        time.sleep(2)
-        logger.info("Cleanup complete, ports should now be available")
-
         # Execute setup command in background with initial output monitoring
         logger.info(f"Starting server setup for {server.name}:")
         logger.info(f"Command: {server.setup_command.command}")
@@ -198,6 +186,8 @@ class EndToEndTestRunner:
         )
 
         # Monitor initial output for a short time to catch immediate failures
+        import time
+
         setup_output_lines = []
         start_time = time.time()
 
@@ -336,14 +326,14 @@ class EndToEndTestRunner:
                         echo "Stopping Docker Compose services..."
                         docker compose -f docker-compose.yml down 2>/dev/null || true
 
-                        echo "Stopping Dynamo and related containers..."
-                        # Stop by common container names
-                        docker stop dcgm-exporter nats-server etcd-server prometheus grafana nats-prometheus-exporter 2>/dev/null || true
-                        docker rm dcgm-exporter nats-server etcd-server prometheus grafana nats-prometheus-exporter 2>/dev/null || true
+                        echo "Stopping Dynamo containers..."
+                        # Stop containers by Dynamo image
+                        docker ps --filter ancestor=*dynamo* --format "{{.ID}}" | xargs -r docker stop 2>/dev/null || true
+                        docker ps --filter ancestor=*vllm-runtime* --format "{{.ID}}" | xargs -r docker stop 2>/dev/null || true
 
-                        # Stop containers by image patterns
-                        docker ps -q | xargs -r -I {} sh -c '\''docker inspect --format="{{.Config.Image}} {{.Id}}" {} | grep -iE "(dynamo|vllm-runtime|dcgm-exporter)" | cut -d" " -f2'\'' | xargs -r docker stop 2>/dev/null || true
-                        docker ps -aq | xargs -r -I {} sh -c '\''docker inspect --format="{{.Config.Image}} {{.Id}}" {} | grep -iE "(dynamo|vllm-runtime|dcgm-exporter)" | cut -d" " -f2'\'' | xargs -r docker rm 2>/dev/null || true
+                        # Remove containers
+                        docker ps -aq --filter ancestor=*dynamo* | xargs -r docker rm 2>/dev/null || true
+                        docker ps -aq --filter ancestor=*vllm-runtime* | xargs -r docker rm 2>/dev/null || true
 
                         echo "Dynamo graceful shutdown completed"
                     '
@@ -354,14 +344,12 @@ class EndToEndTestRunner:
                 logger.info("Executing vLLM graceful shutdown...")
                 shutdown_cmd = """
                     timeout 30 bash -c '
-                        echo "Stopping vLLM and DCGM containers..."
-                        # Stop by common container names
-                        docker stop vllm-server dcgm-exporter 2>/dev/null || true
-                        docker rm vllm-server dcgm-exporter 2>/dev/null || true
+                        echo "Stopping vLLM containers..."
+                        # Stop containers by vLLM image
+                        docker ps --filter ancestor=*vllm* --format "{{.ID}}" | xargs -r docker stop 2>/dev/null || true
 
-                        # Stop containers by image patterns
-                        docker ps -q | xargs -r -I {} sh -c '\''docker inspect --format="{{.Config.Image}} {{.Id}}" {} | grep -iE "(vllm|dcgm-exporter)" | cut -d" " -f2'\'' | xargs -r docker stop 2>/dev/null || true
-                        docker ps -aq | xargs -r -I {} sh -c '\''docker inspect --format="{{.Config.Image}} {{.Id}}" {} | grep -iE "(vllm|dcgm-exporter)" | cut -d" " -f2'\'' | xargs -r docker rm 2>/dev/null || true
+                        # Remove containers
+                        docker ps -aq --filter ancestor=*vllm* | xargs -r docker rm 2>/dev/null || true
 
                         echo "vLLM graceful shutdown completed"
                     '
@@ -373,7 +361,7 @@ class EndToEndTestRunner:
                 shutdown_cmd = f"""
                     timeout 30 bash -c '
                         echo "Stopping containers for {server_name}..."
-                        docker ps --filter name={server_name} --format "{{{{.ID}}}}" | xargs -r docker stop 2>/dev/null || true
+                        docker ps --filter name={server_name} --format "{{.ID}}" | xargs -r docker stop 2>/dev/null || true
                         docker ps -aq --filter name={server_name} | xargs -r docker rm 2>/dev/null || true
                         echo "Generic server shutdown completed"
                     '
@@ -414,11 +402,7 @@ class EndToEndTestRunner:
                 self.setup_process.kill()
 
         # Stop any containers that might be related to this server using utility functions
-        # Exclude the aiperf test container from cleanup
-        exclude_list = []
-        if self.aiperf_container_id:
-            exclude_list.append(self.aiperf_container_id)
-        cleanup_docker_resources(exclude_containers=exclude_list)
+        cleanup_docker_resources()
 
     def _cleanup(self):
         """Cleanup AIPerf container and other resources"""
