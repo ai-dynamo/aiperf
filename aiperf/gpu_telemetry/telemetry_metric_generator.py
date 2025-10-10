@@ -13,6 +13,8 @@ from aiperf.common.models import TelemetryRecord
 from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 from aiperf.metrics.base_telemetry_metric import BaseTelemetryMetric
 
+_metrics_registered = False
+
 
 def _create_extract_value_method(field_name: str):
     """Create the _extract_value method for a telemetry metric class.
@@ -62,6 +64,10 @@ def register_telemetry_metrics():
     """Register all GPU telemetry metric classes with MetricRegistry.
 
     This function generates and registers metric classes dynamically based on
-    GPU_TELEMETRY_METRICS_CONFIG. It should be called once during module initialization.
+    GPU_TELEMETRY_METRICS_CONFIG. It is safe to call multiple times (idempotent).
     """
+    global _metrics_registered
+    if _metrics_registered:
+        return
     _generate_metric_classes()
+    _metrics_registered = True

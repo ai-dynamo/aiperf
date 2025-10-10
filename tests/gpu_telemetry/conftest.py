@@ -7,15 +7,6 @@ Shared fixtures for testing GPU telemetry components.
 import pytest
 
 from aiperf.common.models.telemetry_models import TelemetryMetrics, TelemetryRecord
-from aiperf.gpu_telemetry.telemetry_metric_generator import register_telemetry_metrics
-from aiperf.metrics.metric_registry import MetricRegistry
-
-# Only register if not already registered (prevents duplicate registration errors
-# when multiple conftest files try to register metrics)
-try:
-    MetricRegistry.get_class("gpu_power_usage")
-except Exception:
-    register_telemetry_metrics()
 
 
 @pytest.fixture
