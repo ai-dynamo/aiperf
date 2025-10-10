@@ -176,8 +176,8 @@ def _format_parameter_options(param: ParameterInfo) -> str:
     if not options:
         return ""
 
-    # Format each option with backticks
-    return "<br>".join(f"`{opt}`" for opt in options)
+    # Format each option with code tags
+    return "<br>".join(f"<code>{opt}</code>" for opt in options)
 
 
 def _format_parameter_type(param: ParameterInfo) -> str:
@@ -186,20 +186,32 @@ def _format_parameter_type(param: ParameterInfo) -> str:
         return ""
     # Remove leading space and angle brackets, capitalize
     type_str = param.type_suffix.strip().strip("<>")
-    return f"`{type_str}`" if type_str else ""
+    return f"<code>{type_str}</code>" if type_str else ""
 
 
 def _format_parameter_description(param: ParameterInfo) -> str:
-    """Format description with choices and default value inline."""
+    """Format description with choices and default value inline, converting markdown to HTML."""
     description_text = param.description.replace("\n", " ")
+
+    # Convert backticks to code tags in description
+    import re
+
+    description_text = re.sub(r"`([^`]+)`", r"<code>\1</code>", description_text)
+
     description_parts = [description_text.rstrip(".") + "."]
 
     if param.choices:
-        choices_str = ", ".join(param.choices)
-        description_parts.append(f"<br>**Choices:** {choices_str}")
+        # Convert backticks in choices to code tags
+        choices_list = [
+            re.sub(r"`([^`]+)`", r"<code>\1</code>", choice) for choice in param.choices
+        ]
+        choices_str = ", ".join(choices_list)
+        description_parts.append(f"<br><strong>Choices:</strong> {choices_str}")
 
     if param.default_value and param.default_value != "False":
-        description_parts.append(f"<br>**Default:** `{param.default_value}`")
+        description_parts.append(
+            f"<br><strong>Default:</strong> <code>{param.default_value}</code>"
+        )
 
     return " ".join(description_parts)
 
@@ -237,13 +249,15 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
     for group_name, parameters in parameter_groups.items():
         lines.extend([f"### {group_name} Options", ""])
 
-        # Create HTML table with nowrap on first column
+        # Create HTML table with width constraints
         lines.append("<table>")
         lines.append("<thead>")
         lines.append("<tr>")
-        lines.append("<th style='white-space: nowrap;'>Option</th>")
-        lines.append("<th>Type</th>")
-        lines.append("<th>Description</th>")
+        lines.append(
+            "<th style='white-space: nowrap; width: 20%; min-width: 150px;'>Option</th>"
+        )
+        lines.append("<th style='width: 10%; min-width: 80px;'>Type</th>")
+        lines.append("<th style='width: 70%;'>Description</th>")
         lines.append("</tr>")
         lines.append("</thead>")
         lines.append("<tbody>")
@@ -257,10 +271,14 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
 
             lines.append("<tr>")
             lines.append(
-                f"<td style='white-space: nowrap;'><a id='{anchor_id}'></a>{option_col}</td>"
+                f"<td style='white-space: nowrap; width: 20%; min-width: 150px; vertical-align: top;'><a id='{anchor_id}'></a>{option_col}</td>"
             )
-            lines.append(f"<td>{type_col}</td>")
-            lines.append(f"<td>{description_col}</td>")
+            lines.append(
+                f"<td style='width: 10%; min-width: 80px; vertical-align: top;'>{type_col}</td>"
+            )
+            lines.append(
+                f"<td style='width: 70%; vertical-align: top;'>{description_col}</td>"
+            )
             lines.append("</tr>")
 
         lines.append("</tbody>")
