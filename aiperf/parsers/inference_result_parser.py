@@ -90,7 +90,7 @@ class InferenceResultParser(CommunicationMixin):
         self.info(f"Initialized tokenizers: {tokenizer_info} in {duration:.2f} seconds")
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
-        """Get the tokenizer for a given model."""
+        """Get the tokenizer for a given model or create it if it doesn't exist."""
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
                 self.tokenizers[model] = Tokenizer.from_pretrained(
@@ -110,9 +110,17 @@ class InferenceResultParser(CommunicationMixin):
         )
 
         if request_record.has_error:
+            # Even for error records, compute input token count if possible
+            try:
+                input_token_count = await self.compute_input_token_count(request_record)
+            except Exception as e:
+                self.warning(f"Error computing input token count for error record: {e}")
+                input_token_count = None
+
             return ParsedResponseRecord(
                 request=request_record,
                 responses=[],
+                input_token_count=input_token_count,
             )
 
         elif request_record.valid:
@@ -127,9 +135,18 @@ class InferenceResultParser(CommunicationMixin):
                 # TODO: We should add an ErrorDetails to the response record and not the request record.
                 self.exception(f"Error processing valid record: {e}")
                 request_record.error = ErrorDetails.from_exception(e)
+
+                try:
+                    input_token_count = await self.compute_input_token_count(
+                        request_record
+                    )
+                except Exception:
+                    input_token_count = None
+
                 return ParsedResponseRecord(
                     request=request_record,
                     responses=[],
+                    input_token_count=input_token_count,
                 )
         else:
             self.warning(f"Received invalid inference results: {request_record}")
@@ -139,9 +156,16 @@ class InferenceResultParser(CommunicationMixin):
                 message="Invalid inference results",
                 type="InvalidInferenceResults",
             )
+
+            try:
+                input_token_count = await self.compute_input_token_count(request_record)
+            except Exception:
+                input_token_count = None
+
             return ParsedResponseRecord(
                 request=request_record,
                 responses=[],
+                input_token_count=input_token_count,
             )
 
     async def process_valid_record(
@@ -159,11 +183,8 @@ class InferenceResultParser(CommunicationMixin):
                 output_token_count=None,
             )
 
-        tokenizer = await self.get_tokenizer(request_record.model_name)
         resp = await self.extractor.extract_response_data(request_record)
-        input_token_count = await self.compute_input_token_count(
-            request_record, tokenizer
-        )
+        input_token_count = await self.compute_input_token_count(request_record)
 
         output_texts: list[str] = []
         reasoning_texts: list[str] = []
@@ -176,6 +197,7 @@ class InferenceResultParser(CommunicationMixin):
             else:
                 output_texts.append(response.data.get_text())
 
+        tokenizer = await self.get_tokenizer(request_record.model_name)
         output_token_count = (
             len(tokenizer.encode("".join(output_texts))) if output_texts else None
         )
@@ -218,13 +240,14 @@ class InferenceResultParser(CommunicationMixin):
         return turn_response.turn
 
     async def compute_input_token_count(
-        self, request_record: RequestRecord, tokenizer: Tokenizer
+        self, request_record: RequestRecord
     ) -> int | None:
         """Compute the number of tokens in the input for a given request record."""
         turn = await self.get_turn(request_record)
         if turn is None:
             return None
 
+        tokenizer = await self.get_tokenizer(request_record.model_name)
         input_token_count = 0
         for text in turn.texts:
             input_token_count += len(tokenizer.encode("".join(text.contents)))

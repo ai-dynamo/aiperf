@@ -21,5 +21,5 @@ class ErrorRequestCountMetric(BaseAggregateCounterMetric[int]):
     short_header = "Error Count"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.ERROR_ONLY
+    flags = MetricFlags.ERROR_ONLY | MetricFlags.NO_INDIVIDUAL_RECORDS
     required_metrics = None

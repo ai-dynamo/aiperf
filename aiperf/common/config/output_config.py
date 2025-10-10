@@ -10,6 +10,7 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.config.groups import Groups
+from aiperf.common.enums import ExportLevel
 
 
 class OutputConfig(BaseConfig):
@@ -32,3 +33,18 @@ class OutputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = OutputDefaults.ARTIFACT_DIRECTORY
+
+    profile_export_file: Annotated[
+        Path,
+        Field(
+            description="The file to store the profile export in JSONL format.",
+        ),
+        CLIParameter(
+            name=("--profile-export-file",),
+            group=_CLI_GROUP,
+        ),
+    ] = OutputDefaults.PROFILE_EXPORT_FILE
+
+    @property
+    def export_level(self) -> ExportLevel:
+        return ExportLevel.RECORDS

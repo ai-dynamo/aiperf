@@ -107,6 +107,27 @@ async def yield_to_event_loop() -> None:
     await asyncio.sleep(0)
 
 
+def compute_time_ns(
+    start_time_ns: int, start_perf_ns: int, perf_ns: int | None
+) -> int | None:
+    """Convert a perf_ns timestamp to a wall clock time_ns timestamp by
+    computing the absolute duration in perf_ns (perf_ns - start_perf_ns) and adding it to the start_time_ns.
+
+    Args:
+        start_time_ns: The wall clock start time in nanoseconds (time.time_ns).
+        start_perf_ns: The start perf time in nanoseconds (perf_counter_ns).
+        perf_ns: The perf time in nanoseconds to convert to time_ns (perf_counter_ns).
+
+    Returns:
+        The perf_ns converted to time_ns, or None if the perf_ns is None.
+    """
+    if perf_ns is None:
+        return None
+    if perf_ns < start_perf_ns:
+        raise ValueError(f"perf_ns {perf_ns} is before start_perf_ns {start_perf_ns}")
+    return start_time_ns + (perf_ns - start_perf_ns)
+
+
 # This is used to identify the source file of the call_all_functions function
 # in the AIPerfLogger class to skip it when determining the caller.
 # NOTE: Using similar logic to logging._srcfile

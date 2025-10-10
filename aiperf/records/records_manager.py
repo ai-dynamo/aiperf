@@ -20,8 +20,8 @@ from aiperf.common.enums import (
     MessageType,
     ServiceType,
 )
-from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.enums.ui_enums import AIPerfUIType
+from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.factories import (
     ResultsProcessorFactory,
     ServiceFactory,
@@ -42,6 +42,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.messages.command_messages import RealtimeMetricsCommand
 from aiperf.common.messages.credit_messages import CreditPhaseSendingCompleteMessage
+from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -62,9 +63,6 @@ from aiperf.common.protocols import (
     ServiceProtocol,
     TelemetryResultsProcessorProtocol,
 )
-from aiperf.common.types import MetricTagT
-from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
-from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.records.phase_completion import (
     PhaseCompletionChecker,
 )
@@ -129,17 +127,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._telemetry_results_processors: list[TelemetryResultsProcessorProtocol] = []
 
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
-            results_processor = ResultsProcessorFactory.create_instance(
-                class_type=results_processor_type,
-                service_id=self.service_id,
-                service_config=self.service_config,
-                user_config=self.user_config,
-            )
-            self.debug(
-                f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
-            )
-
-            self._results_processors.append(results_processor)
+            try:
+                results_processor = ResultsProcessorFactory.create_instance(
+                    class_type=results_processor_type,
+                    service_id=self.service_id,
+                    service_config=self.service_config,
+                    user_config=self.user_config,
+                )
+                self._results_processors.append(results_processor)
+                self.attach_child_lifecycle(results_processor)
+                self.debug(
+                    f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
+                )
+            except PostProcessorDisabled:
+                self.debug(
+                    f"Results processor {results_processor_type} is disabled and will not be used"
+                )
 
             if isinstance(results_processor, TelemetryResultsProcessorProtocol):
                 self._telemetry_results_processors.append(results_processor)
@@ -152,20 +155,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 
-        if message.credit_phase != CreditPhase.PROFILING:
-            self.debug(lambda: f"Skipping non-profiling record: {message.credit_phase}")
+        if message.metadata.benchmark_phase != CreditPhase.PROFILING:
+            self.debug(
+                lambda: f"Skipping non-profiling record: {message.metadata.benchmark_phase}"
+            )
             return
 
-        should_include_request = self._should_include_request_by_duration(
-            message.results
-        )
+        record_data = message.to_data()
+
+        should_include_request = self._should_include_request_by_duration(record_data)
 
         if should_include_request:
-            await self._send_results_to_results_processors(message.results)
+            await self._send_results_to_results_processors(record_data)
 
-        worker_id = message.worker_id
+        worker_id = message.metadata.worker_id
 
-        if message.valid and should_include_request:
+        if record_data.valid and should_include_request:
             # Valid record
             async with self.worker_stats_lock:
                 worker_stats = self.worker_stats.setdefault(
@@ -174,7 +179,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 worker_stats.processed += 1
             async with self.processing_status_lock:
                 self.processing_stats.processed += 1
-        elif message.valid and not should_include_request:
+        elif record_data.valid and not should_include_request:
             # Timed out record
             self.debug(
                 f"Filtered out record from worker {worker_id} - response received after duration"
@@ -188,10 +193,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 worker_stats.errors += 1
             async with self.processing_status_lock:
                 self.processing_stats.errors += 1
-            if message.error:
+            if record_data.error:
                 async with self.error_summary_lock:
-                    self.error_summary[message.error] = (
-                        self.error_summary.get(message.error, 0) + 1
+                    self.error_summary[record_data.error] = (
+                        self.error_summary.get(record_data.error, 0) + 1
                     )
 
         await self._check_if_all_records_received()
@@ -230,12 +235,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     )
 
     def _should_include_request_by_duration(
-        self, results: list[dict[MetricTagT, MetricValueTypeT]]
+        self, record_data: MetricRecordsData
     ) -> bool:
         """Determine if the request should be included based on benchmark duration.
 
         Args:
-            results: List of metric results for a single request
+            record_data: MetricRecordsData for a single request
 
         Returns:
             True if the request should be included, else False
@@ -250,33 +255,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         # Check if any response in this request was received after the duration
         # If so, filter out the entire request (all-or-nothing approach)
-        for result_dict in results:
-            request_timestamp = result_dict.get(MinRequestTimestampMetric.tag)
-            request_latency = result_dict.get(RequestLatencyMetric.tag)
-
-            if request_timestamp is not None and request_latency is not None:
-                final_response_timestamp = request_timestamp + request_latency
-
-                if final_response_timestamp > duration_end_ns:
-                    self.debug(
-                        f"Filtering out timed-out request - response received "
-                        f"{final_response_timestamp - duration_end_ns} ns after timeout"
-                    )
-                    return False
+        if record_data.metadata.request_end_ns > duration_end_ns:
+            self.debug(
+                f"Filtering out timed-out request - response received "
+                f"{record_data.metadata.request_end_ns - duration_end_ns} ns after timeout"
+            )
+            return False
 
         return True
 
     async def _check_if_all_records_received(self) -> None:
-        """Check if all records have been received, and if so, publish a message and process the records.
-
-        Uses PhaseCompletionChecker strategy to determine if processing is complete based on:
-        - Number of records processed vs expected final count
-        - Timeout conditions
-        - Expected benchmark duration
-
-        If complete, publishes AllRecordsReceivedMessage and triggers result processing.
-        Thread-safe using processing_status_lock to prevent race conditions.
-        """
+        """Check if all records have been received, and if so, publish a message and process the records."""
         all_records_received = False
 
         async with self.processing_status_lock:
@@ -326,22 +315,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._process_results(cancelled=cancelled)
 
     async def _send_results_to_results_processors(
-        self, results: list[dict[MetricTagT, MetricValueTypeT]]
+        self, record_data: MetricRecordsData
     ) -> None:
-        """Send the results to inference metric results processors only.
-
-        Distributes inference metrics to all registered metric processors (not telemetry processors)
-        for real-time processing and aggregation. Runs all processor calls concurrently.
-
-        Args:
-            results: List of metric dictionaries from a single request, where each dict maps
-                metric tags to their values
-        """
+        """Send the results to each of the metric results processors."""
         await asyncio.gather(
             *[
-                results_processor.process_result(result)
+                results_processor.process_result(record_data)
                 for results_processor in self._metric_results_processors
-                for result in results
             ]
         )
 
@@ -509,22 +489,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ]
 
     async def _process_results(self, cancelled: bool) -> ProcessRecordsResult:
-        """Process the results by calling summarize on all metric processors.
-
-        Collects summarized results from all metric processors, packages them into
-        ProfileResults, and publishes via message bus. Also triggers telemetry results
-        publishing as a separate step.
-
-        Args:
-            cancelled: Whether the profiling run was cancelled by user or error
-
-        Returns:
-            ProcessRecordsResult: Contains ProfileResults with aggregated metrics and any errors
-                encountered during processing
-        """
+        """Process the results."""
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
 
         self.info("Processing records results...")
+        # Process the records through the metric results processors only.
         results = await asyncio.gather(
             *[
                 results_processor.summarize()
@@ -655,15 +624,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
 
     async def get_error_summary(self) -> list[ErrorDetailsCount]:
-        """Generate a summary of the error records from inference requests.
-
-        Thread-safe method that returns aggregated error counts for all errors
-        encountered during inference request processing.
-
-        Returns:
-            list[ErrorDetailsCount]: List of error details with occurrence counts,
-                sorted by error type
-        """
+        """Generate a summary of the error records."""
         async with self.error_summary_lock:
             return [
                 ErrorDetailsCount(error_details=error_details, count=count)
