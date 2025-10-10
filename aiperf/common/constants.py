@@ -108,3 +108,6 @@ AIPERF_HTTP_CONNECTION_LIMIT = int(os.environ.get("AIPERF_HTTP_CONNECTION_LIMIT"
 
 GOOD_REQUEST_COUNT_TAG = "good_request_count"
 """GoodRequestCount metric tag"""
+
+DEFAULT_RECORD_EXPORT_BATCH_SIZE = 100
+"""Default batch size for record export results processor."""

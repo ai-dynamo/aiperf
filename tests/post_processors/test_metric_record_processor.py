@@ -14,9 +14,11 @@ from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.post_processors.metric_record_processor import MetricRecordProcessor
-from tests.post_processors.conftest import (
+from tests.conftest import (
     DEFAULT_LAST_RESPONSE_NS,
     DEFAULT_START_TIME_NS,
+)
+from tests.post_processors.conftest import (
     setup_mock_registry_sequences,
 )
 

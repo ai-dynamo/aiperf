@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Callable
-from datetime import datetime
 from enum import Flag
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
@@ -169,15 +168,8 @@ class MetricTimeUnit(BaseMetricUnit):
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
-        if not isinstance(
-            other_unit, MetricTimeUnit | MetricTimeUnitInfo | MetricDateTimeUnit
-        ):
+        if not isinstance(other_unit, MetricTimeUnit | MetricTimeUnitInfo):
             return super().convert_to(other_unit, value)
-
-        if isinstance(other_unit, MetricDateTimeUnit):
-            return datetime.fromtimestamp(
-                self.convert_to(MetricTimeUnit.SECONDS, value)
-            )
 
         return value * (other_unit.per_second / self.per_second)
 
@@ -289,12 +281,6 @@ class EnergyMetricUnit(BaseMetricUnit):
     def long_name(self) -> str:
         """The long name of the energy unit."""
         return self.info.long_name
-
-
-class MetricDateTimeUnit(BaseMetricUnit):
-    """Defines the various date time units that can be used for metrics."""
-
-    DATE_TIME = _unit("datetime")
 
 
 class MetricOverTimeUnitInfo(BaseMetricUnitInfo):
@@ -657,6 +643,10 @@ class MetricFlags(Flag):
 
     GPU_TELEMETRY = 1 << 11
     """Metrics that collect GPU telemetry data such as power usage, memory, and utilization."""
+    
+    NO_INDIVIDUAL_RECORDS = 1 << 12
+    """Metrics that should not be exported for individual records. These are typically aggregate metrics.
+    This is used to filter out metrics such as request count or min/max timestamps that are not relevant to individual records."""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""

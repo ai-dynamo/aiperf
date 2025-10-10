@@ -26,6 +26,7 @@ from aiperf.common.enums.communication_enums import (
 from aiperf.common.enums.data_exporter_enums import (
     ConsoleExporterType,
     DataExporterType,
+    ExportLevel,
 )
 from aiperf.common.enums.dataset_enums import (
     AudioFormat,
@@ -57,7 +58,6 @@ from aiperf.common.enums.metric_enums import (
     FrequencyMetricUnit,
     FrequencyMetricUnitInfo,
     GenericMetricUnit,
-    MetricDateTimeUnit,
     MetricFlags,
     MetricOverTimeUnit,
     MetricOverTimeUnitInfo,
@@ -132,6 +132,7 @@ __all__ = [
     "EndpointTypeInfo",
     "EnergyMetricUnit",
     "EnergyMetricUnitInfo",
+    "ExportLevel",
     "FrequencyMetricUnit",
     "FrequencyMetricUnitInfo",
     "GenericMetricUnit",
@@ -139,7 +140,6 @@ __all__ = [
     "LifecycleState",
     "MediaType",
     "MessageType",
-    "MetricDateTimeUnit",
     "MetricFlags",
     "MetricOverTimeUnit",
     "MetricOverTimeUnitInfo",

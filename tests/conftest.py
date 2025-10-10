@@ -10,7 +10,8 @@ and made available to test functions in the same directory and subdirectories.
 import asyncio
 import logging
 from collections.abc import Callable, Generator
-from unittest.mock import MagicMock, patch
+from io import StringIO
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -18,7 +19,15 @@ from aiperf.common.aiperf_logger import _TRACE
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType
 from aiperf.common.messages import Message
-from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models import (
+    Conversation,
+    ParsedResponse,
+    ParsedResponseRecord,
+    RequestRecord,
+    Text,
+    TextResponseData,
+    Turn,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
 from tests.comms.mock_zmq import (
@@ -33,6 +42,13 @@ from tests.utils.time_traveler import (  # noqa: E402
 )
 
 logging.basicConfig(level=_TRACE)
+
+# Shared test constants for request/response records
+DEFAULT_START_TIME_NS = 1_000_000
+DEFAULT_FIRST_RESPONSE_NS = 1_050_000
+DEFAULT_LAST_RESPONSE_NS = 1_100_000
+DEFAULT_INPUT_TOKENS = 5
+DEFAULT_OUTPUT_TOKENS = 2
 
 
 def pytest_addoption(parser):
@@ -315,3 +331,71 @@ def sample_conversations() -> dict[str, Conversation]:
         ),
     }
     return conversations
+
+
+@pytest.fixture
+def sample_request_record() -> RequestRecord:
+    """Create a sample RequestRecord for testing."""
+    return RequestRecord(
+        conversation_id="test-conversation",
+        turn_index=0,
+        model_name="test-model",
+        start_perf_ns=DEFAULT_START_TIME_NS,
+        timestamp_ns=DEFAULT_START_TIME_NS,
+        end_perf_ns=DEFAULT_LAST_RESPONSE_NS,
+        error=None,
+    )
+
+
+@pytest.fixture
+def sample_parsed_record(sample_request_record: RequestRecord) -> ParsedResponseRecord:
+    """Create a valid ParsedResponseRecord for testing."""
+    responses = [
+        ParsedResponse(
+            perf_ns=DEFAULT_FIRST_RESPONSE_NS,
+            data=TextResponseData(text="Hello"),
+        ),
+        ParsedResponse(
+            perf_ns=DEFAULT_LAST_RESPONSE_NS,
+            data=TextResponseData(text=" world"),
+        ),
+    ]
+
+    return ParsedResponseRecord(
+        request=sample_request_record,
+        responses=responses,
+        input_token_count=DEFAULT_INPUT_TOKENS,
+        output_token_count=DEFAULT_OUTPUT_TOKENS,
+    )
+
+
+@pytest.fixture
+def mock_aiofiles_stringio():
+    """Mock aiofiles.open to write to a StringIO buffer instead of a file.
+
+    Automatically patches aiofiles.open for the duration of the test.
+
+    Returns:
+        StringIO: Buffer that captures all writes
+
+    Example:
+        def test_something(mock_aiofiles_stringio):
+            # aiofiles.open is already patched
+            # ... test code that writes to files ...
+
+            # Verify contents
+            contents = mock_aiofiles_stringio.getvalue()
+            assert "expected" in contents
+    """
+    string_buffer = StringIO()
+
+    mock_file = AsyncMock()
+    mock_file.write = AsyncMock(side_effect=lambda data: string_buffer.write(data))
+    mock_file.flush = AsyncMock()
+    mock_file.close = AsyncMock()
+
+    async def mock_aiofiles_open(*args, **kwargs):
+        return mock_file
+
+    with patch("aiofiles.open", side_effect=mock_aiofiles_open):
+        yield string_buffer

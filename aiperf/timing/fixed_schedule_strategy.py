@@ -106,12 +106,14 @@ class FixedScheduleStrategy(CreditIssuingStrategy):
 
                 await self.credit_manager.drop_credit(
                     credit_phase=CreditPhase.PROFILING,
+                    credit_num=phase_stats.sent,
                     conversation_id=conversation_id,
                     # We already waited, so it can be sent ASAP
                     credit_drop_ns=None,
                     should_cancel=should_cancel,
                     cancel_after_ns=cancel_after_ns,
                 )
+                # NOTE: This is incremented here, as the credit_num is used up above, and needs the current value.
                 phase_stats.sent += 1
 
         duration_sec = (self._perf_counter_ms() - start_time_ms) / MILLIS_PER_SECOND
