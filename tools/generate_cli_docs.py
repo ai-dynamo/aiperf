@@ -159,27 +159,34 @@ def extract_help_data(subcommand: str) -> dict[str, list[ParameterInfo]]:
 
 
 def _format_parameter_options(param: ParameterInfo) -> str:
-    """Format parameter options for table display."""
+    """Format parameter options for table display without type suffix."""
     options = []
 
     if param.short:
-        options.append(f"{param.short}{param.type_suffix}")
+        options.append(param.short)
 
     for option in param.long_options.split(" --"):
         option = option.strip()
         if option:
             if not option.startswith("--"):
                 option = "--" + option.lower().replace(" ", "-")
-            formatted = f"{option}{param.type_suffix}"
-            if formatted not in options:
-                options.append(formatted)
+            if option not in options:
+                options.append(option)
 
     if not options:
         return ""
 
     # Format each option with backticks
-    # Keep the space between option and type - table cells typically won't wrap within code
     return "<br>".join(f"`{opt}`" for opt in options)
+
+
+def _format_parameter_type(param: ParameterInfo) -> str:
+    """Format the parameter type for display."""
+    if not param.type_suffix:
+        return ""
+    # Remove leading space and angle brackets, capitalize
+    type_str = param.type_suffix.strip().strip("<>")
+    return f"`{type_str}`" if type_str else ""
 
 
 def _format_parameter_description(param: ParameterInfo) -> str:
@@ -230,17 +237,20 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
     for group_name, parameters in parameter_groups.items():
         lines.extend([f"### {group_name} Options", ""])
 
-        # Create table header
-        lines.extend(["| Option | Description |", "|--------|-------------|"])
+        # Create table header with Type as second column
+        lines.extend(
+            ["| Option | Type | Description |", "|--------|------|-------------|"]
+        )
 
         # Add each parameter as a table row
         for param in parameters:
             anchor_id = _generate_anchor_id(param)
             option_col = _format_parameter_options(param)
+            type_col = _format_parameter_type(param)
             description_col = _format_parameter_description(param)
             # Add anchor ID at the start of the option column
             lines.append(
-                f"| <a id='{anchor_id}'></a>{option_col} | {description_col} |"
+                f"| <a id='{anchor_id}'></a>{option_col} | {type_col} | {description_col} |"
             )
 
         lines.append("")  # Empty line after table
