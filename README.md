@@ -12,7 +12,7 @@ SPDX-License-Identifier: Apache-2.0
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ai-dynamo/aiperf)
 
 
-**[Architecture](docs/architecture.md)**| **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)**
+**[Architecture](docs/architecture.md)** |  **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)** | **[Metrics Reference](docs/metrics_reference.md)** |
 
 
 AIPerf is a comprehensive benchmarking tool that measures the performance of generative AI models served by your preferred inference solution.
@@ -89,7 +89,6 @@ aiperf profile --benchmark-duration 300.0 --benchmark-grace-period 30.0 [other o
 
 </br>
 
-
 <!--
 ======================
 INSTALLATION
@@ -157,6 +156,69 @@ NVIDIA AIPerf | LLM Metrics
 └──────────────────────────────────────┴───────────┴────────┴────────┴────────┴────────┴────────┴───────┘
 ```
 </div>
+
+
+
+<!--
+======================
+METRICS REFERENCE
+======================
+-->
+
+## Metrics Reference
+
+AIPerf provides comprehensive metrics organized into four functional categories. For detailed descriptions, requirements, and nuances of each metric, see the **[Complete Metrics Reference](docs/metrics_reference.md)**.
+
+### Streaming Metrics
+
+Metrics specific to streaming requests that measure real-time token generation characteristics. Requires `--streaming` flag.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Time to First Token (TTFT)**](docs/metrics_reference.md#time-to-first-token-ttft) | `ttft` | `responses[0].perf_ns - request.start_perf_ns` | `ms` |
+| [**Time to Second Token (TTST)**](docs/metrics_reference.md#time-to-second-token-ttst) | `ttst` | `responses[1].perf_ns - responses[0].perf_ns` | `ms` |
+| [**Inter Token Latency (ITL)**](docs/metrics_reference.md#inter-token-latency-itl) | `inter_token_latency` | `(request_latency - ttft) / (output_sequence_length - 1)` | `ms` |
+| [**Inter Chunk Latency (ICL)**](docs/metrics_reference.md#inter-chunk-latency-icl) | `inter_chunk_latency` | `[responses[i].perf_ns - responses[i-1].perf_ns for i in range(1, len(responses))]` | `ms` |
+| [**Output Token Throughput Per User**](docs/metrics_reference.md#output-token-throughput-per-user) | `output_token_throughput_per_user` | `1.0 / inter_token_latency_seconds` | `tokens/sec/user` |
+
+### Token Based Metrics
+
+Metrics for token-producing endpoints that track token counts and throughput. Requires text-generating endpoints (chat, completion, etc.).
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Output Token Count**](docs/metrics_reference.md#output-token-count) | `output_token_count` | `len(tokenizer.encode(content))` | `tokens` |
+| [**Output Sequence Length (OSL)**](docs/metrics_reference.md#output-sequence-length-osl) | `output_sequence_length` | `(output_token_count or 0) + (reasoning_token_count or 0)` | `tokens` |
+| [**Input Sequence Length (ISL)**](docs/metrics_reference.md#input-sequence-length-isl) | `input_sequence_length` | `len(tokenizer.encode(prompt))` | `tokens` |
+| [**Total Output Tokens**](docs/metrics_reference.md#total-output-tokens) | `total_output_tokens` | `sum(output_token_count for record in records)` | `tokens` |
+| [**Total Output Sequence Length**](docs/metrics_reference.md#total-output-sequence-length) | `total_osl` | `sum(output_sequence_length for record in records)` | `tokens` |
+| [**Total Input Sequence Length**](docs/metrics_reference.md#total-input-sequence-length) | `total_isl` | `sum(input_sequence_length for record in records)` | `tokens` |
+| [**Output Token Throughput**](docs/metrics_reference.md#output-token-throughput) | `output_token_throughput` | `total_osl / benchmark_duration_seconds` | `tokens/sec` |
+
+### Reasoning Metrics
+
+Metrics specific to models that support reasoning/thinking tokens. Requires models with separate `reasoning_content` field.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Reasoning Token Count**](docs/metrics_reference.md#reasoning-token-count) | `reasoning_token_count` | `len(tokenizer.encode(reasoning_content))` | `tokens` |
+| [**Total Reasoning Tokens**](docs/metrics_reference.md#total-reasoning-tokens) | `total_reasoning_tokens` | `sum(reasoning_token_count for record in records)` | `tokens` |
+
+### General Metrics
+
+Metrics available for all benchmark runs with no special requirements.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Request Latency**](docs/metrics_reference.md#request-latency) | `request_latency` | `responses[-1].perf_ns - start_perf_ns` | `ms` |
+| [**Request Throughput**](docs/metrics_reference.md#request-throughput) | `request_throughput` | `request_count / benchmark_duration_seconds` | `requests/sec` |
+| [**Request Count**](docs/metrics_reference.md#request-count) | `request_count` | `sum(1 for record if record.valid)` | `requests` |
+| [**Error Request Count**](docs/metrics_reference.md#error-request-count) | `error_request_count` | `sum(1 for record if not record.valid)` | `requests` |
+| [**Minimum Request Timestamp**](docs/metrics_reference.md#minimum-request-timestamp) | `min_request_timestamp` | `min(timestamp_ns for record in records)` | `datetime` |
+| [**Maximum Response Timestamp**](docs/metrics_reference.md#maximum-response-timestamp) | `max_response_timestamp` | `max(timestamp_ns + request_latency for record in records)` | `datetime` |
+| [**Benchmark Duration**](docs/metrics_reference.md#benchmark-duration) | `benchmark_duration` | `max_response_timestamp - min_request_timestamp` | `sec` |
+
+</br>
 
 
 ## Known Issues
