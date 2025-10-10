@@ -179,14 +179,14 @@ def _format_parameter_options(param: ParameterInfo) -> list[str]:
 
     combined = "<br>".join(f"`{opt}`" for opt in options)
     if param.display_name:
-        return [f"#### {param.display_name}", "", f"{combined}", ""]
+        return [f"#### {param.display_name}\n", f"{combined}\n"]
     else:
-        return [f"#### {combined}", ""]
+        return [f"#### {combined}\n"]
 
 
 def _add_parameter_details(lines: list[str], param: ParameterInfo) -> None:
     """Add description with choices and default value inline."""
-    description_parts = [param.description.rstrip(".") + "."]
+    description_parts = [param.description.strip().rstrip(".") + "."]
 
     if param.choices:
         choices_str = ", ".join(param.choices)
@@ -196,7 +196,7 @@ def _add_parameter_details(lines: list[str], param: ParameterInfo) -> None:
         description_parts.append(f"\n<br>**Default:** `{param.default_value}`.")
 
     full_description = " ".join(description_parts)
-    lines.extend([full_description, ""])
+    lines.extend([full_description.strip() + " \n"])
 
 
 def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> str:
@@ -209,16 +209,16 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
         "",
     ]
 
-    lines.extend(["## Command Line Options", ""])
+    lines.extend(["## Command Line Options\n"])
 
     for group_name, parameters in parameter_groups.items():
-        lines.extend([f"### {group_name} Options", ""])
+        lines.extend([f"### {group_name} Options\n"])
 
         for param in parameters:
             lines.extend(_format_parameter_options(param))
             _add_parameter_details(lines, param)
 
-    return "\n".join([line.strip() for line in lines])
+    return "\n".join([line.strip(" ") for line in lines]) + "\n"
 
 
 def main():

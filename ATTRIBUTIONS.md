@@ -1,3 +1,7 @@
+<!--
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+-->
 # Third-Party Asset Attributions
 
 This document provides attribution information for public domain assets used in this project.
@@ -21,7 +25,7 @@ This document provides attribution information for public domain assets used in 
 ### Getty Museum Images
 
 **Asset Information:**
-- **Files**: 
+- **Files**:
   - [`aiperf/dataset/generator/assets/source_images/0bfd8fdf-457f-43c8-9253-a2346d37d26a_1024.jpg`](aiperf/dataset/generator/assets/source_images/0bfd8fdf-457f-43c8-9253-a2346d37d26a_1024.jpg) - [Object 103QTD](https://www.getty.edu/art/collection/object/103QTD)
   - [`aiperf/dataset/generator/assets/source_images/119544eb-9bbf-47d1-8d93-a51de6370295_861.jpg`](aiperf/dataset/generator/assets/source_images/119544eb-9bbf-47d1-8d93-a51de6370295_861.jpg) - [Object 103SNG](https://www.getty.edu/art/collection/object/103SNG)
   - [`aiperf/dataset/generator/assets/source_images/1ba066e0-7291-4ef4-8a6e-e8724af7f046_865.jpg`](aiperf/dataset/generator/assets/source_images/1ba066e0-7291-4ef4-8a6e-e8724af7f046_865.jpg) - [Object 10962M](https://www.getty.edu/art/collection/object/10962M)
@@ -32,9 +36,9 @@ This document provides attribution information for public domain assets used in 
 **License Text:**
 
 > Creative Commons Legal Code
-> 
+>
 > CC0 1.0 Universal
-> 
+>
 >     CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM AND DOES NOT PROVIDE
 >     LEGAL SERVICES. DISTRIBUTION OF THIS DOCUMENT DOES NOT CREATE AN
 >     ATTORNEY-CLIENT RELATIONSHIP. CREATIVE COMMONS PROVIDES THIS
@@ -43,14 +47,14 @@ This document provides attribution information for public domain assets used in 
 >     PROVIDED HEREUNDER, AND DISCLAIMS LIABILITY FOR DAMAGES RESULTING FROM
 >     THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS PROVIDED
 >     HEREUNDER.
-> 
+>
 > Statement of Purpose
-> 
+>
 > The laws of most jurisdictions throughout the world automatically confer
 > exclusive Copyright and Related Rights (defined below) upon the creator
 > and subsequent owner(s) (each and all, an "owner") of an original work of
 > authorship and/or a database (each, a "Work").
-> 
+>
 > Certain owners wish to permanently relinquish those rights to a Work for
 > the purpose of contributing to a commons of creative, cultural and
 > scientific works ("Commons") that the public can reliably and without fear
@@ -61,7 +65,7 @@ This document provides attribution information for public domain assets used in 
 > culture and the further production of creative, cultural and scientific
 > works, or to gain reputation or greater distribution for their Work in
 > part through the use and efforts of others.
-> 
+>
 > For these and/or other purposes and motivations, and without any
 > expectation of additional consideration or compensation, the person
 > associating CC0 with a Work (the "Affirmer"), to the extent that he or she
@@ -69,12 +73,12 @@ This document provides attribution information for public domain assets used in 
 > elects to apply CC0 to the Work and publicly distribute the Work under its
 > terms, with knowledge of his or her Copyright and Related Rights in the
 > Work and the meaning and intended legal effect of CC0 on those rights.
-> 
+>
 > 1. Copyright and Related Rights. A Work made available under CC0 may be
 > protected by copyright and related or neighboring rights ("Copyright and
 > Related Rights"). Copyright and Related Rights include, but are not
 > limited to, the following:
-> 
+>
 >   i. the right to reproduce, adapt, distribute, perform, display,
 >      communicate, and translate a Work;
 >  ii. moral rights retained by the original author(s) and/or performer(s);
@@ -92,7 +96,7 @@ This document provides attribution information for public domain assets used in 
 > vii. other similar, equivalent or corresponding rights throughout the
 >      world based on applicable law or treaty, and any national
 >      implementations thereof.
-> 
+>
 > 2. Waiver. To the greatest extent permitted by, but not in contravention
 > of, applicable law, Affirmer hereby overtly, fully, permanently,
 > irrevocably and unconditionally waives, abandons, and surrenders all of
@@ -109,7 +113,7 @@ This document provides attribution information for public domain assets used in 
 > revocation, rescission, cancellation, termination, or any other legal or
 > equitable action to disrupt the quiet enjoyment of the Work by the public
 > as contemplated by Affirmer's express Statement of Purpose.
-> 
+>
 > 3. Public License Fallback. Should any part of the Waiver for any reason
 > be judged legally invalid or ineffective under applicable law, then the
 > Waiver shall be preserved to the maximum extent permitted taking into
@@ -131,9 +135,9 @@ This document provides attribution information for public domain assets used in 
 > Rights in the Work or (ii) assert any associated claims and causes of
 > action with respect to the Work, in either case contrary to Affirmer's
 > express Statement of Purpose.
-> 
+>
 > 4. Limitations and Disclaimers.
-> 
+>
 >  a. No trademark or patent rights held by Affirmer are waived, abandoned,
 >     surrendered, licensed or otherwise affected by this document.
 >  b. Affirmer offers the Work as-is and makes no representations or
@@ -156,7 +160,7 @@ This document provides attribution information for public domain assets used in 
 ## Usage Summary
 
 - **All assets are public domain** - no legal restrictions on use
-- **No attribution legally required** but recommended as good practice  
+- **No attribution legally required** but recommended as good practice
 - **Compatible with Apache 2.0** license used by this project
 - **No endorsement implied** by original sources
 
