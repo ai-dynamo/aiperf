@@ -18,7 +18,6 @@ from aiperf.exporters.csv_exporter import (
     CsvExporter,
 )
 from aiperf.exporters.display_units_utils import (
-    STAT_KEYS,
     convert_all_metrics_to_display_units,
     normalize_endpoint_display,
     to_display_unit,

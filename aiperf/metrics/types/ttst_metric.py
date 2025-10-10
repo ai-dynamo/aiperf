@@ -15,7 +15,7 @@ class TTSTMetric(BaseRecordMetric[int]):
         TTST = Second Response Timestamp - First Response Timestamp
     """
 
-    tag = "ttst"
+    tag = "time_to_second_token"
     header = "Time to Second Token"
     short_header = "TTST"
     unit = MetricTimeUnit.NANOSECONDS

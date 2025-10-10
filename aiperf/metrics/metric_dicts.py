@@ -188,8 +188,8 @@ class MetricArray(Generic[MetricValueTypeVarT]):
         """Compute metric stats with zero-copy"""
 
         arr = self.data
-        p1, p5, p25, p50, p75, p90, p95, p99 = np.percentile(
-            arr, [1, 5, 25, 50, 75, 90, 95, 99]
+        p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
+            arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
         return MetricResult(
             tag=tag,
@@ -201,6 +201,7 @@ class MetricArray(Generic[MetricValueTypeVarT]):
             std=float(np.std(arr)),
             p1=p1,
             p5=p5,
+            p10=p10,
             p25=p25,
             p50=p50,
             p75=p75,

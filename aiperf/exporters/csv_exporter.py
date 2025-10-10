@@ -10,6 +10,7 @@ from decimal import Decimal
 import aiofiles
 
 from aiperf.common.config.config_defaults import OutputDefaults
+from aiperf.common.constants import STAT_KEYS
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DataExporterType
 from aiperf.common.enums.metric_enums import MetricFlags

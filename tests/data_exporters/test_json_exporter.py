@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import tempfile
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
+from aiperf.common.models.export_models import JsonExportData
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.json_exporter import JsonExporter
 
@@ -48,6 +48,37 @@ def mock_user_config():
             model_names=["test-model"],
             type=EndpointType.CHAT,
             custom_endpoint="custom_endpoint",
+class TestJsonExporter:
+    @pytest.fixture
+    def sample_records(self):
+        return [
+            MetricResult(
+                tag="time_to_first_token",
+                header="Time to First Token",
+                unit="ns",
+                avg=123.0 * NANOS_PER_MILLIS,
+                min=100.0 * NANOS_PER_MILLIS,
+                max=150.0 * NANOS_PER_MILLIS,
+                p1=101.0 * NANOS_PER_MILLIS,
+                p5=105.0 * NANOS_PER_MILLIS,
+                p25=110.0 * NANOS_PER_MILLIS,
+                p50=120.0 * NANOS_PER_MILLIS,
+                p75=130.0 * NANOS_PER_MILLIS,
+                p90=140.0 * NANOS_PER_MILLIS,
+                p95=None,
+                p99=149.0 * NANOS_PER_MILLIS,
+                std=10.0 * NANOS_PER_MILLIS,
+            )
+        ]
+
+    @pytest.fixture
+    def mock_user_config(self):
+        return UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                custom_endpoint="custom_endpoint",
+            )
         )
     )
 
@@ -104,19 +135,16 @@ class TestJsonExporter:
             assert expected_file.exists()
 
             with open(expected_file) as f:
-                data = json.load(f)
+                data = JsonExportData.model_validate_json(f.read())
 
-            assert "records" in data
-            records = data["records"]
-            assert isinstance(records, dict)
-            assert len(records) == 1
-            assert "ttft" in records
-            assert records["ttft"]["unit"] == "ms"
-            assert records["ttft"]["avg"] == 123.0
-            assert records["ttft"]["p1"] == 101.0
+            assert isinstance(data, JsonExportData)
+            assert data.time_to_first_token is not None
+            assert data.time_to_first_token.unit == "ms"
+            assert data.time_to_first_token.avg == 123.0
+            assert data.time_to_first_token.p1 == 101.0
 
-            assert "input_config" in data
-            assert isinstance(data["input_config"], dict)
+            assert data.input_config is not None
+            assert isinstance(data.input_config, UserConfig)
             # TODO: Uncomment this once we have expanded the output config to include all important fields
             # assert "output" in data["input_config"]
             # assert data["input_config"]["output"]["artifact_directory"] == str(

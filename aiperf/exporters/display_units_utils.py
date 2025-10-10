@@ -5,26 +5,13 @@ from collections.abc import Iterable
 from urllib.parse import urlparse
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import STAT_KEYS
 from aiperf.common.exceptions import MetricUnitError
 from aiperf.common.models import MetricResult
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_registry import MetricRegistry
 
 _logger = AIPerfLogger(__name__)
-STAT_KEYS = [
-    "avg",
-    "min",
-    "max",
-    "p1",
-    "p5",
-    "p25",
-    "p50",
-    "p75",
-    "p90",
-    "p95",
-    "p99",
-    "std",
-]
 
 
 def normalize_endpoint_display(url: str) -> str:

@@ -32,6 +32,10 @@ from aiperf.common.models.error_models import (
     ErrorDetailsCount,
     ExitErrorInfo,
 )
+from aiperf.common.models.export_models import (
+    JsonExportData,
+    JsonMetricResult,
+)
 from aiperf.common.models.health_models import (
     CPUTimes,
     CtxSwitches,
@@ -116,6 +120,8 @@ __all__ = [
     "Image",
     "InferenceServerResponse",
     "InputsFile",
+    "JsonExportData",
+    "JsonMetricResult",
     "Media",
     "MetricRecordInfo",
     "MetricRecordMetadata",
