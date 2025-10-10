@@ -177,8 +177,9 @@ def _format_parameter_options(param: ParameterInfo) -> str:
     if not options:
         return ""
 
-    # Wrap each option in <nobr> to prevent line breaks within the option
-    return "<br>".join(f"<nobr>`{opt}`</nobr>" for opt in options)
+    # Format each option with backticks
+    # Keep the space between option and type - table cells typically won't wrap within code
+    return "<br>".join(f"`{opt}`" for opt in options)
 
 
 def _format_parameter_description(param: ParameterInfo) -> str:
