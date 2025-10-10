@@ -218,7 +218,7 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
             lines.extend(_format_parameter_options(param))
             _add_parameter_details(lines, param)
 
-    return "\n".join(lines)
+    return "\n".join([line.strip() for line in lines])
 
 
 def main():
