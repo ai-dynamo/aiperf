@@ -237,10 +237,16 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
     for group_name, parameters in parameter_groups.items():
         lines.extend([f"### {group_name} Options", ""])
 
-        # Create table header with Type as second column
-        lines.extend(
-            ["| Option | Type | Description |", "|--------|------|-------------|"]
-        )
+        # Create HTML table with nowrap on first column
+        lines.append("<table>")
+        lines.append("<thead>")
+        lines.append("<tr>")
+        lines.append("<th style='white-space: nowrap;'>Option</th>")
+        lines.append("<th>Type</th>")
+        lines.append("<th>Description</th>")
+        lines.append("</tr>")
+        lines.append("</thead>")
+        lines.append("<tbody>")
 
         # Add each parameter as a table row
         for param in parameters:
@@ -248,11 +254,17 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
             option_col = _format_parameter_options(param)
             type_col = _format_parameter_type(param)
             description_col = _format_parameter_description(param)
-            # Add anchor ID at the start of the option column
-            lines.append(
-                f"| <a id='{anchor_id}'></a>{option_col} | {type_col} | {description_col} |"
-            )
 
+            lines.append("<tr>")
+            lines.append(
+                f"<td style='white-space: nowrap;'><a id='{anchor_id}'></a>{option_col}</td>"
+            )
+            lines.append(f"<td>{type_col}</td>")
+            lines.append(f"<td>{description_col}</td>")
+            lines.append("</tr>")
+
+        lines.append("</tbody>")
+        lines.append("</table>")
         lines.append("")  # Empty line after table
 
     return "\n".join(lines)
