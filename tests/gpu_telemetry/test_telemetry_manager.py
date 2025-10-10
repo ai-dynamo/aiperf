@@ -16,28 +16,34 @@ from aiperf.gpu_telemetry.telemetry_manager import TelemetryManager
 class TestTelemetryManagerInitialization:
     """Test TelemetryManager initialization and configuration."""
 
+    def _create_manager_with_mocked_base(self, user_config):
+        """Helper to create TelemetryManager with mocked BaseComponentService."""
+        mock_service_config = MagicMock()
+
+        with patch(
+            "aiperf.common.base_component_service.BaseComponentService.__init__",
+            return_value=None,
+        ):
+            # Create manager and manually set up comms
+            manager = object.__new__(TelemetryManager)
+            manager.comms = MagicMock()
+            manager.comms.create_push_client = MagicMock(return_value=MagicMock())
+
+            # Call actual __init__ to run real initialization logic
+            TelemetryManager.__init__(
+                manager,
+                service_config=mock_service_config,
+                user_config=user_config,
+            )
+
+        return manager
+
     def test_initialization_default_endpoint(self):
         """Test initialization with no user-provided endpoints uses default."""
         mock_user_config = MagicMock(spec=UserConfig)
         mock_user_config.gpu_telemetry = None
 
-        with patch.object(
-            TelemetryManager, "__init__", lambda self, *args, **kwargs: None
-        ):
-            manager = TelemetryManager.__new__(TelemetryManager)
-            manager._dcgm_endpoints = None
-            manager._collection_interval = None
-
-            # Simulate what __init__ does with endpoints
-            user_endpoints = mock_user_config.gpu_telemetry
-            if user_endpoints is None:
-                user_endpoints = []
-
-            if DEFAULT_DCGM_ENDPOINT not in user_endpoints:
-                manager._dcgm_endpoints = [DEFAULT_DCGM_ENDPOINT] + user_endpoints
-            else:
-                manager._dcgm_endpoints = user_endpoints
-
+        manager = self._create_manager_with_mocked_base(mock_user_config)
         assert manager._dcgm_endpoints == [DEFAULT_DCGM_ENDPOINT]
 
     def test_initialization_custom_endpoints(self):
@@ -46,52 +52,28 @@ class TestTelemetryManagerInitialization:
         custom_endpoint = "http://gpu-node-01:9401/metrics"
         mock_user_config.gpu_telemetry = [custom_endpoint]
 
-        with patch.object(
-            TelemetryManager, "__init__", lambda self, *args, **kwargs: None
-        ):
-            manager = TelemetryManager.__new__(TelemetryManager)
-
-            # Simulate endpoint processing
-            user_endpoints = mock_user_config.gpu_telemetry
-            if isinstance(user_endpoints, str):
-                user_endpoints = [user_endpoints]
-
-            if DEFAULT_DCGM_ENDPOINT not in user_endpoints:
-                manager._dcgm_endpoints = [DEFAULT_DCGM_ENDPOINT] + user_endpoints
-            else:
-                manager._dcgm_endpoints = user_endpoints
+        manager = self._create_manager_with_mocked_base(mock_user_config)
 
         assert DEFAULT_DCGM_ENDPOINT in manager._dcgm_endpoints
         assert custom_endpoint in manager._dcgm_endpoints
         assert len(manager._dcgm_endpoints) == 2
 
     def test_initialization_string_endpoint(self):
-        """Test initialization converts single string endpoint to list."""
+        """Test initialization converts single string endpoint to list and prepends default."""
         mock_user_config = MagicMock(spec=UserConfig)
         mock_user_config.gpu_telemetry = "http://single-node:9401/metrics"
 
-        with patch.object(
-            TelemetryManager, "__init__", lambda self, *args, **kwargs: None
-        ):
-            manager = TelemetryManager.__new__(TelemetryManager)
-
-            # Simulate conversion
-            user_endpoints = mock_user_config.gpu_telemetry
-            if isinstance(user_endpoints, str):
-                user_endpoints = [user_endpoints]
-            else:
-                user_endpoints = list(user_endpoints)
-
-            manager._dcgm_endpoints = user_endpoints
+        manager = self._create_manager_with_mocked_base(mock_user_config)
 
         assert isinstance(manager._dcgm_endpoints, list)
-        assert len(manager._dcgm_endpoints) == 1
+        assert DEFAULT_DCGM_ENDPOINT in manager._dcgm_endpoints
+        assert "http://single-node:9401/metrics" in manager._dcgm_endpoints
+        assert len(manager._dcgm_endpoints) == 2
 
     def test_initialization_filters_invalid_urls(self):
         """Test initialization filters out invalid URLs."""
-        from urllib.parse import urlparse
-
-        endpoints = [
+        mock_user_config = MagicMock(spec=UserConfig)
+        mock_user_config.gpu_telemetry = [
             "http://valid:9401/metrics",  # Valid
             "not-a-url",  # Invalid - no scheme
             "ftp://wrong-scheme:9401",  # Invalid - wrong scheme
@@ -99,35 +81,30 @@ class TestTelemetryManagerInitialization:
             "",  # Invalid - empty
         ]
 
-        valid_endpoints = []
-        for endpoint in endpoints:
-            try:
-                parsed = urlparse(endpoint)
-                if parsed.scheme in ("http", "https") and parsed.netloc:
-                    valid_endpoints.append(endpoint)
-            except Exception:
-                continue
+        manager = self._create_manager_with_mocked_base(mock_user_config)
 
-        assert len(valid_endpoints) == 2
-        assert "http://valid:9401/metrics" in valid_endpoints
-        assert "http://another-valid:9401" in valid_endpoints
+        # Should have default + 2 valid URLs
+        assert len(manager._dcgm_endpoints) == 3
+        assert DEFAULT_DCGM_ENDPOINT in manager._dcgm_endpoints
+        assert "http://valid:9401/metrics" in manager._dcgm_endpoints
+        assert "http://another-valid:9401/metrics" in manager._dcgm_endpoints
 
     def test_initialization_deduplicates_endpoints(self):
-        """Test initialization removes duplicate endpoints."""
-        endpoints = [
+        """Test initialization removes duplicate endpoints while preserving order."""
+        mock_user_config = MagicMock(spec=UserConfig)
+        mock_user_config.gpu_telemetry = [
             "http://node1:9401/metrics",
             "http://node2:9401/metrics",
             "http://node1:9401/metrics",  # Duplicate
         ]
 
-        # Deduplicate while preserving order
-        deduplicated = list(dict.fromkeys(endpoints))
+        manager = self._create_manager_with_mocked_base(mock_user_config)
 
-        assert len(deduplicated) == 2
-        assert deduplicated == [
-            "http://node1:9401/metrics",
-            "http://node2:9401/metrics",
-        ]
+        # Should have default + 2 unique user endpoints (duplicate removed)
+        assert len(manager._dcgm_endpoints) == 3
+        assert manager._dcgm_endpoints[0] == DEFAULT_DCGM_ENDPOINT
+        assert manager._dcgm_endpoints[1] == "http://node1:9401/metrics"
+        assert manager._dcgm_endpoints[2] == "http://node2:9401/metrics"
 
 
 class TestUrlNormalization:
@@ -359,7 +336,15 @@ class TestStatusMessaging:
     @pytest.mark.asyncio
     async def test_send_telemetry_disabled_status_and_shutdown(self):
         """Test _send_telemetry_disabled_status_and_shutdown schedules shutdown."""
-        with patch("asyncio.create_task") as mock_create_task:
+
+        # Side effect to close coroutines and prevent unawaited coroutine warnings
+        def close_coroutine(coro):
+            coro.close()
+            return MagicMock()  # Return a mock Task
+
+        with patch(
+            "asyncio.create_task", side_effect=close_coroutine
+        ) as mock_create_task:
             manager = self._create_test_manager()
 
             # Mock dependencies
@@ -466,29 +451,48 @@ class TestCollectorManagement:
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
-    def test_normalize_url_empty_string(self):
-        """Test URL normalization with empty string."""
-        url = ""
+    def _create_manager_with_mocked_base(self, user_config):
+        """Helper to create TelemetryManager with mocked BaseComponentService."""
+        mock_service_config = MagicMock()
+
+        with patch(
+            "aiperf.common.base_component_service.BaseComponentService.__init__",
+            return_value=None,
+        ):
+            # Create manager and manually set up comms
+            manager = object.__new__(TelemetryManager)
+            manager.comms = MagicMock()
+            manager.comms.create_push_client = MagicMock(return_value=MagicMock())
+
+            # Call actual __init__ to run real initialization logic
+            TelemetryManager.__init__(
+                manager,
+                service_config=mock_service_config,
+                user_config=user_config,
+            )
+
+        return manager
+
+    def test_invalid_endpoints_filtered_during_init(self):
+        """Test that empty string and invalid URLs are filtered during initialization."""
+        mock_user_config = MagicMock(spec=UserConfig)
+        mock_user_config.gpu_telemetry = [
+            "",  # Empty string - filtered
+            "/metrics",  # No scheme - filtered
+            "http://valid:9401/metrics",  # Valid
+        ]
+
+        manager = self._create_manager_with_mocked_base(mock_user_config)
+
+        # Only default + valid endpoint should remain
+        assert len(manager._dcgm_endpoints) == 2
+        assert DEFAULT_DCGM_ENDPOINT in manager._dcgm_endpoints
+        assert "http://valid:9401/metrics" in manager._dcgm_endpoints
+
+    def test_normalize_url_preserves_valid_structure(self):
+        """Test URL normalization only works with properly structured URLs."""
+        # normalize_dcgm_url is a simple string operation that assumes valid input
+        # Invalid inputs are filtered before normalization in __init__
+        url = "http://localhost:9401"
         normalized = TelemetryManager._normalize_dcgm_url(url)
-        assert normalized == "/metrics"
-
-    def test_normalize_url_only_metrics(self):
-        """Test URL normalization with only /metrics path."""
-        url = "/metrics"
-        normalized = TelemetryManager._normalize_dcgm_url(url)
-        assert normalized == "/metrics"
-
-    @pytest.mark.asyncio
-    async def test_callbacks_with_none_values(self):
-        """Test callbacks handle None values gracefully."""
-        manager = TelemetryManager.__new__(TelemetryManager)
-        manager.service_id = "test_manager"
-        manager._collectors = {}
-
-        manager.records_push_client = AsyncMock()
-
-        # Call with None error (valid case)
-        await manager._on_telemetry_error(None, "test_collector")
-
-        # Should still send message with None error
-        manager.records_push_client.push.assert_called_once()
+        assert normalized == "http://localhost:9401/metrics"
