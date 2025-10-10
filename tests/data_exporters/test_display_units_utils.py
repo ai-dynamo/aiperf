@@ -72,7 +72,7 @@ class TestDisplayUnitsUtils:
     def test_converts_ns_to_ms_and_returns_copy(self):
         reg = FakeRegistry(base_unit="ns", display_unit="ms")
         src = MetricResult(
-            tag="ttft",
+            tag="time_to_first_token",
             unit="ns",
             header="TTFT",
             avg=1_500_000.0,
@@ -96,7 +96,11 @@ class TestDisplayUnitsUtils:
     def test_preserves_none_fields(self):
         reg = FakeRegistry(base_unit="ns", display_unit="ms")
         src = MetricResult(
-            tag="ttft", unit="ns", header="TTFT", avg=1_000_000.0, p95=None
+            tag="time_to_first_token",
+            unit="ns",
+            header="TTFT",
+            avg=1_000_000.0,
+            p95=None,
         )
         out = to_display_unit(src, reg)
         assert out.p95 is None
@@ -107,7 +111,9 @@ class TestDisplayUnitsUtils:
         monkeypatch.setattr(_logger, "error", err_mock)
         reg = FakeRegistry(base_unit="ns", display_unit="ms")
         # record claims "ms" but base is "ns"
-        src = MetricResult(tag="ttft", unit="ms", header="TTFT", avg=1_000_000.0)
+        src = MetricResult(
+            tag="time_to_first_token", unit="ms", header="TTFT", avg=1_000_000.0
+        )
         to_display_unit(src, reg)
         assert err_mock.call_count == 1
         msg = err_mock.call_args[0][0]
@@ -118,7 +124,9 @@ class TestDisplayUnitsUtils:
         monkeypatch.setattr(_logger, "warning", warn_mock)
         # Force convert_to to raise
         reg = FakeRegistry(base_unit="ns", display_unit="ms", raise_on_convert=True)
-        src = MetricResult(tag="ttft", unit="ns", header="TTFT", avg=1_000_000.0)
+        src = MetricResult(
+            tag="time_to_first_token", unit="ns", header="TTFT", avg=1_000_000.0
+        )
         out = to_display_unit(src, reg)
         # Unit string still updated to display (ms), value left as original (since conversion failed)
         assert out.unit == "ms"
@@ -127,9 +135,11 @@ class TestDisplayUnitsUtils:
 
     def test_convert_all_metrics_to_display_units(self):
         reg = FakeRegistry(base_unit="ns", display_unit="ms")
-        a = MetricResult(tag="ttft", unit="ns", header="TTFT", avg=1_000_000.0)
+        a = MetricResult(
+            tag="time_to_first_token", unit="ns", header="TTFT", avg=1_000_000.0
+        )
         b = MetricResult(tag="foo", unit="ns", header="Foo", avg=2_000_000.0)
         out = convert_all_metrics_to_display_units([a, b], reg)
-        assert set(out.keys()) == {"ttft", "foo"}
-        assert out["ttft"].unit == "ms"
+        assert set(out.keys()) == {"time_to_first_token", "foo"}
+        assert out["time_to_first_token"].unit == "ms"
         assert out["foo"].avg == pytest.approx(2.0)

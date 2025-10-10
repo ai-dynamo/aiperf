@@ -47,7 +47,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --request-count 20 \
-    --goodput "ttft:100 inter_token_latency:3.40"
+    --goodput "time_to_first_token:100 inter_token_latency:3.40"
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 

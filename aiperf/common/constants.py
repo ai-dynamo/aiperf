@@ -8,6 +8,22 @@ NANOS_PER_MILLIS = 1_000_000
 MILLIS_PER_SECOND = 1000
 BYTES_PER_MIB = 1024 * 1024
 
+STAT_KEYS = [
+    "avg",
+    "min",
+    "max",
+    "p1",
+    "p5",
+    "p10",
+    "p25",
+    "p50",
+    "p75",
+    "p90",
+    "p95",
+    "p99",
+    "std",
+]
+
 
 GRACEFUL_SHUTDOWN_TIMEOUT = 5.0
 """Default timeout for shutting down services in seconds."""

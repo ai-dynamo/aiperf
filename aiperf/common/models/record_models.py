@@ -12,37 +12,25 @@ from pydantic import (
     SerializeAsAny,
 )
 
-from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.constants import NANOS_PER_SECOND, STAT_KEYS
 from aiperf.common.enums import CreditPhase, SSEFieldType
 from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
+from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.types import MetricTagT
 
 
-class MetricResult(AIPerfBaseModel):
+class MetricResult(JsonMetricResult):
     """The result values of a single metric."""
 
     tag: MetricTagT = Field(description="The unique identifier of the metric")
     # NOTE: We do not use a MetricUnitT here, as that is harder to de-serialize from JSON strings with pydantic.
     #       If we need an instance of a MetricUnitT, lookup the unit based on the tag in the MetricRegistry.
-    unit: str = Field(description="The unit of the metric, e.g. 'ms' or 'requests/sec'")
     header: str = Field(
         description="The user friendly name of the metric (e.g. 'Inter Token Latency')"
     )
-    avg: float | None = None
-    min: int | float | None = None
-    max: int | float | None = None
-    p1: float | None = None
-    p5: float | None = None
-    p25: float | None = None
-    p50: float | None = None
-    p75: float | None = None
-    p90: float | None = None
-    p95: float | None = None
-    p99: float | None = None
-    std: float | None = None
     count: int | None = Field(
         default=None,
         description="The total number of records used to calculate the metric",
@@ -54,6 +42,13 @@ class MetricResult(AIPerfBaseModel):
         from aiperf.metrics.metric_registry import MetricRegistry
 
         return to_display_unit(self, MetricRegistry)
+
+    def to_json_result(self) -> JsonMetricResult:
+        """Convert the metric result to a JsonMetricResult."""
+        result = JsonMetricResult(unit=self.unit)
+        for stat in STAT_KEYS:
+            setattr(result, stat, getattr(self, stat, None))
+        return result
 
 
 class MetricValue(AIPerfBaseModel):

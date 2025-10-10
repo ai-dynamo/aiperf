@@ -18,7 +18,6 @@ from aiperf.exporters.csv_exporter import (
     CsvExporter,
 )
 from aiperf.exporters.display_units_utils import (
-    STAT_KEYS,
     convert_all_metrics_to_display_units,
     to_display_unit,
 )
@@ -36,7 +35,6 @@ from aiperf.exporters.internal_metrics_console_exporter import (
     ConsoleInternalMetricsExporter,
 )
 from aiperf.exporters.json_exporter import (
-    JsonExportData,
     JsonExporter,
 )
 
@@ -49,9 +47,7 @@ __all__ = [
     "ExporterConfig",
     "ExporterManager",
     "FileExportInfo",
-    "JsonExportData",
     "JsonExporter",
-    "STAT_KEYS",
     "convert_all_metrics_to_display_units",
     "to_display_unit",
 ]

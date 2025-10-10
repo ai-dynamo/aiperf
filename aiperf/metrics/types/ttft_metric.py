@@ -15,7 +15,7 @@ class TTFTMetric(BaseRecordMetric[int]):
         TTFT = First Response Timestamp - Request Start Timestamp
     """
 
-    tag = "ttft"
+    tag = "time_to_first_token"
     header = "Time to First Token"
     short_header = "TTFT"
     unit = MetricTimeUnit.NANOSECONDS
