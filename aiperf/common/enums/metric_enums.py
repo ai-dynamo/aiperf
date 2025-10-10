@@ -643,7 +643,7 @@ class MetricFlags(Flag):
 
     GPU_TELEMETRY = 1 << 11
     """Metrics that collect GPU telemetry data such as power usage, memory, and utilization."""
-    
+
     NO_INDIVIDUAL_RECORDS = 1 << 12
     """Metrics that should not be exported for individual records. These are typically aggregate metrics.
     This is used to filter out metrics such as request count or min/max timestamps that are not relevant to individual records."""

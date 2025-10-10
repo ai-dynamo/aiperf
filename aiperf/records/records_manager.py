@@ -63,10 +63,6 @@ from aiperf.common.protocols import (
     ServiceProtocol,
     TelemetryResultsProcessorProtocol,
 )
-from aiperf.common.types import MetricTagT
-from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
-from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
-from aiperf.common.protocols import ResultsProcessorProtocol, ServiceProtocol
 from aiperf.records.phase_completion import (
     PhaseCompletionChecker,
 )
@@ -269,16 +265,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         return True
 
     async def _check_if_all_records_received(self) -> None:
-        """Check if all records have been received, and if so, publish a message and process the records.
-
-        Uses PhaseCompletionChecker strategy to determine if processing is complete based on:
-        - Number of records processed vs expected final count
-        - Timeout conditions
-        - Expected benchmark duration
-
-        If complete, publishes AllRecordsReceivedMessage and triggers result processing.
-        Thread-safe using processing_status_lock to prevent race conditions.
-        """
+        """Check if all records have been received, and if so, publish a message and process the records."""
         all_records_received = False
 
         async with self.processing_status_lock:
@@ -330,20 +317,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _send_results_to_results_processors(
         self, record_data: MetricRecordsData
     ) -> None:
-        """Send the results to inference metric results processors only.
-
-        Distributes inference metrics to all registered metric processors (not telemetry processors)
-        for real-time processing and aggregation. Runs all processor calls concurrently.
-
-        Args:
-            results: List of metric dictionaries from a single request, where each dict maps
-                metric tags to their values
-        """
+        """Send the results to each of the metric results processors."""
         await asyncio.gather(
             *[
-                results_processor.process_result(result)
+                results_processor.process_result(record_data)
                 for results_processor in self._metric_results_processors
-                for result in results
             ]
         )
 
@@ -511,22 +489,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ]
 
     async def _process_results(self, cancelled: bool) -> ProcessRecordsResult:
-        """Process the results by calling summarize on all metric processors.
-
-        Collects summarized results from all metric processors, packages them into
-        ProfileResults, and publishes via message bus. Also triggers telemetry results
-        publishing as a separate step.
-
-        Args:
-            cancelled: Whether the profiling run was cancelled by user or error
-
-        Returns:
-            ProcessRecordsResult: Contains ProfileResults with aggregated metrics and any errors
-                encountered during processing
-        """
+        """Process the results."""
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
 
         self.info("Processing records results...")
+        # Process the records through the metric results processors only.
         results = await asyncio.gather(
             *[
                 results_processor.summarize()
@@ -657,15 +624,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
 
     async def get_error_summary(self) -> list[ErrorDetailsCount]:
-        """Generate a summary of the error records from inference requests.
-
-        Thread-safe method that returns aggregated error counts for all errors
-        encountered during inference request processing.
-
-        Returns:
-            list[ErrorDetailsCount]: List of error details with occurrence counts,
-                sorted by error type
-        """
+        """Generate a summary of the error records."""
         async with self.error_summary_lock:
             return [
                 ErrorDetailsCount(error_details=error_details, count=count)
