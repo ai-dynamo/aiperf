@@ -327,37 +327,6 @@ retry: 5000"""
         result = parse_sse_message("data: test", perf_ns_value)
         assert result.perf_ns == perf_ns_value
 
-    def test_parse_large_message(self, base_perf_ns: int) -> None:
-        """Test parsing performance with large messages."""
-        # Create a large SSE message with many fields
-        large_data = "x" * 10000  # 10KB of data
-        raw_message = f"data: {large_data}"
-
-        start_time = time.perf_counter()
-        result = parse_sse_message(raw_message, base_perf_ns)
-        end_time = time.perf_counter()
-
-        # Should parse quickly (less than 100ms for 10KB)
-        assert (end_time - start_time) < 0.1
-        assert result.perf_ns == base_perf_ns
-        assert len(result.packets) == 1
-        assert result.packets[0].value == large_data
-
-    def test_parse_many_packets(self, base_perf_ns: int) -> None:
-        """Test parsing performance with many fields."""
-        # Create message with 1000 fields
-        lines = [f"data: field_{i}_data" for i in range(1000)]
-        raw_message = "\n".join(lines)
-
-        start_time = time.perf_counter()
-        result = parse_sse_message(raw_message, base_perf_ns)
-        end_time = time.perf_counter()
-
-        # Should parse quickly (less than 250ms for 1000 fields)
-        assert (end_time - start_time) < 0.250
-        assert result.perf_ns == base_perf_ns
-        assert len(result.packets) == 1000
-
     def test_parse_with_fixture_data(
         self, complex_sse_message_data: dict[str, str], base_perf_ns: int
     ) -> None:
@@ -477,3 +446,38 @@ retry: 5000"""
         else:
             # For non-standard fields, preserve exact case
             assert result.packets[0].name == field_name_case
+
+
+class TestParseSSEMessagePerformance:
+    @pytest.mark.performance
+    def test_parse_large_message(self, base_perf_ns: int) -> None:
+        """Test parsing performance with large messages."""
+        # Create a large SSE message with many fields
+        large_data = "x" * 10000  # 10KB of data
+        raw_message = f"data: {large_data}"
+
+        start_time = time.perf_counter()
+        result = parse_sse_message(raw_message, base_perf_ns)
+        end_time = time.perf_counter()
+
+        # Should parse quickly (less than 100ms for 10KB)
+        assert (end_time - start_time) < 0.1
+        assert result.perf_ns == base_perf_ns
+        assert len(result.packets) == 1
+        assert result.packets[0].value == large_data
+
+    @pytest.mark.performance
+    def test_parse_many_packets(self, base_perf_ns: int) -> None:
+        """Test parsing performance with many fields."""
+        # Create message with 1000 fields
+        lines = [f"data: field_{i}_data" for i in range(1000)]
+        raw_message = "\n".join(lines)
+
+        start_time = time.perf_counter()
+        result = parse_sse_message(raw_message, base_perf_ns)
+        end_time = time.perf_counter()
+
+        # Should parse quickly (less than 250ms for 1000 fields)
+        assert (end_time - start_time) < 0.250
+        assert result.perf_ns == base_perf_ns
+        assert len(result.packets) == 1000
