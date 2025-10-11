@@ -156,6 +156,9 @@ class WorkerManager(BaseComponentService):
         # High Load Status
         elif message.health.cpu_usage > DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE:
             info.last_high_load_ns = time.time_ns()
+            self.warning(
+                f"CPU usage for {message.service_id} is {round(message.health.cpu_usage)}%. AIPerf results may be inaccurate."
+            )
             info.status = WorkerStatus.HIGH_LOAD
         elif (time.time_ns() - (info.last_high_load_ns or 0)) / NANOS_PER_SECOND < DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME:  # fmt: skip
             info.status = WorkerStatus.HIGH_LOAD
