@@ -11,7 +11,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Generator
 from io import StringIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -399,3 +399,19 @@ def mock_aiofiles_stringio():
 
     with patch("aiofiles.open", side_effect=mock_aiofiles_open):
         yield string_buffer
+
+
+@pytest.fixture
+def mock_macos_child_process():
+    """Mock for simulating a child process on macOS."""
+    mock_process = Mock()
+    mock_process.name = "DATASET_MANAGER_process"  # Not MainProcess
+    return mock_process
+
+
+@pytest.fixture
+def mock_macos_main_process():
+    """Mock for simulating the main process on macOS."""
+    mock_process = Mock()
+    mock_process.name = "MainProcess"
+    return mock_process
