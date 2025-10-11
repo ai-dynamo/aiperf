@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from dataclasses import dataclass
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator, Field, model_validator
@@ -53,49 +52,6 @@ def parse_service_types(input: Any | None) -> set[ServiceType] | None:
     }
 
 
-@dataclass(frozen=True)
-class EnvironmentDefaults:
-    """Default values for environment variables. All environment variables
-    should be prefixed with AIPERF_."""
-
-    COMMAND_RESPONSE_TIMEOUT = 30.0
-    COMMS_REQUEST_TIMEOUT = 90.0
-    CONNECTION_PROBE_INTERVAL = 0.1
-    CONNECTION_PROBE_TIMEOUT = 30.0
-    CREDIT_PROGRESS_REPORT_INTERVAL = 2.0
-    DEV_MODE = False
-    DEBUG_SERVICES = None
-    DISABLE_UVLOOP = False
-    ENABLE_YAPPI = False
-    HEARTBEAT_INTERVAL = 5.0
-    HTTP_CONNECTION_LIMIT = 2500
-    MAX_REGISTRATION_ATTEMPTS = 10
-    MAX_WORKERS_CAP = 32
-    PROFILE_CONFIGURE_TIMEOUT = 300.0
-    PROFILE_START_TIMEOUT = 60.0
-    PULL_CLIENT_MAX_CONCURRENCY = 100_000
-    REALTIME_METRICS_INTERVAL = 5.0
-    RECORD_EXPORT_BATCH_SIZE = 100
-    RECORD_PROCESSOR_SCALE_FACTOR = 4
-    RECORDS_PROGRESS_REPORT_INTERVAL = 2.0
-    REGISTRATION_INTERVAL = 1.0
-    SERVICE_REGISTRATION_TIMEOUT = 30.0
-    SERVICE_START_TIMEOUT = 30.0
-    SHOW_INTERNAL_METRICS = False
-    SHOW_EXPERIMENTAL_METRICS = False
-    TASK_CANCEL_TIMEOUT_SHORT = 2.0
-    TRACE_SERVICES = None
-    UI_MIN_UPDATE_PERCENT = 1.0
-    WORKER_CHECK_INTERVAL = 1.0
-    WORKER_ERROR_RECOVERY_TIME = 3.0
-    WORKER_HEALTH_CHECK_INTERVAL = 2.0
-    WORKER_HIGH_LOAD_CPU_USAGE = 75.0
-    WORKER_HIGH_LOAD_RECOVERY_TIME = 5.0
-    WORKER_STALE_TIME = 10.0
-    WORKER_STATUS_SUMMARY_INTERVAL = 0.5
-    ZMQ_CONTEXT_TERM_TIMEOUT = 10.0
-
-
 class _Environment(BaseSettings):
     """
     Singleton environment configuration loaded from environment variables.
@@ -128,270 +84,202 @@ class _Environment(BaseSettings):
 
         return self
 
-    COMMAND_RESPONSE_TIMEOUT: Annotated[
-        float,
-        Field(
-            description="Default timeout for command responses in seconds",
-        ),
-    ] = EnvironmentDefaults.COMMAND_RESPONSE_TIMEOUT
+    COMMAND_RESPONSE_TIMEOUT: float = Field(
+        default=30.0,
+        description="Default timeout for command responses in seconds",
+    )
 
-    COMMS_REQUEST_TIMEOUT: Annotated[
-        float,
-        Field(
-            description="Default timeout for requests from req_clients to rep_clients in seconds",
-        ),
-    ] = EnvironmentDefaults.COMMS_REQUEST_TIMEOUT
+    COMMS_REQUEST_TIMEOUT: float = Field(
+        default=90.0,
+        description="Default timeout for requests from req_clients to rep_clients in seconds",
+    )
 
-    CONNECTION_PROBE_INTERVAL: Annotated[
-        float,
-        Field(
-            description="Default interval for connection probes in seconds until a response is received",
-        ),
-    ] = EnvironmentDefaults.CONNECTION_PROBE_INTERVAL
+    CONNECTION_PROBE_INTERVAL: float = Field(
+        default=0.1,
+        description="Default interval for connection probes in seconds until a response is received",
+    )
 
-    CONNECTION_PROBE_TIMEOUT: Annotated[
-        float,
-        Field(
-            description="Maximum amount of time to wait for connection probe response",
-        ),
-    ] = EnvironmentDefaults.CONNECTION_PROBE_TIMEOUT
+    CONNECTION_PROBE_TIMEOUT: float = Field(
+        default=30.0,
+        description="Maximum amount of time to wait for connection probe response",
+    )
 
-    CREDIT_PROGRESS_REPORT_INTERVAL: Annotated[
-        float,
-        Field(
-            description="Default interval in seconds between credit progress report messages",
-        ),
-    ] = EnvironmentDefaults.CREDIT_PROGRESS_REPORT_INTERVAL
+    CREDIT_PROGRESS_REPORT_INTERVAL: float = Field(
+        default=2.0,
+        description="Default interval in seconds between credit progress report messages",
+    )
 
-    DEV_MODE: Annotated[
-        bool,
-        Field(
-            description="Enable AIPerf Developer mode",
-        ),
-    ] = EnvironmentDefaults.DEV_MODE
+    DEV_MODE: bool = Field(
+        default=False,
+        description="Enable AIPerf Developer mode",
+    )
 
     DEBUG_SERVICES: Annotated[
         set[ServiceType] | None,
-        Field(
-            description="List of services to enable debug logging for. Can be a comma-separated list, a single service type, "
-            "or the cli flag can be used multiple times.",
-        ),
         BeforeValidator(parse_service_types),
-    ] = EnvironmentDefaults.DEBUG_SERVICES
+    ] = Field(
+        default=None,
+        description="List of services to enable debug logging for. Can be a comma-separated list, a single service type, "
+        "or the cli flag can be used multiple times.",
+    )
 
-    DISABLE_UVLOOP: Annotated[
-        bool,
-        Field(
-            description="Disable the use of uvloop, and use the default asyncio event loop instead.",
-        ),
-    ] = EnvironmentDefaults.DISABLE_UVLOOP
+    DISABLE_UVLOOP: bool = Field(
+        default=False,
+        description="Disable the use of uvloop, and use the default asyncio event loop instead.",
+    )
 
-    ENABLE_YAPPI: Annotated[
-        bool,
-        Field(
-            description="Enable yappi profiling (Yet Another Python Profiler) to profile AIPerf's internal python code. "
-            "This can be used in the development of AIPerf in order to find performance bottlenecks across the various services. "
-            "The output '.prof' files can be viewed with snakeviz. Requires yappi and snakeviz to be installed. "
-            "Run 'pip install yappi snakeviz' to install them.",
-        ),
-    ] = EnvironmentDefaults.ENABLE_YAPPI
+    ENABLE_YAPPI: bool = Field(
+        default=False,
+        description="Enable yappi profiling (Yet Another Python Profiler) to profile AIPerf's internal python code. "
+        "This can be used in the development of AIPerf in order to find performance bottlenecks across the various services. "
+        "The output '.prof' files can be viewed with snakeviz. Requires yappi and snakeviz to be installed. "
+        "Run 'pip install yappi snakeviz' to install them.",
+    )
 
-    HEARTBEAT_INTERVAL: Annotated[
-        float,
-        Field(
-            description="Default interval between heartbeat messages in seconds for component services",
-        ),
-    ] = EnvironmentDefaults.HEARTBEAT_INTERVAL
+    HEARTBEAT_INTERVAL: float = Field(
+        default=5.0,
+        description="Default interval between heartbeat messages in seconds for component services",
+    )
 
-    HTTP_CONNECTION_LIMIT: Annotated[
-        int,
-        Field(
-            description="Maximum number of concurrent connections for HTTP clients",
-        ),
-    ] = EnvironmentDefaults.HTTP_CONNECTION_LIMIT
+    HTTP_CONNECTION_LIMIT: int = Field(
+        default=2500,
+        description="Maximum number of concurrent connections for HTTP clients",
+    )
 
-    MAX_REGISTRATION_ATTEMPTS: Annotated[
-        int,
-        Field(
-            description="Default maximum number of registration attempts for component services before giving up",
-        ),
-    ] = EnvironmentDefaults.MAX_REGISTRATION_ATTEMPTS
+    MAX_REGISTRATION_ATTEMPTS: int = Field(
+        default=10,
+        description="Default maximum number of registration attempts for component services before giving up",
+    )
 
-    MAX_WORKERS_CAP: Annotated[
-        int,
-        Field(
-            description="Default absolute maximum number of workers to spawn, regardless of the number "
-            "of CPU cores. Only applies if the user does not specify a max workers value",
-        ),
-    ] = EnvironmentDefaults.MAX_WORKERS_CAP
+    MAX_WORKERS_CAP: int = Field(
+        default=32,
+        description="Default absolute maximum number of workers to spawn, regardless of the number "
+        "of CPU cores. Only applies if the user does not specify a max workers value",
+    )
 
-    PROFILE_CONFIGURE_TIMEOUT: Annotated[
-        float,
-        Field(
-            description="Default timeout for profile configure command in seconds",
-        ),
-    ] = EnvironmentDefaults.PROFILE_CONFIGURE_TIMEOUT
+    PROFILE_CONFIGURE_TIMEOUT: float = Field(
+        default=300.0,
+        description="Default timeout for profile configure command in seconds",
+    )
 
-    PROFILE_START_TIMEOUT: Annotated[
-        float,
-        Field(
-            description="Default timeout for profile start command in seconds",
-        ),
-    ] = EnvironmentDefaults.PROFILE_START_TIMEOUT
+    PROFILE_START_TIMEOUT: float = Field(
+        default=60.0,
+        description="Default timeout for profile start command in seconds",
+    )
 
-    PULL_CLIENT_MAX_CONCURRENCY: Annotated[
-        int,
-        Field(
-            description="Default maximum concurrency for pull clients",
-        ),
-    ] = EnvironmentDefaults.PULL_CLIENT_MAX_CONCURRENCY
+    PULL_CLIENT_MAX_CONCURRENCY: int = Field(
+        default=100_000,
+        description="Default maximum concurrency for pull clients",
+    )
 
-    REALTIME_METRICS_INTERVAL: Annotated[
-        float,
-        Field(
-            description="Default interval in seconds between real-time metrics messages",
-        ),
-    ] = EnvironmentDefaults.REALTIME_METRICS_INTERVAL
+    REALTIME_METRICS_INTERVAL: float = Field(
+        default=5.0,
+        description="Default interval in seconds between real-time metrics messages",
+    )
 
-    RECORD_EXPORT_BATCH_SIZE: Annotated[
-        int,
-        Field(
-            description="Default batch size for record export results processor",
-        ),
-    ] = EnvironmentDefaults.RECORD_EXPORT_BATCH_SIZE
+    RECORD_EXPORT_BATCH_SIZE: int = Field(
+        default=100,
+        description="Default batch size for record export results processor",
+    )
 
-    RECORD_PROCESSOR_SCALE_FACTOR: Annotated[
-        int,
-        Field(
-            description="Default scale factor for the number of record processors to spawn based on the "
-            "number of workers. This will spawn 1 record processor for every X workers",
-        ),
-    ] = EnvironmentDefaults.RECORD_PROCESSOR_SCALE_FACTOR
+    RECORD_PROCESSOR_SCALE_FACTOR: int = Field(
+        default=4,
+        description="Default scale factor for the number of record processors to spawn based on the "
+        "number of workers. This will spawn 1 record processor for every X workers",
+    )
 
-    RECORDS_PROGRESS_REPORT_INTERVAL: Annotated[
-        float,
-        Field(
-            description="Default interval in seconds between records progress report messages",
-        ),
-    ] = EnvironmentDefaults.RECORDS_PROGRESS_REPORT_INTERVAL
+    RECORDS_PROGRESS_REPORT_INTERVAL: float = Field(
+        default=2.0,
+        description="Default interval in seconds between records progress report messages",
+    )
 
-    REGISTRATION_INTERVAL: Annotated[
-        float,
-        Field(
-            description="Default interval between registration attempts in seconds for component services",
-        ),
-    ] = EnvironmentDefaults.REGISTRATION_INTERVAL
+    REGISTRATION_INTERVAL: float = Field(
+        default=1.0,
+        description="Default interval between registration attempts in seconds for component services",
+    )
 
-    SERVICE_REGISTRATION_TIMEOUT: Annotated[
-        float,
-        Field(
-            description="Default timeout for service registration in seconds",
-        ),
-    ] = EnvironmentDefaults.SERVICE_REGISTRATION_TIMEOUT
+    SERVICE_REGISTRATION_TIMEOUT: float = Field(
+        default=30.0,
+        description="Default timeout for service registration in seconds",
+    )
 
-    SERVICE_START_TIMEOUT: Annotated[
-        float,
-        Field(
-            description="Default timeout for service start in seconds",
-        ),
-    ] = EnvironmentDefaults.SERVICE_START_TIMEOUT
+    SERVICE_START_TIMEOUT: float = Field(
+        default=30.0,
+        description="Default timeout for service start in seconds",
+    )
 
-    SHOW_INTERNAL_METRICS: Annotated[
-        bool,
-        Field(
-            description="[Developer use only] Whether to show internal and hidden metrics in the output",
-        ),
-    ] = EnvironmentDefaults.SHOW_INTERNAL_METRICS
+    SHOW_INTERNAL_METRICS: bool = Field(
+        default=False,
+        description="[Developer use only] Whether to show internal and hidden metrics in the output",
+    )
 
-    SHOW_EXPERIMENTAL_METRICS: Annotated[
-        bool,
-        Field(
-            description="[Developer use only] Whether to show experimental metrics in the output",
-        ),
-    ] = EnvironmentDefaults.SHOW_EXPERIMENTAL_METRICS
+    SHOW_EXPERIMENTAL_METRICS: bool = Field(
+        default=False,
+        description="[Developer use only] Whether to show experimental metrics in the output",
+    )
 
-    TASK_CANCEL_TIMEOUT_SHORT: Annotated[
-        float,
-        Field(
-            description="Maximum time to wait for simple tasks to complete when cancelling them",
-        ),
-    ] = EnvironmentDefaults.TASK_CANCEL_TIMEOUT_SHORT
+    TASK_CANCEL_TIMEOUT_SHORT: float = Field(
+        default=2.0,
+        description="Maximum time to wait for simple tasks to complete when cancelling them",
+    )
 
     TRACE_SERVICES: Annotated[
         set[ServiceType] | None,
-        Field(
-            description="List of services to enable trace logging for. Can be a comma-separated list, a single service type, "
-            "or the cli flag can be used multiple times.",
-        ),
         BeforeValidator(parse_service_types),
-    ] = EnvironmentDefaults.TRACE_SERVICES
+    ] = Field(
+        default=None,
+        description="List of services to enable trace logging for. Can be a comma-separated list, a single service type, "
+        "or the cli flag can be used multiple times.",
+    )
 
-    UI_MIN_UPDATE_PERCENT: Annotated[
-        float,
-        Field(
-            description="Default minimum percentage difference from the last update to trigger a UI"
-            " update (for non-dashboard UIs)",
-        ),
-    ] = EnvironmentDefaults.UI_MIN_UPDATE_PERCENT
+    UI_MIN_UPDATE_PERCENT: float = Field(
+        default=1.0,
+        description="Default minimum percentage difference from the last update to trigger a UI"
+        " update (for non-dashboard UIs)",
+    )
 
-    WORKER_CHECK_INTERVAL: Annotated[
-        float,
-        Field(
-            description="Default interval between worker checks in seconds for the WorkerManager",
-        ),
-    ] = EnvironmentDefaults.WORKER_CHECK_INTERVAL
+    WORKER_CHECK_INTERVAL: float = Field(
+        default=1.0,
+        description="Default interval between worker checks in seconds for the WorkerManager",
+    )
 
-    WORKER_ERROR_RECOVERY_TIME: Annotated[
-        float,
-        Field(
-            description="Default time in seconds from the last time a worker had an error before it is "
-            "considered healthy again",
-        ),
-    ] = EnvironmentDefaults.WORKER_ERROR_RECOVERY_TIME
+    WORKER_ERROR_RECOVERY_TIME: float = Field(
+        default=3.0,
+        description="Default time in seconds from the last time a worker had an error before it is "
+        "considered healthy again",
+    )
 
-    WORKER_HEALTH_CHECK_INTERVAL: Annotated[
-        float,
-        Field(
-            description="Default interval in seconds between worker health check messages",
-        ),
-    ] = EnvironmentDefaults.WORKER_HEALTH_CHECK_INTERVAL
+    WORKER_HEALTH_CHECK_INTERVAL: float = Field(
+        default=2.0,
+        description="Default interval in seconds between worker health check messages",
+    )
 
-    WORKER_HIGH_LOAD_CPU_USAGE: Annotated[
-        float,
-        Field(
-            description="Default CPU usage threshold for a worker to be considered high load",
-        ),
-    ] = EnvironmentDefaults.WORKER_HIGH_LOAD_CPU_USAGE
+    WORKER_HIGH_LOAD_CPU_USAGE: float = Field(
+        default=75.0,
+        description="Default CPU usage threshold for a worker to be considered high load",
+    )
 
-    WORKER_HIGH_LOAD_RECOVERY_TIME: Annotated[
-        float,
-        Field(
-            description="Default time in seconds from the last time a worker was in high load before it is "
-            "considered healthy again",
-        ),
-    ] = EnvironmentDefaults.WORKER_HIGH_LOAD_RECOVERY_TIME
+    WORKER_HIGH_LOAD_RECOVERY_TIME: float = Field(
+        default=5.0,
+        description="Default time in seconds from the last time a worker was in high load before it is "
+        "considered healthy again",
+    )
 
-    WORKER_STALE_TIME: Annotated[
-        float,
-        Field(
-            description="Default time in seconds from the last time a worker reported any status before it is "
-            "considered stale",
-        ),
-    ] = EnvironmentDefaults.WORKER_STALE_TIME
+    WORKER_STALE_TIME: float = Field(
+        default=10.0,
+        description="Default time in seconds from the last time a worker reported any status before it is "
+        "considered stale",
+    )
 
-    WORKER_STATUS_SUMMARY_INTERVAL: Annotated[
-        float,
-        Field(
-            description="Default interval in seconds between worker status summary messages",
-        ),
-    ] = EnvironmentDefaults.WORKER_STATUS_SUMMARY_INTERVAL
+    WORKER_STATUS_SUMMARY_INTERVAL: float = Field(
+        default=0.5,
+        description="Default interval in seconds between worker status summary messages",
+    )
 
-    ZMQ_CONTEXT_TERM_TIMEOUT: Annotated[
-        float,
-        Field(
-            description="Default timeout for terminating the ZMQ context in seconds",
-        ),
-    ] = EnvironmentDefaults.ZMQ_CONTEXT_TERM_TIMEOUT
+    ZMQ_CONTEXT_TERM_TIMEOUT: float = Field(
+        default=10.0,
+        description="Default timeout for terminating the ZMQ context in seconds",
+    )
 
 
 # Global singleton instance
