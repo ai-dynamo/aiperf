@@ -81,7 +81,7 @@ DEFAULT_UI_MIN_UPDATE_PERCENT = 1.0
 DEFAULT_WORKER_CHECK_INTERVAL = 1.0
 """Default interval between worker checks in seconds for the WorkerManager."""
 
-DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE = 75.0
+DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE = 85.0
 """Default CPU usage threshold for a worker to be considered high load."""
 
 DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME = 5.0
