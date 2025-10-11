@@ -132,6 +132,30 @@ def mock_zmq_context() -> Generator[MagicMock, None, None]:
         yield zmq_context
 
 
+@pytest.fixture(autouse=True)
+def reset_singleton_factories():
+    """Reset singleton factory instances between tests to prevent state leakage.
+
+    This fixture runs automatically for every test and clears the singleton
+    instances in factories like CommunicationFactory. This prevents tests from
+    interfering with each other when they create services that use singleton
+    communication instances.
+
+    The error "Communication clients must be created before the ZMQIPCCommunication
+    class is initialized" occurs when a singleton instance from a previous test
+    is reused in an invalid state.
+    """
+    yield  # Run the test first
+
+    # Clean up after test completes
+    from aiperf.common.factories import CommunicationFactory
+
+    if hasattr(CommunicationFactory, "_instances"):
+        CommunicationFactory._instances.clear()
+    if hasattr(CommunicationFactory, "_instances_pid"):
+        CommunicationFactory._instances_pid.clear()
+
+
 @pytest.fixture
 def mock_communication(mock_zmq_communication: MagicMock) -> MagicMock:  # noqa: F811 : used as a fixture
     """
