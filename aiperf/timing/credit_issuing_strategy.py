@@ -5,11 +5,9 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 
-from aiperf.common.constants import (
-    DEFAULT_CREDIT_PROGRESS_REPORT_INTERVAL,
-    NANOS_PER_SECOND,
-)
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, TimingMode
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import ConfigurationError
 from aiperf.common.factories import AIPerfFactory
 from aiperf.common.messages import CreditReturnMessage
@@ -329,7 +327,7 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
         """Report the progress at a fixed interval."""
         self.debug("Starting progress reporting loop")
         while not self.all_phases_complete_event.is_set():
-            await asyncio.sleep(DEFAULT_CREDIT_PROGRESS_REPORT_INTERVAL)
+            await asyncio.sleep(Environment.CREDIT_PROGRESS_REPORT_INTERVAL)
 
             for phase, stats in self.phase_stats.items():
                 try:

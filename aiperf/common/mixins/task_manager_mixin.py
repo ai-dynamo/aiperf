@@ -4,8 +4,8 @@ import asyncio
 import inspect
 from collections.abc import Callable, Coroutine
 
-from aiperf.common.constants import TASK_CANCEL_TIMEOUT_SHORT
 from aiperf.common.decorators import implements_protocol
+from aiperf.common.environment import Environment
 from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
 from aiperf.common.protocols import TaskManagerProtocol
 from aiperf.common.utils import yield_to_event_loop
@@ -36,7 +36,7 @@ class TaskManagerMixin(AIPerfLoggerMixin):
         return await asyncio.gather(*list(self.tasks), return_exceptions=True)
 
     async def cancel_all_tasks(
-        self, timeout: float = TASK_CANCEL_TIMEOUT_SHORT
+        self, timeout: float = Environment.TASK_CANCEL_TIMEOUT_SHORT
     ) -> None:
         """Cancel all tasks in the set and wait for up to timeout seconds for them to complete.
 

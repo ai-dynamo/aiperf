@@ -4,10 +4,10 @@
 
 from rich.console import Console
 
-from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import MetricFlags
 from aiperf.common.enums.data_exporter_enums import ConsoleExporterType
+from aiperf.common.environment import Environment
 from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ConsoleExporterProtocol
@@ -27,8 +27,8 @@ class ConsoleInternalMetricsExporter(ConsoleMetricsExporter):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config=exporter_config, **kwargs)
-        self._show_internal_metrics = AIPERF_DEV_MODE and (
-            exporter_config.service_config.developer.show_internal_metrics
+        self._show_internal_metrics = (
+            Environment.DEV_MODE and Environment.SHOW_INTERNAL_METRICS
         )
 
     async def export(self, console: Console) -> None:

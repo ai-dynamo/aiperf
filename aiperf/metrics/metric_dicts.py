@@ -59,7 +59,10 @@ class MetricRecordDict(BaseMetricDict[MetricValueTypeT]):
     """
 
     def to_display_dict(
-        self, registry: "type[MetricRegistry]", show_internal: bool = False
+        self,
+        registry: "type[MetricRegistry]",
+        show_internal: bool = False,
+        show_experimental: bool = False,
     ) -> dict[str, MetricValue]:
         """Convert to display units with filtering applied.
         NOTE: This will not include metrics with the `NO_INDIVIDUAL_RECORDS` flag.
@@ -81,11 +84,13 @@ class MetricRecordDict(BaseMetricDict[MetricValueTypeT]):
                 _logger.warning(f"Metric {tag} not found in registry")
                 continue
 
-            if not show_internal and not metric_class.missing_flags(
-                MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
+            if (
+                metric_class.has_flags(MetricFlags.EXPERIMENTAL)
+                and not show_experimental
             ):
                 continue
-
+            if metric_class.has_flags(MetricFlags.INTERNAL) and not show_internal:
+                continue
             if metric_class.has_flags(MetricFlags.NO_INDIVIDUAL_RECORDS):
                 continue
 

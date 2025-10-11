@@ -7,9 +7,9 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.constants import DEFAULT_COMMS_REQUEST_TIMEOUT
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task, on_stop
@@ -127,7 +127,7 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
     async def request(
         self,
         message: Message,
-        timeout: float = DEFAULT_COMMS_REQUEST_TIMEOUT,
+        timeout: float = Environment.COMMS_REQUEST_TIMEOUT,
     ) -> Message:
         """Send a request and wait for a response up to timeout seconds.
 

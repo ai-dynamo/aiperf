@@ -5,12 +5,9 @@ import asyncio
 from pydantic import BaseModel
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import (
-    DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
-    DEFAULT_SERVICE_START_TIMEOUT,
-)
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ServiceRunType
+from aiperf.common.environment import Environment
 from aiperf.common.factories import ServiceManagerFactory
 from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
@@ -70,7 +67,7 @@ class KubernetesServiceManager(BaseServiceManager):
     async def wait_for_all_services_registration(
         self,
         stop_event: asyncio.Event,
-        timeout_seconds: float = DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
+        timeout_seconds: float = Environment.SERVICE_REGISTRATION_TIMEOUT,
     ) -> None:
         """Wait for all required services to be registered in Kubernetes."""
         self.logger.debug(
@@ -84,7 +81,7 @@ class KubernetesServiceManager(BaseServiceManager):
     async def wait_for_all_services_start(
         self,
         stop_event: asyncio.Event,
-        timeout_seconds: float = DEFAULT_SERVICE_START_TIMEOUT,
+        timeout_seconds: float = Environment.SERVICE_START_TIMEOUT,
     ) -> None:
         """Wait for all required services to be started in Kubernetes."""
         self.logger.debug(

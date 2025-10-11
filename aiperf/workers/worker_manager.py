@@ -8,18 +8,10 @@ from pydantic import Field
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import (
-    DEFAULT_MAX_WORKERS_CAP,
-    DEFAULT_WORKER_CHECK_INTERVAL,
-    DEFAULT_WORKER_ERROR_RECOVERY_TIME,
-    DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE,
-    DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME,
-    DEFAULT_WORKER_STALE_TIME,
-    DEFAULT_WORKER_STATUS_SUMMARY_INTERVAL,
-    NANOS_PER_SECOND,
-)
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import MessageType, ServiceType
 from aiperf.common.enums.worker_enums import WorkerStatus
+from aiperf.common.environment import Environment
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import background_task, on_message, on_start, on_stop
 from aiperf.common.messages import (
@@ -76,9 +68,9 @@ class WorkerManager(BaseComponentService):
         self.max_concurrency = self.user_config.loadgen.concurrency
         self.max_workers = self.service_config.workers.max
         if self.max_workers is None:
-            # Default to 75% of the CPU cores - 1, with a cap of DEFAULT_MAX_WORKERS_CAP, and a minimum of 1
+            # Default to 75% of the CPU cores - 1, with a cap of Environment.MAX_WORKERS_CAP, and a minimum of 1
             self.max_workers = max(
-                1, min(int(self.cpu_count * 0.75) - 1, DEFAULT_MAX_WORKERS_CAP)
+                1, min(int(self.cpu_count * 0.75) - 1, Environment.MAX_WORKERS_CAP)
             )
             self.debug(
                 lambda: f"Auto-setting max workers to {self.max_workers} due to no max workers specified."
@@ -150,14 +142,14 @@ class WorkerManager(BaseComponentService):
         if message.task_stats.failed > info.task_stats.failed:
             info.last_error_ns = time.time_ns()
             info.status = WorkerStatus.ERROR
-        elif (time.time_ns() - (info.last_error_ns or 0)) / NANOS_PER_SECOND < DEFAULT_WORKER_ERROR_RECOVERY_TIME:  # fmt: skip
+        elif (time.time_ns() - (info.last_error_ns or 0)) / NANOS_PER_SECOND < Environment.WORKER_ERROR_RECOVERY_TIME:  # fmt: skip
             info.status = WorkerStatus.ERROR
 
         # High Load Status
-        elif message.health.cpu_usage > DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE:
+        elif message.health.cpu_usage > Environment.WORKER_HIGH_LOAD_CPU_USAGE:
             info.last_high_load_ns = time.time_ns()
             info.status = WorkerStatus.HIGH_LOAD
-        elif (time.time_ns() - (info.last_high_load_ns or 0)) / NANOS_PER_SECOND < DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME:  # fmt: skip
+        elif (time.time_ns() - (info.last_high_load_ns or 0)) / NANOS_PER_SECOND < Environment.WORKER_HIGH_LOAD_RECOVERY_TIME:  # fmt: skip
             info.status = WorkerStatus.HIGH_LOAD
 
         # Idle Status
@@ -171,16 +163,18 @@ class WorkerManager(BaseComponentService):
         info.health = message.health
         info.task_stats = message.task_stats
 
-    @background_task(immediate=False, interval=DEFAULT_WORKER_CHECK_INTERVAL)
+    @background_task(immediate=False, interval=Environment.WORKER_CHECK_INTERVAL)
     async def _worker_status_loop(self) -> None:
         """Check the status of all workers."""
         self.debug("Checking worker status")
 
         for _, info in self.worker_infos.items():
-            if (time.time_ns() - (info.last_update_ns or 0)) / NANOS_PER_SECOND > DEFAULT_WORKER_STALE_TIME:  # fmt: skip
+            if (time.time_ns() - (info.last_update_ns or 0)) / NANOS_PER_SECOND > Environment.WORKER_STALE_TIME:  # fmt: skip
                 info.status = WorkerStatus.STALE
 
-    @background_task(immediate=False, interval=DEFAULT_WORKER_STATUS_SUMMARY_INTERVAL)
+    @background_task(
+        immediate=False, interval=Environment.WORKER_STATUS_SUMMARY_INTERVAL
+    )
     async def _worker_summary_loop(self) -> None:
         """Generate a summary of the worker status."""
         summary = WorkerStatusSummaryMessage(

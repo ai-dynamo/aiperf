@@ -3,7 +3,7 @@
 import socket
 from dataclasses import dataclass
 
-from aiperf.common import constants
+from aiperf.common.environment import Environment
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ class AioHttpDefaults:
     """Default values for aiohttp.ClientSession."""
 
     LIMIT = (
-        constants.AIPERF_HTTP_CONNECTION_LIMIT
+        Environment.HTTP_CONNECTION_LIMIT
     )  # Maximum number of concurrent connections
     LIMIT_PER_HOST = (
         0  # Maximum number of concurrent connections per host (0 will set to LIMIT)

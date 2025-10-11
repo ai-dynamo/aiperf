@@ -10,13 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import (
-    DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
-    DEFAULT_SERVICE_START_TIMEOUT,
-    TASK_CANCEL_TIMEOUT_SHORT,
-)
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ServiceRegistrationStatus, ServiceRunType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.factories import ServiceFactory, ServiceManagerFactory
 from aiperf.common.protocols import ServiceManagerProtocol
@@ -139,7 +135,7 @@ class MultiProcessServiceManager(BaseServiceManager):
     async def wait_for_all_services_registration(
         self,
         stop_event: asyncio.Event,
-        timeout_seconds: float = DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
+        timeout_seconds: float = Environment.SERVICE_REGISTRATION_TIMEOUT,
     ) -> None:
         """Wait for all required services to be registered.
 
@@ -207,7 +203,7 @@ class MultiProcessServiceManager(BaseServiceManager):
         try:
             info.process.terminate()
             await asyncio.to_thread(
-                info.process.join, timeout=TASK_CANCEL_TIMEOUT_SHORT
+                info.process.join, timeout=Environment.TASK_CANCEL_TIMEOUT_SHORT
             )
             self.debug(
                 f"Service {info.service_type} process stopped (pid: {info.process.pid})"
@@ -221,7 +217,7 @@ class MultiProcessServiceManager(BaseServiceManager):
     async def wait_for_all_services_start(
         self,
         stop_event: asyncio.Event,
-        timeout_seconds: float = DEFAULT_SERVICE_START_TIMEOUT,
+        timeout_seconds: float = Environment.SERVICE_START_TIMEOUT,
     ) -> None:
         """Wait for all required services to be started."""
         self.debug("Waiting for all required services to start...")

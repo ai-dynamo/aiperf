@@ -4,11 +4,8 @@ import asyncio
 from abc import ABC, abstractmethod
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import (
-    DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
-    DEFAULT_SERVICE_START_TIMEOUT,
-)
 from aiperf.common.decorators import implements_protocol
+from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ServiceRunInfo
@@ -107,7 +104,7 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
     async def wait_for_all_services_registration(
         self,
         stop_event: asyncio.Event,
-        timeout_seconds: float = DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
+        timeout_seconds: float = Environment.SERVICE_REGISTRATION_TIMEOUT,
     ) -> None:
         pass
 
@@ -115,6 +112,6 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
     async def wait_for_all_services_start(
         self,
         stop_event: asyncio.Event,
-        timeout_seconds: float = DEFAULT_SERVICE_START_TIMEOUT,
+        timeout_seconds: float = Environment.SERVICE_START_TIMEOUT,
     ) -> None:
         pass

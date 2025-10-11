@@ -6,12 +6,7 @@ import time
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import (
-    DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
-    DEFAULT_REALTIME_METRICS_INTERVAL,
-    DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL,
-    NANOS_PER_SECOND,
-)
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
@@ -21,6 +16,7 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.enums.ui_enums import AIPerfUIType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.factories import (
     ResultsProcessorFactory,
@@ -76,7 +72,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             service_id=service_id,
             pull_client_address=CommAddress.RECORDS,
             pull_client_bind=True,
-            pull_client_max_concurrency=DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
+            pull_client_max_concurrency=Environment.PULL_CLIENT_MAX_CONCURRENCY,
         )
 
         #########################################################
@@ -319,7 +315,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # all records before we have the final request count set.
         await self._check_if_all_records_received()
 
-    @background_task(interval=DEFAULT_RECORDS_PROGRESS_REPORT_INTERVAL, immediate=False)
+    @background_task(
+        interval=Environment.RECORDS_PROGRESS_REPORT_INTERVAL, immediate=False
+    )
     async def _report_records_task(self) -> None:
         """Report the records processing stats."""
         if self.processing_stats.processed > 0 or self.processing_stats.errors > 0:
@@ -365,7 +363,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if self.service_config.ui_type != AIPerfUIType.DASHBOARD:
             return
         while not self.stop_requested:
-            await asyncio.sleep(DEFAULT_REALTIME_METRICS_INTERVAL)
+            await asyncio.sleep(Environment.REALTIME_METRICS_INTERVAL)
             async with self.processing_status_lock:
                 if (
                     self.processing_stats.total_records

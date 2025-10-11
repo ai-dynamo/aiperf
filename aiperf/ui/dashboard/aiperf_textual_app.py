@@ -12,8 +12,8 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.enums import WorkerStatus
+from aiperf.common.environment import Environment
 from aiperf.common.models import MetricResult, RecordsStats, RequestsStats, WorkerStats
 from aiperf.controller.system_controller import SystemController
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
@@ -85,7 +85,7 @@ class AIPerfTextualApp(App):
         super().__init__()
 
         self.title = "NVIDIA AIPerf"
-        if AIPERF_DEV_MODE:
+        if Environment.DEV_MODE:
             self.title = "NVIDIA AIPerf (Developer Mode)"
 
         self.log_viewer: RichLogViewer | None = None

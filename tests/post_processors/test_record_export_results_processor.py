@@ -13,9 +13,9 @@ from aiperf.common.config import (
     ServiceConfig,
     UserConfig,
 )
-from aiperf.common.constants import DEFAULT_RECORD_EXPORT_BATCH_SIZE
 from aiperf.common.enums import CreditPhase, EndpointType
 from aiperf.common.enums.data_exporter_enums import ExportLevel
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models.record_models import (
@@ -180,11 +180,8 @@ class TestRecordExportResultsProcessorInitialization:
         service_config: ServiceConfig,
     ):
         """Test that show_internal is set based on dev mode."""
-        with patch(
-            "aiperf.post_processors.record_export_results_processor.AIPERF_DEV_MODE",
-            True,
-        ):
-            service_config.developer.show_internal_metrics = True
+        with patch.object(Environment, "DEV_MODE", True):
+            Environment.SHOW_INTERNAL_METRICS = True
             processor = RecordExportResultsProcessor(
                 service_id="records-manager",
                 service_config=service_config,
@@ -597,7 +594,7 @@ class TestRecordExportResultsProcessorLifecycle:
         assert processor._file_handle is not None
         await processor.start()
 
-        for i in range(DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2):
+        for i in range(Environment.RECORD_EXPORT_BATCH_SIZE * 2):
             await processor.process_result(
                 create_metric_records_message(
                     x_request_id=f"record-{i}",
@@ -610,12 +607,12 @@ class TestRecordExportResultsProcessorLifecycle:
 
         await processor.stop()
 
-        assert processor.record_count == DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2
+        assert processor.record_count == Environment.RECORD_EXPORT_BATCH_SIZE * 2
 
         contents = mock_aiofiles_stringio.getvalue()
         lines = contents.splitlines()
         assert contents.endswith("\n")
-        assert len(lines) == DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2
+        assert len(lines) == Environment.RECORD_EXPORT_BATCH_SIZE * 2
 
         for i, line in enumerate(lines):
             record = MetricRecordInfo.model_validate_json(line)

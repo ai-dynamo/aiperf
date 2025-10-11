@@ -6,13 +6,9 @@ import uuid
 
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import (
-    DEFAULT_HEARTBEAT_INTERVAL,
-    DEFAULT_MAX_REGISTRATION_ATTEMPTS,
-    DEFAULT_REGISTRATION_INTERVAL,
-)
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommandType, LifecycleState, ServiceType
+from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
     background_task,
     on_command,
@@ -57,7 +53,7 @@ class BaseComponentService(BaseService):
             **kwargs,
         )
 
-    @background_task(interval=DEFAULT_HEARTBEAT_INTERVAL, immediate=False)
+    @background_task(interval=Environment.HEARTBEAT_INTERVAL, immediate=False)
     async def _heartbeat_task(self) -> None:
         """Send a heartbeat notification to the system controller."""
         await self.publish(
@@ -83,12 +79,12 @@ class BaseComponentService(BaseService):
             target_service_type=ServiceType.SYSTEM_CONTROLLER,
             state=self.state,
         )
-        for _ in range(DEFAULT_MAX_REGISTRATION_ATTEMPTS):
+        for _ in range(Environment.MAX_REGISTRATION_ATTEMPTS):
             result = await self.send_command_and_wait_for_response(
                 # NOTE: We keep the command id the same each time to ensure that the system controller
                 #       can ignore duplicate registration requests.
                 command_message,
-                timeout=DEFAULT_REGISTRATION_INTERVAL,
+                timeout=Environment.REGISTRATION_INTERVAL,
             )
             if isinstance(result, CommandResponse):
                 self.debug(

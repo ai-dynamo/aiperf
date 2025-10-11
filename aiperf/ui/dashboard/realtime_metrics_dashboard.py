@@ -16,6 +16,7 @@ from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums.metric_enums import MetricFlags, MetricUnitT
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import MetricUnitError
 from aiperf.common.models.record_models import MetricResult
 from aiperf.metrics.base_metric import BaseMetric
@@ -68,7 +69,7 @@ class RealtimeMetricsTable(Widget):
             metric_class.has_any_flags(
                 MetricFlags.NO_CONSOLE | MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
             )
-            and not self.service_config.developer.show_internal_metrics
+            and not Environment.SHOW_INTERNAL_METRICS
         )
 
     def _initialize_columns(self) -> None:

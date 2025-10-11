@@ -14,6 +14,7 @@ from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import ServiceType
 from aiperf.common.enums.ui_enums import AIPerfUIType
+from aiperf.common.environment import Environment
 from aiperf.common.factories import ServiceFactory
 
 LOG_QUEUE_MAXSIZE = 1000
@@ -70,12 +71,12 @@ def setup_child_process_logging(
 
         if service_id:
             # If the service is in the trace or debug services, set the level to trace or debug
-            if service_config.developer.trace_services and _is_service_in_types(
-                service_id, service_config.developer.trace_services
+            if Environment.TRACE_SERVICES and _is_service_in_types(
+                service_id, Environment.TRACE_SERVICES
             ):
                 level = _TRACE
-            elif service_config.developer.debug_services and _is_service_in_types(
-                service_id, service_config.developer.debug_services
+            elif Environment.DEBUG_SERVICES and _is_service_in_types(
+                service_id, Environment.DEBUG_SERVICES
             ):
                 level = _DEBUG
 

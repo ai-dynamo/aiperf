@@ -6,9 +6,9 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
+from aiperf.common.environment import Environment
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.messages import Message
@@ -78,7 +78,7 @@ class ZMQPullClient(BaseZMQClient):
             self.semaphore = asyncio.Semaphore(value=max_pull_concurrency)
         else:
             self.semaphore = asyncio.Semaphore(
-                value=DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
+                value=Environment.PULL_CLIENT_MAX_CONCURRENCY
             )
 
     @background_task(immediate=True, interval=None)

@@ -5,8 +5,8 @@ import asyncio
 import zmq.asyncio
 
 from aiperf.common.config import ServiceConfig
-from aiperf.common.constants import DEFAULT_ZMQ_CONTEXT_TERM_TIMEOUT
 from aiperf.common.enums import ZMQProxyType
+from aiperf.common.environment import Environment
 from aiperf.common.factories import ZMQProxyFactory
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -56,7 +56,7 @@ class ProxyManager(AIPerfLifecycleMixin):
             self.debug("Terminating ZMQ context")
             await asyncio.wait_for(
                 asyncio.to_thread(zmq.asyncio.Context.instance().term),
-                timeout=DEFAULT_ZMQ_CONTEXT_TERM_TIMEOUT,
+                timeout=Environment.ZMQ_CONTEXT_TERM_TIMEOUT,
             )
             self.debug("ZMQ context terminated successfully")
         except BaseException as e:

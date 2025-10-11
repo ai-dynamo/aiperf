@@ -6,38 +6,20 @@ import importlib
 
 
 class TestDevMode:
-    def test_dev_mode_on(self, monkeypatch, capsys):
+    def test_dev_mode_on(self, monkeypatch):
         monkeypatch.setenv("AIPERF_DEV_MODE", "1")
-        constants = importlib.reload(importlib.import_module("aiperf.common.constants"))
-
-        assert constants.AIPERF_DEV_MODE is True
-
-        monkeypatch.setattr("aiperf.common.config.dev_config.AIPERF_DEV_MODE", True)
-        _ = importlib.reload(
-            importlib.import_module("aiperf.common.config.service_config")
+        env_module = importlib.reload(
+            importlib.import_module("aiperf.common.environment")
         )
-        _ = importlib.reload(importlib.import_module("aiperf.common.config.dev_config"))
-        _ = importlib.reload(importlib.import_module("aiperf.common.config"))
-        cli = importlib.reload(importlib.import_module("aiperf.cli"))
+        Environment = env_module.Environment
 
-        cli.app(["profile", "-h"])
-        captured = capsys.readouterr()
-        assert "Developer Mode is active" in captured.out
+        assert Environment.DEV_MODE is True
 
-    def test_dev_mode_off(self, monkeypatch, capsys):
+    def test_dev_mode_off(self, monkeypatch):
         monkeypatch.setenv("AIPERF_DEV_MODE", "0")
-        constants = importlib.reload(importlib.import_module("aiperf.common.constants"))
-
-        assert constants.AIPERF_DEV_MODE is False
-
-        monkeypatch.setattr("aiperf.common.config.dev_config.AIPERF_DEV_MODE", False)
-        _ = importlib.reload(
-            importlib.import_module("aiperf.common.config.service_config")
+        env_module = importlib.reload(
+            importlib.import_module("aiperf.common.environment")
         )
-        _ = importlib.reload(importlib.import_module("aiperf.common.config.dev_config"))
-        _ = importlib.reload(importlib.import_module("aiperf.common.config"))
-        cli = importlib.reload(importlib.import_module("aiperf.cli"))
+        Environment = env_module.Environment
 
-        cli.app(["-h"])
-        captured = capsys.readouterr()
-        assert "Developer Mode is active" not in captured.out
+        assert Environment.DEV_MODE is False

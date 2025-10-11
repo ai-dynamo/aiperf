@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 from tqdm import tqdm
 
-from aiperf.common.constants import DEFAULT_UI_MIN_UPDATE_PERCENT
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import AIPerfUIType
+from aiperf.common.environment import Environment
 from aiperf.common.factories import AIPerfUIFactory
 from aiperf.common.hooks import (
     on_profiling_progress,
@@ -39,7 +39,7 @@ class ProgressBar:
             **kwargs,
         )
         self.total = total
-        self.update_threshold = DEFAULT_UI_MIN_UPDATE_PERCENT
+        self.update_threshold = Environment.UI_MIN_UPDATE_PERCENT
         self.last_percent = 0.0
         self.last_value = 0.0
 

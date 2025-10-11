@@ -6,8 +6,8 @@ from collections.abc import Iterable
 from typing import Any
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import DEFAULT_COMMAND_RESPONSE_TIMEOUT
 from aiperf.common.enums import MessageType
+from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
     AIPerfHook,
     Hook,
@@ -167,7 +167,9 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         )
 
     async def send_command_and_wait_for_response(
-        self, message: CommandMessage, timeout: float = DEFAULT_COMMAND_RESPONSE_TIMEOUT
+        self,
+        message: CommandMessage,
+        timeout: float = Environment.COMMAND_RESPONSE_TIMEOUT,
     ) -> CommandResponse | ErrorDetails:
         """Send a single command message to a single service and wait for the response.
         This is useful communicating directly with a single service.
@@ -189,7 +191,7 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         self,
         command: CommandMessage,
         service_ids: list[str],
-        timeout: float = DEFAULT_COMMAND_RESPONSE_TIMEOUT,
+        timeout: float = Environment.COMMAND_RESPONSE_TIMEOUT,
     ) -> list[CommandResponse | ErrorDetails]:
         """Broadcast a command message to multiple services and wait for the responses from all of the specified services.
         This is useful for the system controller to send one command but wait for all services to respond.

@@ -4,7 +4,6 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.enums import (
     AIPerfLogLevel,
     AIPerfUIType,
@@ -167,19 +166,3 @@ class LoadGeneratorDefaults:
 class WorkersDefaults:
     MIN = None
     MAX = None
-
-
-@dataclass(frozen=True)
-class DevDefaults:
-    if AIPERF_DEV_MODE:
-        ENABLE_YAPPI = False
-        DEBUG_SERVICES = None
-        TRACE_SERVICES = None
-        SHOW_INTERNAL_METRICS = True
-        DISABLE_UVLOOP = False
-    else:
-        ENABLE_YAPPI = False
-        DEBUG_SERVICES = None
-        TRACE_SERVICES = None
-        SHOW_INTERNAL_METRICS = False
-        DISABLE_UVLOOP = False
