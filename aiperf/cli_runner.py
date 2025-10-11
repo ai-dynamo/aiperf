@@ -63,7 +63,7 @@ def run_system_controller(
                     flags = fcntl.fcntl(fd, fcntl.F_GETFD)
                     fcntl.fcntl(fd, fcntl.F_SETFD, flags | fcntl.FD_CLOEXEC)
                 logger.debug("Set FD_CLOEXEC on terminal file descriptors for macOS")
-            except Exception as e:
+            except (OSError, ValueError, AttributeError) as e:
                 # Non-fatal if this fails, other layers will protect
                 logger.debug(f"Could not set FD_CLOEXEC on terminal descriptors: {e}")
     else:

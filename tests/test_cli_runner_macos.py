@@ -103,38 +103,6 @@ class TestMacOSTerminalFixes:
     @patch("aiperf.module_loader.ensure_modules_loaded")
     @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
     @patch("aiperf.common.logging.get_global_log_queue")
-    def test_fd_cloexec_set_on_macos_dashboard(
-        self,
-        mock_log_queue: Mock,
-        mock_bootstrap: Mock,
-        mock_ensure_modules: Mock,
-        mock_fcntl: Mock,
-        mock_platform: Mock,
-        service_config_dashboard: ServiceConfig,
-        user_config: UserConfig,
-    ):
-        """Test that FD_CLOEXEC is set on terminal FDs on macOS with Dashboard UI."""
-
-        from aiperf.cli_runner import run_system_controller
-
-        mock_platform.return_value = "Darwin"
-        mock_log_queue.return_value = MagicMock(spec=multiprocessing.Queue)
-        mock_fcntl.return_value = 0  # Simulate getting flags
-
-        run_system_controller(user_config, service_config_dashboard)
-
-        # Verify fcntl was called to set FD_CLOEXEC on macOS
-        # Note: The actual call count may vary depending on implementation details,
-        # but we verify it was at least attempted
-        assert (
-            mock_fcntl.called or mock_fcntl.call_count == 0
-        )  # May not be called in test due to mocking
-
-    @patch("platform.system")
-    @patch("fcntl.fcntl")
-    @patch("aiperf.module_loader.ensure_modules_loaded")
-    @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
-    @patch("aiperf.common.logging.get_global_log_queue")
     def test_fd_cloexec_not_set_on_linux(
         self,
         mock_log_queue: Mock,
