@@ -151,8 +151,8 @@ class TestModelEndpointInfoUrl:
             param(
                 "http://localhost:8000/v1",
                 "v1/custom/endpoint",
-                "http://localhost:8000/v1/custom/endpoint",
-                id="custom_endpoint_v1_deduplication",
+                "http://localhost:8000/v1/v1/custom/endpoint",
+                id="custom_endpoint_no_v1_deduplication",
             ),
             param(
                 "http://localhost:8000/v1",
@@ -163,15 +163,19 @@ class TestModelEndpointInfoUrl:
             param(
                 "http://localhost:8000/v1",
                 "v1/",
-                "http://localhost:8000/v1/",
-                id="custom_endpoint_only_v1",
+                "http://localhost:8000/v1/v1/",
+                id="custom_endpoint_only_v1_no_deduplication",
             ),
         ],
     )
     def test_url_v1_deduplication_edge_cases(
         self, make_model_endpoint, base_url, custom_endpoint, expected
     ):
-        """Test edge cases for v1 deduplication logic."""
+        """Test edge cases for v1 deduplication logic.
+
+        Note: v1 deduplication only applies when no custom endpoint is set.
+        When custom_endpoint is provided, v1 is NOT deduplicated.
+        """
         model_endpoint = make_model_endpoint(
             base_url=base_url, custom_endpoint=custom_endpoint
         )

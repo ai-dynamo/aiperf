@@ -138,12 +138,16 @@ class ModelEndpointInfo(AIPerfBaseModel):
     def url(self) -> str:
         """Get the full URL for the endpoint."""
         url = self.endpoint.base_url.rstrip("/") if self.endpoint.base_url else ""
-        path = self.endpoint.type.endpoint_path
+
         if self.endpoint.custom_endpoint:
-            path = self.endpoint.custom_endpoint
-        path = path.lstrip("/")
-        if url.endswith("/v1") and path.startswith("v1/"):
-            path = path[3:]  # Remove the v1/ prefix
+            path = self.endpoint.custom_endpoint.lstrip("/")
+        else:
+            if not self.endpoint.type.endpoint_path:
+                return url
+            path = self.endpoint.type.endpoint_path.lstrip("/")
+            if url.endswith("/v1") and path.startswith("v1/"):
+                path = path[3:]  # Remove the v1/ prefix
+
         return f"{url}/{path}"
 
     @property
