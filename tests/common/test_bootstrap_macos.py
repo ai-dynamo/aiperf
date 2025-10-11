@@ -14,6 +14,16 @@ from tests.common.conftest import DummyService
 class TestBootstrapMacOSFixes:
     """Test the macOS-specific terminal FD closing in bootstrap.py"""
 
+    @pytest.fixture(autouse=True)
+    def setup_bootstrap_mocks(
+        self,
+        mock_psutil_process,
+        mock_setup_child_process_logging,
+        mock_ensure_modules_loaded,
+    ):
+        """Combine common bootstrap mocks that are used but not called in tests."""
+        pass
+
     @pytest.mark.parametrize("capsys", [None], indirect=True)
     def test_terminal_fds_closed_in_macos_child_process(
         self,
@@ -21,23 +31,15 @@ class TestBootstrapMacOSFixes:
         service_config_no_uvloop: ServiceConfig,
         user_config: UserConfig,
         mock_log_queue,
-        mock_macos_child_process,
+        mock_darwin_child_process,
     ):
         """Test that terminal FDs are closed in child processes on macOS."""
         # Disable pytest capture to avoid conflicts with FD mocking
         with (
             capsys.disabled(),
-            patch("psutil.Process"),
-            patch("platform.system", return_value="Darwin"),
-            patch(
-                "multiprocessing.current_process",
-                return_value=mock_macos_child_process,
-            ),
             patch("sys.stdin") as mock_stdin,
             patch("sys.stdout") as mock_stdout,
             patch("sys.stderr") as mock_stderr,
-            patch("aiperf.common.logging.setup_child_process_logging"),
-            patch("aiperf.module_loader.ensure_modules_loaded"),
         ):
             # Setup FD mocks
             mock_stdin.fileno.return_value = 0
@@ -62,19 +64,10 @@ class TestBootstrapMacOSFixes:
         service_config_no_uvloop: ServiceConfig,
         user_config: UserConfig,
         mock_log_queue,
-        mock_macos_main_process,
+        mock_darwin_main_process,
     ):
         """Test that terminal FDs are NOT closed in the main process on macOS."""
-        with (
-            patch("psutil.Process"),
-            patch("platform.system", return_value="Darwin"),
-            patch(
-                "multiprocessing.current_process", return_value=mock_macos_main_process
-            ),
-            patch("sys.stdin") as mock_stdin,
-            patch("aiperf.common.logging.setup_child_process_logging"),
-            patch("aiperf.module_loader.ensure_modules_loaded"),
-        ):
+        with patch("sys.stdin") as mock_stdin:
             bootstrap_and_run_service(
                 DummyService,
                 service_config=service_config_no_uvloop,
@@ -91,19 +84,10 @@ class TestBootstrapMacOSFixes:
         service_config_no_uvloop: ServiceConfig,
         user_config: UserConfig,
         mock_log_queue,
-        mock_macos_child_process,
+        mock_linux_child_process,
     ):
         """Test that terminal FDs are NOT closed on Linux."""
-        with (
-            patch("psutil.Process"),
-            patch("platform.system", return_value="Linux"),
-            patch(
-                "multiprocessing.current_process", return_value=mock_macos_child_process
-            ),
-            patch("sys.stdin") as mock_stdin,
-            patch("aiperf.common.logging.setup_child_process_logging"),
-            patch("aiperf.module_loader.ensure_modules_loaded"),
-        ):
+        with patch("sys.stdin") as mock_stdin:
             bootstrap_and_run_service(
                 DummyService,
                 service_config=service_config_no_uvloop,
@@ -122,23 +106,15 @@ class TestBootstrapMacOSFixes:
         service_config_no_uvloop: ServiceConfig,
         user_config: UserConfig,
         mock_log_queue,
-        mock_macos_child_process,
+        mock_darwin_child_process,
     ):
         """Test that exceptions during FD closing are handled gracefully."""
         # Disable pytest capture to avoid conflicts with FD mocking
         with (
             capsys.disabled(),
-            patch("psutil.Process"),
-            patch("platform.system", return_value="Darwin"),
-            patch(
-                "multiprocessing.current_process",
-                return_value=mock_macos_child_process,
-            ),
             patch("sys.stdin") as mock_stdin,
             patch("sys.stdout") as mock_stdout,
             patch("sys.stderr") as mock_stderr,
-            patch("aiperf.common.logging.setup_child_process_logging"),
-            patch("aiperf.module_loader.ensure_modules_loaded"),
         ):
             # Setup FD mocks
             mock_stdin.fileno.return_value = 0
