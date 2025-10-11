@@ -86,6 +86,7 @@ def mock_exporter_config(sample_records, mock_endpoint_config):
         ),
         user_config=input_config,
         service_config=ServiceConfig(),
+        telemetry_results=None,
     )
 
 
@@ -139,6 +140,7 @@ class TestConsoleExporter:
             ),
             user_config=user_config,
             service_config=service_config,
+            telemetry_results=None,
         )
         exporter = ConsoleMetricsExporter(config)
 

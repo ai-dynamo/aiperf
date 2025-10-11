@@ -20,10 +20,14 @@ from aiperf.post_processors.metric_results_processor import (
 from aiperf.post_processors.record_export_results_processor import (
     RecordExportResultsProcessor,
 )
+from aiperf.post_processors.telemetry_results_processor import (
+    TelemetryResultsProcessor,
+)
 
 __all__ = [
     "BaseMetricsProcessor",
     "MetricRecordProcessor",
     "MetricResultsProcessor",
     "RecordExportResultsProcessor",
+    "TelemetryResultsProcessor",
 ]

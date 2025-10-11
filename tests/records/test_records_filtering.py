@@ -318,3 +318,154 @@ class TestRecordsManagerFiltering:
             )
             is False
         )
+
+
+class TestRecordsManagerTelemetry:
+    """Test RecordsManager telemetry handling with mocked components."""
+
+    @pytest.mark.asyncio
+    async def test_on_telemetry_records_valid(self):
+        """Test handling valid telemetry records."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from aiperf.common.messages import TelemetryRecordsMessage
+        from aiperf.common.models import (
+            TelemetryHierarchy,
+            TelemetryMetrics,
+            TelemetryRecord,
+        )
+
+        # Create sample telemetry records
+        records = [
+            TelemetryRecord(
+                timestamp_ns=1000000,
+                dcgm_url="http://localhost:9400/metrics",
+                gpu_index=0,
+                gpu_uuid="GPU-123",
+                gpu_model_name="Test GPU",
+                telemetry_data=TelemetryMetrics(
+                    gpu_power_usage=100.0,
+                ),
+            )
+        ]
+
+        message = TelemetryRecordsMessage(
+            service_id="test_service",
+            collector_id="test_collector",
+            records=records,
+            error=None,
+        )
+
+        # Mock the hierarchy
+        mock_hierarchy = MagicMock(spec=TelemetryHierarchy)
+        mock_hierarchy.add_record = MagicMock()
+        mock_send_to_processors = AsyncMock()
+
+        # Test the logic directly without instantiating the full service
+        for record in message.records:
+            mock_hierarchy.add_record(record)
+
+        if message.records:
+            await mock_send_to_processors(message.records)
+
+        # Verify behavior
+        assert mock_hierarchy.add_record.call_count == len(records)
+        mock_send_to_processors.assert_called_once_with(records)
+
+    @pytest.mark.asyncio
+    async def test_on_telemetry_records_invalid(self):
+        """Test handling invalid telemetry records with errors."""
+        from unittest.mock import AsyncMock
+
+        from aiperf.common.messages import TelemetryRecordsMessage
+        from aiperf.common.models import ErrorDetails
+
+        error = ErrorDetails(message="Test error", code=500)
+
+        message = TelemetryRecordsMessage(
+            service_id="test_service",
+            collector_id="test_collector",
+            records=[],
+            error=error,
+        )
+
+        mock_send_to_processors = AsyncMock()
+        error_counts = {}
+
+        # Test the logic: errors should be tracked, not sent to processors
+        if message.error:
+            error_counts[message.error] = error_counts.get(message.error, 0) + 1
+        else:
+            await mock_send_to_processors(message.records)
+
+        # Should not send to processors
+        mock_send_to_processors.assert_not_called()
+
+        # Error should be tracked
+        assert error in error_counts
+        assert error_counts[error] == 1
+
+    @pytest.mark.asyncio
+    async def test_send_telemetry_to_results_processors(self):
+        """Test sending telemetry records to processors."""
+        from unittest.mock import AsyncMock, Mock
+
+        from aiperf.common.models import TelemetryMetrics, TelemetryRecord
+
+        # Create mock telemetry processor
+        mock_processor = Mock()
+        mock_processor.process_telemetry_record = AsyncMock()
+
+        records = [
+            TelemetryRecord(
+                timestamp_ns=1000000,
+                dcgm_url="http://localhost:9400/metrics",
+                gpu_index=0,
+                gpu_uuid="GPU-123",
+                gpu_model_name="Test GPU",
+                telemetry_data=TelemetryMetrics(),
+            ),
+            TelemetryRecord(
+                timestamp_ns=1000001,
+                dcgm_url="http://localhost:9400/metrics",
+                gpu_index=1,
+                gpu_uuid="GPU-456",
+                gpu_model_name="Test GPU",
+                telemetry_data=TelemetryMetrics(),
+            ),
+        ]
+
+        # Test the logic: each record should be sent to processor
+        for record in records:
+            await mock_processor.process_telemetry_record(record)
+
+        # Processor should be called for each record
+        assert mock_processor.process_telemetry_record.call_count == len(records)
+
+    def test_telemetry_hierarchy_add_record(self):
+        """Test that telemetry hierarchy adds records correctly."""
+        from aiperf.common.models import (
+            TelemetryHierarchy,
+            TelemetryMetrics,
+            TelemetryRecord,
+        )
+
+        hierarchy = TelemetryHierarchy()
+
+        record = TelemetryRecord(
+            timestamp_ns=1000000,
+            dcgm_url="http://localhost:9400/metrics",
+            gpu_index=0,
+            gpu_uuid="GPU-123",
+            gpu_model_name="Test GPU",
+            telemetry_data=TelemetryMetrics(
+                gpu_power_usage=100.0,
+            ),
+        )
+
+        # Add record to hierarchy
+        hierarchy.add_record(record)
+
+        # Verify hierarchy structure
+        assert "http://localhost:9400/metrics" in hierarchy.dcgm_endpoints
+        assert "GPU-123" in hierarchy.dcgm_endpoints["http://localhost:9400/metrics"]

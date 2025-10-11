@@ -81,6 +81,17 @@ from aiperf.common.models.sequence_distribution import (
 from aiperf.common.models.service_models import (
     ServiceRunInfo,
 )
+from aiperf.common.models.telemetry_models import (
+    GpuMetadata,
+    GpuMetricTimeSeries,
+    GpuTelemetryData,
+    GpuTelemetrySnapshot,
+    ProcessTelemetryResult,
+    TelemetryHierarchy,
+    TelemetryMetrics,
+    TelemetryRecord,
+    TelemetryResults,
+)
 from aiperf.common.models.worker_models import (
     WorkerTaskStats,
 )
@@ -101,6 +112,10 @@ __all__ = [
     "ErrorDetailsCount",
     "ExitErrorInfo",
     "FullPhaseProgress",
+    "GpuMetadata",
+    "GpuMetricTimeSeries",
+    "GpuTelemetryData",
+    "GpuTelemetrySnapshot",
     "IOCounters",
     "Image",
     "InferenceServerResponse",
@@ -116,6 +131,7 @@ __all__ = [
     "ParsedResponseRecord",
     "ProcessHealth",
     "ProcessRecordsResult",
+    "ProcessTelemetryResult",
     "ProcessingStats",
     "ProfileResults",
     "RankingsResponseData",
@@ -130,6 +146,10 @@ __all__ = [
     "ServiceRunInfo",
     "SessionPayloads",
     "StatsProtocol",
+    "TelemetryHierarchy",
+    "TelemetryMetrics",
+    "TelemetryRecord",
+    "TelemetryResults",
     "Text",
     "TextResponse",
     "TextResponseData",

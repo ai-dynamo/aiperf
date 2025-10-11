@@ -142,6 +142,7 @@ async def test_csv_exporter_writes_two_sections_and_values(
             results=results,
             user_config=mock_user_config,
             service_config=ServiceConfig(),
+            telemetry_results=None,
         )
 
         exporter = CsvExporter(cfg)
@@ -191,6 +192,7 @@ async def test_csv_exporter_empty_records_creates_empty_file(
             results=results,
             user_config=mock_user_config,
             service_config=ServiceConfig(),
+            telemetry_results=None,
         )
 
         exporter = CsvExporter(cfg)
@@ -229,6 +231,7 @@ async def test_csv_exporter_deterministic_sort_order(
             results=results,
             user_config=mock_user_config,
             service_config=ServiceConfig(),
+            telemetry_results=None,
         )
 
         exporter = CsvExporter(cfg)
@@ -248,7 +251,7 @@ async def test_csv_exporter_deterministic_sort_order(
 
         # System section present and contains GPU Util
         assert "Metric,Value" in text
-        assert "GPU Util (percent),80" in text or "GPU Util (percent),80.0" in text
+        assert "GPU Util (percent),80.00" in text
 
 
 @pytest.mark.asyncio
@@ -284,6 +287,7 @@ async def test_csv_exporter_unit_aware_number_formatting(
             results=results,
             user_config=mock_user_config,
             service_config=ServiceConfig(),
+            telemetry_results=None,
         )
 
         exporter = CsvExporter(cfg)
@@ -294,7 +298,7 @@ async def test_csv_exporter_unit_aware_number_formatting(
         # counts: integer
         assert re.search(r"Input Sequence Length \(tokens\),\s*4096\b", text)
 
-        # ms floats should not collapse to integer; allow 2 fixed integers
+        # ms floats preserve precision (2 decimal places)
         assert re.search(r"Request Latency \(ms\).*(1\.23)", text)
 
 
@@ -343,6 +347,7 @@ async def test_csv_exporter_logs_and_raises_on_write_failure(
             results=results,
             user_config=mock_user_config,
             service_config=ServiceConfig(),
+            telemetry_results=None,
         )
 
         exporter = CsvExporter(cfg)
@@ -362,24 +367,27 @@ async def test_csv_exporter_logs_and_raises_on_write_failure(
         (142357, "142357"),
         (0, "0"),
         (-7, "-7"),
-        (123456.14159, "123456.14"),
+        (123456.14159, "123456.14"),  # Preserves precision with 2 decimals
         (2.0, "2.00"),
         (-1.234, "-1.23"),
         ("string", "string"),
         (True, "True"),
         (False, "False"),
+        (
+            1234567.89,
+            "1234567.89",
+        ),  # No scientific notation, formatted with 2 decimal places
     ],
 )
 @pytest.mark.asyncio
-async def test_format_number_various_types(
-    monkeypatch, mock_user_config, value, expected
-):
+async def test_format_number_various_types(mock_user_config, value, expected):
     """
-    Test the `_format_number` method of `DummyExporter` with various input types.
+    Test the `_format_number` method with various input types.
 
     This parameterized test verifies that the method correctly formats:
     - None as an empty string
-    - Integers and floats as strings, with floats rounded to two decimal places
+    - Integers as strings without decimals
+    - Floats with 2 decimal places (preserving precision)
     - Strings as themselves
     - Boolean values as their string representation
     """
@@ -387,6 +395,432 @@ async def test_format_number_various_types(
         results=None,
         user_config=mock_user_config,
         service_config=ServiceConfig(),
+        telemetry_results=None,
     )
     exporter = CsvExporter(cfg)
     assert exporter._format_number(value) == expected
+
+
+class TestCsvExporterTelemetry:
+    """Test CSV export with telemetry data."""
+
+    @pytest.mark.asyncio
+    async def test_csv_export_with_telemetry_data(
+        self, mock_user_config, sample_telemetry_results
+    ):
+        """Test that CSV export includes telemetry data section."""
+        from aiperf.common.models import ProfileResults
+
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            mock_user_config.output.artifact_directory = outdir
+
+            results = ProfileResults(
+                records=[
+                    MetricResult(
+                        tag="ttft",
+                        header="Time to First Token",
+                        unit="ms",
+                        avg=120.5,
+                    )
+                ],
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+            )
+
+            cfg = ExporterConfig(
+                results=results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=sample_telemetry_results,
+            )
+
+            exporter = CsvExporter(cfg)
+            await exporter.export()
+
+            csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
+            assert csv_file.exists()
+
+            content = csv_file.read_text()
+            # Check for telemetry section with structured table format
+            assert "Endpoint" in content
+            assert "GPU_Index" in content
+            assert "GPU Power Usage (W)" in content or "GPU Power Usage" in content
+            assert "GPU Utilization (%)" in content or "GPU Utilization" in content
+
+    @pytest.mark.asyncio
+    async def test_csv_export_without_telemetry_data(self, mock_user_config):
+        """Test that CSV export works when telemetry_results is None."""
+        from aiperf.common.models import ProfileResults
+
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            mock_user_config.output.artifact_directory = outdir
+
+            results = ProfileResults(
+                records=[
+                    MetricResult(
+                        tag="ttft",
+                        header="Time to First Token",
+                        unit="ms",
+                        avg=120.5,
+                    )
+                ],
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+            )
+
+            cfg = ExporterConfig(
+                results=results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+
+            exporter = CsvExporter(cfg)
+            await exporter.export()
+
+            csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
+            assert csv_file.exists()
+
+            content = csv_file.read_text()
+            # Should not have telemetry section (check for telemetry-specific columns)
+            assert "GPU_Index" not in content
+            assert "GPU_UUID" not in content
+
+    @pytest.mark.asyncio
+    async def test_csv_export_telemetry_multi_gpu(
+        self, mock_user_config, sample_telemetry_results
+    ):
+        """Test that CSV export includes data for multiple GPUs."""
+        from aiperf.common.models import ProfileResults
+
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            mock_user_config.output.artifact_directory = outdir
+
+            results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+
+            cfg = ExporterConfig(
+                results=results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=sample_telemetry_results,
+            )
+
+            exporter = CsvExporter(cfg)
+            await exporter.export()
+
+            csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
+            content = csv_file.read_text()
+
+            # Check for both GPU models in the test data
+            assert "H100" in content or "A100" in content
+            # Check that GPU index column appears
+            assert "GPU_Index" in content
+
+    @pytest.mark.asyncio
+    async def test_csv_export_telemetry_metric_row_exceptions(self, mock_user_config):
+        """Test that metric row write handles exceptions gracefully."""
+        from unittest.mock import Mock
+
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            ProfileResults,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            mock_user_config.output.artifact_directory = outdir
+
+            # Create GPU data that will fail on metric retrieval
+            gpu_data = Mock(spec=GpuTelemetryData)
+            gpu_data.metadata = GpuMetadata(
+                gpu_index=0,
+                model_name="Test GPU",
+                gpu_uuid="GPU-123",
+            )
+            gpu_data.get_metric_result = Mock(
+                side_effect=Exception("Metric not available")
+            )
+
+            hierarchy = TelemetryHierarchy()
+            hierarchy.dcgm_endpoints = {
+                "http://localhost:9400/metrics": {"GPU-123": gpu_data}
+            }
+
+            telemetry_results = TelemetryResults(
+                telemetry_data=hierarchy,
+                start_ns=0,
+                end_ns=0,
+                endpoints_tested=["http://localhost:9400/metrics"],
+                endpoints_successful=["http://localhost:9400/metrics"],
+            )
+
+            results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+
+            cfg = ExporterConfig(
+                results=results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=telemetry_results,
+            )
+
+            exporter = CsvExporter(cfg)
+            # Should not raise exception despite metric retrieval failures
+            await exporter.export()
+
+            csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
+            assert csv_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_csv_gpu_has_metric(self, mock_user_config):
+        """Test _gpu_has_metric detection method."""
+        from unittest.mock import Mock
+
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            MetricResult,
+            ProfileResults,
+        )
+
+        results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+
+        cfg = ExporterConfig(
+            results=results,
+            user_config=mock_user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=None,
+        )
+
+        exporter = CsvExporter(cfg)
+
+        # GPU data with working metric
+        gpu_data_with_metric = Mock(spec=GpuTelemetryData)
+        gpu_data_with_metric.metadata = GpuMetadata(
+            gpu_index=0, model_name="Test GPU", gpu_uuid="GPU-123"
+        )
+        gpu_data_with_metric.get_metric_result = Mock(
+            return_value=MetricResult(
+                tag="gpu_power_usage", header="Power", unit="W", avg=100.0
+            )
+        )
+
+        assert exporter._gpu_has_metric(gpu_data_with_metric, "gpu_power_usage") is True
+
+        # GPU data without metric
+        gpu_data_without_metric = Mock(spec=GpuTelemetryData)
+        gpu_data_without_metric.metadata = GpuMetadata(
+            gpu_index=1, model_name="Test GPU 2", gpu_uuid="GPU-456"
+        )
+        gpu_data_without_metric.get_metric_result = Mock(
+            side_effect=Exception("Not available")
+        )
+
+        assert (
+            exporter._gpu_has_metric(gpu_data_without_metric, "invalid_metric") is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_csv_export_telemetry_multi_endpoint(self, mock_user_config):
+        """Test CSV export with multiple DCGM endpoints."""
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            ProfileResults,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            mock_user_config.output.artifact_directory = outdir
+
+            # Create telemetry data for two endpoints
+            hierarchy = TelemetryHierarchy()
+
+            # Endpoint 1
+            gpu1_data = GpuTelemetryData(
+                metadata=GpuMetadata(
+                    gpu_index=0,
+                    model_name="GPU Model 1",
+                    gpu_uuid="GPU-111",
+                )
+            )
+            gpu1_data.time_series.append_snapshot(
+                {"gpu_power_usage": 100.0}, timestamp_ns=1000000000
+            )
+            gpu1_data.time_series.append_snapshot(
+                {"gpu_power_usage": 110.0}, timestamp_ns=2000000000
+            )
+            gpu1_data.time_series.append_snapshot(
+                {"gpu_power_usage": 105.0}, timestamp_ns=3000000000
+            )
+
+            # Endpoint 2
+            gpu2_data = GpuTelemetryData(
+                metadata=GpuMetadata(
+                    gpu_index=0,
+                    model_name="GPU Model 2",
+                    gpu_uuid="GPU-222",
+                )
+            )
+            gpu2_data.time_series.append_snapshot(
+                {"gpu_power_usage": 200.0}, timestamp_ns=1000000000
+            )
+            gpu2_data.time_series.append_snapshot(
+                {"gpu_power_usage": 210.0}, timestamp_ns=2000000000
+            )
+            gpu2_data.time_series.append_snapshot(
+                {"gpu_power_usage": 205.0}, timestamp_ns=3000000000
+            )
+
+            hierarchy.dcgm_endpoints = {
+                "http://node1:9400/metrics": {"GPU-111": gpu1_data},
+                "http://node2:9400/metrics": {"GPU-222": gpu2_data},
+            }
+
+            telemetry_results = TelemetryResults(
+                telemetry_data=hierarchy,
+                start_ns=0,
+                end_ns=0,
+                endpoints_tested=[
+                    "http://node1:9400/metrics",
+                    "http://node2:9400/metrics",
+                ],
+                endpoints_successful=[
+                    "http://node1:9400/metrics",
+                    "http://node2:9400/metrics",
+                ],
+            )
+
+            results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+
+            cfg = ExporterConfig(
+                results=results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=telemetry_results,
+            )
+
+            exporter = CsvExporter(cfg)
+            await exporter.export()
+
+            csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
+            content = csv_file.read_text()
+
+            # Check for both endpoints
+            assert "node1:9400" in content
+            assert "node2:9400" in content
+            # Check for both GPU models
+            assert "GPU Model 1" in content
+            assert "GPU Model 2" in content
+
+    @pytest.mark.asyncio
+    async def test_csv_export_telemetry_empty_metrics(self, mock_user_config):
+        """Test CSV export when GPU has no metric data."""
+        from aiperf.common.models import (
+            GpuMetadata,
+            GpuTelemetryData,
+            ProfileResults,
+            TelemetryHierarchy,
+            TelemetryResults,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            mock_user_config.output.artifact_directory = outdir
+
+            # Create GPU data with no metrics
+            hierarchy = TelemetryHierarchy()
+            gpu_data = GpuTelemetryData(
+                metadata=GpuMetadata(
+                    gpu_index=0,
+                    model_name="Empty GPU",
+                    gpu_uuid="GPU-EMPTY",
+                )
+            )
+            # Don't add any metrics
+
+            hierarchy.dcgm_endpoints = {
+                "http://localhost:9400/metrics": {"GPU-EMPTY": gpu_data}
+            }
+
+            telemetry_results = TelemetryResults(
+                telemetry_data=hierarchy,
+                start_ns=0,
+                end_ns=0,
+                endpoints_tested=["http://localhost:9400/metrics"],
+                endpoints_successful=["http://localhost:9400/metrics"],
+            )
+
+            results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+
+            cfg = ExporterConfig(
+                results=results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=telemetry_results,
+            )
+
+            exporter = CsvExporter(cfg)
+            await exporter.export()
+
+            csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
+            content = csv_file.read_text()
+
+            # Should still have telemetry table header columns
+            assert "Endpoint" in content
+            assert "GPU_Index" in content
+            # But no metric data rows (GPU name should not appear since no metrics)
+            assert "Empty GPU" not in content
+
+    @pytest.mark.asyncio
+    async def test_csv_format_number_small_values(self, mock_user_config):
+        """Test _format_number with very small values."""
+        from aiperf.common.models import ProfileResults
+
+        results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+        cfg = ExporterConfig(
+            results=results,
+            user_config=mock_user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=None,
+        )
+
+        exporter = CsvExporter(cfg)
+
+        # Test very small value
+        result = exporter._format_number(0.00123)
+        assert result == "0.00"
+
+        # Test zero
+        result = exporter._format_number(0.0)
+        assert result == "0.00"
+
+    @pytest.mark.asyncio
+    async def test_csv_format_number_decimal_type(self, mock_user_config):
+        """Test _format_number with Decimal type."""
+        from decimal import Decimal
+
+        from aiperf.common.models import ProfileResults
+
+        results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+        cfg = ExporterConfig(
+            results=results,
+            user_config=mock_user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=None,
+        )
+
+        exporter = CsvExporter(cfg)
+
+        # Test Decimal type
+        result = exporter._format_number(Decimal("123.456"))
+        assert result == "123.46"

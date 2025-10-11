@@ -73,6 +73,11 @@ from aiperf.common.messages.service_messages import (
     RegistrationMessage,
     StatusMessage,
 )
+from aiperf.common.messages.telemetry_messages import (
+    ProcessTelemetryResultMessage,
+    TelemetryRecordsMessage,
+    TelemetryStatusMessage,
+)
 from aiperf.common.messages.worker_messages import (
     WorkerHealthMessage,
     WorkerStatusSummaryMessage,
@@ -113,6 +118,7 @@ __all__ = [
     "ProcessRecordsCommand",
     "ProcessRecordsResponse",
     "ProcessRecordsResultMessage",
+    "ProcessTelemetryResultMessage",
     "ProcessingStatsMessage",
     "ProfileCancelCommand",
     "ProfileConfigureCommand",
@@ -130,6 +136,8 @@ __all__ = [
     "SpawnWorkersCommand",
     "StatusMessage",
     "TargetedServiceMessage",
+    "TelemetryRecordsMessage",
+    "TelemetryStatusMessage",
     "WorkerHealthMessage",
     "WorkerStatusSummaryMessage",
 ]

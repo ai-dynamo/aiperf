@@ -33,7 +33,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
 
     async def export(self, console: Console) -> None:
         if not self._results.records:
-            self.warning("No records to export")
+            self.debug("No records to export")
             return
 
         self._print_renderable(

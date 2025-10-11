@@ -16,10 +16,15 @@ from aiperf.common.enums import DataExporterType
 from aiperf.common.enums.metric_enums import MetricFlags
 from aiperf.common.factories import DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models import MetricResult
+from aiperf.common.models import MetricResult, TelemetryResults
 from aiperf.common.protocols import DataExporterProtocol
-from aiperf.exporters.display_units_utils import convert_all_metrics_to_display_units
+from aiperf.exporters.display_units_utils import (
+    STAT_KEYS,
+    convert_all_metrics_to_display_units,
+    normalize_endpoint_display,
+)
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 from aiperf.metrics.metric_registry import MetricRegistry
 
 
@@ -37,6 +42,7 @@ class CsvExporter(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         self.debug(lambda: f"Initializing CsvExporter with config: {exporter_config}")
         self._results = exporter_config.results
+        self._telemetry_results = exporter_config.telemetry_results
         self._output_directory = exporter_config.user_config.output.artifact_directory
         self._metric_registry = MetricRegistry
         self._file_path = (
@@ -51,6 +57,16 @@ class CsvExporter(AIPerfLoggerMixin):
         )
 
     async def export(self) -> None:
+        """Export inference and telemetry data to CSV file.
+
+        Creates a CSV file with three sections:
+        1. Request metrics (with percentiles)
+        2. System metrics (single values)
+        3. GPU telemetry metrics (if available)
+
+        Raises:
+            Exception: If file writing fails
+        """
         self._output_directory.mkdir(parents=True, exist_ok=True)
 
         self.debug(lambda: f"Exporting data to CSV file: {self._file_path}")
@@ -62,7 +78,7 @@ class CsvExporter(AIPerfLoggerMixin):
                     self._results.records, self._metric_registry
                 )
 
-            csv_content = self._generate_csv_content(records)
+            csv_content = self._generate_csv_content(records, self._telemetry_results)
 
             async with aiofiles.open(
                 self._file_path, "w", newline="", encoding="utf-8"
@@ -73,7 +89,20 @@ class CsvExporter(AIPerfLoggerMixin):
             self.error(f"Failed to export CSV to {self._file_path}: {e}")
             raise
 
-    def _generate_csv_content(self, records: Mapping[str, MetricResult]) -> str:
+    def _generate_csv_content(
+        self,
+        records: Mapping[str, MetricResult],
+        telemetry_results: TelemetryResults | None = None,
+    ) -> str:
+        """Generate CSV content string from inference and telemetry data.
+
+        Args:
+            records: Mapping of metric tags to MetricResult objects (inference metrics)
+            telemetry_results: Optional GPU telemetry data to include
+
+        Returns:
+            str: Complete CSV content with all sections formatted and ready to write
+        """
         buf = io.StringIO()
         writer = csv.writer(buf)
 
@@ -86,6 +115,10 @@ class CsvExporter(AIPerfLoggerMixin):
 
         if system_metrics:
             self._write_system_metrics(writer, system_metrics)
+
+        # Add telemetry data section if available
+        if telemetry_results:
+            self._write_telemetry_section(writer, telemetry_results)
 
         return buf.getvalue()
 
@@ -111,7 +144,7 @@ class CsvExporter(AIPerfLoggerMixin):
     def _write_request_metrics(
         self,
         writer: csv.writer,
-        records: Mapping[str, MetricResult],  # type: ignore
+        records: Mapping[str, MetricResult],
     ) -> None:
         header = ["Metric"] + list(STAT_KEYS)
         writer.writerow(header)
@@ -137,7 +170,7 @@ class CsvExporter(AIPerfLoggerMixin):
     def _write_system_metrics(
         self,
         writer: csv.writer,
-        records: Mapping[str, MetricResult],  # type: ignore
+        records: Mapping[str, MetricResult],
     ) -> None:
         writer.writerow(["Metric", "Value"])
         for _, metric in sorted(records.items(), key=lambda kv: kv[0]):
@@ -169,3 +202,128 @@ class CsvExporter(AIPerfLoggerMixin):
             return f"{float(value):.2f}"
 
         return str(value)
+
+    def _write_telemetry_section(self, writer, telemetry_results) -> None:
+        """Write GPU telemetry data section to CSV in structured table format.
+
+        Creates a single flat table with all GPU telemetry metrics that's easy to
+        parse programmatically for visualization platforms (pandas, Tableau, Excel, etc.).
+
+        Each row represents one metric for one GPU with all statistics in columns.
+
+        Args:
+            writer: CSV writer object
+            telemetry_results: TelemetryResults containing GPU telemetry data hierarchy
+        """
+
+        writer.writerow([])
+        writer.writerow([])
+
+        # Write header row for GPU telemetry table
+        header_row = [
+            "Endpoint",
+            "GPU_Index",
+            "GPU_Name",
+            "GPU_UUID",
+            "Metric",
+        ]
+        header_row.extend(STAT_KEYS)
+        writer.writerow(header_row)
+
+        for (
+            dcgm_url,
+            gpus_data,
+        ) in telemetry_results.telemetry_data.dcgm_endpoints.items():
+            if not gpus_data:
+                continue
+
+            endpoint_display = normalize_endpoint_display(dcgm_url)
+
+            for gpu_uuid, gpu_data in gpus_data.items():
+                for (
+                    metric_display,
+                    metric_key,
+                    unit_enum,
+                ) in GPU_TELEMETRY_METRICS_CONFIG:
+                    if not self._gpu_has_metric(gpu_data, metric_key):
+                        continue
+
+                    self._write_gpu_metric_row_structured(
+                        writer,
+                        endpoint_display,
+                        gpu_data,
+                        gpu_uuid,
+                        metric_key,
+                        metric_display,
+                        unit_enum.value,
+                    )
+
+    def _write_gpu_metric_row_structured(
+        self,
+        writer,
+        endpoint_display,
+        gpu_data,
+        gpu_uuid,
+        metric_key,
+        metric_display,
+        unit,
+    ):
+        """Write a single GPU metric row in structured table format.
+
+        Each row contains: endpoint, GPU info, metric name with unit, and all stats.
+        This format is optimized for programmatic extraction and visualization.
+
+        Args:
+            writer: CSV writer object
+            endpoint_display: Display name of the DCGM endpoint
+            gpu_data: GpuTelemetryData containing metric time series
+            gpu_uuid: UUID identifier for the GPU
+            metric_key: Internal metric name (e.g., "gpu_power_usage")
+            metric_display: Display name for the metric (e.g., "GPU Power Usage")
+            unit: Unit of measurement (e.g., "W", "GB", "%")
+        """
+        try:
+            metric_result = gpu_data.get_metric_result(
+                metric_key, metric_key, metric_display, unit
+            )
+
+            # Format metric name with unit like inference metrics
+            metric_with_unit = f"{metric_display} ({unit})"
+
+            row = [
+                endpoint_display,
+                str(gpu_data.metadata.gpu_index),
+                gpu_data.metadata.model_name,
+                gpu_uuid,
+                metric_with_unit,
+            ]
+
+            for stat in STAT_KEYS:
+                value = getattr(metric_result, stat, None)
+                row.append(self._format_number(value))
+
+            writer.writerow(row)
+        except Exception as e:
+            self.warning(
+                f"Failed to write metric row for GPU {gpu_uuid}, metric {metric_key}: {e}"
+            )
+
+    def _gpu_has_metric(self, gpu_data, metric_key: str) -> bool:
+        """Check if GPU has data for the specified metric.
+
+        Attempts to retrieve metric result to determine if the metric has any data.
+        Used to filter out metrics with no collected data.
+
+        Args:
+            gpu_data: GpuTelemetryData containing metric time series
+            metric_key: Internal metric name to check (e.g., "gpu_power_usage")
+
+        Returns:
+            bool: True if metric has data, False if metric is unavailable or has no data
+        """
+        try:
+            gpu_data.get_metric_result(metric_key, metric_key, "test", "test")
+            return True
+        except Exception as e:
+            self.debug(f"GPU metric {metric_key} not available: {e}")
+            return False
