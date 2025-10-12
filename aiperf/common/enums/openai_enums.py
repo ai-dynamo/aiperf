@@ -15,5 +15,4 @@ class OpenAIObjectType(CaseInsensitiveStrEnum):
     EMBEDDING = "embedding"
     LIST = "list"
     RANKINGS = "rankings"
-    RESPONSE = "response"
     TEXT_COMPLETION = "text_completion"

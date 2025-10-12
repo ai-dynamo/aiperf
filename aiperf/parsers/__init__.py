@@ -18,8 +18,6 @@ from aiperf.parsers.openai_parsers import (
     ListParser,
     OpenAIResponseExtractor,
     RankingsParser,
-    ResponseParser,
-    TextCompletionParser,
 )
 
 __all__ = [
@@ -30,6 +28,4 @@ __all__ = [
     "ListParser",
     "OpenAIResponseExtractor",
     "RankingsParser",
-    "ResponseParser",
-    "TextCompletionParser",
 ]
