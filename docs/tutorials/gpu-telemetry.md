@@ -14,7 +14,7 @@ This guide covers two setup paths depending on your inference backend:
 ### Path 1: Dynamo (Built-in DCGM)
 If you're using **Dynamo**, it comes with DCGM pre-configured on port 9401. No additional setup needed! Just use the `--gpu-telemetry` flag to enable console display and optionally add additional DCGM url endpoints.
 
-### Path 2: Custom DCGM (vLLM, SGLang, TRT-LLM, etc.)
+### Path 2: Other Inference Servers (Custom DCGM)
 If you're using **any other inference backend**, you'll need to set up DCGM separately.
 
 ## Prerequisites
@@ -39,7 +39,7 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 
 ---
 
-# Path 1: Using Dynamo
+# 1: Using Dynamo
 
 Dynamo includes DCGM out of the box on port 9401 - no extra setup needed!
 
@@ -133,7 +133,7 @@ aiperf profile \
 
 ---
 
-# Path 2: Using Any Other Backend
+# 2: Using Other Inference Server
 
 This path works with **vLLM, SGLang, TRT-LLM, or any inference server**. We'll use vLLM as an example.
 
@@ -310,6 +310,7 @@ This will collect GPU metrics from:
 - `http://localhost:9401/metrics` (default, always attempted)
 - `http://node1:9400/metrics` (custom node 1)
 - `http://node2:9400/metrics` (custom node 2)
+- `http://node3:9400/metrics` (custom node 3)
 
 All metrics are displayed on the console and saved to the output CSV and JSON files, with GPU indices and hostnames distinguishing metrics from different nodes.
 
