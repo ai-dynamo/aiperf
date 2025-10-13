@@ -34,6 +34,7 @@ dependencies = [
   "openai[aiohttp]~=1.92.2",
   "orjson~=3.10.18",
   "pillow~=11.1.0",
+  "prometheus_client~=0.23.1",
   "psutil~=7.0.0",
   "pydantic~=2.11.4",
   "pydantic-settings~=2.10.0",
@@ -50,7 +51,7 @@ dependencies = [
 
 # CLI Entrypoint
 [project.scripts]
-aiperf = "aiperf.cli:app"
+aiperf = "aiperf.__main__:main"
 
 [project.optional-dependencies]
 dev = [

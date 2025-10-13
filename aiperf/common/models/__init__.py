@@ -33,8 +33,12 @@ from aiperf.common.models.error_models import (
     ExitErrorInfo,
 )
 from aiperf.common.models.export_models import (
+    EndpointData,
+    GpuSummary,
     JsonExportData,
     JsonMetricResult,
+    TelemetryExportData,
+    TelemetrySummary,
 )
 from aiperf.common.models.health_models import (
     CPUTimes,
@@ -81,6 +85,17 @@ from aiperf.common.models.sequence_distribution import (
 from aiperf.common.models.service_models import (
     ServiceRunInfo,
 )
+from aiperf.common.models.telemetry_models import (
+    GpuMetadata,
+    GpuMetricTimeSeries,
+    GpuTelemetryData,
+    GpuTelemetrySnapshot,
+    ProcessTelemetryResult,
+    TelemetryHierarchy,
+    TelemetryMetrics,
+    TelemetryRecord,
+    TelemetryResults,
+)
 from aiperf.common.models.worker_models import (
     WorkerTaskStats,
 )
@@ -97,10 +112,16 @@ __all__ = [
     "CtxSwitches",
     "DistributionParser",
     "EmbeddingResponseData",
+    "EndpointData",
     "ErrorDetails",
     "ErrorDetailsCount",
     "ExitErrorInfo",
     "FullPhaseProgress",
+    "GpuMetadata",
+    "GpuMetricTimeSeries",
+    "GpuSummary",
+    "GpuTelemetryData",
+    "GpuTelemetrySnapshot",
     "IOCounters",
     "Image",
     "InferenceServerResponse",
@@ -116,6 +137,7 @@ __all__ = [
     "ParsedResponseRecord",
     "ProcessHealth",
     "ProcessRecordsResult",
+    "ProcessTelemetryResult",
     "ProcessingStats",
     "ProfileResults",
     "RankingsResponseData",
@@ -130,6 +152,12 @@ __all__ = [
     "ServiceRunInfo",
     "SessionPayloads",
     "StatsProtocol",
+    "TelemetryExportData",
+    "TelemetryHierarchy",
+    "TelemetryMetrics",
+    "TelemetryRecord",
+    "TelemetryResults",
+    "TelemetrySummary",
     "Text",
     "TextResponse",
     "TextResponseData",
