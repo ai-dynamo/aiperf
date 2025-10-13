@@ -9,18 +9,20 @@ from aiperf.common.enums import SSEFieldType
 from aiperf.common.models import SSEField, SSEMessage
 
 
+@pytest.fixture
+def base_perf_ns() -> int:
+    """Fixture providing a base performance counter timestamp."""
+    return 1234567890123456789
+
+
+@pytest.fixture
+def expected_empty_message(base_perf_ns: int) -> SSEMessage:
+    """Fixture providing an empty SSE message structure."""
+    return SSEMessage(perf_ns=base_perf_ns, packets=[])
+
+
 class TestParseSSEMessage:
     """Comprehensive test suite for SSE message parsing functionality."""
-
-    @pytest.fixture
-    def base_perf_ns(self) -> int:
-        """Fixture providing a base performance counter timestamp."""
-        return 1234567890123456789
-
-    @pytest.fixture
-    def expected_empty_message(self, base_perf_ns: int) -> SSEMessage:
-        """Fixture providing an empty SSE message structure."""
-        return SSEMessage(perf_ns=base_perf_ns, packets=[])
 
     @pytest.mark.parametrize(
         "raw_message",
