@@ -4,14 +4,84 @@
 Simple test for WorkerManager max workers functionality.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.worker_config import WorkersConfig
-from aiperf.workers.worker_manager import WorkerManager
+from aiperf.common.constants import (
+    DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE,
+    DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME,
+)
+from aiperf.common.enums.worker_enums import WorkerStatus
+from aiperf.common.messages import WorkerHealthMessage
+from aiperf.common.models import ProcessHealth, WorkerTaskStats
+from aiperf.workers.worker_manager import WorkerManager, WorkerStatusInfo
+from tests.utils.time_traveler import TimeTraveler
+
+DEFAULT_MEMORY = 1024 * 1024 * 100
+WORKER_ID = "test-worker-1"
+
+
+@pytest.fixture
+def worker_manager() -> WorkerManager:
+    """Create a WorkerManager instance for testing."""
+    service_config = ServiceConfig(workers=WorkersConfig(max=4))
+    user_config = UserConfig(
+        endpoint=EndpointConfig(model_names=["test-model"]),
+        loadgen=LoadGeneratorConfig(concurrency=10),
+    )
+    with patch(
+        "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=8
+    ):
+        manager = WorkerManager(
+            service_config=service_config,
+            user_config=user_config,
+            service_id="test-worker-manager",
+        )
+        manager.warning = MagicMock()
+        return manager
+
+
+@pytest.fixture
+def worker_info(time_traveler: TimeTraveler) -> WorkerStatusInfo:
+    """Create a WorkerStatusInfo instance for testing."""
+    return WorkerStatusInfo(
+        worker_id=WORKER_ID,
+        last_update_ns=time_traveler.time_ns(),
+        status=WorkerStatus.HEALTHY,
+        health=ProcessHealth(
+            create_time=time_traveler.time(),
+            uptime=100.0,
+            cpu_usage=50.0,
+            memory_usage=DEFAULT_MEMORY,
+        ),
+        task_stats=WorkerTaskStats(total=10, completed=5, failed=0),
+    )
+
+
+def create_health_message(
+    time_traveler: TimeTraveler,
+    cpu_usage: float = 50.0,
+    memory_usage: int | None = None,
+    uptime: float = 100.0,
+    total: int = 10,
+    completed: int = 5,
+    failed: int = 0,
+) -> WorkerHealthMessage:
+    """Helper to create WorkerHealthMessage with default values."""
+    return WorkerHealthMessage(
+        service_id=WORKER_ID,
+        health=ProcessHealth(
+            create_time=time_traveler.time(),
+            uptime=uptime,
+            cpu_usage=cpu_usage,
+            memory_usage=memory_usage or DEFAULT_MEMORY,
+        ),
+        task_stats=WorkerTaskStats(total=total, completed=completed, failed=failed),
+    )
 
 
 class TestMaxWorkers:
@@ -90,3 +160,173 @@ class TestMaxWorkers:
             )
 
             assert worker_manager.max_workers == expected
+
+
+class TestHighCPUWarning:
+    """Test the high CPU warning functionality in WorkerManager."""
+
+    def test_high_cpu_triggers_warning(
+        self,
+        worker_manager: WorkerManager,
+        worker_info: WorkerStatusInfo,
+        time_traveler: TimeTraveler,
+    ):
+        """Test that exceeding CPU threshold triggers warning and sets HIGH_LOAD status."""
+        message = create_health_message(time_traveler, cpu_usage=90.0)
+
+        worker_manager._update_worker_status(worker_info, message)
+
+        assert worker_info.status == WorkerStatus.HIGH_LOAD
+        assert worker_info.last_high_load_ns is not None
+        worker_manager.warning.assert_called_once()
+        warning_msg = worker_manager.warning.call_args[0][0]
+        assert "CPU usage" in warning_msg
+        assert "90%" in warning_msg
+        assert WORKER_ID in warning_msg
+
+    def test_cpu_at_threshold_boundary(
+        self,
+        worker_manager: WorkerManager,
+        worker_info: WorkerStatusInfo,
+        time_traveler: TimeTraveler,
+    ):
+        """Test that CPU exactly at 85% threshold does not trigger warning (boundary condition)."""
+        message = create_health_message(
+            time_traveler, cpu_usage=DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE
+        )
+
+        worker_manager._update_worker_status(worker_info, message)
+
+        assert worker_info.status != WorkerStatus.HIGH_LOAD
+        worker_manager.warning.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "time_offset_seconds,expected_status",
+        [
+            (DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME / 2, WorkerStatus.HIGH_LOAD),
+            (DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME + 1, WorkerStatus.HEALTHY),
+        ],
+    )
+    def test_high_cpu_recovery_behavior(
+        self,
+        worker_manager: WorkerManager,
+        worker_info: WorkerStatusInfo,
+        time_traveler: TimeTraveler,
+        time_offset_seconds: float,
+        expected_status: WorkerStatus,
+    ):
+        """Test HIGH_LOAD status behavior during and after recovery period."""
+        worker_info.last_high_load_ns = time_traveler.time_ns()
+        worker_info.status = WorkerStatus.HIGH_LOAD
+
+        time_traveler.advance_time(time_offset_seconds)
+        worker_manager._update_worker_status(
+            worker_info,
+            create_health_message(time_traveler, cpu_usage=50.0, completed=7),
+        )
+
+        assert worker_info.status == expected_status
+        worker_manager.warning.assert_not_called()
+
+    def test_first_high_cpu_with_none_last_high_load(
+        self,
+        worker_manager: WorkerManager,
+        worker_info: WorkerStatusInfo,
+        time_traveler: TimeTraveler,
+    ):
+        """Test high CPU detection when last_high_load_ns is None (first occurrence)."""
+        worker_info.last_high_load_ns = None
+        worker_info.status = WorkerStatus.HEALTHY
+
+        message = create_health_message(time_traveler, cpu_usage=95.0)
+
+        worker_manager._update_worker_status(worker_info, message)
+
+        assert worker_info.status == WorkerStatus.HIGH_LOAD
+        assert worker_info.last_high_load_ns is not None
+        worker_manager.warning.assert_called_once()
+
+    def test_multiple_consecutive_high_cpu_messages(
+        self,
+        worker_manager: WorkerManager,
+        worker_info: WorkerStatusInfo,
+        time_traveler: TimeTraveler,
+    ):
+        """Test multiple consecutive high CPU messages update timestamp and trigger warnings."""
+        worker_manager._update_worker_status(
+            worker_info, create_health_message(time_traveler, cpu_usage=90.0)
+        )
+
+        first_timestamp = worker_info.last_high_load_ns
+        assert worker_info.status == WorkerStatus.HIGH_LOAD
+        assert worker_manager.warning.call_count == 1
+
+        time_traveler.advance_time(2.0)
+        worker_manager._update_worker_status(
+            worker_info,
+            create_health_message(
+                time_traveler, cpu_usage=92.0, uptime=102.0, total=12, completed=6
+            ),
+        )
+
+        assert worker_info.status == WorkerStatus.HIGH_LOAD
+        assert worker_info.last_high_load_ns != first_timestamp
+        assert worker_info.last_high_load_ns == time_traveler.time_ns()
+        assert worker_manager.warning.call_count == 2
+
+    def test_error_status_takes_precedence_over_high_cpu(
+        self,
+        worker_manager: WorkerManager,
+        worker_info: WorkerStatusInfo,
+        time_traveler: TimeTraveler,
+    ):
+        """Test that ERROR status takes precedence over HIGH_LOAD status."""
+        worker_info.task_stats = WorkerTaskStats(total=10, completed=5, failed=2)
+        worker_info.last_error_ns = time_traveler.time_ns()
+
+        message = create_health_message(time_traveler, cpu_usage=95.0, failed=3)
+
+        worker_manager._update_worker_status(worker_info, message)
+
+        assert worker_info.status == WorkerStatus.ERROR
+        worker_manager.warning.assert_not_called()
+
+    def test_high_cpu_with_idle_worker(
+        self,
+        worker_manager: WorkerManager,
+        worker_info: WorkerStatusInfo,
+        time_traveler: TimeTraveler,
+    ):
+        """Test that HIGH_LOAD status takes precedence over IDLE when CPU is high."""
+        message = create_health_message(
+            time_traveler, cpu_usage=90.0, total=0, completed=0
+        )
+
+        worker_manager._update_worker_status(worker_info, message)
+
+        assert worker_info.status == WorkerStatus.HIGH_LOAD
+        worker_manager.warning.assert_called_once()
+
+    def test_high_cpu_updates_health_info(
+        self,
+        worker_manager: WorkerManager,
+        worker_info: WorkerStatusInfo,
+        time_traveler: TimeTraveler,
+    ):
+        """Test that worker health info is updated even when high CPU is detected."""
+        message = create_health_message(
+            time_traveler,
+            cpu_usage=92.5,
+            memory_usage=DEFAULT_MEMORY * 2,
+            uptime=150.0,
+            total=20,
+            completed=15,
+        )
+
+        worker_manager._update_worker_status(worker_info, message)
+
+        assert worker_info.status == WorkerStatus.HIGH_LOAD
+        assert worker_info.health.cpu_usage == 92.5
+        assert worker_info.health.memory_usage == DEFAULT_MEMORY * 2
+        assert worker_info.task_stats.total == 20
+        assert worker_info.task_stats.completed == 15
