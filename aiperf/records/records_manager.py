@@ -122,7 +122,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ] = {}  # Track telemetry-specific errors with counts
         self._telemetry_error_counts_lock = asyncio.Lock()
 
-        self._results_processors: list[ResultsProcessorProtocol] = []
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
         self._telemetry_results_processors: list[TelemetryResultsProcessorProtocol] = []
 
@@ -134,8 +133,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     service_config=self.service_config,
                     user_config=self.user_config,
                 )
-                self._results_processors.append(results_processor)
                 self.attach_child_lifecycle(results_processor)
+
+                if isinstance(results_processor, TelemetryResultsProcessorProtocol):
+                    self._telemetry_results_processors.append(results_processor)
+                else:
+                    self._metric_results_processors.append(results_processor)
+
                 self.debug(
                     f"Created results processor: {results_processor_type}: {results_processor.__class__.__name__}"
                 )
@@ -143,11 +147,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self.debug(
                     f"Results processor {results_processor_type} is disabled and will not be used"
                 )
-
-            if isinstance(results_processor, TelemetryResultsProcessorProtocol):
-                self._telemetry_results_processors.append(results_processor)
-            else:
-                self._metric_results_processors.append(results_processor)
 
     @on_pull_message(MessageType.METRIC_RECORDS)
     async def _on_metric_records(self, message: MetricRecordsMessage) -> None:

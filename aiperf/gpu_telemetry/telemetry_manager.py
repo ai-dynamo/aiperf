@@ -261,7 +261,7 @@ class TelemetryManager(BaseComponentService):
         )
 
         # Schedule delayed shutdown to allow command response to be sent
-        asyncio.create_task(self._delayed_shutdown())
+        self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
 
     async def _stop_all_collectors(self) -> None:
         """Stop all telemetry collectors.

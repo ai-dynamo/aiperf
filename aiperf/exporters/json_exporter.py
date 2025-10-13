@@ -2,19 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import Any
 
 import aiofiles
-from pydantic import BaseModel, ConfigDict
 
-from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.constants import NANOS_PER_SECOND, STAT_KEYS
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DataExporterType, MetricFlags
 from aiperf.common.factories import DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models import ErrorDetailsCount, MetricResult
+from aiperf.common.models import MetricResult
+from aiperf.common.models.export_models import (
+    EndpointData,
+    GpuSummary,
+    JsonExportData,
+    TelemetryExportData,
+    TelemetrySummary,
+)
 from aiperf.common.protocols import DataExporterProtocol
 from aiperf.common.types import MetricTagT
 from aiperf.exporters.display_units_utils import (
@@ -24,52 +28,6 @@ from aiperf.exporters.display_units_utils import (
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 from aiperf.metrics.metric_registry import MetricRegistry
-
-
-class TelemetrySummary(BaseModel):
-    """Summary information for telemetry collection."""
-
-    endpoints_tested: list[str]
-    endpoints_successful: list[str]
-    start_time: datetime
-    end_time: datetime
-
-
-class GpuSummary(BaseModel):
-    """Summary of GPU telemetry data."""
-
-    gpu_index: int
-    gpu_name: str
-    gpu_uuid: str
-    hostname: str | None
-    metrics: dict[str, dict[str, Any]]  # metric_key -> {stat_key -> value}
-
-
-class EndpointData(BaseModel):
-    """Data for a single endpoint."""
-
-    gpus: dict[str, GpuSummary]
-
-
-class TelemetryExportData(BaseModel):
-    """Telemetry data structure for JSON export."""
-
-    summary: TelemetrySummary
-    endpoints: dict[str, EndpointData]
-
-
-class JsonExportData(BaseModel):
-    """Data to be exported to a JSON file."""
-
-    model_config = ConfigDict(extra="allow")
-
-    records: dict[MetricTagT, MetricResult] | None = None
-    input_config: UserConfig | None = None
-    was_cancelled: bool | None = None
-    error_summary: list[ErrorDetailsCount] | None = None
-    start_time: datetime | None = None
-    end_time: datetime | None = None
-    telemetry_data: TelemetryExportData | None = None
 
 
 @DataExporterFactory.register(DataExporterType.JSON)

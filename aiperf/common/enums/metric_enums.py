@@ -381,11 +381,6 @@ class MetricType(CaseInsensitiveStrEnum):
     """Metrics that are purely derived from other metrics as a summary, and do not require per-request values.
     Examples: request throughput, output token throughput, etc."""
 
-    TELEMETRY = "telemetry"
-    """Metrics that collect telemetry data from an external source like a DCGM exporter.
-    These metrics are continuously collected during benchmark execution and then aggregated for added display.
-    Examples: GPU power usage, memory utilization, GPU utilization, etc."""
-
 
 class MetricValueTypeInfo(BasePydanticEnumInfo):
     """Information about a metric value type."""
@@ -641,10 +636,7 @@ class MetricFlags(Flag):
     GOODPUT = 1 << 10
     """Metrics that are only applicable when goodput feature is enabled"""
 
-    GPU_TELEMETRY = 1 << 11
-    """Metrics that collect GPU telemetry data such as power usage, memory, and utilization."""
-
-    NO_INDIVIDUAL_RECORDS = 1 << 12
+    NO_INDIVIDUAL_RECORDS = 1 << 11
     """Metrics that should not be exported for individual records. These are typically aggregate metrics.
     This is used to filter out metrics such as request count or min/max timestamps that are not relevant to individual records."""
 

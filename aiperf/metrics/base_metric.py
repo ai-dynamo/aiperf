@@ -91,7 +91,7 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
 
     @classmethod
     def _verify_base_class(cls) -> None:
-        """Verify that the class is a subclass of BaseRecordMetric, BaseAggregateMetric, BaseDerivedMetric, or BaseTelemetryMetric.
+        """Verify that the class is a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric.
         This is done to ensure that the class is a valid metric type.
         """
         # Note: this is valid because the below imports are abstract, so they will not get here
@@ -99,19 +99,17 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
             BaseAggregateMetric,
             BaseDerivedMetric,
             BaseRecordMetric,
-            BaseTelemetryMetric,
         )
 
-        # Enforce that concrete subclasses are a subclass of BaseRecordMetric, BaseAggregateMetric, BaseDerivedMetric, or BaseTelemetryMetric
+        # Enforce that concrete subclasses are a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric
         valid_base_classes = {
             BaseRecordMetric,
             BaseAggregateMetric,
             BaseDerivedMetric,
-            BaseTelemetryMetric,
         }
         if not any(issubclass(cls, base) for base in valid_base_classes):
             raise TypeError(
-                f"Concrete metric class {cls.__name__} must be a subclass of BaseRecordMetric, BaseAggregateMetric, BaseDerivedMetric, or BaseTelemetryMetric"
+                f"Concrete metric class {cls.__name__} must be a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric"
             )
 
     @classmethod

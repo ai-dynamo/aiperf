@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import ConfigDict, Field
 
@@ -36,6 +37,38 @@ class JsonMetricResult(AIPerfBaseModel):
     min: int | float | None = None
     max: int | float | None = None
     std: float | None = None
+
+
+class TelemetrySummary(AIPerfBaseModel):
+    """Summary information for telemetry collection."""
+
+    endpoints_tested: list[str]
+    endpoints_successful: list[str]
+    start_time: datetime
+    end_time: datetime
+
+
+class GpuSummary(AIPerfBaseModel):
+    """Summary of GPU telemetry data."""
+
+    gpu_index: int
+    gpu_name: str
+    gpu_uuid: str
+    hostname: str | None
+    metrics: dict[str, dict[str, Any]]  # metric_key -> {stat_key -> value}
+
+
+class EndpointData(AIPerfBaseModel):
+    """Data for a single endpoint."""
+
+    gpus: dict[str, GpuSummary]
+
+
+class TelemetryExportData(AIPerfBaseModel):
+    """Telemetry data structure for JSON export."""
+
+    summary: TelemetrySummary
+    endpoints: dict[str, EndpointData]
 
 
 class JsonExportData(AIPerfBaseModel):
@@ -77,9 +110,7 @@ class JsonExportData(AIPerfBaseModel):
     error_request_count: JsonMetricResult | None = None
     error_isl: JsonMetricResult | None = None
     total_error_isl: JsonMetricResult | None = None
-
-    # TODO: Uncomment this once we have added gpu telemetry support
-    # telemetry_stats: TelemetryStats | None = None
+    telemetry_data: TelemetryExportData | None = None
     input_config: UserConfig | None = None
     was_cancelled: bool | None = None
     error_summary: list[ErrorDetailsCount] | None = None

@@ -199,8 +199,8 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
             )
 
         values = np.array([point[0] for point in data_points])
-        p1, p5, p25, p50, p75, p90, p95, p99 = np.percentile(
-            values, [1, 5, 25, 50, 75, 90, 95, 99]
+        p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
+            values, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
 
         return MetricResult(
@@ -214,6 +214,7 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
             count=len(values),
             p1=p1,
             p5=p5,
+            p10=p10,
             p25=p25,
             p50=p50,
             p75=p75,
