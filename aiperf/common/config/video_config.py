@@ -3,7 +3,8 @@
 
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, model_validator
+from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
@@ -19,6 +20,14 @@ class VideoConfig(BaseConfig):
     Note: Video generation requires FFmpeg to be installed on your system.
     If FFmpeg is not found, you'll get installation instructions specific to your platform.
     """
+
+    @model_validator(mode="after")
+    def validate_width_and_height(self) -> Self:
+        if self.width and not self.height:
+            raise ValueError("Width is specified but height is not")
+        if self.height and not self.width:
+            raise ValueError("Height is specified but width is not")
+        return self
 
     _CLI_GROUP = Groups.VIDEO_INPUT
 
@@ -62,7 +71,7 @@ class VideoConfig(BaseConfig):
     ] = VideoDefaults.FPS
 
     width: Annotated[
-        int,
+        int | None,
         Field(
             ge=1,
             description="Video width in pixels.",
@@ -74,7 +83,7 @@ class VideoConfig(BaseConfig):
     ] = VideoDefaults.WIDTH
 
     height: Annotated[
-        int,
+        int | None,
         Field(
             ge=1,
             description="Video height in pixels.",

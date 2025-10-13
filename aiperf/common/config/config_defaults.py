@@ -83,8 +83,8 @@ class VideoDefaults:
     BATCH_SIZE = 1
     DURATION = 5.0
     FPS = 4
-    WIDTH = 0
-    HEIGHT = 0
+    WIDTH = None
+    HEIGHT = None
     SYNTH_TYPE = VideoSynthType.MOVING_SHAPES
     FORMAT = VideoFormat.MP4
     CODEC = "libx264"
