@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from typing import Any, Literal
 
 import orjson
 
@@ -120,14 +120,34 @@ class OpenAIResponseExtractor(AIPerfLoggerMixin):
         return None
 
 
-def _parse_chat_common(sub_obj: dict[str, Any]) -> BaseResponseData | None:
-    """Parse the common ChatCompletion and ChatCompletionChunk objects into a ResponseData object."""
-    content = sub_obj.get("content")
-    reasoning = sub_obj.get("reasoning_content") or sub_obj.get("reasoning")
+def _parse_chat_response(
+    obj: dict[str, Any], data_key: Literal["message", "delta"]
+) -> BaseResponseData | None:
+    """Parse the common ChatCompletion and ChatCompletionChunk objects into a ResponseData object.
+
+    Args:
+        obj: The JSON object to parse.
+        data_key: The key to use to get the data from the choices (e.g. "message" or "delta").
+
+    Returns:
+        The parsed response data.
+    """
+    choices = obj.get("choices")
+    if not choices:
+        return None
+
+    message = choices[0].get(data_key)
+    if not message:
+        return None
+
+    content = message.get("content")
+    reasoning = message.get("reasoning_content") or message.get("reasoning")
     if not content and not reasoning:
         return None
+
     if not reasoning:
         return _make_text_response_data(content)
+
     return ReasoningResponseData(
         content=content,
         reasoning=reasoning,
@@ -140,7 +160,7 @@ class ChatCompletionParser(OpenAIObjectParserProtocol):
 
     def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
         """Parse a ChatCompletion into a ResponseData object."""
-        return _parse_chat_common(obj.get("choices", [{}])[0].get("message", {}))
+        return _parse_chat_response(obj, "message")
 
 
 @OpenAIObjectParserFactory.register(OpenAIObjectType.CHAT_COMPLETION_CHUNK)
@@ -149,16 +169,21 @@ class ChatCompletionChunkParser(OpenAIObjectParserProtocol):
 
     def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
         """Parse a ChatCompletionChunk into a ResponseData object."""
-        return _parse_chat_common(obj.get("choices", [{}])[0].get("delta", {}))
+        return _parse_chat_response(obj, "delta")
 
 
-@OpenAIObjectParserFactory.register(OpenAIObjectType.COMPLETION)
+@OpenAIObjectParserFactory.register_all(
+    OpenAIObjectType.COMPLETION, OpenAIObjectType.TEXT_COMPLETION
+)
 class CompletionParser(OpenAIObjectParserProtocol):
     """Parser for Completion objects."""
 
     def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
         """Parse a Completion object."""
-        return _make_text_response_data(obj.get("choices", [{}])[0].get("text"))
+        choices = obj.get("choices")
+        if not choices:
+            return None
+        return _make_text_response_data(choices[0].get("text"))
 
 
 @OpenAIObjectParserFactory.register(OpenAIObjectType.LIST)
@@ -187,24 +212,6 @@ class RankingsParser(OpenAIObjectParserProtocol):
         if not rankings:
             return None
         return RankingsResponseData(rankings=rankings)
-
-
-@OpenAIObjectParserFactory.register(OpenAIObjectType.RESPONSE)
-class ResponseParser(OpenAIObjectParserProtocol):
-    """Parser for OpenAI Responses objects."""
-
-    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
-        """Parse a Responses object."""
-        return _make_text_response_data(obj.get("output_text"))
-
-
-@OpenAIObjectParserFactory.register(OpenAIObjectType.TEXT_COMPLETION)
-class TextCompletionParser(OpenAIObjectParserProtocol):
-    """Parser for TextCompletion objects."""
-
-    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
-        """Parse a TextCompletion object."""
-        return _make_text_response_data(obj.get("choices", [{}])[0].get("text"))
 
 
 def _make_text_response_data(text: str | None) -> TextResponseData | None:

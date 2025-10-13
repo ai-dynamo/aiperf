@@ -228,6 +228,97 @@ class TestOpenAIResponseExtractor:
         assert results[2].data.get_text() == "Valid chunk 2"
         assert results[2].perf_ns == 5
 
+    def test_parse_chat_completion_with_empty_choices_array_returns_none(
+        self, extractor
+    ):
+        """Test that chat completion with empty choices array returns None (no IndexError)."""
+        chat_completion = {
+            "id": "test",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "test-model",
+            "choices": [],
+        }
+        chat_completion_json = json.dumps(chat_completion)
+
+        result = extractor._parse_raw_text(chat_completion_json)
+        assert result is None
+
+    def test_parse_chat_completion_chunk_with_empty_choices_array_returns_none(
+        self, extractor
+    ):
+        """Test that chat completion chunk with empty choices array returns None (no IndexError)."""
+        chunk = {
+            "id": "test",
+            "object": "chat.completion.chunk",
+            "created": 1700000000,
+            "model": "test-model",
+            "choices": [],
+        }
+        chunk_json = json.dumps(chunk)
+
+        result = extractor._parse_raw_text(chunk_json)
+        assert result is None
+
+    def test_parse_completion_with_empty_choices_array_returns_none(self, extractor):
+        """Test that completion with empty choices array returns None (no IndexError)."""
+        completion = {
+            "id": "test",
+            "object": "text_completion",
+            "created": 1700000000,
+            "model": "test-model",
+            "choices": [],
+        }
+        completion_json = json.dumps(completion)
+
+        result = extractor._parse_raw_text(completion_json)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_extract_response_data_with_empty_choices_array_filters(
+        self, extractor
+    ):
+        """Test that responses with empty choices arrays are filtered out properly."""
+        # Create responses with empty choices arrays
+        empty_chat_completion = {
+            "id": "test1",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "test-model",
+            "choices": [],
+        }
+        empty_chunk = {
+            "id": "test2",
+            "object": "chat.completion.chunk",
+            "created": 1700000000,
+            "model": "test-model",
+            "choices": [],
+        }
+        empty_completion = {
+            "id": "test3",
+            "object": "text_completion",
+            "created": 1700000000,
+            "model": "test-model",
+            "choices": [],
+        }
+
+        request = self.create_request_record(
+            self.create_raw_text_response(json.dumps(empty_chat_completion), perf_ns=1),
+            self.create_text_response("Valid response", perf_ns=2),
+            self.create_raw_text_response(json.dumps(empty_chunk), perf_ns=3),
+            self.create_sse_message("Valid chunk", perf_ns=4),
+            self.create_raw_text_response(json.dumps(empty_completion), perf_ns=5),
+        )
+
+        results = await extractor.extract_response_data(request)
+
+        # Should only return the valid responses, empty choices arrays should be filtered out
+        assert len(results) == 2
+        assert results[0].data.get_text() == "Valid response"
+        assert results[0].perf_ns == 2
+        assert results[1].data.get_text() == "Valid chunk"
+        assert results[1].perf_ns == 4
+
 
 class TestRankingsParser(TestOpenAIResponseExtractor):
     """Test cases for RankingsParser."""
