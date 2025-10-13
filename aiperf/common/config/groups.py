@@ -21,6 +21,7 @@ class Groups:
     PREFIX_PROMPT = Group.create_ordered("Prefix Prompt")
     AUDIO_INPUT = Group.create_ordered("Audio Input")
     IMAGE_INPUT = Group.create_ordered("Image Input")
+    VIDEO_INPUT = Group.create_ordered("Video Input")
     SERVICE = Group.create_ordered("Service")
     TELEMETRY = Group.create_ordered("Telemetry")
     UI = Group.create_ordered("UI")

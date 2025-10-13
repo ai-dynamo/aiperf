@@ -39,6 +39,12 @@ class Audio(Media):
     media_type: ClassVar[MediaTypeT] = MediaType.AUDIO
 
 
+class Video(Media):
+    """Media that contains video data."""
+
+    media_type: ClassVar[MediaTypeT] = MediaType.VIDEO
+
+
 @exclude_if_none("role")
 class Turn(AIPerfBaseModel):
     """A dataset representation of a single turn within a conversation.
@@ -67,6 +73,9 @@ class Turn(AIPerfBaseModel):
     )
     audios: list[Audio] = Field(
         default=[], description="Collection of audio data in each turn."
+    )
+    videos: list[Video] = Field(
+        default=[], description="Collection of video data in each turn."
     )
 
 

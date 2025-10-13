@@ -50,6 +50,7 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
             and len(turn.texts[0].contents) == 1
             and len(turn.images) == 0
             and len(turn.audios) == 0
+            and len(turn.videos) == 0
         ):
             # Hotfix for Dynamo API which does not yet support a list of messages
             message["name"] = turn.texts[0].name
@@ -91,6 +92,14 @@ class OpenAIChatCompletionRequestConverter(AIPerfLoggerMixin):
                             "format": format,
                         },
                     }
+                )
+
+        for video in turn.videos:
+            for content in video.contents:
+                if not content:
+                    continue
+                message_content.append(
+                    {"type": "video_url", "video_url": {"url": content}}
                 )
 
         message["content"] = message_content

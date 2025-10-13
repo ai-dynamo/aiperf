@@ -26,6 +26,7 @@ from aiperf.common.models.dataset_models import (
     SessionPayloads,
     Text,
     Turn,
+    Video,
 )
 from aiperf.common.models.error_models import (
     ErrorDetails,
@@ -162,6 +163,7 @@ __all__ = [
     "TextResponse",
     "TextResponseData",
     "Turn",
+    "Video",
     "WorkerStats",
     "WorkerTaskStats",
     "create_balanced_distribution",
