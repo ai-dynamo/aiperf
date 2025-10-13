@@ -33,6 +33,10 @@ from aiperf.common.models.error_models import (
     ErrorDetailsCount,
     ExitErrorInfo,
 )
+from aiperf.common.models.export_models import (
+    JsonExportData,
+    JsonMetricResult,
+)
 from aiperf.common.models.health_models import (
     CPUTimes,
     CtxSwitches,
@@ -51,7 +55,10 @@ from aiperf.common.models.record_models import (
     BaseResponseData,
     EmbeddingResponseData,
     InferenceServerResponse,
+    MetricRecordInfo,
+    MetricRecordMetadata,
     MetricResult,
+    MetricValue,
     ParsedResponse,
     ParsedResponseRecord,
     ProcessRecordsResult,
@@ -63,6 +70,14 @@ from aiperf.common.models.record_models import (
     SSEMessage,
     TextResponse,
     TextResponseData,
+)
+from aiperf.common.models.sequence_distribution import (
+    DistributionParser,
+    SequenceLengthDistribution,
+    SequenceLengthPair,
+    create_balanced_distribution,
+    create_uniform_distribution,
+    logger,
 )
 from aiperf.common.models.service_models import (
     ServiceRunInfo,
@@ -81,6 +96,7 @@ __all__ = [
     "CreditPhaseConfig",
     "CreditPhaseStats",
     "CtxSwitches",
+    "DistributionParser",
     "EmbeddingResponseData",
     "ErrorDetails",
     "ErrorDetailsCount",
@@ -90,8 +106,13 @@ __all__ = [
     "Image",
     "InferenceServerResponse",
     "InputsFile",
+    "JsonExportData",
+    "JsonMetricResult",
     "Media",
+    "MetricRecordInfo",
+    "MetricRecordMetadata",
     "MetricResult",
+    "MetricValue",
     "ParsedResponse",
     "ParsedResponseRecord",
     "ProcessHealth",
@@ -105,6 +126,8 @@ __all__ = [
     "RequestsStats",
     "SSEField",
     "SSEMessage",
+    "SequenceLengthDistribution",
+    "SequenceLengthPair",
     "ServiceRunInfo",
     "SessionPayloads",
     "StatsProtocol",
@@ -115,5 +138,8 @@ __all__ = [
     "Video",
     "WorkerStats",
     "WorkerTaskStats",
+    "create_balanced_distribution",
+    "create_uniform_distribution",
     "exclude_if_none",
+    "logger",
 ]

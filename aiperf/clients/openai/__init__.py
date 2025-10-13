@@ -22,9 +22,6 @@ from aiperf.clients.openai.openai_completions import (
 from aiperf.clients.openai.openai_embeddings import (
     OpenAIEmbeddingsRequestConverter,
 )
-from aiperf.clients.openai.openai_responses import (
-    OpenAIResponsesRequestConverter,
-)
 from aiperf.clients.openai.rankings import (
     RankingsRequestConverter,
 )
@@ -35,6 +32,5 @@ __all__ = [
     "OpenAIClientAioHttp",
     "OpenAICompletionRequestConverter",
     "OpenAIEmbeddingsRequestConverter",
-    "OpenAIResponsesRequestConverter",
     "RankingsRequestConverter",
 ]

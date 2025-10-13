@@ -11,6 +11,7 @@ from aiperf.common.enums import (
     AudioFormat,
     CommunicationBackend,
     EndpointType,
+    ExportLevel,
     ImageFormat,
     ModelSelectionStrategy,
     RequestRateMode,
@@ -49,6 +50,7 @@ class InputDefaults:
     FIXED_SCHEDULE_AUTO_OFFSET = False
     FIXED_SCHEDULE_START_OFFSET = None
     FIXED_SCHEDULE_END_OFFSET = None
+    GOODPUT = None
     PUBLIC_DATASET = None
     CUSTOM_DATASET_TYPE = None
     RANDOM_SEED = None
@@ -127,12 +129,13 @@ class TurnDelayDefaults:
 @dataclass(frozen=True)
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
-    PROFILE_EXPORT_FILE = Path("profile_export.json")
+    PROFILE_EXPORT_FILE = Path("profile_export.jsonl")
     LOG_FOLDER = Path("logs")
     LOG_FILE = Path("aiperf.log")
     INPUTS_JSON_FILE = Path("inputs.json")
     PROFILE_EXPORT_AIPERF_CSV_FILE = Path("profile_export_aiperf.csv")
     PROFILE_EXPORT_AIPERF_JSON_FILE = Path("profile_export_aiperf.json")
+    EXPORT_LEVEL = ExportLevel.RECORDS
 
 
 @dataclass(frozen=True)

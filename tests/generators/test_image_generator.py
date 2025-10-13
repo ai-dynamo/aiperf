@@ -6,6 +6,7 @@ import random
 from io import BytesIO
 from unittest.mock import Mock, patch
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -165,9 +166,11 @@ class TestImageGenerator:
         mock_sample_image.return_value = test_image
 
         state = random.getstate()
+        np_state = np.random.get_state()
         try:
             # Set random seed to make the test deterministic
             random.seed(42)
+            np.random.seed(42)
             generator = ImageGenerator(base_config)
             image1 = generator.generate()
             image2 = generator.generate()
@@ -175,6 +178,7 @@ class TestImageGenerator:
             assert image1 != image2
         finally:
             random.setstate(state)
+            np.random.set_state(np_state)
 
     def test_sample_source_image_success(self, base_config, mock_file_system):
         """Test successful sampling of source image."""

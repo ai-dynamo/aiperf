@@ -69,7 +69,7 @@ def mk_metric():
         std=None,
     ):
         return MetricResult(
-            tag="ttft",
+            tag="time_to_first_token",
             header=header,
             unit=unit,
             avg=avg,
@@ -104,8 +104,8 @@ async def test_csv_exporter_writes_two_sections_and_values(
     # - ttft: request-level metric with percentiles, already converted to ms
     # - input_tokens: system metric (count)
     converted = {
-        "ttft": mk_metric(
-            "ttft",
+        "time_to_first_token": mk_metric(
+            "time_to_first_token",
             "Time to First Token",
             "ms",
             avg=12.3456,
@@ -117,8 +117,8 @@ async def test_csv_exporter_writes_two_sections_and_values(
             p99=15.0,
             std=1.2,
         ),
-        "ttft_system": mk_metric(
-            "ttft",
+        "time_to_first_token_system": mk_metric(
+            "time_to_first_token",
             'Input, Tokens "Total"',
             "ms",
             avg=1024.0,

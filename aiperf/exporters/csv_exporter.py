@@ -10,6 +10,7 @@ from decimal import Decimal
 import aiofiles
 
 from aiperf.common.config.config_defaults import OutputDefaults
+from aiperf.common.constants import STAT_KEYS
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DataExporterType
 from aiperf.common.enums.metric_enums import MetricFlags
@@ -17,10 +18,7 @@ from aiperf.common.factories import DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import DataExporterProtocol
-from aiperf.exporters.display_units_utils import (
-    STAT_KEYS,
-    convert_all_metrics_to_display_units,
-)
+from aiperf.exporters.display_units_utils import convert_all_metrics_to_display_units
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.metrics.metric_registry import MetricRegistry
 

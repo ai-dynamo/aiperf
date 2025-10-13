@@ -13,11 +13,11 @@ Use these options to profile with AIPerf.
 │                                                             in the list gets assigned to n-mod len(models). random: assignment is uniformly random [choices: round-robin, random]     │
 │                                                             [default: round-robin]                                                                                                    │
 │    CUSTOM-ENDPOINT --custom-endpoint --endpoint             Set a custom endpoint that differs from the OpenAI defaults.                                                              │
-│    ENDPOINT-TYPE --endpoint-type                            The endpoint type to send requests to on the server. [choices: chat, completions, embeddings, rankings, responses]        │
+│    ENDPOINT-TYPE --endpoint-type                            The endpoint type to send requests to on the server. [choices: chat, completions, embeddings, rankings]                   │
 │                                                             [default: chat]                                                                                                           │
 │    STREAMING --streaming                                    An option to enable the use of the streaming API. [default: False]                                                        │
 │    URL --url                                            -u  URL of the endpoint to target for benchmarking. [default: localhost:8000]                                                 │
-│    REQUEST-TIMEOUT-SECONDS --request-timeout-seconds        The timeout in floating-point seconds for each request to the endpoint. [default: 600.0]                                 │
+│    REQUEST-TIMEOUT-SECONDS --request-timeout-seconds        The timeout in floating-point seconds for each request to the endpoint. [default: 600.0]                                  │
 │    API-KEY --api-key                                        The API key to use for the endpoint. If provided, it will be sent with every request as a header: Authorization: Bearer   │
 │                                                             <api_key>.                                                                                                                │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -25,11 +25,11 @@ Use these options to profile with AIPerf.
 ```
 ╭─ Input ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ EXTRA-INPUTS --extra-inputs                                    Provide additional inputs to include with every request. Inputs should be in an 'input_name:value' format.             │
-│                                                                Alternatively, a string representing a json formatted dictionary can be provided. [default: []]                              │
+│                                                                Alternatively, a string representing a json formatted dictionary can be provided. [default: []]                        │
 │ HEADER --header                                            -H  Adds a custom header to the requests. Headers must be specified as 'Header:Value' pairs. Alternatively, a string       │
-│                                                                representing a json formatted dictionary can be provided. [default: []]                                                      │
+│                                                                representing a json formatted dictionary can be provided. [default: []]                                                │
 │ INPUT-FILE --input-file                                        The file or directory path that contains the dataset to use for profiling. This parameter is used in conjunction with  │
-│                                                                the --custom-dataset-type parameter to support different types of user provided datasets.                                │
+│                                                                the --custom-dataset-type parameter to support different types of user provided datasets.                              │
 │ FIXED-SCHEDULE --fixed-schedule                                Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file parameter, but can be   │
 │                                                                set manually here. [default: False]                                                                                    │
 │ FIXED-SCHEDULE-AUTO-OFFSET --fixed-schedule-auto-offset        Specifies to automatically offset the timestamps in the fixed schedule, such that the first timestamp is considered 0, │
@@ -41,7 +41,7 @@ Use these options to profile with AIPerf.
 │ FIXED-SCHEDULE-END-OFFSET --fixed-schedule-end-offset          Specifies the offset in milliseconds to end the fixed schedule at. By default, the schedule ends at the last timestamp │
 │                                                                in the trace dataset, but this option can be used to only run a subset of the trace. The schedule will include any     │
 │                                                                requests at the end offset.                                                                                            │
-│ CUSTOM-DATASET-TYPE --custom-dataset-type                      The type of custom dataset to use. This parameter is used in conjunction with the --input-file parameter. [choices:          │
+│ CUSTOM-DATASET-TYPE --custom-dataset-type                      The type of custom dataset to use. This parameter is used in conjunction with the --input-file parameter. [choices:    │
 │                                                                single_turn, multi_turn, random_pool, mooncake_trace] [default: mooncake_trace]                                        │
 │ RANDOM-SEED --random-seed                                      The seed used to generate random values. Set to some value to make the synthetic data generation deterministic. It     │
 │                                                                will use system default if not provided.                                                                               │
@@ -54,27 +54,27 @@ Use these options to profile with AIPerf.
 ```
 ```
 ╭─ Tokenizer ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ TOKENIZER --tokenizer                                      The Hugging Face tokenizer to use to interpret token metrics from prompts and responses. The value can be the name of a     │
+│ TOKENIZER --tokenizer                                      The Hugging Face tokenizer to use to interpret token metrics from prompts and responses. The value can be the name of a    │
 │                                                            tokenizer or the filepath of the tokenizer. The default value is the model name.                                           │
 │ TOKENIZER-REVISION --tokenizer-revision                    The specific model version to use. It can be a branch name, tag name, or commit ID. [default: main]                        │
 │ TOKENIZER-TRUST-REMOTE-CODE --tokenizer-trust-remote-code  Allows custom tokenizer to be downloaded and executed. This carries security risks and should only be used for             │
-│                                                            repositories you trust. This is only necessary for custom tokenizers stored in Hugging Face Hub. [default: False]           │
+│                                                            repositories you trust. This is only necessary for custom tokenizers stored in Hugging Face Hub. [default: False]          │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```
 ╭─ Load Generator ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ BENCHMARK-DURATION --benchmark-duration                            The duration in seconds for benchmarking.                                                                          │
-│ BENCHMARK-GRACE-PERIOD --benchmark-grace-period                    The grace period in seconds to wait for responses after benchmark duration ends. Only applies when               │
-│                                                                    --benchmark-duration is set. Responses received within this period are included in metrics. [default: 30.0]       │
+│ BENCHMARK-GRACE-PERIOD --benchmark-grace-period                    The grace period in seconds to wait for responses after benchmark duration ends. Only applies when                 │
+│                                                                    --benchmark-duration is set. Responses received within this period are included in metrics. [default: 30.0]        │
 │ CONCURRENCY --concurrency                                          The concurrency value to benchmark.                                                                                │
 │ REQUEST-RATE --request-rate                                        Sets the request rate for the load generated by AIPerf. Unit: requests/second                                      │
 │ REQUEST-RATE-MODE --request-rate-mode                              Sets the request rate mode for the load generated by AIPerf. Valid values: constant, poisson. constant: Generate   │
 │                                                                    requests at a fixed rate. poisson: Generate requests using a poisson distribution. [default: poisson]              │
 │ REQUEST-COUNT --request-count --num-requests                       The number of requests to use for measurement. [default: 10]                                                       │
 │ WARMUP-REQUEST-COUNT --warmup-request-count --num-warmup-requests  The number of warmup requests to send before benchmarking. [default: 0]                                            │
-│ REQUEST-CANCELLATION-RATE --request-cancellation-rate              The percentage of requests to cancel. [default: 0.0]                                                              │
-│ REQUEST-CANCELLATION-DELAY --request-cancellation-delay            The delay in seconds before cancelling requests. This is used when --request-cancellation-rate is greater than 0. │
-│                                                                    [default: 0.0]                                                                                                    │
+│ REQUEST-CANCELLATION-RATE --request-cancellation-rate              The percentage of requests to cancel. [default: 0.0]                                                               │
+│ REQUEST-CANCELLATION-DELAY --request-cancellation-delay            The delay in seconds before cancelling requests. This is used when --request-cancellation-rate is greater than 0.  │
+│                                                                    [default: 0.0]                                                                                                     │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```

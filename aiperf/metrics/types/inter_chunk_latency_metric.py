@@ -33,7 +33,7 @@ class InterChunkLatencyMetric(BaseRecordMetric[list[int]]):
     short_header = "ICL"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
-    flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.EXPERIMENTAL
+    flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.NO_CONSOLE
     required_metrics = None
 
     def _parse_record(

@@ -6,72 +6,121 @@ from unittest.mock import MagicMock
 import pytest
 
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.enums import CreditPhase
+from aiperf.common.messages.inference_messages import MetricRecordsData
+from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.types import MetricTagT
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 
+# Constants
+START_TIME = 1000000000
+
+
+# Helper functions
+def create_mock_records_manager(
+    start_time_ns: int,
+    expected_duration_sec: float | None,
+    grace_period_sec: float = 0.0,
+) -> MagicMock:
+    """Create a mock RecordsManager instance for testing filtering logic."""
+    instance = MagicMock()
+    instance.expected_duration_sec = expected_duration_sec
+    instance.start_time_ns = start_time_ns
+    instance.user_config.loadgen.benchmark_grace_period = grace_period_sec
+    instance.debug = MagicMock()
+    return instance
+
+
+def create_metric_record_data(
+    request_start_ns: int,
+    request_end_ns: int,
+    metrics: dict[MetricTagT, int | float] | None = None,
+) -> MetricRecordsData:
+    """Create a MetricRecordsData object with sensible defaults for testing."""
+    return MetricRecordsData(
+        metadata=MetricRecordMetadata(
+            session_num=0,
+            conversation_id="test",
+            turn_index=0,
+            request_start_ns=request_start_ns,
+            request_end_ns=request_end_ns,
+            worker_id="worker-1",
+            record_processor_id="processor-1",
+            benchmark_phase=CreditPhase.PROFILING,
+        ),
+        metrics=metrics or {},
+    )
+
 
 class TestRecordsManagerFiltering:
-    """Test the records manager's filtering logic ."""
+    """Test the records manager's filtering logic."""
 
     def test_should_include_request_by_duration_no_duration_benchmark(self):
         """Test that request-count benchmarks always include all requests."""
         from aiperf.records.records_manager import RecordsManager
 
-        instance = MagicMock()
-        instance.expected_duration_sec = None
+        instance = create_mock_records_manager(
+            start_time_ns=0,
+            expected_duration_sec=None,
+        )
 
-        results = [
-            {
+        record_data = create_metric_record_data(
+            request_start_ns=999999999999999,
+            request_end_ns=999999999999999,
+            metrics={
                 MinRequestTimestampMetric.tag: 999999999999999,
                 RequestLatencyMetric.tag: 999999999999999,
-            }
-        ]
+            },
+        )
 
-        result = RecordsManager._should_include_request_by_duration(instance, results)
+        result = RecordsManager._should_include_request_by_duration(
+            instance, record_data
+        )
         assert result is True
 
     def test_should_include_request_within_duration_no_grace_period(self):
         """Test filtering with zero grace period - only duration matters."""
         from aiperf.records.records_manager import RecordsManager
 
-        start_time = 1000000000
-        duration_sec = 2.0
-        grace_period_sec = 0.0
-
-        instance = MagicMock()
-        instance.expected_duration_sec = duration_sec
-        instance.start_time_ns = start_time
-        instance.user_config.loadgen.benchmark_grace_period = grace_period_sec
-        instance.debug = MagicMock()  # Mock debug method
+        instance = create_mock_records_manager(
+            start_time_ns=START_TIME,
+            expected_duration_sec=2.0,
+            grace_period_sec=0.0,
+        )
 
         # Request that completes exactly at duration end should be included
-        results_at_duration = [
-            {
-                MinRequestTimestampMetric.tag: start_time + int(1.5 * NANOS_PER_SECOND),
-                RequestLatencyMetric.tag: int(
-                    0.5 * NANOS_PER_SECOND
-                ),  # Completes exactly at 2.0s
-            }
-        ]
+        request_start = START_TIME + int(1.5 * NANOS_PER_SECOND)
+        request_latency = int(0.5 * NANOS_PER_SECOND)
+        record_at_duration = create_metric_record_data(
+            request_start_ns=request_start,
+            request_end_ns=request_start + request_latency,  # Completes exactly at 2.0s
+            metrics={
+                MinRequestTimestampMetric.tag: request_start,
+                RequestLatencyMetric.tag: request_latency,
+            },
+        )
         assert (
             RecordsManager._should_include_request_by_duration(
-                instance, results_at_duration
+                instance, record_at_duration
             )
             is True
         )
 
         # Request that completes after duration should be excluded
-        results_after_duration = [
-            {
-                MinRequestTimestampMetric.tag: start_time + int(1.5 * NANOS_PER_SECOND),
-                RequestLatencyMetric.tag: int(
-                    0.6 * NANOS_PER_SECOND
-                ),  # Completes at 2.1s
-            }
-        ]
+        request_start2 = START_TIME + int(1.5 * NANOS_PER_SECOND)
+        request_latency2 = int(0.6 * NANOS_PER_SECOND)
+        record_after_duration = create_metric_record_data(
+            request_start_ns=request_start2,
+            request_end_ns=request_start2 + request_latency2,  # Completes at 2.1s
+            metrics={
+                MinRequestTimestampMetric.tag: request_start2,
+                RequestLatencyMetric.tag: request_latency2,
+            },
+        )
         assert (
             RecordsManager._should_include_request_by_duration(
-                instance, results_after_duration
+                instance, record_after_duration
             )
             is False
         )
@@ -80,45 +129,46 @@ class TestRecordsManagerFiltering:
         """Test filtering with grace period - responses within grace period are included."""
         from aiperf.records.records_manager import RecordsManager
 
-        start_time = 1000000000
-        duration_sec = 2.0
-        grace_period_sec = 1.0  # 1 second grace period
+        instance = create_mock_records_manager(
+            start_time_ns=START_TIME,
+            expected_duration_sec=2.0,
+            grace_period_sec=1.0,
+        )
 
-        instance = MagicMock()
-        instance.expected_duration_sec = duration_sec
-        instance.start_time_ns = start_time
-        instance.user_config.loadgen.benchmark_grace_period = grace_period_sec
-        instance.debug = MagicMock()
-
-        results_within_grace = [
-            {
-                MinRequestTimestampMetric.tag: start_time
-                + int(1.5 * NANOS_PER_SECOND),  # 1.5s after start
-                RequestLatencyMetric.tag: int(
-                    1.4 * NANOS_PER_SECOND
-                ),  # Completes at 2.9s (within 3s total)
-            }
-        ]
+        # Request that completes within grace period should be included
+        request_start_within = START_TIME + int(1.5 * NANOS_PER_SECOND)
+        request_latency_within = int(1.4 * NANOS_PER_SECOND)
+        record_within_grace = create_metric_record_data(
+            request_start_ns=request_start_within,
+            request_end_ns=request_start_within
+            + request_latency_within,  # Completes at 2.9s
+            metrics={
+                MinRequestTimestampMetric.tag: request_start_within,
+                RequestLatencyMetric.tag: request_latency_within,
+            },
+        )
         assert (
             RecordsManager._should_include_request_by_duration(
-                instance, results_within_grace
+                instance, record_within_grace
             )
             is True
         )
 
         # Request that completes after grace period should be excluded
-        results_after_grace = [
-            {
-                MinRequestTimestampMetric.tag: start_time
-                + int(1.5 * NANOS_PER_SECOND),  # 1.5s after start
-                RequestLatencyMetric.tag: int(
-                    1.6 * NANOS_PER_SECOND
-                ),  # Completes at 3.1s (after 3s total)
-            }
-        ]
+        request_start_after = START_TIME + int(1.5 * NANOS_PER_SECOND)
+        request_latency_after = int(1.6 * NANOS_PER_SECOND)
+        record_after_grace = create_metric_record_data(
+            request_start_ns=request_start_after,
+            request_end_ns=request_start_after
+            + request_latency_after,  # Completes at 3.1s
+            metrics={
+                MinRequestTimestampMetric.tag: request_start_after,
+                RequestLatencyMetric.tag: request_latency_after,
+            },
+        )
         assert (
             RecordsManager._should_include_request_by_duration(
-                instance, results_after_grace
+                instance, record_after_grace
             )
             is False
         )
@@ -127,48 +177,51 @@ class TestRecordsManagerFiltering:
         """Test filtering behavior when required metrics are missing."""
         from aiperf.records.records_manager import RecordsManager
 
-        start_time = 1000000000
-        duration_sec = 2.0
-        grace_period_sec = 1.0
+        instance = create_mock_records_manager(
+            start_time_ns=START_TIME,
+            expected_duration_sec=2.0,
+            grace_period_sec=1.0,
+        )
 
-        instance = MagicMock()
-        instance.expected_duration_sec = duration_sec
-        instance.start_time_ns = start_time
-        instance.user_config.loadgen.benchmark_grace_period = grace_period_sec
-        instance.debug = MagicMock()
-
-        # Request with missing timestamp should be included (cannot filter)
-        results_missing_timestamp = [
-            {
+        # Request that ends after grace period should be excluded
+        record_missing_timestamp = create_metric_record_data(
+            request_start_ns=START_TIME,
+            request_end_ns=START_TIME + int(5.0 * NANOS_PER_SECOND),  # After grace
+            metrics={
                 RequestLatencyMetric.tag: int(5.0 * NANOS_PER_SECOND)  # Only latency
-            }
-        ]
+            },
+        )
         assert (
             RecordsManager._should_include_request_by_duration(
-                instance, results_missing_timestamp
+                instance, record_missing_timestamp
+            )
+            is False
+        )
+
+        # Request that ends within grace period should be included
+        record_missing_latency = create_metric_record_data(
+            request_start_ns=START_TIME + int(1.0 * NANOS_PER_SECOND),
+            request_end_ns=START_TIME + int(2.0 * NANOS_PER_SECOND),  # Within grace
+            metrics={
+                MinRequestTimestampMetric.tag: START_TIME + int(1.0 * NANOS_PER_SECOND)
+            },
+        )
+        assert (
+            RecordsManager._should_include_request_by_duration(
+                instance, record_missing_latency
             )
             is True
         )
 
-        # Request with missing latency should be included (cannot filter)
-        results_missing_latency = [
-            {
-                MinRequestTimestampMetric.tag: start_time
-                + int(1.0 * NANOS_PER_SECOND)  # Only timestamp
-            }
-        ]
-        assert (
-            RecordsManager._should_include_request_by_duration(
-                instance, results_missing_latency
-            )
-            is True
+        # Request with no metrics should be included if it ends within grace period
+        record_no_metrics = create_metric_record_data(
+            request_start_ns=START_TIME,
+            request_end_ns=START_TIME + int(1.0 * NANOS_PER_SECOND),  # Within grace
+            metrics={},
         )
-
-        # Request with no metrics should be included
-        results_no_metrics = [{}]
         assert (
             RecordsManager._should_include_request_by_duration(
-                instance, results_no_metrics
+                instance, record_no_metrics
             )
             is True
         )
@@ -178,41 +231,44 @@ class TestRecordsManagerFiltering:
         """Test filtering logic with various grace period values."""
         from aiperf.records.records_manager import RecordsManager
 
-        start_time = 1000000000
-        duration_sec = 2.0
-
-        instance = MagicMock()
-        instance.expected_duration_sec = duration_sec
-        instance.start_time_ns = start_time
-        instance.user_config.loadgen.benchmark_grace_period = grace_period
-        instance.debug = MagicMock()
+        instance = create_mock_records_manager(
+            start_time_ns=START_TIME,
+            expected_duration_sec=2.0,
+            grace_period_sec=grace_period,
+        )
 
         # Request that completes exactly at duration + grace_period boundary
-        results_at_boundary = [
-            {
-                MinRequestTimestampMetric.tag: start_time + int(1.0 * NANOS_PER_SECOND),
-                RequestLatencyMetric.tag: int((1.0 + grace_period) * NANOS_PER_SECOND),
-            }
-        ]
+        request_start_at = START_TIME + int(1.0 * NANOS_PER_SECOND)
+        request_latency_at = int((1.0 + grace_period) * NANOS_PER_SECOND)
+        record_at_boundary = create_metric_record_data(
+            request_start_ns=request_start_at,
+            request_end_ns=request_start_at + request_latency_at,
+            metrics={
+                MinRequestTimestampMetric.tag: request_start_at,
+                RequestLatencyMetric.tag: request_latency_at,
+            },
+        )
         assert (
             RecordsManager._should_include_request_by_duration(
-                instance, results_at_boundary
+                instance, record_at_boundary
             )
             is True
         )
 
         # Request that completes just after duration + grace_period should be excluded
-        results_after_boundary = [
-            {
-                MinRequestTimestampMetric.tag: start_time + int(1.0 * NANOS_PER_SECOND),
-                RequestLatencyMetric.tag: int(
-                    (1.0 + grace_period + 0.1) * NANOS_PER_SECOND
-                ),
-            }
-        ]
+        request_start_after = START_TIME + int(1.0 * NANOS_PER_SECOND)
+        request_latency_after = int((1.0 + grace_period + 0.1) * NANOS_PER_SECOND)
+        record_after_boundary = create_metric_record_data(
+            request_start_ns=request_start_after,
+            request_end_ns=request_start_after + request_latency_after,
+            metrics={
+                MinRequestTimestampMetric.tag: request_start_after,
+                RequestLatencyMetric.tag: request_latency_after,
+            },
+        )
         assert (
             RecordsManager._should_include_request_by_duration(
-                instance, results_after_boundary
+                instance, record_after_boundary
             )
             is False
         )
@@ -221,56 +277,44 @@ class TestRecordsManagerFiltering:
         """Test filtering with multiple result dictionaries for a single request (all-or-nothing)."""
         from aiperf.records.records_manager import RecordsManager
 
-        start_time = 1000000000
-        duration_sec = 2.0
-        grace_period_sec = 1.0
+        instance = create_mock_records_manager(
+            start_time_ns=START_TIME,
+            expected_duration_sec=2.0,
+            grace_period_sec=1.0,
+        )
 
-        instance = MagicMock()
-        instance.expected_duration_sec = duration_sec
-        instance.start_time_ns = start_time
-        instance.user_config.loadgen.benchmark_grace_period = grace_period_sec
-        instance.debug = MagicMock()
-
-        # Multiple results where all complete within grace period - should include
-        results_all_within = [
-            {
-                MinRequestTimestampMetric.tag: start_time + int(1.5 * NANOS_PER_SECOND),
-                RequestLatencyMetric.tag: int(
-                    1.0 * NANOS_PER_SECOND
-                ),  # Completes at 2.5s
+        # Request where the latest response completes within grace period - should include
+        request_start_within = START_TIME + int(1.5 * NANOS_PER_SECOND)
+        record_all_within = create_metric_record_data(
+            request_start_ns=request_start_within,
+            request_end_ns=START_TIME
+            + int(2.9 * NANOS_PER_SECOND),  # Latest completion time
+            metrics={
+                MinRequestTimestampMetric.tag: request_start_within,
+                RequestLatencyMetric.tag: int(1.0 * NANOS_PER_SECOND),
             },
-            {
-                MinRequestTimestampMetric.tag: start_time + int(1.8 * NANOS_PER_SECOND),
-                RequestLatencyMetric.tag: int(
-                    1.1 * NANOS_PER_SECOND
-                ),  # Completes at 2.9s
-            },
-        ]
+        )
         assert (
             RecordsManager._should_include_request_by_duration(
-                instance, results_all_within
+                instance, record_all_within
             )
             is True
         )
 
-        # Multiple results where one completes after grace period - should exclude entire request
-        results_one_after = [
-            {
-                MinRequestTimestampMetric.tag: start_time + int(1.0 * NANOS_PER_SECOND),
-                RequestLatencyMetric.tag: int(
-                    1.0 * NANOS_PER_SECOND
-                ),  # Completes at 2.0s (within)
+        # Request where one response completes after grace period - should exclude entire request
+        request_start_after = START_TIME + int(1.0 * NANOS_PER_SECOND)
+        record_one_after = create_metric_record_data(
+            request_start_ns=request_start_after,
+            request_end_ns=START_TIME
+            + int(3.5 * NANOS_PER_SECOND),  # Latest completion time (after grace)
+            metrics={
+                MinRequestTimestampMetric.tag: request_start_after,
+                RequestLatencyMetric.tag: int(1.0 * NANOS_PER_SECOND),
             },
-            {
-                MinRequestTimestampMetric.tag: start_time + int(1.5 * NANOS_PER_SECOND),
-                RequestLatencyMetric.tag: int(
-                    2.0 * NANOS_PER_SECOND
-                ),  # Completes at 3.5s (after grace)
-            },
-        ]
+        )
         assert (
             RecordsManager._should_include_request_by_duration(
-                instance, results_one_after
+                instance, record_one_after
             )
             is False
         )

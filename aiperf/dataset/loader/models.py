@@ -176,6 +176,12 @@ class MooncakeTrace(AIPerfBaseModel):
         None, description="The hash ids of a request (required if input_length is used)"
     )
     timestamp: int | None = Field(None, description="The timestamp of a request")
+    delay: int | None = Field(
+        None, description="Amount of milliseconds to wait before sending the turn."
+    )
+    session_id: str | None = Field(
+        None, description="Unique identifier for the conversation session"
+    )
 
     @model_validator(mode="after")
     def validate_input(self) -> "MooncakeTrace":

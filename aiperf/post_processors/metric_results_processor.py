@@ -9,12 +9,13 @@ from aiperf.common.enums import MetricType, ResultsProcessorType
 from aiperf.common.enums.metric_enums import MetricDictValueTypeT, MetricValueTypeT
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.factories import ResultsProcessorFactory
+from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol
 from aiperf.common.types import MetricTagT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
-from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
@@ -64,12 +65,12 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             if metric.type == MetricType.AGGREGATE
         }
 
-    async def process_result(self, incoming_metrics: MetricRecordDict) -> None:
+    async def process_result(self, record_data: MetricRecordsData) -> None:
         """Process a result from the metric record processor."""
         if self.is_trace_enabled:
-            self.trace(f"Processing incoming metrics: {incoming_metrics}")
+            self.trace(f"Processing incoming metrics: {record_data.metrics}")
 
-        for tag, value in incoming_metrics.items():
+        for tag, value in record_data.metrics.items():
             try:
                 metric_type = self._tags_to_types[tag]
                 if metric_type == MetricType.RECORD:

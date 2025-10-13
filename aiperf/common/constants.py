@@ -8,6 +8,22 @@ NANOS_PER_MILLIS = 1_000_000
 MILLIS_PER_SECOND = 1000
 BYTES_PER_MIB = 1024 * 1024
 
+STAT_KEYS = [
+    "avg",
+    "min",
+    "max",
+    "p1",
+    "p5",
+    "p10",
+    "p25",
+    "p50",
+    "p75",
+    "p90",
+    "p95",
+    "p99",
+    "std",
+]
+
 
 GRACEFUL_SHUTDOWN_TIMEOUT = 5.0
 """Default timeout for shutting down services in seconds."""
@@ -105,3 +121,9 @@ DEFAULT_ZMQ_CONTEXT_TERM_TIMEOUT = 10.0
 
 AIPERF_HTTP_CONNECTION_LIMIT = int(os.environ.get("AIPERF_HTTP_CONNECTION_LIMIT", 2500))
 """Maximum number of concurrent connections for HTTP clients."""
+
+GOOD_REQUEST_COUNT_TAG = "good_request_count"
+"""GoodRequestCount metric tag"""
+
+DEFAULT_RECORD_EXPORT_BATCH_SIZE = 100
+"""Default batch size for record export results processor."""

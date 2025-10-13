@@ -28,7 +28,7 @@ class OutputTokenCountMetric(BaseRecordMetric[int]):
     flags = (
         MetricFlags.PRODUCES_TOKENS_ONLY
         | MetricFlags.LARGER_IS_BETTER
-        | MetricFlags.HIDDEN
+        | MetricFlags.NO_CONSOLE
     )
     required_metrics = None
 
@@ -63,3 +63,9 @@ class TotalOutputTokensMetric(DerivedSumMetric[int, OutputTokenCountMetric]):
     tag = "total_output_tokens"
     header = "Total Output Tokens"
     short_header = "Total Output"
+    short_header_hide_unit = True
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.LARGER_IS_BETTER
+        | MetricFlags.NO_CONSOLE
+    )

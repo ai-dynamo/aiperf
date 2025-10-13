@@ -5,6 +5,7 @@ Comprehensive unit tests for the RequestRateStrategy class.
 """
 
 import math
+import uuid
 
 import numpy as np
 import pytest
@@ -409,6 +410,7 @@ class TestRequestRateStrategyMaxConcurrency:
         credit_return = CreditReturnMessage(
             service_id="test-service",
             phase=CreditPhase.PROFILING,
+            credit_drop_id=str(uuid.uuid4()),
         )
         await strategy._on_credit_return(credit_return)
 

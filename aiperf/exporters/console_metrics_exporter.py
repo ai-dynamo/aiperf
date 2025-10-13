@@ -68,7 +68,12 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
     def _should_show(self, record: MetricResult) -> bool:
         # Only show metrics that are not error-only or hidden
         metric_class = MetricRegistry.get_class(record.tag)
-        return metric_class.missing_flags(MetricFlags.ERROR_ONLY | MetricFlags.HIDDEN)
+        return metric_class.missing_flags(
+            MetricFlags.ERROR_ONLY
+            | MetricFlags.NO_CONSOLE
+            | MetricFlags.INTERNAL
+            | MetricFlags.EXPERIMENTAL
+        )
 
     def _format_row(self, record: MetricResult) -> list[str]:
         metric_class = MetricRegistry.get_class(record.tag)
