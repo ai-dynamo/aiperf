@@ -80,7 +80,7 @@ class VideoConfig(BaseConfig):
             name=("--video-width",),
             group=_CLI_GROUP,
         ),
-    ] = None
+    ] = VideoDefaults.WIDTH
 
     height: Annotated[
         int | None,
@@ -92,7 +92,7 @@ class VideoConfig(BaseConfig):
             name=("--video-height",),
             group=_CLI_GROUP,
         ),
-    ] = None
+    ] = VideoDefaults.HEIGHT
 
     synth_type: Annotated[
         VideoSynthType,
