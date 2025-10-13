@@ -17,6 +17,8 @@ from aiperf.common.enums import (
     RequestRateMode,
     ServiceRunType,
     TimingMode,
+    VideoFormat,
+    VideoSynthType,
 )
 
 
@@ -74,6 +76,18 @@ class ImageDefaults:
     HEIGHT_MEAN = 0.0
     HEIGHT_STDDEV = 0.0
     FORMAT = ImageFormat.PNG
+
+
+@dataclass(frozen=True)
+class VideoDefaults:
+    BATCH_SIZE = 1
+    DURATION = 5.0
+    FPS = 4
+    WIDTH = 0
+    HEIGHT = 0
+    SYNTH_TYPE = VideoSynthType.MOVING_SHAPES
+    FORMAT = VideoFormat.MP4
+    CODEC = "libx264"
 
 
 @dataclass(frozen=True)

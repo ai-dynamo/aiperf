@@ -16,6 +16,7 @@ from aiperf.dataset.generator import (
     AudioGenerator,
     ImageGenerator,
     PromptGenerator,
+    VideoGenerator,
 )
 
 
@@ -26,6 +27,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         self.prompt_generator = PromptGenerator(config.input.prompt, tokenizer)
         self.image_generator = ImageGenerator(config.input.image)
         self.audio_generator = AudioGenerator(config.input.audio)
+        self.video_generator = VideoGenerator(config.input.video)
         self.turn_count = 0
 
         # Initialize sequence distribution
