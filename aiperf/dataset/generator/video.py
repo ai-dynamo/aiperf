@@ -76,11 +76,9 @@ class VideoGenerator(BaseGenerator):
             A base64 encoded string of the generated video, or empty string if generation is disabled.
         """
         # Only generate videos if width and height are non-zero
-        if self.config.width <= 0 or self.config.height <= 0:
+        if not self.config.width or not self.config.height:
             self.logger.debug(
-                "Video generation disabled (width=%d, height=%d)",
-                self.config.width,
-                self.config.height,
+                f"Video generation disabled (width={self.config.width}, height={self.config.height})",
             )
             return ""
 
