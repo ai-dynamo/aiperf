@@ -187,4 +187,4 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
     @property
     def include_video(self) -> bool:
-        return self.config.input.video.width > 0 and self.config.input.video.height > 0
+        return bool(self.config.input.video.width and self.config.input.video.height)
