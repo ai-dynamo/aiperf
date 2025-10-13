@@ -148,12 +148,16 @@ def reset_singleton_factories():
     yield  # Run the test first
 
     # Clean up after test completes
-    from aiperf.common.factories import CommunicationFactory
+    from aiperf.common.factories import AIPerfUIFactory, CommunicationFactory
 
     if hasattr(CommunicationFactory, "_instances"):
         CommunicationFactory._instances.clear()
     if hasattr(CommunicationFactory, "_instances_pid"):
         CommunicationFactory._instances_pid.clear()
+    if hasattr(AIPerfUIFactory, "_instances"):
+        AIPerfUIFactory._instances.clear()
+    if hasattr(AIPerfUIFactory, "_instances_pid"):
+        AIPerfUIFactory._instances_pid.clear()
 
 
 @pytest.fixture
