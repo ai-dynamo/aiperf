@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import ConfigDict, Field
 
@@ -55,7 +54,7 @@ class GpuSummary(AIPerfBaseModel):
     gpu_name: str
     gpu_uuid: str
     hostname: str | None
-    metrics: dict[str, dict[str, Any]]  # metric_key -> {stat_key -> value}
+    metrics: dict[str, JsonMetricResult]  # metric_key -> {stat_key -> value}
 
 
 class EndpointData(AIPerfBaseModel):

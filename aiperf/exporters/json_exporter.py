@@ -6,7 +6,7 @@ from datetime import datetime
 import aiofiles
 
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.constants import NANOS_PER_SECOND, STAT_KEYS
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DataExporterType, MetricFlags
 from aiperf.common.factories import DataExporterFactory
@@ -170,13 +170,7 @@ class JsonExporter(AIPerfLoggerMixin):
                         metric_result = gpu_data.get_metric_result(
                             metric_key, metric_key, metric_key, unit
                         )
-                        stats_dict = {}
-                        for stat in STAT_KEYS:
-                            value = getattr(metric_result, stat, None)
-                            stats_dict[stat] = value
-                        stats_dict["count"] = metric_result.count
-                        stats_dict["unit"] = unit
-                        metrics_dict[metric_key] = stats_dict
+                        metrics_dict[metric_key] = metric_result.to_json_result()
                     except Exception:
                         continue
 
