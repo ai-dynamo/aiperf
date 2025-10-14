@@ -107,13 +107,13 @@ check-format check-fmt: #? check the formatting of the project using ruff.
 	$(activate_venv) && ruff format . --check $(args)
 
 test: #? run the tests using pytest-xdist.
-	$(activate_venv) && pytest -n auto -m 'not integration and not performance' $(args)
+	$(activate_venv) && pytest -n auto $(args)
 
 test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
-	$(activate_venv) && pytest -n auto -v -s --log-cli-level DEBUG -m 'not integration and not performance'
+	$(activate_venv) && pytest -n auto -v -s --log-cli-level DEBUG $(args)
 
 coverage: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest -n auto --cov=aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance' $(args)
+	$(activate_venv) && pytest -n auto --cov=aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term $(args)
 
 install: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]" $(args)
@@ -163,10 +163,6 @@ first-time-setup: #? convenience command to setup the environment for the first 
 	@# Install the project
 	@printf "$(bold)$(green)Installing project...$(reset)\n"
 	@PATH=$(UV_PATH):$(PATH) $(MAKE) --no-print-directory install
-
-	@# Install the mock server
-	@printf "$(bold)$(green)Installing mock server...$(reset)\n"
-	@$(MAKE) -C integration-tests --no-print-directory install
 
 	@# Install pre-commit hooks
 	@printf "$(bold)$(green)Installing pre-commit hooks...$(reset)\n"

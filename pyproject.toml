@@ -32,7 +32,6 @@ dependencies = [
   "cyclopts>=3,<4",
   "ffmpeg-python~=0.2.0",
   "numpy~=1.26.4",
-  "openai[aiohttp]~=1.92.2",
   "orjson~=3.10.18",
   "pillow~=11.1.0",
   "prometheus_client~=0.23.1",
@@ -102,9 +101,13 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
     "integration: marks tests as integration tests (deselected by default)",
     "performance: marks tests as performance tests (deselected by default)",
+    "ffmpeg: marks tests that require ffmpeg to be installed (deselected by default)",
 ]
 # Better console output
 console_output_style = "progress"
 verbosity_assertions = 2
 # Show extra test summary info
-addopts = "--strict-markers"
+# Deselect integration, performance, and ffmpeg tests by default
+# To run them: pytest -m integration, pytest -m performance, pytest -m ffmpeg
+# IDE note: When running a specific test file/function from IDE, markers are often bypassed
+addopts = "--strict-markers -m 'not integration and not performance and not ffmpeg'"

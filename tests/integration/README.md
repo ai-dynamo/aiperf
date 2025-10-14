@@ -68,6 +68,44 @@ class TestMyFeature:
         assert result.has_streaming_metrics
 ```
 
+### Test Markers
+
+- `@pytest.mark.integration` - Required for all integration tests (deselected by default)
+- `@pytest.mark.performance` - For high-load/stress tests (deselected by default)
+- `@pytest.mark.ffmpeg` - For tests requiring FFmpeg binary (deselected by default)
+
+**Default behavior:**
+- Unit tests run by default
+- Integration, performance, and ffmpeg tests are skipped by default
+- To run marked tests, explicitly use `-m` flag
+
+**Common usage:**
+
+```bash
+# Run default tests (unit tests only)
+pytest
+
+# Run integration tests
+pytest -m integration
+
+# Run integration tests but skip ffmpeg tests
+pytest -m "integration and not ffmpeg"
+
+# Run only ffmpeg tests
+pytest -m ffmpeg
+
+# Run everything (unit + integration + performance + ffmpeg)
+pytest -m ""
+```
+
+**IDE Test Runners:**
+
+When you run tests from your IDE (VSCode, PyCharm, etc.):
+- **VSCode:** The project's [.vscode/settings.json](../../.vscode/settings.json) is configured to respect the same marker filtering as the CLI
+- **Other IDEs:** You may need to configure pytest arguments manually to include `-m "not integration and not performance and not ffmpeg"`
+- **Running individual tests:** When you click to run a specific test function, marker filtering still applies (test will be skipped if markers don't match)
+- **To run marked tests in IDE:** Edit `.vscode/settings.json` and change the `-m` argument or remove it entirely
+
 ## Working with Results
 
 The `AIPerfResults` object provides parsed outputs via Pydantic models:

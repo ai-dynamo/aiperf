@@ -294,6 +294,7 @@ class TestMultimodal:
         assert result.has_input_images
         assert result.has_input_audio
 
+    @pytest.mark.ffmpeg
     async def test_video(self, cli: AIPerfCLI, fakeai_server: FakeAIServer):
         """Video generation with parameter validation."""
         result = await cli.run(
