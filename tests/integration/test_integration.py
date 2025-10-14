@@ -21,6 +21,32 @@ from tests.integration.utils import (
 )
 
 # =============================================================================
+# Test Default Behavior
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestDefaultBehavior:
+    """Tests for default behavior."""
+
+    async def test_default_behavior(self, cli: AIPerfCLI, fakeai_server: FakeAIServer):
+        """Test that only providing the model and nothing else still works.
+
+        NOTE: We still have to provide the server's url due to the nature of it being on a non-default port.
+        """
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model openai/gpt-oss-120b \
+                --url {fakeai_server.url}
+            """
+        )
+        assert result.request_count == 0
+        assert result.exit_code == 0
+
+
+# =============================================================================
 # Chat Endpoint - /v1/chat/completions
 # =============================================================================
 
@@ -287,7 +313,7 @@ class TestMultimodal:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model mistralai/Mistral-7B-Instruct-v0.3 \
+                --model openai/gpt-oss-120b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -382,7 +408,7 @@ class TestMediaFormats:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model mistralai/Mistral-7B-Instruct-v0.3 \
+                --model openai/gpt-oss-120b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 5 \
