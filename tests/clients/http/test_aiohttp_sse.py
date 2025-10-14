@@ -178,6 +178,7 @@ class TestAioHttpSSEStreamReader:
             assert first_byte_ns == first_timestamp
 
     @pytest.mark.asyncio
+    @pytest.mark.performance
     async def test_sse_stream_performance(self, mock_sse_response: Mock) -> None:
         """Test SSE stream reading performance with large number of messages."""
         num_messages = 10000
