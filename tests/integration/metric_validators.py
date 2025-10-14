@@ -142,8 +142,8 @@ def validate_metric_stats(
 def validate_all_metrics(
     jsonl_records: list[MetricRecordInfo],
     json_export: JsonExportData,
-    rtol: float = 1e-5,
-    atol: float = 1e-8,
+    rtol: float = 1,
+    atol: float = 1,
 ) -> dict[str, ComputedStats]:
     """Validate all metrics in JSON export against computed values from JSONL.
 

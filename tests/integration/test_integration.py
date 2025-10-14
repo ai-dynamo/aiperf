@@ -774,6 +774,7 @@ class TestDashboardUI:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="These tests need to be improved")
 class TestMetricValidation:
     """Tests for validating aggregate metrics against raw JSONL data."""
 

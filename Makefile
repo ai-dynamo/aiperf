@@ -173,11 +173,11 @@ first-time-setup: #? convenience command to setup the environment for the first 
 
 test-integration: #? run integration tests with with FakeAI server.
 	@printf "$(bold)$(blue)Running integration tests with FakeAI server...$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -n auto -v $(args)
+	$(activate_venv) && pytest tests/integration/ -m 'integration' -n auto -v $(args)
 	@printf "$(bold)$(green)Integration tests passed!$(reset)\n"
 
 test-integration-verbose: #? run integration tests with verbose output with FakeAI server.
 	@printf "$(bold)$(blue)Running integration tests (verbose, sequential) with FakeAI server...$(reset)\n"
 	@printf "$(yellow)Note: Sequential mode shows real-time AIPerf output$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	$(activate_venv) && pytest tests/integration/ -m 'integration' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
 	@printf "$(bold)$(green)Integration tests passed!$(reset)\n"
