@@ -152,8 +152,7 @@ class TestWarmup:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model meta-llama/Llama-3.1-8B-Instruct \
-                --tokenizer gpt2 \
+                --model openai/gpt-oss-120b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --warmup-request-count 5 \
@@ -172,8 +171,7 @@ class TestWarmup:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model meta-llama/Llama-3.1-70B-Instruct \
-                --tokenizer gpt2 \
+                --model openai/gpt-oss-120b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --streaming \
@@ -252,8 +250,7 @@ class TestMultimodal:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model meta-llama/Llama-3.1-70B-Instruct \
-                --tokenizer gpt2 \
+                --model openai/gpt-oss-120b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -272,8 +269,7 @@ class TestMultimodal:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model meta-llama/Llama-3.1-8B-Instruct \
-                --tokenizer gpt2 \
+                --model openai/gpt-oss-120b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -363,8 +359,7 @@ class TestMediaFormats:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model meta-llama/Llama-3.1-70B-Instruct \
-                --tokenizer gpt2 \
+                --model openai/gpt-oss-120b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 5 \
@@ -575,9 +570,8 @@ class TestRequestCancellation:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model meta-llama/Llama-3.1-8B-Instruct \
+                --model openai/gpt-oss-120b \
                 --url {fakeai_server.url} \
-                --tokenizer gpt2 \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 50 \
@@ -899,3 +893,55 @@ class TestMetricValidation:
 
         # Ensure streaming metrics don't exist
         assert result.json.time_to_first_token is None
+
+
+# =============================================================================
+# Test model and tokenizer issues
+# =============================================================================
+
+
+@pytest.mark.skip(reason="These tests need to be fully implemented")
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestModelAndTokenizerIssues:
+    """Tests for tokenizer issues."""
+
+    async def test_invalid_model_name(
+        self, cli: AIPerfCLI, fakeai_server: FakeAIServer
+    ):
+        """Test that an invalid model name raises an error and exits the benchmark quickly."""
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model invalid-model-name \
+                --url {fakeai_server.url} \
+                --endpoint-type chat \
+                --request-count 10 \
+                --concurrency 2 \
+                --workers-max 1 \
+                --ui simple
+            """
+        )
+        assert result.request_count == 0
+        assert result.exit_code == 1
+        assert "Invalid model name" in result.log
+
+    async def test_private_restricted_model(
+        self, cli: AIPerfCLI, fakeai_server: FakeAIServer
+    ):
+        """Test that a private restricted model raises an error and exits the benchmark quickly."""
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model meta-llama/Llama-3.1-70B-Instruct \
+                --url {fakeai_server.url} \
+                --endpoint-type chat \
+                --request-count 10 \
+                --concurrency 2 \
+                --workers-max 1 \
+                --ui simple
+            """
+        )
+        assert result.request_count == 0
+        assert result.exit_code == 1
+        assert "Private restricted model" in result.log
