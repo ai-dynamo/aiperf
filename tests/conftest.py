@@ -51,53 +51,6 @@ DEFAULT_INPUT_TOKENS = 5
 DEFAULT_OUTPUT_TOKENS = 2
 
 
-def pytest_addoption(parser):
-    """Add custom command line options for pytest."""
-    parser.addoption(
-        "--performance",
-        action="store_true",
-        default=False,
-        help="Run performance tests (disabled by default)",
-    )
-    parser.addoption(
-        "--integration",
-        action="store_true",
-        default=False,
-        help="Run integration tests (disabled by default)",
-    )
-
-
-def pytest_configure(config):
-    """Configure custom markers."""
-    config.addinivalue_line(
-        "markers",
-        "performance: marks tests as performance tests (disabled by default, use --performance to enable)",
-    )
-    config.addinivalue_line(
-        "markers",
-        "integration: marks tests as integration tests (disabled by default, use --integration to enable)",
-    )
-
-
-def pytest_collection_modifyitems(config, items):
-    """Skip performance and integration tests unless their respective options are given."""
-    performance_enabled = config.getoption("--performance")
-    integration_enabled = config.getoption("--integration")
-
-    skip_performance = pytest.mark.skip(
-        reason="performance tests disabled (use --performance to enable)"
-    )
-    skip_integration = pytest.mark.skip(
-        reason="integration tests disabled (use --integration to enable)"
-    )
-
-    for item in items:
-        if "performance" in item.keywords and not performance_enabled:
-            item.add_marker(skip_performance)
-        if "integration" in item.keywords and not integration_enabled:
-            item.add_marker(skip_integration)
-
-
 @pytest.fixture(autouse=True)
 def no_sleep(monkeypatch) -> None:
     """
