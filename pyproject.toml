@@ -32,7 +32,7 @@ dependencies = [
   "cyclopts>=3,<4",
   "ffmpeg-python~=0.2.0",
   "numpy~=1.26.4",
-  "openai[aiohttp]~=1.92.2",
+  "openai[aiohttp]>=1.92.2",
 
   "orjson~=3.10.18",
   "pillow~=11.1.0",
