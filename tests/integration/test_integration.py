@@ -42,7 +42,7 @@ class TestDefaultBehavior:
                 --url {fakeai_server.url}
             """
         )
-        assert result.request_count == 0
+        assert result.request_count == 10
         assert result.exit_code == 0
 
 
