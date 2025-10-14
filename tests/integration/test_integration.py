@@ -153,6 +153,7 @@ class TestWarmup:
             f"""
             aiperf profile \
                 --model meta-llama/Llama-3.1-8B-Instruct \
+                --tokenizer gpt2 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --warmup-request-count 5 \
@@ -172,6 +173,7 @@ class TestWarmup:
             f"""
             aiperf profile \
                 --model meta-llama/Llama-3.1-70B-Instruct \
+                --tokenizer gpt2 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --streaming \
@@ -251,6 +253,7 @@ class TestMultimodal:
             f"""
             aiperf profile \
                 --model meta-llama/Llama-3.1-70B-Instruct \
+                --tokenizer gpt2 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -270,6 +273,7 @@ class TestMultimodal:
             f"""
             aiperf profile \
                 --model meta-llama/Llama-3.1-8B-Instruct \
+                --tokenizer gpt2 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -360,6 +364,7 @@ class TestMediaFormats:
             f"""
             aiperf profile \
                 --model meta-llama/Llama-3.1-70B-Instruct \
+                --tokenizer gpt2 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 5 \
@@ -481,6 +486,7 @@ class TestDeterministicBehavior:
             f"""
             aiperf profile \
                 --model meta-llama/Llama-3.1-70B-Instruct \
+                --tokenizer gpt2 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -572,6 +578,7 @@ class TestRequestCancellation:
             aiperf profile \
                 --model meta-llama/Llama-3.1-8B-Instruct \
                 --url {fakeai_server.url} \
+                --tokenizer gpt2 \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 50 \
