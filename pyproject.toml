@@ -56,15 +56,18 @@ aiperf = "aiperf.__main__:main"
 [project.optional-dependencies]
 dev = [
   "black>=25.1.0",
-  "fakeai==0.3.1",
+  "blobfile>=23.0.0",  # for integration test tokenizers
+  "fakeai==0.3.1",  # pin to prevent breaking changes
   "mkinit>=1.1.0",
   "pre-commit>=4.2.0",
+  "protobuf>=3.20.0",  # for integration test tokenizers
   "pytest-asyncio",
   "pytest-cov",
   "pytest>=7.0.0",
   "pytest-xdist>=3.8.0",
   "ruff>=0.0.0",
   "scipy>=1.13.0",
+  "tiktoken>=0.8.0",  # for integration test tokenizers
 ]
 
 

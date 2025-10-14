@@ -35,7 +35,7 @@ class TestChatEndpoint:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model microsoft/phi-4 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -61,7 +61,7 @@ class TestCompletionsEndpoint:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model Qwen/Qwen3-0.6B \
                 --url {fakeai_server.url} \
                 --endpoint-type completions \
                 --request-count 10 \
@@ -87,7 +87,7 @@ class TestEmbeddingsEndpoint:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model text-embedding-3-small \
+                --model nomic-ai/nomic-embed-text-v1.5 \
                 --tokenizer gpt2 \
                 --url {fakeai_server.url} \
                 --endpoint-type embeddings \
@@ -122,13 +122,15 @@ class TestRankingsEndpoint:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model nvidia/nv-rerank-qa-mistral-4b \
                 --url {fakeai_server.url} \
+                --tokenizer gpt2 \
                 --endpoint-type rankings \
                 --input-file {dataset_path} \
                 --custom-dataset-type single_turn \
                 --request-count 10 \
                 --concurrency 2 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -150,12 +152,13 @@ class TestWarmup:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model meta-llama/Llama-3.1-8B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --warmup-request-count 5 \
                 --request-count 15 \
                 --concurrency 2 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -168,13 +171,14 @@ class TestWarmup:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model meta-llama/Llama-3.1-70B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --streaming \
                 --warmup-request-count 10 \
                 --request-count 20 \
                 --concurrency 4 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -197,12 +201,13 @@ class TestStreaming:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model Qwen/Qwen2.5-32B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 10 \
                 --concurrency 2 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -216,12 +221,13 @@ class TestStreaming:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model mistralai/Mixtral-8x7B-Instruct-v0.1 \
                 --url {fakeai_server.url} \
                 --endpoint-type completions \
                 --streaming \
                 --request-count 10 \
                 --concurrency 2 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -244,13 +250,14 @@ class TestMultimodal:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model meta-llama/Llama-3.1-70B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
                 --concurrency 2 \
                 --image-width-mean 64 \
                 --image-height-mean 64 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -262,12 +269,13 @@ class TestMultimodal:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model meta-llama/Llama-3.1-8B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
                 --concurrency 2 \
                 --audio-length-mean 0.1 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -279,7 +287,7 @@ class TestMultimodal:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model mistralai/Mistral-7B-Instruct-v0.3 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -287,6 +295,7 @@ class TestMultimodal:
                 --image-width-mean 64 \
                 --image-height-mean 64 \
                 --audio-length-mean 0.1 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -311,7 +320,8 @@ class TestMultimodal:
                 --prompt-input-tokens-mean 50 \
                 --num-dataset-entries 1 \
                 --request-rate 2.0 \
-                --request-count 4
+                --request-count 4 \
+                --workers-max 1
             """
         )
         assert result.request_count == 4
@@ -349,7 +359,7 @@ class TestMediaFormats:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model meta-llama/Llama-3.1-70B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 5 \
@@ -357,6 +367,7 @@ class TestMediaFormats:
                 --image-width-mean 128 \
                 --image-height-mean 128 \
                 --image-format {image_format} \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -371,13 +382,14 @@ class TestMediaFormats:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model mistralai/Mistral-7B-Instruct-v0.3 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 5 \
                 --concurrency 1 \
                 --audio-length-mean 0.1 \
                 --audio-format {audio_format} \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -402,7 +414,7 @@ class TestDeterministicBehavior:
         result1 = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model deepseek-ai/DeepSeek-R1 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -411,6 +423,7 @@ class TestDeterministicBehavior:
                 --image-width-mean 64 \
                 --image-height-mean 64 \
                 --audio-length-mean 0.1 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -418,7 +431,7 @@ class TestDeterministicBehavior:
         result2 = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model deepseek-ai/DeepSeek-R1 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -427,6 +440,7 @@ class TestDeterministicBehavior:
                 --image-width-mean 64 \
                 --image-height-mean 64 \
                 --audio-length-mean 0.1 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -450,7 +464,7 @@ class TestDeterministicBehavior:
         result1 = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model meta-llama/Llama-3.1-70B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -458,6 +472,7 @@ class TestDeterministicBehavior:
                 --random-seed 42 \
                 --image-width-mean 128 \
                 --image-height-mean 128 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -465,7 +480,7 @@ class TestDeterministicBehavior:
         result2 = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model meta-llama/Llama-3.1-70B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -473,6 +488,7 @@ class TestDeterministicBehavior:
                 --random-seed 123 \
                 --image-width-mean 128 \
                 --image-height-mean 128 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -508,13 +524,15 @@ class TestGpuTelemetry:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {fakeai_server.url} \
+                --tokenizer gpt2 \
                 --endpoint-type chat \
                 --gpu-telemetry {dcgm_url} \
                 --streaming \
                 --request-count 100 \
                 --concurrency 10 \
+                --workers-max 2 \
                 --ui dashboard
             """
         )
@@ -552,7 +570,7 @@ class TestRequestCancellation:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model meta-llama/Llama-3.1-8B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --streaming \
@@ -562,6 +580,7 @@ class TestRequestCancellation:
                 --image-height-mean 64 \
                 --request-cancellation-rate 0.3 \
                 --request-cancellation-delay 0.5 \
+                --workers-max 1 \
                 --ui simple
             """,
             timeout=120.0,
@@ -593,6 +612,7 @@ class TestPerformance:
                 --concurrency 100 \
                 --request-count 100 \
                 --streaming \
+                --workers-max 5 \
                 --ui simple
             """
         )
@@ -607,7 +627,7 @@ class TestPerformance:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model mistralai/Mixtral-8x7B-Instruct-v0.1 \
                 --url {fakeai_server.url} \
                 --gpu-telemetry {fakeai_server.dcgm_url} \
                 --endpoint-type chat \
@@ -616,6 +636,7 @@ class TestPerformance:
                 --concurrency 1000 \
                 --image-width-mean 64 \
                 --image-height-mean 64 \
+                --workers-max 5 \
                 --ui simple
             """,
             timeout=180.0,
@@ -630,12 +651,13 @@ class TestPerformance:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model text-embedding-3-small \
+                --model nomic-ai/nomic-embed-text-v1.5 \
                 --tokenizer gpt2 \
                 --url {fakeai_server.url} \
                 --endpoint-type embeddings \
                 --concurrency 50 \
                 --request-count 200 \
+                --workers-max 5 \
                 --ui simple
             """
         )
@@ -657,12 +679,13 @@ class TestOutputFormats:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model Qwen/Qwen2.5-Coder-32B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 10 \
                 --concurrency 2 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -674,11 +697,12 @@ class TestOutputFormats:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model microsoft/Phi-4-reasoning \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
                 --concurrency 2 \
+                --workers-max 1 \
                 --ui simple
             """
         )
@@ -702,11 +726,12 @@ class TestUIOptions:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model deepseek-ai/DeepSeek-R1 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
                 --concurrency 2 \
+                --workers-max 1 \
                 --ui none
             """
         )
@@ -731,7 +756,7 @@ class TestDashboardUI:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model Qwen/Qwen2.5-Coder-7B-Instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --ui dashboard \
@@ -785,7 +810,7 @@ class TestMetricValidation:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model mistralai/Mixtral-8x7B-Instruct-v0.1 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --streaming \
@@ -819,7 +844,7 @@ class TestMetricValidation:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model deepseek-ai/DeepSeek-R1 \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --streaming \
@@ -849,7 +874,7 @@ class TestMetricValidation:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-20b \
+                --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 30 \

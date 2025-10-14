@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest", "macos-latest"]
+        os: ["ubuntu-latest"]
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
@@ -29,6 +29,11 @@ jobs:
       run: |
         make first-time-setup
 
+    - name: Install ffmpeg
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+
     - name: Run integration tests
       run: |
-        ./.venv/bin/pytest -n auto -m "integration and not performance and not ffmpeg"
+        ./.venv/bin/pytest -n auto -m "integration and not performance"
