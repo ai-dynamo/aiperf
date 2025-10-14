@@ -92,3 +92,34 @@ class TestDCGMFaker:
         assert high_telemetry.gpu_temperature > low_telemetry.gpu_temperature
         assert high_telemetry.gpu_utilization > low_telemetry.gpu_utilization
         assert high_telemetry.gpu_memory_used > low_telemetry.gpu_memory_used
+
+    def test_metrics_clamped_to_bounds(self):
+        """Test that all metrics are clamped to [0, max] bounds."""
+        faker = DCGMFaker(gpu_name="h100", num_gpus=2, seed=42)
+        collector = TelemetryDataCollector(dcgm_url="http://fake")
+
+        # Test extreme high load
+        faker.set_load(1.0)
+        for _ in range(10):  # Generate multiple times to test with noise variance
+            metrics = faker.generate()
+            records = collector._parse_metrics_to_records(metrics)
+
+            for record in records:
+                t = record.telemetry_data
+                cfg = faker.cfg
+
+                # All metrics should be non-negative
+                assert t.gpu_utilization >= 0
+                assert t.gpu_power_usage >= 0
+                assert t.gpu_temperature >= 0
+                assert t.sm_clock_frequency >= 0
+                assert t.memory_clock_frequency >= 0
+                assert t.gpu_memory_used >= 0
+
+                # All metrics should not exceed their max values
+                assert t.gpu_utilization <= 100
+                assert t.gpu_power_usage <= cfg.max_power_w
+                assert t.gpu_temperature <= cfg.temp_max_c
+                assert t.sm_clock_frequency <= cfg.sm_clock_boost_mhz
+                assert t.memory_clock_frequency <= cfg.mem_clock_mhz
+                assert t.gpu_memory_used <= t.gpu_memory_total

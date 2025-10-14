@@ -82,9 +82,10 @@ class FakeGPU:
         self.pci_bus_id = f"00000000:{self.idx + 2:02x}:00.0"
         self.device = f"nvidia{self.idx}"
 
-    def _noise(self, val: float, variance: float) -> float:
-        """Add noise to a value."""
-        return val * self.rng.uniform(1 - variance, 1 + variance)
+    def _noise(self, val: float, variance: float, max_val: float) -> float:
+        """Add noise to a value and clamp to [0, max]."""
+        noisy = val * self.rng.uniform(1 - variance, 1 + variance)
+        return max(0.0, min(noisy, max_val))
 
     def update(self, base_load: float) -> None:
         """Update all metrics based on current load (computed once)."""
@@ -92,15 +93,15 @@ class FakeGPU:
         c = self.cfg
 
         # Update all current metrics
-        self.util = self._noise(5 + load * 95, 0.03)
-        self.power = self._noise(c.idle_power_w + load * (c.max_power_w - c.idle_power_w), 0.02)  # fmt: skip
-        self.temp = self._noise(c.temp_idle_c + load * (c.temp_max_c - c.temp_idle_c), 0.01)  # fmt: skip
-        self.mem_temp = self.temp + self.rng.uniform(3, 8)
-        self.sm_clk = self._noise(c.sm_clock_base_mhz + load * (c.sm_clock_boost_mhz - c.sm_clock_base_mhz), 0.01)  # fmt: skip
-        self.mem_clk = self._noise(c.mem_clock_mhz, 0.005)
-        self.mem_used = self._noise(c.memory_gb * 1024 * (0.10 + load * 0.75), 0.02)
+        self.util = self._noise(5 + load * 95, 0.03, 100.0)
+        self.power = self._noise(c.idle_power_w + load * (c.max_power_w - c.idle_power_w), 0.02, c.max_power_w)  # fmt: skip
+        self.temp = self._noise(c.temp_idle_c + load * (c.temp_max_c - c.temp_idle_c), 0.01, c.temp_max_c)  # fmt: skip
+        self.mem_temp = min(self.temp + self.rng.uniform(3, 8), c.temp_max_c + 10)
+        self.sm_clk = self._noise(c.sm_clock_base_mhz + load * (c.sm_clock_boost_mhz - c.sm_clock_base_mhz), 0.01, c.sm_clock_boost_mhz)  # fmt: skip
+        self.mem_clk = self._noise(c.mem_clock_mhz, 0.005, c.mem_clock_mhz)
+        self.mem_used = self._noise(c.memory_gb * 1024 * (0.10 + load * 0.75), 0.02, self.mem_total)  # fmt: skip
         self.mem_free = self.mem_total - self.mem_used
-        self.mem_copy = self._noise(load * 50, 0.05)
+        self.mem_copy = self._noise(load * 50, 0.05, 100.0)
 
         # Update cumulative metrics
         self.energy += self.power * 1000  # 1 tick = 1s
