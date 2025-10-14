@@ -11,7 +11,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Generator
 from io import StringIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -427,3 +427,116 @@ def mock_aiofiles_stringio():
 
     with patch("aiofiles.open", side_effect=mock_aiofiles_open):
         yield string_buffer
+
+
+@pytest.fixture
+def mock_macos_child_process():
+    """Mock for simulating a child process on macOS."""
+    mock_process = Mock()
+    mock_process.name = "DATASET_MANAGER_process"  # Not MainProcess
+    return mock_process
+
+
+@pytest.fixture
+def mock_macos_main_process():
+    """Mock for simulating the main process on macOS."""
+    mock_process = Mock()
+    mock_process.name = "MainProcess"
+    return mock_process
+
+
+@pytest.fixture
+def mock_platform_system():
+    """Mock platform.system() for testing OS-specific behavior."""
+    with patch("platform.system") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_platform_darwin(mock_platform_system):
+    """Mock platform.system() to return 'Darwin' for macOS testing."""
+    mock_platform_system.return_value = "Darwin"
+    return mock_platform_system
+
+
+@pytest.fixture
+def mock_platform_linux(mock_platform_system):
+    """Mock platform.system() to return 'Linux' for Linux testing."""
+    mock_platform_system.return_value = "Linux"
+    return mock_platform_system
+
+
+@pytest.fixture
+def mock_multiprocessing_set_start_method():
+    """Mock multiprocessing.set_start_method() for testing spawn method setup."""
+    with patch("multiprocessing.set_start_method") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_ensure_modules_loaded():
+    """Mock aiperf.module_loader.ensure_modules_loaded() for testing."""
+    with patch("aiperf.module_loader.ensure_modules_loaded") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_bootstrap_and_run_service():
+    """Mock aiperf.common.bootstrap.bootstrap_and_run_service() for testing."""
+    with patch("aiperf.common.bootstrap.bootstrap_and_run_service") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_get_global_log_queue():
+    """Mock aiperf.common.logging.get_global_log_queue() for testing."""
+    with patch("aiperf.common.logging.get_global_log_queue") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_psutil_process():
+    """Mock psutil.Process for testing."""
+    with patch("psutil.Process") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_setup_child_process_logging():
+    """Mock aiperf.common.logging.setup_child_process_logging() for testing."""
+    with patch("aiperf.common.logging.setup_child_process_logging") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_current_process():
+    """Mock multiprocessing.current_process() for testing."""
+    with patch("multiprocessing.current_process") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_darwin_child_process(
+    mock_platform_darwin, mock_current_process, mock_macos_child_process
+):
+    """Mock macOS child process environment (Darwin platform + child process)."""
+    mock_current_process.return_value = mock_macos_child_process
+    return mock_current_process
+
+
+@pytest.fixture
+def mock_darwin_main_process(
+    mock_platform_darwin, mock_current_process, mock_macos_main_process
+):
+    """Mock macOS main process environment (Darwin platform + main process)."""
+    mock_current_process.return_value = mock_macos_main_process
+    return mock_current_process
+
+
+@pytest.fixture
+def mock_linux_child_process(
+    mock_platform_linux, mock_current_process, mock_macos_child_process
+):
+    """Mock Linux child process environment (Linux platform + child process)."""
+    mock_current_process.return_value = mock_macos_child_process
+    return mock_current_process

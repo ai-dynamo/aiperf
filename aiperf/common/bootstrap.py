@@ -4,7 +4,10 @@
 import asyncio
 import contextlib
 import multiprocessing
+import os
+import platform
 import random
+import sys
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.protocols import ServiceProtocol
@@ -68,6 +71,32 @@ def bootstrap_and_run_service(
         setup_child_process_logging(
             log_queue, service.service_id, service_config, user_config
         )
+
+        # NOTE: Prevent child processes from accessing parent's terminal on macOS.
+        # This solves the macOS terminal corruption issue with Textual UI where child
+        # processes inherit terminal file descriptors and interfere with Textual's
+        # terminal management, causing ASCII garbage and freezing when mouse events occur.
+        # Only apply this in spawned child processes, NOT in the main process where Textual runs.
+        if platform.system() == "Darwin":
+            # Only close terminal FDs if we're in a spawned child process
+            # The main process name is typically "MainProcess", child processes have other names
+            is_child_process = multiprocessing.current_process().name != "MainProcess"
+
+            if is_child_process:
+                try:
+                    # Close and redirect stdin to prevent reading terminal input (mouse events, etc.)
+                    sys.stdin.close()
+                    sys.stdin = open(os.devnull)  # noqa: SIM115
+
+                    # Close and redirect stdout/stderr to prevent writing to terminal
+                    # All logging goes through the log_queue instead
+                    sys.stdout.close()
+                    sys.stderr.close()
+                    sys.stdout = open(os.devnull, "w")  # noqa: SIM115
+                    sys.stderr = open(os.devnull, "w")  # noqa: SIM115
+                except Exception:
+                    # Silently continue if FD operations fail
+                    pass
 
         if user_config.input.random_seed is not None:
             random.seed(user_config.input.random_seed)

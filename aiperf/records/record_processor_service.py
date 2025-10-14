@@ -24,7 +24,11 @@ from aiperf.common.messages import (
     ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
-from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
+from aiperf.common.models import (
+    MetricRecordMetadata,
+    ParsedResponseRecord,
+    RequestRecord,
+)
 from aiperf.common.protocols import (
     PushClientProtocol,
     RecordProcessorProtocol,
@@ -115,7 +119,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             return self.tokenizers[model]
 
     def _create_metric_record_metadata(
-        self, record: ParsedResponseRecord, worker_id: str
+        self, record: RequestRecord, worker_id: str
     ) -> MetricRecordMetadata:
         """Create a metric record metadata based on a parsed response record."""
 
@@ -126,7 +130,9 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         request_end_ns = compute_time_ns(
             start_time_ns,
             start_perf_ns,
-            record.responses[-1].perf_ns if record.responses else record.end_perf_ns,
+            record.responses[-1].perf_ns
+            if record.responses
+            else record.end_perf_ns or record.start_perf_ns,
         )
         request_ack_ns = compute_time_ns(
             start_time_ns, start_perf_ns, record.recv_start_perf_ns
