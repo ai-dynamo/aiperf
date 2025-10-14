@@ -153,6 +153,16 @@ async def fakeai_server(fakeai_server_port: int) -> AsyncGenerator[FakeAIServer,
                             break
                 except (aiohttp.ClientError, asyncio.TimeoutError):
                     await asyncio.sleep(0.2)
+            else:
+                # Loop completed without break - all health checks failed
+                if process.returncode is None:
+                    process.terminate()
+                    with suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(process.wait(), timeout=5.0)
+                raise RuntimeError(
+                    f"FakeAI server failed to become healthy after 30 attempts "
+                    f"(URL: {url}/health)"
+                )
 
         yield FakeAIServer(host=host, port=fakeai_server_port, url=url, process=process)
 
