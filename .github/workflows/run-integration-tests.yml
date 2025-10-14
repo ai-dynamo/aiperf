@@ -27,8 +27,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        uv venv --python ${{ matrix.python-version }}
-        uv pip install -e ".[dev]"
+        make first-time-setup PYTHON_VERSION=${{ matrix.python-version }}
 
     - name: Install ffmpeg
       run: |
@@ -37,4 +36,4 @@ jobs:
 
     - name: Run integration tests
       run: |
-        ./.venv/bin/pytest -n auto -m "integration and not performance" -vv -s --tb=short --log-cli-level=INFO --capture=no
+        ./.venv/bin/pytest -n auto -m "integration and not performance"
