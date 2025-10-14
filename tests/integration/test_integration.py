@@ -419,7 +419,7 @@ class TestDeterministicBehavior:
         result1 = await cli.run(
             f"""
             aiperf profile \
-                --model deepseek-ai/DeepSeek-R1 \
+                --model openai/gpt-oss-20b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -436,7 +436,7 @@ class TestDeterministicBehavior:
         result2 = await cli.run(
             f"""
             aiperf profile \
-                --model deepseek-ai/DeepSeek-R1 \
+                --model openai/gpt-oss-20b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -469,7 +469,7 @@ class TestDeterministicBehavior:
         result1 = await cli.run(
             f"""
             aiperf profile \
-                --model meta-llama/Llama-3.1-70B-Instruct \
+                --model openai/gpt-oss-20b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
@@ -485,8 +485,7 @@ class TestDeterministicBehavior:
         result2 = await cli.run(
             f"""
             aiperf profile \
-                --model meta-llama/Llama-3.1-70B-Instruct \
-                --tokenizer gpt2 \
+                --model openai/gpt-oss-20b \
                 --url {fakeai_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
