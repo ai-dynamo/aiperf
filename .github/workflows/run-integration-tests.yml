@@ -31,4 +31,4 @@ jobs:
 
     - name: Run integration tests
       run: |
-        make test-integration-verbose
+        make test-integration
