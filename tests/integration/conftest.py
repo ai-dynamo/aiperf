@@ -13,6 +13,7 @@ from pathlib import Path
 import aiohttp
 import pytest
 
+from tests.conftest import real_sleep
 from tests.integration.models import AIPerfResults, AIPerfSubprocessResult, FakeAIServer
 
 # Suppress faker debug messages
@@ -144,7 +145,7 @@ async def fakeai_server(fakeai_server_port: int) -> AsyncGenerator[FakeAIServer,
 
     try:
         async with aiohttp.ClientSession() as session:
-            for _ in range(30):
+            for _ in range(100):
                 try:
                     async with session.get(
                         f"{url}/health", timeout=aiohttp.ClientTimeout(total=2)
@@ -152,7 +153,8 @@ async def fakeai_server(fakeai_server_port: int) -> AsyncGenerator[FakeAIServer,
                         if resp.status == 200:
                             break
                 except (aiohttp.ClientError, asyncio.TimeoutError):
-                    await asyncio.sleep(0.2)
+                    pass
+                await real_sleep(0.1)
             else:
                 # Loop completed without break - all health checks failed
                 if process.returncode is None:
