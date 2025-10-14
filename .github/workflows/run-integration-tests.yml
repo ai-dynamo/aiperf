@@ -31,4 +31,4 @@ jobs:
 
     - name: Run integration tests
       run: |
-        make test-integration
+        make test -- -m 'integration and not performance and not ffmpeg'
