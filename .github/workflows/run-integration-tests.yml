@@ -31,4 +31,4 @@ jobs:
 
     - name: Run integration tests
       run: |
-        make test -- -m 'integration and not performance and not ffmpeg'
+        ./.venv/bin/pytest -n auto -m "integration and not performance and not ffmpeg"
