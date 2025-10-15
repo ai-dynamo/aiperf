@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
             "type": "debugpy",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "module": "aiperf.cli",
+            "module": "aiperf.__main__",
             "args": [
                 "profile",
                 "-m",
