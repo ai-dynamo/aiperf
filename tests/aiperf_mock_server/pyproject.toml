@@ -3,8 +3,8 @@
 
 # Build
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "aiperf-mock-server"
@@ -20,14 +20,16 @@ dependencies = [
 ]
 readme = "README.md"
 requires-python = ">=3.10"
-packages = [{ include = "mock_server" }]
 
-[tool.hatch.build.targets.wheel]
-packages = ["mock_server"]
+[tool.setuptools]
+packages = ["aiperf_mock_server"]
+
+[tool.setuptools.package-dir]
+"aiperf_mock_server" = "."
 
 # CLI Entrypoint
 [project.scripts]
-aiperf-mock-server = "mock_server.main:app"
+aiperf-mock-server = "aiperf_mock_server.__main__:main"
 
 [project.optional-dependencies]
 dev = [

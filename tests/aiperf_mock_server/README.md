@@ -27,14 +27,15 @@ The server echoes user prompts back token by token with configurable latencies, 
 
 ## Installation
 
+From project root:
 ```bash
-cd integration-tests
-pip install -e .
+make install-mock-server
 ```
 
-Or with development dependencies:
+Or locally:
 ```bash
-pip install -e ".[dev]"
+cd tests/aiperf_mock_server
+uv pip install -e ".[dev]"
 ```
 
 ## Usage
