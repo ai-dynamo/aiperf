@@ -8,7 +8,7 @@ from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 
 
-class TimeToFirstOutputMetric(BaseRecordMetric[int]):
+class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
     """
     Calculates the time elapsed from request start to the first non-reasoning output token.
 
@@ -27,8 +27,8 @@ class TimeToFirstOutputMetric(BaseRecordMetric[int]):
         Time to First Output = First Non-Reasoning Token Timestamp - Request Start Timestamp
     """
 
-    tag = "time_to_first_output"
-    header = "Time to First Output"
+    tag = "time_to_first_output_token"
+    header = "Time to First Output Token"
     short_header = "TTFO"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
@@ -56,24 +56,13 @@ class TimeToFirstOutputMetric(BaseRecordMetric[int]):
             record_metrics: Dictionary of previously computed metrics for this record (unused)
 
         Returns:
-            The time to first output in nanoseconds
-
-        Raises:
-            NoMetricValue: If the record contains no responses or no non-reasoning tokens
-            ValueError: If the first non-reasoning token timestamp precedes the request start
-                timestamp, indicating invalid or corrupted timing data
+            The time to first output token in nanoseconds
         """
-
-        if len(record.responses) < 1:
-            raise NoMetricValue(
-                "Record must have at least one non-reasoning token to calculate Time to First Output."
-            )
-
         try:
             # Try and find the first non-reasoning token output and extract the timestamp.
             # This is done by checking for the first response that is either a TextResponseData or a ReasoningResponseData
             # and has a non-empty text or content field. Note that ReasoningResponseData can have both reasoning and content.
-            first_non_reasoning_token_ts: int = next(
+            first_non_reasoning_token_perf_ns: int = next(
                 response.perf_ns
                 for response in record.responses
                 if (isinstance(response.data, TextResponseData) and response.data.text)
@@ -84,13 +73,8 @@ class TimeToFirstOutputMetric(BaseRecordMetric[int]):
             )
         except StopIteration:
             raise NoMetricValue(
-                "Record must have at least one non-reasoning token to calculate Time to First Output."
+                "Record must have at least one non-reasoning token to calculate Time to First Output Token."
             ) from None
 
-        request_ts: int = record.request.start_perf_ns
-        if first_non_reasoning_token_ts < request_ts:
-            raise ValueError(
-                "First non-reasoning token timestamp is before request start timestamp, cannot compute Time to First Output."
-            )
-
-        return first_non_reasoning_token_ts - request_ts
+        request_perf_ns: int = record.request.start_perf_ns
+        return first_non_reasoning_token_perf_ns - request_perf_ns

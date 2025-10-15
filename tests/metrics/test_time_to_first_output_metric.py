@@ -7,7 +7,9 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponse, ParsedResponseRecord, RequestRecord
 from aiperf.common.models.record_models import ReasoningResponseData, TextResponseData
 from aiperf.metrics.metric_dicts import MetricRecordDict
-from aiperf.metrics.types.time_to_first_output_metric import TimeToFirstOutputMetric
+from aiperf.metrics.types.time_to_first_output_token_metric import (
+    TimeToFirstOutputTokenMetric,
+)
 from tests.metrics.conftest import create_record, run_simple_metrics_pipeline
 
 
@@ -65,9 +67,9 @@ class TestTimeToFirstOutputMetric:
         """Test basic time to first output with text responses"""
         record = create_record(start_ns=start_ns, responses=responses)
         metric_results = run_simple_metrics_pipeline(
-            [record], TimeToFirstOutputMetric.tag
+            [record], TimeToFirstOutputTokenMetric.tag
         )
-        assert metric_results[TimeToFirstOutputMetric.tag] == [expected_ttfo]
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [expected_ttfo]
 
     def test_ttfo_with_reasoning_response(self):
         """Test TTFO with reasoning response that has content"""
@@ -75,9 +77,9 @@ class TestTimeToFirstOutputMetric:
             start_ns=100, responses=[(110, "reasoning", "content")]
         )
         metric_results = run_simple_metrics_pipeline(
-            [record], TimeToFirstOutputMetric.tag
+            [record], TimeToFirstOutputTokenMetric.tag
         )
-        assert metric_results[TimeToFirstOutputMetric.tag] == [10]
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [10]
 
     @pytest.mark.parametrize(
         "responses,expected_ttfo",
@@ -105,9 +107,9 @@ class TestTimeToFirstOutputMetric:
         """Test TTFO correctly handles reasoning tokens and finds first valid content"""
         record = create_response_record(start_ns=100, responses=responses)
         metric_results = run_simple_metrics_pipeline(
-            [record], TimeToFirstOutputMetric.tag
+            [record], TimeToFirstOutputTokenMetric.tag
         )
-        assert metric_results[TimeToFirstOutputMetric.tag] == [expected_ttfo]
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [expected_ttfo]
 
     def test_ttfo_multiple_records(self):
         """Test processing multiple records with mixed response types"""
@@ -124,14 +126,14 @@ class TestTimeToFirstOutputMetric:
 
         metric_results = run_simple_metrics_pipeline(
             records,
-            TimeToFirstOutputMetric.tag,
+            TimeToFirstOutputTokenMetric.tag,
         )
-        assert metric_results[TimeToFirstOutputMetric.tag] == [10, 10, 15]
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [10, 10, 15]
 
     def test_ttfo_invalid_timestamp(self):
         """Test error when first non-reasoning token timestamp is before request start"""
         record = create_record(start_ns=100, responses=[90])
-        metric = TimeToFirstOutputMetric()
+        metric = TimeToFirstOutputTokenMetric()
         with pytest.raises(NoMetricValue, match="Invalid Record"):
             metric.parse_record(record, MetricRecordDict())
 
@@ -139,7 +141,7 @@ class TestTimeToFirstOutputMetric:
         """Test error when no responses are present"""
         record = create_record(start_ns=100)
         record.responses = []
-        metric = TimeToFirstOutputMetric()
+        metric = TimeToFirstOutputTokenMetric()
         with pytest.raises(NoMetricValue, match="Invalid Record"):
             metric.parse_record(record, MetricRecordDict())
 
@@ -154,7 +156,7 @@ class TestTimeToFirstOutputMetric:
     def test_ttfo_no_valid_content(self, responses):
         """Test error when no valid content tokens are present"""
         record = create_response_record(start_ns=100, responses=responses)
-        metric = TimeToFirstOutputMetric()
+        metric = TimeToFirstOutputTokenMetric()
         with pytest.raises(
             NoMetricValue,
             match="Record must have at least one non-reasoning token",
