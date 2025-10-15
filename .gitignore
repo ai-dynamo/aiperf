@@ -22,3 +22,4 @@ profile.html
 .vscode/settings.json
 *.jsonl
 coverage.xml
+*.egg-info/

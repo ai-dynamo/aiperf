@@ -17,7 +17,7 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install docker docker-run first-time-setup \
-		test-verbose init-files setup-venv setup-mkinit \
+		test-verbose init-files setup-venv setup-mkinit install-mock-server \
 		internal-help help
 
 
@@ -126,6 +126,9 @@ docker-run: #? run the docker container.
 version: #? print the version of the project.
 	@PATH=$(UV_PATH):$(PATH) uv version
 
+install-mock-server: #? install the mock server in editable mode.
+	$(activate_venv) && uv pip install -e "tests/aiperf_mock_server[dev]" $(args)
+
 clean: #? clean up the pytest and ruff caches, coverage reports, and *.pyc files.
 	rm -rf .pytest_cache/
 	rm -rf .ruff_cache/
@@ -165,7 +168,7 @@ first-time-setup: #? convenience command to setup the environment for the first 
 
 	@# Install the mock server
 	@printf "$(bold)$(green)Installing mock server...$(reset)\n"
-	@$(MAKE) -C integration-tests --no-print-directory install
+	@PATH=$(UV_PATH):$(PATH) $(MAKE) --no-print-directory install-mock-server
 
 	@# Install pre-commit hooks
 	@printf "$(bold)$(green)Installing pre-commit hooks...$(reset)\n"
