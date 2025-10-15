@@ -3,12 +3,12 @@
 """Main entry point for the integration test server."""
 
 import logging
+import sys
 
 import cyclopts
 import uvicorn
-
-from .app import set_server_config
-from .config import MockServerConfig
+from aiperf_mock_server.app import set_server_config
+from aiperf_mock_server.config import MockServerConfig
 
 # Configure logging
 logging.basicConfig(
@@ -21,7 +21,7 @@ app = cyclopts.App(name="aiperf-mock-server", help="AIPerf Integration Test Serv
 
 
 @app.default
-def main(
+def serve(
     config: MockServerConfig | None = None,
 ) -> None:
     """Start the AIPerf Integration Test Server.
@@ -46,7 +46,7 @@ def main(
 
     # Start the server
     uvicorn.run(
-        "mock_server.app:app",
+        "aiperf_mock_server.app:app",
         host=config.host,
         port=config.port,
         log_level=config.log_level.lower(),
@@ -55,5 +55,9 @@ def main(
     )
 
 
+def main() -> None:
+    sys.exit(app())
+
+
 if __name__ == "__main__":
-    app()
+    main()
