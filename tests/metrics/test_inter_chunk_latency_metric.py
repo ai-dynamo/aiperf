@@ -118,20 +118,7 @@ class TestInterChunkLatencyMetric:
         metric = InterChunkLatencyMetric()
         with pytest.raises(
             ValueError,
-            match="Each inter chunk latency must be positive",
-        ):
-            metric.parse_record(record, MetricRecordDict())
-
-    def test_inter_chunk_latency_equal_timestamps(self):
-        """Test error when consecutive responses have equal timestamps"""
-        record = create_record(
-            start_ns=100, responses=[110, 110, 120]
-        )  # Equal timestamps
-
-        metric = InterChunkLatencyMetric()
-        with pytest.raises(
-            ValueError,
-            match="Each inter chunk latency must be positive",
+            match="Each inter chunk latency must be non-negative. got: .*",
         ):
             metric.parse_record(record, MetricRecordDict())
 
@@ -141,8 +128,6 @@ class TestInterChunkLatencyMetric:
             [100, 90, 110],  # Second response before first
             [100, 110, 105],  # Third response before second
             [100, 110, 120, 115],  # Fourth response before third
-            [100, 100, 110],  # Equal first two timestamps
-            [100, 110, 110],  # Equal last two timestamps
         ],
     )  # fmt: skip
     def test_inter_chunk_latency_invalid_timestamp_order(self, responses):
@@ -152,7 +137,7 @@ class TestInterChunkLatencyMetric:
         metric = InterChunkLatencyMetric()
         with pytest.raises(
             ValueError,
-            match="Each inter chunk latency must be positive",
+            match="Each inter chunk latency must be non-negative. got: .*",
         ):
             metric.parse_record(record, MetricRecordDict())
 

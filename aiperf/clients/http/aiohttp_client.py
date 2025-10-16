@@ -214,7 +214,8 @@ class AioHttpSSEStreamReader:
             try:
                 decoded = chunk.decode("utf-8")
                 for sub_chunk in decoded.split("\n\n"):
-                    yield (sub_chunk, chunk_ns_first_byte)
+                    if sub_chunk:
+                        yield (sub_chunk, chunk_ns_first_byte)
                 # Use the fastest available decoder
             except UnicodeDecodeError:
                 # Handle potential encoding issues gracefully
