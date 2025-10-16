@@ -60,8 +60,10 @@ class InterChunkLatencyMetric(BaseRecordMetric[list[int]]):
         inter_chunk_latencies = []
         for i in range(1, len(responses)):
             chunk_latency_ns = responses[i].perf_ns - responses[i - 1].perf_ns
-            if chunk_latency_ns <= 0:
-                raise ValueError("Each inter chunk latency must be positive.")
+            if chunk_latency_ns < 0:
+                raise ValueError(
+                    f"Each inter chunk latency must be non-negative. got: {chunk_latency_ns}"
+                )
             inter_chunk_latencies.append(chunk_latency_ns)
 
         return inter_chunk_latencies

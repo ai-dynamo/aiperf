@@ -211,7 +211,6 @@ class AioHttpSSEStreamReader:
                 break
             chunk = first_byte + chunk
 
-
             try:
                 decoded = chunk.decode("utf-8")
                 for sub_chunk in decoded.split("\n\n"):
