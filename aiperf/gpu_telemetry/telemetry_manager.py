@@ -144,7 +144,7 @@ class TelemetryManager(BaseComponentService):
 
         reachable_count = 0
         self._collectors.clear()
-        for _i, dcgm_url in enumerate(self._dcgm_endpoints):
+        for dcgm_url in self._dcgm_endpoints:
             collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
             collector = TelemetryDataCollector(
                 dcgm_url=dcgm_url,
@@ -163,16 +163,19 @@ class TelemetryManager(BaseComponentService):
                 self.error(f"Exception testing {dcgm_url}: {e}")
 
         if reachable_count == 0:
-            await self._send_telemetry_disabled_status_and_shutdown(
-                "no DCGM endpoints reachable"
+            await self._send_telemetry_status(
+                enabled=False,
+                reason="no DCGM endpoints reachable",
+                endpoints_tested=self._dcgm_endpoints,
+                endpoints_reachable=[],
             )
             return
 
-        reachable_endpoints = list(self._collectors)
         await self._send_telemetry_status(
             enabled=True,
+            reason=None,
             endpoints_tested=self._dcgm_endpoints,
-            endpoints_reachable=reachable_endpoints,
+            endpoints_reachable=list(self._collectors),
         )
 
     @on_command(CommandType.PROFILE_START)
@@ -185,27 +188,27 @@ class TelemetryManager(BaseComponentService):
         Args:
             message: Profile start command from SystemController
         """
+        await self.publish(
+            CommandAcknowledgedResponse.from_command_message(message, self.service_id)
+        )
 
         if not self._collectors:
+            await self._send_telemetry_disabled_status_and_shutdown(
+                "no DCGM endpoints reachable"
+            )
             return
 
         started_count = 0
         for dcgm_url, collector in self._collectors.items():
             try:
-                if await collector.is_url_reachable():
-                    await collector.initialize()
-                    await collector.start()
-                    started_count += 1
+                await collector.initialize()
+                await collector.start()
+                started_count += 1
             except Exception as e:
                 self.error(f"Failed to start collector for {dcgm_url}: {e}")
 
         if started_count == 0:
             self.warning("No telemetry collectors successfully started")
-            await self.publish(
-                CommandAcknowledgedResponse.from_command_message(
-                    message, self.service_id
-                )
-            )
             await self._send_telemetry_disabled_status_and_shutdown(
                 "all collectors failed to start"
             )
