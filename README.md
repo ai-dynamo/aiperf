@@ -27,6 +27,8 @@ Features
 ======================
 -->
 
+<img width="1724" height="670" alt="AIPerf UI Dashboard" src="https://github.com/user-attachments/assets/7eb40867-b1c1-4ebe-bd57-7619f2154bba" />
+
 ## Features
 
 - Scalable via multiprocess support
