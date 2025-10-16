@@ -27,6 +27,9 @@ Features
 ======================
 -->
 
+<img width="1723" height="670" alt="image" src="https://github.com/user-attachments/assets/66216fe7-f59e-482a-89de-24bf0b9dde0a" />
+
+
 ## Features
 
 - Scalable via multiprocess support
