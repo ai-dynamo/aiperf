@@ -16,6 +16,8 @@ from aiperf.common.config import (
 )
 from aiperf.common.enums import CustomDatasetType, MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import MetricTypeError
+from aiperf.metrics.base_derived_metric import BaseDerivedMetric
+from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 
@@ -113,3 +115,28 @@ def test_goodput_unknown_raises(monkeypatch, goodput_str, unknown_tag):
         InputConfig(goodput=goodput_str)
 
     assert f"Unknown metric tag in --goodput: {unknown_tag}" in str(exc.value)
+
+
+def test_goodput_derived_metric_raises_error(monkeypatch):
+    monkeypatch.setattr(MetricRegistry, "get_class", lambda tag: BaseDerivedMetric)
+
+    with pytest.raises(ValidationError) as exc:
+        InputConfig(goodput="mock_derived:1")
+
+    assert (
+        "Metric 'mock_derived' is a Derived metric and cannot be used for --goodput."
+        in str(exc.value)
+    )
+
+
+def test_goodput_mixed_raises_error(monkeypatch):
+    mapping = {
+        "request_latency": BaseRecordMetric,
+        "mock_derived": BaseDerivedMetric,
+    }
+    monkeypatch.setattr(MetricRegistry, "get_class", mapping.__getitem__)
+
+    with pytest.raises(ValidationError) as exc:
+        InputConfig(goodput="request_latency:250 mock_derived:1")
+
+    assert "Derived metric and cannot be used for --goodput" in str(exc.value)
