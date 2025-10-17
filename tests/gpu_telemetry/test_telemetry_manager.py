@@ -117,6 +117,28 @@ class TestTelemetryManagerInitialization:
         assert manager._dcgm_endpoints[2] == "http://node1:9401/metrics"
         assert manager._dcgm_endpoints[3] == "http://node2:9401/metrics"
 
+    def test_user_provides_default_endpoint(self):
+        """Test that explicitly providing a default endpoint doesn't duplicate it."""
+        mock_user_config = MagicMock(spec=UserConfig)
+        mock_user_config.gpu_telemetry = [
+            "http://localhost:9400/metrics",  # This is a default
+            "http://node1:9401/metrics",
+            "http://localhost:9401/metrics",  # This is also a default
+        ]
+
+        manager = self._create_manager_with_mocked_base(mock_user_config)
+
+        # Should have 2 defaults + 1 unique user endpoint (defaults not duplicated)
+        assert len(manager._dcgm_endpoints) == 3
+        assert manager._dcgm_endpoints[0] == DEFAULT_DCGM_ENDPOINTS[0]
+        assert manager._dcgm_endpoints[1] == DEFAULT_DCGM_ENDPOINTS[1]
+        assert manager._dcgm_endpoints[2] == "http://node1:9401/metrics"
+        # Verify user_provided_endpoints excludes the defaults
+        assert len(manager._user_provided_endpoints) == 1
+        assert "http://node1:9401/metrics" in manager._user_provided_endpoints
+        assert "http://localhost:9400/metrics" not in manager._user_provided_endpoints
+        assert "http://localhost:9401/metrics" not in manager._user_provided_endpoints
+
 
 class TestUrlNormalization:
     """Test _normalize_dcgm_url static method."""

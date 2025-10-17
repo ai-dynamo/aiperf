@@ -105,7 +105,7 @@ class TelemetryManager(BaseComponentService):
 
         # Combine defaults + user endpoints, preserving order and removing duplicates
         self._dcgm_endpoints = list(
-            dict.fromkeys(list(DEFAULT_DCGM_ENDPOINTS) + valid_endpoints)
+            dict.fromkeys(list(DEFAULT_DCGM_ENDPOINTS) + self._user_provided_endpoints)
         )
 
         self._collection_interval = DEFAULT_COLLECTION_INTERVAL
