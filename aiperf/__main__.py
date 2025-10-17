@@ -4,18 +4,19 @@
 import sys
 
 from aiperf.cli import app
-from aiperf.gpu_telemetry.constants import DEFAULT_DCGM_ENDPOINT
+from aiperf.gpu_telemetry.constants import DEFAULT_DCGM_ENDPOINTS
 
 
 def main() -> int:
     # TODO: HACK: Remove this once we can upgrade to v4 of cyclopts
     # This is a hack to allow the --gpu-telemetry flag to be used without a value
-    # and it will be set to the default endpoint, which will inform the telemetry
+    # and it will be set to the default endpoints, which will inform the telemetry
     # exporter to print the telemetry to the console
     if "--gpu-telemetry" in sys.argv:
         idx = sys.argv.index("--gpu-telemetry")
         if idx >= len(sys.argv) - 1 or sys.argv[idx + 1].startswith("-"):
-            sys.argv.insert(idx + 1, DEFAULT_DCGM_ENDPOINT)
+            for endpoint in reversed(DEFAULT_DCGM_ENDPOINTS):
+                sys.argv.insert(idx + 1, endpoint)
     return app(sys.argv[1:])
 
 

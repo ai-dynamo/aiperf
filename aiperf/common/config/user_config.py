@@ -215,7 +215,7 @@ class UserConfig(BaseConfig):
         list[str] | None,
         Field(
             default=None,
-            description="Enable GPU telemetry console display and optionally specify custom DCGM exporter URLs (e.g., http://node1:9401/metrics http://node2:9401/metrics). Default localhost:9401 is always attempted",
+            description="Enable GPU telemetry console display and optionally specify custom DCGM exporter URLs (e.g., http://node1:9401/metrics http://node2:9401/metrics). Default localhost:9400 and localhost:9401 are always attempted",
         ),
         BeforeValidator(parse_str_or_list),
         CLIParameter(

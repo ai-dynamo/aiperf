@@ -120,9 +120,9 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         """
         title_lines = ["NVIDIA AIPerf | GPU Telemetry Summary"]
 
-        endpoints_tested = self._telemetry_results.endpoints_tested
+        endpoints_configured = self._telemetry_results.endpoints_configured
         endpoints_successful = self._telemetry_results.endpoints_successful
-        total_count = len(endpoints_tested)
+        total_count = len(endpoints_configured)
         successful_count = len(endpoints_successful)
         failed_count = total_count - successful_count
 
@@ -139,7 +139,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                 f"[bold yellow]{successful_count}/{total_count} DCGM endpoints reachable[/bold yellow]"
             )
 
-        for endpoint in endpoints_tested:
+        for endpoint in endpoints_configured:
             clean_endpoint = normalize_endpoint_display(endpoint)
             if endpoint in endpoints_successful:
                 title_lines.append(f"[green]• {clean_endpoint} \u2714 [/green]")
@@ -218,10 +218,10 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         """
         message_parts = ["No GPU telemetry data collected during the benchmarking run."]
 
-        endpoints_tested = self._telemetry_results.endpoints_tested
+        endpoints_configured = self._telemetry_results.endpoints_configured
         endpoints_successful = self._telemetry_results.endpoints_successful
         failed_endpoints = [
-            ep for ep in endpoints_tested if ep not in endpoints_successful
+            ep for ep in endpoints_configured if ep not in endpoints_successful
         ]
 
         if failed_endpoints:

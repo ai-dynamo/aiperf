@@ -41,7 +41,7 @@ class JsonMetricResult(AIPerfBaseModel):
 class TelemetrySummary(AIPerfBaseModel):
     """Summary information for telemetry collection."""
 
-    endpoints_tested: list[str]
+    endpoints_configured: list[str]
     endpoints_successful: list[str]
     start_time: datetime
     end_time: datetime

@@ -96,7 +96,7 @@ def sample_telemetry_results():
         telemetry_data=hierarchy,
         start_ns=1000000000,
         end_ns=6000000000,
-        endpoints_tested=[
+        endpoints_configured=[
             "http://localhost:9400/metrics",
             "http://remote-node:9400/metrics",
         ],
@@ -134,7 +134,7 @@ def sample_telemetry_results_with_failures():
         telemetry_data=hierarchy,
         start_ns=1000000000,
         end_ns=4000000000,
-        endpoints_tested=[
+        endpoints_configured=[
             "http://localhost:9400/metrics",
             "http://unreachable-node:9400/metrics",
             "http://failed-node:9400/metrics",
@@ -151,7 +151,7 @@ def empty_telemetry_results():
         telemetry_data=TelemetryHierarchy(),
         start_ns=1000000000,
         end_ns=2000000000,
-        endpoints_tested=[
+        endpoints_configured=[
             "http://unreachable-1:9400/metrics",
             "http://unreachable-2:9400/metrics",
         ],

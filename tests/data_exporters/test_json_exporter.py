@@ -153,7 +153,7 @@ class TestJsonExporterTelemetry:
             # Verify summary section
             assert "summary" in data["telemetry_data"]
             summary = data["telemetry_data"]["summary"]
-            assert "endpoints_tested" in summary
+            assert "endpoints_configured" in summary
             assert "endpoints_successful" in summary
 
             # Verify endpoints section with GPU data
@@ -278,7 +278,7 @@ class TestJsonExporterTelemetry:
                 telemetry_data=hierarchy,
                 start_ns=0,
                 end_ns=0,
-                endpoints_tested=["http://localhost:9400/metrics"],
+                endpoints_configured=["http://localhost:9400/metrics"],
                 endpoints_successful=["http://localhost:9400/metrics"],
             )
 
@@ -337,7 +337,7 @@ class TestJsonExporterTelemetry:
                 telemetry_data=hierarchy,
                 start_ns=0,
                 end_ns=0,
-                endpoints_tested=["http://localhost:9400/metrics"],
+                endpoints_configured=["http://localhost:9400/metrics"],
                 endpoints_successful=["http://localhost:9400/metrics"],
             )
 
@@ -374,7 +374,7 @@ class TestJsonExporterTelemetry:
                 telemetry_data=TelemetryHierarchy(),
                 start_ns=0,
                 end_ns=0,
-                endpoints_tested=[],
+                endpoints_configured=[],
                 endpoints_successful=[],
             )
 
@@ -433,7 +433,7 @@ class TestJsonExporterTelemetry:
                 telemetry_data=hierarchy,
                 start_ns=0,
                 end_ns=0,
-                endpoints_tested=["http://node1.example.com:9400/metrics"],
+                endpoints_configured=["http://node1.example.com:9400/metrics"],
                 endpoints_successful=["http://node1.example.com:9400/metrics"],
             )
 
@@ -510,7 +510,7 @@ class TestJsonExporterTelemetry:
                 telemetry_data=hierarchy,
                 start_ns=0,
                 end_ns=0,
-                endpoints_tested=[
+                endpoints_configured=[
                     "http://node1:9400/metrics",
                     "http://node2:9400/metrics",
                 ],
@@ -580,7 +580,7 @@ class TestJsonExporterTelemetry:
                 telemetry_data=hierarchy,
                 start_ns=0,
                 end_ns=0,
-                endpoints_tested=["http://localhost:9400/metrics"],
+                endpoints_configured=["http://localhost:9400/metrics"],
                 endpoints_successful=["http://localhost:9400/metrics"],
             )
 
