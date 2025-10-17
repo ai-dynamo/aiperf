@@ -47,9 +47,10 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
                 ) from e
             unit = metric_cls.unit
             display_unit = metric_cls.display_unit
-            if display_unit != unit:
+            value = float(value)
+            if display_unit is not None and display_unit != unit:
                 try:
-                    value = display_unit.convert_to(unit, float(value))
+                    value = display_unit.convert_to(unit, value)
                 except Exception as e:
                     raise ValueError(
                         f"Failed to convert from {display_unit} to "
