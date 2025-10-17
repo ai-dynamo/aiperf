@@ -558,7 +558,7 @@ class TestCsvExporterTelemetry:
                 telemetry_data=hierarchy,
                 start_ns=0,
                 end_ns=0,
-                endpoints_tested=["http://localhost:9400/metrics"],
+                endpoints_configured=["http://localhost:9400/metrics"],
                 endpoints_successful=["http://localhost:9400/metrics"],
             )
 
@@ -690,7 +690,7 @@ class TestCsvExporterTelemetry:
                 telemetry_data=hierarchy,
                 start_ns=0,
                 end_ns=0,
-                endpoints_tested=[
+                endpoints_configured=[
                     "http://node1:9400/metrics",
                     "http://node2:9400/metrics",
                 ],
@@ -756,7 +756,7 @@ class TestCsvExporterTelemetry:
                 telemetry_data=hierarchy,
                 start_ns=0,
                 end_ns=0,
-                endpoints_tested=["http://localhost:9400/metrics"],
+                endpoints_configured=["http://localhost:9400/metrics"],
                 endpoints_successful=["http://localhost:9400/metrics"],
             )
 

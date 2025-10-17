@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from aiperf.gpu_telemetry.constants import DEFAULT_DCGM_ENDPOINT
+from aiperf.gpu_telemetry.constants import DEFAULT_DCGM_ENDPOINTS
 
 
 class TestMainFunction:
@@ -25,20 +25,20 @@ class TestMainFunction:
             # --gpu-telemetry at end without value
             (
                 ["--gpu-telemetry"],
-                ["--gpu-telemetry", DEFAULT_DCGM_ENDPOINT],
-                [DEFAULT_DCGM_ENDPOINT],
+                ["--gpu-telemetry", *DEFAULT_DCGM_ENDPOINTS],
+                DEFAULT_DCGM_ENDPOINTS,
             ),
             # --gpu-telemetry followed by single dash flag
             (
                 ["--gpu-telemetry", "-v"],
-                ["--gpu-telemetry", DEFAULT_DCGM_ENDPOINT, "-v"],
-                [DEFAULT_DCGM_ENDPOINT],
+                ["--gpu-telemetry", *DEFAULT_DCGM_ENDPOINTS, "-v"],
+                DEFAULT_DCGM_ENDPOINTS,
             ),
             # --gpu-telemetry followed by double dash flag
             (
                 ["--gpu-telemetry", "--verbose"],
-                ["--gpu-telemetry", DEFAULT_DCGM_ENDPOINT, "--verbose"],
-                [DEFAULT_DCGM_ENDPOINT],
+                ["--gpu-telemetry", *DEFAULT_DCGM_ENDPOINTS, "--verbose"],
+                DEFAULT_DCGM_ENDPOINTS,
             ),
             # --gpu-telemetry with custom value
             (

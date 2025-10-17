@@ -102,7 +102,7 @@ class JsonExporter(AIPerfLoggerMixin):
         telemetry_export_data = None
         if self._telemetry_results:
             summary = TelemetrySummary(
-                endpoints_tested=self._telemetry_results.endpoints_tested,
+                endpoints_configured=self._telemetry_results.endpoints_configured,
                 endpoints_successful=self._telemetry_results.endpoints_successful,
                 start_time=datetime.fromtimestamp(
                     self._telemetry_results.start_ns / NANOS_PER_SECOND

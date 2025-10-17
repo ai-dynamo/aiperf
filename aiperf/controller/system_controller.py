@@ -132,7 +132,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self._shutdown_triggered = False
         self._shutdown_lock = asyncio.Lock()
-        self._endpoints_tested: list[str] = []
+        self._endpoints_configured: list[str] = []
         self._endpoints_reachable: list[str] = []
         self.debug("System Controller created")
 
@@ -370,7 +370,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         TelemetryStatusMessage informs SystemController if telemetry results will be available.
         """
 
-        self._endpoints_tested = message.endpoints_tested
+        self._endpoints_configured = message.endpoints_configured
         self._endpoints_reachable = message.endpoints_reachable
         self._should_wait_for_telemetry = message.enabled
 
@@ -472,7 +472,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
 
         if telemetry_results:
-            telemetry_results.endpoints_tested = self._endpoints_tested
+            telemetry_results.endpoints_configured = self._endpoints_configured
             telemetry_results.endpoints_successful = self._endpoints_reachable
 
         self._telemetry_results = telemetry_results

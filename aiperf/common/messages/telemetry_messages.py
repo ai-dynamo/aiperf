@@ -54,9 +54,9 @@ class TelemetryStatusMessage(BaseServiceMessage):
     reason: str | None = Field(
         default=None, description="Reason why telemetry is disabled (if enabled=False)"
     )
-    endpoints_tested: list[str] = Field(
+    endpoints_configured: list[str] = Field(
         default_factory=list,
-        description="List of DCGM endpoint URLs that were tested for reachability",
+        description="List of DCGM endpoint URLs in the configured scope for display",
     )
     endpoints_reachable: list[str] = Field(
         default_factory=list,

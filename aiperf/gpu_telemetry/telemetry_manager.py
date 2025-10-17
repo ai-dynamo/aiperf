@@ -28,7 +28,7 @@ from aiperf.common.protocols import (
 )
 from aiperf.gpu_telemetry.constants import (
     DEFAULT_COLLECTION_INTERVAL,
-    DEFAULT_DCGM_ENDPOINT,
+    DEFAULT_DCGM_ENDPOINTS,
 )
 from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
 
@@ -75,15 +75,20 @@ class TelemetryManager(BaseComponentService):
 
         self._collectors: dict[str, TelemetryDataCollector] = {}
 
-        user_endpoints = user_config.gpu_telemetry
-        if user_endpoints is None:
-            user_endpoints = []
-        elif isinstance(user_endpoints, str):
-            user_endpoints = [user_endpoints]
-        else:
-            user_endpoints = list(user_endpoints)
+        self._user_explicitly_configured_telemetry = (
+            user_config.gpu_telemetry is not None
+        )
 
-        # Filter to keep only valid URLs (has http/https scheme because DCGM exporter endpoints are always Prometheus and netloc)
+        # Normalize to list
+        user_endpoints = (
+            []
+            if user_config.gpu_telemetry is None
+            else [user_config.gpu_telemetry]
+            if isinstance(user_config.gpu_telemetry, str)
+            else list(user_config.gpu_telemetry)
+        )
+
+        # Validate and normalize URLs
         valid_endpoints = []
         for endpoint in user_endpoints:
             try:
@@ -91,15 +96,17 @@ class TelemetryManager(BaseComponentService):
                 if parsed.scheme in ("http", "https") and parsed.netloc:
                     valid_endpoints.append(self._normalize_dcgm_url(endpoint))
             except Exception:
-                # Skip invalid URLs
                 continue
-        # Deduplicate normalized endpoints while preserving order
-        user_endpoints = list(dict.fromkeys(valid_endpoints))
 
-        if DEFAULT_DCGM_ENDPOINT not in user_endpoints:
-            self._dcgm_endpoints = [DEFAULT_DCGM_ENDPOINT] + user_endpoints
-        else:
-            self._dcgm_endpoints = user_endpoints
+        # Store user-provided endpoints separately for display filtering (excluding auto-inserted defaults)
+        self._user_provided_endpoints = [
+            ep for ep in valid_endpoints if ep not in DEFAULT_DCGM_ENDPOINTS
+        ]
+
+        # Combine defaults + user endpoints, preserving order and removing duplicates
+        self._dcgm_endpoints = list(
+            dict.fromkeys(list(DEFAULT_DCGM_ENDPOINTS) + self._user_provided_endpoints)
+        )
 
         self._collection_interval = DEFAULT_COLLECTION_INTERVAL
 
@@ -117,6 +124,32 @@ class TelemetryManager(BaseComponentService):
         if not url.endswith("/metrics"):
             url = f"{url}/metrics"
         return url
+
+    def _compute_endpoints_for_display(
+        self, reachable_defaults: list[str]
+    ) -> list[str]:
+        """Compute which DCGM endpoints should be displayed to the user.
+
+        Filters endpoints for clean console output based on user configuration
+        and reachability. This intentional filtering prevents cluttering the UI
+        with unreachable default endpoints that the user didn't explicitly configure.
+
+        Args:
+            reachable_defaults: List of default DCGM endpoints that are reachable
+
+        Returns:
+            List of endpoint URLs to display in console/export output:
+            - Empty list if user did not configure telemetry (implicit acceptance only)
+            - reachable_defaults if user configured telemetry with no custom endpoints
+            - user_provided_endpoints + reachable_defaults if custom endpoints provided
+        """
+        if not self._user_explicitly_configured_telemetry:
+            return []
+
+        if self._user_provided_endpoints:
+            return list(self._user_provided_endpoints) + reachable_defaults
+
+        return reachable_defaults
 
     @on_init
     async def _initialize(self) -> None:
@@ -142,9 +175,9 @@ class TelemetryManager(BaseComponentService):
             message: Profile configuration command from SystemController
         """
 
-        reachable_count = 0
         self._collectors.clear()
         for dcgm_url in self._dcgm_endpoints:
+            self.debug(f"GPU Telemetry: Testing reachability of {dcgm_url}")
             collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
             collector = TelemetryDataCollector(
                 dcgm_url=dcgm_url,
@@ -158,15 +191,26 @@ class TelemetryManager(BaseComponentService):
                 is_reachable = await collector.is_url_reachable()
                 if is_reachable:
                     self._collectors[dcgm_url] = collector
-                    reachable_count += 1
+                    self.debug(f"GPU Telemetry: DCGM endpoint {dcgm_url} is reachable")
+                else:
+                    self.debug(
+                        f"GPU Telemetry: DCGM endpoint {dcgm_url} is not reachable"
+                    )
             except Exception as e:
-                self.error(f"Exception testing {dcgm_url}: {e}")
+                self.error(f"GPU Telemetry: Exception testing {dcgm_url}: {e}")
 
-        if reachable_count == 0:
+        # Determine which defaults are reachable for display filtering
+        reachable_endpoints = list(self._collectors.keys())
+        reachable_defaults = [
+            ep for ep in DEFAULT_DCGM_ENDPOINTS if ep in reachable_endpoints
+        ]
+        endpoints_for_display = self._compute_endpoints_for_display(reachable_defaults)
+
+        if not self._collectors:
             await self._send_telemetry_status(
                 enabled=False,
                 reason="no DCGM endpoints reachable",
-                endpoints_tested=self._dcgm_endpoints,
+                endpoints_configured=endpoints_for_display,
                 endpoints_reachable=[],
             )
             return
@@ -174,8 +218,8 @@ class TelemetryManager(BaseComponentService):
         await self._send_telemetry_status(
             enabled=True,
             reason=None,
-            endpoints_tested=self._dcgm_endpoints,
-            endpoints_reachable=list(self._collectors),
+            endpoints_configured=endpoints_for_display,
+            endpoints_reachable=reachable_endpoints,
         )
 
     @on_command(CommandType.PROFILE_START)
@@ -259,7 +303,7 @@ class TelemetryManager(BaseComponentService):
         await self._send_telemetry_status(
             enabled=False,
             reason=reason,
-            endpoints_tested=self._dcgm_endpoints,
+            endpoints_configured=self._compute_endpoints_for_display([]),
             endpoints_reachable=[],
         )
 
@@ -343,7 +387,7 @@ class TelemetryManager(BaseComponentService):
         self,
         enabled: bool,
         reason: str | None = None,
-        endpoints_tested: list[str] | None = None,
+        endpoints_configured: list[str] | None = None,
         endpoints_reachable: list[str] | None = None,
     ) -> None:
         """Send telemetry status message to SystemController.
@@ -355,7 +399,7 @@ class TelemetryManager(BaseComponentService):
         Args:
             enabled: Whether telemetry collection is enabled/available
             reason: Optional human-readable reason for status (e.g., "no DCGM endpoints reachable")
-            endpoints_tested: List of all DCGM endpoint URLs that were tested
+            endpoints_configured: List of DCGM endpoint URLs in configured scope for display
             endpoints_reachable: List of DCGM endpoint URLs that are accessible
         """
         try:
@@ -363,7 +407,7 @@ class TelemetryManager(BaseComponentService):
                 service_id=self.service_id,
                 enabled=enabled,
                 reason=reason,
-                endpoints_tested=endpoints_tested or [],
+                endpoints_configured=endpoints_configured or [],
                 endpoints_reachable=endpoints_reachable or [],
             )
 
