@@ -79,13 +79,19 @@ class InputConfig(BaseConfig):
         Runs after the model is constructed so we can inspect self.goodput directly.
         """
         if self.goodput:
+            from aiperf.common.enums import MetricType
             from aiperf.metrics.metric_registry import MetricRegistry
 
             for tag in self.goodput:
                 try:
-                    MetricRegistry.get_class(tag)
+                    metric_cls = MetricRegistry.get_class(tag)
                 except MetricTypeError as e:
                     raise ValueError(f"Unknown metric tag in --goodput: {tag}") from e
+                if metric_cls.type == MetricType.DERIVED:
+                    raise ValueError(
+                        f"Metric '{tag}' is a Derived metric and cannot be used for --goodput. "
+                        "Use a per-record metric instead (e.g., 'inter_token_latency', 'time_to_first_token')."
+                    )
 
         return self
 
