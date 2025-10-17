@@ -204,6 +204,7 @@ class AioHttpSSEStreamReader:
             if not first_byte:
                 break
 
+            # Read until we hit \n\n which delimits SSE messages
             chunk = await self.response.content.readuntil(b"\n\n")
 
             if not chunk:
@@ -211,11 +212,11 @@ class AioHttpSSEStreamReader:
             chunk = first_byte + chunk
 
             try:
+                decoded = chunk.decode("utf-8")
+                for sub_chunk in decoded.split("\n\n"):
+                    if sub_chunk:
+                        yield (sub_chunk, chunk_ns_first_byte)
                 # Use the fastest available decoder
-                yield (
-                    chunk.decode("utf-8").strip(),
-                    chunk_ns_first_byte,
-                )
             except UnicodeDecodeError:
                 # Handle potential encoding issues gracefully
                 yield (
