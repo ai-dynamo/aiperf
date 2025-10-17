@@ -379,7 +379,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.info(f"GPU telemetry disabled{reason_msg}")
         else:
             self.info(
-                f"GPU telemetry enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_tested)} endpoint(s) reachable"
+                f"GPU telemetry enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_configured)} endpoint(s) reachable"
             )
 
     @on_message(MessageType.COMMAND_RESPONSE)
