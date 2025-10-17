@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
 import pytest
 
 from tests.integration.conftest import AIPerfCLI
+from tests.integration.conftest import IntegrationTestDefaults as defaults
 from tests.integration.models import AIPerfMockServer
 
 
@@ -21,9 +23,9 @@ class TestDefaultBehavior:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model openai/gpt-oss-120b \
+                --model {defaults.model} \
                 --url {aiperf_mock_server.url}
             """
         )
-        assert result.request_count == 10
+        assert result.request_count == defaults.request_count
         assert result.exit_code == 0

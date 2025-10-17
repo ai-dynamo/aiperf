@@ -101,12 +101,13 @@ markers = [
     "integration: marks tests as integration tests (deselected by default)",
     "performance: marks tests as performance tests (deselected by default)",
     "ffmpeg: marks tests that require ffmpeg to be installed (deselected by default)",
+    "stress: marks tests as stress tests that generate high load (deselected by default)",
 ]
 # Better console output
 console_output_style = "progress"
 verbosity_assertions = 2
 # Show extra test summary info
-# Deselect integration, performance, and ffmpeg tests by default
-# To run them: pytest -m integration, pytest -m performance, pytest -m ffmpeg
+# Deselect integration, performance, ffmpeg, and stress tests by default
+# To run them: pytest -m integration, pytest -m performance, pytest -m ffmpeg, pytest -m stress
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not integration and not performance and not ffmpeg'"
+addopts = "--strict-markers -m 'not integration and not performance and not ffmpeg and not stress'"

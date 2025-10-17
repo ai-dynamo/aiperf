@@ -3,11 +3,13 @@
 import asyncio
 import logging
 import os
+import platform
 import shlex
 import socket
 import sys
 from collections.abc import AsyncGenerator, Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 import aiohttp
@@ -24,6 +26,24 @@ logging.getLogger("faker").setLevel(logging.WARNING)
 logging.getLogger("asyncio").setLevel(logging.INFO)
 
 
+@dataclass(frozen=True)
+class IntegrationTestDefaults:
+    """Default test parameters."""
+
+    # Default model to use for integration tests.
+    # Note that the openai/gpt-oss-120b model crashes on macOS for some reason.
+    # Defining the default model differently so we can have more variety in the tests.
+    if platform.system() == "Darwin":
+        model = "Qwen/Qwen3-0.6B"
+    else:
+        model = "openai/gpt-oss-120b"
+    workers_max: int = 1
+    concurrency: int = 2
+    request_count: int = 10
+    timeout: float = 200.0
+    ui: str = "simple"
+
+
 class AIPerfCLI:
     """Clean CLI wrapper for running AIPerf benchmarks."""
 
@@ -34,7 +54,10 @@ class AIPerfCLI:
         self._runner = aiperf_runner
 
     async def run(
-        self, command: str, timeout: float = 60.0, assert_success: bool = True
+        self,
+        command: str,
+        timeout: float = IntegrationTestDefaults.timeout,
+        assert_success: bool = True,
     ) -> AIPerfResults:
         """Run aiperf command and return results.
 
@@ -223,6 +246,13 @@ async def aiperf_runner(
             await asyncio.wait_for(process.wait(), timeout=timeout)
         except asyncio.TimeoutError as e:
             process.kill()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                logging.warning(
+                    "Process did not exit after kill(), forcing termination"
+                )
+                process.kill()
             raise RuntimeError(f"AIPerf timed out after {timeout}s") from e
 
         return AIPerfSubprocessResult(

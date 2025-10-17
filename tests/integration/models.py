@@ -31,8 +31,8 @@ class AIPerfMockServer:
 
     @property
     def dcgm_urls(self) -> list[str]:
-        """AIPerfMockServer server DCGM URL."""
-        return [f"{self.url}/dcgm1", f"{self.url}/dcgm2"]
+        """AIPerfMockServer server DCGM metrics URLs."""
+        return [f"{self.url}/dcgm{i}/metrics" for i in [1, 2]]
 
 
 class VideoDetails(BaseModel):

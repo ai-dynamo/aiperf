@@ -143,6 +143,8 @@ class ReasoningGenerationContext(BaseModel):
 
     def _create_reasoning_content(self, num_tokens: int) -> list[str]:
         """Generate reasoning content tokens using reverse cycling pattern."""
+        if not self.prompt_tokens or num_tokens == 0:
+            return []
         return [
             self.prompt_tokens[
                 (len(self.prompt_tokens) - 1 - i) % len(self.prompt_tokens)
@@ -202,6 +204,17 @@ class _Tokenizer:
                 text=text,
                 tokens=[],
                 prompt_token_count=prompt_token_count,
+                reasoning_tokens=0,
+                reasoning_content_tokens=[],
+                finish_reason="stop",
+            )
+
+        # Handle empty prompts - can't generate tokens without source material
+        if not prompt_tokens:
+            return TokenizedText(
+                text=text,
+                tokens=[],
+                prompt_token_count=0,
                 reasoning_tokens=0,
                 reasoning_content_tokens=[],
                 finish_reason="stop",
@@ -309,11 +322,15 @@ class _Tokenizer:
 
     def _generate_seed(self, prompt_tokens: list[str]) -> int:
         """Generate deterministic seed from prompt tokens."""
+        if not prompt_tokens:
+            return 0
         sample = prompt_tokens[:5]
         return hash(tuple(sample)) % 1000
 
     def _cycle_tokens(self, prompt_tokens: list[str], num_tokens: int) -> list[str]:
         """Generate tokens by cycling through prompt tokens."""
+        if not prompt_tokens or num_tokens == 0:
+            return []
         return [prompt_tokens[i % len(prompt_tokens)] for i in range(num_tokens)]
 
 

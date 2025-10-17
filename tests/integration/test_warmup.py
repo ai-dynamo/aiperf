@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""Tests for warmup phase functionality."""
+
 import pytest
 
 from tests.integration.conftest import AIPerfCLI
@@ -9,43 +11,45 @@ from tests.integration.models import AIPerfMockServer
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-class TestChatEndpoint:
-    """Tests for /v1/chat/completions endpoint."""
+class TestWarmup:
+    """Tests for warmup phase functionality."""
 
-    async def test_basic_chat(
+    async def test_warmup_phase(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
-        """Basic non-streaming chat completion."""
+        """Warmup requests excluded from profiling metrics."""
         result = await cli.run(
             f"""
             aiperf profile \
-                --model microsoft/phi-4 \
+                --model {defaults.model} \
                 --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
-                --request-count {defaults.request_count} \
+                --warmup-request-count 5 \
+                --request-count 15 \
                 --concurrency {defaults.concurrency} \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
             """
         )
-        assert result.request_count == defaults.request_count
+        assert result.request_count == 15
 
-    async def test_streaming_chat(
+    async def test_warmup_with_streaming(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
-        """Streaming chat completion with metrics validation."""
+        """Warmup with streaming enabled."""
         result = await cli.run(
             f"""
             aiperf profile \
-                --model Qwen/Qwen2.5-32B-Instruct \
+                --model {defaults.model} \
                 --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --streaming \
-                --request-count {defaults.request_count} \
-                --concurrency {defaults.concurrency} \
+                --warmup-request-count 10 \
+                --request-count 20 \
+                --concurrency 4 \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
             """
         )
-        assert result.request_count == defaults.request_count
+        assert result.request_count == 20
         assert result.has_streaming_metrics

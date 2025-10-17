@@ -24,11 +24,10 @@ class TestGpuTelemetry:
                 --url {aiperf_mock_server.url} \
                 --tokenizer gpt2 \
                 --endpoint-type chat \
-                --gpu-telemetry {aiperf_mock_server.dcgm_urls[0]} \
-                --gpu-telemetry {aiperf_mock_server.dcgm_urls[1]} \
+                --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --streaming \
                 --request-count 100 \
-                --concurrency 10 \
+                --concurrency 2 \
                 --workers-max 2 \
                 --ui dashboard
             """

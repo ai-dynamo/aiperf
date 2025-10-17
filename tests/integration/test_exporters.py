@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""Tests for different output export formats."""
+
 import pytest
 
 from tests.integration.conftest import AIPerfCLI
@@ -9,35 +11,17 @@ from tests.integration.models import AIPerfMockServer
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-class TestChatEndpoint:
-    """Tests for /v1/chat/completions endpoint."""
+class TestOutputFormats:
+    """Tests for different output export formats."""
 
-    async def test_basic_chat(
+    async def test_csv_export(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
-        """Basic non-streaming chat completion."""
+        """CSV export format validation."""
         result = await cli.run(
             f"""
             aiperf profile \
-                --model microsoft/phi-4 \
-                --url {aiperf_mock_server.url} \
-                --endpoint-type chat \
-                --request-count {defaults.request_count} \
-                --concurrency {defaults.concurrency} \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """
-        )
-        assert result.request_count == defaults.request_count
-
-    async def test_streaming_chat(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
-    ):
-        """Streaming chat completion with metrics validation."""
-        result = await cli.run(
-            f"""
-            aiperf profile \
-                --model Qwen/Qwen2.5-32B-Instruct \
+                --model Qwen/Qwen2.5-Coder-32B-Instruct \
                 --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --streaming \
@@ -47,5 +31,25 @@ class TestChatEndpoint:
                 --ui {defaults.ui}
             """
         )
-        assert result.request_count == defaults.request_count
-        assert result.has_streaming_metrics
+        assert "Metric" in result.csv
+        assert "Request Latency" in result.csv
+
+    async def test_json_export(
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+    ):
+        """JSON export format validation."""
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model microsoft/Phi-4-reasoning \
+                --url {aiperf_mock_server.url} \
+                --endpoint-type chat \
+                --request-count {defaults.request_count} \
+                --concurrency {defaults.concurrency} \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+        assert result.json is not None
+        assert result.json.request_count is not None
+        assert result.json.request_latency is not None

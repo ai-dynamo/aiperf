@@ -5,6 +5,7 @@
 import pytest
 
 from tests.integration.conftest import AIPerfCLI
+from tests.integration.conftest import IntegrationTestDefaults as defaults
 from tests.integration.models import AIPerfMockServer
 
 
@@ -24,12 +25,13 @@ class TestEmbeddingsEndpoint:
                 --tokenizer gpt2 \
                 --url {aiperf_mock_server.url} \
                 --endpoint-type embeddings \
-                --request-count 10 \
-                --concurrency 2 \
-                --ui simple
+                --request-count {defaults.request_count} \
+                --concurrency {defaults.concurrency} \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
             """
         )
-        assert result.request_count == 10
+        assert result.request_count == defaults.request_count
         assert (
             not hasattr(result.json, "time_to_first_token")
             or result.json.time_to_first_token is None

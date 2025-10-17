@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.integration.conftest import AIPerfCLI
+from tests.integration.conftest import IntegrationTestDefaults as defaults
 from tests.integration.models import AIPerfMockServer
 from tests.integration.utils import create_rankings_dataset
 
@@ -31,10 +32,10 @@ class TestRankingsEndpoint:
                 --endpoint-type rankings \
                 --input-file {dataset_path} \
                 --custom-dataset-type single_turn \
-                --request-count 10 \
-                --concurrency 2 \
-                --workers-max 1 \
-                --ui simple
+                --request-count {defaults.request_count} \
+                --concurrency {defaults.concurrency} \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
             """
         )
-        assert result.request_count == 10
+        assert result.request_count == defaults.request_count

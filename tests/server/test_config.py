@@ -115,15 +115,20 @@ class TestConfigHelpers:
         assert "key" in result
         assert "value" in result
 
-    def test_propagate_config_to_env(self):
+    def test_propagate_config_to_env(self, monkeypatch):
+        monkeypatch.delenv("MOCK_SERVER_PORT", raising=False)
+        monkeypatch.delenv("MOCK_SERVER_TTFT", raising=False)
+
         config = MockServerConfig(port=9000, ttft=15.0)
         _propagate_config_to_env(config)
 
         assert os.environ["MOCK_SERVER_PORT"] == "9000"
         assert os.environ["MOCK_SERVER_TTFT"] == "15.0"
 
-    def test_set_server_config(self):
+    def test_set_server_config(self, monkeypatch):
         from aiperf_mock_server import config as config_module
+
+        monkeypatch.delenv("MOCK_SERVER_PORT", raising=False)
 
         new_config = MockServerConfig(port=9999)
         set_server_config(new_config)

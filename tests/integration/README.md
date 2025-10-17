@@ -46,10 +46,10 @@ make first-time-setup
 
 ```bash
 # Run all integration tests (parallel)
-make test-integration
+make integration-tests
 
 # Run all integration tests (verbose, sequential with live AIPerf output)
-make test-integration-verbose
+make integration-tests-verbose
 ```
 
 

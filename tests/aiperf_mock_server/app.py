@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import hashlib
 import logging
 import random
 import time
@@ -158,6 +159,13 @@ async def embeddings(req: EmbeddingRequest) -> EmbeddingResponse:
     ctx = RequestContext(req)
     await ctx.wait_until_completion()
 
+    def generate_embedding(text: str) -> list[float]:
+        """Generate deterministic embedding from text using stable hash."""
+        digest = hashlib.blake2s(text.encode("utf-8")).digest()
+        seed = int.from_bytes(digest, byteorder="big")
+        rng = random.Random(seed)
+        return [rng.random() - 0.5 for _ in range(768)]
+
     return EmbeddingResponse(
         id=ctx.request_id,
         created=int(time.time()),
@@ -165,10 +173,7 @@ async def embeddings(req: EmbeddingRequest) -> EmbeddingResponse:
         data=[
             Embedding(
                 index=i,
-                embedding=[
-                    ((hash(text) + dimension * 17) % 1000) / 1000.0 - 0.5
-                    for dimension in range(768)
-                ],
+                embedding=generate_embedding(text),
             )
             for i, text in enumerate(req.inputs)
         ],
@@ -187,12 +192,18 @@ async def rankings(req: RankingRequest) -> RankingResponse:
     """Ranking endpoint."""
     ctx = RequestContext(req)
 
-    query_hash = hash(req.query_text)
+    def compute_relevance_score(query: str, passage: str) -> float:
+        """Compute deterministic relevance score using stable hash."""
+        combined = f"{query}|{passage}"
+        digest = hashlib.blake2s(combined.encode("utf-8")).digest()
+        int_digest = int.from_bytes(digest, byteorder="big")
+        return (int_digest % 1000) / 1000.0
+
     rankings = sorted(
         [
             Ranking(
                 index=i,
-                relevance_score=hash(query_hash ^ hash(text)) % 1000 / 1000.0,
+                relevance_score=compute_relevance_score(req.query_text, text),
             )
             for i, text in enumerate(req.passage_texts)
         ],

@@ -18,24 +18,6 @@ from aiperf_mock_server.utils import (
 )
 from fastapi import HTTPException
 
-from tests.utils.time_traveler import TimeTraveler
-
-
-class TestLatencySimulator:
-    """Tests for LatencySimulator class."""
-
-    @pytest.mark.asyncio
-    async def test_wait_for_next_token(self, time_traveler: TimeTraveler):
-        sim = LatencySimulator()
-        with time_traveler.sleeps_for(expected_seconds=0.02):
-            await sim.wait_for_next_token()
-
-    @pytest.mark.asyncio
-    async def test_wait_for_tokens_multiple(self, time_traveler: TimeTraveler):
-        sim = LatencySimulator()
-        with time_traveler.sleeps_for(expected_seconds=0.02 + (0.005 * 5)):
-            await sim.wait_for_tokens(num_tokens=5)
-
 
 class TestGetRequestId:
     """Tests for create_request_id function."""

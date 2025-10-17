@@ -18,8 +18,9 @@
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install docker docker-run first-time-setup \
 		test-verbose init-files setup-venv setup-mkinit install-mock-server \
-		test-integration test-integration-verbose \
-		internal-help help
+		integration-tests integration-tests-ci integration-tests-verbose \
+		test-integration test-integration-ci test-integration-verbose \
+		test-stress stress-tests internal-help help
 
 
 # Include user-defined environment variables
@@ -178,13 +179,23 @@ first-time-setup: #? convenience command to setup the environment for the first 
 	@# Print a success message
 	@printf "$(bold)$(green)Done!$(reset)\n"
 
-test-integration: #? run integration tests with with FakeAI server.
-	@printf "$(bold)$(blue)Running integration tests with FakeAI server...$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -m 'integration' -n auto -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
-	@printf "$(bold)$(green)Integration tests passed!$(reset)\n"
+stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
+	@printf "$(bold)$(blue)Running stress tests with AIPerf Mock Server...$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server stress tests passed!$(reset)\n"
 
-test-integration-verbose: #? run integration tests with verbose output with FakeAI server.
-	@printf "$(bold)$(blue)Running integration tests (verbose, sequential) with FakeAI server...$(reset)\n"
+integration-tests test-integration: #? run integration tests with with AIPerf Mock Server.
+	@printf "$(bold)$(blue)Running integration tests with AIPerf Mock Server...$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance' -n auto -v --tb=short $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server integration tests passed!$(reset)\n"
+
+integration-tests-ci test-integration-ci: #? run integration tests with with AIPerf Mock Server for CI (parallel, verbose, no performance and no ffmpeg tests).
+	@printf "$(bold)$(blue)Running integration tests (CI mode) with AIPerf Mock Server...$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -n auto -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode) passed!$(reset)\n"
+
+integration-tests-verbose test-integration-verbose: #? run integration tests with verbose output with AIPerf Mock Server.
+	@printf "$(bold)$(blue)Running integration tests (verbose, sequential) with AIPerf Mock Server...$(reset)\n"
 	@printf "$(yellow)Note: Sequential mode shows real-time AIPerf output$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -m 'integration' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
-	@printf "$(bold)$(green)Integration tests passed!$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server integration tests passed!$(reset)\n"
