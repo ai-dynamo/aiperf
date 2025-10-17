@@ -16,7 +16,9 @@ dependencies = [
     "uvicorn[standard]>=0.24.0",
     "transformers>=4.35.0",
     "pydantic>=2.5.0",
-    "cyclopts>=3.0.0"
+    "pydantic-settings>=2.0.0",
+    "cyclopts>=3.0.0",
+    "orjson>=3.9.0"
 ]
 readme = "README.md"
 requires-python = ">=3.10"
