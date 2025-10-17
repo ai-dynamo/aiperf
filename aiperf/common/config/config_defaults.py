@@ -110,7 +110,7 @@ class PrefixPromptDefaults:
 
 @dataclass(frozen=True)
 class ConversationDefaults:
-    NUM = 100
+    NUM = None
 
 
 @dataclass(frozen=True)

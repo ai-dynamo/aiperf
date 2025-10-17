@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config import (
+    ConversationDefaults,
     InputDefaults,
     LoadGeneratorDefaults,
     UserConfig,
@@ -27,6 +28,7 @@ class TimingManagerConfig(AIPerfBaseModel):
     fixed_schedule_end_offset: int | None = InputDefaults.FIXED_SCHEDULE_END_OFFSET
     request_cancellation_rate: float = LoadGeneratorDefaults.REQUEST_CANCELLATION_RATE
     request_cancellation_delay: float = LoadGeneratorDefaults.REQUEST_CANCELLATION_DELAY
+    num_sessions: int | None = ConversationDefaults.NUM
 
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> "TimingManagerConfig":
@@ -47,4 +49,5 @@ class TimingManagerConfig(AIPerfBaseModel):
             fixed_schedule_end_offset=user_config.input.fixed_schedule_end_offset,
             request_cancellation_rate=user_config.loadgen.request_cancellation_rate,
             request_cancellation_delay=user_config.loadgen.request_cancellation_delay,
+            num_sessions=user_config.input.conversation.num,
         )

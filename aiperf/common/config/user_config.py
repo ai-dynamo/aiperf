@@ -293,3 +293,18 @@ class UserConfig(BaseConfig):
     def timing_mode(self) -> TimingMode:
         """Get the timing mode based on the user config."""
         return self._timing_mode
+
+    @model_validator(mode="after")
+    def validate_multi_turn_options(self) -> Self:
+        """Validate multi-turn options."""
+        # Multi-turn validation: only one of request_count or num_sessions should be set
+        if (
+            "request_count" in self.loadgen.model_fields_set
+            and "num_sessions" in self.loadgen.model_fields_set
+        ):
+            _logger.warning(
+                "Both --request-count and --num-sessions are set. This can result in confusing output. "
+                "Using --num-sessions for multi-turn scenarios."
+            )
+
+        return self

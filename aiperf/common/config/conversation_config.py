@@ -117,7 +117,7 @@ class ConversationConfig(BaseConfig):
     _CLI_GROUP = Groups.CONVERSATION_INPUT
 
     num: Annotated[
-        int,
+        int | None,
         Field(
             ge=1,
             description="The total number of unique conversations to generate.\n"

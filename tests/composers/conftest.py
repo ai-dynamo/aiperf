@@ -168,6 +168,7 @@ def custom_config() -> UserConfig:
         input=InputConfig.model_construct(
             file="test_data.jsonl",
             custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+            conversation=ConversationConfig(num=5),
         ),
     )
 
