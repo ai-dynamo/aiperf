@@ -123,6 +123,22 @@ class TestAioHttpSSEStreamReader:
             assert raw_message == expected_messages[i]
 
     @pytest.mark.asyncio
+    async def test_aiter_multiple_data_chunks(self, mock_sse_response: Mock) -> None:
+        """Test __aiter__ with multiple data: entries in a single chunk."""
+
+        raw_message = b"data: Hello\n\ndata: World\n\n"
+        setup_single_sse_chunk(
+            mock_sse_response, first_byte=raw_message[:1], remaining=raw_message[1:]
+        )
+
+        reader = AioHttpSSEStreamReader(mock_sse_response)
+        chunks = await self._collect_chunks(reader)
+
+        assert len(chunks) == 2
+        assert chunks[0][0] == "data: Hello"
+        assert chunks[1][0] == "data: World"
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "first_byte,remaining,expected_count,description",
         [
