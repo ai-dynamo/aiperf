@@ -235,7 +235,6 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
                 Returns empty list if metrics_data is empty or parsing fails.
         """
         if not metrics_data.strip():
-            self.warning("Response from DCGM metrics endpoint is empty")
             return []
 
         current_timestamp = time.time_ns()

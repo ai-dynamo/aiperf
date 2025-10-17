@@ -70,6 +70,10 @@ class AIPerfDashboardUI(BaseAIPerfUI):
             AIPerfHook.ON_WORKER_STATUS_SUMMARY, self.app.on_worker_status_summary
         )
         self.attach_hook(AIPerfHook.ON_REALTIME_METRICS, self.app.on_realtime_metrics)
+        self.attach_hook(
+            AIPerfHook.ON_REALTIME_TELEMETRY_METRICS,
+            self.app.on_realtime_telemetry_metrics,
+        )
 
     @on_start
     async def _run_app(self) -> None:

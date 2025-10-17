@@ -352,6 +352,7 @@ class TestRecordsManagerTelemetry:
         message = TelemetryRecordsMessage(
             service_id="test_service",
             collector_id="test_collector",
+            dcgm_url="http://localhost:9400/metrics",
             records=records,
             error=None,
         )
@@ -385,6 +386,7 @@ class TestRecordsManagerTelemetry:
         message = TelemetryRecordsMessage(
             service_id="test_service",
             collector_id="test_collector",
+            dcgm_url="http://localhost:9400/metrics",
             records=[],
             error=error,
         )

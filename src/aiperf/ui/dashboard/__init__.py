@@ -31,6 +31,11 @@ from aiperf.ui.dashboard.realtime_metrics_dashboard import (
     RealtimeMetricsDashboard,
     RealtimeMetricsTable,
 )
+from aiperf.ui.dashboard.realtime_telemetry_dashboard import (
+    GPUMetricsTable,
+    RealtimeTelemetryDashboard,
+    SingleNodeView,
+)
 from aiperf.ui.dashboard.rich_log_viewer import (
     LogConsumer,
     RichLogViewer,
@@ -47,6 +52,7 @@ __all__ = [
     "AIPERF_THEME",
     "AIPerfDashboardUI",
     "AIPerfTextualApp",
+    "GPUMetricsTable",
     "LogConsumer",
     "MaximizableWidget",
     "NonFocusableDataTable",
@@ -54,7 +60,9 @@ __all__ = [
     "ProgressHeader",
     "RealtimeMetricsDashboard",
     "RealtimeMetricsTable",
+    "RealtimeTelemetryDashboard",
     "RichLogViewer",
+    "SingleNodeView",
     "WORKER_STATUS_STYLES",
     "WorkerDashboard",
     "WorkerStatusTable",

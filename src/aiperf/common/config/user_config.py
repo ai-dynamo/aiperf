@@ -19,7 +19,7 @@ from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, GPUTelemetryMode
 from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
 from aiperf.common.utils import load_json_str
 
@@ -223,6 +223,43 @@ class UserConfig(BaseConfig):
             group=Groups.TELEMETRY,
         ),
     ]
+
+    gpu_telemetry_mode: Annotated[
+        GPUTelemetryMode,
+        Field(
+            default=GPUTelemetryMode.SUMMARY,
+            description="GPU telemetry display mode (parsed from gpu_telemetry list)",
+        ),
+        DisableCLI(reason="Automatically parsed from --gpu-telemetry argument"),
+    ] = GPUTelemetryMode.SUMMARY
+
+    gpu_telemetry_urls: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description="Parsed GPU telemetry DCGM endpoint URLs",
+        ),
+        DisableCLI(reason="Automatically parsed from --gpu-telemetry argument"),
+    ]
+
+    @model_validator(mode="after")
+    def _parse_gpu_telemetry_config(self) -> Self:
+        """Parse gpu_telemetry list into mode and URLs."""
+        if not self.gpu_telemetry:
+            return self
+
+        mode = GPUTelemetryMode.SUMMARY
+        urls = []
+
+        for item in self.gpu_telemetry:
+            if item in ["dashboard"]:
+                mode = GPUTelemetryMode.REALTIME_DASHBOARD
+            elif item.startswith("http"):
+                urls.append(item)
+
+        self.gpu_telemetry_mode = mode
+        self.gpu_telemetry_urls = urls
+        return self
 
     @model_validator(mode="after")
     def _compute_config(self) -> Self:

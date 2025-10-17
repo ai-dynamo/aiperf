@@ -38,7 +38,6 @@ class CsvExporter(AIPerfLoggerMixin):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.debug(lambda: f"Initializing CsvExporter with config: {exporter_config}")
         self._results = exporter_config.results
         self._telemetry_results = exporter_config.telemetry_results
         self._output_directory = exporter_config.user_config.output.artifact_directory

@@ -1,11 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Literal
+
 from pydantic import Field
 
-from aiperf.common.enums import MessageType
+from aiperf.common.enums import CommandType, GPUTelemetryMode, MessageType
+from aiperf.common.messages.command_messages import CommandMessage
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetails, ProcessTelemetryResult, TelemetryRecord
+from aiperf.common.models import (
+    ErrorDetails,
+    MetricResult,
+    ProcessTelemetryResult,
+    TelemetryRecord,
+)
 from aiperf.common.types import MessageTypeT
 
 
@@ -18,6 +26,10 @@ class TelemetryRecordsMessage(BaseServiceMessage):
     collector_id: str = Field(
         ...,
         description="The ID of the telemetry data collector that collected the records.",
+    )
+    dcgm_url: str = Field(
+        ...,
+        description="The DCGM endpoint URL that was contacted (e.g., 'http://localhost:9400/metrics')",
     )
     records: list[TelemetryRecord] = Field(
         ..., description="The telemetry records collected from GPU monitoring"
@@ -61,4 +73,26 @@ class TelemetryStatusMessage(BaseServiceMessage):
     endpoints_reachable: list[str] = Field(
         default_factory=list,
         description="List of DCGM endpoint URLs that were reachable and will provide data",
+    )
+
+
+class RealtimeTelemetryMetricsMessage(BaseServiceMessage):
+    """Message from the records manager to show real-time GPU telemetry metrics."""
+
+    message_type: MessageTypeT = MessageType.REALTIME_TELEMETRY_METRICS
+
+    metrics: list[MetricResult] = Field(
+        ..., description="The current real-time GPU telemetry metrics."
+    )
+
+
+class StartRealtimeTelemetryCommand(CommandMessage):
+    """Command to start the realtime telemetry background task in RecordsManager."""
+
+    command: Literal[CommandType.START_REALTIME_TELEMETRY] = (
+        CommandType.START_REALTIME_TELEMETRY
+    )
+    telemetry_mode: GPUTelemetryMode = Field(
+        default=GPUTelemetryMode.REALTIME_DASHBOARD,
+        description="The GPU telemetry mode to set when starting realtime telemetry",
     )
