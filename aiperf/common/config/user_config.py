@@ -300,11 +300,11 @@ class UserConfig(BaseConfig):
         # Multi-turn validation: only one of request_count or num_sessions should be set
         if (
             "request_count" in self.loadgen.model_fields_set
-            and "num_sessions" in self.loadgen.model_fields_set
+            and "num" in self.input.conversation.model_fields_set
         ):
-            _logger.warning(
-                "Both --request-count and --num-sessions are set. This can result in confusing output. "
-                "Using --num-sessions for multi-turn scenarios."
+            raise ValueError(
+                "Both a request-count and number of conversations are set. This can result in confusing output. "
+                "Use only --conversation-num for multi-turn scenarios."
             )
 
         return self
