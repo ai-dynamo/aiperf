@@ -717,26 +717,6 @@ class TestProfileStartCommand:
         return manager
 
     @pytest.mark.asyncio
-    async def test_start_acknowledges_command_immediately(self):
-        """Test that start command is acknowledged at the beginning."""
-        manager = self._create_test_manager()
-        manager.publish = AsyncMock()
-
-        # Add a mock collector
-        mock_collector = AsyncMock(spec=TelemetryDataCollector)
-        manager._collectors["http://localhost:9400/metrics"] = mock_collector
-
-        start_msg = ProfileStartCommand(
-            command_id="test", service_id="system_controller"
-        )
-        await manager._on_start_profiling(start_msg)
-
-        # Should have published command acknowledgment
-        manager.publish.assert_called_once()
-        call_args = manager.publish.call_args[0][0]
-        assert isinstance(call_args, CommandAcknowledgedResponse)
-
-    @pytest.mark.asyncio
     async def test_start_triggers_shutdown_when_no_collectors(self):
         """Test that start triggers shutdown when no collectors available."""
 

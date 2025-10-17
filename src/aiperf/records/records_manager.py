@@ -136,6 +136,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
         self._telemetry_results_processors: list[TelemetryResultsProcessorProtocol] = []
 
+        from aiperf.gpu_telemetry.constants import DEFAULT_DCGM_ENDPOINTS
+        from aiperf.gpu_telemetry.telemetry_manager import TelemetryManager
+
+        self._configured_telemetry_endpoints = set()
+        if user_config.gpu_telemetry_urls:
+            urls = user_config.gpu_telemetry_urls
+            # Defensive: ensure urls is iterable and handle string case
+            if isinstance(urls, str):
+                urls = [urls]
+            self._configured_telemetry_endpoints.update(
+                [TelemetryManager._normalize_dcgm_url(url) for url in urls]
+            )
+        # Add any default endpoints that aren't already configured
+        for endpoint in DEFAULT_DCGM_ENDPOINTS:
+            if endpoint not in self._configured_telemetry_endpoints:
+                self._configured_telemetry_endpoints.add(endpoint)
+
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
             try:
                 results_processor = ResultsProcessorFactory.create_instance(
