@@ -9,7 +9,7 @@ This module provides GPU telemetry collection capabilities through DCGM endpoint
 from aiperf.gpu_telemetry.constants import (
     DCGM_TO_FIELD_MAPPING,
     DEFAULT_COLLECTION_INTERVAL,
-    DEFAULT_DCGM_ENDPOINT,
+    DEFAULT_DCGM_ENDPOINTS,
     SCALING_FACTORS,
     THREAD_JOIN_TIMEOUT,
     URL_REACHABILITY_TIMEOUT,
@@ -24,7 +24,7 @@ from aiperf.gpu_telemetry.telemetry_manager import (
 __all__ = [
     "DCGM_TO_FIELD_MAPPING",
     "DEFAULT_COLLECTION_INTERVAL",
-    "DEFAULT_DCGM_ENDPOINT",
+    "DEFAULT_DCGM_ENDPOINTS",
     "SCALING_FACTORS",
     "THREAD_JOIN_TIMEOUT",
     "TelemetryDataCollector",

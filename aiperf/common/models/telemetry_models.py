@@ -334,9 +334,9 @@ class TelemetryResults(AIPerfBaseModel):
         description="Start time of telemetry collection in nanoseconds"
     )
     end_ns: int = Field(description="End time of telemetry collection in nanoseconds")
-    endpoints_tested: list[str] = Field(
+    endpoints_configured: list[str] = Field(
         default_factory=list,
-        description="List of DCGM endpoint URLs that were tested for reachability",
+        description="List of DCGM endpoint URLs in configured scope for display",
     )
     endpoints_successful: list[str] = Field(
         default_factory=list,

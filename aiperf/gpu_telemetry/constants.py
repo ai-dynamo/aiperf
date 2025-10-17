@@ -15,7 +15,10 @@ from aiperf.common.enums.metric_enums import (
 )
 
 # Default telemetry configuration
-DEFAULT_DCGM_ENDPOINT = "http://localhost:9401/metrics"
+DEFAULT_DCGM_ENDPOINTS = [
+    "http://localhost:9400/metrics",
+    "http://localhost:9401/metrics",
+]
 DEFAULT_COLLECTION_INTERVAL = 0.33  # in seconds, 330ms (~3Hz)
 
 # Timeouts for telemetry operations (seconds)

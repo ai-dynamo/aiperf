@@ -30,12 +30,12 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 
 | Usage | Command | What Gets Collected (If Available) | Console Display | CSV/JSON Export |
 |-------|---------|---------------------|-----------------|-----------------|
-| **No flag** | `aiperf profile --model MODEL ...` | `http://localhost:9401/metrics` | ❌ No | ✅ Yes |
-| **Flag only** | `aiperf profile --model MODEL ... --gpu-telemetry` | `http://localhost:9401/metrics` | ✅ Yes | ✅ Yes |
-| **Custom URLs** | `aiperf profile --model MODEL ... --gpu-telemetry http://node1:9400/metrics http://node2:9400/metrics` | `http://localhost:9401/metrics` + custom URLs | ✅ Yes | ✅ Yes |
+| **No flag** | `aiperf profile --model MODEL ...` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ❌ No | ✅ Yes |
+| **Flag only** | `aiperf profile --model MODEL ... --gpu-telemetry` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ✅ Yes | ✅ Yes |
+| **Custom URLs** | `aiperf profile --model MODEL ... --gpu-telemetry http://node1:9400/metrics http://node2:9400/metrics` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + custom URLs | ✅ Yes | ✅ Yes |
 
 > [!IMPORTANT]
-> The default endpoint `http://localhost:9401/metrics` is ALWAYS attempted for telemetry collection, regardless of whether the `--gpu-telemetry` flag is used. The flag primarily controls whether metrics are displayed on the console and allows you to specify additional custom DCGM exporter endpoints.
+> The default endpoints `http://localhost:9400/metrics` and `http://localhost:9401/metrics` are ALWAYS attempted for telemetry collection, regardless of whether the `--gpu-telemetry` flag is used. The flag primarily controls whether metrics are displayed on the console and allows you to specify additional custom DCGM exporter endpoints.
 
 ---
 
@@ -285,7 +285,8 @@ For distributed setups with multiple nodes, you can collect GPU telemetry from a
 
 ```bash
 # Example: Collecting telemetry from 3 nodes in a distributed setup
-# Note: The default http://localhost:9401/metrics is always attempted in addition to these URLs
+# Note: The default endpoints http://localhost:9400/metrics and http://localhost:9401/metrics
+#       are always attempted in addition to these custom URLs
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
@@ -307,6 +308,7 @@ aiperf profile \
 ```
 
 This will collect GPU metrics from:
+- `http://localhost:9400/metrics` (default, always attempted)
 - `http://localhost:9401/metrics` (default, always attempted)
 - `http://node1:9400/metrics` (custom node 1)
 - `http://node2:9400/metrics` (custom node 2)
@@ -361,7 +363,7 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
 ```
 "telemetry_data": {
     "summary": {
-      "endpoints_tested": [
+      "endpoints_configured": [
         "http://localhost:9401/metrics"
       ],
       "endpoints_successful": [

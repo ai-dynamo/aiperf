@@ -550,7 +550,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 telemetry_data=self._telemetry_hierarchy,
                 start_ns=self.start_time_ns or time.time_ns(),
                 end_ns=self.end_time_ns or time.time_ns(),
-                endpoints_tested=list(self._telemetry_hierarchy.dcgm_endpoints.keys()),
+                endpoints_configured=list(
+                    self._telemetry_hierarchy.dcgm_endpoints.keys()
+                ),
                 endpoints_successful=list(
                     self._telemetry_hierarchy.dcgm_endpoints.keys()
                 ),
