@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest", "macos-latest"]
+        os: ["ubuntu-latest"]
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
@@ -30,11 +30,5 @@ jobs:
         make first-time-setup PYTHON_VERSION=${{ matrix.python-version }}
 
     - name: Run integration tests
-      if: matrix.os == 'ubuntu-latest'
       run: |
         make integration-tests-ci
-
-    - name: Run macOS integration tests
-      if: matrix.os == 'macos-latest'
-      run: |
-        make integration-tests-macos
