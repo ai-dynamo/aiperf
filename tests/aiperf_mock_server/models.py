@@ -1,96 +1,250 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Pydantic models for OpenAI-compatible chat completions API."""
+from typing import Any, Literal, TypeVar
 
-from enum import Enum
-from typing import Any
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import ConfigDict
 
-from pydantic import BaseModel, Field
-
-
-class ConfigureMessage(BaseModel):
-    """Configuration for the server."""
-
-    ttft: int | None = Field(
-        default=None, description="Time to first token in milliseconds"
-    )
-    itl: int | None = Field(
-        default=None, description="Inter-token latency in milliseconds"
-    )
-    tokenizer_models: list[str] | None = Field(
-        default=None, description="List of tokenizer models to load"
-    )
+# ============================================================================
+# Base Models
+# ============================================================================
 
 
-class Role(str, Enum):
-    """Message roles in chat completion."""
+class BaseModel(PydanticBaseModel):
+    """Base model with common configuration for all Pydantic models."""
 
-    SYSTEM = "system"
-    USER = "user"
-    ASSISTANT = "assistant"
+    model_config = ConfigDict(extra="allow", exclude_none=True)
 
 
-class ChatMessage(BaseModel):
-    """A single chat message."""
-
-    role: Role
-    content: str
+# ============================================================================
+# Request Models
+# ============================================================================
 
 
-class ChatCompletionRequest(BaseModel):
-    """Request model for chat completions."""
+class Message(BaseModel):
+    """Represents a chat message with role and content."""
+
+    role: str
+    content: str | list[dict[str, Any]]
+
+
+class BaseCompletionRequest(BaseModel):
+    """Base request model for completion endpoints with common parameters."""
 
     model: str
-    messages: list[ChatMessage]
-    max_completion_tokens: int | None = Field(default=None, ge=1)
-    temperature: float | None = Field(default=1.0, ge=0, le=2)
-    top_p: float | None = Field(default=1.0, ge=0, le=1)
-    stream: bool | None = Field(default=False)
-    stop: str | list[str] | None = None
-    presence_penalty: float | None = Field(default=0, ge=-2, le=2)
-    frequency_penalty: float | None = Field(default=0, ge=-2, le=2)
+    stream: bool = False
+    stream_options: dict[str, Any] | None = None
+    max_tokens: int | None = None
+    ignore_eos: bool = False
+    min_tokens: int | None = None
+
+    @property
+    def include_usage(self) -> bool:
+        """Check if usage statistics should be included in streaming response."""
+        return bool(self.stream_options and self.stream_options.get("include_usage"))
 
 
-class ChatCompletionChoice(BaseModel):
-    """A single choice in chat completion response."""
+class ChatCompletionRequest(BaseCompletionRequest):
+    """Request model for chat completion endpoints."""
 
-    index: int
-    message: ChatMessage
-    finish_reason: str | None = None
+    messages: list[Message]
+    max_completion_tokens: int | None = None
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
+
+    @property
+    def max_output_tokens(self) -> int | None:
+        """Get max output tokens from either max_completion_tokens or max_tokens field."""
+        return self.max_completion_tokens or self.max_tokens
+
+
+class CompletionRequest(BaseCompletionRequest):
+    """Request model for text completion endpoints."""
+
+    prompt: str | list[str]
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
+
+    @property
+    def prompt_text(self) -> str:
+        """Convert prompt to single text string (join array with newlines)."""
+        if isinstance(self.prompt, str):
+            return self.prompt
+        return "\n".join(str(p) for p in self.prompt if p)
+
+
+class EmbeddingRequest(BaseModel):
+    """Request model for embedding endpoints."""
+
+    model: str
+    input: str | list[str]
+
+    @property
+    def inputs(self) -> list[str]:
+        """Get inputs as list (normalizes single string to list)."""
+        return (
+            [self.input]
+            if isinstance(self.input, str)
+            else [str(x) for x in self.input]
+        )
+
+
+class RankingRequest(BaseModel):
+    """Request model for ranking/reranking endpoints."""
+
+    model: str
+    query: dict[str, str]
+    passages: list[dict[str, str]]
+
+    @property
+    def query_text(self) -> str:
+        """Extract query text from query dict."""
+        return self.query.get("text", "")
+
+    @property
+    def passage_texts(self) -> list[str]:
+        """Extract all passage texts from passages list."""
+        return [p.get("text", "") for p in self.passages]
+
+    @property
+    def total_tokens(self) -> int:
+        """Get total tokens from query and passage texts."""
+        return len(self.query_text) + sum(len(p) for p in self.passage_texts)
+
+
+# ============================================================================
+# Response Models
+# ============================================================================
 
 
 class Usage(BaseModel):
-    """Token usage information."""
+    """Token usage statistics for API requests and responses."""
 
     prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    completion_tokens_details: dict[str, int] | None = None
 
 
-class ChatCompletionResponse(BaseModel):
-    """Response model for chat completions."""
+class BaseResponse(BaseModel):
+    """Base response model with common fields for all completion responses."""
 
     id: str
-    object: str = "chat.completion"
     created: int
     model: str
-    choices: list[ChatCompletionChoice]
-    usage: Usage
+    usage: Usage | None = None
 
 
-class ChatCompletionStreamChoice(BaseModel):
-    """A single choice in streaming chat completion response."""
+class BaseChoice(BaseModel):
+    """Base choice model with common fields for completion choices."""
 
     index: int
-    delta: dict[str, Any]
     finish_reason: str | None = None
 
 
-class ChatCompletionStreamResponse(BaseModel):
-    """Streaming response model for chat completions."""
+class ChatMessage(BaseModel):
+    """Message model for chat completions."""
+
+    role: str
+    content: str
+    reasoning_content: str | None = None
+
+
+class ChatDelta(BaseModel):
+    """Delta model for streaming chat completions."""
+
+    role: str | None = None
+    content: str | None = None
+    reasoning_content: str | None = None
+
+
+class ChatChoice(BaseChoice):
+    """Choice model for chat completion responses."""
+
+    message: ChatMessage
+
+
+class TextChoice(BaseChoice):
+    """Choice model for text completion responses."""
+
+    text: str
+
+
+class ChatStreamChoice(BaseChoice):
+    """Choice model for streaming chat completion responses."""
+
+    delta: ChatDelta
+
+
+class TextStreamChoice(BaseChoice):
+    """Choice model for streaming text completion responses."""
+
+    text: str
+
+
+class ChatCompletionResponse(BaseResponse):
+    """Response model for chat completion endpoints."""
+
+    object: Literal["chat.completion"] = "chat.completion"
+    choices: list[ChatChoice]
+
+
+class TextCompletionResponse(BaseResponse):
+    """Response model for text completion endpoints."""
+
+    object: Literal["text_completion"] = "text_completion"
+    choices: list[TextChoice]
+
+
+class ChatStreamCompletionResponse(BaseResponse):
+    """Response model for streaming chat completion endpoints."""
+
+    object: Literal["chat.completion.chunk"] = "chat.completion.chunk"
+    choices: list[ChatStreamChoice]
+
+
+class TextStreamCompletionResponse(BaseResponse):
+    """Response model for streaming text completion endpoints."""
+
+    object: Literal["text_completion.chunk"] = "text_completion.chunk"
+    choices: list[TextStreamChoice]
+
+
+class Embedding(BaseModel):
+    """Represents a single embedding vector with its index."""
+
+    object: Literal["embedding"] = "embedding"
+    index: int
+    embedding: list[float]
+
+
+class EmbeddingResponse(BaseModel):
+    """Response model for embedding endpoints."""
+
+    object: Literal["list"] = "list"
+    data: list[Embedding]
+    model: str
+    usage: Usage
+
+
+class Ranking(BaseModel):
+    """Represents a single ranking result with relevance score."""
+
+    index: int
+    relevance_score: float
+
+
+class RankingResponse(BaseModel):
+    """Response model for ranking/reranking endpoints."""
 
     id: str
-    object: str = "chat.completion.chunk"
-    created: int
+    object: Literal["rankings"] = "rankings"
     model: str
-    choices: list[ChatCompletionStreamChoice]
+    rankings: list[Ranking]
+    usage: Usage
+
+
+# ============================================================================
+# Request Type Variables
+# ============================================================================
+
+RequestT = ChatCompletionRequest | CompletionRequest | EmbeddingRequest | RankingRequest
+RequestTypeVarT = TypeVar("RequestTypeVarT", bound=RequestT)
