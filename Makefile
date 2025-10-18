@@ -18,7 +18,9 @@
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install docker docker-run first-time-setup \
 		test-verbose init-files setup-venv setup-mkinit install-mock-server \
-		internal-help help
+		integration-tests integration-tests-ci integration-tests-verbose \
+		test-integration test-integration-ci test-integration-verbose \
+		test-stress stress-tests internal-help help
 
 
 # Include user-defined environment variables
@@ -106,13 +108,13 @@ check-format check-fmt: #? check the formatting of the project using ruff.
 	$(activate_venv) && ruff format . --check $(args)
 
 test: #? run the tests using pytest-xdist.
-	$(activate_venv) && pytest -n auto $(args)
+	$(activate_venv) && pytest -n auto -m 'not integration and not performance' $(args)
 
 test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
-	$(activate_venv) && pytest -n auto -v -s --log-cli-level DEBUG
+	$(activate_venv) && pytest -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance'
 
 coverage: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest -n auto --cov=aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term $(args)
+	$(activate_venv) && pytest -n auto --cov=aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance' $(args)
 
 install: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]" $(args)
@@ -176,3 +178,29 @@ first-time-setup: #? convenience command to setup the environment for the first 
 
 	@# Print a success message
 	@printf "$(bold)$(green)Done!$(reset)\n"
+
+stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
+	@printf "$(bold)$(blue)Running stress tests with AIPerf Mock Server...$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server stress tests passed!$(reset)\n"
+
+integration-tests test-integration: #? run integration tests with with AIPerf Mock Server.
+	@printf "$(bold)$(blue)Running integration tests with AIPerf Mock Server...$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance' -n auto -v --tb=short $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server integration tests passed!$(reset)\n"
+
+integration-tests-ci test-integration-ci: #? run integration tests with with AIPerf Mock Server for CI (parallel, verbose, no performance and no ffmpeg tests).
+	@printf "$(bold)$(blue)Running integration tests (CI mode) with AIPerf Mock Server...$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -n auto -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode) passed!$(reset)\n"
+
+integration-tests-macos test-integration-macos: #? run integration tests with AIPerf Mock Server on macOS.
+	@printf "$(bold)$(blue)Running integration tests on macOS with AIPerf Mock Server...$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress and macos' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server macOS integration tests passed!$(reset)\n"
+
+integration-tests-verbose test-integration-verbose: #? run integration tests with verbose output with AIPerf Mock Server.
+	@printf "$(bold)$(blue)Running integration tests (verbose, sequential) with AIPerf Mock Server...$(reset)\n"
+	@printf "$(yellow)Note: Sequential mode shows real-time AIPerf output$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server integration tests passed!$(reset)\n"

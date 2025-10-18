@@ -3,220 +3,298 @@ SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# AIPerf Integration Test Server
+# AIPerf Mock Server
 
-A FastAPI server that implements an OpenAI-compatible chat completions API for integration testing.
-
-The server echoes user prompts back token by token with configurable latencies, using the actual tokenizer from the requested model.
+A production-grade OpenAI-compatible mock server for integration testing and performance benchmarking. Features deterministic responses, precise latency simulation, realistic DCGM GPU metrics, and advanced reasoning model support.
 
 ## Features
 
-- **OpenAI-compatible API**: Implements `/v1/chat/completions` endpoint
-- **Token-by-token echoing**: Uses the actual tokenizer from the requested model
-- **Streaming and non-streaming**: Supports both `stream: true` and `stream: false`
-- **Configurable latencies**:
-  - Time to first token latency (TTFT)
-  - Inter-token latency (ITL)
-- **Precise timing**: Uses `perf_counter` for accurate latency simulation
-- **Flexible configuration**: Environment variables and command-line arguments with unified config system
-- **Model-specific tokenization**: Automatically loads tokenizers for different models
-- **Pre-loading support**: Pre-load tokenizers at startup for faster responses
-- **Runtime configuration**: Configure server settings via `/configure` endpoint
-- **Comprehensive logging**: Configurable log levels and access logs
-- **Error simulation**: Returns 404 for unsupported models to simulate real-world scenarios
+- **OpenAI API Compatibility**: Full support for `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`, and `/v1/ranking` endpoints
+- **Realistic GPU Telemetry**: Dual DCGM metrics endpoints (`/dcgm1/metrics`, `/dcgm2/metrics`) with Prometheus-format GPU metrics (defaults to 2× H200 GPUs)
+- **Precise Latency Control**: Configurable Time-to-First-Token (TTFT) and Inter-Token Latency (ITL) for realistic timing simulation
+- **Reasoning Model Support**: Native emulation of GPT-OSS/Qwen-style reasoning with `reasoning_content` and configurable `reasoning_effort` levels
+- **Error Injection Framework**: Reproducible fault testing with configurable error rates and deterministic seeding
+- **High-Throughput Architecture**: Multi-worker support via Uvicorn for concurrent load testing
+- **Deterministic Behavior**: Hash-based token generation ensures identical outputs for identical inputs
 
 ## Installation
 
-From project root:
+### From Project Root
+
 ```bash
 make install-mock-server
 ```
 
-Or locally:
+### Standalone Installation
+
 ```bash
 cd tests/aiperf_mock_server
-uv pip install -e ".[dev]"
+pip install -e ".[dev]"
 ```
 
-## Usage
+After installation, the `aiperf-mock-server` command will be available in your environment.
 
-> [!IMPORTANT]
->You must provide a model tokenizer to load either on start or dynamically
-> after running using the /configure endpoint, or all requests will return HTTP 404.
-
-### Command Line
+## Quick Start
 
 ```bash
-# Basic usage
-aiperf-mock-server -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
-
-# Custom configuration with short flags
-aiperf-mock-server -p 8000 -t 30 -i 10 -m deepseek-ai/DeepSeek-R1-Distill-Llama-8B
-
-# Full configuration with long flags
-aiperf-mock-server \
-  --port 8000 \
-  --ttft 30 \
-  --itl 10 \
-  --host 127.0.0.1 \
-  --workers 4 \
-  --log-level DEBUG \
-  --tokenizer-models deepseek-ai/DeepSeek-R1-Distill-Llama-8B
-
-# With environment variables
-export MOCK_SERVER_PORT=8000
-export MOCK_SERVER_TTFT=30
-export MOCK_SERVER_ITL=10
-export MOCK_SERVER_LOG_LEVEL=DEBUG
-export MOCK_SERVER_TOKENIZER_MODELS='["deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]'
+# Start with defaults (127.0.0.1:8000, 20ms TTFT, 5ms ITL, 2× H200 GPUs)
 aiperf-mock-server
+
+# Custom server configuration
+aiperf-mock-server --port 8080 --ttft 50 --itl 10 --workers 4
+
+# Configure GPU simulation (4× H100 GPUs)
+aiperf-mock-server --dcgm-num-gpus 4 --dcgm-gpu-name h100
+
+# Enable fault injection for reliability testing
+aiperf-mock-server --error-rate 5 --random-seed 42
+
+# Enable verbose logging for debugging
+aiperf-mock-server -v
 ```
+
+## Configuration
+
+Configuration can be provided via CLI arguments or environment variables with `MOCK_SERVER_` prefix.
+
+### Server Configuration
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--port` / `-p` | `8000` | Server port (1-65535) |
+| `--host` | `127.0.0.1` | Server bind address |
+| `--workers` / `-w` | `1` | Uvicorn worker processes (1-32) |
+| `--ttft` / `-t` | `20.0` | Time to first token in milliseconds |
+| `--itl` | `5.0` | Inter-token latency in milliseconds |
+| `--error-rate` | `0.0` | Error injection rate (0-100%) |
+| `--random-seed` | `None` | Random seed for reproducible error injection |
+| `--log-level` | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
+| `--verbose` / `-v` | `false` | Enable DEBUG logging (overrides log-level) |
+| `--access-logs` | `false` | Enable HTTP access logs |
+
+### GPU Telemetry Configuration
+
+DCGM metrics are always enabled and available at `/dcgm1/metrics` and `/dcgm2/metrics`.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--dcgm-gpu-name` | `h200` | GPU model: `rtx6000`, `a100`, `h100`, `h100-sxm`, `h200`, `b200`, `gb200` |
+| `--dcgm-num-gpus` | `2` | Number of GPUs to simulate (1-8) |
+| `--dcgm-initial-load` | `0.7` | Initial GPU load level (0.0=idle, 1.0=maximum) |
+| `--dcgm-hostname` | `localhost` | Hostname label in Prometheus metrics |
+| `--dcgm-seed` | `None` | Random seed for deterministic GPU metrics |
 
 ### Environment Variables
 
-All configuration options can be set via environment variables with the `MOCK_SERVER_` prefix:
+All configuration options can be set via environment variables:
 
-- `MOCK_SERVER_PORT`: Port to run the server on (default: 8000)
-- `MOCK_SERVER_HOST`: Host to bind to (default: 0.0.0.0)
-- `MOCK_SERVER_WORKERS`: Number of uvicorn worker processes (default: 1)
-- `MOCK_SERVER_TTFT`: Time to first token latency in milliseconds (default: 20.0)
-- `MOCK_SERVER_ITL`: Inter-token latency in milliseconds (default: 5.0)
-- `MOCK_SERVER_LOG_LEVEL`: Logging level (default: INFO)
-- `MOCK_SERVER_ACCESS_LOGS`: Enable HTTP access logs (default: false)
-- `MOCK_SERVER_TOKENIZER_MODELS`: JSON-formatted array of models to pre-load
+```bash
+export MOCK_SERVER_PORT=8080
+export MOCK_SERVER_TTFT=30
+export MOCK_SERVER_DCGM_GPU_NAME=h100
+aiperf-mock-server
+```
 
-### API Usage
+## API Endpoints
 
-#### Non-streaming
+### Chat Completions
+
+**`POST /v1/chat/completions`**
+
+OpenAI-compatible chat completions with streaming and non-streaming support. Supports reasoning models (models containing `gpt-oss` or `qwen`) with `reasoning_content` field and configurable `reasoning_effort`.
 
 ```bash
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
-    "messages": [
-      {"role": "user", "content": "Hello, world!"}
-    ],
-    "max_tokens": 10,
+    "model": "openai/gpt-oss-120b",
+    "messages": [{"role": "user", "content": "Explain quantum entanglement"}],
+    "max_completion_tokens": 100,
+    "reasoning_effort": "high",
     "stream": false
   }'
 ```
 
-#### Streaming
+**Supported Parameters:**
+- `model`: Model identifier (string)
+- `messages`: Array of message objects with `role` and `content`
+- `max_completion_tokens` or `max_tokens`: Maximum output tokens
+- `reasoning_effort`: `"low"` (100 tokens) | `"medium"` (250 tokens) | `"high"` (500 tokens)
+- `stream`: Enable Server-Sent Events streaming (boolean)
+- `stream_options`: Include usage stats in stream with `{"include_usage": true}`
+- `min_tokens`: Minimum output tokens to generate
+- `ignore_eos`: Generate exactly `max_tokens` tokens
+
+### Text Completions
+
+**`POST /v1/completions`**
+
+Text completion endpoint with support for single or batched prompts. Supports streaming via Server-Sent Events.
+
+**Supported Parameters:**
+- `prompt`: String or array of strings
+- `max_tokens`: Maximum output tokens
+- `stream`: Enable streaming
+- `stream_options`, `min_tokens`, `ignore_eos`: Same as chat completions
+
+### Embeddings
+
+**`POST /v1/embeddings`**
+
+Generates deterministic 768-dimensional embeddings based on input text hash. Suitable for testing embedding-based workflows.
+
+**Supported Parameters:**
+- `input`: String or array of strings
+- `model`: Model identifier
+
+### Rankings
+
+**`POST /v1/ranking`**
+
+Returns deterministic relevance scores for query-passage pairs, sorted by relevance score.
+
+**Supported Parameters:**
+- `query`: Object with `text` field
+- `passages`: Array of objects with `text` field
+- `model`: Model identifier
+
+### Monitoring & Health
+
+**`GET /health`**
+
+Health check endpoint returning server status and current configuration.
+
+**`GET /`**
+
+Server information including version and configuration.
+
+### GPU Telemetry
+
+**`GET /dcgm1/metrics`** and **`GET /dcgm2/metrics`**
+
+DCGM metrics in Prometheus exposition format. Both endpoints provide independent metric streams simulating separate DCGM instances. Metrics are dynamically generated and include:
+
+- GPU utilization percentage
+- Power usage and limits (Watts)
+- Temperature (GPU and memory, Celsius)
+- Memory usage (used/free/total in MiB)
+- Clock frequencies (SM and memory, MHz)
+- Energy consumption (millijoules)
+- Violations (power and thermal, microseconds)
+- XID error counts
+
+**Example:**
+```bash
+# Query first DCGM instance
+curl http://localhost:8000/dcgm1/metrics
+
+# Query second DCGM instance
+curl http://localhost:8000/dcgm2/metrics
+```
+
+## Architecture & Implementation
+
+### Tokenization
+
+Character-based tokenizer approximating ~4 characters per token. Output tokens are deterministically generated by cycling through input tokens, ensuring reproducible responses for identical requests.
+
+### Latency Simulation
+
+- **Streaming Mode**: TTFT delay before first token, then ITL delay between each subsequent token
+- **Non-Streaming Mode**: Single delay = TTFT + (ITL × total_tokens)
+
+Timing is precise down to the millisecond using `asyncio.sleep()` with `perf_counter()` for accurate measurements.
+
+### Output Generation Logic
+
+| Scenario | Behavior | Finish Reason |
+|----------|----------|---------------|
+| No `max_tokens` set | Generates 0.8-1.2× prompt length (minimum 16 tokens) | `stop` |
+| `max_tokens` set | Generates up to limit, respects `min_tokens` if specified | `length` if limit reached, else `stop` |
+| `ignore_eos=true` | Generates exactly `max_tokens` tokens | `length` |
+
+### Reasoning Model Behavior
+
+Models containing `gpt-oss` or `qwen` in their name automatically support reasoning:
+
+- Generates `reasoning_content` field before primary output
+- Reasoning tokens count toward total `max_tokens` budget
+- Effort mapping: `low`=100 tokens | `medium`=250 tokens (default) | `high`=500 tokens
+- In streaming mode, reasoning tokens are emitted before content tokens
+
+### Error Injection
+
+When `--error-rate` is set, requests randomly fail with HTTP 500 status. The `--random-seed` parameter enables deterministic error sequences for reproducible testing.
+
+### GPU Telemetry Simulation
+
+DCGM metrics are always enabled with two independent endpoints (`/dcgm1/metrics`, `/dcgm2/metrics`):
+
+- **Dynamic Load Simulation**: Metrics evolve with configurable initial load level
+- **Per-GPU Variance**: Each GPU has slight random offsets for realistic variation
+- **Comprehensive Metrics**: Utilization, power, temperature, memory, clocks, energy, violations, errors
+- **Multiple GPU Types**: RTX 6000, A100, H100, H100-SXM, H200, B200, GB200 with model-specific characteristics
+- **Prometheus Format**: Standard exposition format compatible with Prometheus, Grafana, and DCGM tooling
+
+## Usage Examples
+
+### Streaming Chat with Usage Statistics
+
+```bash
+curl -N -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Explain machine learning"}],
+    "stream": true,
+    "stream_options": {"include_usage": true}
+  }'
+```
+
+### Reasoning Model with High Effort
 
 ```bash
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
-    "messages": [
-      {"role": "user", "content": "Hello, world!"}
-    ],
-    "max_tokens": 10,
-    "stream": true
+    "model": "openai/gpt-oss-120b",
+    "messages": [{"role": "user", "content": "Solve: What is 2+2?"}],
+    "reasoning_effort": "high",
+    "max_completion_tokens": 1000
   }'
 ```
 
-#### Runtime Configuration
+### High-Concurrency Load Testing
 
 ```bash
-# Configure latencies at runtime
-curl -X POST http://localhost:8000/configure \
-  -H "Content-Type: application/json" \
-  -d '{
-    "ttft": 100,
-    "itl": 25,
-    "tokenizer_models": ["deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]
-  }'
+# Start server with 32 workers for maximum throughput
+aiperf-mock-server --workers 32 --port 8000
 ```
 
-### Health Check
+### Custom GPU Configuration
 
 ```bash
-curl http://localhost:8000/health
+# Simulate 8× A100 GPUs at 50% load
+aiperf-mock-server \
+  --dcgm-num-gpus 8 \
+  --dcgm-gpu-name a100 \
+  --dcgm-initial-load 0.5
+
+# Query both DCGM instances
+curl http://localhost:8000/dcgm1/metrics
+curl http://localhost:8000/dcgm2/metrics
 ```
 
-### Server Information
+### Fault Injection Testing
 
 ```bash
-curl http://localhost:8000/
-```
+# 10% error rate with deterministic seed
+aiperf-mock-server --error-rate 10 --random-seed 42
 
-## Configuration Options
-
-| Parameter | CLI Flag | Environment Variable | Default | Description |
-|-----------|----------|---------------------|---------|-------------|
-| Port | `--port`, `-p` | `MOCK_SERVER_PORT` | 8000 | Server port |
-| Host | `--host`, `-h` | `MOCK_SERVER_HOST` | 0.0.0.0 | Server host |
-| Workers | `--workers`, `-w` | `MOCK_SERVER_WORKERS` | 1 | Worker processes for uvicorn server |
-| TTFT | `--ttft`, `-t` | `MOCK_SERVER_TTFT` | 20.0 | Time to first token (ms) |
-| ITL | `--itl`, `-i` | `MOCK_SERVER_ITL` | 5.0 | Inter-token latency (ms) |
-| Log Level | `--log-level`, `-l` | `MOCK_SERVER_LOG_LEVEL` | INFO | Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
-| Access Logs | `--access-logs`, `-a` | `MOCK_SERVER_ACCESS_LOGS` | false | Enable HTTP access logs |
-| Tokenizer Models | `--tokenizer-models`, `-m` | `MOCK_SERVER_TOKENIZER_MODELS` | [] | Models to pre-load at startup |
-
-Configuration priority (highest to lowest):
-1. CLI arguments
-2. Environment variables (prefixed with `MOCK_SERVER_`)
-3. Default values
-
-## API Endpoints
-
-### POST `/v1/chat/completions`
-OpenAI-compatible chat completions endpoint that echoes user messages token by token.
-
-**Request Body**: Standard OpenAI chat completions format
-**Response**: OpenAI-compatible response (streaming or non-streaming)
-
-### POST `/configure`
-Runtime configuration endpoint for updating server settings.
-
-**Request Body**:
-```json
-{
-  "ttft": 50,
-  "itl": 15,
-  "tokenizer_models": ["deepseek-ai/DeepSeek-R1-Distill-Llama-8B"]
-}
-```
-
-### GET `/health`
-Health check endpoint returning server status and current configuration.
-
-### GET `/`
-Root endpoint providing server information and available endpoints.
-
-## How It Works
-
-1. **Request Processing**: The server receives a chat completion request
-2. **Tokenization**: Uses the model-specific tokenizer to tokenize the user prompt
-3. **Token Limit**: Respects the `max_tokens` parameter if specified
-4. **Latency Simulation**:
-   - Waits for the configured TTFT before sending the first token
-   - Waits for the configured ITL between subsequent tokens
-   - Uses `perf_counter` for precise timing control
-5. **Response**: Echoes back the tokenized prompt either as:
-   - A complete response (non-streaming)
-   - Token-by-token chunks (streaming)
-
-## Supported Models
-
-The server uses Hugging Face Transformers to load tokenizers for any supported model. Models must be:
-- Available on Hugging Face Hub
-- Compatible with `AutoTokenizer.from_pretrained()`
-
-If a tokenizer fails to load for a requested model, the server returns a 404 error to simulate model unavailability.
-
-## Development
-
-### Code Structure
-
-```
-mock_server/
-├── __init__.py          # Package initialization
-├── app.py               # FastAPI application with endpoints
-├── config.py            # Unified configuration management (CLI + env vars)
-├── main.py              # CLI entry point with cyclopts
-├── models.py            # Pydantic models for API
-└── tokenizer_service.py # Tokenizer management and caching
+# Test error handling
+for i in {1..100}; do
+  curl -X POST http://localhost:8000/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "test"}]}'
+done
 ```

@@ -8,8 +8,6 @@ from dataclasses import dataclass
 
 @dataclass
 class GPUConfig:
-    """GPU configuration for realistic metrics generation."""
-
     model: str
     memory_gb: int
     max_power_w: int
@@ -26,6 +24,7 @@ GPU_CONFIGS = {
     "a100": GPUConfig("NVIDIA A100-SXM4-40GB", 40, 400, 50, 765, 1410, 1215, 40, 85),
     "h100": GPUConfig("NVIDIA H100 PCIe", 80, 350, 40, 1095, 1830, 1593, 35, 82),
     "h100-sxm": GPUConfig("NVIDIA H100 SXM5", 80, 700, 70, 1350, 1980, 1593, 40, 88),
+    "h200": GPUConfig("NVIDIA H200", 141, 700, 70, 1350, 1980, 1593, 40, 88),
     "b200": GPUConfig("NVIDIA B200", 192, 1200, 100, 1500, 2200, 2000, 40, 90),
     "gb200": GPUConfig("NVIDIA GB200", 192, 1200, 100, 1500, 2200, 2000, 40, 90),
 }  # fmt: skip
