@@ -25,6 +25,7 @@ class TestDashboardUI:
                 --model {defaults.model} \
                 --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
+                --tokenizer gpt2 \
                 --ui dashboard \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
@@ -44,6 +45,7 @@ class TestDashboardUI:
             aiperf profile \
                 --model {defaults.model} \
                 --url {aiperf_mock_server.url} \
+                --tokenizer gpt2 \
                 --endpoint-type chat \
                 --ui dashboard \
                 --benchmark-duration 10 \
