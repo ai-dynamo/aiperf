@@ -32,7 +32,7 @@ from aiperf.common.factories import (
     ServiceManagerFactory,
 )
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
-from aiperf.common.logging import get_global_log_queue
+from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
     CommandErrorResponse,
     CommandResponse,
@@ -563,6 +563,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         if AIPERF_DEV_MODE:
             # Print a warning message to the console if developer mode is enabled, on exit after results
             print_developer_mode_warning()
+
+        # Clean up the global log queue to prevent semaphore leaks
+        cleanup_global_log_queue()
 
         # Exit the process in a more explicit way, to ensure that it stops
         os._exit(1 if self._exit_errors else 0)

@@ -28,6 +28,24 @@ def get_global_log_queue() -> multiprocessing.Queue:
     return multiprocessing.Queue(maxsize=LOG_QUEUE_MAXSIZE)
 
 
+def cleanup_global_log_queue() -> None:
+    """Clean up the global log queue to prevent semaphore leaks.
+
+    This should be called during shutdown to properly close and join the queue,
+    which releases the internal semaphores used by multiprocessing.Queue.
+    """
+    if get_global_log_queue.cache_info().currsize > 0:
+        try:
+            log_queue = get_global_log_queue()
+            log_queue.close()
+            log_queue.join_thread()
+            _logger.debug("Cleaned up global log queue")
+        except Exception as e:
+            _logger.debug(f"Error cleaning up log queue: {e}")
+        finally:
+            get_global_log_queue.cache_clear()
+
+
 def _is_service_in_types(service_id: str, service_types: set[ServiceType]) -> bool:
     """Check if a service is in a set of services."""
     for service_type in service_types:
