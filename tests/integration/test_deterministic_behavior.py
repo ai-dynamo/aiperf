@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import platform
 
 import pytest
 
@@ -9,9 +8,6 @@ from tests.integration.conftest import IntegrationTestDefaults as defaults
 from tests.integration.models import AIPerfMockServer
 
 
-@pytest.mark.skipif(
-    platform.system() == "Darwin", reason="Skipping on macOS due to failing test."
-)
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestDeterministicBehavior:

@@ -194,6 +194,11 @@ integration-tests-ci test-integration-ci: #? run integration tests with with AIP
 	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -n auto -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode) passed!$(reset)\n"
 
+integration-tests-macos test-integration-macos: #? run integration tests with AIPerf Mock Server on macOS.
+	@printf "$(bold)$(blue)Running integration tests on macOS with AIPerf Mock Server...$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress and macos' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server macOS integration tests passed!$(reset)\n"
+
 integration-tests-verbose test-integration-verbose: #? run integration tests with verbose output with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests (verbose, sequential) with AIPerf Mock Server...$(reset)\n"
 	@printf "$(yellow)Note: Sequential mode shows real-time AIPerf output$(reset)\n"

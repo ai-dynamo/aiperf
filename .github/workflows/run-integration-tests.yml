@@ -30,5 +30,11 @@ jobs:
         make first-time-setup PYTHON_VERSION=${{ matrix.python-version }}
 
     - name: Run integration tests
+      if: matrix.os == 'ubuntu-latest'
       run: |
         make integration-tests-ci
+
+    - name: Run macOS integration tests
+      if: matrix.os == 'macos-latest'
+      run: |
+        make integration-tests-macos
