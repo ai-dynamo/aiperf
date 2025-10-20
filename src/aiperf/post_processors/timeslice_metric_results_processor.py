@@ -3,15 +3,12 @@
 from collections import defaultdict
 from typing import Any
 
-from pygments.lexer import default
-
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ResultsProcessorType
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
 from aiperf.common.factories import ResultsProcessorFactory
-from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ResultsProcessorProtocol
 from aiperf.common.types import MetricTagT, TimeSliceT
