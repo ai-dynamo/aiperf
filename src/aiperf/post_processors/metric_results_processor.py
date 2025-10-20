@@ -71,8 +71,9 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             self.trace(f"Processing incoming metrics: {record_data.metrics}")
 
         # Get the appropriate results dict and instances map once to avoid multiple calls
-        instances_map = await self.get_instances_map(record_data)
-        results_dict = await self.get_results(record_data)
+        request_start_ns = record_data.metadata.request_start_ns
+        instances_map = await self.get_instances_map(request_start_ns)
+        results_dict = await self.get_results(request_start_ns)
 
         for tag, value in record_data.metrics.items():
             try:

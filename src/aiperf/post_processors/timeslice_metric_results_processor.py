@@ -37,6 +37,10 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
                 "TimesliceMetricResultsProcessor requires slice_duration to be set"
             )
 
+        self._slice_duration_ns: int = (
+            self.user_config.output.slice_duration * NANOS_PER_MILLIS
+        )
+
         # Set up aggregate metric object default initialization for each timeslice
         self._timeslice_instances_maps: dict[
             TimeSliceT, dict[MetricTagT, BaseMetric]
@@ -52,35 +56,36 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
             MetricResultsDict
         )
 
+    async def get_timeslice_index(self, request_start_ns: int):
+        return int(request_start_ns / self._slice_duration_ns)
+
     async def get_instances_map(
-        self, record_data: MetricRecordsData = None
+        self, request_start_ns: int | None = None
     ) -> dict[MetricTagT, BaseMetric]:
         """Get the appropriate instances map based on mode."""
         """Get the results dict for the appropriate timeslice based on request timestamp."""
-        # Extract the request start time from the record metadata
-        request_start_ns = record_data.metadata.request_start_ns
+        if request_start_ns is None:
+            raise ValueError(
+                "TimesliceMetricResultsProcessor::get_instances_map must be passed a request_start_ns"
+            )
 
-        # Calculate timeslice index
-        # slice_duration is in milliseconds, timestamps are in nanoseconds
-        slice_duration_ns = self.user_config.output.slice_duration * NANOS_PER_MILLIS
-        timeslice_index = int(request_start_ns / slice_duration_ns)
+        timeslice_index = await self.get_timeslice_index(request_start_ns)
 
-        # Return (or create) the results dict for this timeslice
+        # Return (or create) the timeslice instances dict for this timeslice
         return self._timeslice_instances_maps[timeslice_index]
 
     async def get_results(
-        self, record_data: MetricRecordsData = None
+        self, request_start_ns: int | None = None
     ) -> MetricResultsDict:
         """Get the results dict for the appropriate timeslice based on request timestamp."""
-        # Extract the request start time from the record metadata
-        request_start_ns = record_data.metadata.request_start_ns
+        if request_start_ns is None:
+            raise ValueError(
+                "TimesliceMetricResultsProcessor::get_results must be passed a request_start_ns"
+            )
 
-        # Calculate timeslice index
-        # slice_duration is in milliseconds, timestamps are in nanoseconds
-        slice_duration_ns = self.user_config.output.slice_duration * NANOS_PER_MILLIS
-        timeslice_index = int(request_start_ns / slice_duration_ns)
+        timeslice_index = await self.get_timeslice_index(request_start_ns)
 
-        # Return (or create) the results dict for this timeslice
+        # Return (or create) the timeslice results dict for this timeslice
         return self._timeslice_results[timeslice_index]
 
     async def update_derived_metrics(self) -> None:
