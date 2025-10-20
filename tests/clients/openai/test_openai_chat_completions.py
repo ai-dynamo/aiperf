@@ -36,7 +36,6 @@ class TestOpenAIChatCompletionRequestConverter:
         converter = OpenAIChatCompletionRequestConverter()
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
-        print(f"Turns: {turns}")
         payload = await converter.format_payload(model_endpoint, turns)
         expected_payload = {
             "messages": [
