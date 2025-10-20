@@ -22,7 +22,7 @@ class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
     ) -> dict[str, Any]:
         """Format payload for a completion request."""
 
-        # This converter does not support mutli-turn completions. Only the last turn is used.
+        # This converter does not support multi-turn completions. Only the last turn is used.
         turn = turns[-1]
         prompts = [
             content for text in turn.texts for content in text.contents if content

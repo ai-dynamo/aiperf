@@ -21,7 +21,7 @@ class OpenAIEmbeddingsRequestConverter(AIPerfLoggerMixin):
     ) -> dict[str, Any]:
         """Format payload for an embeddings request."""
 
-        # This converter does not support mutli-turn completions. Only the last turn is used.
+        # This converter does not support multi-turn completions. Only the last turn is used.
         turn = turns[-1]
         if turn.max_tokens:
             self.error("Max_tokens is provided but is not supported for embeddings.")

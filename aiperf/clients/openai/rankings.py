@@ -25,7 +25,7 @@ class RankingsRequestConverter(AIPerfLoggerMixin):
         turns: list[Turn],
     ) -> dict[str, Any]:
         """Format payload for a rankings request."""
-        # This converter does not support mutli-turn completions. Only the last turn is used.
+        # This converter does not support multi-turn completions. Only the last turn is used.
         turn = turns[-1]
 
         if turn.max_tokens:

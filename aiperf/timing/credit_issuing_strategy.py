@@ -84,24 +84,20 @@ class CreditIssuingStrategy(TaskManagerMixin, ABC):
             debug_message = (
                 "Setting up count-based profiling phase: total_expected_requests="
             )
-            if self.config.num_sessions is not None:
-                debug_message += f"{self.config.num_sessions}"
-                self.debug(debug_message)
-                self.ordered_phase_configs.append(
-                    CreditPhaseConfig(
-                        type=CreditPhase.PROFILING,
-                        total_expected_requests=self.config.num_sessions,
-                    )
+            total_expected_requests = (
+                self.config.num_sessions
+                if self.config.num_sessions is not None
+                else self.config.request_count
+            )
+            debug_message += f"{total_expected_requests}"
+            self.debug(debug_message)
+
+            self.ordered_phase_configs.append(
+                CreditPhaseConfig(
+                    type=CreditPhase.PROFILING,
+                    total_expected_requests=total_expected_requests,
                 )
-            else:
-                debug_message += f"{self.config.request_count}"
-                self.debug(debug_message)
-                self.ordered_phase_configs.append(
-                    CreditPhaseConfig(
-                        type=CreditPhase.PROFILING,
-                        total_expected_requests=self.config.request_count,
-                    )
-                )
+            )
 
     def _validate_phase_configs(self) -> None:
         """Validate the phase configs."""
