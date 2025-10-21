@@ -293,3 +293,19 @@ class UserConfig(BaseConfig):
     def timing_mode(self) -> TimingMode:
         """Get the timing mode based on the user config."""
         return self._timing_mode
+
+    # TODO: disable until num-dataset-entries is separated from num-conversation
+    # @model_validator(mode="after")
+    # def validate_multi_turn_options(self) -> Self:
+    #     """Validate multi-turn options."""
+    #     # Multi-turn validation: only one of request_count or num_sessions should be set
+    #     if (
+    #         "request_count" in self.loadgen.model_fields_set
+    #         and "num" in self.input.conversation.model_fields_set
+    #     ):
+    #         raise ValueError(
+    #             "Both a request-count and number of conversations are set. This can result in confusing output. "
+    #             "Use only --conversation-num for multi-turn scenarios."
+    #         )
+
+    #     return self

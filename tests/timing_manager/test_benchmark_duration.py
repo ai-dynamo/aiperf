@@ -14,9 +14,7 @@ from aiperf.common.enums import CreditPhase, RequestRateMode, TimingMode
 from aiperf.common.models import CreditPhaseStats
 from aiperf.timing.config import TimingManagerConfig
 from aiperf.timing.request_rate_strategy import RequestRateStrategy
-from tests.timing_manager.conftest import (
-    MockCreditManager,
-)
+from tests.timing_manager.conftest import MockCreditManager
 
 
 def benchmark_duration_config(

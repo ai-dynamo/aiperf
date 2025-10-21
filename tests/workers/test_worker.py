@@ -251,7 +251,7 @@ class TestWorker:
         result = await worker._build_response_record(
             conversation_id=conversation.session_id,
             message=message,
-            turn=first_turn,
+            turn_list=[first_turn],
             turn_index=turn_index,
             drop_perf_ns=drop_perf_ns,
         )
@@ -301,7 +301,7 @@ class TestWorker:
         result = await worker._build_response_record(
             conversation_id=conversation.session_id,
             message=message,
-            turn=first_turn,
+            turn_list=[first_turn],
             turn_index=turn_index,
             drop_perf_ns=drop_perf_ns,
         )
@@ -343,7 +343,7 @@ class TestWorker:
             return_value={"test": "payload"}
         )
 
-        await worker._call_inference_api_internal(message, turn, x_request_id)
+        await worker._call_inference_api_internal(message, [turn], x_request_id)
 
         assert "x_request_id" in captured_args
         assert captured_args["x_request_id"] == x_request_id

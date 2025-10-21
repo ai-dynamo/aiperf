@@ -185,6 +185,7 @@ class MockCreditManager(AIPerfLifecycleMixin):
         phase: CreditPhase,
         completed: int,
         end_ns: int,
+        final_request_count: int,
         timeout_triggered: bool = False,
     ) -> None:
         """Mock publish_phase_complete method."""
@@ -193,6 +194,7 @@ class MockCreditManager(AIPerfLifecycleMixin):
                 phase=phase,
                 completed=completed,
                 end_ns=end_ns,
+                final_request_count=final_request_count,
                 timeout_triggered=timeout_triggered,
                 service_id="test-service",
             )

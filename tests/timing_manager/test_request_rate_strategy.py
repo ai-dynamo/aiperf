@@ -411,6 +411,7 @@ class TestRequestRateStrategyMaxConcurrency:
             service_id="test-service",
             phase=CreditPhase.PROFILING,
             credit_drop_id=str(uuid.uuid4()),
+            requests_sent=1,
         )
         await strategy._on_credit_return(credit_return)
 

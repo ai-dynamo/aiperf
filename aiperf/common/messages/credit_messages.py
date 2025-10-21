@@ -71,6 +71,11 @@ class CreditReturnMessage(BaseServiceMessage):
         description="The number of nanoseconds the credit drop was delayed by, or None if the credit was sent on time. "
         "NOTE: This is only applicable if the original credit_drop_ns was not None.",
     )
+    requests_sent: int = Field(
+        ...,
+        ge=0,
+        description="The number of requests that were sent for this credit drop. This can be more than one in multi turn conversations.",
+    )
 
     @property
     def delayed(self) -> bool:
@@ -150,6 +155,11 @@ class CreditPhaseCompleteMessage(BaseServiceMessage):
     timeout_triggered: bool = Field(
         default=False,
         description="Whether this phase completed because a timeout was triggered",
+    )
+    final_request_count: int = Field(
+        ...,
+        ge=0,
+        description="The total number of requests sent.",
     )
 
 

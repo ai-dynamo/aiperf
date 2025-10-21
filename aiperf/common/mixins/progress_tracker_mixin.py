@@ -101,6 +101,7 @@ class ProgressTrackerMixin(MessageBusClientMixin):
             phase_progress.requests.end_ns = message.end_ns
             # Just in case we did not get a progress report for the last credit (timing issues due to network)
             phase_progress.requests.completed = phase_progress.requests.sent
+            phase_progress.records.final_request_count = message.final_request_count
             await self._update_requests_stats(
                 message.phase, phase_progress, message.request_ns
             )

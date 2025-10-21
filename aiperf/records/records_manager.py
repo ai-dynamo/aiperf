@@ -22,10 +22,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.enums.ui_enums import AIPerfUIType
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.factories import (
-    ResultsProcessorFactory,
-    ServiceFactory,
-)
+from aiperf.common.factories import ResultsProcessorFactory, ServiceFactory
 from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
@@ -63,9 +60,7 @@ from aiperf.common.protocols import (
     ServiceProtocol,
     TelemetryResultsProcessorProtocol,
 )
-from aiperf.records.phase_completion import (
-    PhaseCompletionChecker,
-)
+from aiperf.records.phase_completion import PhaseCompletionChecker
 
 
 @implements_protocol(ServiceProtocol)
@@ -359,14 +354,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, message: CreditPhaseSendingCompleteMessage
     ) -> None:
         """Handle a credit phase sending complete message in order to track the final request count."""
-        if message.phase != CreditPhase.PROFILING:
-            return
-        # This will equate to how many records we expect to receive,
-        # and once we receive that many records, we know to stop.
-        async with self.processing_status_lock:
-            self.final_request_count = message.sent
+        if message.phase == CreditPhase.PROFILING:
             self.info(
-                f"Sent {self.final_request_count:,} requests. Waiting for completion..."
+                f"Sent {message.sent:,} conversations. Waiting for all to complete..."
             )
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
@@ -377,13 +367,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if message.phase != CreditPhase.PROFILING:
             return
         async with self.processing_status_lock:
-            if self.final_request_count is None:
-                # If for whatever reason the final request count was not set, use the number of completed requests.
-                # This would only happen if the credit phase sending complete message was not received by the service.
-                self.warning(
-                    f"Final request count was not set for profiling phase, using {message.completed:,} as the final request count"
-                )
-                self.final_request_count = message.completed
+            self.final_request_count = message.final_request_count
             self.end_time_ns = message.end_ns
             self.timeout_triggered = message.timeout_triggered
 

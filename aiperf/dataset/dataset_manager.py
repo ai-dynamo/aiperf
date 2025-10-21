@@ -124,7 +124,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         for conversation in self.dataset.values():
             payloads = await asyncio.gather(
                 *[
-                    request_converter.format_payload(model_endpoint, turn)
+                    request_converter.format_payload(model_endpoint, [turn])
                     for turn in conversation.turns
                 ]
             )

@@ -47,7 +47,7 @@ class TestRankingsRequestConverter:
     @pytest.mark.asyncio
     async def test_format_payload_basic(self, converter, model_endpoint, basic_turn):
         """Test basic payload formatting with query and passages."""
-        payload = await converter.format_payload(model_endpoint, basic_turn)
+        payload = await converter.format_payload(model_endpoint, [basic_turn])
 
         assert payload["model"] == "test-model"
         assert payload["query"] == {"text": "What is artificial intelligence?"}
@@ -67,7 +67,7 @@ class TestRankingsRequestConverter:
             model="test-model",
         )
 
-        payload = await converter.format_payload(model_endpoint, turn)
+        payload = await converter.format_payload(model_endpoint, [turn])
 
         assert payload["query"] == {"text": "What is Python?"}
         assert len(payload["passages"]) == 1
@@ -87,7 +87,7 @@ class TestRankingsRequestConverter:
         )
 
         with caplog.at_level(logging.WARNING):
-            payload = await converter.format_payload(model_endpoint, turn)
+            payload = await converter.format_payload(model_endpoint, [turn])
 
         assert "Multiple query texts found" in caplog.text
         assert payload["query"] == {"text": "First query"}
@@ -100,7 +100,7 @@ class TestRankingsRequestConverter:
         )
 
         with caplog.at_level(logging.WARNING):
-            payload = await converter.format_payload(model_endpoint, turn)
+            payload = await converter.format_payload(model_endpoint, [turn])
 
         assert "no passages to rank" in caplog.text
         assert payload["query"] == {"text": "What is AI?"}
@@ -114,7 +114,7 @@ class TestRankingsRequestConverter:
         )
 
         with pytest.raises(ValueError, match="requires a text with name 'query'"):
-            await converter.format_payload(model_endpoint, turn)
+            await converter.format_payload(model_endpoint, [turn])
 
     @pytest.mark.asyncio
     async def test_format_payload_empty_query_contents(self, converter, model_endpoint):
@@ -128,7 +128,7 @@ class TestRankingsRequestConverter:
         )
 
         with pytest.raises(ValueError, match="requires a text with name 'query'"):
-            await converter.format_payload(model_endpoint, turn)
+            await converter.format_payload(model_endpoint, [turn])
 
     @pytest.mark.asyncio
     async def test_format_payload_ignored_texts(
@@ -147,7 +147,7 @@ class TestRankingsRequestConverter:
 
         # Should warn about ignored texts
         with caplog.at_level(logging.WARNING):
-            payload = await converter.format_payload(model_endpoint, turn)
+            payload = await converter.format_payload(model_endpoint, [turn])
 
         # Check that warnings were issued for ignored texts
         assert "context" in caplog.text
@@ -169,7 +169,7 @@ class TestRankingsRequestConverter:
             model="test-model",
         )
 
-        payload = await converter.format_payload(model_endpoint, turn)
+        payload = await converter.format_payload(model_endpoint, [turn])
 
         assert payload["query"] == {"text": "What is AI?"}
         assert len(payload["passages"]) == 3
@@ -188,7 +188,7 @@ class TestRankingsRequestConverter:
             model="turn-model",  # Different from endpoint model
         )
 
-        payload = await converter.format_payload(model_endpoint, turn)
+        payload = await converter.format_payload(model_endpoint, [turn])
         assert payload["model"] == "turn-model"
 
     @pytest.mark.asyncio
@@ -202,7 +202,7 @@ class TestRankingsRequestConverter:
             model=None,
         )
 
-        payload = await converter.format_payload(model_endpoint, turn)
+        payload = await converter.format_payload(model_endpoint, [turn])
         assert payload["model"] == model_endpoint.primary_model_name
 
     @pytest.mark.asyncio
@@ -220,7 +220,7 @@ class TestRankingsRequestConverter:
         )
 
         with caplog.at_level(logging.WARNING):
-            await converter.format_payload(model_endpoint, turn)
+            await converter.format_payload(model_endpoint, [turn])
 
         assert "not supported for rankings" in caplog.text
 
@@ -239,7 +239,7 @@ class TestRankingsRequestConverter:
             model="test-model",
         )
 
-        payload = await converter.format_payload(mock_endpoint, turn)
+        payload = await converter.format_payload(mock_endpoint, [turn])
 
         assert payload["top_k"] == 5
         assert payload["return_scores"] is True

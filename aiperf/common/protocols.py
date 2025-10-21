@@ -11,10 +11,7 @@ from aiperf.common.constants import (
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
 )
-from aiperf.common.enums import (
-    CommClientType,
-    LifecycleState,
-)
+from aiperf.common.enums import CommClientType, LifecycleState
 from aiperf.common.hooks import Hook, HookType
 from aiperf.common.models import (
     BaseResponseData,
@@ -421,7 +418,7 @@ class RequestConverterProtocol(Protocol):
     """Protocol for a request converter that converts a raw request to a formatted request for the inference server."""
 
     async def format_payload(
-        self, model_endpoint: ModelEndpointInfoT, turn: Turn
+        self, model_endpoint: ModelEndpointInfoT, turns: list[Turn]
     ) -> RequestOutputT:
         """Format the turn for the inference server."""
         ...

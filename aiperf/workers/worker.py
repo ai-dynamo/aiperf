@@ -133,13 +133,6 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             await self._process_credit_drop_internal(message)
         except Exception as e:
             self.error(f"Error processing credit drop: {e!r}")
-            await self.credit_return_push_client.push(
-                CreditReturnMessage(
-                    service_id=self.service_id,
-                    phase=message.phase,
-                    credit_drop_id=message.request_id,
-                )
-            )
 
     @on_stop
     async def _shutdown_worker(self) -> None:
@@ -182,26 +175,29 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         This is to ensure that the max concurrency is respected via the semaphore of the pull client.
         The way this is enforced is by requiring that this method returns a CreditReturnMessage.
         """
+        return_message = CreditReturnMessage(
+            service_id=self.service_id,
+            phase=message.phase,
+            credit_drop_id=message.request_id,
+            delayed_ns=None,  # TODO: set this properly (from record if available?)
+            requests_sent=0,
+        )
 
         try:
             if self.is_trace_enabled:
                 self.trace(f"Processing credit drop: {message}")
 
-            await self._execute_single_credit_internal(message)
+            await self._execute_single_credit_internal(message, return_message)
         finally:
             # Need to return the credit here to ensure it is always returned
-            return_message = CreditReturnMessage(
-                service_id=self.service_id,
-                phase=message.phase,
-                credit_drop_id=message.request_id,
-                delayed_ns=None,  # TODO: set this properly (from record if available?)
-            )
             if self.is_trace_enabled:
                 self.trace(f"Returning credit {return_message}")
             # NOTE: Do not do this execute_async, as we want to give the credit back as soon as possible.
             await self.credit_return_push_client.push(return_message)
 
-    async def _execute_single_credit_internal(self, message: CreditDropMessage) -> None:
+    async def _execute_single_credit_internal(
+        self, message: CreditDropMessage, return_message: CreditReturnMessage
+    ) -> None:
         """Run a credit task for a single credit."""
         drop_perf_ns = time.perf_counter_ns()  # The time the credit was received
 
@@ -219,14 +215,14 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             self.task_stats.total += 1
             turn = conversation.turns[turn_index]
             turn_list.append(turn)
-            # TODO: how do we handle errors in the middle of a conversation?
             record = await self._build_response_record(
                 conversation_id=conversation.session_id,
                 message=message,
-                turn=turn,
+                turn_list=turn_list,
                 turn_index=turn_index,
                 drop_perf_ns=drop_perf_ns,
             )
+            return_message.requests_sent += 1
             await self._send_inference_result_message(record)
             resp_turn = await self._process_response(record)
             if resp_turn:
@@ -279,14 +275,18 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         *,
         conversation_id: str,
         message: CreditDropMessage,
-        turn: Turn,
+        turn_list: list[Turn],
         turn_index: int,
         drop_perf_ns: int,
     ) -> RequestRecord:
         """Build a RequestRecord from an inference API call for the given turn."""
         x_request_id = str(uuid.uuid4())
-        record = await self._call_inference_api_internal(message, turn, x_request_id)
-        record.model_name = turn.model or self.model_endpoint.primary_model_name
+        record = await self._call_inference_api_internal(
+            message, turn_list, x_request_id
+        )
+        record.model_name = (
+            turn_list[-1].model or self.model_endpoint.primary_model_name
+        )
         record.conversation_id = conversation_id
         record.turn_index = turn_index
         record.credit_phase = message.phase
@@ -314,12 +314,12 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
     async def _call_inference_api_internal(
         self,
         message: CreditDropMessage,
-        turn: Turn,
+        turn_list: list[Turn],
         x_request_id: str,
     ) -> RequestRecord:
         """Make a single call to the inference API. Will return an error record if the call fails."""
         if self.is_trace_enabled:
-            self.trace(f"Calling inference API for turn: {turn}")
+            self.trace(f"Calling inference API for turn: {turn_list[-1]}")
         formatted_payload = None
         pre_send_perf_ns = None
         timestamp_ns = None
@@ -327,7 +327,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             # Format payload for the API request
             formatted_payload = await self.request_converter.format_payload(
                 model_endpoint=self.model_endpoint,
-                turn=turn,
+                turns=turn_list,
             )
 
             # NOTE: Current implementation of the TimingManager bypasses this, it is for future use.
@@ -371,16 +371,16 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                         f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
                     )
                 result.delayed_ns = delayed_ns
-                result.turn = turn
+                result.turn = turn_list[-1]
                 return result
             else:
                 cancellation_perf_ns = time.perf_counter_ns()
                 if self.is_debug_enabled:
                     delay_s = message.cancel_after_ns / NANOS_PER_SECOND
                     self.debug(f"Request cancelled after {delay_s:.3f}s")
-
+                # TODO what do i do with the turn here?
                 return RequestRecord(
-                    turn=turn,
+                    turn=turn_list[-1],
                     timestamp_ns=timestamp_ns,
                     start_perf_ns=pre_send_perf_ns,
                     end_perf_ns=cancellation_perf_ns,
@@ -401,7 +401,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                 f"Error calling inference server API at {self.model_endpoint.url}: {e!r}"
             )
             return RequestRecord(
-                turn=turn,
+                turn=turn_list[-1],
                 timestamp_ns=timestamp_ns or time.time_ns(),
                 # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
                 start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),
