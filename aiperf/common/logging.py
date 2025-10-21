@@ -3,7 +3,7 @@
 import logging
 import multiprocessing
 import queue
-from functools import lru_cache
+import threading
 from pathlib import Path
 
 from rich.console import Console
@@ -20,12 +20,41 @@ LOG_QUEUE_MAXSIZE = 1000
 
 
 _logger = AIPerfLogger(__name__)
+_global_log_queue: "multiprocessing.Queue | None" = None
+_log_queue_lock = threading.Lock()
 
 
-@lru_cache(maxsize=1)
 def get_global_log_queue() -> multiprocessing.Queue:
-    """Get the global log queue. Will create a new queue if it doesn't exist."""
-    return multiprocessing.Queue(maxsize=LOG_QUEUE_MAXSIZE)
+    """Get the global log queue. Will create a new queue if it doesn't exist.
+
+    Thread-safe singleton pattern using double-checked locking.
+    """
+    global _global_log_queue
+    if _global_log_queue is None:
+        with _log_queue_lock:
+            if _global_log_queue is None:
+                _global_log_queue = multiprocessing.Queue(maxsize=LOG_QUEUE_MAXSIZE)
+    return _global_log_queue
+
+
+def cleanup_global_log_queue() -> None:
+    """Clean up the global log queue to prevent semaphore leaks.
+
+    This should be called during shutdown to properly close and join the queue,
+    which releases the internal semaphores used by multiprocessing.Queue.
+    Thread-safe.
+    """
+    global _global_log_queue
+    with _log_queue_lock:
+        if _global_log_queue is not None:
+            try:
+                _global_log_queue.close()
+                _global_log_queue.join_thread()
+                _logger.debug("Cleaned up global log queue")
+            except Exception as e:
+                _logger.debug(f"Error cleaning up log queue: {e}")
+            finally:
+                _global_log_queue = None
 
 
 def _is_service_in_types(service_id: str, service_types: set[ServiceType]) -> bool:
