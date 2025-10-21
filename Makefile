@@ -193,7 +193,7 @@ integration-tests test-integration: #? run integration tests with with AIPerf Mo
 
 integration-tests-ci test-integration-ci: #? run integration tests with with AIPerf Mock Server for CI (parallel, verbose, no performance and no ffmpeg tests).
 	@printf "$(bold)$(blue)Running integration tests (CI mode) with AIPerf Mock Server...$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -n auto -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -n auto -v --tb=long $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode) passed!$(reset)\n"
 
 integration-tests-macos test-integration-macos: #? run integration tests with AIPerf Mock Server on macOS.
