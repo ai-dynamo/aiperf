@@ -16,7 +16,7 @@
 
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
-		test coverage clean install docker docker-run first-time-setup \
+		test coverage clean install install-app docker docker-run first-time-setup \
 		test-verbose init-files setup-venv setup-mkinit install-mock-server \
 		integration-tests integration-tests-ci integration-tests-verbose \
 		test-integration test-integration-ci test-integration-verbose \
@@ -116,8 +116,10 @@ test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
 coverage: #? run the tests and generate an html coverage report.
 	$(activate_venv) && pytest -n auto --cov=aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance' $(args)
 
-install: #? install the project in editable mode.
-	$(activate_venv) && uv pip install -e ".[dev]" $(args)
+install: install-app install-mock-server #? install the project and mock server in editable mode.
+
+install-app: #? install the project in editable mode.
+	$(activate_venv) && uv pip install -e ".[dev]"
 
 docker: #? build the docker image.
 	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args) .
@@ -129,7 +131,7 @@ version: #? print the version of the project.
 	@PATH=$(UV_PATH):$(PATH) uv version
 
 install-mock-server: #? install the mock server in editable mode.
-	$(activate_venv) && uv pip install -e "tests/aiperf_mock_server[dev]" $(args)
+	$(activate_venv) && uv pip install -e "tests/aiperf_mock_server[dev]"
 
 clean: #? clean up the pytest and ruff caches, coverage reports, and *.pyc files.
 	rm -rf .pytest_cache/
