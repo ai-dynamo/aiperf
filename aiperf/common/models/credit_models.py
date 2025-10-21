@@ -149,6 +149,10 @@ class ProcessingStats(AIPerfBaseModel):
         default=None,
         description="The total number of expected requests to process. If None, the phase is not request count based.",
     )
+    final_request_count: int | None = Field(
+        default=None,
+        description="The final number of requests sent for processing. If None, the phase is not complete.",
+    )
 
     @property
     def total_records(self) -> int:
@@ -157,4 +161,4 @@ class ProcessingStats(AIPerfBaseModel):
 
     @property
     def is_complete(self) -> bool:
-        return self.total_records == self.total_expected_requests
+        return self.total_records == self.final_request_count
