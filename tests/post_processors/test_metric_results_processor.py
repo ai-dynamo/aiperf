@@ -247,3 +247,47 @@ class TestMetricResultsProcessor:
             processor._create_metric_result(
                 RequestLatencyMetric.tag, {"invalid": "dict"}
             )
+
+    @pytest.mark.asyncio
+    async def test_get_instances_map_default_behavior(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Test default get_instances_map returns shared instances map regardless of request_start_ns."""
+        processor = MetricResultsProcessor(mock_user_config)
+
+        # Set up a metric
+        processor._instances_map = {RequestCountMetric.tag: RequestCountMetric()}
+
+        # Call with None (should be ignored in base implementation)
+        instances_map_none = await processor.get_instances_map(None)
+        assert instances_map_none is processor._instances_map
+
+        # Call with a timestamp (should also be ignored in base implementation)
+        instances_map_with_time = await processor.get_instances_map(1000000000)
+        assert instances_map_with_time is processor._instances_map
+
+        # Both should return the same shared instances map
+        assert instances_map_none is instances_map_with_time
+
+    @pytest.mark.asyncio
+    async def test_get_results_default_behavior(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Test default get_results returns shared results dict regardless of request_start_ns."""
+        processor = MetricResultsProcessor(mock_user_config)
+
+        # Set up some results
+        processor._results["test_metric"] = 42
+
+        # Call with None (should be ignored in base implementation)
+        results_dict_none = await processor.get_results(None)
+        assert results_dict_none is processor._results
+        assert results_dict_none["test_metric"] == 42
+
+        # Call with a timestamp (should also be ignored in base implementation)
+        results_dict_with_time = await processor.get_results(1000000000)
+        assert results_dict_with_time is processor._results
+        assert results_dict_with_time["test_metric"] == 42
+
+        # Both should return the same shared results dict
+        assert results_dict_none is results_dict_with_time

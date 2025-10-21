@@ -104,7 +104,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             self.trace(f"Results after processing incoming metrics: {results_dict}")
 
     async def get_instances_map(
-        self, record_data: MetricRecordsData = None
+        self, request_start_ns: int | None = None
     ) -> dict[MetricTagT, BaseMetric]:
         """Get the appropriate instances map based on mode.
 
@@ -114,7 +114,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         return self._instances_map
 
     async def get_results(
-        self, record_data: MetricRecordsData = None
+        self, request_start_ns: int | None = None
     ) -> MetricResultsDict:
         """Get the appropriate results dictionary based on mode.
 
