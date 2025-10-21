@@ -38,6 +38,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             list[Conversation]: A list of conversation objects.
         """
         conversations = []
+        # TODO: remove after --num-dataset-entries is separated from --num-conversations
+        if self.config.input.conversation.num is None:
+            self.config.input.conversation.num = 100
         for _ in range(self.config.input.conversation.num):
             conversation = Conversation(session_id=str(uuid.uuid4()))
 
