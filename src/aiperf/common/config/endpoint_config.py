@@ -15,7 +15,7 @@ from aiperf.common.config.config_validators import (
     parse_str_or_list,
 )
 from aiperf.common.config.groups import Groups
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy, TransportType
 
 _logger = AIPerfLogger(__name__)
 
@@ -29,7 +29,18 @@ class EndpointConfig(BaseConfig):
 
     @model_validator(mode="after")
     def validate_streaming(self) -> Self:
-        if not self.type.supports_streaming:
+        """Validate that streaming is supported for the endpoint type."""
+        if not self.streaming:
+            return self
+
+        # Lazy import to avoid circular dependency
+        from aiperf.common.factories import EndpointFactory
+        from aiperf.module_loader import ensure_modules_loaded
+
+        ensure_modules_loaded()
+
+        metadata = EndpointFactory.get_metadata(self.type)
+        if not metadata.supports_streaming:
             _logger.warning(
                 f"Streaming is not supported for --endpoint-type {self.type}, setting streaming to False"
             )
@@ -147,3 +158,15 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.API_KEY
+
+    transport: Annotated[
+        TransportType | None,
+        Field(
+            description="The transport to use for the endpoint. If not provided, it will be auto-detected from the URL."
+            "This can also be used to force an alternative transport or implementation.",
+        ),
+        CLIParameter(
+            name=("--transport", "--transport-type"),
+            group=_CLI_GROUP,
+        ),
+    ] = None

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.models.record_models import InferenceServerResponse
+from aiperf.common.models import TextResponse
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 
@@ -56,7 +56,7 @@ class TestRecordProcessorCreateMetricRecordMetadata:
             sample_request_record.start_perf_ns + 200_000
         )
         sample_request_record.responses = [
-            InferenceServerResponse(perf_ns=last_response_perf_ns),
+            TextResponse(perf_ns=last_response_perf_ns, text="test"),
         ]
         sample_request_record.credit_num = 2
 

@@ -640,6 +640,9 @@ class MetricFlags(Flag):
     """Metrics that should not be exported for individual records. These are typically aggregate metrics.
     This is used to filter out metrics such as request count or min/max timestamps that are not relevant to individual records."""
 
+    TOKENIZES_INPUT_ONLY = 1 << 12
+    """Metrics that are only applicable when the endpoint tokenizes input text."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.

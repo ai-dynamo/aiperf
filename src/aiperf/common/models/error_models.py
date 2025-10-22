@@ -23,6 +23,14 @@ class ErrorDetails(AIPerfBaseModel):
         ...,
         description="The error message.",
     )
+    cause: str | None = Field(
+        default=None,
+        description="The cause of the error.",
+    )
+    details: Any | None = Field(
+        default=None,
+        description="Additional details about the error.",
+    )
 
     def __eq__(self, other: Any) -> bool:
         """Check if the error details are equal by comparing the code, type, and message."""
@@ -44,6 +52,8 @@ class ErrorDetails(AIPerfBaseModel):
         return cls(
             type=e.__class__.__name__,
             message=str(e),
+            cause=repr(e.__cause__) if e.__cause__ else None,
+            details=list(repr(arg) for arg in e.args) if e.args else None,
         )
 
 

@@ -12,8 +12,7 @@ from rich.logging import RichHandler
 from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
 from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.enums import ServiceType
-from aiperf.common.enums.ui_enums import AIPerfUIType
+from aiperf.common.enums import AIPerfUIType, ServiceType
 from aiperf.common.factories import ServiceFactory
 
 LOG_QUEUE_MAXSIZE = 1000
@@ -210,6 +209,8 @@ class MultiProcessLogHandler(RichHandler):
         super().__init__()
         self.log_queue = log_queue
         self.service_id = service_id
+        self._proc_name = multiprocessing.current_process().name
+        self._proc_id = multiprocessing.current_process().pid
 
     def emit(self, record: logging.LogRecord) -> None:
         """Emit a log record to the queue."""
@@ -221,8 +222,8 @@ class MultiProcessLogHandler(RichHandler):
                 "levelno": record.levelno,
                 "msg": record.getMessage(),
                 "created": record.created,
-                "process_name": multiprocessing.current_process().name,
-                "process_id": multiprocessing.current_process().pid,
+                "process_name": self._proc_name,
+                "process_id": self._proc_id,
                 "service_id": self.service_id,
             }
             self.log_queue.put_nowait(log_data)

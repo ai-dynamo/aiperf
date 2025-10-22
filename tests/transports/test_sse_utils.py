@@ -6,7 +6,6 @@ import pytest
 
 from aiperf.common.enums import SSEFieldType
 from aiperf.common.models import SSEField, SSEMessage
-from aiperf.transports.aiohttp_client import parse_sse_message
 
 
 @pytest.fixture
@@ -38,7 +37,7 @@ class TestParseSSEMessage:
         self, raw_message: str, base_perf_ns: int, expected_empty_message: SSEMessage
     ) -> None:
         """Test parsing of empty or whitespace-only messages."""
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
         assert result.perf_ns == expected_empty_message.perf_ns
         assert result.packets == expected_empty_message.packets
 
@@ -71,7 +70,7 @@ class TestParseSSEMessage:
     ) -> None:
         """Test parsing of messages with single field."""
         raw_message = f"{field_name}: {field_value}"
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
@@ -93,7 +92,7 @@ class TestParseSSEMessage:
     ) -> None:
         """Test parsing of fields without colon (no value)."""
         raw_message = field_name
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
@@ -112,7 +111,7 @@ class TestParseSSEMessage:
     def test_parse_comment_messages(self, comment_text: str, base_perf_ns: int) -> None:
         """Test parsing of comment messages (empty field name)."""
         raw_message = f": {comment_text}"
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
@@ -130,7 +129,7 @@ data: {"continuation": "World"}
 custom-header: custom-value
 field-without-value"""
 
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 8
@@ -168,7 +167,7 @@ field-without-value"""
         self, raw_message: str, expected_packet_count: int, base_perf_ns: int
     ) -> None:
         """Test parsing of messages with multiple fields."""
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == expected_packet_count
@@ -194,7 +193,7 @@ field-without-value"""
         base_perf_ns: int,
     ) -> None:
         """Test proper handling of whitespace in field parsing."""
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
@@ -214,7 +213,7 @@ field-without-value"""
         self, colon_content: str, base_perf_ns: int
     ) -> None:
         """Test parsing when field values contain multiple colons."""
-        result = parse_sse_message(colon_content, base_perf_ns)
+        result = SSEMessage.parse(colon_content, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
@@ -231,7 +230,7 @@ field-without-value"""
         )
         raw_message = f"data: {json_data}"
 
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
@@ -246,7 +245,7 @@ data: {"choices": [{"delta": {"content": "Hello"}, "index": 0}]}
 id: msg_123
 retry: 5000"""
 
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 5
@@ -282,7 +281,7 @@ retry: 5000"""
     ) -> None:
         """Test parsing of fields containing special characters."""
         raw_message = f"data: {special_chars}"
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
@@ -290,10 +289,10 @@ retry: 5000"""
         assert result.packets[0].value == special_chars.strip()
 
     def test_sse_message_inheritance(self, base_perf_ns: int) -> None:
-        """Test that SSEMessage properly inherits from InferenceServerResponse."""
-        result = parse_sse_message("data: test", base_perf_ns)
+        """Test that SSEMessage properly implements InferenceServerResponse Protocol."""
+        result = SSEMessage.parse("data: test", base_perf_ns)
 
-        # Should have the perf_ns field from InferenceServerResponse
+        # Should have the perf_ns field required by InferenceServerResponse Protocol
         assert hasattr(result, "perf_ns")
         assert result.perf_ns == base_perf_ns
 
@@ -303,7 +302,7 @@ retry: 5000"""
 
     def test_sse_field_model_validation(self, base_perf_ns: int) -> None:
         """Test that SSEField models are properly validated."""
-        result = parse_sse_message("data: test_value", base_perf_ns)
+        result = SSEMessage.parse("data: test_value", base_perf_ns)
 
         field = result.packets[0]
         assert isinstance(field, SSEField)
@@ -326,7 +325,7 @@ retry: 5000"""
     )
     def test_perf_ns_values(self, perf_ns_value: int) -> None:
         """Test various perf_ns timestamp values."""
-        result = parse_sse_message("data: test", perf_ns_value)
+        result = SSEMessage.parse("data: test", perf_ns_value)
         assert result.perf_ns == perf_ns_value
 
     def test_parse_with_fixture_data(
@@ -334,7 +333,7 @@ retry: 5000"""
     ) -> None:
         """Test parsing using complex fixture data."""
         for _, raw_message in complex_sse_message_data.items():
-            result = parse_sse_message(raw_message, base_perf_ns)
+            result = SSEMessage.parse(raw_message, base_perf_ns)
 
             assert result.perf_ns == base_perf_ns
             assert len(result.packets) > 0
@@ -350,7 +349,7 @@ retry: 5000"""
     ) -> None:
         """Test parsing with edge case inputs."""
         for case_name, raw_message in edge_case_inputs.items():
-            result = parse_sse_message(raw_message, base_perf_ns)
+            result = SSEMessage.parse(raw_message, base_perf_ns)
 
             assert result.perf_ns == base_perf_ns
             assert isinstance(result.packets, list)
@@ -376,7 +375,7 @@ retry: 5000"""
         lines = ["data: line1", "data: line2", "data: line3"]
         raw_message = line_ending.join(lines)
 
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.perf_ns == base_perf_ns
 
@@ -391,8 +390,8 @@ retry: 5000"""
     def test_parse_sse_message_immutability(self, base_perf_ns: int) -> None:
         """Test that parsing produces immutable-like results."""
         raw_message = "data: test"
-        result1 = parse_sse_message(raw_message, base_perf_ns)
-        result2 = parse_sse_message(raw_message, base_perf_ns)
+        result1 = SSEMessage.parse(raw_message, base_perf_ns)
+        result2 = SSEMessage.parse(raw_message, base_perf_ns)
 
         # Should produce equivalent but separate objects
         assert result1.perf_ns == result2.perf_ns
@@ -415,7 +414,7 @@ retry: 5000"""
 
         for field_str, expected_enum in test_cases:
             raw_message = f"{field_str}: test"
-            result = parse_sse_message(raw_message, base_perf_ns)
+            result = SSEMessage.parse(raw_message, base_perf_ns)
 
             assert result.packets[0].name == expected_enum
             assert str(result.packets[0].name) == field_str
@@ -423,7 +422,7 @@ retry: 5000"""
     def test_comment_field_special_handling(self, base_perf_ns: int) -> None:
         """Test special handling of comment fields (empty field name)."""
         raw_message = ": this is a comment"
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 1
         assert result.packets[0].name == SSEFieldType.COMMENT
@@ -437,7 +436,7 @@ retry: 5000"""
     ) -> None:
         """Test that field name case is preserved exactly as provided."""
         raw_message = f"{field_name_case}: test"
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 1
         # The name should match exactly what was provided
@@ -459,7 +458,7 @@ class TestParseSSEMessagePerformance:
         raw_message = f"data: {large_data}"
 
         start_time = time.perf_counter()
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
         end_time = time.perf_counter()
 
         # Should parse quickly (less than 100ms for 10KB)
@@ -476,7 +475,7 @@ class TestParseSSEMessagePerformance:
         raw_message = "\n".join(lines)
 
         start_time = time.perf_counter()
-        result = parse_sse_message(raw_message, base_perf_ns)
+        result = SSEMessage.parse(raw_message, base_perf_ns)
         end_time = time.perf_counter()
 
         # Should parse quickly (less than 250ms for 1000 fields)

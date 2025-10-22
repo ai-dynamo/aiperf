@@ -2,16 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import multiprocessing
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+from aiohttp import RequestInfo
 
 from aiperf.common.constants import (
     DEFAULT_COMMS_REQUEST_TIMEOUT,
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
     DEFAULT_SERVICE_START_TIMEOUT,
 )
-from aiperf.common.enums import CommClientType, LifecycleState
+from aiperf.common.enums import (
+    CommClientType,
+    LifecycleState,
+)
 from aiperf.common.hooks import Hook, HookType
 from aiperf.common.models import (
     BaseResponseData,
@@ -20,25 +24,28 @@ from aiperf.common.models import (
     RequestRecord,
     ServiceRunInfo,
     TelemetryRecord,
-    Turn,
 )
 from aiperf.common.types import (
     CommAddressType,
+    JsonObject,
     MessageCallbackMapT,
     MessageOutputT,
     MessageT,
     MessageTypeT,
-    ModelEndpointInfoT,
     RequestInputT,
     RequestOutputT,
     ServiceTypeT,
 )
 
 if TYPE_CHECKING:
+    import multiprocessing
+
     from rich.console import Console
 
     from aiperf.common.config import ServiceConfig, UserConfig
     from aiperf.common.messages.inference_messages import MetricRecordsData
+    from aiperf.common.models.metadata import EndpointMetadata, TransportMetadata
+    from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
     from aiperf.common.models.record_models import MetricResult
     from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
     from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -333,6 +340,66 @@ class DataExporterProtocol(Protocol):
 
 
 @runtime_checkable
+class EndpointProtocol(Protocol):
+    """Protocol for an endpoint."""
+
+    def __init__(self, model_endpoint: "ModelEndpointInfo", **kwargs) -> None: ...
+
+    @classmethod
+    def metadata(cls) -> "EndpointMetadata": ...
+
+    def format_payload(self, request_info: RequestInfo) -> RequestOutputT: ...
+    def extract_response_data(self, record: RequestRecord) -> list[ParsedResponse]: ...
+    def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]: ...
+    def get_endpoint_params(self, request_info: RequestInfo) -> dict[str, str]: ...
+
+
+@runtime_checkable
+class InferenceServerResponse(Protocol):
+    """Protocol for inference server response objects.
+
+    Defines the interface for response objects that can parse themselves
+    into different formats. Any object implementing these methods can be
+    used as a response in the inference pipeline.
+
+    This protocol-based approach allows for:
+    - Duck typing (structural subtyping)
+    - Easier testing with mocks
+    - Flexibility in implementation
+    - No concrete inheritance required
+    """
+
+    perf_ns: int
+    """Timestamp of the response in nanoseconds (perf_counter_ns)."""
+
+    def get_raw(self) -> Any | None:
+        """Get the raw representation of the response.
+
+        Returns:
+            Raw response data or None
+        """
+        ...
+
+    def get_text(self) -> str | None:
+        """Get the text representation of the response.
+
+        Returns:
+            Text content or None
+        """
+        ...
+
+    def get_json(self) -> JsonObject | None:
+        """Get the JSON representation of the response.
+
+        Automatically parses text content as JSON if applicable.
+
+        Returns:
+            Parsed JSON dict or None if parsing fails
+        """
+        ...
+
+
+@runtime_checkable
 class HooksProtocol(Protocol):
     """Protocol for hooks methods provided by the HooksMixin."""
 
@@ -351,76 +418,11 @@ class HooksProtocol(Protocol):
 
 
 @runtime_checkable
-class InferenceClientProtocol(Protocol):
-    """Protocol for an inference server client.
-
-    This protocol defines the methods that must be implemented by any inference server client
-    implementation that is compatible with the AIPerf framework.
-    """
-
-    def __init__(self, model_endpoint: ModelEndpointInfoT) -> None:
-        """Create a new inference server client based on the provided configuration."""
-        ...
-
-    async def initialize(self) -> None:
-        """Initialize the inference server client in an asynchronous context."""
-        ...
-
-    async def send_request(
-        self,
-        model_endpoint: ModelEndpointInfoT,
-        payload: RequestInputT,
-        x_request_id: str | None = None,
-        x_correlation_id: str | None = None,
-    ) -> RequestRecord:
-        """Send a request to the inference server.
-
-        This method is used to send a request to the inference server.
-
-        Args:
-            model_endpoint: The endpoint to send the request to.
-            payload: The payload to send to the inference server.
-            x_request_id: The X-Request-ID header to send to the inference server.
-            x_correlation_id: The X-Correlation-ID header to send to the inference server.
-        Returns:
-            The raw response from the inference server.
-        """
-        ...
-
-    async def close(self) -> None:
-        """Close the client."""
-        ...
-
-
-@runtime_checkable
 class OpenAIObjectParserProtocol(Protocol):
     """Protocol for an OpenAI object parser that parses a raw OpenAI object into a BaseResponseData object."""
 
     def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
         """Parse the raw text of an OpenAI object into a BaseResponseData object."""
-        ...
-
-
-@runtime_checkable
-class ResponseExtractorProtocol(Protocol):
-    """Protocol for a response extractor that extracts the response data from a raw inference server
-    response and converts it to a list of ParsedResponse objects."""
-
-    async def extract_response_data(
-        self, record: RequestRecord
-    ) -> list[ParsedResponse]:
-        """Extract the response data from a raw inference server response and convert it to a list of ParsedResponse objects."""
-        ...
-
-
-@runtime_checkable
-class RequestConverterProtocol(Protocol):
-    """Protocol for a request converter that converts a raw request to a formatted request for the inference server."""
-
-    async def format_payload(
-        self, model_endpoint: ModelEndpointInfoT, turns: list[Turn]
-    ) -> RequestOutputT:
-        """Format the turn for the inference server."""
         ...
 
 
@@ -539,3 +541,25 @@ class RequestRateGeneratorProtocol(Protocol):
     def __init__(self, config: "TimingManagerConfig") -> None: ...
 
     def next_interval(self) -> float: ...
+
+
+@runtime_checkable
+class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
+    """Protocol for a transport that sends requests to an inference server."""
+
+    def __init__(self, **kwargs) -> None: ...
+
+    @classmethod
+    def metadata(cls) -> "TransportMetadata": ...
+
+    def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]: ...
+
+    def build_headers(self, request_info: RequestInfo) -> dict[str, str]: ...
+
+    def build_url(self, request_info: RequestInfo) -> str: ...
+
+    def get_url(self, request_info: RequestInfo) -> str: ...
+
+    async def send_request(
+        self, request_info: RequestInfo, payload: RequestInputT
+    ) -> RequestRecord: ...

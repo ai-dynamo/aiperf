@@ -30,6 +30,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
+from aiperf.module_loader import ensure_modules_loaded
 from tests.comms.mock_zmq import (
     mock_zmq_communication as mock_zmq_communication,  # import fixture globally
 )
@@ -49,6 +50,10 @@ DEFAULT_FIRST_RESPONSE_NS = 1_050_000
 DEFAULT_LAST_RESPONSE_NS = 1_100_000
 DEFAULT_INPUT_TOKENS = 5
 DEFAULT_OUTPUT_TOKENS = 2
+
+
+# Make sure all modules are loaded for registration purposes
+ensure_modules_loaded()
 
 
 @pytest.fixture(autouse=True)

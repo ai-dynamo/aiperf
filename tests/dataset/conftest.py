@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+import aiperf.endpoints  # noqa: F401  # Import to register endpoints
+import aiperf.transports  # noqa: F401  # Import to register transports
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Conversation
@@ -23,6 +25,7 @@ def user_config(tmp_path: Path) -> UserConfig:
             model_names=["test-model"],
             type=EndpointType.CHAT,
             streaming=False,
+            url="http://localhost:8000",
         ),
         output=OutputConfig(artifact_directory=tmp_path),
     )

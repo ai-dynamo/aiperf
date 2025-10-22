@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums.ui_enums import AIPerfUIType
+from aiperf.common.enums import AIPerfUIType
 
 
 class TestMacOSTerminalFixes:

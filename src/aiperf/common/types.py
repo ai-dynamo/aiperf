@@ -10,25 +10,23 @@ from types import UnionType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, Union
 
 from aiperf.common.enums import (
+    CaseInsensitiveStrEnum,
     CommAddress,
     CommandType,
     MediaType,
     MessageType,
     MetricType,
     ServiceType,
+    TransportType,
 )
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from aiperf.common.messages import CommandMessage, Message
-    from aiperf.common.models import (
-        AIPerfBaseModel,
-        AIPerfLifecycleMixin,
-        BaseModel,
-        CaseInsensitiveStrEnum,
-        HooksMixin,
-        Media,
-        ModelEndpointInfo,
-    )
+    from aiperf.common.mixins import AIPerfLifecycleMixin, HooksMixin
+    from aiperf.common.models import AIPerfBaseModel, Media
+    from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
     from aiperf.common.protocols import ServiceProtocol
 
 
@@ -48,6 +46,7 @@ HooksMixinT = TypeVar("HooksMixinT", bound="HooksMixin")
 HookParamsT = TypeVar("HookParamsT", bound=Any)
 HookCallableParamsT = HookParamsT | Callable[["SelfT"], HookParamsT]
 InputT = TypeVar("InputT", bound=Any)
+JsonObject: TypeAlias = dict[str, Any]
 LifecycleMixinT = TypeVar("LifecycleMixinT", bound="AIPerfLifecycleMixin")
 MediaT = TypeVar("MediaT", bound="Media")
 MediaTypeT = MediaType | str
@@ -59,6 +58,7 @@ MessageTypeT: TypeAlias = MessageType | str
 MetricTagT: TypeAlias = str
 ModelEndpointInfoT = TypeVar("ModelEndpointInfoT", bound="ModelEndpointInfo")
 OutputT = TypeVar("OutputT", bound=Any)
+PluginClassT = TypeVar("PluginClassT", bound=Any)
 ProtocolT = TypeVar("ProtocolT", bound=Any)
 RawRequestT = TypeVar("RawRequestT", bound=Any, contravariant=True)
 RawResponseT = TypeVar("RawResponseT", bound=Any, contravariant=True)
@@ -68,3 +68,4 @@ ResponseT = TypeVar("ResponseT", bound=Any, covariant=True)
 SelfT = TypeVar("SelfT", bound=Any)
 ServiceProtocolT = TypeVar("ServiceProtocolT", bound="ServiceProtocol")
 ServiceTypeT: TypeAlias = ServiceType | str
+TransportTypeT: TypeAlias = TransportType | str

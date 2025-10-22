@@ -3,19 +3,19 @@
 
 import pytest
 
-from aiperf.common.enums.endpoints_enums import EndpointType
-from aiperf.common.enums.model_enums import ModelSelectionStrategy
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.endpoints.openai_completions import OpenAICompletionRequestConverter
+from aiperf.common.models.record_models import RequestInfo
+from aiperf.endpoints.openai_completions import CompletionsEndpoint
 
 
-class TestOpenAICompletionRequestConverter:
-    """Test OpenAICompletionRequestConverter."""
+class TestCompletionsEndpoint:
+    """Test CompletionsEndpoint."""
 
     @pytest.fixture
     def model_endpoint(self):
@@ -33,13 +33,13 @@ class TestOpenAICompletionRequestConverter:
             ),
         )
 
-    @pytest.mark.asyncio
-    async def test_format_payload_basic(self, model_endpoint, sample_conversations):
-        converter = OpenAICompletionRequestConverter()
+    def test_format_payload_basic(self, model_endpoint, sample_conversations):
+        endpoint = CompletionsEndpoint(model_endpoint)
         # Use the first turn from the sample_conversations fixture
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
-        payload = await converter.format_payload(model_endpoint, turns)
+        request_info = RequestInfo(model_endpoint=model_endpoint, turns=turns)
+        payload = endpoint.format_payload(request_info)
         print(f"Payload: {payload}")
         expected_payload = {
             "prompt": ["Hello, world!"],
@@ -48,18 +48,18 @@ class TestOpenAICompletionRequestConverter:
         }
         assert payload == expected_payload
 
-    @pytest.mark.asyncio
-    async def test_format_payload_with_extra_options(
+    def test_format_payload_with_extra_options(
         self, model_endpoint, sample_conversations
     ):
-        converter = OpenAICompletionRequestConverter()
+        endpoint = CompletionsEndpoint(model_endpoint)
         # Use the first turn from the sample_conversations fixture
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         turns[0].max_tokens = 50
         model_endpoint.endpoint.streaming = True
         model_endpoint.endpoint.extra = [("ignore_eos", True)]
-        payload = await converter.format_payload(model_endpoint, turns)
+        request_info = RequestInfo(model_endpoint=model_endpoint, turns=turns)
+        payload = endpoint.format_payload(request_info)
         print(f"Payload: {payload}")
         expected_payload = {
             "prompt": ["Hello, world!"],
