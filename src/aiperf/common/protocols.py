@@ -18,7 +18,6 @@ from aiperf.common.enums import (
 )
 from aiperf.common.hooks import Hook, HookType
 from aiperf.common.models import (
-    BaseResponseData,
     ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
@@ -414,15 +413,6 @@ class HooksProtocol(Protocol):
         If reversed is True, the hooks will be run in reverse order. This is useful for stop/cleanup starting with
         the children and ending with the parent.
         """
-        ...
-
-
-@runtime_checkable
-class OpenAIObjectParserProtocol(Protocol):
-    """Protocol for an OpenAI object parser that parses a raw OpenAI object into a BaseResponseData object."""
-
-    def parse(self, obj: dict[str, Any]) -> BaseResponseData | None:
-        """Parse the raw text of an OpenAI object into a BaseResponseData object."""
         ...
 
 
