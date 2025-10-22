@@ -54,20 +54,6 @@ class AsyncSSEStreamReader:
         - Malformed messages are parsed as-is (SSEMessage.parse is permissive, so it will not raise an exception)
         - Empty messages are skipped
 
-    Example SSE Stream:
-        >>> # Server sends:
-        >>> # data: {"delta": {"content": "Hello"}}
-        >>> #
-        >>> # data: {"delta": {"content": " World"}}
-        >>> #
-        >>> # [DONE]
-        >>>
-        >>> async for message in AsyncSSEStreamReader(async_iter).__aiter__():
-        >>>     print(message)
-        >>> # SSEMessage(packets=[SSEField(name='data', value='{"delta": {"content": "Hello"}}')], perf_ns=123456789000)
-        >>> # SSEMessage(packets=[SSEField(name='data', value='{"delta": {"content": " World"}}')], perf_ns=123456790000)
-        >>> # SSEMessage(packets=[SSEField(name='data', value='[DONE]')], perf_ns=123456791000)
-
     Performance:
         - Incremental parsing minimizes latency (messages available as they arrive)
         - Chunk-based reading is memory efficient
