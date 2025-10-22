@@ -41,7 +41,7 @@ class TestCompletionsEndpointParseResponse:
             return CompletionsEndpoint(model_endpoint=model_endpoint)
 
     def test_parse_response_completion_object(self, endpoint):
-        """Test parsing text.completion object type."""
+        """Test parsing text_completion object type."""
         mock_response = Mock(spec=InferenceServerResponse)
         mock_response.perf_ns = 123456789
         mock_response.get_json.return_value = {

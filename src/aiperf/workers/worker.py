@@ -309,15 +309,9 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             self.trace(
                 f"Calling inference API for turn: {request_info.turns[request_info.turn_index]}"
             )
-        formatted_payload = None
         pre_send_perf_ns = None
         timestamp_ns = None
         try:
-            # Format payload for the API request
-            formatted_payload = self.inference_client.endpoint.format_payload(
-                request_info=request_info
-            )
-
             # NOTE: Current implementation of the TimingManager bypasses this, it is for future use.
             # Wait for the credit drop time if it is in the future.
             # Note that we check this after we have retrieved the data from the dataset, to ensure
@@ -339,9 +333,8 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             pre_send_perf_ns = time.perf_counter_ns()
             timestamp_ns = time.time_ns()
 
-            send_coroutine = self.inference_client.transport.send_request(
+            send_coroutine = self.inference_client.send_request(
                 request_info=request_info,
-                payload=formatted_payload,
             )
 
             maybe_result: RequestRecord | None = await self._send_with_optional_cancel(

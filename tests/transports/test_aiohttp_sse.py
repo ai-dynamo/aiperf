@@ -351,3 +351,181 @@ class TestAsyncSSEStreamReader:
 
         with pytest.raises(ValueError, match="Iterator failed"):
             await reader.read_complete_stream()
+
+    @pytest.mark.asyncio
+    async def test_aiter_crlf_delimiter(self) -> None:
+        """Test __aiter__ with CRLF CRLF delimiter (spec-compliant)."""
+        chunks = [b"data: Hello\r\nevent: message\r\n\r\n"]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = await self._collect_messages(reader)
+
+        assert len(messages) == 1
+        assert messages[0].packets[0].name == "data"
+        assert messages[0].packets[0].value == "Hello"
+        assert messages[0].packets[1].name == "event"
+        assert messages[0].packets[1].value == "message"
+
+    @pytest.mark.asyncio
+    async def test_aiter_multiple_messages_crlf(self) -> None:
+        """Test __aiter__ with multiple CRLF-delimited messages."""
+        chunks = [
+            b"data: Hello\r\n\r\n",
+            b"data: World\r\n\r\n",
+            b"data: [DONE]\r\n\r\n",
+        ]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = await self._collect_messages(reader)
+
+        assert len(messages) == 3
+        assert messages[0].packets[0].value == "Hello"
+        assert messages[1].packets[0].value == "World"
+        assert messages[2].packets[0].value == "[DONE]"
+
+    @pytest.mark.asyncio
+    async def test_aiter_mixed_delimiters(self) -> None:
+        """Test __aiter__ with mixed CRLF and LF delimiters."""
+        chunks = [
+            b"data: First\r\n\r\n",  # CRLF delimiter
+            b"data: Second\n\n",  # LF delimiter
+            b"data: Third\r\n\r\n",  # CRLF delimiter
+        ]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = await self._collect_messages(reader)
+
+        assert len(messages) == 3
+        assert messages[0].packets[0].value == "First"
+        assert messages[1].packets[0].value == "Second"
+        assert messages[2].packets[0].value == "Third"
+
+    @pytest.mark.asyncio
+    async def test_aiter_crlf_split_across_chunks(self) -> None:
+        """Test __aiter__ with CRLF delimiter split across chunks."""
+        chunks = [
+            b"data: Hello\r\n\r",
+            b"\ndata: World\r\n\r\n",
+        ]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = await self._collect_messages(reader)
+
+        assert len(messages) == 2
+        assert messages[0].packets[0].value == "Hello"
+        assert messages[1].packets[0].value == "World"
+
+    @pytest.mark.asyncio
+    async def test_aiter_crlf_multiple_messages_in_single_chunk(self) -> None:
+        """Test __aiter__ with multiple CRLF messages in single chunk."""
+        chunks = [b"data: First\r\n\r\ndata: Second\r\n\r\ndata: Third\r\n\r\n"]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = await self._collect_messages(reader)
+
+        assert len(messages) == 3
+        assert messages[0].packets[0].value == "First"
+        assert messages[1].packets[0].value == "Second"
+        assert messages[2].packets[0].value == "Third"
+
+    @pytest.mark.asyncio
+    async def test_aiter_crlf_multiline_data(self) -> None:
+        """Test __aiter__ with CRLF-separated multiline data fields."""
+        chunks = [b"data: line1\r\ndata: line2\r\ndata: line3\r\n\r\n"]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = await self._collect_messages(reader)
+
+        assert len(messages) == 1
+        data_packets = [p for p in messages[0].packets if p.name == "data"]
+        assert len(data_packets) == 3
+        assert data_packets[0].value == "line1"
+        assert data_packets[1].value == "line2"
+        assert data_packets[2].value == "line3"
+
+    @pytest.mark.asyncio
+    async def test_aiter_crlf_all_field_types(self) -> None:
+        """Test __aiter__ with CRLF and all SSE field types."""
+        chunks = [
+            b"data: test\r\nevent: custom\r\nid: msg-123\r\nretry: 5000\r\n: comment\r\n\r\n"
+        ]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = await self._collect_messages(reader)
+
+        assert len(messages) == 1
+        packets = messages[0].packets
+        field_names = {p.name for p in packets}
+        assert "data" in field_names
+        assert "event" in field_names
+        assert "id" in field_names
+        assert "retry" in field_names
+        assert "comment" in field_names
+
+    @pytest.mark.asyncio
+    async def test_aiter_crlf_without_final_delimiter(self) -> None:
+        """Test __aiter__ handles CRLF message without final delimiter."""
+        chunks = [b"data: complete\r\n\r\ndata: incomplete"]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = await self._collect_messages(reader)
+
+        assert len(messages) == 2
+        assert messages[0].packets[0].value == "complete"
+        assert messages[1].packets[0].value == "incomplete"
+
+    @pytest.mark.asyncio
+    async def test_aiter_crlf_real_world_openai_format(self) -> None:
+        """Test __aiter__ with real-world OpenAI SSE format."""
+        chunks = [
+            b'data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"Hello"}}]}\r\n\r\n',
+            b'data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{"index":0,"delta":{"content":" World"}}]}\r\n\r\n',
+            b"data: [DONE]\r\n\r\n",
+        ]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = await self._collect_messages(reader)
+
+        assert len(messages) == 3
+        assert '"content":"Hello"' in messages[0].packets[0].value
+        assert '"content":" World"' in messages[1].packets[0].value
+        assert messages[2].packets[0].value == "[DONE]"
+
+    @pytest.mark.asyncio
+    async def test_aiter_crlf_byte_by_byte(self) -> None:
+        """Test __aiter__ can handle CRLF messages byte-by-byte."""
+        message = b"data: Hello\r\n\r\n"
+        chunks = [bytes([b]) for b in message]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = await self._collect_messages(reader)
+
+        assert len(messages) == 1
+        assert messages[0].packets[0].value == "Hello"
+
+    @pytest.mark.asyncio
+    @pytest.mark.performance
+    async def test_aiter_crlf_performance(self) -> None:
+        """Test CRLF parsing performance with large number of messages."""
+        num_messages = 10000
+
+        # Create chunks with multiple CRLF messages each
+        chunks = []
+        messages_per_chunk = 100
+        for i in range(0, num_messages, messages_per_chunk):
+            chunk = b""
+            for j in range(messages_per_chunk):
+                chunk += f"data: Message {i + j}\r\n\r\n".encode()
+            chunks.append(chunk)
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+
+        start_time = time.perf_counter()
+        messages = await self._collect_messages(reader)
+        end_time = time.perf_counter()
+        processing_time = end_time - start_time
+
+        assert len(messages) == num_messages
+        assert processing_time < 3.0, (
+            f"CRLF processing took {processing_time:.3f}s, expected < 3s"
+        )

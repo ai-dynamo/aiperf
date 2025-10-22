@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared fixtures and helpers for endpoint tests."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ def create_model_endpoint(
     model_name: str = "test-model",
     streaming: bool = False,
     base_url: str = "http://localhost:8000",
-    extra: list[tuple[str, any]] | None = None,
+    extra: list[tuple[str, Any]] | None = None,
 ) -> ModelEndpointInfo:
     """Helper to create a ModelEndpointInfo with common defaults."""
     return ModelEndpointInfo(
@@ -34,7 +35,7 @@ def create_model_endpoint(
             type=endpoint_type,
             base_url=base_url,
             streaming=streaming,
-            extra=extra,
+            extra=extra or [],
         ),
     )
 

@@ -37,7 +37,19 @@ class InferenceClient(AIPerfLifecycleMixin):
         self.attach_child_lifecycle(self.transport)
 
     async def send_request(self, request_info: RequestInfo) -> RequestRecord:
-        """Send request via transport."""
+        """Send request via transport.
+
+        Handles the complete request lifecycle:
+        1. Populates endpoint headers and params on request_info
+        2. Formats the payload using the endpoint
+        3. Sends the request via the transport
+
+        Args:
+            request_info: The request information.
+
+        Returns:
+            RequestRecord containing the response data and metadata.
+        """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
         formatted_payload = self.endpoint.format_payload(request_info)

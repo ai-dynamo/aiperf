@@ -94,7 +94,7 @@ class CompletionsEndpoint(BaseEndpoint):
     ) -> BaseResponseData | None:
         """Extract content from OpenAI Completions JSON response.
 
-        Handles both text.completion and completion object types.
+        Handles both text_completion and completion object types.
 
         Args:
             json_obj: Deserialized OpenAI response

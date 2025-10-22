@@ -14,12 +14,16 @@ _logger = AIPerfLogger(__name__)
 class AsyncSSEStreamReader:
     """Parse Server-Sent Events (SSE) stream with per-message timestamps.
 
+    Parsing logic based on the official HTML SSE Living Standard:
+    https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream
+
     This class can be used to read an SSE stream incrementally, parsing individual messages
     as they arrive from the server. Each message will receive its own timestamp for
     accurate Time-To-First-Token (TTFT) and Inter-Chunk-Latency (ICL) measurements.
 
     SSE Format:
-        Server-Sent Events are text-based, with messages delimited by double newlines (\n\n):
+        Server-Sent Events are text-based, with messages delimited by double newlines.
+        Supports both \r\n\r\n and \n\n delimiters:
 
         data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1749678185,"model":"gpt2","choices":[{"index":0,"delta":{"content":"Hello","tool_calls":[]}}]}
 
@@ -29,7 +33,7 @@ class AsyncSSEStreamReader:
 
     Parsing Strategy:
         1. Read response in chunks
-        2. Accumulate chunks in buffer until "\n\n" delimiter found
+        2. Accumulate chunks in buffer until delimiter found (\r\n\r\n or \n\n)
         3. Parse complete message using SSEMessage.parse()
         4. Timestamp message at arrival time
         5. Repeat until stream ends
@@ -85,12 +89,27 @@ class AsyncSSEStreamReader:
             # bytearray is mutable, no copy overhead, so we can append the chunk to the buffer in-place.
             buffer += chunk
 
-            # Parse complete messages from buffer. SSE messages are delimited by "\n\n".
-            while (delimiter_index := buffer.find(b"\n\n")) != -1:
+            # Parse complete messages from buffer.
+            # SSE spec requires "\r\n\r\n" (CRLF CRLF) but we support both "\r\n\r\n" and "\n\n"
+            # for compatibility with lenient servers.
+            while True:
+                # Try to find "\r\n\r\n" first (spec-compliant delimiter)
+                delimiter_index = buffer.find(b"\r\n\r\n")
+                delimiter_length = 4
+
+                if delimiter_index == -1:
+                    # Fall back to "\n\n" for lenient servers
+                    delimiter_index = buffer.find(b"\n\n")
+                    delimiter_length = 2
+
+                if delimiter_index == -1:
+                    # No complete message found, wait for more data
+                    break
+
                 # Extract message bytes up to delimiter
                 message_bytes = bytes(buffer[:delimiter_index])
-                # Remove processed message + delimiter (2 bytes) from buffer in-place
-                del buffer[: delimiter_index + 2]
+                # Remove processed message + delimiter from buffer in-place
+                del buffer[: delimiter_index + delimiter_length]
 
                 raw_message = message_bytes.decode("utf-8", errors="replace").strip()
                 if not raw_message:
@@ -105,7 +124,7 @@ class AsyncSSEStreamReader:
                     _logger.debug(f"Parsed SSE message: {raw_message}...")
 
         # Handle any remaining data in buffer after stream ends
-        # Some servers don't send final "\n\n" delimiter
+        # Some servers don't send final delimiter
         if buffer_remaining := buffer.strip():
             final_perf_ns = time.perf_counter_ns()
             raw_message = buffer_remaining.decode("utf-8", errors="replace")

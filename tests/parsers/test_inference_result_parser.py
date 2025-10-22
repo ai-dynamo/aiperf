@@ -53,7 +53,7 @@ def parser(mock_turn_response):
         # Call the parent class __init__ to ensure lifecycle state is initialized
         from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 
-        AIPerfLifecycleMixin.__init__(self, **kwargs)
+        AIPerfLifecycleMixin.__init__(self, service_config=service_config, **kwargs)
         self.service_config = service_config
         self.comms = mock_comms
         # Add logger methods

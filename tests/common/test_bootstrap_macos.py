@@ -19,7 +19,6 @@ class TestBootstrapMacOSFixes:
         self,
         mock_psutil_process,
         mock_setup_child_process_logging,
-        mock_ensure_modules_loaded,
     ):
         """Combine common bootstrap mocks that are used but not called in tests."""
         pass

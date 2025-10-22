@@ -15,11 +15,6 @@ from aiperf.common.enums import AIPerfUIType
 class TestMacOSTerminalFixes:
     """Test the macOS-specific terminal corruption fixes in cli_runner.py"""
 
-    @pytest.fixture(autouse=True)
-    def setup_cli_runner_mocks(self, mock_ensure_modules_loaded: Mock):
-        """Common mock for module loading that is used but not called in tests."""
-        pass
-
     @pytest.fixture
     def service_config_dashboard(self) -> ServiceConfig:
         """Create a ServiceConfig with Dashboard UI type."""

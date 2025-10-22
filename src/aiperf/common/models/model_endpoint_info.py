@@ -61,8 +61,8 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointType.CHAT,
         description="The type of request payload to use for the endpoint.",
     )
-    base_url: str | None = Field(
-        default=None,
+    base_url: str = Field(
+        default=EndpointDefaults.URL,
         description="URL of the endpoint.",
     )
     custom_endpoint: str | None = Field(
@@ -76,8 +76,8 @@ class EndpointInfo(AIPerfBaseModel):
         default=False,
         description="Whether the endpoint supports streaming.",
     )
-    headers: list[tuple[str, str]] | None = Field(
-        default=None,
+    headers: list[tuple[str, str]] = Field(
+        default=[],
         description="Custom URL headers to use for the endpoint.",
     )
     api_key: str | None = Field(
@@ -92,8 +92,8 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.TIMEOUT,
         description="The timeout in seconds for each request to the endpoint.",
     )
-    extra: list[tuple[str, Any]] | None = Field(
-        default=None,
+    extra: list[tuple[str, Any]] = Field(
+        default=[],
         description="Additional inputs to include with every request. "
         "You can repeat this flag for multiple inputs. Inputs should be in an 'input_name:value' format. "
         "Alternatively, a string representing a json formatted dict can be provided.",
