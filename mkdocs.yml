@@ -32,7 +32,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [.]
+          paths: [src]
 
 markdown_extensions:
   - admonition
