@@ -5,14 +5,14 @@ import uuid
 
 import pytest
 
-from aiperf.clients.model_endpoint_info import (
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.clients.openai.openai_aiohttp import OpenAIClientAioHttp
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+from aiperf.endpoints.openai_aiohttp import OpenAIClientAioHttp
 
 
 class TestOpenAIClientAioHttpHeaders:

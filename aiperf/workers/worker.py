@@ -7,7 +7,6 @@ import time
 import uuid
 from collections.abc import Awaitable
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import (
@@ -50,6 +49,7 @@ from aiperf.common.models import (
     Turn,
     WorkerTaskStats,
 )
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,

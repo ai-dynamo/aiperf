@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models import (
     ParsedResponse,
     RequestRecord,
@@ -14,6 +13,7 @@ from aiperf.common.models import (
     TextResponse,
     TextResponseData,
 )
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.parsers.openai_parsers import OpenAIResponseExtractor
 
 

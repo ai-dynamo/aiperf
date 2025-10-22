@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.clients.openai.rankings import RankingsRequestConverter
 from aiperf.common.models import Text, Turn
+from aiperf.endpoints.rankings import RankingsRequestConverter
 
 
 class TestRankingsRequestConverter:

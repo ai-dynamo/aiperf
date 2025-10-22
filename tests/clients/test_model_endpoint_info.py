@@ -5,13 +5,13 @@
 import pytest
 from pytest import param
 
-from aiperf.clients.model_endpoint_info import (
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 
 
 @pytest.fixture

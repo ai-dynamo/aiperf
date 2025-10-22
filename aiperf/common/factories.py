@@ -39,13 +39,13 @@ if TYPE_CHECKING:
     # NOTE: These imports are for the factory class type hints.
     #       We do not want to import these classes directly.
 
-    from aiperf.clients.model_endpoint_info import ModelEndpointInfo
     from aiperf.common.config import (
         BaseZMQCommunicationConfig,
         BaseZMQProxyConfig,
         ServiceConfig,
         UserConfig,
     )
+    from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
     from aiperf.common.protocols import (
         CommunicationClientProtocol,
         CommunicationProtocol,

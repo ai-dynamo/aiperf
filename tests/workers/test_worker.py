@@ -24,7 +24,7 @@ class MockWorker(Worker):
     def __init__(self):
         with (
             patch(
-                "aiperf.clients.http.aiohttp_client.create_tcp_connector"
+                "aiperf.transports.aiohttp_client.create_tcp_connector"
             ) as mock_tcp_connector,
             patch(
                 "aiperf.common.factories.ResponseExtractorFactory.create_instance"

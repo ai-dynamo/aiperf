@@ -47,6 +47,12 @@ from aiperf.common.models.health_models import (
     IOCounters,
     ProcessHealth,
 )
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
 from aiperf.common.models.progress_models import (
     ComputedStats,
     FullPhaseProgress,
@@ -114,6 +120,7 @@ __all__ = [
     "DistributionParser",
     "EmbeddingResponseData",
     "EndpointData",
+    "EndpointInfo",
     "ErrorDetails",
     "ErrorDetailsCount",
     "ExitErrorInfo",
@@ -134,6 +141,9 @@ __all__ = [
     "MetricRecordMetadata",
     "MetricResult",
     "MetricValue",
+    "ModelEndpointInfo",
+    "ModelInfo",
+    "ModelListInfo",
     "ParsedResponse",
     "ParsedResponseRecord",
     "ProcessHealth",

@@ -5,7 +5,6 @@ from typing import Any, Literal
 
 import orjson
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import EndpointType, OpenAIObjectType
 from aiperf.common.factories import (
     FactoryCreationError,
@@ -25,6 +24,7 @@ from aiperf.common.models import (
     TextResponse,
     TextResponseData,
 )
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.protocols import OpenAIObjectParserProtocol
 from aiperf.common.utils import load_json_str
 
