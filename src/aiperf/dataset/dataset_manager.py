@@ -128,7 +128,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             model_endpoint=model_endpoint,
         )
         self.debug(
-            lambda: f"Created inference client for {model_endpoint.endpoint.type}, "
+            lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
             f"class: {endpoint.__class__.__name__}",
         )
         session_payloads_map: dict[str, list] = {}
