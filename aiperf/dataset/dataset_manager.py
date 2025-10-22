@@ -6,7 +6,6 @@ import time
 
 import aiofiles
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -39,6 +38,7 @@ from aiperf.common.messages import (
 from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import Conversation, InputsFile
 from aiperf.common.models.dataset_models import SessionPayloads
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.protocols import RequestConverterProtocol, ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader import ShareGPTLoader

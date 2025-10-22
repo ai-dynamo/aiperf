@@ -66,7 +66,9 @@ def parser(mock_turn_response):
         patch(
             "aiperf.common.mixins.CommunicationMixin.__init__", mock_communication_init
         ),
-        patch("aiperf.clients.model_endpoint_info.ModelEndpointInfo.from_user_config"),
+        patch(
+            "aiperf.common.models.model_endpoint_info.ModelEndpointInfo.from_user_config"
+        ),
         patch("aiperf.common.factories.ResponseExtractorFactory.create_instance"),
     ):
         parser = InferenceResultParser(

@@ -5,15 +5,15 @@ import random
 import uuid
 from typing import Any
 
-from aiperf.clients.model_endpoint_info import (
+from aiperf.common.config.user_config import UserConfig
+from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader

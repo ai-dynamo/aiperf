@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.clients.model_endpoint_info import (
+from aiperf.common.enums.endpoints_enums import EndpointType
+from aiperf.common.enums.model_enums import ModelSelectionStrategy
+from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.clients.openai.openai_chat import OpenAIChatCompletionRequestConverter
-from aiperf.common.enums.endpoints_enums import EndpointType
-from aiperf.common.enums.model_enums import ModelSelectionStrategy
+from aiperf.endpoints.openai_chat import OpenAIChatCompletionRequestConverter
 
 
 class TestOpenAIChatCompletionRequestConverter:

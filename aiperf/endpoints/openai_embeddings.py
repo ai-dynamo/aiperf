@@ -3,40 +3,39 @@
 
 from typing import Any
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.enums import EndpointType
 from aiperf.common.factories import RequestConverterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Turn
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
 
-# TODO: Not fully implemented yet.
-@RequestConverterFactory.register(EndpointType.COMPLETIONS)
-class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
-    """Request converter for OpenAI completion requests."""
+@RequestConverterFactory.register(EndpointType.EMBEDDINGS)
+class OpenAIEmbeddingsRequestConverter(AIPerfLoggerMixin):
+    """Request converter for OpenAI embeddings requests."""
 
     async def format_payload(
         self,
         model_endpoint: ModelEndpointInfo,
         turns: list[Turn],
     ) -> dict[str, Any]:
-        """Format payload for a completion request."""
+        """Format payload for an embeddings request."""
 
         # This converter does not support multi-turn completions. Only the last turn is used.
         turn = turns[-1]
+        if turn.max_tokens:
+            self.error("Max_tokens is provided but is not supported for embeddings.")
+
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]
+
         extra = model_endpoint.endpoint.extra or []
 
         payload = {
-            "prompt": prompts,
             "model": turn.model or model_endpoint.primary_model_name,
-            "stream": model_endpoint.endpoint.streaming,
+            "input": prompts,
         }
-
-        if turn.max_tokens:
-            payload["max_tokens"] = turn.max_tokens
 
         if extra:
             payload.update(extra)

@@ -3,7 +3,6 @@
 import asyncio
 import time
 
-from aiperf.clients.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommAddress
 from aiperf.common.factories import ResponseExtractorFactory
@@ -20,6 +19,7 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.models.dataset_models import Turn
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import ReasoningResponseData
 from aiperf.common.protocols import RequestClientProtocol, ResponseExtractorProtocol
 from aiperf.common.tokenizer import Tokenizer

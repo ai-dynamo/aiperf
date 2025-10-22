@@ -10,7 +10,6 @@ from types import UnionType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, Union
 
 from aiperf.common.enums import (
-    CaseInsensitiveStrEnum,
     CommAddress,
     CommandType,
     MediaType,
@@ -20,12 +19,16 @@ from aiperf.common.enums import (
 )
 
 if TYPE_CHECKING:
-    from pydantic import BaseModel
-
-    from aiperf.clients.model_endpoint_info import ModelEndpointInfo
     from aiperf.common.messages import CommandMessage, Message
-    from aiperf.common.mixins import AIPerfLifecycleMixin, HooksMixin
-    from aiperf.common.models import AIPerfBaseModel, Media
+    from aiperf.common.models import (
+        AIPerfBaseModel,
+        AIPerfLifecycleMixin,
+        BaseModel,
+        CaseInsensitiveStrEnum,
+        HooksMixin,
+        Media,
+        ModelEndpointInfo,
+    )
     from aiperf.common.protocols import ServiceProtocol
 
 

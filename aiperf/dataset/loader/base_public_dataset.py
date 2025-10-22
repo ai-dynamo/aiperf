@@ -4,9 +4,9 @@
 from pathlib import Path
 from typing import Any, ClassVar
 
-from aiperf.clients.http.aiohttp_client import AioHttpClientMixin
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation, RequestRecord
+from aiperf.transports.aiohttp_client import AioHttpClientMixin
 
 AIPERF_DATASET_CACHE_DIR = Path(".cache/aiperf/datasets")
 
