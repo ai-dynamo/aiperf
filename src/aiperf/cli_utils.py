@@ -46,13 +46,6 @@ def raise_startup_error_and_exit(
         message = f"[{text_color}]{message}[/{text_color}]" if text_color else message
 
     console = Console()
-    console.print_exception(
-        show_locals=True,
-        max_frames=10,
-        word_wrap=True,
-        width=console.width,
-    )
-    console.file.flush()
     console.print(
         Panel(
             renderable=message,
@@ -61,6 +54,7 @@ def raise_startup_error_and_exit(
             border_style=border_style,
         )
     )
+    console.file.flush()
 
     sys.exit(exit_code)
 
