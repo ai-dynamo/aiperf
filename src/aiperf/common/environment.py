@@ -58,6 +58,8 @@ class _DatasetSettings(BaseSettings):
     )
 
     CONFIGURATION_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
         default=300.0,
         description="Timeout in seconds for dataset configuration operations",
     )
@@ -120,6 +122,8 @@ class _GPUSettings(BaseSettings):
     )
 
     COLLECTION_INTERVAL: float = Field(
+        ge=0.01,
+        le=300.0,
         default=0.33,
         description="GPU telemetry metrics collection interval in seconds (default: 330ms, ~3Hz)",
     )
@@ -131,14 +135,20 @@ class _GPUSettings(BaseSettings):
         description="Default DCGM endpoint URLs to check for GPU telemetry (comma-separated string or JSON array)",
     )
     REACHABILITY_TIMEOUT: int = Field(
+        ge=1,
+        le=300,
         default=5,
         description="Timeout in seconds for checking GPU telemetry endpoint reachability during init",
     )
     SHUTDOWN_DELAY: float = Field(
+        ge=1.0,
+        le=300.0,
         default=5.0,
         description="Delay in seconds before shutting down GPU telemetry service to allow command response transmission",
     )
     THREAD_JOIN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=300.0,
         default=5.0,
         description="Timeout in seconds for joining GPU telemetry collection threads during shutdown",
     )
@@ -157,50 +167,66 @@ class _HTTPSettings(BaseSettings):
     )
 
     CONNECTION_LIMIT: int = Field(
+        ge=1,
+        le=65000,
         default=2500,
         description="Maximum number of concurrent HTTP connections",
     )
     KEEPALIVE_TIMEOUT: int = Field(
+        ge=1,
+        le=10000,
         default=300,
         description="HTTP connection keepalive timeout in seconds for connection pooling",
     )
     SO_RCVBUF: int = Field(
+        ge=1024,
         default=10485760,  # 10MB
         description="Socket receive buffer size in bytes (default: 10MB for high-throughput streaming)",
     )
     SO_RCVTIMEO: int = Field(
+        ge=1,
+        le=100000,
         default=30,
         description="Socket receive timeout in seconds",
     )
     SO_SNDBUF: int = Field(
+        ge=1024,
         default=10485760,  # 10MB
         description="Socket send buffer size in bytes (default: 10MB for high-throughput streaming)",
     )
     SO_SNDTIMEO: int = Field(
+        ge=1,
+        le=100000,
         default=30,
         description="Socket send timeout in seconds",
     )
     TCP_KEEPCNT: int = Field(
+        ge=1,
+        le=100,
         default=1,
         description="Maximum number of keepalive probes to send before considering the connection dead",
     )
     TCP_KEEPIDLE: int = Field(
+        ge=1,
+        le=100000,
         default=60,
         description="Time in seconds before starting TCP keepalive probes on idle connections",
     )
     TCP_KEEPINTVL: int = Field(
+        ge=1,
+        le=100000,
         default=30,
         description="Interval in seconds between TCP keepalive probes",
     )
-    TCP_QUICKACK: int = Field(
-        default=1,
-        description="Enable TCP quickack to reduce latency for high-throughput streaming",
-    )
     TCP_USER_TIMEOUT: int = Field(
+        ge=1,
+        le=1000000,
         default=30000,
         description="TCP user timeout in milliseconds (Linux-specific, detects dead connections)",
     )
     TTL_DNS_CACHE: int = Field(
+        ge=1,
+        le=1000000,
         default=300,
         description="DNS cache TTL in seconds for aiohttp client sessions",
     )
@@ -217,6 +243,8 @@ class _LoggingSettings(BaseSettings):
     )
 
     QUEUE_MAXSIZE: int = Field(
+        ge=1,
+        le=1000000,
         default=1000,
         description="Maximum size of the multiprocessing logging queue",
     )
@@ -233,6 +261,8 @@ class _MetricsSettings(BaseSettings):
     )
 
     ARRAY_INITIAL_CAPACITY: int = Field(
+        ge=100,
+        le=1000000,
         default=10000,
         description="Initial array capacity for metric storage dictionaries to minimize reallocation",
     )
@@ -249,15 +279,21 @@ class _RecordSettings(BaseSettings):
     )
 
     EXPORT_BATCH_SIZE: int = Field(
+        ge=1,
+        le=1000000,
         default=100,
         description="Batch size for record export results processor",
     )
     PROCESSOR_SCALE_FACTOR: int = Field(
+        ge=1,
+        le=100,
         default=4,
         description="Scale factor for number of record processors to spawn based on worker count. "
         "Formula: 1 record processor for every X workers",
     )
     PROGRESS_REPORT_INTERVAL: float = Field(
+        ge=0.1,
+        le=600.0,
         default=2.0,
         description="Interval in seconds between records progress report messages",
     )
@@ -275,22 +311,32 @@ class _ServiceSettings(BaseSettings):
     )
 
     COMMAND_RESPONSE_TIMEOUT: float = Field(
+        ge=1.0,
+        le=1000.0,
         default=30.0,
         description="Timeout in seconds for command responses",
     )
     COMMS_REQUEST_TIMEOUT: float = Field(
+        ge=1.0,
+        le=1000.0,
         default=90.0,
         description="Timeout in seconds for requests from req_clients to rep_clients",
     )
     CONNECTION_PROBE_INTERVAL: float = Field(
+        ge=0.1,
+        le=600.0,
         default=0.1,
         description="Interval in seconds for connection probes while waiting for initial connection to the zmq message bus",
     )
     CONNECTION_PROBE_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
         default=90.0,
         description="Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus",
     )
     CREDIT_PROGRESS_REPORT_INTERVAL: float = Field(
+        ge=1,
+        le=100000.0,
         default=2.0,
         description="Interval in seconds between credit progress report messages",
     )
@@ -299,34 +345,50 @@ class _ServiceSettings(BaseSettings):
         description="Disable uvloop and use default asyncio event loop instead",
     )
     HEARTBEAT_INTERVAL: float = Field(
+        ge=1.0,
+        le=100000.0,
         default=5.0,
         description="Interval in seconds between heartbeat messages for component services",
     )
     PROFILE_CONFIGURE_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
         default=300.0,
         description="Timeout in seconds for profile configure command",
     )
     PROFILE_START_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
         default=60.0,
         description="Timeout in seconds for profile start command",
     )
     REGISTRATION_INTERVAL: float = Field(
+        ge=1.0,
+        le=100000.0,
         default=1.0,
         description="Interval in seconds between registration attempts for component services",
     )
     REGISTRATION_MAX_ATTEMPTS: int = Field(
+        ge=1,
+        le=100000,
         default=10,
         description="Maximum number of registration attempts before giving up",
     )
     REGISTRATION_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
         default=30.0,
         description="Timeout in seconds for service registration",
     )
     START_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
         default=30.0,
         description="Timeout in seconds for service start operations",
     )
     TASK_CANCEL_TIMEOUT_SHORT: float = Field(
+        ge=1.0,
+        le=100000.0,
         default=2.0,
         description="Maximum time in seconds to wait for simple tasks to complete when cancelling",
     )
@@ -344,22 +406,32 @@ class _UISettings(BaseSettings):
     )
 
     LOG_REFRESH_INTERVAL: float = Field(
+        ge=0.01,
+        le=100000.0,
         default=0.1,
         description="Log viewer refresh interval in seconds (default: 10 FPS)",
     )
     MIN_UPDATE_PERCENT: float = Field(
+        ge=0.01,
+        le=100.0,
         default=1.0,
         description="Minimum percentage difference from last update to trigger a UI update (for non-dashboard UIs)",
     )
     NOTIFICATION_TIMEOUT: int = Field(
+        ge=1,
+        le=100000,
         default=3,
         description="Duration in seconds to display UI notifications before auto-dismissing",
     )
     REALTIME_METRICS_INTERVAL: float = Field(
+        ge=1.0,
+        le=1000.0,
         default=5.0,
         description="Interval in seconds between real-time metrics messages",
     )
     SPINNER_REFRESH_RATE: float = Field(
+        ge=0.1,
+        le=100.0,
         default=0.1,
         description="Progress spinner refresh rate in seconds (default: 10 FPS)",
     )
@@ -378,39 +450,57 @@ class _WorkerSettings(BaseSettings):
     )
 
     CHECK_INTERVAL: float = Field(
+        ge=0.1,
+        le=100000.0,
         default=1.0,
         description="Interval in seconds between worker status checks by WorkerManager",
     )
     CPU_UTILIZATION_FACTOR: float = Field(
+        ge=0.1,
+        le=1.0,
         default=0.75,
         description="Factor multiplied by CPU count to determine default max workers (0.0-1.0). "
         "Formula: max(1, min(int(cpu_count * factor) - 1, MAX_WORKERS_CAP))",
     )
     ERROR_RECOVERY_TIME: float = Field(
+        ge=0.1,
+        le=1000.0,
         default=3.0,
         description="Time in seconds from last error before worker is considered healthy again",
     )
     HEALTH_CHECK_INTERVAL: float = Field(
+        ge=0.1,
+        le=1000.0,
         default=2.0,
         description="Interval in seconds between worker health check messages",
     )
     HIGH_LOAD_CPU_USAGE: float = Field(
+        ge=50.0,
+        le=100.0,
         default=85.0,
         description="CPU usage percentage threshold for considering a worker under high load",
     )
     HIGH_LOAD_RECOVERY_TIME: float = Field(
+        ge=0.1,
+        le=1000.0,
         default=5.0,
         description="Time in seconds from last high load before worker is considered recovered",
     )
     MAX_WORKERS_CAP: int = Field(
+        ge=1,
+        le=10000,
         default=32,
         description="Absolute maximum number of workers to spawn, regardless of CPU count",
     )
     STALE_TIME: float = Field(
+        ge=0.1,
+        le=1000.0,
         default=10.0,
         description="Time in seconds from last status report before worker is considered stale",
     )
     STATUS_SUMMARY_INTERVAL: float = Field(
+        ge=0.1,
+        le=1000.0,
         default=0.5,
         description="Interval in seconds between worker status summary messages",
     )
@@ -428,34 +518,50 @@ class _ZMQSettings(BaseSettings):
     )
 
     CONTEXT_TERM_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
         default=10.0,
         description="Timeout in seconds for terminating the ZMQ context during shutdown",
     )
     PULL_MAX_CONCURRENCY: int = Field(
+        ge=1,
+        le=10000000,
         default=100_000,
         description="Maximum concurrency for ZMQ PULL clients",
     )
     PUSH_MAX_RETRIES: int = Field(
+        ge=1,
+        le=100,
         default=2,
         description="Maximum number of retry attempts when pushing messages to ZMQ PUSH socket",
     )
     PUSH_RETRY_DELAY: float = Field(
+        ge=0.1,
+        le=1000.0,
         default=0.1,
         description="Delay in seconds between retry attempts for ZMQ PUSH operations",
     )
     RCVTIMEO: int = Field(
+        ge=1,
+        le=10000000,
         default=300000,  # 5 minutes
         description="Socket receive timeout in milliseconds (default: 5 minutes)",
     )
     SNDTIMEO: int = Field(
+        ge=1,
+        le=10000000,
         default=300000,  # 5 minutes
         description="Socket send timeout in milliseconds (default: 5 minutes)",
     )
     TCP_KEEPALIVE_IDLE: int = Field(
+        ge=1,
+        le=100000,
         default=60,
         description="Time in seconds before starting TCP keepalive probes on idle ZMQ connections",
     )
     TCP_KEEPALIVE_INTVL: int = Field(
+        ge=1,
+        le=100000,
         default=10,
         description="Interval in seconds between TCP keepalive probes for ZMQ connections",
     )

@@ -48,9 +48,7 @@ class SocketDefaults:
 
         # Linux-specific TCP optimizations
         if hasattr(socket, "TCP_QUICKACK"):
-            sock.setsockopt(
-                socket.SOL_TCP, socket.TCP_QUICKACK, Environment.HTTP.TCP_QUICKACK
-            )
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, cls.TCP_QUICKACK)
 
         if hasattr(socket, "TCP_USER_TIMEOUT"):
             sock.setsockopt(
