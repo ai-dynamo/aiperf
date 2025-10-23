@@ -38,3 +38,6 @@ class ResultsProcessorType(CaseInsensitiveStrEnum):
     RECORD_EXPORT = "record_export"
     """Processor that exports per-record metrics to JSONL files with display unit conversion and filtering.
     Only enabled when export_level is set to RECORDS."""
+
+    TIMESLICE = "timeslice"
+    """Processor that processes metric results for each user-configurable time-slice."""
