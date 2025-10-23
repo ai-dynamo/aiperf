@@ -10,6 +10,7 @@ from typing import Any
 import orjson
 
 from aiperf.common.enums import TransportType
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.factories import TransportFactory
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord
@@ -94,7 +95,7 @@ class AioHttpTransport(BaseTransport):
         endpoint_info = request_info.model_endpoint.endpoint
 
         # Start with base URL
-        base_url = endpoint_info.base_url.rstrip("/") if endpoint_info.base_url else ""
+        base_url = endpoint_info.base_url.rstrip("/")
 
         # Determine the endpoint path
         if endpoint_info.custom_endpoint:
@@ -116,7 +117,6 @@ class AioHttpTransport(BaseTransport):
                     path = path.removeprefix("v1/")
                 url = f"{base_url}/{path}"
 
-        # Add http:// prefix if no scheme specified
         return url if url.startswith("http") else f"http://{url}"
 
     async def send_request(
@@ -131,6 +131,11 @@ class AioHttpTransport(BaseTransport):
         Returns:
             Request record with responses, timing, and any errors
         """
+        if self.aiohttp_client is None:
+            raise NotInitializedError(
+                "AioHttpTransport not initialized. Call initialize() before send_request()."
+            )
+
         start_perf_ns = time.perf_counter_ns()
         try:
             url = self.build_url(request_info)
@@ -146,8 +151,8 @@ class AioHttpTransport(BaseTransport):
             record = RequestRecord(
                 start_perf_ns=start_perf_ns,
                 end_perf_ns=time.perf_counter_ns(),
-                error=ErrorDetails(type=e.__class__.__name__, message=str(e)),
+                error=ErrorDetails.from_exception(e),
             )
-            self.exception(f"HTTP request failed: {e}")
+            self.exception(f"HTTP request failed: {e!r}")
 
         return record

@@ -46,6 +46,9 @@ class EmbeddingsEndpoint(BaseEndpoint):
         Returns:
             OpenAI Embeddings API payload
         """
+        if len(request_info.turns) != 1:
+            raise ValueError("Embeddings endpoint only supports one turn.")
+
         # Use first turn (hardcoded for now)
         turn = request_info.turns[0]
 

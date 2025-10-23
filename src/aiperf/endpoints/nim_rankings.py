@@ -56,6 +56,8 @@ class RankingsEndpoint(BaseEndpoint):
         Raises:
             ValueError: If query is missing
         """
+        if len(request_info.turns) != 1:
+            raise ValueError("Rankings endpoint only supports one turn.")
 
         turn = request_info.turns[0]
         model_endpoint = request_info.model_endpoint

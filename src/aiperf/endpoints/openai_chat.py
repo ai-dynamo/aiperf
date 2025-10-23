@@ -54,6 +54,9 @@ class ChatEndpoint(BaseEndpoint):
         Returns:
             OpenAI Chat Completions API payload
         """
+        if not request_info.turns:
+            raise ValueError("Chat endpoint requires at least one turn.")
+
         turns = request_info.turns
         model_endpoint = request_info.model_endpoint
         messages = self._create_messages(turns)
