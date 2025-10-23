@@ -1,12 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import Mock
-
 import pytest
 
 from aiperf.common.enums import EndpointType
-from aiperf.common.models import ParsedResponse, TextResponseData
+from aiperf.common.models import ParsedResponse, TextResponse, TextResponseData
 from aiperf.common.models.metadata import EndpointMetadata
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.common.protocols import InferenceServerResponse
@@ -132,11 +130,17 @@ class TestBaseEndpoint:
     @pytest.mark.asyncio
     async def test_extract_response_data_single_response(self, endpoint):
         """Test extract_response_data with single valid response."""
-        mock_response = Mock(spec=InferenceServerResponse)
-        mock_response.perf_ns = 123456789
-        mock_response.get_json.return_value = {"text": "Hello, world!"}
+        response = TextResponse(
+            perf_ns=123456789,
+            text='{"text": "Hello, world!"}',
+            content_type="application/json",
+        )
 
-        record = RequestRecord(responses=[mock_response])
+        record = RequestRecord(
+            responses=[response],
+            start_perf_ns=100000000,
+            end_perf_ns=123456789,
+        )
 
         results = endpoint.extract_response_data(record)
 
@@ -149,12 +153,18 @@ class TestBaseEndpoint:
         """Test extract_response_data with multiple responses."""
         responses = []
         for i in range(3):
-            mock_response = Mock(spec=InferenceServerResponse)
-            mock_response.perf_ns = 100000000 + i
-            mock_response.get_json.return_value = {"text": f"Response {i}"}
-            responses.append(mock_response)
+            response = TextResponse(
+                perf_ns=100000000 + i,
+                text=f'{{"text": "Response {i}"}}',
+                content_type="application/json",
+            )
+            responses.append(response)
 
-        record = RequestRecord(responses=responses)
+        record = RequestRecord(
+            responses=responses,
+            start_perf_ns=50000000,
+            end_perf_ns=100000002,
+        )
 
         results = endpoint.extract_response_data(record)
 
@@ -165,20 +175,28 @@ class TestBaseEndpoint:
     @pytest.mark.asyncio
     async def test_extract_response_data_filters_none(self, endpoint):
         """Test that None responses are filtered out."""
-        mock_response1 = Mock(spec=InferenceServerResponse)
-        mock_response1.perf_ns = 100
-        mock_response1.get_json.return_value = {"text": "Valid"}
+        response1 = TextResponse(
+            perf_ns=100,
+            text='{"text": "Valid"}',
+            content_type="application/json",
+        )
 
-        mock_response2 = Mock(spec=InferenceServerResponse)
-        mock_response2.perf_ns = 200
-        mock_response2.get_json.return_value = {}  # Will return None
+        response2 = TextResponse(
+            perf_ns=200,
+            text="{}",  # Will return None from parse
+            content_type="application/json",
+        )
 
-        mock_response3 = Mock(spec=InferenceServerResponse)
-        mock_response3.perf_ns = 300
-        mock_response3.get_json.return_value = {"text": "Also valid"}
+        response3 = TextResponse(
+            perf_ns=300,
+            text='{"text": "Also valid"}',
+            content_type="application/json",
+        )
 
         record = RequestRecord(
-            responses=[mock_response1, mock_response2, mock_response3]
+            responses=[response1, response2, response3],
+            start_perf_ns=50,
+            end_perf_ns=300,
         )
 
         results = endpoint.extract_response_data(record)
@@ -190,7 +208,11 @@ class TestBaseEndpoint:
     @pytest.mark.asyncio
     async def test_extract_response_data_empty_record(self, endpoint):
         """Test extract_response_data with no responses."""
-        record = RequestRecord(responses=[])
+        record = RequestRecord(
+            responses=[],
+            start_perf_ns=100,
+            end_perf_ns=200,
+        )
         results = endpoint.extract_response_data(record)
         assert len(results) == 0
 
@@ -203,11 +225,13 @@ class TestBaseEndpoint:
 
     def test_parse_response_called(self, endpoint):
         """Test that parse_response is implemented and callable."""
-        mock_response = Mock(spec=InferenceServerResponse)
-        mock_response.perf_ns = 12345
-        mock_response.get_json.return_value = {"text": "Hello"}
+        response = TextResponse(
+            perf_ns=12345,
+            text='{"text": "Hello"}',
+            content_type="application/json",
+        )
 
-        parsed = endpoint.parse_response(mock_response)
+        parsed = endpoint.parse_response(response)
 
         assert parsed is not None
         assert parsed.data.text == "Hello"

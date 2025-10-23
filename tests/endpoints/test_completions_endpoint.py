@@ -159,8 +159,8 @@ class TestCompletionsEndpoint:
             model_endpoint=model_endpoint, turn_index=0, turns=[turn1, turn2]
         )
 
-        payload = endpoint.format_payload(request_info)
-
-        # Should only use first turn
-        assert payload["prompt"] == ["First"]
-        assert payload["model"] == "model1"
+        # Should raise ValueError because completions endpoint only supports one turn
+        with pytest.raises(
+            ValueError, match="Completions endpoint only supports one turn"
+        ):
+            endpoint.format_payload(request_info)

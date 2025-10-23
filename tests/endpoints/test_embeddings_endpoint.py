@@ -142,11 +142,11 @@ class TestEmbeddingsEndpoint:
             model_endpoint=model_endpoint, turn_index=0, turns=[turn1, turn2]
         )
 
-        payload = endpoint.format_payload(request_info)
-
-        # Should only use first turn
-        assert payload["input"] == ["Embed me"]
-        assert payload["model"] == "model1"
+        # Should raise ValueError because embeddings endpoint only supports one turn
+        with pytest.raises(
+            ValueError, match="Embeddings endpoint only supports one turn"
+        ):
+            endpoint.format_payload(request_info)
 
     def test_format_payload_very_long_input(self, endpoint, model_endpoint):
         """Test handling of very long input text."""

@@ -253,7 +253,9 @@ def assert_error_request_record(
     if expected_error_type is not None:
         assert record.error.type == expected_error_type
     if expected_error_message is not None:
-        assert record.error.message == expected_error_message
+        # The error message is formatted as repr(exception), e.g., "ValueError('message')"
+        # Check if the expected message is contained in the actual message
+        assert expected_error_message in record.error.message
 
 
 def setup_mock_session(
