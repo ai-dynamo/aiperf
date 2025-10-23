@@ -10,10 +10,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import EndpointDefaults
-from aiperf.common.config.config_validators import (
-    custom_enum_converter,
-    parse_str_or_list,
-)
+from aiperf.common.config.config_validators import parse_str_or_list
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import EndpointType, ModelSelectionStrategy, TransportType
 
@@ -103,7 +100,6 @@ class EndpointConfig(BaseConfig):
                 "--endpoint-type",  # GenAI-Perf
             ),
             group=_CLI_GROUP,
-            converter=custom_enum_converter,
         ),
     ] = EndpointDefaults.TYPE
 

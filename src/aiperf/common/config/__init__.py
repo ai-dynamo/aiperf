@@ -44,7 +44,6 @@ from aiperf.common.config.config_defaults import (
 )
 from aiperf.common.config.config_validators import (
     coerce_value,
-    custom_enum_converter,
     parse_file,
     parse_service_types,
     parse_str_as_numeric_dict,
@@ -172,7 +171,6 @@ __all__ = [
     "ZMQTCPConfig",
     "ZMQTCPProxyConfig",
     "coerce_value",
-    "custom_enum_converter",
     "load_service_config",
     "load_user_config",
     "parse_file",
