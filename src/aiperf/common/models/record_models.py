@@ -3,15 +3,19 @@
 
 import sys
 import time
+from abc import ABC, abstractmethod
 from functools import cached_property
-from typing import Any
+from typing import Any, AnyStr
 
+import orjson
 from pydantic import (
     BaseModel,
     Field,
     SerializeAsAny,
 )
+from typing_extensions import Self
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import NANOS_PER_SECOND, STAT_KEYS
 from aiperf.common.enums import CreditPhase, SSEFieldType
 from aiperf.common.enums.metric_enums import MetricValueTypeT
@@ -19,7 +23,11 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
-from aiperf.common.types import MetricTagT
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.types import JsonObject, MetricTagT
+from aiperf.common.utils import load_json_str
+
+_logger = AIPerfLogger(__name__)
 
 
 class MetricResult(JsonMetricResult):
@@ -188,16 +196,42 @@ class ProcessRecordsResult(AIPerfBaseModel):
 ################################################################################
 
 
-class InferenceServerResponse(AIPerfBaseModel):
-    """Response from a inference client."""
+class BaseInferenceServerResponse(AIPerfBaseModel, ABC):
+    """Base class for inference server response implementations.
+
+    Provides shared functionality for all response types. The interface
+    is defined by the InferenceServerResponse Protocol in protocols.py,
+    allowing for flexible implementations and easy mocking.
+
+    This base class ensures concrete implementations provide:
+    - perf_ns: Timestamp in nanoseconds
+    - get_raw(): Raw response data
+    - get_text(): Text representation
+    - get_json(): Parsed JSON representation
+    """
 
     perf_ns: int = Field(
         ...,
         description="The timestamp of the response in nanoseconds (perf_counter_ns).",
     )
 
+    @abstractmethod
+    def get_raw(self) -> Any | None:
+        """Get the raw representation of the response."""
+        ...
 
-class TextResponse(InferenceServerResponse):
+    @abstractmethod
+    def get_text(self) -> str | None:
+        """Get the text representation of the response."""
+        ...
+
+    @abstractmethod
+    def get_json(self) -> JsonObject | None:
+        """Get the JSON representation of the response."""
+        ...
+
+
+class TextResponse(BaseInferenceServerResponse):
     """Raw text response from a inference client including an optional content type."""
 
     content_type: str | None = Field(
@@ -208,6 +242,23 @@ class TextResponse(InferenceServerResponse):
         ...,
         description="The text of the response.",
     )
+
+    def get_raw(self) -> Any | None:
+        """Get the raw representation of the response."""
+        return self.text
+
+    def get_text(self) -> str | None:
+        """Get the text representation of the response."""
+        return self.text
+
+    def get_json(self) -> JsonObject | None:
+        """Get the JSON representation of the response."""
+        try:
+            if not self.text:
+                return None
+            return load_json_str(self.text)
+        except orjson.JSONDecodeError:
+            return None
 
 
 class SSEField(AIPerfBaseModel):
@@ -223,7 +274,7 @@ class SSEField(AIPerfBaseModel):
     )
 
 
-class SSEMessage(InferenceServerResponse):
+class SSEMessage(BaseInferenceServerResponse):
     """Individual SSE message from an SSE stream. Delimited by \n\n."""
 
     # Note: "fields" is a restricted keyword in pydantic
@@ -231,6 +282,46 @@ class SSEMessage(InferenceServerResponse):
         default_factory=list,
         description="The fields contained in the message.",
     )
+
+    @classmethod
+    def parse(cls, raw_message: AnyStr, perf_ns: int) -> Self:
+        """Parse a raw SSE message into an SSEMessage object.
+
+        Parsing logic based on the official HTML SSE Living Standard:
+        https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream
+
+        Args:
+            raw_message: The raw SSE message to parse. Can be a string or a bytes object.
+            perf_ns: The performance timestamp of the response.
+
+        Returns:
+            The parsed SSEMessage.
+        """
+        if isinstance(raw_message, bytes):
+            raw_message = raw_message.decode("utf-8")
+
+        message = cls(perf_ns=perf_ns)
+        for line in raw_message.splitlines():
+            if not (line := line.strip()):
+                continue
+
+            parts = line.split(":", 1)
+            if len(parts) < 2:
+                # Fields without a colon have no value, so the whole line is the field name
+                message.packets.append(SSEField(name=parts[0].strip(), value=None))
+                continue
+
+            field_name, value = parts
+
+            if field_name == "":
+                # Field name is empty, so this is a comment
+                field_name = SSEFieldType.COMMENT
+
+            message.packets.append(
+                SSEField(name=field_name.strip(), value=value.strip())
+            )
+
+        return message
 
     def extract_data_content(self) -> str:
         """Extract the data contents from the SSE message as a list of strings. Note that the SSE spec specifies
@@ -240,12 +331,31 @@ class SSEMessage(InferenceServerResponse):
             list[str]: A list of strings containing the data contents of the SSE message.
         """
         return "\n".join(
-            [
-                packet.value
-                for packet in self.packets
-                if packet.name == SSEFieldType.DATA and packet.value
-            ]
+            packet.value
+            for packet in self.packets
+            if packet.name == SSEFieldType.DATA and packet.value
         )
+
+    def get_raw(self) -> Any | None:
+        """Get the raw representation of the SSE message."""
+        return self.packets
+
+    def get_text(self) -> str | None:
+        """Get the text representation of the SSE message."""
+        if data_content := self.extract_data_content():
+            return data_content
+        return None
+
+    def get_json(self) -> JsonObject | None:
+        """Get the JSON representation of the response."""
+        data_content = None
+        try:
+            data_content = self.get_text()
+            if data_content in ("", None, "[DONE]"):
+                return None
+            return load_json_str(data_content)
+        except orjson.JSONDecodeError:
+            return None
 
 
 class RequestRecord(AIPerfBaseModel):
@@ -300,9 +410,7 @@ class RequestRecord(AIPerfBaseModel):
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
-    responses: SerializeAsAny[
-        list[SSEMessage | TextResponse | InferenceServerResponse | Any]
-    ] = Field(
+    responses: SerializeAsAny[list[SSEMessage | TextResponse]] = Field(
         default_factory=list,
         description="The raw responses received from the request.",
     )
@@ -597,3 +705,59 @@ class ParsedResponseRecord(AIPerfBaseModel):
             and 0 <= self.start_perf_ns < self.end_perf_ns < sys.maxsize
             and all(0 < response.perf_ns < sys.maxsize for response in self.responses)
         )
+
+
+class RequestInfo(AIPerfBaseModel):
+    """Info about a request."""
+
+    model_endpoint: ModelEndpointInfo = Field(
+        ...,
+        description="The model endpoint that the request was sent to.",
+    )
+    turns: list[Turn] = Field(
+        default_factory=list,
+        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations.",
+    )
+    turn_index: int | None = Field(
+        default=None,
+        description="The index of the turn in the conversation (if applicable).",
+    )
+    endpoint_headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Endpoint-specific headers (auth, API keys, custom headers).",
+    )
+    endpoint_params: dict[str, str] = Field(
+        default_factory=dict,
+        description="Endpoint-specific URL query parameters.",
+    )
+    credit_num: int | None = Field(
+        default=None,
+        ge=0,
+        description="The sequential number of the credit in the credit phase. This is used to track the progress of the credit phase,"
+        " as well as the order that requests are sent in.",
+    )
+    credit_phase: CreditPhase = Field(
+        default=CreditPhase.PROFILING,
+        description="The type of credit phase (either warmup or profiling)",
+    )
+    should_cancel: bool = Field(
+        default=False,
+        description="Whether this request should be cancelled after the specified delay.",
+    )
+    cancel_after_ns: int = Field(
+        default=0,
+        ge=0,
+        description="The delay in nanoseconds after which the request should be cancelled, as specified in the credit drop message.",
+    )
+    x_request_id: str | None = Field(
+        default=None,
+        description="The X-Request-ID header of the request. This is a unique ID for the request.",
+    )
+    x_correlation_id: str | None = Field(
+        default=None,
+        description="The X-Correlation-ID header of the request. This is the ID of the credit drop.",
+    )
+    conversation_id: str | None = Field(
+        default=None,
+        description="The ID of the conversation (if applicable).",
+    )

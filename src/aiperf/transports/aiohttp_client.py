@@ -2,49 +2,37 @@
 # SPDX-License-Identifier: Apache-2.0
 import socket
 import time
-import typing
 from typing import Any
 
 import aiohttp
 
-from aiperf.common.enums import SSEFieldType
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     ErrorDetails,
     RequestRecord,
-    SSEField,
-    SSEMessage,
     TextResponse,
 )
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.transports.http_defaults import AioHttpDefaults, SocketDefaults
-
-################################################################################
-# AioHTTP Client
-################################################################################
+from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
 
-class AioHttpClientMixin(AIPerfLoggerMixin):
+class AioHttpClient(AIPerfLoggerMixin):
     """A high-performance HTTP client for communicating with HTTP based REST APIs using aiohttp.
 
     This class is optimized for maximum performance and accurate timing measurements,
     making it ideal for benchmarking scenarios.
     """
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None:
-        self.model_endpoint = model_endpoint
-        super().__init__(model_endpoint=model_endpoint, **kwargs)
-        self.tcp_connector = create_tcp_connector()
-
-        # For now, just set all timeouts to the same value.
-        # TODO: Add support for different timeouts for different parts of the request.
-        self.timeout = aiohttp.ClientTimeout(
-            total=self.model_endpoint.endpoint.timeout,
-            connect=self.model_endpoint.endpoint.timeout,
-            sock_connect=self.model_endpoint.endpoint.timeout,
-            sock_read=self.model_endpoint.endpoint.timeout,
-            ceil_threshold=self.model_endpoint.endpoint.timeout,
-        )
+    def __init__(
+        self,
+        timeout: float | None = None,
+        tcp_kwargs: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> None:
+        """Initialize the AioHttpClient."""
+        super().__init__(**kwargs)
+        self.tcp_connector = create_tcp_connector(**tcp_kwargs or {})
+        self.timeout = aiohttp.ClientTimeout(total=timeout)
 
     async def close(self) -> None:
         """Close the client."""
@@ -113,10 +101,8 @@ class AioHttpClientMixin(AIPerfLoggerMixin):
                         and response.content_type == "text/event-stream"
                     ):
                         # Parse SSE stream with optimal performance
-                        messages = await AioHttpSSEStreamReader(
-                            response
-                        ).read_complete_stream()
-                        record.responses.extend(messages)
+                        async for message in AsyncSSEStreamReader(response.content):
+                            record.responses.append(message)
                     else:
                         raw_response = await response.text()
                         record.end_perf_ns = time.perf_counter_ns()
@@ -132,7 +118,7 @@ class AioHttpClientMixin(AIPerfLoggerMixin):
         except Exception as e:
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Error in aiohttp request: {e!r}")
-            record.error = ErrorDetails(type=e.__class__.__name__, message=str(e))
+            record.error = ErrorDetails.from_exception(e)
 
         return record
 
@@ -158,100 +144,6 @@ class AioHttpClientMixin(AIPerfLoggerMixin):
         The response will be parsed into a TextResponse object.
         """
         return await self._request("GET", url, headers, **kwargs)
-
-
-class AioHttpSSEStreamReader:
-    """A helper class for reading an SSE stream from an aiohttp.ClientResponse object.
-
-    This class is optimized for maximum performance and accurate timing measurements,
-    making it ideal for benchmarking scenarios.
-    """
-
-    def __init__(self, response: aiohttp.ClientResponse):
-        self.response = response
-
-    async def read_complete_stream(self) -> list[SSEMessage]:
-        """Read the complete SSE stream in a performant manner and return a list of
-        SSE messages that contain the most accurate timestamp data possible.
-
-        Returns:
-            A list of SSE messages.
-        """
-        messages: list[SSEMessage] = []
-
-        async for raw_message, first_byte_ns in self.__aiter__():
-            # Parse the raw SSE message into a SSEMessage object
-            message = parse_sse_message(raw_message, first_byte_ns)
-            messages.append(message)
-
-        return messages
-
-    async def __aiter__(self) -> typing.AsyncIterator[tuple[str, int]]:
-        """Iterate over the SSE stream in a performant manner and return a tuple of the
-        raw SSE message, the perf_counter_ns of the first byte, and the perf_counter_ns of the last byte.
-        This provides the most accurate timing information possible without any delays due to the nature of
-        the aiohttp library. The first byte is read immediately to capture the timestamp of the first byte,
-        and the last byte is read after the rest of the chunk is read to capture the timestamp of the last byte.
-
-        Returns:
-            An async iterator of tuples of the raw SSE message, and the perf_counter_ns of the first byte
-        """
-
-        while not self.response.content.at_eof():
-            # Read the first byte of the SSE stream
-            first_byte = await self.response.content.read(1)
-            chunk_ns_first_byte = time.perf_counter_ns()
-            if not first_byte:
-                break
-
-            # Read until we hit \n\n which delimits SSE messages
-            chunk = await self.response.content.readuntil(b"\n\n")
-
-            if not chunk:
-                break
-            chunk = first_byte + chunk
-
-            try:
-                decoded = chunk.decode("utf-8")
-                for sub_chunk in decoded.split("\n\n"):
-                    if sub_chunk:
-                        yield (sub_chunk, chunk_ns_first_byte)
-                # Use the fastest available decoder
-            except UnicodeDecodeError:
-                # Handle potential encoding issues gracefully
-                yield (
-                    chunk.decode("utf-8", errors="replace").strip(),
-                    chunk_ns_first_byte,
-                )
-
-
-def parse_sse_message(raw_message: str, perf_ns: int) -> SSEMessage:
-    """Parse a raw SSE message into an SSEMessage object.
-
-    Parsing logic based on official HTML SSE Living Standard:
-    https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream
-    """
-
-    message = SSEMessage(perf_ns=perf_ns)
-    for line in raw_message.split("\n"):
-        if not (line := line.strip()):
-            continue
-
-        parts = line.split(":", 1)
-        if len(parts) < 2:
-            # Fields without a colon have no value, so the whole line is the field name
-            message.packets.append(SSEField(name=parts[0].strip(), value=None))
-            continue
-
-        field_name, value = parts
-
-        if field_name == "":
-            # Field name is empty, so this is a comment
-            field_name = SSEFieldType.COMMENT
-
-        message.packets.append(SSEField(name=field_name.strip(), value=value.strip()))
-
-    return message
 
 
 def create_tcp_connector(**kwargs) -> aiohttp.TCPConnector:

@@ -30,6 +30,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
+from aiperf.module_loader import ensure_modules_loaded
 from tests.comms.mock_zmq import (
     mock_zmq_communication as mock_zmq_communication,  # import fixture globally
 )
@@ -65,6 +66,16 @@ def no_sleep(monkeypatch) -> None:
         )  # relinquish time slice to other tasks to avoid blocking the event loop
 
     monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def load_aiperf_modules() -> None:
+    """Load all AIPerf modules for testing.
+
+    This fixture is automatically used for all tests and ensures that all AIPerf
+    modules are loaded for registration purposes.
+    """
+    ensure_modules_loaded()
 
 
 @pytest.fixture
@@ -423,13 +434,6 @@ def mock_platform_linux(mock_platform_system):
 def mock_multiprocessing_set_start_method():
     """Mock multiprocessing.set_start_method() for testing spawn method setup."""
     with patch("multiprocessing.set_start_method") as mock:
-        yield mock
-
-
-@pytest.fixture
-def mock_ensure_modules_loaded():
-    """Mock aiperf.module_loader.ensure_modules_loaded() for testing."""
-    with patch("aiperf.module_loader.ensure_modules_loaded") as mock:
         yield mock
 
 

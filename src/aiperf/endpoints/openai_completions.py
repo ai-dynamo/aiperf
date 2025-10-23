@@ -1,32 +1,60 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from __future__ import annotations
 
+from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import EndpointType
-from aiperf.common.factories import RequestConverterFactory
-from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models import Turn
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.factories import EndpointFactory
+from aiperf.common.models import (
+    BaseResponseData,
+    ParsedResponse,
+)
+from aiperf.common.models.metadata import EndpointMetadata
+from aiperf.common.models.record_models import RequestInfo
+from aiperf.common.protocols import EndpointProtocol, InferenceServerResponse
+from aiperf.common.types import JsonObject, RequestOutputT
+from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 
-# TODO: Not fully implemented yet.
-@RequestConverterFactory.register(EndpointType.COMPLETIONS)
-class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
-    """Request converter for OpenAI completion requests."""
+@implements_protocol(EndpointProtocol)
+@EndpointFactory.register(EndpointType.COMPLETIONS)
+class CompletionsEndpoint(BaseEndpoint):
+    """OpenAI Completions endpoint.
 
-    async def format_payload(
-        self,
-        model_endpoint: ModelEndpointInfo,
-        turns: list[Turn],
-    ) -> dict[str, Any]:
-        """Format payload for a completion request."""
+    Supports text completions with streaming.
+    """
 
-        # This converter does not support multi-turn completions. Only the last turn is used.
-        turn = turns[-1]
+    @classmethod
+    def metadata(cls) -> EndpointMetadata:
+        """Return Completions endpoint metadata."""
+        return EndpointMetadata(
+            endpoint_path="/v1/completions",
+            supports_streaming=True,
+            produces_tokens=True,
+            tokenizes_input=True,
+            metrics_title="LLM Metrics",
+        )
+
+    def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
+        """Format payload for a completions request.
+
+        Args:
+            request_info: Request context including model endpoint, metadata, and turns
+
+        Returns:
+            OpenAI Completions API payload
+        """
+        if len(request_info.turns) != 1:
+            raise ValueError("Completions endpoint only supports one turn.")
+
+        turn = request_info.turns[0]
+        model_endpoint = request_info.model_endpoint
+
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]
+
         extra = model_endpoint.endpoint.extra or []
 
         payload = {
@@ -43,3 +71,47 @@ class OpenAICompletionRequestConverter(AIPerfLoggerMixin):
 
         self.debug(lambda: f"Formatted payload: {payload}")
         return payload
+
+    def parse_response(
+        self, response: InferenceServerResponse
+    ) -> ParsedResponse | None:
+        """Parse OpenAI Completions response.
+
+        Args:
+            response: Raw response from inference server
+
+        Returns:
+            Parsed response with extracted text content
+        """
+        json_obj = response.get_json()
+        if not json_obj:
+            return None
+
+        if data := self.extract_completions_response_data(json_obj):
+            return ParsedResponse(perf_ns=response.perf_ns, data=data)
+
+        return None
+
+    def extract_completions_response_data(
+        self, json_obj: JsonObject
+    ) -> BaseResponseData | None:
+        """Extract content from OpenAI Completions JSON response.
+
+        Handles both text_completion and completion object types.
+
+        Args:
+            json_obj: Deserialized OpenAI response
+
+        Returns:
+            Extracted text data or None if no content
+        """
+        match json_obj.get("object"):
+            case "completion" | "text_completion":
+                choices = json_obj.get("choices")
+                if not choices:
+                    self.debug(lambda: f"No choices found in response: {json_obj}")
+                    return None
+                return self.make_text_response_data(choices[0].get("text"))
+            case _:
+                object_type = json_obj.get("object")
+                raise ValueError(f"Unsupported OpenAI object type: {object_type!r}")

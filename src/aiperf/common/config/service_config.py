@@ -20,9 +20,9 @@ from aiperf.common.config.zmq_config import (
 )
 from aiperf.common.enums import (
     AIPerfLogLevel,
+    AIPerfUIType,
     ServiceRunType,
 )
-from aiperf.common.enums.ui_enums import AIPerfUIType
 
 _logger = AIPerfLogger(__name__)
 

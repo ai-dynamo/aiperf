@@ -9,7 +9,7 @@ from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, Use
 from aiperf.common.messages import ConversationTurnResponseMessage
 from aiperf.common.models import ErrorDetails, RequestRecord, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.parsers.inference_result_parser import InferenceResultParser
+from aiperf.records.inference_result_parser import InferenceResultParser
 
 
 @pytest.fixture
@@ -49,7 +49,12 @@ def parser(mock_turn_response):
     mock_comms = MagicMock()
     mock_comms.create_request_client.return_value = mock_client
 
-    def mock_communication_init(self, **_kwargs):
+    def mock_communication_init(self, service_config, **kwargs):
+        # Call the parent class __init__ to ensure lifecycle state is initialized
+        from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
+
+        AIPerfLifecycleMixin.__init__(self, service_config=service_config, **kwargs)
+        self.service_config = service_config
         self.comms = mock_comms
         # Add logger methods
         for method in [
@@ -69,7 +74,7 @@ def parser(mock_turn_response):
         patch(
             "aiperf.common.models.model_endpoint_info.ModelEndpointInfo.from_user_config"
         ),
-        patch("aiperf.common.factories.ResponseExtractorFactory.create_instance"),
+        patch("aiperf.common.factories.EndpointFactory.create_instance"),
     ):
         parser = InferenceResultParser(
             service_config=ServiceConfig(),

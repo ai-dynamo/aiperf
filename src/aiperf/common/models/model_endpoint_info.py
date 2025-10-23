@@ -12,7 +12,7 @@ from typing import Any
 from pydantic import Field
 
 from aiperf.common.config import EndpointDefaults, UserConfig
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy, TransportType
 from aiperf.common.models import AIPerfBaseModel
 
 
@@ -61,8 +61,8 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointType.CHAT,
         description="The type of request payload to use for the endpoint.",
     )
-    base_url: str | None = Field(
-        default=None,
+    base_url: str = Field(
+        default=EndpointDefaults.URL,
         description="URL of the endpoint.",
     )
     custom_endpoint: str | None = Field(
@@ -76,8 +76,8 @@ class EndpointInfo(AIPerfBaseModel):
         default=False,
         description="Whether the endpoint supports streaming.",
     )
-    headers: list[tuple[str, str]] | None = Field(
-        default=None,
+    headers: list[tuple[str, str]] = Field(
+        default=[],
         description="Custom URL headers to use for the endpoint.",
     )
     api_key: str | None = Field(
@@ -92,8 +92,8 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.TIMEOUT,
         description="The timeout in seconds for each request to the endpoint.",
     )
-    extra: list[tuple[str, Any]] | None = Field(
-        default=None,
+    extra: list[tuple[str, Any]] = Field(
+        default=[],
         description="Additional inputs to include with every request. "
         "You can repeat this flag for multiple inputs. Inputs should be in an 'input_name:value' format. "
         "Alternatively, a string representing a json formatted dict can be provided.",
@@ -103,7 +103,7 @@ class EndpointInfo(AIPerfBaseModel):
     def from_user_config(cls, user_config: UserConfig) -> "EndpointInfo":
         """Create an HttpEndpointInfo from a UserConfig."""
         return cls(
-            type=EndpointType(user_config.endpoint.type),
+            type=user_config.endpoint.type,
             custom_endpoint=user_config.endpoint.custom_endpoint,
             streaming=user_config.endpoint.streaming,
             base_url=user_config.endpoint.url,
@@ -125,6 +125,10 @@ class ModelEndpointInfo(AIPerfBaseModel):
         ...,
         description="The endpoint to use for the models.",
     )
+    transport: TransportType | None = Field(
+        default=None,
+        description="The transport to use for the endpoint. If not provided, it will be auto-detected from the URL.",
+    )
 
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> "ModelEndpointInfo":
@@ -132,23 +136,8 @@ class ModelEndpointInfo(AIPerfBaseModel):
         return cls(
             models=ModelListInfo.from_user_config(user_config),
             endpoint=EndpointInfo.from_user_config(user_config),
+            transport=user_config.endpoint.transport,
         )
-
-    @property
-    def url(self) -> str:
-        """Get the full URL for the endpoint."""
-        url = self.endpoint.base_url.rstrip("/") if self.endpoint.base_url else ""
-
-        if self.endpoint.custom_endpoint:
-            path = self.endpoint.custom_endpoint.lstrip("/")
-        else:
-            if not self.endpoint.type.endpoint_path:
-                return url
-            path = self.endpoint.type.endpoint_path.lstrip("/")
-            if url.endswith("/v1") and path.startswith("v1/"):
-                path = path[3:]  # Remove the v1/ prefix
-
-        return f"{url}/{path}"
 
     @property
     def primary_model(self) -> ModelInfo:

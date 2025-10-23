@@ -4,14 +4,16 @@
 from pathlib import Path
 from typing import Any, ClassVar
 
+from aiperf.common.constants import DEFAULT_PUBLIC_DATASET_TIMEOUT
 from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, RequestRecord
-from aiperf.transports.aiohttp_client import AioHttpClientMixin
+from aiperf.transports.aiohttp_client import AioHttpClient
 
 AIPERF_DATASET_CACHE_DIR = Path(".cache/aiperf/datasets")
 
 
-class BasePublicDatasetLoader(AioHttpClientMixin):
+class BasePublicDatasetLoader(AIPerfLoggerMixin):
     """Base class for loading public datasets from remote URLs with caching support.
 
     This abstract base class provides a common interface and implementation for downloading,
@@ -43,6 +45,7 @@ class BasePublicDatasetLoader(AioHttpClientMixin):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.http_client = AioHttpClient(timeout=DEFAULT_PUBLIC_DATASET_TIMEOUT)
         self.cache_filepath = AIPERF_DATASET_CACHE_DIR / self.filename
 
     async def load_dataset(self) -> dict[str, Any]:
@@ -99,8 +102,10 @@ class BasePublicDatasetLoader(AioHttpClientMixin):
         """
         if not self.cache_filepath.exists():
             self.info(f"No local dataset cache found, downloading from {self.url}")
-            record: RequestRecord = await self.get_request(self.url, headers=headers)
-            await self.close()
+            record: RequestRecord = await self.http_client.get_request(
+                self.url, headers=headers
+            )
+            await self.http_client.close()
 
             dataset = record.responses[0].text
             self._save_to_local(dataset)

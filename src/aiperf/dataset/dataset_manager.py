@@ -21,7 +21,6 @@ from aiperf.common.enums import (
 from aiperf.common.enums.dataset_enums import CustomDatasetType
 from aiperf.common.factories import (
     ComposerFactory,
-    RequestConverterFactory,
     ServiceFactory,
 )
 from aiperf.common.hooks import on_command, on_request
@@ -39,7 +38,8 @@ from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import Conversation, InputsFile
 from aiperf.common.models.dataset_models import SessionPayloads
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.protocols import RequestConverterProtocol, ServiceProtocol
+from aiperf.common.models.record_models import RequestInfo
+from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader import ShareGPTLoader
 
@@ -114,22 +114,45 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             revision=self.user_config.tokenizer.revision,
         )
 
-    async def _generate_input_payloads(
+    def _generate_input_payloads(
         self,
         model_endpoint: ModelEndpointInfo,
-        request_converter: RequestConverterProtocol,
     ) -> InputsFile:
         """Generate input payloads from the dataset for use in the inputs.json file."""
         inputs = InputsFile()
+        from aiperf.common.factories import EndpointFactory
+        from aiperf.common.protocols import EndpointProtocol
+
+        endpoint: EndpointProtocol = EndpointFactory.create_instance(
+            model_endpoint.endpoint.type,
+            model_endpoint=model_endpoint,
+        )
+        self.debug(
+            lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
+            f"class: {endpoint.__class__.__name__}",
+        )
+        session_payloads_map: dict[str, list] = {}
         for conversation in self.dataset.values():
-            payloads = await asyncio.gather(
-                *[
-                    request_converter.format_payload(model_endpoint, [turn])
-                    for turn in conversation.turns
-                ]
-            )
+            session_id = conversation.session_id
+            if session_id not in session_payloads_map:
+                session_payloads_map[session_id] = []
+
+            for i, turn in enumerate(conversation.turns):
+                request_info = RequestInfo(
+                    model_endpoint=model_endpoint, turns=[turn], turn_index=i
+                )
+                request_info.endpoint_headers = endpoint.get_endpoint_headers(
+                    request_info
+                )
+                request_info.endpoint_params = endpoint.get_endpoint_params(
+                    request_info
+                )
+                payload = endpoint.format_payload(request_info)
+                session_payloads_map[session_id].append(payload)
+
+        for session_id, payloads in session_payloads_map.items():
             inputs.data.append(
-                SessionPayloads(session_id=conversation.session_id, payloads=payloads)
+                SessionPayloads(session_id=session_id, payloads=payloads)
             )
         return inputs
 
@@ -145,13 +168,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
             model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
-            request_converter = RequestConverterFactory.create_instance(
-                model_endpoint.endpoint.type,
-            )
-
-            inputs = await self._generate_input_payloads(
-                model_endpoint, request_converter
-            )
+            inputs = self._generate_input_payloads(model_endpoint)
 
             async with aiofiles.open(file_path, "w") as f:
                 await f.write(inputs.model_dump_json(indent=2, exclude_unset=True))

@@ -38,11 +38,6 @@ from aiperf.common.enums.dataset_enums import (
     VideoFormat,
     VideoSynthType,
 )
-from aiperf.common.enums.endpoints_enums import (
-    EndpointServiceKind,
-    EndpointType,
-    EndpointTypeInfo,
-)
 from aiperf.common.enums.logging_enums import (
     AIPerfLogLevel,
 )
@@ -79,8 +74,10 @@ from aiperf.common.enums.metric_enums import (
 from aiperf.common.enums.model_enums import (
     ModelSelectionStrategy,
 )
-from aiperf.common.enums.openai_enums import (
-    OpenAIObjectType,
+from aiperf.common.enums.plugin_enums import (
+    AIPerfUIType,
+    EndpointType,
+    TransportType,
 )
 from aiperf.common.enums.post_processor_enums import (
     RecordProcessorType,
@@ -102,9 +99,6 @@ from aiperf.common.enums.timing_enums import (
     CreditPhase,
     RequestRateMode,
     TimingMode,
-)
-from aiperf.common.enums.ui_enums import (
-    AIPerfUIType,
 )
 from aiperf.common.enums.worker_enums import (
     WorkerStatus,
@@ -129,9 +123,7 @@ __all__ = [
     "CreditPhase",
     "CustomDatasetType",
     "DataExporterType",
-    "EndpointServiceKind",
     "EndpointType",
-    "EndpointTypeInfo",
     "EnergyMetricUnit",
     "EnergyMetricUnitInfo",
     "ExportLevel",
@@ -154,7 +146,6 @@ __all__ = [
     "MetricValueTypeInfo",
     "MetricValueTypeVarT",
     "ModelSelectionStrategy",
-    "OpenAIObjectType",
     "PowerMetricUnit",
     "PowerMetricUnitInfo",
     "PromptSource",
@@ -170,6 +161,7 @@ __all__ = [
     "TemperatureMetricUnit",
     "TemperatureMetricUnitInfo",
     "TimingMode",
+    "TransportType",
     "VideoFormat",
     "VideoSynthType",
     "WorkerStatus",

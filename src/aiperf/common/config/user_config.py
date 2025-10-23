@@ -20,7 +20,6 @@ from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import CustomDatasetType
-from aiperf.common.enums.endpoints_enums import EndpointServiceKind
 from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
 from aiperf.common.utils import load_json_str
 
@@ -267,12 +266,14 @@ class UserConfig(BaseConfig):
 
     def _get_artifact_service_kind(self) -> str:
         """Get the service kind name based on the endpoint config."""
-        if self.endpoint.type.service_kind == EndpointServiceKind.OPENAI:
-            return f"{self.endpoint.type.service_kind}-{self.endpoint.type}"
-        else:
-            raise ValueError(
-                f"Unknown service kind '{self.endpoint.type.service_kind}'."
-            )
+        # Lazy import to avoid circular dependency
+        from aiperf.common.factories import EndpointFactory
+        from aiperf.module_loader import ensure_modules_loaded
+
+        ensure_modules_loaded()
+
+        metadata = EndpointFactory.get_metadata(self.endpoint.type)
+        return f"{metadata.service_kind}-{self.endpoint.type}"
 
     def _get_artifact_stimulus(self) -> str:
         """Get the stimulus name based on the timing mode."""

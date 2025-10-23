@@ -23,12 +23,9 @@ from aiperf.common.enums import (
 )
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.factories import (
-    InferenceClientFactory,
-    RequestConverterFactory,
-    ResponseExtractorFactory,
     ServiceFactory,
 )
-from aiperf.common.hooks import background_task, on_command, on_pull_message, on_stop
+from aiperf.common.hooks import background_task, on_command, on_pull_message
 from aiperf.common.messages import (
     CommandAcknowledgedResponse,
     ConversationRequestMessage,
@@ -50,11 +47,12 @@ from aiperf.common.models import (
     WorkerTaskStats,
 )
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.models.record_models import RequestInfo
 from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
-    ResponseExtractorProtocol,
 )
+from aiperf.workers.inference_client import InferenceClient
 
 
 @ServiceFactory.register(ServiceType.WORKER)
@@ -106,23 +104,14 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
 
         self.model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
 
+        self.inference_client: InferenceClient = InferenceClient(
+            model_endpoint=self.model_endpoint
+        )
         self.debug(
             lambda: f"Creating inference client for {self.model_endpoint.endpoint.type}, "
-            f"class: {InferenceClientFactory.get_class_from_type(self.model_endpoint.endpoint.type).__name__}",
+            f"class: {self.inference_client.__class__.__name__}",
         )
-        self.request_converter = RequestConverterFactory.create_instance(
-            self.model_endpoint.endpoint.type,
-        )
-        self.inference_client = InferenceClientFactory.create_instance(
-            self.model_endpoint.endpoint.type,
-            model_endpoint=self.model_endpoint,
-        )
-        self.extractor: ResponseExtractorProtocol = (
-            ResponseExtractorFactory.create_instance(
-                self.model_endpoint.endpoint.type,
-                model_endpoint=self.model_endpoint,
-            )
-        )
+        self.attach_child_lifecycle(self.inference_client)
 
     @on_pull_message(MessageType.CREDIT_DROP)
     async def _credit_drop_callback(self, message: CreditDropMessage) -> None:
@@ -133,12 +122,6 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             await self._process_credit_drop_internal(message)
         except Exception as e:
             self.error(f"Error processing credit drop: {e!r}")
-
-    @on_stop
-    async def _shutdown_worker(self) -> None:
-        self.debug("Shutting down worker")
-        if self.inference_client:
-            await self.inference_client.close()
 
     @background_task(
         immediate=False,
@@ -215,17 +198,27 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             self.task_stats.total += 1
             turn = conversation.turns[turn_index]
             turn_list.append(turn)
-            record = await self._build_response_record(
-                conversation_id=conversation.session_id,
-                message=message,
-                turn_list=turn_list,
+
+            request_info = RequestInfo(
+                model_endpoint=self.model_endpoint,
+                credit_num=message.credit_num,
+                credit_phase=message.phase,
+                should_cancel=message.should_cancel,
+                cancel_after_ns=message.cancel_after_ns,
+                x_request_id=str(uuid.uuid4()),
+                x_correlation_id=message.request_id,  # CreditDropMessage request_id is the X-Correlation-ID header
+                conversation_id=message.conversation_id,
                 turn_index=turn_index,
+                turns=turn_list,
+            )
+
+            return_message.requests_sent += 1
+            record = await self._build_response_record(
+                request_info=request_info,
                 drop_perf_ns=drop_perf_ns,
             )
-            return_message.requests_sent += 1
             await self._send_inference_result_message(record)
-            resp_turn = await self._process_response(record)
-            if resp_turn:
+            if resp_turn := await self._process_response(record):
                 turn_list.append(resp_turn)
 
     async def _retrieve_conversation_response(
@@ -273,35 +266,30 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
     async def _build_response_record(
         self,
         *,
-        conversation_id: str,
-        message: CreditDropMessage,
-        turn_list: list[Turn],
-        turn_index: int,
+        request_info: RequestInfo,
         drop_perf_ns: int,
     ) -> RequestRecord:
         """Build a RequestRecord from an inference API call for the given turn."""
-        x_request_id = str(uuid.uuid4())
-        record = await self._call_inference_api_internal(
-            message, turn_list, x_request_id
-        )
+        record = await self._call_inference_api_internal(request_info, drop_perf_ns)
         record.model_name = (
-            turn_list[-1].model or self.model_endpoint.primary_model_name
+            request_info.turns[request_info.turn_index].model
+            or self.model_endpoint.primary_model_name
         )
-        record.conversation_id = conversation_id
-        record.turn_index = turn_index
-        record.credit_phase = message.phase
-        record.cancel_after_ns = message.cancel_after_ns
-        record.x_request_id = x_request_id
-        record.x_correlation_id = message.request_id
-        record.credit_num = message.credit_num
+        record.conversation_id = request_info.conversation_id
+        record.turn_index = request_info.turn_index
+        record.credit_phase = request_info.credit_phase
+        record.cancel_after_ns = request_info.cancel_after_ns
+        record.x_request_id = request_info.x_request_id
+        record.x_correlation_id = request_info.x_correlation_id
+        record.credit_num = request_info.credit_num
         # If this is the first turn, calculate the credit drop latency
-        if turn_index == 0:
+        if request_info.turn_index == 0:
             record.credit_drop_latency = record.start_perf_ns - drop_perf_ns
         return record
 
     async def _process_response(self, record: RequestRecord) -> Turn | None:
         """Process the response from the inference API call and convert it to a Turn object."""
-        resp = await self.extractor.extract_response_data(record)
+        resp = self.inference_client.endpoint.extract_response_data(record)
         # TODO how do we handle reasoning responses in multi turn?
         resp_text = "".join([r.data.get_text() for r in resp])
         if resp_text:
@@ -313,29 +301,23 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
 
     async def _call_inference_api_internal(
         self,
-        message: CreditDropMessage,
-        turn_list: list[Turn],
-        x_request_id: str,
+        request_info: RequestInfo,  # NOTE: RequestInfo is used to pass the request info to the inference client
+        credit_drop_ns: int,
     ) -> RequestRecord:
         """Make a single call to the inference API. Will return an error record if the call fails."""
         if self.is_trace_enabled:
-            self.trace(f"Calling inference API for turn: {turn_list[-1]}")
-        formatted_payload = None
+            self.trace(
+                f"Calling inference API for turn: {request_info.turns[request_info.turn_index]}"
+            )
         pre_send_perf_ns = None
         timestamp_ns = None
         try:
-            # Format payload for the API request
-            formatted_payload = await self.request_converter.format_payload(
-                model_endpoint=self.model_endpoint,
-                turns=turn_list,
-            )
-
             # NOTE: Current implementation of the TimingManager bypasses this, it is for future use.
             # Wait for the credit drop time if it is in the future.
             # Note that we check this after we have retrieved the data from the dataset, to ensure
             # that we are fully ready to go.
             delayed_ns = None
-            drop_ns = message.credit_drop_ns
+            drop_ns = credit_drop_ns
             now_ns = time.time_ns()
             if drop_ns and drop_ns > now_ns:
                 if self.is_trace_enabled:
@@ -352,16 +334,13 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             timestamp_ns = time.time_ns()
 
             send_coroutine = self.inference_client.send_request(
-                model_endpoint=self.model_endpoint,
-                payload=formatted_payload,
-                x_request_id=x_request_id,
-                x_correlation_id=message.request_id,  # CreditDropMessage request_id is the X-Correlation-ID header
+                request_info=request_info,
             )
 
             maybe_result: RequestRecord | None = await self._send_with_optional_cancel(
                 send_coroutine=send_coroutine,
-                should_cancel=message.should_cancel,
-                cancel_after_ns=message.cancel_after_ns,
+                should_cancel=request_info.should_cancel,
+                cancel_after_ns=request_info.cancel_after_ns,
             )
 
             if maybe_result is not None:
@@ -371,16 +350,16 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                         f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
                     )
                 result.delayed_ns = delayed_ns
-                result.turn = turn_list[-1]
+                result.turn = request_info.turns[request_info.turn_index]
                 return result
             else:
                 cancellation_perf_ns = time.perf_counter_ns()
                 if self.is_debug_enabled:
-                    delay_s = message.cancel_after_ns / NANOS_PER_SECOND
+                    delay_s = request_info.cancel_after_ns / NANOS_PER_SECOND
                     self.debug(f"Request cancelled after {delay_s:.3f}s")
                 # TODO what do i do with the turn here?
                 return RequestRecord(
-                    turn=turn_list[-1],
+                    turn=request_info.turns[request_info.turn_index],
                     timestamp_ns=timestamp_ns,
                     start_perf_ns=pre_send_perf_ns,
                     end_perf_ns=cancellation_perf_ns,
@@ -391,17 +370,17 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                         type="RequestCancellationError",
                         message=(
                             f"Request was cancelled after "
-                            f"{message.cancel_after_ns / NANOS_PER_SECOND:.3f} seconds"
+                            f"{request_info.cancel_after_ns / NANOS_PER_SECOND:.3f} seconds"
                         ),
                         code=499,  # Client Closed Request
                     ),
                 )
         except Exception as e:
             self.error(
-                f"Error calling inference server API at {self.model_endpoint.url}: {e!r}"
+                f"Error calling inference server API at {self.model_endpoint.endpoint.base_url}: {e!r}"
             )
             return RequestRecord(
-                turn=turn_list[-1],
+                turn=request_info.turns[request_info.turn_index],
                 timestamp_ns=timestamp_ns or time.time_ns(),
                 # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
                 start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),

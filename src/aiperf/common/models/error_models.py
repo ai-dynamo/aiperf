@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import re
 from typing import Any
 
 from pydantic import Field
@@ -23,6 +24,29 @@ class ErrorDetails(AIPerfBaseModel):
         ...,
         description="The error message.",
     )
+    cause: str | None = Field(
+        default=None,
+        description="The cause of the error.",
+    )
+    details: Any | None = Field(
+        default=None,
+        description="Additional details about the error.",
+    )
+
+    @staticmethod
+    def _safe_repr(value: Any, max_len: int = 4096) -> str:
+        s = repr(value)
+        # Basic redactions
+        redactions = [
+            (r"(?i)(authorization:\s*bearer\s+)[^\s,;]+", r"\1***"),
+            (r"(?i)\b(api[-_ ]?key|token|secret)\s*=\s*[^&\s]+", r"\1=***"),
+            (r"(?i)(x-api-key:\s*)[^\s,;]+", r"\1***"),
+        ]
+        for pat, repl in redactions:
+            s = re.sub(pat, repl, s)
+        if len(s) > max_len:
+            s = s[:max_len] + "…"
+        return s
 
     def __eq__(self, other: Any) -> bool:
         """Check if the error details are equal by comparing the code, type, and message."""
@@ -43,7 +67,9 @@ class ErrorDetails(AIPerfBaseModel):
         """Create an error details object from an exception."""
         return cls(
             type=e.__class__.__name__,
-            message=str(e),
+            message=cls._safe_repr(e),
+            cause=cls._safe_repr(e.__cause__) if e.__cause__ else None,
+            details=[cls._safe_repr(arg) for arg in e.args] if e.args else None,
         )
 
 

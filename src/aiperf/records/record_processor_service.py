@@ -37,7 +37,7 @@ from aiperf.common.protocols import (
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
-from aiperf.parsers.inference_result_parser import InferenceResultParser
+from aiperf.records.inference_result_parser import InferenceResultParser
 
 
 @ServiceFactory.register(ServiceType.RECORD_PROCESSOR)
@@ -99,6 +99,9 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 self.debug(
                     f"Record processor {processor_type} is disabled and will not be used"
                 )
+            except Exception as e:
+                self.exception(f"Error creating record processor {processor_type}: {e}")
+                raise
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
