@@ -128,5 +128,8 @@ GOOD_REQUEST_COUNT_TAG = "good_request_count"
 DEFAULT_RECORD_EXPORT_BATCH_SIZE = 100
 """Default batch size for record export results processor."""
 
+DEFAULT_RAW_RECORD_EXPORT_BATCH_SIZE = 10
+"""Default batch size for raw record export results processor."""
+
 DEFAULT_PUBLIC_DATASET_TIMEOUT = 300.0
 """Default timeout for public dataset loader in seconds."""

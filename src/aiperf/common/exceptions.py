@@ -87,6 +87,14 @@ class ConfigurationError(AIPerfError):
     """Exception raised when something fails to configure, or there is a configuration error."""
 
 
+class ConsoleExporterDisabled(AIPerfError):
+    """Raised when initializing a console exporter to indicate to the caller that it is disabled and should not be used."""
+
+
+class DataExporterDisabled(AIPerfError):
+    """Raised when initializing a data exporter to indicate to the caller that it is disabled and should not be used."""
+
+
 class DatasetError(AIPerfError):
     """Generic dataset error."""
 

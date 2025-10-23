@@ -97,7 +97,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Checkpoint Directory** | `--checkpoint-dir` | ✅ | ❌ | |
 | **Generate Plots** | `--generate-plots` | ✅ | ❌ | |
 | **Enable Checkpointing** | `--enable-checkpointing` | ✅ | ❌ | |
-| **Profile Export File** | `--profile-export-file` | ✅ | ❌ | |
+| **Profile Export File** | `--profile-export-file` | ✅ | ✅ | AIPerf works as a prefix for the profile export file names. |
 
 ---
 

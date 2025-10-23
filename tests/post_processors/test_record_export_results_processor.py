@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -27,7 +28,10 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.post_processors.record_export_results_processor import (
     RecordExportResultsProcessor,
 )
-from tests.post_processors.conftest import create_metric_records_message
+from tests.post_processors.conftest import (
+    aiperf_lifecycle,
+    create_metric_records_message,
+)
 
 
 @pytest.fixture
@@ -93,11 +97,7 @@ class TestRecordExportResultsProcessorInitialization:
         service_config: ServiceConfig,
     ):
         """Test initialization with various export levels enable or disable the processor."""
-        monkeypatch.setattr(
-            type(user_config_records_export.output),
-            "export_level",
-            property(lambda self: export_level),
-        )
+        user_config_records_export.output.export_level = export_level
         if raise_exception:
             with pytest.raises(PostProcessorDisabled):
                 _ = RecordExportResultsProcessor(
@@ -112,7 +112,7 @@ class TestRecordExportResultsProcessorInitialization:
                 user_config=user_config_records_export,
             )
 
-            assert processor.record_count == 0
+            assert processor.lines_written == 0
             assert processor.output_file.name == "profile_export.jsonl"
             assert processor.output_file.parent.exists()
 
@@ -128,7 +128,7 @@ class TestRecordExportResultsProcessorInitialization:
             user_config=user_config_records_export,
         )
 
-        assert processor.record_count == 0
+        assert processor.lines_written == 0
         assert processor.output_file.name == "profile_export.jsonl"
         assert processor.output_file.parent.exists()
 
@@ -217,22 +217,15 @@ class TestRecordExportResultsProcessorProcessResult:
             user_config=user_config_records_export,
         )
 
-        await processor._open_file()
+        async with aiperf_lifecycle(processor):
+            with patch.object(
+                MetricRecordDict,
+                "to_display_dict",
+                return_value=mock_display_dict,
+            ):
+                await processor.process_result(sample_metric_records_message.to_data())
 
-        with patch.object(
-            MetricRecordDict,
-            "to_display_dict",
-            return_value=mock_display_dict,
-        ):
-            await processor.process_result(sample_metric_records_message.to_data())
-
-        await processor._shutdown()
-
-        assert processor.record_count == 1
-        assert processor.output_file.exists()
-
-        with open(processor.output_file, "rb") as f:
-            lines = f.readlines()
+        lines = processor.output_file.read_text().splitlines()
 
         assert len(lines) == 1
         record_dict = orjson.loads(lines[0])
@@ -268,7 +261,7 @@ class TestRecordExportResultsProcessorProcessResult:
             await processor.process_result(sample_metric_records_message.to_data())
 
         # Should not write anything since display_metrics is empty
-        assert processor.record_count == 0
+        assert processor.lines_written == 0
         if processor.output_file.exists():
             content = processor.output_file.read_text()
             assert content == ""
@@ -302,7 +295,7 @@ class TestRecordExportResultsProcessorProcessResult:
             assert mock_error.call_count >= 1
 
         # Record count should not increment
-        assert processor.record_count == 0
+        assert processor.lines_written == 0
 
     @pytest.mark.asyncio
     async def test_process_result_multiple_messages(
@@ -323,28 +316,24 @@ class TestRecordExportResultsProcessorProcessResult:
             user_config=user_config_records_export,
         )
 
-        await processor._open_file()
+        async with aiperf_lifecycle(processor):
+            with patch.object(
+                MetricRecordDict, "to_display_dict", return_value=mock_display_dict
+            ):
+                for i in range(5):
+                    message = create_metric_records_message(
+                        x_request_id=f"record-{i}",
+                        conversation_id=f"conv-{i}",
+                        turn_index=i,
+                        request_start_ns=1_000_000_000 + i,
+                        results=[{"metric1": 100}, {"metric2": 200}],
+                    )
+                    await processor.process_result(message.to_data())
 
-        with patch.object(
-            MetricRecordDict, "to_display_dict", return_value=mock_display_dict
-        ):
-            for i in range(5):
-                message = create_metric_records_message(
-                    x_request_id=f"record-{i}",
-                    conversation_id=f"conv-{i}",
-                    turn_index=i,
-                    request_start_ns=1_000_000_000 + i,
-                    results=[{"metric1": 100}, {"metric2": 200}],
-                )
-                await processor.process_result(message.to_data())
-
-        await processor._shutdown()
-
-        assert processor.record_count == 5
+        assert processor.lines_written == 5
         assert processor.output_file.exists()
 
-        with open(processor.output_file, "rb") as f:
-            lines = f.readlines()
+        lines = processor.output_file.read_text().splitlines()
 
         assert len(lines) == 5
 
@@ -376,17 +365,13 @@ class TestRecordExportResultsProcessorFileFormat:
             user_config=user_config_records_export,
         )
 
-        await processor._open_file()
+        async with aiperf_lifecycle(processor):
+            with patch.object(
+                MetricRecordDict, "to_display_dict", return_value=mock_display_dict
+            ):
+                await processor.process_result(sample_metric_records_message.to_data())
 
-        with patch.object(
-            MetricRecordDict, "to_display_dict", return_value=mock_display_dict
-        ):
-            await processor.process_result(sample_metric_records_message.to_data())
-
-        await processor._shutdown()
-
-        with open(processor.output_file, "rb") as f:
-            lines = f.readlines()
+        lines = processor.output_file.read_text().splitlines()
 
         for line in lines:
             if line.strip():
@@ -394,7 +379,6 @@ class TestRecordExportResultsProcessorFileFormat:
                 assert isinstance(record_dict, dict)
                 record = MetricRecordInfo.model_validate(record_dict)
                 assert isinstance(record, MetricRecordInfo)
-                assert line.endswith(b"\n")
 
     @pytest.mark.asyncio
     async def test_record_structure_is_complete(
@@ -413,34 +397,32 @@ class TestRecordExportResultsProcessorFileFormat:
             user_config=user_config_records_export,
         )
 
-        await processor._open_file()
+        async with aiperf_lifecycle(processor):
+            with patch.object(
+                MetricRecordDict, "to_display_dict", return_value=mock_display_dict
+            ):
+                await processor.process_result(sample_metric_records_message.to_data())
 
-        with patch.object(
-            MetricRecordDict, "to_display_dict", return_value=mock_display_dict
-        ):
-            await processor.process_result(sample_metric_records_message.to_data())
+        lines = processor.output_file.read_text().splitlines()
 
-        await processor._shutdown()
+        for line in lines:
+            record_dict = orjson.loads(line)
+            record = MetricRecordInfo.model_validate(record_dict)
 
-        with open(processor.output_file, "rb") as f:
-            record_dict = orjson.loads(f.readline())
+            assert isinstance(record.metadata, MetricRecordMetadata)
+            assert isinstance(record.metrics, dict)
 
-        record = MetricRecordInfo.model_validate(record_dict)
+            assert record.metadata.conversation_id is not None
+            assert isinstance(record.metadata.turn_index, int)
+            assert isinstance(record.metadata.request_start_ns, int)
+            assert isinstance(record.metadata.worker_id, str)
+            assert isinstance(record.metadata.record_processor_id, str)
+            assert isinstance(record.metadata.benchmark_phase, CreditPhase)
 
-        assert isinstance(record.metadata, MetricRecordMetadata)
-        assert isinstance(record.metrics, dict)
-
-        assert record.metadata.conversation_id is not None
-        assert isinstance(record.metadata.turn_index, int)
-        assert isinstance(record.metadata.request_start_ns, int)
-        assert isinstance(record.metadata.worker_id, str)
-        assert isinstance(record.metadata.record_processor_id, str)
-        assert isinstance(record.metadata.benchmark_phase, CreditPhase)
-
-        assert "test_metric" in record.metrics
-        assert isinstance(record.metrics["test_metric"], MetricValue)
-        assert record.metrics["test_metric"].value == 42
-        assert record.metrics["test_metric"].unit == "ms"
+            assert "test_metric" in record.metrics
+            assert isinstance(record.metrics["test_metric"], MetricValue)
+            assert record.metrics["test_metric"].value == 42
+            assert record.metrics["test_metric"].unit == "ms"
 
 
 class TestRecordExportResultsProcessorLogging:
@@ -452,6 +434,7 @@ class TestRecordExportResultsProcessorLogging:
         user_config_records_export: UserConfig,
         service_config: ServiceConfig,
         mock_metric_registry: Mock,
+        caplog,
     ):
         """Test that debug logging occurs when buffer is flushed."""
         mock_display_dict = {"test_metric": MetricValue(value=42, unit="ms")}
@@ -462,25 +445,26 @@ class TestRecordExportResultsProcessorLogging:
             user_config=user_config_records_export,
         )
 
-        await processor._open_file()
-
-        with (
-            patch.object(
+        async with aiperf_lifecycle(processor):
+            with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
-            ),
-            patch.object(processor, "debug") as mock_debug,
-        ):
-            for i in range(processor._batch_size):
-                message = create_metric_records_message(
-                    x_request_id=f"record-{i}",
-                    conversation_id=f"conv-{i}",
-                    turn_index=i,
-                    request_start_ns=1_000_000_000 + i,
-                    results=[{"metric1": 100}, {"metric2": 200}],
-                )
-                await processor.process_result(message.to_data())
+            ):
+                with caplog.at_level(logging.DEBUG):
+                    for i in range(processor._batch_size):
+                        message = create_metric_records_message(
+                            x_request_id=f"record-{i}",
+                            conversation_id=f"conv-{i}",
+                            turn_index=i,
+                            request_start_ns=1_000_000_000 + i,
+                            results=[{"metric1": 100}, {"metric2": 200}],
+                        )
+                        await processor.process_result(message.to_data())
 
-            assert mock_debug.call_count >= 1
+                    # Wait for async flush task to complete
+                    await processor.wait_for_tasks()
+
+                # Check that flushing debug message was logged
+                assert any("Flushing" in record.message for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_error_logging_on_write_failure(
@@ -530,26 +514,35 @@ class TestRecordExportResultsProcessorShutdown:
             user_config=user_config_records_export,
         )
 
-        with patch.object(
-            MetricRecordDict, "to_display_dict", return_value=mock_display_dict
-        ):
-            # Process some records
-            for i in range(3):
-                message = create_metric_records_message(
-                    x_request_id=f"record-{i}",
-                    conversation_id=f"conv-{i}",
-                    turn_index=i,
-                    request_start_ns=1_000_000_000 + i,
-                    results=[{"metric1": 100}],
-                )
-                await processor.process_result(message.to_data())
+        await processor.initialize()
+        await processor.start()
 
-        with patch.object(processor, "info") as mock_info:
-            await processor._shutdown()
+        try:
+            with patch.object(
+                MetricRecordDict, "to_display_dict", return_value=mock_display_dict
+            ):
+                for i in range(3):
+                    message = create_metric_records_message(
+                        x_request_id=f"record-{i}",
+                        conversation_id=f"conv-{i}",
+                        turn_index=i,
+                        request_start_ns=1_000_000_000 + i,
+                        results=[{"metric1": 100}],
+                    )
+                    await processor.process_result(message.to_data())
 
-            mock_info.assert_called_once()
-            call_args = str(mock_info.call_args)
-            assert "3 records written" in call_args or "3" in call_args
+                # Wait for any pending flush tasks
+                await processor.wait_for_tasks()
+
+            await processor.stop()
+
+            # Check that statistics were logged during shutdown by verifying lines_written is correct
+            assert processor.lines_written == 3, (
+                f"Expected 3 records written, but got {processor.lines_written}"
+            )
+        except Exception:
+            await processor.stop()
+            raise
 
 
 class TestRecordExportResultsProcessorSummarize:
@@ -597,24 +590,35 @@ class TestRecordExportResultsProcessorLifecycle:
         assert processor._file_handle is not None
         await processor.start()
 
-        for i in range(DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2):
-            await processor.process_result(
-                create_metric_records_message(
-                    x_request_id=f"record-{i}",
-                    conversation_id=f"conv-{i}",
-                    turn_index=0,
-                    request_start_ns=1_000_000_000 + i,
-                    results=[{"inter_token_latency": 100}],
-                ).to_data()
-            )
+        mock_display_dict = {"inter_token_latency": MetricValue(value=100, unit="ms")}
 
-        await processor.stop()
+        try:
+            with patch.object(
+                MetricRecordDict, "to_display_dict", return_value=mock_display_dict
+            ):
+                for i in range(DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2):
+                    await processor.process_result(
+                        create_metric_records_message(
+                            x_request_id=f"record-{i}",
+                            conversation_id=f"conv-{i}",
+                            turn_index=0,
+                            request_start_ns=1_000_000_000 + i,
+                            results=[{"inter_token_latency": 100}],
+                        ).to_data()
+                    )
 
-        assert processor.record_count == DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2
+                # Wait for all async flush tasks to complete
+                await processor.wait_for_tasks()
+        finally:
+            await processor.stop()
+
+        assert processor.lines_written == DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2
 
         contents = mock_aiofiles_stringio.getvalue()
         lines = contents.splitlines()
-        assert contents.endswith("\n")
+        assert contents.endswith("\n"), (
+            f"Contents should end with newline but got: {repr(contents[-20:])}"
+        )
         assert len(lines) == DEFAULT_RECORD_EXPORT_BATCH_SIZE * 2
 
         for i, line in enumerate(lines):

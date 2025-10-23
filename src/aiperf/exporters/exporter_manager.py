@@ -6,9 +6,15 @@ import asyncio
 from rich.console import Console
 
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.exceptions import (
+    ConsoleExporterDisabled,
+    DataExporterDisabled,
+    FactoryCreationError,
+)
 from aiperf.common.factories import ConsoleExporterFactory, DataExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ProfileResults, TelemetryResults
+from aiperf.common.protocols import ConsoleExporterProtocol, DataExporterProtocol
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
 
@@ -50,9 +56,20 @@ class ExporterManager(AIPerfLoggerMixin):
         self.info("Exporting all records")
 
         for exporter_type in DataExporterFactory.get_all_class_types():
-            exporter = DataExporterFactory.create_instance(
-                exporter_type, exporter_config=self._exporter_config
-            )
+            try:
+                exporter: DataExporterProtocol = DataExporterFactory.create_instance(
+                    exporter_type, exporter_config=self._exporter_config
+                )
+            except FactoryCreationError as e:
+                if isinstance(e.__cause__, DataExporterDisabled):
+                    self.debug(
+                        f"Data exporter {exporter_type} is disabled and will not be used"
+                    )
+                    continue
+                else:
+                    self.exception("Error creating data exporter: {e!r}")
+                    continue
+
             self.debug(f"Creating task for exporter: {exporter_type}")
             task = asyncio.create_task(exporter.export())
             self._tasks.add(task)
@@ -66,9 +83,20 @@ class ExporterManager(AIPerfLoggerMixin):
         """Get the file infos for all exported files."""
         file_infos = []
         for exporter_type in DataExporterFactory.get_all_class_types():
-            exporter = DataExporterFactory.create_instance(
-                exporter_type, exporter_config=self._exporter_config
-            )
+            try:
+                exporter: DataExporterProtocol = DataExporterFactory.create_instance(
+                    exporter_type, exporter_config=self._exporter_config
+                )
+            except FactoryCreationError as e:
+                if isinstance(e.__cause__, DataExporterDisabled):
+                    self.debug(
+                        f"Data exporter {exporter_type} is disabled and will not be used"
+                    )
+                    continue
+                else:
+                    self.exception("Error creating data exporter: {e!r}")
+                    continue
+
             file_infos.append(exporter.get_export_info())
         return file_infos
 
@@ -76,9 +104,22 @@ class ExporterManager(AIPerfLoggerMixin):
         self.info("Exporting console data")
 
         for exporter_type in ConsoleExporterFactory.get_all_class_types():
-            exporter = ConsoleExporterFactory.create_instance(
-                exporter_type, exporter_config=self._exporter_config
-            )
+            try:
+                exporter: ConsoleExporterProtocol = (
+                    ConsoleExporterFactory.create_instance(
+                        exporter_type, exporter_config=self._exporter_config
+                    )
+                )
+            except FactoryCreationError as e:
+                if isinstance(e.__cause__, ConsoleExporterDisabled):
+                    self.debug(
+                        f"Console exporter {exporter_type} is disabled and will not be used"
+                    )
+                    continue
+                else:
+                    self.exception("Error creating console exporter: {e!r}")
+                    continue
+
             self.debug(f"Creating task for exporter: {exporter_type}")
             task = asyncio.create_task(exporter.export(console=console))
             self._tasks.add(task)

@@ -126,23 +126,6 @@ class MetricRecordMetadata(AIPerfBaseModel):
     )
 
 
-class MetricRecordInfo(AIPerfBaseModel):
-    """The full info of a metric record including the metadata, metrics, and error for export."""
-
-    metadata: MetricRecordMetadata = Field(
-        ...,
-        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
-    )
-    metrics: dict[str, MetricValue] = Field(
-        ...,
-        description="A dictionary containing all metric values along with their units.",
-    )
-    error: ErrorDetails | None = Field(
-        default=None,
-        description="The error details if the request failed.",
-    )
-
-
 class ProfileResults(AIPerfBaseModel):
     records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
@@ -361,9 +344,13 @@ class SSEMessage(BaseInferenceServerResponse):
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
 
-    turn: Turn | None = Field(
+    turns: list[Turn] | None = Field(
         default=None,
-        description="The turn of the request, if applicable.",
+        description="The turns of the request. This will include assistant turns as well as user turns in multi-turn conversations.",
+    )
+    request_headers: dict[str, str] | None = Field(
+        default=None,
+        description="The headers of the request.",
     )
     credit_num: int | None = Field(
         default=None,
@@ -760,4 +747,58 @@ class RequestInfo(AIPerfBaseModel):
     conversation_id: str | None = Field(
         default=None,
         description="The ID of the conversation (if applicable).",
+    )
+
+
+class MetricRecordInfo(AIPerfBaseModel):
+    """The full info of a metric record including the metadata, metrics, and error for export."""
+
+    metadata: MetricRecordMetadata = Field(
+        ...,
+        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
+    )
+    metrics: dict[str, MetricValue] = Field(
+        ...,
+        description="A dictionary containing all metric values along with their units.",
+    )
+    error: ErrorDetails | None = Field(
+        default=None,
+        description="The error details if the request failed.",
+    )
+
+
+class RawRecordInfo(AIPerfBaseModel):
+    """The full info of a raw record including the request record for export."""
+
+    metadata: MetricRecordMetadata = Field(
+        ...,
+        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
+    )
+    start_perf_ns: int = Field(
+        default_factory=time.perf_counter_ns,
+        description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
+    )
+    payload: dict[str, Any] = Field(
+        ...,
+        description="The raw request payload sent to the server.",
+    )
+    request_headers: dict[str, str] | None = Field(
+        default=None,
+        description="The headers of the request.",
+    )
+    status: int | None = Field(
+        default=None,
+        description="The status code of the response.",
+    )
+    response_headers: dict[str, str] | None = Field(
+        default=None,
+        description="The headers of the response.",
+    )
+    responses: SerializeAsAny[list[SSEMessage | TextResponse]] = Field(
+        ...,
+        description="The raw responses received from the request.",
+    )
+    error: ErrorDetails | None = Field(
+        default=None,
+        description="The error details if the request failed.",
     )

@@ -249,10 +249,11 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         if isinstance(conversation_response, ErrorMessage):
             await self._send_inference_result_message(
                 RequestRecord(
+                    request_headers=None,
                     model_name=self.model_endpoint.primary_model_name,
                     conversation_id=conversation_id,
                     turn_index=0,
-                    turn=None,
+                    turns=None,
                     timestamp_ns=time.time_ns(),
                     start_perf_ns=time.perf_counter_ns(),
                     end_perf_ns=time.perf_counter_ns(),
@@ -285,6 +286,9 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0:
             record.credit_drop_latency = record.start_perf_ns - drop_perf_ns
+        # Preserve headers set by transport; only use endpoint headers if not set
+        if record.request_headers is None:
+            record.request_headers = request_info.endpoint_headers
         return record
 
     async def _process_response(self, record: RequestRecord) -> Turn | None:
@@ -350,7 +354,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                         f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
                     )
                 result.delayed_ns = delayed_ns
-                result.turn = request_info.turns[request_info.turn_index]
+                result.turns = request_info.turns
                 return result
             else:
                 cancellation_perf_ns = time.perf_counter_ns()
@@ -359,7 +363,9 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                     self.debug(f"Request cancelled after {delay_s:.3f}s")
                 # TODO what do i do with the turn here?
                 return RequestRecord(
-                    turn=request_info.turns[request_info.turn_index],
+                    # TODO: This should be handled by the transport, but we need to handle it here for now.
+                    request_headers=request_info.endpoint_headers,
+                    turns=request_info.turns,
                     timestamp_ns=timestamp_ns,
                     start_perf_ns=pre_send_perf_ns,
                     end_perf_ns=cancellation_perf_ns,
@@ -380,7 +386,8 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                 f"Error calling inference server API at {self.model_endpoint.endpoint.base_url}: {e!r}"
             )
             return RequestRecord(
-                turn=request_info.turns[request_info.turn_index],
+                request_headers=request_info.endpoint_headers,
+                turns=request_info.turns,
                 timestamp_ns=timestamp_ns or time.time_ns(),
                 # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
                 start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),

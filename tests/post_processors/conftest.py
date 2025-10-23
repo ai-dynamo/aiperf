@@ -2,24 +2,89 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared fixtures for testing AIPerf post processors."""
 
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import TypeVar
 from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.enums import CreditPhase, EndpointType, MessageType
+from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
+from aiperf.common.enums import CreditPhase, EndpointType, ExportLevel, MessageType
 from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.messages import MetricRecordsMessage
+from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
+    ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
+    TextResponse,
 )
-from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.models.record_models import (
+    MetricRecordMetadata,
+    ProfileResults,
+)
 from aiperf.common.types import MetricTagT
+from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
-from tests.conftest import DEFAULT_START_TIME_NS
+from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
+from tests.conftest import (
+    DEFAULT_FIRST_RESPONSE_NS,
+    DEFAULT_INPUT_TOKENS,
+    DEFAULT_LAST_RESPONSE_NS,
+    DEFAULT_OUTPUT_TOKENS,
+    DEFAULT_START_TIME_NS,
+)
+
+T = TypeVar("T", bound=AIPerfLifecycleMixin)
+
+
+@asynccontextmanager
+async def aiperf_lifecycle(instance: T) -> T:
+    """Generic async context manager for any AIPerfLifecycleMixin lifecycle.
+
+    Handles initialize, start, and stop automatically for any component
+    implementing the AIPerfLifecycleMixin interface.
+
+    Usage:
+        async with aiperf_lifecycle(processor) as proc:
+            await proc.process_record(record, metadata)
+    """
+    await instance.initialize()
+    await instance.start()
+    try:
+        yield instance
+    finally:
+        await instance.stop()
+
+
+@asynccontextmanager
+async def raw_record_processor(service_id: str, user_config: UserConfig):
+    """Async context manager for RawRecordWriterProcessor lifecycle.
+
+    Handles initialize, start, and stop automatically.
+
+    Usage:
+        async with raw_record_processor("processor-1", user_config) as processor:
+            await processor.process_record(record, metadata)
+    """
+
+    processor = RawRecordWriterProcessor(
+        service_id=service_id,
+        user_config=user_config,
+    )
+    async with aiperf_lifecycle(processor) as proc:
+        yield proc
+
+
+@pytest.fixture
+def tmp_artifact_dir(tmp_path: Path) -> Path:
+    """Create a temporary artifact directory for testing."""
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    return artifact_dir
 
 
 @pytest.fixture
@@ -34,17 +99,102 @@ def mock_user_config() -> UserConfig:
 
 
 @pytest.fixture
-def error_parsed_record() -> ParsedResponseRecord:
-    """Create an error ParsedResponseRecord for testing."""
-    error_details = ErrorDetails(code=500, message="Internal server error")
+def user_config_raw(tmp_artifact_dir: Path) -> UserConfig:
+    """Create a UserConfig for raw record testing."""
+    return UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            streaming=False,
+        ),
+        output=OutputConfig(
+            artifact_directory=tmp_artifact_dir,
+            export_level=ExportLevel.RAW,
+        ),
+    )
+
+
+@pytest.fixture
+def sample_parsed_record_with_raw_responses() -> ParsedResponseRecord:
+    """Create a sample ParsedResponseRecord with raw responses for raw record testing.
+
+    This fixture includes raw TextResponse objects in the request, which is needed
+    for raw record serialization tests.
+    """
+    from aiperf.common.models import Text, Turn
+
+    turns = [
+        Turn(
+            texts=[Text(contents=["Hello, how are you?"])],
+            role="user",
+            model="test-model",
+        )
+    ]
+
+    raw_responses = [
+        TextResponse(text="Hello", perf_ns=DEFAULT_FIRST_RESPONSE_NS),
+        TextResponse(text=" world", perf_ns=DEFAULT_LAST_RESPONSE_NS),
+    ]
+
+    from aiperf.common.models import TextResponseData
 
     request = RequestRecord(
+        turns=turns,
+        conversation_id="conv-123",
+        turn_index=0,
+        model_name="test-model",
+        start_perf_ns=DEFAULT_START_TIME_NS,
+        timestamp_ns=DEFAULT_START_TIME_NS,
+        end_perf_ns=DEFAULT_LAST_RESPONSE_NS,
+        status=200,
+        request_headers={"Content-Type": "application/json"},
+        responses=raw_responses,
+        error=None,
+    )
+
+    parsed_responses = [
+        ParsedResponse(
+            perf_ns=DEFAULT_FIRST_RESPONSE_NS,
+            data=TextResponseData(text="Hello"),
+        ),
+        ParsedResponse(
+            perf_ns=DEFAULT_LAST_RESPONSE_NS,
+            data=TextResponseData(text=" world"),
+        ),
+    ]
+
+    return ParsedResponseRecord(
+        request=request,
+        responses=parsed_responses,
+        input_token_count=DEFAULT_INPUT_TOKENS,
+        output_token_count=DEFAULT_OUTPUT_TOKENS,
+    )
+
+
+@pytest.fixture
+def error_parsed_record() -> ParsedResponseRecord:
+    """Create an error ParsedResponseRecord for testing."""
+    from aiperf.common.models import Text, Turn
+
+    error_details = ErrorDetails(code=500, message="Internal server error")
+
+    turns = [
+        Turn(
+            texts=[Text(contents=["This will fail"])],
+            role="user",
+            model="test-model",
+        )
+    ]
+
+    request = RequestRecord(
+        turns=turns,
         conversation_id="test-conversation-error",
         turn_index=0,
         model_name="test-model",
         start_perf_ns=DEFAULT_START_TIME_NS,
         timestamp_ns=DEFAULT_START_TIME_NS,
         end_perf_ns=DEFAULT_START_TIME_NS,
+        status=500,
         error=error_details,
     )
 
@@ -53,6 +203,21 @@ def error_parsed_record() -> ParsedResponseRecord:
         responses=[],
         input_token_count=None,
         output_token_count=None,
+    )
+
+
+def create_exporter_config(user_config: UserConfig) -> ExporterConfig:
+    """Helper to create standard ExporterConfig for aggregator tests."""
+    return ExporterConfig(
+        user_config=user_config,
+        service_config=ServiceConfig(),
+        results=ProfileResults(
+            records=None,
+            completed=0,
+            start_ns=DEFAULT_START_TIME_NS,
+            end_ns=DEFAULT_LAST_RESPONSE_NS,
+        ),
+        telemetry_results=None,
     )
 
 
