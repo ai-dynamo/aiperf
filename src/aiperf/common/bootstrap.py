@@ -10,6 +10,7 @@ import random
 import sys
 
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.environment import Environment
 from aiperf.common.protocols import ServiceProtocol
 
 
@@ -52,7 +53,7 @@ def bootstrap_and_run_service(
         user_config = load_user_config()
 
     async def _run_service():
-        if service_config.developer.enable_yappi:
+        if Environment.DEV.ENABLE_YAPPI:
             _start_yappi_profiling()
 
         from aiperf.module_loader import ensure_modules_loaded
@@ -114,11 +115,11 @@ def bootstrap_and_run_service(
         except Exception as e:
             service.exception(f"Unhandled exception in service: {e}")
 
-        if service_config.developer.enable_yappi:
+        if Environment.DEV.ENABLE_YAPPI:
             _stop_yappi_profiling(service.service_id, user_config)
 
     with contextlib.suppress(asyncio.CancelledError):
-        if not service_config.developer.disable_uvloop:
+        if not Environment.SERVICE.DISABLE_UVLOOP:
             import uvloop
 
             uvloop.run(_run_service())

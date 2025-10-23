@@ -7,17 +7,12 @@ import zmq.asyncio
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.messages import Message
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.zmq.zmq_base_client import BaseZMQClient
-
-MAX_PUSH_RETRIES = 2
-"""Maximum number of retries for pushing a message."""
-
-RETRY_DELAY_INTERVAL_SEC = 0.1
-"""The interval to wait before retrying to push a message."""
 
 
 @implements_protocol(PushClientProtocol)
@@ -75,15 +70,18 @@ class ZMQPushClient(BaseZMQClient):
         self,
         message: Message,
         retry_count: int = 0,
-        max_retries: int = MAX_PUSH_RETRIES,
+        max_retries: int | None = None,
     ) -> None:
         """Push a message to the socket. Will retry up to max_retries times.
 
         Args:
             message: Message to be sent must be a Message object
             retry_count: Current retry count
-            max_retries: Maximum number of times to retry pushing the message
+            max_retries: Maximum number of times to retry pushing the message (defaults to Environment.ZMQ.PUSH_MAX_RETRIES)
         """
+        if max_retries is None:
+            max_retries = Environment.ZMQ.PUSH_MAX_RETRIES
+
         try:
             data_json = message.model_dump_json()
             await self.socket.send_string(data_json)
@@ -98,7 +96,7 @@ class ZMQPushClient(BaseZMQClient):
                     f"Failed to push data after {retry_count} retries: {e}",
                 ) from e
 
-            await asyncio.sleep(RETRY_DELAY_INTERVAL_SEC)
+            await asyncio.sleep(Environment.ZMQ.PUSH_RETRY_DELAY)
             return await self._push_message(message, retry_count + 1, max_retries)
         except Exception as e:
             raise CommunicationError(f"Failed to push data: {e}") from e

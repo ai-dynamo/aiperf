@@ -6,9 +6,9 @@ import asyncio
 import aiofiles
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import AIPERF_DEV_MODE, DEFAULT_RECORD_EXPORT_BATCH_SIZE
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ExportLevel, ResultsProcessorType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.hooks import on_init, on_stop
@@ -44,7 +44,10 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
         self.record_count = 0
         self.show_internal = (
-            AIPERF_DEV_MODE and service_config.developer.show_internal_metrics
+            Environment.DEV.MODE and Environment.DEV.SHOW_INTERNAL_METRICS
+        )
+        self.show_experimental = (
+            Environment.DEV.MODE and Environment.DEV.SHOW_EXPERIMENTAL_METRICS
         )
         self.info(f"Record metrics export enabled: {self.output_file}")
         self.output_file.unlink(missing_ok=True)
@@ -52,7 +55,7 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
         # File handle for persistent writes with batching
         self._file_handle = None
         self._buffer: list[str] = []
-        self._batch_size = DEFAULT_RECORD_EXPORT_BATCH_SIZE
+        self._batch_size = Environment.RECORD.EXPORT_BATCH_SIZE
         self._buffer_lock = asyncio.Lock()
 
     @on_init
@@ -66,7 +69,7 @@ class RecordExportResultsProcessor(BaseMetricsProcessor):
         try:
             metric_dict = MetricRecordDict(record_data.metrics)
             display_metrics = metric_dict.to_display_dict(
-                MetricRegistry, self.show_internal
+                MetricRegistry, self.show_internal, self.show_experimental
             )
             if not display_metrics:
                 return

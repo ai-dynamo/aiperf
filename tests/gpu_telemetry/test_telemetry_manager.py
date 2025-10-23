@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.config import UserConfig
+from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     CommandAcknowledgedResponse,
     ProfileConfigureCommand,
@@ -14,7 +15,6 @@ from aiperf.common.messages import (
     TelemetryStatusMessage,
 )
 from aiperf.common.models import ErrorDetails
-from aiperf.gpu_telemetry.constants import DEFAULT_DCGM_ENDPOINTS
 from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
 from aiperf.gpu_telemetry.telemetry_manager import TelemetryManager
 
@@ -50,7 +50,7 @@ class TestTelemetryManagerInitialization:
         mock_user_config.gpu_telemetry = None
 
         manager = self._create_manager_with_mocked_base(mock_user_config)
-        assert manager._dcgm_endpoints == list(DEFAULT_DCGM_ENDPOINTS)
+        assert manager._dcgm_endpoints == list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
 
     def test_initialization_custom_endpoints(self):
         """Test initialization with custom user-provided endpoints."""
@@ -61,7 +61,7 @@ class TestTelemetryManagerInitialization:
         manager = self._create_manager_with_mocked_base(mock_user_config)
 
         # Should have both defaults + custom endpoint
-        for default_endpoint in DEFAULT_DCGM_ENDPOINTS:
+        for default_endpoint in Environment.GPU.DEFAULT_DCGM_ENDPOINTS:
             assert default_endpoint in manager._dcgm_endpoints
         assert custom_endpoint in manager._dcgm_endpoints
         assert len(manager._dcgm_endpoints) == 3
@@ -74,7 +74,7 @@ class TestTelemetryManagerInitialization:
         manager = self._create_manager_with_mocked_base(mock_user_config)
 
         assert isinstance(manager._dcgm_endpoints, list)
-        for default_endpoint in DEFAULT_DCGM_ENDPOINTS:
+        for default_endpoint in Environment.GPU.DEFAULT_DCGM_ENDPOINTS:
             assert default_endpoint in manager._dcgm_endpoints
         assert "http://single-node:9401/metrics" in manager._dcgm_endpoints
         assert len(manager._dcgm_endpoints) == 3
@@ -94,7 +94,7 @@ class TestTelemetryManagerInitialization:
 
         # Should have 2 defaults + 2 valid URLs
         assert len(manager._dcgm_endpoints) == 4
-        for default_endpoint in DEFAULT_DCGM_ENDPOINTS:
+        for default_endpoint in Environment.GPU.DEFAULT_DCGM_ENDPOINTS:
             assert default_endpoint in manager._dcgm_endpoints
         assert "http://valid:9401/metrics" in manager._dcgm_endpoints
         assert "http://another-valid:9401/metrics" in manager._dcgm_endpoints
@@ -112,8 +112,8 @@ class TestTelemetryManagerInitialization:
 
         # Should have 2 defaults + 2 unique user endpoints (duplicate removed)
         assert len(manager._dcgm_endpoints) == 4
-        assert manager._dcgm_endpoints[0] == DEFAULT_DCGM_ENDPOINTS[0]
-        assert manager._dcgm_endpoints[1] == DEFAULT_DCGM_ENDPOINTS[1]
+        assert manager._dcgm_endpoints[0] == Environment.GPU.DEFAULT_DCGM_ENDPOINTS[0]
+        assert manager._dcgm_endpoints[1] == Environment.GPU.DEFAULT_DCGM_ENDPOINTS[1]
         assert manager._dcgm_endpoints[2] == "http://node1:9401/metrics"
         assert manager._dcgm_endpoints[3] == "http://node2:9401/metrics"
 
@@ -130,8 +130,8 @@ class TestTelemetryManagerInitialization:
 
         # Should have 2 defaults + 1 unique user endpoint (defaults not duplicated)
         assert len(manager._dcgm_endpoints) == 3
-        assert manager._dcgm_endpoints[0] == DEFAULT_DCGM_ENDPOINTS[0]
-        assert manager._dcgm_endpoints[1] == DEFAULT_DCGM_ENDPOINTS[1]
+        assert manager._dcgm_endpoints[0] == Environment.GPU.DEFAULT_DCGM_ENDPOINTS[0]
+        assert manager._dcgm_endpoints[1] == Environment.GPU.DEFAULT_DCGM_ENDPOINTS[1]
         assert manager._dcgm_endpoints[2] == "http://node1:9401/metrics"
         # Verify user_provided_endpoints excludes the defaults
         assert len(manager._user_provided_endpoints) == 1
@@ -525,7 +525,7 @@ class TestEdgeCases:
 
         # Only 2 defaults + valid endpoint should remain
         assert len(manager._dcgm_endpoints) == 3
-        for default_endpoint in DEFAULT_DCGM_ENDPOINTS:
+        for default_endpoint in Environment.GPU.DEFAULT_DCGM_ENDPOINTS:
             assert default_endpoint in manager._dcgm_endpoints
         assert "http://valid:9401/metrics" in manager._dcgm_endpoints
 
@@ -568,10 +568,10 @@ class TestBothDefaultEndpoints:
 
         manager = self._create_manager_with_mocked_base(mock_user_config)
 
-        assert len(DEFAULT_DCGM_ENDPOINTS) == 2
-        assert "http://localhost:9400/metrics" in DEFAULT_DCGM_ENDPOINTS
-        assert "http://localhost:9401/metrics" in DEFAULT_DCGM_ENDPOINTS
-        assert manager._dcgm_endpoints == list(DEFAULT_DCGM_ENDPOINTS)
+        assert len(Environment.GPU.DEFAULT_DCGM_ENDPOINTS) == 2
+        assert "http://localhost:9400/metrics" in Environment.GPU.DEFAULT_DCGM_ENDPOINTS
+        assert "http://localhost:9401/metrics" in Environment.GPU.DEFAULT_DCGM_ENDPOINTS
+        assert manager._dcgm_endpoints == list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
 
     def test_user_explicitly_configured_telemetry_flag(self):
         """Test that _user_explicitly_configured_telemetry flag is set correctly."""
@@ -600,7 +600,7 @@ class TestProfileConfigureCommand:
         manager = TelemetryManager.__new__(TelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
-        manager._dcgm_endpoints = list(DEFAULT_DCGM_ENDPOINTS)
+        manager._dcgm_endpoints = list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
         manager._collection_interval = 0.33
@@ -665,7 +665,7 @@ class TestProfileStartCommand:
         manager = TelemetryManager.__new__(TelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
-        manager._dcgm_endpoints = list(DEFAULT_DCGM_ENDPOINTS)
+        manager._dcgm_endpoints = list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
         manager._collection_interval = 0.33
@@ -743,7 +743,9 @@ class TestSmartDefaultVisibility:
         manager = TelemetryManager.__new__(TelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
-        manager._dcgm_endpoints = list(DEFAULT_DCGM_ENDPOINTS) + user_endpoints
+        manager._dcgm_endpoints = (
+            list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS) + user_endpoints
+        )
         manager._user_provided_endpoints = user_endpoints
         manager._user_explicitly_configured_telemetry = user_requested
         manager._collection_interval = 0.33
@@ -759,12 +761,14 @@ class TestSmartDefaultVisibility:
 
         # Manually simulate one reachable default by adding to collectors
         # This tests the smart visibility logic without complex mocking
-        manager._collectors[DEFAULT_DCGM_ENDPOINTS[0]] = MagicMock()
+        manager._collectors[Environment.GPU.DEFAULT_DCGM_ENDPOINTS[0]] = MagicMock()
 
         # Call the status reporting part directly
         reachable_endpoints = list(manager._collectors.keys())
         reachable_defaults = [
-            ep for ep in DEFAULT_DCGM_ENDPOINTS if ep in reachable_endpoints
+            ep
+            for ep in Environment.GPU.DEFAULT_DCGM_ENDPOINTS
+            if ep in reachable_endpoints
         ]
 
         # Test the smart visibility logic
@@ -777,8 +781,8 @@ class TestSmartDefaultVisibility:
 
         # Should only report reachable endpoint
         assert len(endpoints_to_report) == 1
-        assert DEFAULT_DCGM_ENDPOINTS[0] in endpoints_to_report
-        assert DEFAULT_DCGM_ENDPOINTS[1] not in endpoints_to_report
+        assert Environment.GPU.DEFAULT_DCGM_ENDPOINTS[0] in endpoints_to_report
+        assert Environment.GPU.DEFAULT_DCGM_ENDPOINTS[1] not in endpoints_to_report
 
     @pytest.mark.asyncio
     async def test_show_custom_urls_when_defaults_unreachable(self):
@@ -803,7 +807,7 @@ class TestSmartDefaultVisibility:
         assert len(call_args.endpoints_configured) == 1  # Just custom URL
         assert "http://custom:9401/metrics" in call_args.endpoints_configured
         # Defaults should NOT be in the tested list since they're unreachable
-        for endpoint in DEFAULT_DCGM_ENDPOINTS:
+        for endpoint in Environment.GPU.DEFAULT_DCGM_ENDPOINTS:
             assert endpoint not in call_args.endpoints_configured
 
     @pytest.mark.asyncio
@@ -815,12 +819,14 @@ class TestSmartDefaultVisibility:
         manager.publish = AsyncMock()
 
         # Simulate one reachable default
-        manager._collectors[DEFAULT_DCGM_ENDPOINTS[0]] = MagicMock()
+        manager._collectors[Environment.GPU.DEFAULT_DCGM_ENDPOINTS[0]] = MagicMock()
 
         # Get the status logic results directly
         reachable_endpoints = list(manager._collectors.keys())
         reachable_defaults = [
-            ep for ep in DEFAULT_DCGM_ENDPOINTS if ep in reachable_endpoints
+            ep
+            for ep in Environment.GPU.DEFAULT_DCGM_ENDPOINTS
+            if ep in reachable_endpoints
         ]
 
         # Scenario 3 logic
@@ -831,8 +837,8 @@ class TestSmartDefaultVisibility:
         # Should have both custom URL and reachable default
         assert len(endpoints_to_report) == 2
         assert "http://custom:9401/metrics" in endpoints_to_report
-        assert DEFAULT_DCGM_ENDPOINTS[0] in endpoints_to_report
-        assert DEFAULT_DCGM_ENDPOINTS[1] not in endpoints_to_report
+        assert Environment.GPU.DEFAULT_DCGM_ENDPOINTS[0] in endpoints_to_report
+        assert Environment.GPU.DEFAULT_DCGM_ENDPOINTS[1] not in endpoints_to_report
 
     @pytest.mark.asyncio
     async def test_hide_defaults_when_not_requested_and_all_unreachable(self):

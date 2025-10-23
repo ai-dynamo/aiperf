@@ -18,6 +18,7 @@ from textual.visual import VisualType
 from textual.widgets import Static
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.models import RecordsStats, RequestsStats, StatsProtocol
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget
 from aiperf.ui.utils import format_elapsed_time, format_eta
@@ -54,8 +55,6 @@ class ProgressDashboard(Container, MaximizableWidget):
     }
     """
 
-    SPINNER_REFRESH_RATE = 0.1  # 10 FPS
-
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.border_title = "Profile Progress"
@@ -79,7 +78,7 @@ class ProgressDashboard(Container, MaximizableWidget):
     def on_mount(self) -> None:
         """Set up the refresh timer when the widget is mounted."""
         self.refresh_timer = self.set_interval(
-            self.SPINNER_REFRESH_RATE, self.refresh_timer_callback
+            Environment.UI.SPINNER_REFRESH_RATE, self.refresh_timer_callback
         )
 
     def on_unmount(self) -> None:

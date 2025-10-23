@@ -14,17 +14,6 @@ from aiperf.common.enums.metric_enums import (
     TemperatureMetricUnit,
 )
 
-# Default telemetry configuration
-DEFAULT_DCGM_ENDPOINTS = [
-    "http://localhost:9400/metrics",
-    "http://localhost:9401/metrics",
-]
-DEFAULT_COLLECTION_INTERVAL = 0.33  # in seconds, 330ms (~3Hz)
-
-# Timeouts for telemetry operations (seconds)
-URL_REACHABILITY_TIMEOUT = 5
-THREAD_JOIN_TIMEOUT = 5.0
-
 # Unit conversion scaling factors
 SCALING_FACTORS = {
     "energy_consumption": 1e-9,  # mJ to MJ

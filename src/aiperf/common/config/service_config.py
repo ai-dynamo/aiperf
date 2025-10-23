@@ -3,14 +3,12 @@
 from typing import Annotated
 
 from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config.base_config import ADD_TO_TEMPLATE
+from aiperf.common.config.base_config import ADD_TO_TEMPLATE, BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import ServiceDefaults
-from aiperf.common.config.dev_config import DeveloperConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
@@ -27,15 +25,8 @@ from aiperf.common.enums.ui_enums import AIPerfUIType
 _logger = AIPerfLogger(__name__)
 
 
-class ServiceConfig(BaseSettings):
+class ServiceConfig(BaseConfig):
     """Base configuration for all services. It will be provided to all services during their __init__ function."""
-
-    model_config = SettingsConfigDict(
-        env_prefix="AIPERF_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="allow",
-    )
 
     _CLI_GROUP = Groups.SERVICE
     _comm_config: BaseZMQCommunicationConfig | None = None
@@ -158,8 +149,6 @@ class ServiceConfig(BaseSettings):
             group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.UI_TYPE
-
-    developer: DeveloperConfig = DeveloperConfig()
 
     @property
     def comm_config(self) -> BaseZMQCommunicationConfig:

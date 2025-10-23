@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from aiperf.gpu_telemetry.constants import DEFAULT_DCGM_ENDPOINTS
+from aiperf.common.environment import Environment
 
 
 class TestMainFunction:
@@ -25,20 +25,20 @@ class TestMainFunction:
             # --gpu-telemetry at end without value
             (
                 ["--gpu-telemetry"],
-                ["--gpu-telemetry", *DEFAULT_DCGM_ENDPOINTS],
-                DEFAULT_DCGM_ENDPOINTS,
+                ["--gpu-telemetry", *Environment.GPU.DEFAULT_DCGM_ENDPOINTS],
+                Environment.GPU.DEFAULT_DCGM_ENDPOINTS,
             ),
             # --gpu-telemetry followed by single dash flag
             (
                 ["--gpu-telemetry", "-v"],
-                ["--gpu-telemetry", *DEFAULT_DCGM_ENDPOINTS, "-v"],
-                DEFAULT_DCGM_ENDPOINTS,
+                ["--gpu-telemetry", *Environment.GPU.DEFAULT_DCGM_ENDPOINTS, "-v"],
+                Environment.GPU.DEFAULT_DCGM_ENDPOINTS,
             ),
             # --gpu-telemetry followed by double dash flag
             (
                 ["--gpu-telemetry", "--verbose"],
-                ["--gpu-telemetry", *DEFAULT_DCGM_ENDPOINTS, "--verbose"],
-                DEFAULT_DCGM_ENDPOINTS,
+                ["--gpu-telemetry", *Environment.GPU.DEFAULT_DCGM_ENDPOINTS, "--verbose"],
+                Environment.GPU.DEFAULT_DCGM_ENDPOINTS,
             ),
             # --gpu-telemetry with custom value
             (
@@ -75,4 +75,8 @@ class TestMainFunction:
             main()
 
         assert sys.argv == ["aiperf", "profile", "-m", "test-model", *expected_argv]
-        assert captured_user_config.gpu_telemetry == expected_gpu_telemetry
+        assert (
+            captured_user_config.gpu_telemetry == expected_gpu_telemetry
+            if captured_user_config
+            else []
+        )

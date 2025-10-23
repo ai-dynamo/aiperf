@@ -8,16 +8,10 @@ from typing import cast
 
 from rich.console import Console
 
+from aiperf.cli_utils import print_developer_mode_warning
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.config.dev_config import print_developer_mode_warning
-from aiperf.common.constants import (
-    AIPERF_DEV_MODE,
-    DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
-    DEFAULT_PROFILE_START_TIMEOUT,
-    DEFAULT_RECORD_PROCESSOR_SCALE_FACTOR,
-)
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
@@ -25,6 +19,7 @@ from aiperf.common.enums import (
     ServiceRegistrationStatus,
     ServiceType,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.factories import (
     AIPerfUIFactory,
@@ -86,6 +81,10 @@ class SystemController(SignalHandlerMixin, BaseService):
             service_id=service_id,
         )
         self.debug("Creating System Controller")
+        if Environment.DEV.MODE:
+            # Print a warning message to the console if developer mode is enabled, once at load time
+            print_developer_mode_warning()
+
         self._was_cancelled = False
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
@@ -209,7 +208,7 @@ class SystemController(SignalHandlerMixin, BaseService):
                 config=self.user_config,
             ),
             list(self.service_manager.service_id_map.keys()),
-            timeout=DEFAULT_PROFILE_CONFIGURE_TIMEOUT,
+            timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
         )
         duration = time.perf_counter() - begin
         self._parse_responses_for_errors(responses, "Configure Profiling")
@@ -223,7 +222,7 @@ class SystemController(SignalHandlerMixin, BaseService):
                 service_id=self.service_id,
             ),
             list(self.service_manager.service_id_map.keys()),
-            timeout=DEFAULT_PROFILE_START_TIMEOUT,
+            timeout=Environment.SERVICE.PROFILE_START_TIMEOUT,
         )
         self._parse_responses_for_errors(responses, "Start Profiling")
         self.info("All services started profiling successfully")
@@ -410,7 +409,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         if self.scale_record_processors_with_workers:
             await self.service_manager.run_service(
                 ServiceType.RECORD_PROCESSOR,
-                max(1, message.num_workers // DEFAULT_RECORD_PROCESSOR_SCALE_FACTOR),
+                max(
+                    1, message.num_workers // Environment.RECORD.PROCESSOR_SCALE_FACTOR
+                ),
             )
 
     @on_command(CommandType.SHUTDOWN_WORKERS)
@@ -560,7 +561,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         else:
             self._print_exit_errors_and_log_file()
 
-        if AIPERF_DEV_MODE:
+        if Environment.DEV.MODE:
             # Print a warning message to the console if developer mode is enabled, on exit after results
             print_developer_mode_warning()
 

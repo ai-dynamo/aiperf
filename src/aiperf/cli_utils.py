@@ -46,6 +46,13 @@ def raise_startup_error_and_exit(
         message = f"[{text_color}]{message}[/{text_color}]" if text_color else message
 
     console = Console()
+    console.print_exception(
+        show_locals=True,
+        max_frames=10,
+        word_wrap=True,
+        width=console.width,
+    )
+    console.file.flush()
     console.print(
         Panel(
             renderable=message,
@@ -115,3 +122,23 @@ class exit_on_error(AbstractContextManager):
                 title=self.title,
                 exit_code=self.exit_code,
             )
+
+
+def print_developer_mode_warning() -> None:
+    """Print a warning message to the console if developer mode is enabled."""
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+
+    console = Console()
+    panel = Panel(
+        Text(
+            "Developer Mode is active. This is a developer-only feature. Use at your own risk.",
+            style="yellow",
+        ),
+        title="AIPerf Developer Mode",
+        border_style="bold yellow",
+        title_align="left",
+    )
+    console.print(panel)
+    console.file.flush()
