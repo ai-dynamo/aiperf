@@ -10,6 +10,7 @@ from aiperf.common.enums import MetricType, RecordProcessorType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.factories import RecordProcessorFactory
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.protocols import RecordProcessorProtocol
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -54,7 +55,9 @@ class MetricRecordProcessor(BaseMetricsProcessor):
             )
         ]
 
-    async def process_record(self, record: ParsedResponseRecord) -> MetricRecordDict:
+    async def process_record(
+        self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
+    ) -> MetricRecordDict:
         """Process a response record from the inference results parser."""
         record_metrics: MetricRecordDict = MetricRecordDict()
         parse_funcs = self.valid_parse_funcs if record.valid else self.error_parse_funcs

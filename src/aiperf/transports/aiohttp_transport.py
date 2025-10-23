@@ -137,6 +137,7 @@ class AioHttpTransport(BaseTransport):
             )
 
         start_perf_ns = time.perf_counter_ns()
+        headers = None
         try:
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
@@ -145,10 +146,12 @@ class AioHttpTransport(BaseTransport):
             json_str = orjson.dumps(payload).decode("utf-8")
 
             record = await self.aiohttp_client.post_request(url, json_str, headers)
+            record.request_headers = headers
 
         except Exception as e:
             # Capture all exceptions with timing and error details
             record = RequestRecord(
+                request_headers=headers or request_info.endpoint_headers,
                 start_perf_ns=start_perf_ns,
                 end_perf_ns=time.perf_counter_ns(),
                 error=ErrorDetails.from_exception(e),

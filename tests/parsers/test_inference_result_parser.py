@@ -123,6 +123,9 @@ async def test_error_records_compute_input_tokens(
     else:  # processing_exception
         record = create_request_record()
 
+    # Set turns so that input token count can be computed
+    record.turns = [sample_turn]
+
     setup_parser_for_error_tests(parser, mock_tokenizer, sample_turn)
 
     if record_type == "processing_exception":

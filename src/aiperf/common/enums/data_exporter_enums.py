@@ -15,6 +15,7 @@ class ConsoleExporterType(CaseInsensitiveStrEnum):
 class DataExporterType(CaseInsensitiveStrEnum):
     JSON = "json"
     CSV = "csv"
+    RAW_RECORD_AGGREGATOR = "raw_record_aggregator"
 
 
 class ExportLevel(CaseInsensitiveStrEnum):

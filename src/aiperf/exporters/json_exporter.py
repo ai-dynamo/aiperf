@@ -5,7 +5,6 @@ from datetime import datetime
 
 import aiofiles
 
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DataExporterType, MetricFlags
@@ -42,12 +41,10 @@ class JsonExporter(AIPerfLoggerMixin):
         self.debug(lambda: f"Initializing JsonExporter with config: {exporter_config}")
         self._results = exporter_config.results
         self._telemetry_results = exporter_config.telemetry_results
-        self._output_directory = exporter_config.user_config.output.artifact_directory
         self._input_config = exporter_config.user_config
         self._metric_registry = MetricRegistry
-        self._file_path = (
-            self._output_directory / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
-        )
+        self._output_directory = exporter_config.user_config.output.artifact_directory
+        self._file_path = exporter_config.user_config.output.profile_export_json_file
 
     def get_export_info(self) -> FileExportInfo:
         return FileExportInfo(

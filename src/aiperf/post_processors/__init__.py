@@ -17,6 +17,10 @@ from aiperf.post_processors.metric_record_processor import (
 from aiperf.post_processors.metric_results_processor import (
     MetricResultsProcessor,
 )
+from aiperf.post_processors.raw_record_writer_processor import (
+    RawRecordAggregator,
+    RawRecordWriterProcessor,
+)
 from aiperf.post_processors.record_export_results_processor import (
     RecordExportResultsProcessor,
 )
@@ -28,6 +32,8 @@ __all__ = [
     "BaseMetricsProcessor",
     "MetricRecordProcessor",
     "MetricResultsProcessor",
+    "RawRecordAggregator",
+    "RawRecordWriterProcessor",
     "RecordExportResultsProcessor",
     "TelemetryResultsProcessor",
 ]

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import traceback
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -11,7 +12,7 @@ from aiperf.common.enums import (
     MessageType,
     ServiceType,
 )
-from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.exceptions import FactoryCreationError, PostProcessorDisabled
 from aiperf.common.factories import (
     RecordProcessorFactory,
     ServiceFactory,
@@ -88,6 +89,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                         processor_type,
                         service_config=self.service_config,
                         user_config=self.user_config,
+                        service_id=self.service_id,
                     )
                 )
                 self.records_processors.append(processor)
@@ -95,13 +97,16 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 self.debug(
                     f"Created record processor: {processor_type}: {processor.__class__.__name__}"
                 )
-            except PostProcessorDisabled:
-                self.debug(
-                    f"Record processor {processor_type} is disabled and will not be used"
-                )
-            except Exception as e:
-                self.exception(f"Error creating record processor {processor_type}: {e}")
-                raise
+            except FactoryCreationError as e:
+                if e.__cause__ is not None and isinstance(
+                    e.__cause__, PostProcessorDisabled
+                ):
+                    self.debug(
+                        f"Record processor {processor_type} is disabled and will not be used"
+                    )
+                else:
+                    self.exception(f"Error creating record processor: {e!r}")
+                    raise
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -166,36 +171,40 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         parsed_record = await self.inference_result_parser.parse_request_record(
             message.record
         )
-        raw_results = await self._process_record(parsed_record)
+        metadata = self._create_metric_record_metadata(
+            message.record, message.service_id
+        )
+        raw_results = await self._process_record(parsed_record, metadata)
         results = []
         for result in raw_results:
             if isinstance(result, BaseException):
-                self.warning(f"Error processing record: {result}")
+                self.error(
+                    f"Error processing record: {result!r}: {traceback.format_exception(result)}"
+                )
             else:
                 results.append(result)
 
         await self.records_push_client.push(
             MetricRecordsMessage(
                 service_id=self.service_id,
-                metadata=self._create_metric_record_metadata(
-                    message.record, message.service_id
-                ),
+                metadata=metadata,
                 results=results,
                 error=message.record.error,
             )
         )
 
     async def _process_record(
-        self, record: ParsedResponseRecord
+        self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
     ) -> list[MetricRecordDict | BaseException]:
         """Stream a record to the records processors."""
         tasks = [
-            processor.process_record(record) for processor in self.records_processors
+            processor.process_record(record, metadata)
+            for processor in self.records_processors
         ]
-        results: list[MetricRecordDict | BaseException] = await asyncio.gather(
+        results: list[MetricRecordDict | BaseException | None] = await asyncio.gather(
             *tasks, return_exceptions=True
         )
-        return results
+        return [result for result in results if result is not None]
 
 
 def main() -> None:

@@ -9,7 +9,6 @@ from decimal import Decimal
 
 import aiofiles
 
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.constants import STAT_KEYS
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DataExporterType
@@ -44,9 +43,7 @@ class CsvExporter(AIPerfLoggerMixin):
         self._telemetry_results = exporter_config.telemetry_results
         self._output_directory = exporter_config.user_config.output.artifact_directory
         self._metric_registry = MetricRegistry
-        self._file_path = (
-            self._output_directory / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
-        )
+        self._file_path = exporter_config.user_config.output.profile_export_csv_file
         self._percentile_keys = _percentile_keys_from(STAT_KEYS)
 
     def get_export_info(self) -> FileExportInfo:

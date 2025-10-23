@@ -4,24 +4,13 @@ import asyncio
 import time
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommAddress
 from aiperf.common.factories import EndpointFactory
 from aiperf.common.hooks import on_init
-from aiperf.common.messages import (
-    ConversationTurnRequestMessage,
-    ConversationTurnResponseMessage,
-    ErrorMessage,
-)
 from aiperf.common.mixins import CommunicationMixin
-from aiperf.common.models import (
-    ErrorDetails,
-    ParsedResponseRecord,
-    RequestRecord,
-)
-from aiperf.common.models.dataset_models import Turn
+from aiperf.common.models import ErrorDetails, ParsedResponseRecord, RequestRecord
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import ReasoningResponseData
-from aiperf.common.protocols import EndpointProtocol, RequestClientProtocol
+from aiperf.common.protocols import EndpointProtocol
 from aiperf.common.tokenizer import Tokenizer
 
 
@@ -38,26 +27,20 @@ class InferenceResultParser(CommunicationMixin):
             service_config=service_config,
             user_config=user_config,
         )
-        self.conversation_request_client: RequestClientProtocol = (
-            self.comms.create_request_client(
-                CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
-            )
-        )
         self.tokenizers: dict[str, Tokenizer] = {}
         self.user_config: UserConfig = user_config
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
             user_config
         )
-        self.inference_client: EndpointProtocol = EndpointFactory.create_instance(
+        self.endpoint: EndpointProtocol = EndpointFactory.create_instance(
             self.model_endpoint.endpoint.type,
             model_endpoint=self.model_endpoint,
         )
         self.debug(
-            lambda: f"Created inference client for {self.model_endpoint.endpoint.type}, "
-            f"class: {self.inference_client.__class__.__name__}",
+            lambda: f"Created endpoint for {self.model_endpoint.endpoint.type}, "
+            f"class: {self.endpoint.__class__.__name__}",
         )
-        self.attach_child_lifecycle(self.inference_client)
 
     @on_init
     async def _initialize(self) -> None:
@@ -181,7 +164,7 @@ class InferenceResultParser(CommunicationMixin):
                 output_token_count=None,
             )
 
-        resp = self.inference_client.extract_response_data(request_record)
+        resp = self.endpoint.extract_response_data(request_record)
         input_token_count = await self.compute_input_token_count(request_record)
 
         output_texts: list[str] = []
@@ -211,42 +194,21 @@ class InferenceResultParser(CommunicationMixin):
             reasoning_token_count=reasoning_token_count,
         )
 
-    async def get_turn(self, request_record: RequestRecord) -> Turn | None:
-        """Get the turn for a given request record."""
-        if request_record.turn is not None:
-            return request_record.turn
-
-        if request_record.conversation_id is None or request_record.turn_index is None:
-            self.warning(
-                lambda: f"Conversation ID or turn index is None: {request_record.conversation_id=} {request_record.turn_index=}"
-            )
-            return None
-
-        turn_response: ConversationTurnResponseMessage = (
-            await self.conversation_request_client.request(
-                ConversationTurnRequestMessage(
-                    service_id=self.id,
-                    conversation_id=request_record.conversation_id,
-                    turn_index=request_record.turn_index,
-                )
-            )
-        )
-        if isinstance(turn_response, ErrorMessage):
-            self.error(lambda: f"Error getting turn response: {turn_response}")
-            return None
-
-        return turn_response.turn
-
     async def compute_input_token_count(
         self, request_record: RequestRecord
     ) -> int | None:
         """Compute the number of tokens in the input for a given request record."""
-        turn = await self.get_turn(request_record)
-        if turn is None:
+        turns = request_record.turns
+        if turns is None:
+            self.warning(
+                "Turns are not set for request record, unable to calculate input token count"
+            )
             return None
 
         tokenizer = await self.get_tokenizer(request_record.model_name)
         input_token_count = 0
-        for text in turn.texts:
-            input_token_count += len(tokenizer.encode("".join(text.contents)))
+        # TODO: We need to handle images, audios, videos, etc.
+        for turn in turns:
+            for text in turn.texts:
+                input_token_count += len(tokenizer.encode("".join(text.contents)))
         return input_token_count

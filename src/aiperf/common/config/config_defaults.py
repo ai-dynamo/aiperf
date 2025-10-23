@@ -129,12 +129,14 @@ class TurnDelayDefaults:
 @dataclass(frozen=True)
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
-    PROFILE_EXPORT_FILE = Path("profile_export.jsonl")
+    RAW_RECORDS_FOLDER = Path("raw_records")
     LOG_FOLDER = Path("logs")
     LOG_FILE = Path("aiperf.log")
     INPUTS_JSON_FILE = Path("inputs.json")
     PROFILE_EXPORT_AIPERF_CSV_FILE = Path("profile_export_aiperf.csv")
     PROFILE_EXPORT_AIPERF_JSON_FILE = Path("profile_export_aiperf.json")
+    PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
+    PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
     EXPORT_LEVEL = ExportLevel.RECORDS
 
 

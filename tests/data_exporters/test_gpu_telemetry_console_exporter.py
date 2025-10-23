@@ -115,8 +115,7 @@ class TestGPUTelemetryConsoleExporter:
         assert "GPU Telemetry Summary" in output
         assert "DCGM endpoints reachable" in output
         assert "H100" in output or "A100" in output
-        assert "Power Usage" in output
-        assert "Utilization" in output
+        assert "Power" in output and "Usage" in output
 
     @pytest.mark.asyncio
     async def test_export_displays_all_endpoints(

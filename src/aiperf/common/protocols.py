@@ -16,6 +16,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.hooks import Hook, HookType
 from aiperf.common.models import (
+    MetricRecordMetadata,
     ParsedResponse,
     ParsedResponseRecord,
     RequestInfo,
@@ -482,7 +483,7 @@ class RecordProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for a record processor that processes the incoming records and returns the results of the post processing."""
 
     async def process_record(
-        self, record: ParsedResponseRecord
+        self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
     ) -> "MetricRecordDict": ...
 
 
