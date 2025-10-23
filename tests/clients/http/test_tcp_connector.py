@@ -134,7 +134,7 @@ class TestCreateTcpConnector:
                     True,
                     "TCP_QUICKACK",
                     socket.TCP_QUICKACK,
-                    Environment.HTTP.TCP_QUICKACK,
+                    1,
                 ),
                 (
                     True,
