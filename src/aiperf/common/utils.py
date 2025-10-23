@@ -94,7 +94,7 @@ def load_json_str(json_str: str, func: Callable = lambda x: x) -> dict[str, Any]
         return func(orjson.loads(json_str))
     except orjson.JSONDecodeError as e:
         snippet = json_str[:200] + ("..." if len(json_str) > 200 else "")
-        _logger.error(f"Failed to parse JSON string: '{snippet}' - {e!r}")
+        _logger.exception(f"Failed to parse JSON string: '{snippet}' - {e!r}")
         raise
 
 

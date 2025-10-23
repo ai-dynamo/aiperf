@@ -410,7 +410,7 @@ class RequestRecord(AIPerfBaseModel):
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | Any]] = Field(
+    responses: SerializeAsAny[list[SSEMessage | TextResponse]] = Field(
         default_factory=list,
         description="The raw responses received from the request.",
     )

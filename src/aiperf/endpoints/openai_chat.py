@@ -187,9 +187,8 @@ class ChatEndpoint(BaseEndpoint):
             case "chat.completion.chunk":
                 data_key = "delta"
             case _:
-                raise ValueError(
-                    f"Unsupported OpenAI object type: {json_obj.get('object')}: {json_obj}"
-                )
+                object_type = json_obj.get("object")
+                raise ValueError(f"Unsupported OpenAI object type: {object_type!r}")
 
         choices = json_obj.get("choices")
         if not choices:

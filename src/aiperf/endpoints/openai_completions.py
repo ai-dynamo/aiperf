@@ -113,6 +113,5 @@ class CompletionsEndpoint(BaseEndpoint):
                     return None
                 return self.make_text_response_data(choices[0].get("text"))
             case _:
-                raise ValueError(
-                    f"Unsupported OpenAI object type: {json_obj.get('object')}: {json_obj}"
-                )
+                object_type = json_obj.get("object")
+                raise ValueError(f"Unsupported OpenAI object type: {object_type!r}")

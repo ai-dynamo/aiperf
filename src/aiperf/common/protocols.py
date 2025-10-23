@@ -5,8 +5,6 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from aiohttp import RequestInfo
-
 from aiperf.common.constants import (
     DEFAULT_COMMS_REQUEST_TIMEOUT,
     DEFAULT_SERVICE_REGISTRATION_TIMEOUT,
@@ -20,6 +18,7 @@ from aiperf.common.hooks import Hook, HookType
 from aiperf.common.models import (
     ParsedResponse,
     ParsedResponseRecord,
+    RequestInfo,
     RequestRecord,
     ServiceRunInfo,
     TelemetryRecord,
