@@ -339,6 +339,21 @@ class DataExporterProtocol(Protocol):
 
 
 @runtime_checkable
+class DatasetSamplingStrategyProtocol(Protocol):
+    """
+    Protocol for dataset sampling strategies.
+    Any class implementing this protocol will be provided a list of conversation ids and a seed, and must
+    provide a `next_conversation_id` method that returns the next conversation id, ensuring reproducibility
+    via the seed if provided.
+    """
+
+    def __init__(
+        self, conversation_ids: list[str], seed: int | None = None, **kwargs
+    ) -> None: ...
+    def next_conversation_id(self) -> str: ...
+
+
+@runtime_checkable
 class EndpointProtocol(Protocol):
     """Protocol for an endpoint."""
 

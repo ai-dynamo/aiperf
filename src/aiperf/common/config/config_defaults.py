@@ -20,6 +20,7 @@ from aiperf.common.enums import (
     VideoFormat,
     VideoSynthType,
 )
+from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
 
 
 #
@@ -53,6 +54,7 @@ class InputDefaults:
     GOODPUT = None
     PUBLIC_DATASET = None
     CUSTOM_DATASET_TYPE = None
+    DATASET_SAMPLING_STRATEGY = DatasetSamplingStrategy.SHUFFLE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
 

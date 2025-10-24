@@ -10,6 +10,7 @@ from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, Use
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.dataset.dataset_manager import DatasetManager
+from aiperf.dataset.dataset_samplers import SequentialSampler
 
 
 class TestDatasetManagerSequentialIteration:
@@ -138,8 +139,8 @@ class TestDatasetManagerSequentialIteration:
                 ProfileConfigureCommand(config=custom_config, service_id="test_service")
             )
 
-            # Verify sequential iteration is enabled for custom datasets
-            assert custom_manager._use_sequential_iteration is True
+            assert custom_manager._dataset_sampler is not None
+            assert isinstance(custom_manager._dataset_sampler, SequentialSampler)
 
             # Get sessions in order for custom dataset
             custom_sessions = []
