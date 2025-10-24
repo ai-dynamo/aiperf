@@ -12,8 +12,8 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.enums import WorkerStatus
+from aiperf.common.environment import Environment
 from aiperf.common.models import MetricResult, RecordsStats, RequestsStats, WorkerStats
 from aiperf.controller.system_controller import SystemController
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
@@ -37,9 +37,6 @@ class AIPerfTextualApp(App):
 
     ALLOW_IN_MAXIMIZED_VIEW = "ProgressHeader, Footer"
     """Allow the custom header and footer to be displayed when a panel is maximized."""
-
-    NOTIFICATION_TIMEOUT = 3
-    """The timeout for notifications in seconds."""
 
     CSS = """
     #main-container {
@@ -85,7 +82,7 @@ class AIPerfTextualApp(App):
         super().__init__()
 
         self.title = "NVIDIA AIPerf"
-        if AIPERF_DEV_MODE:
+        if Environment.DEV.MODE:
             self.title = "NVIDIA AIPerf (Developer Mode)"
 
         self.log_viewer: RichLogViewer | None = None
@@ -142,7 +139,9 @@ class AIPerfTextualApp(App):
         self.progress_header = None
         self.realtime_metrics_dashboard = None
         self.log_viewer = None
+
         # Forward the signal to the main process
+        # IMPORTANT: This is necessary, otherwise the process will hang
         os.kill(os.getpid(), signal.SIGINT)
 
     async def action_toggle_hide_log_viewer(self) -> None:

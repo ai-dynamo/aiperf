@@ -3,9 +3,6 @@
 
 from cyclopts import Parameter
 
-from aiperf.common.config.groups import Groups
-from aiperf.common.constants import AIPERF_DEV_MODE
-
 
 class CLIParameter(Parameter):
     """Configuration for a CLI parameter.
@@ -27,13 +24,3 @@ class DisableCLI(CLIParameter):
 
     def __init__(self, reason: str = "Not supported via command line", *args, **kwargs):
         super().__init__(*args, parse=False, **kwargs)
-
-
-class DeveloperOnlyCLI(CLIParameter):
-    """Configuration for a CLI parameter that is only available to developers.
-
-    This is a subclass of the CLIParameter class that is used to set a CLI parameter to only be available to developers.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, parse=AIPERF_DEV_MODE, group=Groups.DEVELOPER, **kwargs)

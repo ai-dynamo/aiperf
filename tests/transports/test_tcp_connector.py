@@ -11,9 +11,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common import constants
+from aiperf.common.environment import Environment
 from aiperf.transports.aiohttp_client import create_tcp_connector
-from aiperf.transports.http_defaults import SocketDefaults
 
 ################################################################################
 # Test create_tcp_connector
@@ -36,7 +35,7 @@ class TestCreateTcpConnector:
             call_kwargs = mock_connector_class.call_args[1]
 
             # Verify default parameters
-            assert call_kwargs["limit"] == constants.AIPERF_HTTP_CONNECTION_LIMIT
+            assert call_kwargs["limit"] == Environment.HTTP.CONNECTION_LIMIT
             assert call_kwargs["limit_per_host"] == 0
             assert call_kwargs["ttl_dns_cache"] == 300
             assert call_kwargs["use_dns_cache"] is True
@@ -103,8 +102,8 @@ class TestCreateTcpConnector:
             expected_calls = [
                 (socket.SOL_TCP, socket.TCP_NODELAY, 1),
                 (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
-                (socket.SOL_SOCKET, socket.SO_RCVBUF, SocketDefaults.SO_RCVBUF),
-                (socket.SOL_SOCKET, socket.SO_SNDBUF, SocketDefaults.SO_SNDBUF),
+                (socket.SOL_SOCKET, socket.SO_RCVBUF, Environment.HTTP.SO_RCVBUF),
+                (socket.SOL_SOCKET, socket.SO_SNDBUF, Environment.HTTP.SO_SNDBUF),
             ]
 
             for option_level, option_name, option_value in expected_calls:
@@ -122,26 +121,26 @@ class TestCreateTcpConnector:
                     True,
                     "TCP_KEEPIDLE",
                     socket.TCP_KEEPIDLE,
-                    SocketDefaults.TCP_KEEPIDLE,
+                    Environment.HTTP.TCP_KEEPIDLE,
                 ),
                 (
                     True,
                     "TCP_KEEPINTVL",
                     socket.TCP_KEEPINTVL,
-                    SocketDefaults.TCP_KEEPINTVL,
+                    Environment.HTTP.TCP_KEEPINTVL,
                 ),
-                (True, "TCP_KEEPCNT", socket.TCP_KEEPCNT, SocketDefaults.TCP_KEEPCNT),
+                (True, "TCP_KEEPCNT", socket.TCP_KEEPCNT, Environment.HTTP.TCP_KEEPCNT),
                 (
                     True,
                     "TCP_QUICKACK",
                     socket.TCP_QUICKACK,
-                    SocketDefaults.TCP_QUICKACK,
+                    1,
                 ),
                 (
                     True,
                     "TCP_USER_TIMEOUT",
                     socket.TCP_USER_TIMEOUT,
-                    SocketDefaults.TCP_USER_TIMEOUT,
+                    Environment.HTTP.TCP_USER_TIMEOUT,
                 ),
                 (False, "TCP_KEEPIDLE", socket.TCP_KEEPIDLE, None),
             ],

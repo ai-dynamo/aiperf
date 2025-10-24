@@ -1,0 +1,671 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""
+Environment Configuration Module
+
+Provides a hierarchical, type-safe configuration system using Pydantic BaseSettings.
+All settings can be configured via environment variables with the AIPERF_ prefix.
+
+Structure:
+    Environment.DATASET.*  - Dataset management
+    Environment.DEV.*      - Development and debugging settings
+    Environment.GPU.*      - GPU telemetry collection
+    Environment.HTTP.*     - HTTP client socket and connection settings
+    Environment.LOGGING.*  - Logging configuration
+    Environment.METRICS.*  - Metrics collection and storage
+    Environment.RECORD.*   - Record processing
+    Environment.SERVICE.*  - Service lifecycle and communication
+    Environment.UI.*       - User interface settings
+    Environment.WORKER.*   - Worker management and scaling
+    Environment.ZMQ.*      - ZMQ communication settings
+
+Examples:
+    # Via environment variables:
+    AIPERF_HTTP_SO_RCVBUF=20971520
+    AIPERF_WORKER_CPU_UTILIZATION_FACTOR=0.8
+
+    # In code:
+    print(f"Buffer: {Environment.HTTP.SO_RCVBUF}")
+    print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
+"""
+
+from typing import Annotated
+
+from pydantic import BeforeValidator, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing_extensions import Self
+
+from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.config.config_validators import (
+    parse_service_types,
+    parse_str_or_csv_list,
+)
+from aiperf.common.enums.service_enums import ServiceType
+
+_logger = AIPerfLogger(__name__)
+
+__all__ = ["Environment"]
+
+
+class _DatasetSettings(BaseSettings):
+    """Dataset loading and configuration.
+
+    Controls timeouts and behavior for dataset loading operations.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_DATASET_",
+    )
+
+    CONFIGURATION_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=300.0,
+        description="Timeout in seconds for dataset configuration operations",
+    )
+    PUBLIC_DATASET_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=300.0,
+        description="Timeout in seconds for public dataset loading operations",
+    )
+
+
+class _DeveloperSettings(BaseSettings):
+    """Development and debugging configuration.
+
+    Controls developer-focused features like debug logging, profiling, and internal metrics.
+    These settings are typically disabled in production environments.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_DEV_",
+    )
+
+    DEBUG_SERVICES: Annotated[
+        set[ServiceType] | None,
+        BeforeValidator(parse_service_types),
+    ] = Field(
+        default=None,
+        description="List of services to enable DEBUG logging for (comma-separated or multiple flags)",
+    )
+    ENABLE_YAPPI: bool = Field(
+        default=False,
+        description="Enable yappi profiling (Yet Another Python Profiler) for performance analysis. "
+        "Requires 'pip install yappi snakeviz'",
+    )
+    MODE: bool = Field(
+        default=False,
+        description="Enable AIPerf Developer mode for internal metrics and debugging",
+    )
+    SHOW_EXPERIMENTAL_METRICS: bool = Field(
+        default=False,
+        description="[Developer use only] Show experimental metrics in output (requires DEV_MODE)",
+    )
+    SHOW_INTERNAL_METRICS: bool = Field(
+        default=False,
+        description="[Developer use only] Show internal and hidden metrics in output (requires DEV_MODE)",
+    )
+    TRACE_SERVICES: Annotated[
+        set[ServiceType] | None,
+        BeforeValidator(parse_service_types),
+    ] = Field(
+        default=None,
+        description="List of services to enable TRACE logging for (comma-separated or multiple flags)",
+    )
+
+
+class _GPUSettings(BaseSettings):
+    """GPU telemetry collection configuration.
+
+    Controls GPU metrics collection frequency, endpoint detection, and shutdown behavior.
+    Metrics are collected from DCGM endpoints at the specified interval.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_GPU_",
+        env_parse_enums=True,
+    )
+
+    COLLECTION_INTERVAL: float = Field(
+        ge=0.01,
+        le=300.0,
+        default=0.33,
+        description="GPU telemetry metrics collection interval in seconds (default: 330ms, ~3Hz)",
+    )
+    DEFAULT_DCGM_ENDPOINTS: Annotated[
+        str | list[str],
+        BeforeValidator(parse_str_or_csv_list),
+    ] = Field(
+        default=["http://localhost:9400/metrics", "http://localhost:9401/metrics"],
+        description="Default DCGM endpoint URLs to check for GPU telemetry (comma-separated string or JSON array)",
+    )
+    REACHABILITY_TIMEOUT: int = Field(
+        ge=1,
+        le=300,
+        default=5,
+        description="Timeout in seconds for checking GPU telemetry endpoint reachability during init",
+    )
+    SHUTDOWN_DELAY: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=5.0,
+        description="Delay in seconds before shutting down GPU telemetry service to allow command response transmission",
+    )
+    THREAD_JOIN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=5.0,
+        description="Timeout in seconds for joining GPU telemetry collection threads during shutdown",
+    )
+
+
+class _HTTPSettings(BaseSettings):
+    """HTTP client socket and connection configuration.
+
+    Controls low-level socket options, keepalive settings, DNS caching, and connection
+    pooling for HTTP clients. These settings optimize performance for high-throughput
+    streaming workloads.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_HTTP_",
+    )
+
+    CONNECTION_LIMIT: int = Field(
+        ge=1,
+        le=65000,
+        default=2500,
+        description="Maximum number of concurrent HTTP connections",
+    )
+    KEEPALIVE_TIMEOUT: int = Field(
+        ge=1,
+        le=10000,
+        default=300,
+        description="HTTP connection keepalive timeout in seconds for connection pooling",
+    )
+    SO_RCVBUF: int = Field(
+        ge=1024,
+        default=10485760,  # 10MB
+        description="Socket receive buffer size in bytes (default: 10MB for high-throughput streaming)",
+    )
+    SO_RCVTIMEO: int = Field(
+        ge=1,
+        le=100000,
+        default=30,
+        description="Socket receive timeout in seconds",
+    )
+    SO_SNDBUF: int = Field(
+        ge=1024,
+        default=10485760,  # 10MB
+        description="Socket send buffer size in bytes (default: 10MB for high-throughput streaming)",
+    )
+    SO_SNDTIMEO: int = Field(
+        ge=1,
+        le=100000,
+        default=30,
+        description="Socket send timeout in seconds",
+    )
+    TCP_KEEPCNT: int = Field(
+        ge=1,
+        le=100,
+        default=1,
+        description="Maximum number of keepalive probes to send before considering the connection dead",
+    )
+    TCP_KEEPIDLE: int = Field(
+        ge=1,
+        le=100000,
+        default=60,
+        description="Time in seconds before starting TCP keepalive probes on idle connections",
+    )
+    TCP_KEEPINTVL: int = Field(
+        ge=1,
+        le=100000,
+        default=30,
+        description="Interval in seconds between TCP keepalive probes",
+    )
+    TCP_USER_TIMEOUT: int = Field(
+        ge=1,
+        le=1000000,
+        default=30000,
+        description="TCP user timeout in milliseconds (Linux-specific, detects dead connections)",
+    )
+    TTL_DNS_CACHE: int = Field(
+        ge=1,
+        le=1000000,
+        default=300,
+        description="DNS cache TTL in seconds for aiohttp client sessions",
+    )
+
+
+class _LoggingSettings(BaseSettings):
+    """Logging system configuration.
+
+    Controls multiprocessing log queue size and other logging behavior.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_LOGGING_",
+    )
+
+    QUEUE_MAXSIZE: int = Field(
+        ge=1,
+        le=1000000,
+        default=1000,
+        description="Maximum size of the multiprocessing logging queue",
+    )
+
+
+class _MetricsSettings(BaseSettings):
+    """Metrics collection and storage configuration.
+
+    Controls metrics storage allocation and collection behavior.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_METRICS_",
+    )
+
+    ARRAY_INITIAL_CAPACITY: int = Field(
+        ge=100,
+        le=1000000,
+        default=10000,
+        description="Initial array capacity for metric storage dictionaries to minimize reallocation",
+    )
+
+
+class _RecordSettings(BaseSettings):
+    """Record processing and export configuration.
+
+    Controls batch sizes, processor scaling, and progress reporting for record processing.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_RECORD_",
+    )
+
+    EXPORT_BATCH_SIZE: int = Field(
+        ge=1,
+        le=1000000,
+        default=100,
+        description="Batch size for record export results processor",
+    )
+    RAW_EXPORT_BATCH_SIZE: int = Field(
+        ge=1,
+        le=1000000,
+        default=10,
+        description="Batch size for raw record writer processor",
+    )
+    PROCESSOR_SCALE_FACTOR: int = Field(
+        ge=1,
+        le=100,
+        default=4,
+        description="Scale factor for number of record processors to spawn based on worker count. "
+        "Formula: 1 record processor for every X workers",
+    )
+    PROGRESS_REPORT_INTERVAL: float = Field(
+        ge=0.1,
+        le=600.0,
+        default=2.0,
+        description="Interval in seconds between records progress report messages",
+    )
+
+
+class _ServiceSettings(BaseSettings):
+    """Service lifecycle and inter-service communication configuration.
+
+    Controls timeouts for service registration, startup, shutdown, command handling,
+    connection probing, heartbeats, and profile operations.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_SERVICE_",
+    )
+
+    COMMAND_RESPONSE_TIMEOUT: float = Field(
+        ge=1.0,
+        le=1000.0,
+        default=30.0,
+        description="Timeout in seconds for command responses",
+    )
+    COMMS_REQUEST_TIMEOUT: float = Field(
+        ge=1.0,
+        le=1000.0,
+        default=90.0,
+        description="Timeout in seconds for requests from req_clients to rep_clients",
+    )
+    CONNECTION_PROBE_INTERVAL: float = Field(
+        ge=0.1,
+        le=600.0,
+        default=0.1,
+        description="Interval in seconds for connection probes while waiting for initial connection to the zmq message bus",
+    )
+    CONNECTION_PROBE_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=90.0,
+        description="Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus",
+    )
+    CREDIT_PROGRESS_REPORT_INTERVAL: float = Field(
+        ge=1,
+        le=100000.0,
+        default=2.0,
+        description="Interval in seconds between credit progress report messages",
+    )
+    DISABLE_UVLOOP: bool = Field(
+        default=False,
+        description="Disable uvloop and use default asyncio event loop instead",
+    )
+    HEARTBEAT_INTERVAL: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=5.0,
+        description="Interval in seconds between heartbeat messages for component services",
+    )
+    PROFILE_CONFIGURE_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=300.0,
+        description="Timeout in seconds for profile configure command",
+    )
+    PROFILE_START_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=60.0,
+        description="Timeout in seconds for profile start command",
+    )
+    REGISTRATION_INTERVAL: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=1.0,
+        description="Interval in seconds between registration attempts for component services",
+    )
+    REGISTRATION_MAX_ATTEMPTS: int = Field(
+        ge=1,
+        le=100000,
+        default=10,
+        description="Maximum number of registration attempts before giving up",
+    )
+    REGISTRATION_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=30.0,
+        description="Timeout in seconds for service registration",
+    )
+    START_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=30.0,
+        description="Timeout in seconds for service start operations",
+    )
+    TASK_CANCEL_TIMEOUT_SHORT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=2.0,
+        description="Maximum time in seconds to wait for simple tasks to complete when cancelling",
+    )
+
+
+class _UISettings(BaseSettings):
+    """User interface and dashboard configuration.
+
+    Controls refresh rates, update thresholds, and notification behavior for the
+    various UI modes (dashboard, tqdm, etc.).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_UI_",
+    )
+
+    LOG_REFRESH_INTERVAL: float = Field(
+        ge=0.01,
+        le=100000.0,
+        default=0.1,
+        description="Log viewer refresh interval in seconds (default: 10 FPS)",
+    )
+    MIN_UPDATE_PERCENT: float = Field(
+        ge=0.01,
+        le=100.0,
+        default=1.0,
+        description="Minimum percentage difference from last update to trigger a UI update (for non-dashboard UIs)",
+    )
+    NOTIFICATION_TIMEOUT: int = Field(
+        ge=1,
+        le=100000,
+        default=3,
+        description="Duration in seconds to display UI notifications before auto-dismissing",
+    )
+    REALTIME_METRICS_INTERVAL: float = Field(
+        ge=1.0,
+        le=1000.0,
+        default=5.0,
+        description="Interval in seconds between real-time metrics messages",
+    )
+    SPINNER_REFRESH_RATE: float = Field(
+        ge=0.1,
+        le=100.0,
+        default=0.1,
+        description="Progress spinner refresh rate in seconds (default: 10 FPS)",
+    )
+
+
+class _WorkerSettings(BaseSettings):
+    """Worker management and auto-scaling configuration.
+
+    Controls worker pool sizing, health monitoring, load detection, and recovery behavior.
+    The CPU_UTILIZATION_FACTOR is used in the auto-scaling formula:
+    max_workers = max(1, min(int(cpu_count * factor) - 1, MAX_WORKERS_CAP))
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_WORKER_",
+    )
+
+    CHECK_INTERVAL: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=1.0,
+        description="Interval in seconds between worker status checks by WorkerManager",
+    )
+    CPU_UTILIZATION_FACTOR: float = Field(
+        ge=0.1,
+        le=1.0,
+        default=0.75,
+        description="Factor multiplied by CPU count to determine default max workers (0.0-1.0). "
+        "Formula: max(1, min(int(cpu_count * factor) - 1, MAX_WORKERS_CAP))",
+    )
+    ERROR_RECOVERY_TIME: float = Field(
+        ge=0.1,
+        le=1000.0,
+        default=3.0,
+        description="Time in seconds from last error before worker is considered healthy again",
+    )
+    HEALTH_CHECK_INTERVAL: float = Field(
+        ge=0.1,
+        le=1000.0,
+        default=2.0,
+        description="Interval in seconds between worker health check messages",
+    )
+    HIGH_LOAD_CPU_USAGE: float = Field(
+        ge=50.0,
+        le=100.0,
+        default=85.0,
+        description="CPU usage percentage threshold for considering a worker under high load",
+    )
+    HIGH_LOAD_RECOVERY_TIME: float = Field(
+        ge=0.1,
+        le=1000.0,
+        default=5.0,
+        description="Time in seconds from last high load before worker is considered recovered",
+    )
+    MAX_WORKERS_CAP: int = Field(
+        ge=1,
+        le=10000,
+        default=32,
+        description="Absolute maximum number of workers to spawn, regardless of CPU count",
+    )
+    STALE_TIME: float = Field(
+        ge=0.1,
+        le=1000.0,
+        default=10.0,
+        description="Time in seconds from last status report before worker is considered stale",
+    )
+    STATUS_SUMMARY_INTERVAL: float = Field(
+        ge=0.1,
+        le=1000.0,
+        default=0.5,
+        description="Interval in seconds between worker status summary messages",
+    )
+
+
+class _ZMQSettings(BaseSettings):
+    """ZMQ socket and communication configuration.
+
+    Controls ZMQ socket timeouts, keepalive settings, retry behavior, and concurrency limits.
+    These settings affect reliability and performance of the internal message bus.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_ZMQ_",
+    )
+
+    CONTEXT_TERM_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=10.0,
+        description="Timeout in seconds for terminating the ZMQ context during shutdown",
+    )
+    PULL_MAX_CONCURRENCY: int = Field(
+        ge=1,
+        le=10000000,
+        default=100_000,
+        description="Maximum concurrency for ZMQ PULL clients",
+    )
+    PUSH_MAX_RETRIES: int = Field(
+        ge=1,
+        le=100,
+        default=2,
+        description="Maximum number of retry attempts when pushing messages to ZMQ PUSH socket",
+    )
+    PUSH_RETRY_DELAY: float = Field(
+        ge=0.1,
+        le=1000.0,
+        default=0.1,
+        description="Delay in seconds between retry attempts for ZMQ PUSH operations",
+    )
+    RCVTIMEO: int = Field(
+        ge=1,
+        le=10000000,
+        default=300000,  # 5 minutes
+        description="Socket receive timeout in milliseconds (default: 5 minutes)",
+    )
+    SNDTIMEO: int = Field(
+        ge=1,
+        le=10000000,
+        default=300000,  # 5 minutes
+        description="Socket send timeout in milliseconds (default: 5 minutes)",
+    )
+    TCP_KEEPALIVE_IDLE: int = Field(
+        ge=1,
+        le=100000,
+        default=60,
+        description="Time in seconds before starting TCP keepalive probes on idle ZMQ connections",
+    )
+    TCP_KEEPALIVE_INTVL: int = Field(
+        ge=1,
+        le=100000,
+        default=10,
+        description="Interval in seconds between TCP keepalive probes for ZMQ connections",
+    )
+
+
+class _Environment(BaseSettings):
+    """
+    Root environment configuration with nested subsystem settings.
+
+    This is a singleton instance that loads configuration from environment variables
+    with the AIPERF_ prefix. Settings are organized into logical subsystems for
+    better discoverability and maintainability.
+
+    All nested settings can be configured via environment variables using the pattern:
+    AIPERF_{SUBSYSTEM}_{SETTING_NAME}
+
+    Example:
+        AIPERF_HTTP_CONNECTION_LIMIT=5000
+        AIPERF_WORKER_CPU_UTILIZATION_FACTOR=0.8
+        AIPERF_ZMQ_RCVTIMEO=600000
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="allow",
+    )
+
+    # Nested subsystem settings (alphabetically ordered)
+    DATASET: _DatasetSettings = Field(
+        default_factory=_DatasetSettings,
+        description="Dataset loading and configuration settings",
+    )
+    DEV: _DeveloperSettings = Field(
+        default_factory=_DeveloperSettings,
+        description="Development and debugging settings",
+    )
+    GPU: _GPUSettings = Field(
+        default_factory=_GPUSettings,
+        description="GPU telemetry collection settings",
+    )
+    HTTP: _HTTPSettings = Field(
+        default_factory=_HTTPSettings,
+        description="HTTP client socket and connection settings",
+    )
+    LOGGING: _LoggingSettings = Field(
+        default_factory=_LoggingSettings,
+        description="Logging system settings",
+    )
+    METRICS: _MetricsSettings = Field(
+        default_factory=_MetricsSettings,
+        description="Metrics collection and storage settings",
+    )
+    RECORD: _RecordSettings = Field(
+        default_factory=_RecordSettings,
+        description="Record processing and export settings",
+    )
+    SERVICE: _ServiceSettings = Field(
+        default_factory=_ServiceSettings,
+        description="Service lifecycle and communication settings",
+    )
+    UI: _UISettings = Field(
+        default_factory=_UISettings,
+        description="User interface and dashboard settings",
+    )
+    WORKER: _WorkerSettings = Field(
+        default_factory=_WorkerSettings,
+        description="Worker management and scaling settings",
+    )
+    ZMQ: _ZMQSettings = Field(
+        default_factory=_ZMQSettings,
+        description="ZMQ communication settings",
+    )
+
+    @model_validator(mode="after")
+    def validate_dev_mode(self) -> Self:
+        """Validate that developer mode is enabled for features that require it."""
+        if self.DEV.SHOW_INTERNAL_METRICS and not self.DEV.MODE:
+            _logger.warning(
+                "Developer mode is not enabled, disabling AIPERF_DEV_SHOW_INTERNAL_METRICS"
+            )
+            self.DEV.SHOW_INTERNAL_METRICS = False
+
+        if self.DEV.SHOW_EXPERIMENTAL_METRICS and not self.DEV.MODE:
+            _logger.warning(
+                "Developer mode is not enabled, disabling AIPERF_DEV_SHOW_EXPERIMENTAL_METRICS"
+            )
+            self.DEV.SHOW_EXPERIMENTAL_METRICS = False
+
+        return self
+
+
+# Global singleton instance
+Environment = _Environment()

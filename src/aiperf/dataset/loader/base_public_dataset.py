@@ -4,7 +4,7 @@
 from pathlib import Path
 from typing import Any, ClassVar
 
-from aiperf.common.constants import DEFAULT_PUBLIC_DATASET_TIMEOUT
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, RequestRecord
@@ -45,7 +45,9 @@ class BasePublicDatasetLoader(AIPerfLoggerMixin):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.http_client = AioHttpClient(timeout=DEFAULT_PUBLIC_DATASET_TIMEOUT)
+        self.http_client = AioHttpClient(
+            timeout=Environment.DATASET.PUBLIC_DATASET_TIMEOUT
+        )
         self.cache_filepath = AIPERF_DATASET_CACHE_DIR / self.filename
 
     async def load_dataset(self) -> dict[str, Any]:

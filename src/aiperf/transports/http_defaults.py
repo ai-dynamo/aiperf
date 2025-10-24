@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import socket
 from dataclasses import dataclass
+from typing import Any
 
-from aiperf.common import constants
+from aiperf.common.environment import Environment
 
 
 @dataclass(frozen=True)
@@ -14,22 +15,10 @@ class SocketDefaults:
 
     TCP_NODELAY = 1  # Disable Nagle's algorithm
     TCP_QUICKACK = 1  # Quick ACK mode
-
     SO_KEEPALIVE = 1  # Enable keepalive
-    TCP_KEEPIDLE = 60  # Start keepalive after 1 min idle
-    TCP_KEEPINTVL = 30  # Keepalive interval: 30 seconds
-    TCP_KEEPCNT = 1  # 1 failed keepalive probes = dead
-
     SO_LINGER = 0  # Disable linger
     SO_REUSEADDR = 1  # Enable reuse address
     SO_REUSEPORT = 1  # Enable reuse port
-
-    SO_RCVBUF = 1024 * 1024 * 10  # 10MB receive buffer
-    SO_SNDBUF = 1024 * 1024 * 10  # 10MB send buffer
-
-    SO_RCVTIMEO = 30  # 30 second receive timeout
-    SO_SNDTIMEO = 30  # 30 second send timeout
-    TCP_USER_TIMEOUT = 30000  # 30 sec user timeout
 
     @classmethod
     def apply_to_socket(cls, sock: socket.socket) -> None:
@@ -43,13 +32,19 @@ class SocketDefaults:
 
         # Fine-tune keepalive timing (Linux-specific)
         if hasattr(socket, "TCP_KEEPIDLE"):
-            sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPIDLE, cls.TCP_KEEPIDLE)
-            sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPINTVL, cls.TCP_KEEPINTVL)
-            sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPCNT, cls.TCP_KEEPCNT)
+            sock.setsockopt(
+                socket.SOL_TCP, socket.TCP_KEEPIDLE, Environment.HTTP.TCP_KEEPIDLE
+            )
+            sock.setsockopt(
+                socket.SOL_TCP, socket.TCP_KEEPINTVL, Environment.HTTP.TCP_KEEPINTVL
+            )
+            sock.setsockopt(
+                socket.SOL_TCP, socket.TCP_KEEPCNT, Environment.HTTP.TCP_KEEPCNT
+            )
 
         # Buffer size optimizations for streaming
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, cls.SO_RCVBUF)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, cls.SO_SNDBUF)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, Environment.HTTP.SO_RCVBUF)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, Environment.HTTP.SO_SNDBUF)
 
         # Linux-specific TCP optimizations
         if hasattr(socket, "TCP_QUICKACK"):
@@ -57,7 +52,9 @@ class SocketDefaults:
 
         if hasattr(socket, "TCP_USER_TIMEOUT"):
             sock.setsockopt(
-                socket.SOL_TCP, socket.TCP_USER_TIMEOUT, cls.TCP_USER_TIMEOUT
+                socket.SOL_TCP,
+                socket.TCP_USER_TIMEOUT,
+                Environment.HTTP.TCP_USER_TIMEOUT,
             )
 
 
@@ -66,15 +63,30 @@ class AioHttpDefaults:
     """Default values for aiohttp.ClientSession."""
 
     LIMIT = (
-        constants.AIPERF_HTTP_CONNECTION_LIMIT
+        Environment.HTTP.CONNECTION_LIMIT
     )  # Maximum number of concurrent connections
     LIMIT_PER_HOST = (
         0  # Maximum number of concurrent connections per host (0 will set to LIMIT)
     )
-    TTL_DNS_CACHE = 300  # Time to live for DNS cache
+    TTL_DNS_CACHE = Environment.HTTP.TTL_DNS_CACHE  # Time to live for DNS cache
     USE_DNS_CACHE = True  # Enable DNS cache
     ENABLE_CLEANUP_CLOSED = False  # Disable cleanup of closed connections
     FORCE_CLOSE = False  # Disable force close connections
-    KEEPALIVE_TIMEOUT = 300  # Keepalive timeout
+    KEEPALIVE_TIMEOUT = Environment.HTTP.KEEPALIVE_TIMEOUT  # Keepalive timeout
     HAPPY_EYEBALLS_DELAY = None  # Happy eyeballs delay (None = disabled)
     SOCKET_FAMILY = socket.AF_INET  # Family of the socket (IPv4)
+
+    @classmethod
+    def get_default_kwargs(cls) -> dict[str, Any]:
+        """Get the default keyword arguments for aiohttp.ClientSession."""
+        return {
+            "limit": cls.LIMIT,
+            "limit_per_host": cls.LIMIT_PER_HOST,
+            "ttl_dns_cache": cls.TTL_DNS_CACHE,
+            "use_dns_cache": cls.USE_DNS_CACHE,
+            "enable_cleanup_closed": cls.ENABLE_CLEANUP_CLOSED,
+            "force_close": cls.FORCE_CLOSE,
+            "keepalive_timeout": cls.KEEPALIVE_TIMEOUT,
+            "happy_eyeballs_delay": cls.HAPPY_EYEBALLS_DELAY,
+            "family": cls.SOCKET_FAMILY,
+        }

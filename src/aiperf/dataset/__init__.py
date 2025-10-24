@@ -7,7 +7,6 @@ from aiperf.dataset.composer import (
     SyntheticDatasetComposer,
 )
 from aiperf.dataset.dataset_manager import (
-    DATASET_CONFIGURATION_TIMEOUT,
     DatasetManager,
     main,
 )
@@ -62,7 +61,6 @@ __all__ = [
     "CustomDatasetComposer",
     "CustomDatasetLoaderProtocol",
     "CustomDatasetT",
-    "DATASET_CONFIGURATION_TIMEOUT",
     "DEFAULT_CORPUS_FILE",
     "DatasetManager",
     "ImageGenerator",

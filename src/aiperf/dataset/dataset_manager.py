@@ -17,6 +17,7 @@ from aiperf.common.enums import (
     MessageType,
     ServiceType,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.factories import (
     ComposerFactory,
     DatasetSamplingStrategyFactory,
@@ -42,7 +43,6 @@ from aiperf.common.protocols import DatasetSamplingStrategyProtocol, ServiceProt
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader import ShareGPTLoader
 
-DATASET_CONFIGURATION_TIMEOUT = 300.0
 _logger = AIPerfLogger(__name__)
 
 
@@ -350,7 +350,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 "Dataset not configured. Waiting for dataset to be configured..."
             )
             await asyncio.wait_for(
-                self.dataset_configured.wait(), timeout=DATASET_CONFIGURATION_TIMEOUT
+                self.dataset_configured.wait(),
+                timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
             )
 
 

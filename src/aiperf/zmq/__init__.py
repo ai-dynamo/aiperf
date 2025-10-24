@@ -18,8 +18,6 @@ from aiperf.zmq.pull_client import (
     ZMQPullClient,
 )
 from aiperf.zmq.push_client import (
-    MAX_PUSH_RETRIES,
-    RETRY_DELAY_INTERVAL_SEC,
     ZMQPushClient,
 )
 from aiperf.zmq.router_reply_client import (
@@ -59,10 +57,8 @@ __all__ = [
     "BaseZMQClient",
     "BaseZMQCommunication",
     "BaseZMQProxy",
-    "MAX_PUSH_RETRIES",
     "ProxyEndType",
     "ProxySocketClient",
-    "RETRY_DELAY_INTERVAL_SEC",
     "TOPIC_DELIMITER",
     "TOPIC_END",
     "TOPIC_END_ENCODED",

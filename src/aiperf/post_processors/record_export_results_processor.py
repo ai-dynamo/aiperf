@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import AIPERF_DEV_MODE, DEFAULT_RECORD_EXPORT_BATCH_SIZE
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ExportLevel, ResultsProcessorType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.messages.inference_messages import MetricRecordsData
@@ -43,13 +43,16 @@ class RecordExportResultsProcessor(
         # Initialize parent classes with the output file
         super().__init__(
             output_file=output_file,
-            batch_size=DEFAULT_RECORD_EXPORT_BATCH_SIZE,
+            batch_size=Environment.RECORD.EXPORT_BATCH_SIZE,
             user_config=user_config,
             **kwargs,
         )
 
         self.show_internal = (
-            AIPERF_DEV_MODE and service_config.developer.show_internal_metrics
+            Environment.DEV.MODE and Environment.DEV.SHOW_INTERNAL_METRICS
+        )
+        self.show_experimental = (
+            Environment.DEV.MODE and Environment.DEV.SHOW_EXPERIMENTAL_METRICS
         )
         self.info(f"Record metrics export enabled: {self.output_file}")
 
@@ -57,7 +60,7 @@ class RecordExportResultsProcessor(
         try:
             metric_dict = MetricRecordDict(record_data.metrics)
             display_metrics = metric_dict.to_display_dict(
-                MetricRegistry, self.show_internal
+                MetricRegistry, self.show_internal, self.show_experimental
             )
             if not display_metrics:
                 return

@@ -12,6 +12,7 @@ from aiperf.common.enums import (
     CommandType,
     ServiceType,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
@@ -25,10 +26,6 @@ from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import (
     PushClientProtocol,
     ServiceProtocol,
-)
-from aiperf.gpu_telemetry.constants import (
-    DEFAULT_COLLECTION_INTERVAL,
-    DEFAULT_DCGM_ENDPOINTS,
 )
 from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
 
@@ -100,15 +97,20 @@ class TelemetryManager(BaseComponentService):
 
         # Store user-provided endpoints separately for display filtering (excluding auto-inserted defaults)
         self._user_provided_endpoints = [
-            ep for ep in valid_endpoints if ep not in DEFAULT_DCGM_ENDPOINTS
+            ep
+            for ep in valid_endpoints
+            if ep not in Environment.GPU.DEFAULT_DCGM_ENDPOINTS
         ]
 
         # Combine defaults + user endpoints, preserving order and removing duplicates
         self._dcgm_endpoints = list(
-            dict.fromkeys(list(DEFAULT_DCGM_ENDPOINTS) + self._user_provided_endpoints)
+            dict.fromkeys(
+                list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
+                + self._user_provided_endpoints
+            )
         )
 
-        self._collection_interval = DEFAULT_COLLECTION_INTERVAL
+        self._collection_interval = Environment.GPU.COLLECTION_INTERVAL
 
     @staticmethod
     def _normalize_dcgm_url(url: str) -> str:
@@ -202,7 +204,9 @@ class TelemetryManager(BaseComponentService):
         # Determine which defaults are reachable for display filtering
         reachable_endpoints = list(self._collectors.keys())
         reachable_defaults = [
-            ep for ep in DEFAULT_DCGM_ENDPOINTS if ep in reachable_endpoints
+            ep
+            for ep in Environment.GPU.DEFAULT_DCGM_ENDPOINTS
+            if ep in reachable_endpoints
         ]
         endpoints_for_display = self._compute_endpoints_for_display(reachable_defaults)
 
@@ -285,10 +289,10 @@ class TelemetryManager(BaseComponentService):
     async def _delayed_shutdown(self) -> None:
         """Shutdown service after a delay to allow command response to be sent.
 
-        Waits 5 seconds before calling stop() to ensure the command response
+        Waits before calling stop() to ensure the command response
         has time to be published and transmitted to the SystemController.
         """
-        await asyncio.sleep(5.0)
+        await asyncio.sleep(Environment.GPU.SHUTDOWN_DELAY)
         await self.stop()
 
     async def _send_telemetry_disabled_status_and_shutdown(self, reason: str) -> None:

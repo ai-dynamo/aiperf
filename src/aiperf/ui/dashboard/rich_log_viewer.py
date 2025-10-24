@@ -9,6 +9,7 @@ from rich.text import Text
 from textual.events import Click
 from textual.widgets import RichLog
 
+from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.utils import yield_to_event_loop
@@ -105,9 +106,7 @@ class LogConsumer(AIPerfLifecycleMixin):
         self.log_queue = log_queue
         self.app = app
 
-    LOG_REFRESH_INTERVAL = 0.1
-
-    @background_task(immediate=True, interval=LOG_REFRESH_INTERVAL)
+    @background_task(immediate=True, interval=Environment.UI.LOG_REFRESH_INTERVAL)
     async def _consume_logs(self) -> None:
         """Consume log records from the queue and display them.
 

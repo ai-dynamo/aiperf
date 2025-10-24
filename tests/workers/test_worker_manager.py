@@ -11,11 +11,8 @@ import pytest
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.worker_config import WorkersConfig
-from aiperf.common.constants import (
-    DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE,
-    DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME,
-)
 from aiperf.common.enums.worker_enums import WorkerStatus
+from aiperf.common.environment import Environment
 from aiperf.common.messages import WorkerHealthMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
 from aiperf.workers.worker_manager import WorkerManager, WorkerStatusInfo
@@ -192,7 +189,7 @@ class TestHighCPUWarning:
     ):
         """Test that CPU exactly at 85% threshold does not trigger warning (boundary condition)."""
         message = create_health_message(
-            time_traveler, cpu_usage=DEFAULT_WORKER_HIGH_LOAD_CPU_USAGE
+            time_traveler, cpu_usage=Environment.WORKER.HIGH_LOAD_CPU_USAGE
         )
 
         worker_manager._update_worker_status(worker_info, message)
@@ -203,8 +200,8 @@ class TestHighCPUWarning:
     @pytest.mark.parametrize(
         "time_offset_seconds,expected_status",
         [
-            (DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME / 2, WorkerStatus.HIGH_LOAD),
-            (DEFAULT_WORKER_HIGH_LOAD_RECOVERY_TIME + 1, WorkerStatus.HEALTHY),
+            (Environment.WORKER.HIGH_LOAD_RECOVERY_TIME / 2, WorkerStatus.HIGH_LOAD),
+            (Environment.WORKER.HIGH_LOAD_RECOVERY_TIME + 1, WorkerStatus.HEALTHY),
         ],
     )
     def test_high_cpu_recovery_behavior(

@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import patch
+
 import pytest
 
 from aiperf.common.config import ServiceConfig
-from aiperf.common.config.dev_config import DeveloperConfig
+from aiperf.common.environment import Environment
 from aiperf.common.models import MetricResult
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
@@ -16,16 +18,6 @@ from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.thinking_efficiency_metrics import ThinkingEfficiencyMetric
 from aiperf.metrics.types.ttft_metric import TTFTMetric
 from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsTable
-
-
-@pytest.fixture
-def service_config_show_internal_false():
-    return ServiceConfig(developer=DeveloperConfig(show_internal_metrics=False))
-
-
-@pytest.fixture
-def service_config_show_internal_true():
-    return ServiceConfig(developer=DeveloperConfig(show_internal_metrics=True))
 
 
 class TestRealtimeMetricsTable:
@@ -56,16 +48,15 @@ class TestRealtimeMetricsTable:
         self, metric_tag, show_internal, should_skip
     ):
         """Test that metrics are skipped based on flags and configuration using real metrics"""
-        service_config = ServiceConfig(
-            developer=DeveloperConfig(show_internal_metrics=show_internal)
-        )
-        table = RealtimeMetricsTable(service_config)
+        with patch.object(Environment.DEV, "SHOW_INTERNAL_METRICS", show_internal):
+            service_config = ServiceConfig()
+            table = RealtimeMetricsTable(service_config)
 
-        metric_result = MetricResult(
-            tag=metric_tag,
-            header="Test Metric",
-            unit="ms",
-            avg=1.0,
-        )
+            metric_result = MetricResult(
+                tag=metric_tag,
+                header="Test Metric",
+                unit="ms",
+                avg=1.0,
+            )
 
-        assert table._should_skip(metric_result) is should_skip
+            assert table._should_skip(metric_result) is should_skip

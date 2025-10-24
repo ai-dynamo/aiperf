@@ -5,13 +5,13 @@ import traceback
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import DEFAULT_PULL_CLIENT_MAX_CONCURRENCY
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
     MessageType,
     ServiceType,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import FactoryCreationError, PostProcessorDisabled
 from aiperf.common.factories import (
     RecordProcessorFactory,
@@ -60,7 +60,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             service_id=service_id,
             pull_client_address=CommAddress.RAW_INFERENCE_PROXY_BACKEND,
             pull_client_bind=False,
-            pull_client_max_concurrency=DEFAULT_PULL_CLIENT_MAX_CONCURRENCY,
+            pull_client_max_concurrency=Environment.ZMQ.PULL_MAX_CONCURRENCY,
         )
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
             CommAddress.RECORDS,

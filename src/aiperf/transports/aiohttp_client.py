@@ -156,19 +156,8 @@ def create_tcp_connector(**kwargs) -> aiohttp.TCPConnector:
         SocketDefaults.apply_to_socket(sock)
         return sock
 
-    default_kwargs: dict[str, Any] = {
-        "limit": AioHttpDefaults.LIMIT,
-        "limit_per_host": AioHttpDefaults.LIMIT_PER_HOST,
-        "ttl_dns_cache": AioHttpDefaults.TTL_DNS_CACHE,
-        "use_dns_cache": AioHttpDefaults.USE_DNS_CACHE,
-        "enable_cleanup_closed": AioHttpDefaults.ENABLE_CLEANUP_CLOSED,
-        "force_close": AioHttpDefaults.FORCE_CLOSE,
-        "keepalive_timeout": AioHttpDefaults.KEEPALIVE_TIMEOUT,
-        "happy_eyeballs_delay": AioHttpDefaults.HAPPY_EYEBALLS_DELAY,
-        "family": AioHttpDefaults.SOCKET_FAMILY,
-        "socket_factory": socket_factory,
-    }
-
+    default_kwargs: dict[str, Any] = AioHttpDefaults.get_default_kwargs()
+    default_kwargs["socket_factory"] = socket_factory
     default_kwargs.update(kwargs)
 
     return aiohttp.TCPConnector(

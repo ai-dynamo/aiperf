@@ -36,7 +36,11 @@ def mock_log_queue() -> MagicMock:
 
 
 @pytest.fixture
-def service_config_no_uvloop(service_config: ServiceConfig) -> ServiceConfig:
+def service_config_no_uvloop(
+    service_config: ServiceConfig, monkeypatch
+) -> ServiceConfig:
     """Create a ServiceConfig with uvloop disabled for testing."""
-    service_config.developer.disable_uvloop = True
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.SERVICE, "DISABLE_UVLOOP", True)
     return service_config

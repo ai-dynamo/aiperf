@@ -12,6 +12,7 @@ from aiperf.common.enums.metric_enums import (
     MetricValueTypeT,
     MetricValueTypeVarT,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import MetricTypeError, MetricUnitError, NoMetricValue
 from aiperf.common.models.record_models import MetricResult, MetricValue
 from aiperf.common.types import MetricTagT
@@ -59,7 +60,10 @@ class MetricRecordDict(BaseMetricDict[MetricValueTypeT]):
     """
 
     def to_display_dict(
-        self, registry: "type[MetricRegistry]", show_internal: bool = False
+        self,
+        registry: "type[MetricRegistry]",
+        show_internal: bool = False,
+        show_experimental: bool = False,
     ) -> dict[str, MetricValue]:
         """Convert to display units with filtering applied.
         NOTE: This will not include metrics with the `NO_INDIVIDUAL_RECORDS` flag.
@@ -81,11 +85,13 @@ class MetricRecordDict(BaseMetricDict[MetricValueTypeT]):
                 _logger.warning(f"Metric {tag} not found in registry")
                 continue
 
-            if not show_internal and not metric_class.missing_flags(
-                MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
+            if (
+                metric_class.has_flags(MetricFlags.EXPERIMENTAL)
+                and not show_experimental
             ):
                 continue
-
+            if metric_class.has_flags(MetricFlags.INTERNAL) and not show_internal:
+                continue
             if metric_class.has_flags(MetricFlags.NO_INDIVIDUAL_RECORDS):
                 continue
 
@@ -140,7 +146,9 @@ class MetricArray(Generic[MetricValueTypeVarT]):
     This is used to store the values of a metric over time.
     """
 
-    def __init__(self, initial_capacity: int = 10000):
+    def __init__(
+        self, initial_capacity: int = Environment.METRICS.ARRAY_INITIAL_CAPACITY
+    ):
         """Initialize the array with the given initial capacity."""
         if initial_capacity <= 0:
             raise ValueError("Initial capacity must be greater than 0")

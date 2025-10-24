@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.constants import AIPERF_DEV_MODE
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import MetricFlags
 from aiperf.common.enums.data_exporter_enums import ConsoleExporterType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import ConsoleExporterDisabled
 from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.models import MetricResult
@@ -23,8 +23,8 @@ class ConsoleExperimentalMetricsExporter(ConsoleMetricsExporter):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config=exporter_config, **kwargs)
-        self._show_experimental_metrics = AIPERF_DEV_MODE and (
-            exporter_config.service_config.developer.show_internal_metrics
+        self._show_experimental_metrics = (
+            Environment.DEV.MODE and Environment.DEV.SHOW_EXPERIMENTAL_METRICS
         )
         if not self._show_experimental_metrics:
             raise ConsoleExporterDisabled(

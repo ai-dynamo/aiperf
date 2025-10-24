@@ -7,7 +7,7 @@ from typing import Any
 
 import orjson
 
-from aiperf.common.enums import ServiceType
+from aiperf.common.enums.service_enums import ServiceType
 from aiperf.common.utils import load_json_str
 
 """

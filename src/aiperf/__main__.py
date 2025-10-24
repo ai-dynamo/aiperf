@@ -4,7 +4,7 @@
 import sys
 
 from aiperf.cli import app
-from aiperf.gpu_telemetry.constants import DEFAULT_DCGM_ENDPOINTS
+from aiperf.common.environment import Environment
 
 
 def main() -> int:
@@ -15,7 +15,7 @@ def main() -> int:
     if "--gpu-telemetry" in sys.argv:
         idx = sys.argv.index("--gpu-telemetry")
         if idx >= len(sys.argv) - 1 or sys.argv[idx + 1].startswith("-"):
-            for endpoint in reversed(DEFAULT_DCGM_ENDPOINTS):
+            for endpoint in reversed(Environment.GPU.DEFAULT_DCGM_ENDPOINTS):
                 sys.argv.insert(idx + 1, endpoint)
     return app(sys.argv[1:])
 
