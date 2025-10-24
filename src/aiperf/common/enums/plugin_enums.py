@@ -25,9 +25,10 @@ class EndpointType(CaseInsensitiveStrEnum):
 
     CHAT = "chat"
     COMPLETIONS = "completions"
+    COHERE_RERANK = "cohere_rerank"
     EMBEDDINGS = "embeddings"
-    NIM_RANKINGS = "nim_rankings"
     HF_TEI_RERANKER = "hf_tei_reranker"
+    NIM_RANKINGS = "nim_rankings"
 
 
 class TransportType(CaseInsensitiveStrEnum):

@@ -31,6 +31,7 @@ class NIMRankingsEndpoint(BaseRankingsEndpoint):
     def build_payload(
         self, query_text: str, passages: list[str], model_name: str
     ) -> dict[str, Any]:
+        """Build payload to match NIM rankings API schema."""
         payload = {
             "model": model_name,
             "query": {"text": query_text},
@@ -39,4 +40,5 @@ class NIMRankingsEndpoint(BaseRankingsEndpoint):
         return payload
 
     def extract_rankings(self, json_obj: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract ranking results from NIM rankings API response."""
         return json_obj.get("rankings", [])

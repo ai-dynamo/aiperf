@@ -7,6 +7,9 @@ from aiperf.endpoints.base_endpoint import (
 from aiperf.endpoints.base_rankings_endpoint import (
     BaseRankingsEndpoint,
 )
+from aiperf.endpoints.cohere_rerank import (
+    CohereRerank,
+)
 from aiperf.endpoints.hf_tei_reranker import (
     HFTeiRerankerEndpoint,
 )
@@ -27,6 +30,7 @@ __all__ = [
     "BaseEndpoint",
     "BaseRankingsEndpoint",
     "ChatEndpoint",
+    "CohereRerank",
     "CompletionsEndpoint",
     "EmbeddingsEndpoint",
     "HFTeiRerankerEndpoint",
