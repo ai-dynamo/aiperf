@@ -19,6 +19,7 @@ from tests.conftest import (
     DEFAULT_START_TIME_NS,
 )
 from tests.post_processors.conftest import (
+    create_metric_metadata,
     setup_mock_registry_sequences,
 )
 
@@ -106,7 +107,8 @@ class TestMetricRecordProcessor:
         setup_mock_registry_sequences(mock_metric_registry, [RequestLatencyMetric], [])
 
         processor = MetricRecordProcessor(mock_user_config)
-        result = await processor.process_record(sample_parsed_record)
+        metadata = create_metric_metadata()
+        result = await processor.process_record(sample_parsed_record, metadata)
 
         assert isinstance(result, MetricRecordDict)
         assert RequestLatencyMetric.tag in result
@@ -127,7 +129,8 @@ class TestMetricRecordProcessor:
         )
 
         processor = MetricRecordProcessor(mock_user_config)
-        result = await processor.process_record(error_parsed_record)
+        metadata = create_metric_metadata()
+        result = await processor.process_record(error_parsed_record, metadata)
 
         assert isinstance(result, MetricRecordDict)
         assert result[ErrorRequestCountMetric.tag] == 1
@@ -145,7 +148,8 @@ class TestMetricRecordProcessor:
         )
 
         processor = MetricRecordProcessor(mock_user_config)
-        result = await processor.process_record(sample_parsed_record)
+        metadata = create_metric_metadata()
+        result = await processor.process_record(sample_parsed_record, metadata)
 
         assert len(result) == 2
         assert RequestLatencyMetric.tag in result
@@ -166,9 +170,10 @@ class TestMetricRecordProcessor:
         setup_mock_registry_sequences(mock_metric_registry, [FailingMetricNoValue], [])
 
         processor = MetricRecordProcessor(mock_user_config)
+        metadata = create_metric_metadata()
 
         with patch.object(processor, "debug") as mock_debug:
-            result = await processor.process_record(sample_parsed_record)
+            result = await processor.process_record(sample_parsed_record, metadata)
 
             assert isinstance(result, MetricRecordDict)
             assert FailingMetricNoValue.tag not in result
@@ -190,9 +195,10 @@ class TestMetricRecordProcessor:
         )
 
         processor = MetricRecordProcessor(mock_user_config)
+        metadata = create_metric_metadata()
 
         with patch.object(processor, "warning") as mock_warning:
-            result = await processor.process_record(sample_parsed_record)
+            result = await processor.process_record(sample_parsed_record, metadata)
 
             assert isinstance(result, MetricRecordDict)
             assert FailingMetricValueError.tag not in result
@@ -215,9 +221,10 @@ class TestMetricRecordProcessor:
         )
 
         processor = MetricRecordProcessor(mock_user_config)
+        metadata = create_metric_metadata()
 
         with patch.object(processor, "debug"):
-            result = await processor.process_record(sample_parsed_record)
+            result = await processor.process_record(sample_parsed_record, metadata)
 
             assert len(result) == 1
             assert RequestLatencyMetric.tag in result
@@ -239,7 +246,8 @@ class TestMetricRecordProcessor:
         )
 
         processor = MetricRecordProcessor(mock_user_config)
-        result = await processor.process_record(sample_parsed_record)
+        metadata = create_metric_metadata()
+        result = await processor.process_record(sample_parsed_record, metadata)
 
         assert len(result) == 2
         assert RequestLatencyMetric.tag in result
@@ -259,7 +267,8 @@ class TestMetricRecordProcessor:
     ) -> None:
         """Test processing record when no metrics are configured."""
         processor = MetricRecordProcessor(mock_user_config)
-        result = await processor.process_record(sample_parsed_record)
+        metadata = create_metric_metadata()
+        result = await processor.process_record(sample_parsed_record, metadata)
 
         assert isinstance(result, MetricRecordDict)
         assert len(result) == 0

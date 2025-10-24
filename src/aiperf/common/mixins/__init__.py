@@ -17,6 +17,9 @@ from aiperf.common.mixins.aiperf_logger_mixin import (
 from aiperf.common.mixins.base_mixin import (
     BaseMixin,
 )
+from aiperf.common.mixins.buffered_jsonl_writer_mixin import (
+    BufferedJSONLWriterMixin,
+)
 from aiperf.common.mixins.command_handler_mixin import (
     CommandHandlerMixin,
 )
@@ -55,6 +58,7 @@ __all__ = [
     "AIPerfLifecycleMixin",
     "AIPerfLoggerMixin",
     "BaseMixin",
+    "BufferedJSONLWriterMixin",
     "CommandHandlerMixin",
     "CommunicationMixin",
     "HooksMixin",

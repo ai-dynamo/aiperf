@@ -5,12 +5,14 @@
 
 import pytest
 
+from aiperf.common.config import ServiceConfig
 from aiperf.common.models.telemetry_models import (
     TelemetryHierarchy,
     TelemetryMetrics,
     TelemetryRecord,
     TelemetryResults,
 )
+from aiperf.exporters.exporter_config import ExporterConfig
 
 
 @pytest.fixture
@@ -157,4 +159,16 @@ def empty_telemetry_results():
         ],
         endpoints_successful=[],
         error_summary=[],
+    )
+
+
+def create_exporter_config(
+    profile_results, user_config, telemetry_results=None, verbose=True
+):
+    """Helper to create ExporterConfig with common defaults."""
+    return ExporterConfig(
+        results=profile_results,
+        user_config=user_config,
+        service_config=ServiceConfig(verbose=verbose),
+        telemetry_results=telemetry_results,
     )

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+import aiperf.endpoints  # noqa: F401  # Import to register endpoints
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
@@ -14,7 +15,7 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import CreditDropMessage
 from aiperf.common.models import ParsedResponse, TextResponseData
-from aiperf.common.models.record_models import RequestRecord
+from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.workers.worker import Worker
 
 
@@ -27,17 +28,10 @@ class MockWorker(Worker):
                 "aiperf.transports.aiohttp_client.create_tcp_connector"
             ) as mock_tcp_connector,
             patch(
-                "aiperf.common.factories.ResponseExtractorFactory.create_instance"
-            ) as mock_extractor_factory,
-            patch(
-                "aiperf.common.factories.InferenceClientFactory.create_instance"
+                "aiperf.common.factories.EndpointFactory.create_instance"
             ) as mock_client_factory,
         ):
             mock_tcp_connector.return_value = Mock()
-
-            mock_extractor = Mock()
-            mock_extractor.extract_response_data = AsyncMock(return_value=[])
-            mock_extractor_factory.return_value = mock_extractor
 
             mock_client = Mock()
             mock_client.send_request = AsyncMock()
@@ -114,7 +108,6 @@ class TestWorker:
         )
 
         assert result == mock_record
-        # Verify wait_for was called with correct timeout (2.0 seconds)
         mock_wait_for.assert_called_once()
         call_args = mock_wait_for.call_args
         assert call_args[1]["timeout"] == 2.0
@@ -126,11 +119,9 @@ class TestWorker:
         async def simple_coroutine():
             return RequestRecord(timestamp_ns=time.time_ns())
 
-        # Mock wait_for to properly consume the coroutine before raising TimeoutError
         async def mock_wait_for_timeout(coro, timeout):
-            # Consume the coroutine to avoid warnings, then raise timeout
             with contextlib.suppress(GeneratorExit):
-                coro.close()  # Close the coroutine to prevent warnings
+                coro.close()
             raise asyncio.TimeoutError
 
         mock_wait_for.side_effect = mock_wait_for_timeout
@@ -148,8 +139,7 @@ class TestWorker:
 
     @patch("asyncio.wait_for")
     async def test_timeout_conversion_precision(self, mock_wait_for, worker):
-        """Test that nanoseconds are correctly converted to seconds with proper precision."""
-        # Test various nanosecond values
+        """Test that nanoseconds are correctly converted to seconds."""
         test_cases = [
             (int(0.5 * NANOS_PER_SECOND), 0.5),
             (int(1.0 * NANOS_PER_SECOND), 1.0),
@@ -163,9 +153,7 @@ class TestWorker:
             async def simple_coroutine():
                 return RequestRecord(timestamp_ns=time.time_ns())
 
-            # Mock wait_for to properly consume the coroutine and return result
             async def mock_wait_for_impl(coro, timeout):
-                # Properly consume the coroutine to avoid warnings
                 await coro
                 return RequestRecord(timestamp_ns=time.time_ns())
 
@@ -177,7 +165,6 @@ class TestWorker:
                 cancel_after_ns=cancel_after_ns,
             )
 
-            # Verify the timeout was converted correctly
             call_args = mock_wait_for.call_args
             actual_timeout = call_args[1]["timeout"]
             assert abs(actual_timeout - expected_timeout) < 1e-9, (
@@ -190,35 +177,28 @@ class TestWorker:
             perf_ns=0,
             data=TextResponseData(text="Hello, world!"),
         )
-        mock_extractor = Mock()
-        mock_extractor.extract_response_data = AsyncMock(
-            return_value=[mock_parsed_response]
-        )
-        monkeypatch.setattr(worker, "extractor", mock_extractor)
+        mock_endpoint = Mock()
+        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
+        monkeypatch.setattr(worker.inference_client, "endpoint", mock_endpoint)
         turn = await worker._process_response(RequestRecord())
         assert turn.texts[0].contents == ["Hello, world!"]
 
     async def test_process_response_empty(self, monkeypatch, worker):
         """Ensure process_response handles empty responses correctly."""
-        # mock_parsed_response = RequestRecord(responses=[])
         mock_parsed_response = ParsedResponse(
             perf_ns=0,
             data=TextResponseData(text=""),
         )
-        mock_extractor = Mock()
-        mock_extractor.extract_response_data = AsyncMock(
-            return_value=[mock_parsed_response]
-        )
-        monkeypatch.setattr(worker, "extractor", mock_extractor)
+        mock_endpoint = Mock()
+        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
+        monkeypatch.setattr(worker.inference_client, "endpoint", mock_endpoint)
         turn = await worker._process_response(RequestRecord())
         assert turn is None
 
-    @pytest.mark.asyncio
     async def test_build_response_record(
         self, worker, monkeypatch, sample_conversations
     ):
         """Test that _build_response_record sets all fields correctly."""
-        # Use the first conversation from the fixture
         conversation = sample_conversations["session_1"]
         first_turn = conversation.turns[0]
 
@@ -241,36 +221,37 @@ class TestWorker:
             "_call_inference_api_internal",
             AsyncMock(return_value=dummy_record),
         )
-        # Patch model_endpoint
-        worker.model_endpoint = Mock()
-        worker.model_endpoint.primary_model_name = "primary-model"
 
         turn_index = 0
         drop_perf_ns = 900
 
         result = await worker._build_response_record(
-            conversation_id=conversation.session_id,
-            message=message,
-            turn_list=[first_turn],
-            turn_index=turn_index,
+            request_info=RequestInfo(
+                model_endpoint=worker.model_endpoint,
+                conversation_id=conversation.session_id,
+                turn_index=turn_index,
+                credit_phase=message.phase,
+                cancel_after_ns=message.cancel_after_ns,
+                credit_num=message.credit_num,
+                turns=[first_turn],
+            ),
             drop_perf_ns=drop_perf_ns,
         )
 
-        assert result.model_name == "test-model"  # From the fixture turn
-        assert result.conversation_id == "session_1"  # From the fixture conversation
+        assert result.model_name == "test-model"
+        assert result.conversation_id == "session_1"
         assert result.turn_index == 0
         assert result.credit_phase == CreditPhase.PROFILING
         assert result.cancel_after_ns == 123456789
-        assert result.credit_drop_latency == 100  # 1000 - 900
+        assert result.credit_drop_latency == 100
 
-    @pytest.mark.asyncio
     async def test_build_response_record_credit_drop_latency_only_first_turn(
         self, worker, monkeypatch, sample_conversations
     ):
         """Test that credit_drop_latency is only set for the first turn."""
 
         conversation = sample_conversations["session_1"]
-        first_turn = conversation.turns[0]
+        all_turns = conversation.turns
 
         message = CreditDropMessage(
             service_id="test-service",
@@ -291,23 +272,25 @@ class TestWorker:
             "_call_inference_api_internal",
             AsyncMock(return_value=dummy_record),
         )
-        # Patch model_endpoint
-        worker.model_endpoint = Mock()
-        worker.model_endpoint.primary_model_name = "primary-model"
 
         turn_index = 1
         drop_perf_ns = 900
 
         result = await worker._build_response_record(
-            conversation_id=conversation.session_id,
-            message=message,
-            turn_list=[first_turn],
-            turn_index=turn_index,
+            request_info=RequestInfo(
+                model_endpoint=worker.model_endpoint,
+                conversation_id=conversation.session_id,
+                turn_index=turn_index,
+                credit_phase=message.phase,
+                cancel_after_ns=message.cancel_after_ns,
+                credit_num=message.credit_num,
+                turns=all_turns,
+            ),
             drop_perf_ns=drop_perf_ns,
         )
 
-        assert result.model_name == "test-model"  # From the fixture turn
-        assert result.conversation_id == "session_1"  # From the fixture conversation
+        assert result.model_name == "test-model"
+        assert result.conversation_id == "session_1"
         assert result.turn_index == 1
         assert result.credit_phase == CreditPhase.PROFILING
         assert result.cancel_after_ns == 123456789
@@ -318,7 +301,7 @@ class TestWorker:
 
     @pytest.mark.asyncio
     async def test_x_request_id_and_x_correlation_id_passed_to_client(self, worker):
-        """Test that x_request_id and x_correlation_id are passed to the inference client."""
+        """Test that x_request_id and x_correlation_id are passed to the inference client via RequestInfo."""
         import uuid
 
         from aiperf.common.models import Text, Turn
@@ -331,21 +314,29 @@ class TestWorker:
         turn = Turn(texts=[Text(contents=["test"])], model="test-model")
         x_request_id = str(uuid.uuid4())
 
-        captured_args = {}
+        captured_request_info = None
 
-        async def mock_send_request(*args, **kwargs):
-            captured_args.update(kwargs)
+        async def mock_transport_send(request_info, payload):
+            nonlocal captured_request_info
+            captured_request_info = request_info
             return RequestRecord(start_perf_ns=1000)
 
-        worker.inference_client.send_request = mock_send_request
-        worker.request_converter = Mock()
-        worker.request_converter.format_payload = AsyncMock(
+        worker.inference_client.transport.send_request = AsyncMock(
+            side_effect=mock_transport_send
+        )
+        worker.inference_client.endpoint.format_payload = Mock(
             return_value={"test": "payload"}
         )
 
-        await worker._call_inference_api_internal(message, [turn], x_request_id)
+        request_info = RequestInfo(
+            model_endpoint=worker.model_endpoint,
+            x_request_id=x_request_id,
+            x_correlation_id=message.request_id,
+            turn_index=0,
+            turns=[turn],
+        )
+        await worker._call_inference_api_internal(request_info, 0)
 
-        assert "x_request_id" in captured_args
-        assert captured_args["x_request_id"] == x_request_id
-        assert "x_correlation_id" in captured_args
-        assert captured_args["x_correlation_id"] == message.request_id
+        assert captured_request_info is not None
+        assert captured_request_info.x_request_id == x_request_id
+        assert captured_request_info.x_correlation_id == message.request_id

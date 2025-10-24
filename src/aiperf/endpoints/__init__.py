@@ -1,27 +1,26 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.endpoints.openai_aiohttp import (
-    OpenAIClientAioHttp,
+
+from aiperf.endpoints.base_endpoint import (
+    BaseEndpoint,
+)
+from aiperf.endpoints.nim_rankings import (
+    RankingsEndpoint,
 )
 from aiperf.endpoints.openai_chat import (
-    DEFAULT_ROLE,
-    OpenAIChatCompletionRequestConverter,
+    ChatEndpoint,
 )
 from aiperf.endpoints.openai_completions import (
-    OpenAICompletionRequestConverter,
+    CompletionsEndpoint,
 )
 from aiperf.endpoints.openai_embeddings import (
-    OpenAIEmbeddingsRequestConverter,
-)
-from aiperf.endpoints.rankings import (
-    RankingsRequestConverter,
+    EmbeddingsEndpoint,
 )
 
 __all__ = [
-    "DEFAULT_ROLE",
-    "OpenAIChatCompletionRequestConverter",
-    "OpenAIClientAioHttp",
-    "OpenAICompletionRequestConverter",
-    "OpenAIEmbeddingsRequestConverter",
-    "RankingsRequestConverter",
+    "BaseEndpoint",
+    "ChatEndpoint",
+    "CompletionsEndpoint",
+    "EmbeddingsEndpoint",
+    "RankingsEndpoint",
 ]

@@ -9,13 +9,13 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
+    AIPerfUIType,
     CommAddress,
     CommandType,
     CreditPhase,
     MessageType,
     ServiceType,
 )
-from aiperf.common.enums.ui_enums import AIPerfUIType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.factories import ResultsProcessorFactory, ServiceFactory

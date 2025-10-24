@@ -23,7 +23,8 @@ class PrefillThroughputMetric(BaseRecordMetric[float]):
     short_header_hide_unit = True
     unit = MetricOverTimeUnit.TOKENS_PER_SECOND
     flags = (
-        MetricFlags.STREAMING_TOKENS_ONLY
+        MetricFlags.STREAMING_ONLY
+        | MetricFlags.TOKENIZES_INPUT_ONLY
         | MetricFlags.LARGER_IS_BETTER
         | MetricFlags.EXPERIMENTAL
     )

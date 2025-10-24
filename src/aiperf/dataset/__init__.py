@@ -10,6 +10,12 @@ from aiperf.dataset.dataset_manager import (
     DatasetManager,
     main,
 )
+from aiperf.dataset.dataset_samplers import (
+    BaseDatasetSampler,
+    RandomSampler,
+    SequentialSampler,
+    ShuffleSampler,
+)
 from aiperf.dataset.generator import (
     DEFAULT_CORPUS_FILE,
     MP3_SUPPORTED_SAMPLE_RATES,
@@ -49,6 +55,7 @@ __all__ = [
     "AIPERF_DATASET_CACHE_DIR",
     "AudioGenerator",
     "BaseDatasetComposer",
+    "BaseDatasetSampler",
     "BaseGenerator",
     "BasePublicDatasetLoader",
     "CustomDatasetComposer",
@@ -66,8 +73,11 @@ __all__ = [
     "PromptGenerator",
     "RandomPool",
     "RandomPoolDatasetLoader",
+    "RandomSampler",
     "SUPPORTED_BIT_DEPTHS",
+    "SequentialSampler",
     "ShareGPTLoader",
+    "ShuffleSampler",
     "SingleTurn",
     "SingleTurnDatasetLoader",
     "SyntheticDatasetComposer",

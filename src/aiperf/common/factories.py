@@ -15,19 +15,23 @@ from aiperf.common.enums import (
     CustomDatasetType,
     DataExporterType,
     EndpointType,
-    OpenAIObjectType,
     RecordProcessorType,
     RequestRateMode,
     ResultsProcessorType,
     ServiceRunType,
     ServiceType,
+    TransportType,
     ZMQProxyType,
 )
+from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
 from aiperf.common.exceptions import (
     FactoryCreationError,
     InvalidOperationError,
     InvalidStateError,
 )
+from aiperf.common.models.metadata import EndpointMetadata
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.protocols import EndpointProtocol
 from aiperf.common.types import (
     ClassEnumT,
     ClassProtocolT,
@@ -51,12 +55,12 @@ if TYPE_CHECKING:
         CommunicationProtocol,
         ConsoleExporterProtocol,
         DataExporterProtocol,
-        InferenceClientProtocol,
+        DatasetSamplingStrategyProtocol,
         RecordProcessorProtocol,
         RequestRateGeneratorProtocol,
-        ResponseExtractorProtocol,
         ResultsProcessorProtocol,
         ServiceManagerProtocol,
+        TransportProtocol,
     )
     from aiperf.dataset import (
         CustomDatasetLoaderProtocol,
@@ -447,8 +451,28 @@ class DataExporterFactory(AIPerfFactory[DataExporterType, "DataExporterProtocol"
         )
 
 
-class InferenceClientFactory(AIPerfFactory[EndpointType, "InferenceClientProtocol"]):
-    """Factory for registering and creating InferenceClientProtocol instances based on the specified endpoint type.
+class DatasetSamplingStrategyFactory(
+    AIPerfFactory[DatasetSamplingStrategy, "DatasetSamplingStrategyProtocol"]
+):
+    """Factory for registering and creating DatasetSamplingStrategyProtocol instances based on the specified dataset sampling strategy type.
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
+
+    @classmethod
+    def create_instance(  # type: ignore[override]
+        cls,
+        class_type: DatasetSamplingStrategy | str,
+        conversation_ids: list[str],
+        seed: int | None = None,
+        **kwargs,
+    ) -> "DatasetSamplingStrategyProtocol":
+        return super().create_instance(
+            class_type, conversation_ids=conversation_ids, seed=seed, **kwargs
+        )
+
+
+class EndpointFactory(AIPerfFactory[EndpointType, "EndpointProtocol"]):
+    """Factory for registering and creating EndpointProtocol instances based on the specified endpoint type.
     see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
     """
 
@@ -458,45 +482,14 @@ class InferenceClientFactory(AIPerfFactory[EndpointType, "InferenceClientProtoco
         class_type: EndpointType | str,
         model_endpoint: "ModelEndpointInfo",
         **kwargs,
-    ) -> "InferenceClientProtocol":
+    ) -> "EndpointProtocol":
         return super().create_instance(
             class_type, model_endpoint=model_endpoint, **kwargs
         )
-
-
-class OpenAIObjectParserFactory(
-    AIPerfSingletonFactory[OpenAIObjectType, "OpenAIObjectParserProtocol"]
-):
-    """Factory for registering and creating OpenAIObjectParserProtocol instances based on the specified object type.
-    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
-    """
-
-
-class RequestConverterFactory(
-    AIPerfSingletonFactory[EndpointType, "RequestConverterProtocol"]
-):
-    """Factory for registering and creating RequestConverterProtocol instances based on the specified request payload type.
-    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
-    """
-
-
-class ResponseExtractorFactory(
-    AIPerfFactory[EndpointType, "ResponseExtractorProtocol"]
-):
-    """Factory for registering and creating ResponseExtractorProtocol instances based on the specified response extractor type.
-    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
-    """
 
     @classmethod
-    def create_instance(  # type: ignore[override]
-        cls,
-        class_type: EndpointType | str,
-        model_endpoint: "ModelEndpointInfo",
-        **kwargs,
-    ) -> "ResponseExtractorProtocol":
-        return super().create_instance(
-            class_type, model_endpoint=model_endpoint, **kwargs
-        )
+    def get_metadata(cls, class_type: EndpointType | str) -> "EndpointMetadata":
+        return cls.get_class_from_type(class_type).metadata()
 
 
 class ServiceFactory(AIPerfFactory[ServiceType, "ServiceProtocol"]):
@@ -609,6 +602,56 @@ class RequestRateGeneratorFactory(
         config: "TimingManagerConfig",
     ) -> "RequestRateGeneratorProtocol":
         return super().create_instance(config.request_rate_mode, config=config)
+
+
+class TransportFactory(AIPerfFactory[TransportType, "TransportProtocol"]):
+    """Factory for registering and creating TransportProtocol instances based on the specified transport type.
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
+
+    @classmethod
+    def create_instance(  # type: ignore[override]
+        cls,
+        class_type: TransportType | str,
+        **kwargs,
+    ) -> "TransportProtocol":
+        return super().create_instance(class_type, **kwargs)
+
+    @classmethod
+    def detect_from_url(cls, url: str) -> TransportType | None:
+        """Auto-detect appropriate transport from URL scheme.
+
+        Analyzes URL scheme to determine which transport protocol should be used.
+        Falls back to HTTP for URLs without explicit scheme.
+
+        Args:
+            url: URL to analyze (e.g., "http://api:8000", "grpc://localhost:50051")
+
+        Returns:
+            Transport type enum, or None if no matching transport found
+        """
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+
+        # Handle URLs without scheme (e.g., "localhost:8000")
+        # urlparse incorrectly treats "localhost" as scheme in this case
+        if parsed.scheme and not parsed.netloc and "://" not in url:
+            # No netloc and no "://" means this is likely "host:port" not "scheme://host"
+            scheme = "http"
+        elif not parsed.scheme:
+            # Special handling for file paths without scheme
+            scheme = "file" if url.startswith("/") or url.startswith(".") else "http"
+        else:
+            scheme = parsed.scheme.lower()
+
+        # Query all registered transports for scheme match
+        for transport_type in cls.get_all_class_types():
+            transport_class = cls.get_class_from_type(transport_type)
+            if scheme in transport_class.metadata().url_schemes:
+                return transport_type
+
+        return None
 
 
 class ZMQProxyFactory(AIPerfFactory[ZMQProxyType, "BaseZMQProxy"]):

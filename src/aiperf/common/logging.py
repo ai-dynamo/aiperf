@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import logging
 import multiprocessing
 import queue
@@ -12,8 +13,7 @@ from rich.logging import RichHandler
 from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
 from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.enums import ServiceType
-from aiperf.common.enums.ui_enums import AIPerfUIType
+from aiperf.common.enums import AIPerfUIType, ServiceType
 from aiperf.common.environment import Environment
 from aiperf.common.factories import ServiceFactory
 
@@ -37,7 +37,7 @@ def get_global_log_queue() -> multiprocessing.Queue:
     return _global_log_queue
 
 
-def cleanup_global_log_queue() -> None:
+async def cleanup_global_log_queue() -> None:
     """Clean up the global log queue to prevent semaphore leaks.
 
     This should be called during shutdown to properly close and join the queue,
@@ -49,7 +49,9 @@ def cleanup_global_log_queue() -> None:
         if _global_log_queue is not None:
             try:
                 _global_log_queue.close()
-                _global_log_queue.join_thread()
+                await asyncio.wait_for(
+                    asyncio.to_thread(_global_log_queue.join_thread), timeout=1.0
+                )
                 _logger.debug("Cleaned up global log queue")
             except Exception as e:
                 _logger.debug(f"Error cleaning up log queue: {e}")
@@ -210,6 +212,8 @@ class MultiProcessLogHandler(RichHandler):
         super().__init__()
         self.log_queue = log_queue
         self.service_id = service_id
+        self._proc_name = multiprocessing.current_process().name
+        self._proc_id = multiprocessing.current_process().pid
 
     def emit(self, record: logging.LogRecord) -> None:
         """Emit a log record to the queue."""
@@ -221,8 +225,8 @@ class MultiProcessLogHandler(RichHandler):
                 "levelno": record.levelno,
                 "msg": record.getMessage(),
                 "created": record.created,
-                "process_name": multiprocessing.current_process().name,
-                "process_id": multiprocessing.current_process().pid,
+                "process_name": self._proc_name,
+                "process_id": self._proc_id,
                 "service_id": self.service_id,
             }
             self.log_queue.put_nowait(log_data)

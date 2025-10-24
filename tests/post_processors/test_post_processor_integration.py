@@ -100,7 +100,10 @@ class TestPostProcessorIntegration:
         assert len(record_processor.error_parse_funcs) == 1
         assert len(record_processor.valid_parse_funcs) == 0
 
-        result = await record_processor.process_record(error_parsed_record)
+        from tests.post_processors.conftest import create_metric_metadata
+
+        metadata = create_metric_metadata()
+        result = await record_processor.process_record(error_parsed_record, metadata)
         assert ErrorRequestCountMetric.tag in result
         assert result[ErrorRequestCountMetric.tag] == 1
 

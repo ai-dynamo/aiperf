@@ -8,10 +8,40 @@ import aiohttp
 import pytest
 
 from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.enums import EndpointType
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 from aiperf.common.models import RequestRecord, SSEMessage, TextResponse
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
-from aiperf.transports.aiohttp_client import AioHttpClientMixin, create_tcp_connector
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
+from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
+
+
+def create_model_endpoint_info(
+    base_url: str = "http://localhost:8000",
+    custom_endpoint: str = "/v1/chat/completions",
+    streaming: bool = False,
+    model_name: str = "test-model",
+    api_key: str | None = None,
+    headers: list[tuple[str, str]] | None = None,
+) -> ModelEndpointInfo:
+    """Factory function to create ModelEndpointInfo instances."""
+    return ModelEndpointInfo(
+        models=ModelListInfo(
+            models=[ModelInfo(name=model_name)],
+            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+        ),
+        endpoint=EndpointInfo(
+            type=EndpointType.CHAT,
+            base_url=base_url,
+            custom_endpoint=custom_endpoint,
+            streaming=streaming,
+            api_key=api_key,
+            headers=headers or [],
+        ),
+    )
 
 
 @pytest.fixture
@@ -111,9 +141,9 @@ def user_config() -> UserConfig:
 
 
 @pytest.fixture
-async def aiohttp_client(user_config: UserConfig):
-    """Fixture providing an AioHttpClientMixin instance."""
-    client = AioHttpClientMixin(ModelEndpointInfo.from_user_config(user_config))
+async def aiohttp_client():
+    """Fixture providing an AioHttpClient instance."""
+    client = AioHttpClient(timeout=600.0)
     yield client
     await client.close()
 
@@ -223,7 +253,9 @@ def assert_error_request_record(
     if expected_error_type is not None:
         assert record.error.type == expected_error_type
     if expected_error_message is not None:
-        assert record.error.message == expected_error_message
+        # The error message is formatted as repr(exception), e.g., "ValueError('message')"
+        # Check if the expected message is contained in the actual message
+        assert expected_error_message in record.error.message
 
 
 def setup_mock_session(
@@ -284,3 +316,15 @@ def create_aiohttp_exception(
         )
     else:
         return exception_class(message)
+
+
+@pytest.fixture
+def model_endpoint_non_streaming():
+    """Fixture providing non-streaming ModelEndpointInfo."""
+    return create_model_endpoint_info(streaming=False)
+
+
+@pytest.fixture
+def model_endpoint_streaming():
+    """Fixture providing streaming ModelEndpointInfo."""
+    return create_model_endpoint_info(streaming=True)

@@ -20,29 +20,27 @@ from tests.metrics.conftest import (
 
 
 class TestInputSequenceLengthMetric:
-    def test_input_sequence_length_basic(self):
-        """Test basic input sequence length extraction"""
-        record = create_record(input_tokens=15)
+    @pytest.mark.parametrize(
+        "input_tokens,should_raise",
+        [
+            (15, False),
+            (0, False),
+            (100, False),
+            (None, True),
+        ],
+    )
+    def test_input_sequence_length_parse_record(self, input_tokens, should_raise):
+        """Test input sequence length extraction."""
+        record = create_record(input_tokens=input_tokens)
 
         metric = InputSequenceLengthMetric()
-        result = metric.parse_record(record, MetricRecordDict())
-        assert result == 15
 
-    def test_input_sequence_length_zero(self):
-        """Test handling of zero input tokens"""
-        record = create_record(input_tokens=0)
-
-        metric = InputSequenceLengthMetric()
-        result = metric.parse_record(record, MetricRecordDict())
-        assert result == 0
-
-    def test_input_sequence_length_none(self):
-        """Test handling of None input tokens raises error"""
-        record = create_record(input_tokens=None)
-
-        metric = InputSequenceLengthMetric()
-        with pytest.raises(NoMetricValue):
-            metric.parse_record(record, MetricRecordDict())
+        if should_raise:
+            with pytest.raises(NoMetricValue):
+                metric.parse_record(record, MetricRecordDict())
+        else:
+            result = metric.parse_record(record, MetricRecordDict())
+            assert result == input_tokens
 
     def test_input_sequence_length_multiple_records(self):
         """Test processing multiple records with different token counts"""
@@ -80,7 +78,7 @@ class TestTotalInputSequenceLengthMetric:
         """Test that TotalInputSequenceLengthMetric has correct metadata"""
         assert TotalInputSequenceLengthMetric.tag == "total_isl"
         assert TotalInputSequenceLengthMetric.has_flags(
-            MetricFlags.PRODUCES_TOKENS_ONLY
+            MetricFlags.TOKENIZES_INPUT_ONLY
         )
         assert TotalInputSequenceLengthMetric.has_flags(MetricFlags.LARGER_IS_BETTER)
         assert TotalInputSequenceLengthMetric.has_flags(MetricFlags.NO_CONSOLE)
@@ -88,31 +86,31 @@ class TestTotalInputSequenceLengthMetric:
 
 
 class TestErrorInputSequenceLengthMetric:
-    def test_error_isl_basic(self):
-        """Test basic error input sequence length extraction"""
+    @pytest.mark.parametrize(
+        "input_tokens,should_raise",
+        [
+            (15, False),
+            (0, False),
+            (None, True),
+        ],
+    )
+    def test_error_isl_parse_record(self, input_tokens, should_raise):
+        """Test error input sequence length extraction."""
         from aiperf.common.models import ErrorDetails
 
         record = create_record(
-            input_tokens=15,
+            input_tokens=input_tokens,
             error=ErrorDetails(code=500, message="Error", type="ServerError"),
         )
 
         metric = ErrorInputSequenceLengthMetric()
-        result = metric.parse_record(record, MetricRecordDict())
-        assert result == 15
 
-    def test_error_isl_none_raises(self):
-        """Test handling of None input tokens raises error"""
-        from aiperf.common.models import ErrorDetails
-
-        record = create_record(
-            input_tokens=None,
-            error=ErrorDetails(code=500, message="Error", type="ServerError"),
-        )
-
-        metric = ErrorInputSequenceLengthMetric()
-        with pytest.raises(NoMetricValue):
-            metric.parse_record(record, MetricRecordDict())
+        if should_raise:
+            with pytest.raises(NoMetricValue):
+                metric.parse_record(record, MetricRecordDict())
+        else:
+            result = metric.parse_record(record, MetricRecordDict())
+            assert result == input_tokens
 
     def test_error_isl_metadata(self):
         """Test that ErrorInputSequenceLengthMetric has correct flags"""

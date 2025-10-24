@@ -5,7 +5,7 @@ import contextlib
 
 from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums.ui_enums import AIPerfUIType
+from aiperf.common.enums import AIPerfUIType
 
 
 def run_system_controller(
@@ -95,7 +95,3 @@ def run_system_controller(
         raise
     finally:
         logger.debug("AIPerf System exited")
-        if log_queue is not None:
-            from aiperf.common.logging import cleanup_global_log_queue
-
-            cleanup_global_log_queue()

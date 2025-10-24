@@ -47,6 +47,10 @@ from aiperf.common.models.health_models import (
     IOCounters,
     ProcessHealth,
 )
+from aiperf.common.models.metadata import (
+    EndpointMetadata,
+    TransportMetadata,
+)
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -62,9 +66,9 @@ from aiperf.common.models.progress_models import (
     WorkerStats,
 )
 from aiperf.common.models.record_models import (
+    BaseInferenceServerResponse,
     BaseResponseData,
     EmbeddingResponseData,
-    InferenceServerResponse,
     MetricRecordInfo,
     MetricRecordMetadata,
     MetricResult,
@@ -74,7 +78,9 @@ from aiperf.common.models.record_models import (
     ProcessRecordsResult,
     ProfileResults,
     RankingsResponseData,
+    RawRecordInfo,
     ReasoningResponseData,
+    RequestInfo,
     RequestRecord,
     SSEField,
     SSEMessage,
@@ -110,6 +116,7 @@ from aiperf.common.models.worker_models import (
 __all__ = [
     "AIPerfBaseModel",
     "Audio",
+    "BaseInferenceServerResponse",
     "BaseResponseData",
     "CPUTimes",
     "ComputedStats",
@@ -121,6 +128,7 @@ __all__ = [
     "EmbeddingResponseData",
     "EndpointData",
     "EndpointInfo",
+    "EndpointMetadata",
     "ErrorDetails",
     "ErrorDetailsCount",
     "ExitErrorInfo",
@@ -132,7 +140,6 @@ __all__ = [
     "GpuTelemetrySnapshot",
     "IOCounters",
     "Image",
-    "InferenceServerResponse",
     "InputsFile",
     "JsonExportData",
     "JsonMetricResult",
@@ -152,8 +159,10 @@ __all__ = [
     "ProcessingStats",
     "ProfileResults",
     "RankingsResponseData",
+    "RawRecordInfo",
     "ReasoningResponseData",
     "RecordsStats",
+    "RequestInfo",
     "RequestRecord",
     "RequestsStats",
     "SSEField",
@@ -172,6 +181,7 @@ __all__ = [
     "Text",
     "TextResponse",
     "TextResponseData",
+    "TransportMetadata",
     "Turn",
     "Video",
     "WorkerStats",

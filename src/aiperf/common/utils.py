@@ -92,9 +92,9 @@ def load_json_str(json_str: str, func: Callable = lambda x: x) -> dict[str, Any]
         # notably being stricter on UTF-8 conformance.
         # Refer to https://github.com/ijl/orjson?tab=readme-ov-file#str for details.
         return func(orjson.loads(json_str))
-    except orjson.JSONDecodeError:
+    except orjson.JSONDecodeError as e:
         snippet = json_str[:200] + ("..." if len(json_str) > 200 else "")
-        _logger.error(f"Failed to parse JSON string: '{snippet}'")
+        _logger.exception(f"Failed to parse JSON string: '{snippet}' - {e!r}")
         raise
 
 

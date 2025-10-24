@@ -9,7 +9,13 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from aiperf.common.models import InputsFile, JsonExportData, MetricRecordInfo
+from aiperf.common.models import (
+    InputsFile,
+    JsonExportData,
+    MetricRecordInfo,
+    RawRecordInfo,
+    SessionPayloads,
+)
 
 
 @dataclass
@@ -61,6 +67,7 @@ class AIPerfResults:
         self.csv = self._load_text_file("**/*aiperf.csv")
         self.inputs = self._load_inputs()
         self.jsonl = self._load_jsonl_records()
+        self.raw_records = self._load_raw_records()
         self.log = self._load_text_file("**/logs/aiperf.log")
 
     def _find_file(self, pattern: str) -> Path | None:
@@ -101,6 +108,19 @@ class AIPerfResults:
                     records.append(MetricRecordInfo.model_validate_json(line))
         return records
 
+    def _load_raw_records(self) -> list[RawRecordInfo] | None:
+        """Load raw records as Pydantic models."""
+        file_path = self._find_file("**/*profile_export_raw.jsonl")
+        if not file_path:
+            return None
+
+        records = []
+        with open(file_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    records.append(RawRecordInfo.model_validate_json(line))
+        return records
+
     @property
     def has_all_outputs(self) -> bool:
         """Check if all outputs exist."""
@@ -115,8 +135,6 @@ class AIPerfResults:
 
     def validate_pydantic_models(self) -> None:
         """Validate that all Pydantic models are properly loaded."""
-        from aiperf.common.models import SessionPayloads
-
         if self.json:
             assert isinstance(self.json, JsonExportData), (
                 "json should be JsonExportData"
@@ -132,6 +150,11 @@ class AIPerfResults:
         if self.jsonl:
             assert all(isinstance(r, MetricRecordInfo) for r in self.jsonl), (
                 "All jsonl records should be MetricRecordInfo"
+            )
+
+        if self.raw_records:
+            assert all(isinstance(r, RawRecordInfo) for r in self.raw_records), (
+                "All raw records should be RawRecordInfo"
             )
 
     @property

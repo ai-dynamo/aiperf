@@ -87,6 +87,14 @@ class ConfigurationError(AIPerfError):
     """Exception raised when something fails to configure, or there is a configuration error."""
 
 
+class ConsoleExporterDisabled(AIPerfError):
+    """Raised when initializing a console exporter to indicate to the caller that it is disabled and should not be used."""
+
+
+class DataExporterDisabled(AIPerfError):
+    """Raised when initializing a data exporter to indicate to the caller that it is disabled and should not be used."""
+
+
 class DatasetError(AIPerfError):
     """Generic dataset error."""
 
@@ -141,6 +149,10 @@ class NotInitializedError(AIPerfError):
 
 class NoMetricValue(AIPerfError):
     """Raised when a metric value is not available."""
+
+
+class PluginNotFoundError(AIPerfError):
+    """Exception raised when a plugin is not found. This is used to indicate that a plugin is not found when trying to get a plugin class or metadata."""
 
 
 class PostProcessorDisabled(AIPerfError):

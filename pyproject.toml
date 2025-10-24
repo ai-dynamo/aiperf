@@ -109,3 +109,6 @@ verbosity_assertions = 2
 # To run them: pytest -m integration, pytest -m performance, pytest -m ffmpeg, pytest -m stress
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
 addopts = "--strict-markers -m 'not integration and not performance and not ffmpeg and not stress and not macos'"
+
+[tool.codespell]
+skip = "*.pyc,*build*,tests/transports/test_aiohttp_sse.py"

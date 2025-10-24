@@ -4,7 +4,8 @@
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, model_validator
+from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
@@ -34,17 +35,72 @@ class OutputConfig(BaseConfig):
         ),
     ] = OutputDefaults.ARTIFACT_DIRECTORY
 
-    profile_export_file: Annotated[
-        Path,
+    profile_export_prefix: Annotated[
+        Path | None,
         Field(
-            description="The file to store the profile export in JSONL format.",
+            description="The prefix for the profile export file names. Will be suffixed with .csv, .json, .jsonl, and _raw.jsonl."
+            "If not provided, the default profile export file names will be used: profile_export_aiperf.csv, profile_export_aiperf.json, "
+            "profile_export.jsonl, and profile_export_raw.jsonl.",
         ),
         CLIParameter(
-            name=("--profile-export-file",),
+            name=(
+                "--profile-export-prefix",
+                "--profile-export-file",  # GenAI-Perf
+            ),
             group=_CLI_GROUP,
         ),
-    ] = OutputDefaults.PROFILE_EXPORT_FILE
+    ] = None
+
+    export_level: Annotated[
+        ExportLevel,
+        Field(
+            description="The level of profile export files to create.",
+        ),
+        CLIParameter(
+            name=("--export-level", "--profile-export-level"),
+            group=_CLI_GROUP,
+        ),
+    ] = OutputDefaults.EXPORT_LEVEL
+
+    _profile_export_csv_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
+    _profile_export_json_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+    _profile_export_jsonl_file: Path = OutputDefaults.PROFILE_EXPORT_JSONL_FILE
+    _profile_export_raw_jsonl_file: Path = OutputDefaults.PROFILE_EXPORT_RAW_JSONL_FILE
+
+    @model_validator(mode="after")
+    def set_export_filenames(self) -> Self:
+        """Set export filename variants by stripping suffixes and adding proper ones."""
+        if self.profile_export_prefix is None:
+            return self
+
+        base_path = self.profile_export_prefix
+        base_str = str(base_path)
+
+        suffixes_to_strip = ["_raw.jsonl", ".csv", ".json", ".jsonl"]
+        for suffix in suffixes_to_strip:
+            if base_str.endswith(suffix):
+                base_str = base_str[: -len(suffix)]
+                break
+
+        self._profile_export_csv_file = Path(f"{base_str}.csv")
+        self._profile_export_json_file = Path(f"{base_str}.json")
+        self._profile_export_jsonl_file = Path(f"{base_str}.jsonl")
+        self._profile_export_raw_jsonl_file = Path(f"{base_str}_raw.jsonl")
+
+        return self
 
     @property
-    def export_level(self) -> ExportLevel:
-        return ExportLevel.RECORDS
+    def profile_export_csv_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_csv_file
+
+    @property
+    def profile_export_json_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_json_file
+
+    @property
+    def profile_export_jsonl_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_jsonl_file
+
+    @property
+    def profile_export_raw_jsonl_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_raw_jsonl_file

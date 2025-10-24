@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+import aiperf.endpoints  # noqa: F401  # Import to register endpoints
+import aiperf.transports  # noqa: F401  # Import to register transports
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Conversation
@@ -23,6 +25,7 @@ def user_config(tmp_path: Path) -> UserConfig:
             model_names=["test-model"],
             type=EndpointType.CHAT,
             streaming=False,
+            url="http://localhost:8000",
         ),
         output=OutputConfig(artifact_directory=tmp_path),
     )
@@ -91,3 +94,9 @@ def capture_file_writes():
 
     with patch("aiperf.dataset.dataset_manager.aiofiles.open", mock_open):
         yield capture
+
+
+@pytest.fixture
+def conversation_ids() -> list[str]:
+    """Standard list of conversation IDs for sampler testing."""
+    return ["conv_1", "conv_2", "conv_3", "conv_4", "conv_5"]

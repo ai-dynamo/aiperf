@@ -1,13 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
-
-from rich.console import Console
-
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import MetricFlags
 from aiperf.common.enums.data_exporter_enums import ConsoleExporterType
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import ConsoleExporterDisabled
 from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.models import MetricResult
 from aiperf.common.protocols import ConsoleExporterProtocol
@@ -30,12 +27,10 @@ class ConsoleInternalMetricsExporter(ConsoleMetricsExporter):
         self._show_internal_metrics = (
             Environment.DEV.MODE and Environment.DEV.SHOW_INTERNAL_METRICS
         )
-
-    async def export(self, console: Console) -> None:
         if not self._show_internal_metrics:
-            self.debug("Internal metrics are not enabled, skipping export")
-            return
-        await super().export(console)
+            raise ConsoleExporterDisabled(
+                "Internal metrics are not enabled, skipping console export"
+            )
 
     def _should_show(self, record: MetricResult) -> bool:
         metric_class = MetricRegistry.get_class(record.tag)

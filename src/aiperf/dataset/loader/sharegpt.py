@@ -8,12 +8,6 @@ from typing import Any
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Conversation, Text, Turn
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
@@ -48,15 +42,7 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         self.output_tokens_mean = self.user_config.input.prompt.output_tokens.mean
         self.turn_count = 0
 
-        # TODO: Temporary placeholder for AioHttpClientMixin.
-        model_endpoint = ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="ShareGPT")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(base_url=self.url),
-        )
-        super().__init__(model_endpoint=model_endpoint, **kwargs)
+        super().__init__(user_config=user_config, tokenizer=tokenizer, **kwargs)
 
     async def load_dataset(self) -> dict[str, Any]:
         """
