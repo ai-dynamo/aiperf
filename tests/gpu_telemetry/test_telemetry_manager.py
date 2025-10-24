@@ -632,6 +632,10 @@ class TestProfileConfigureCommand:
         # Should NOT have collectors
         assert len(manager._collectors) == 0
 
+        # When user didn't explicitly configure and no defaults reachable, should report nothing
+        assert len(call_args.endpoints_configured) == 0
+        assert len(call_args.endpoints_reachable) == 0
+
     @pytest.mark.asyncio
     async def test_configure_sends_enabled_status_when_endpoints_reachable(self):
         """Test that configure phase sends enabled status with reachable endpoints."""
@@ -655,6 +659,13 @@ class TestProfileConfigureCommand:
 
         # Should have collectors
         assert len(manager._collectors) == 2
+
+        # Should report both default endpoints as configured and reachable
+        assert len(call_args.endpoints_configured) == 2
+        assert len(call_args.endpoints_reachable) == 2
+        for endpoint in DEFAULT_DCGM_ENDPOINTS:
+            assert endpoint in call_args.endpoints_configured
+            assert endpoint in call_args.endpoints_reachable
 
 
 class TestProfileStartCommand:
