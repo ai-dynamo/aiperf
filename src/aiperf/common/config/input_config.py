@@ -103,7 +103,11 @@ class InputConfig(BaseConfig):
             match self.custom_dataset_type:
                 case CustomDatasetType.RANDOM_POOL:
                     self.dataset_sampling_strategy = DatasetSamplingStrategy.SHUFFLE
-                case CustomDatasetType.MOONCAKE_TRACE:
+                case (
+                    CustomDatasetType.MOONCAKE_TRACE
+                    | CustomDatasetType.SINGLE_TURN
+                    | CustomDatasetType.MULTI_TURN
+                ):
                     self.dataset_sampling_strategy = DatasetSamplingStrategy.SEQUENTIAL
                 case _:
                     self.dataset_sampling_strategy = (
@@ -248,7 +252,11 @@ class InputConfig(BaseConfig):
     dataset_sampling_strategy: Annotated[
         DatasetSamplingStrategy | None,
         Field(
-            description="The strategy to use for sampling the dataset.",
+            description="The strategy to use for sampling the dataset.\n"
+            "`sequential`: Iterate through the dataset sequentially, then wrap around to the beginning.\n"
+            "`random`: Randomly select a conversation from the dataset. Will randomly sample with replacement.\n"
+            "`shuffle`: Shuffle the dataset and iterate through it. Will randomly sample without replacement.\n"
+            "Once the end of the dataset is reached, shuffle the dataset again and start over.",
         ),
         CLIParameter(
             name=("--dataset-sampling-strategy",),
