@@ -29,6 +29,7 @@ class EndpointType(CaseInsensitiveStrEnum):
     EMBEDDINGS = "embeddings"
     HF_TEI_RANKINGS = "hf_tei_rankings"
     NIM_RANKINGS = "nim_rankings"
+    SOLIDO_RAG = "solido_rag"
 
 
 class TransportType(CaseInsensitiveStrEnum):
