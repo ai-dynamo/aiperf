@@ -141,17 +141,18 @@ class TelemetryManager(BaseComponentService):
 
         Returns:
             List of endpoint URLs to display in console/export output:
-            - Empty list if user did not configure telemetry (implicit acceptance only)
-            - reachable_defaults if user configured telemetry with no custom endpoints
-            - user_provided_endpoints + reachable_defaults if custom endpoints provided
+            - reachable_defaults if any defaults are reachable
+            - user_provided_endpoints + reachable_defaults if custom endpoints and defaults reachable
+            - user_provided_endpoints if user configured but no defaults reachable
+            - Empty list if no reachable defaults and user did not configure telemetry
         """
-        if not self._user_explicitly_configured_telemetry:
-            return []
-
-        if self._user_provided_endpoints:
+        if reachable_defaults and self._user_provided_endpoints:
             return list(self._user_provided_endpoints) + reachable_defaults
-
-        return reachable_defaults
+        elif reachable_defaults:
+            return reachable_defaults
+        elif self._user_provided_endpoints:
+            return self._user_provided_endpoints
+        return []
 
     @on_init
     async def _initialize(self) -> None:

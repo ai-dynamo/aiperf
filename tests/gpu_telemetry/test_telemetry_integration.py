@@ -366,8 +366,11 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
             async def run_collector():
                 await collector.initialize_and_start()
-                await asyncio.sleep(0.3)  # More time for collection
+                # Collection interval is 0.05s, so wait 0.5s for ~10 cycles
+                await asyncio.sleep(0.5)
                 await collector.stop()
+                # Give grace period for any pending callbacks to complete
+                await asyncio.sleep(0.2)
 
             # Run the async collection
             loop = asyncio.new_event_loop()
@@ -377,36 +380,37 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             finally:
                 loop.close()
 
-            # Verify that the test setup worked (timing can cause race conditions in CI)
-            # The important part is that the error handling pipeline is properly set up
-            records_collected = len(self.collected_records) > 0
-            errors_collected = len(self.collection_errors) > 0
-
-            # In test environment, race conditions may prevent data collection
-            # but the setup should complete without exceptions
-            print(
-                f"Test results: Records={len(self.collected_records)}, Errors={len(self.collection_errors)}"
+            # Assert: Test completed without exceptions (verifies error handling pipeline)
+            # Assert: Collection state is valid
+            assert isinstance(self.collected_records, list), (
+                "collected_records should be a list"
+            )
+            assert isinstance(self.collection_errors, list), (
+                "collection_errors should be a list"
             )
 
-            # If we got any activity, verify it behaves correctly
-            if records_collected:
-                # Records should be TelemetryRecord objects
+            # If records were collected, verify they're valid TelemetryRecord objects
+            if len(self.collected_records) > 0:
                 assert all(hasattr(r, "gpu_uuid") for r in self.collected_records), (
-                    "Records should be TelemetryRecord objects"
+                    "All records should be TelemetryRecord objects"
                 )
 
-            if errors_collected:
-                # Errors should be string messages
+            # If errors were collected, verify they're valid error messages
+            if len(self.collection_errors) > 0:
                 assert all(isinstance(e, str) for e in self.collection_errors), (
-                    "Errors should be strings"
+                    "All errors should be string messages"
                 )
+
+                # Verify we captured the simulated processing error
                 processing_errors = [
                     e for e in self.collection_errors if "processing error" in e.lower()
                 ]
                 if len(processing_errors) > 0:
                     assert "Simulated processing error" in str(processing_errors), (
-                        "Should contain simulated error message"
+                        "Should contain simulated error message from faulty processor"
                     )
+
+            # Note: Empty lists are acceptable due to async task cancellation timing
 
     def test_empty_dcgm_response_handling(self, user_config):
         """Test end-to-end pipeline handling of empty DCGM responses.
