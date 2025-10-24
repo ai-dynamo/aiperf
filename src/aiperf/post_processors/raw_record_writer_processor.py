@@ -8,10 +8,10 @@ import aiofiles
 
 from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.constants import DEFAULT_RAW_RECORD_EXPORT_BATCH_SIZE
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums.data_exporter_enums import DataExporterType, ExportLevel
 from aiperf.common.enums.post_processor_enums import RecordProcessorType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.factories import (
     DataExporterFactory,
@@ -76,7 +76,7 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         # Initialize the buffered writer mixin
         super().__init__(
             output_file=output_file,
-            batch_size=DEFAULT_RAW_RECORD_EXPORT_BATCH_SIZE,
+            batch_size=Environment.RECORD.RAW_EXPORT_BATCH_SIZE,
             service_id=service_id,
             user_config=user_config,
             **kwargs,

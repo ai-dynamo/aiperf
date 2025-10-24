@@ -63,6 +63,12 @@ class _DatasetSettings(BaseSettings):
         default=300.0,
         description="Timeout in seconds for dataset configuration operations",
     )
+    PUBLIC_DATASET_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=300.0,
+        description="Timeout in seconds for public dataset loading operations",
+    )
 
 
 class _DeveloperSettings(BaseSettings):
@@ -283,6 +289,12 @@ class _RecordSettings(BaseSettings):
         le=1000000,
         default=100,
         description="Batch size for record export results processor",
+    )
+    RAW_EXPORT_BATCH_SIZE: int = Field(
+        ge=1,
+        le=1000000,
+        default=10,
+        description="Batch size for raw record writer processor",
     )
     PROCESSOR_SCALE_FACTOR: int = Field(
         ge=1,
