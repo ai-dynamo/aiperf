@@ -25,9 +25,9 @@ class EndpointType(CaseInsensitiveStrEnum):
 
     CHAT = "chat"
     COMPLETIONS = "completions"
-    COHERE_RERANK = "cohere_rerank"
+    COHERE_RANKINGS = "cohere_rankings"
     EMBEDDINGS = "embeddings"
-    HF_TEI_RERANKER = "hf_tei_reranker"
+    HF_TEI_RANKINGS = "hf_tei_rankings"
     NIM_RANKINGS = "nim_rankings"
 
 

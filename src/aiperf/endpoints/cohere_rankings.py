@@ -12,14 +12,14 @@ from aiperf.endpoints.base_rankings_endpoint import BaseRankingsEndpoint
 
 
 @implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.HF_TEI_RERANKER)
-class HFTeiRerankerEndpoint(BaseRankingsEndpoint):
-    """HuggingFace TEI Reranker Endpoint."""
+@EndpointFactory.register(EndpointType.COHERE_RANKINGS)
+class CohereRankingsEndpoint(BaseRankingsEndpoint):
+    """Cohere Rankings Endpoint."""
 
     @classmethod
     def metadata(cls) -> EndpointMetadata:
         return EndpointMetadata(
-            endpoint_path="/rerank",
+            endpoint_path="/v2/rerank",
             supports_streaming=False,
             produces_tokens=False,
             tokenizes_input=True,
@@ -29,13 +29,19 @@ class HFTeiRerankerEndpoint(BaseRankingsEndpoint):
     def build_payload(
         self, query_text: str, passages: list[str], model_name: str
     ) -> dict[str, Any]:
-        """Build payload to match Huggingface TEI reranker API schema."""
+        """Build payload to match Cohere Rankings API schema."""
         payload = {
+            "model": model_name,
             "query": query_text,
-            "texts": passages,
+            "documents": passages,
         }
         return payload
 
     def extract_rankings(self, json_obj: dict[str, Any]) -> list[dict[str, Any]]:
-        """Extract ranking results from Huggingface TEI reranker API response."""
-        return json_obj if isinstance(json_obj, list) else json_obj.get("results", [])
+        """Extract ranking results from Cohere Rankings API response."""
+        results = json_obj.get("results", [])
+        rankings = [
+            {"index": r.get("index"), "score": r.get("relevance_score")}
+            for r in results
+        ]
+        return rankings
