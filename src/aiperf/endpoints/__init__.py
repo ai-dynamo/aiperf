@@ -7,6 +7,9 @@ from aiperf.endpoints.base_endpoint import (
 from aiperf.endpoints.base_rankings_endpoint import (
     BaseRankingsEndpoint,
 )
+from aiperf.endpoints.hf_tei_reranker import (
+    HFTeiRerankerEndpoint,
+)
 from aiperf.endpoints.nim_rankings import (
     NIMRankingsEndpoint,
 )
@@ -19,9 +22,6 @@ from aiperf.endpoints.openai_completions import (
 from aiperf.endpoints.openai_embeddings import (
     EmbeddingsEndpoint,
 )
-from aiperf.endpoints.tei_reranker import (
-    TEIRerankerEndpoint,
-)
 
 __all__ = [
     "BaseEndpoint",
@@ -29,6 +29,6 @@ __all__ = [
     "ChatEndpoint",
     "CompletionsEndpoint",
     "EmbeddingsEndpoint",
+    "HFTeiRerankerEndpoint",
     "NIMRankingsEndpoint",
-    "TEIRerankerEndpoint",
 ]

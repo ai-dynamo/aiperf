@@ -27,7 +27,7 @@ class EndpointType(CaseInsensitiveStrEnum):
     COMPLETIONS = "completions"
     EMBEDDINGS = "embeddings"
     NIM_RANKINGS = "nim_rankings"
-    TEI_RERANKER = "tei_reranker"
+    HF_TEI_RERANKER = "hf_tei_reranker"
 
 
 class TransportType(CaseInsensitiveStrEnum):
