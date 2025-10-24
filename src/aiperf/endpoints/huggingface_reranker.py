@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-
 from typing import Any
 
 from aiperf.common.decorators import implements_protocol
@@ -14,29 +13,24 @@ from aiperf.endpoints.base_rankings_endpoint import BaseRankingsEndpoint
 
 @implements_protocol(EndpointProtocol)
 @EndpointFactory.register(EndpointType.RANKINGS)
-class NIMRankingsEndpoint(BaseRankingsEndpoint):
-    """NIM Rankings endpoint."""
+class HuggingFaceRerankerEndpoint(BaseRankingsEndpoint):
+    """HuggingFace TEI Reranker Endpoint."""
 
     @classmethod
     def metadata(cls) -> EndpointMetadata:
-        """Return Rankings endpoint metadata."""
         return EndpointMetadata(
-            endpoint_path="/v1/ranking",
+            endpoint_path="/rerank",
             supports_streaming=False,
             produces_tokens=False,
             tokenizes_input=True,
-            metrics_title="Rankings Metrics",
+            metrics_title="Ranking Metrics",
         )
 
     def build_payload(
         self, query_text: str, passages: list[str], model_name: str
     ) -> dict[str, Any]:
-        payload = {
-            "model": model_name,
-            "query": {"text": query_text},
-            "passages": [{"text": p} for p in passages],
-        }
+        payload = {"query": query_text, "texts": passages}
         return payload
 
     def extract_rankings(self, json_obj: dict[str, Any]) -> list[dict[str, Any]]:
-        return json_obj.get("rankings", [])
+        return json_obj if isinstance(json_obj, list) else json_obj.get("results", [])

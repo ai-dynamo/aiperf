@@ -4,8 +4,14 @@
 from aiperf.endpoints.base_endpoint import (
     BaseEndpoint,
 )
+from aiperf.endpoints.base_rankings_endpoint import (
+    BaseRankingsEndpoint,
+)
+from aiperf.endpoints.huggingface_reranker import (
+    HuggingFaceRerankerEndpoint,
+)
 from aiperf.endpoints.nim_rankings import (
-    RankingsEndpoint,
+    NIMRankingsEndpoint,
 )
 from aiperf.endpoints.openai_chat import (
     ChatEndpoint,
@@ -19,8 +25,10 @@ from aiperf.endpoints.openai_embeddings import (
 
 __all__ = [
     "BaseEndpoint",
+    "BaseRankingsEndpoint",
     "ChatEndpoint",
     "CompletionsEndpoint",
     "EmbeddingsEndpoint",
-    "RankingsEndpoint",
+    "HuggingFaceRerankerEndpoint",
+    "NIMRankingsEndpoint",
 ]
