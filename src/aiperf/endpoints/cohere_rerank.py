@@ -32,7 +32,7 @@ class CohereRerank(BaseRankingsEndpoint):
         """Build payload to match Cohere's rerank API schema."""
         payload = {
             "model": model_name,
-            "query": {"text": query_text},
+            "query": query_text,
             "documents": passages,
         }
         return payload
