@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import random
 import time
 
 import aiofiles
@@ -18,9 +17,9 @@ from aiperf.common.enums import (
     MessageType,
     ServiceType,
 )
-from aiperf.common.enums.dataset_enums import CustomDatasetType
 from aiperf.common.factories import (
     ComposerFactory,
+    DatasetSamplingStrategyFactory,
     ServiceFactory,
 )
 from aiperf.common.hooks import on_command, on_request
@@ -39,7 +38,7 @@ from aiperf.common.models import Conversation, InputsFile
 from aiperf.common.models.dataset_models import SessionPayloads
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import RequestInfo
-from aiperf.common.protocols import ServiceProtocol
+from aiperf.common.protocols import DatasetSamplingStrategyProtocol, ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader import ShareGPTLoader
 
@@ -74,12 +73,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[str, Conversation] = {}  # session ID -> Conversation mapping
         self._session_ids_cache: list[str] = []
-        self._conversation_query_random = random.Random(
-            self.user_config.input.random_seed
-        )
         self.dataset_configured = asyncio.Event()
-        self._sequential_iterator_index = 0
-        self._use_sequential_iteration = False
+        self._dataset_sampler: DatasetSamplingStrategyProtocol | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -200,11 +195,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 tokenizer=self.tokenizer,
             )
             conversations = composer.create_dataset()
-            if (
-                self.user_config.input.custom_dataset_type
-                == CustomDatasetType.MOONCAKE_TRACE
-            ):
-                self._use_sequential_iteration = True
         else:
             composer = ComposerFactory.create_instance(
                 ComposerType.SYNTHETIC,
@@ -215,6 +205,12 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._session_ids_cache = list(self.dataset.keys())
+
+        self._dataset_sampler = DatasetSamplingStrategyFactory.create_instance(
+            self.user_config.input.dataset_sampling_strategy,
+            conversation_ids=self._session_ids_cache,
+            seed=self.user_config.input.random_seed,
+        )
 
         self.dataset_configured.set()
         await self.publish(
@@ -252,32 +248,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     ) -> ConversationResponseMessage:
         """Return any conversation from the dataset based on the user specified method."""
 
-        if self._use_sequential_iteration:
-            if self._sequential_iterator_index >= len(self._session_ids_cache):
-                # Reset iterator if we've gone through all conversations
-                _logger.warning(
-                    "All conversations have been used. Resetting sequential iterator to start over."
-                )
-                self._sequential_iterator_index = 0
-
-            session_id = self._session_ids_cache[self._sequential_iterator_index]
-            self._sequential_iterator_index += 1
-
-            conversation = self.dataset[session_id]
-
-            self.trace_or_debug(
-                lambda: f"Sending sequential conversation response: {conversation}",
-                lambda: f"Sending sequential conversation response with id: {conversation.session_id}",
+        if self._dataset_sampler is None:
+            raise self._service_error(
+                "Dataset sampler is not configured. Must be configured before handling requests.",
             )
-        else:
-            # TODO: Implement the user specified method (random, round robin, etc.)
-            session_id = self._conversation_query_random.choice(self._session_ids_cache)
-            conversation = self.dataset[session_id]
-            self.trace_or_debug(
-                lambda: f"Sending random conversation response: {conversation}",
-                lambda: f"Sending random conversation response with id: {conversation.session_id}",
-            )
-
+        session_id = self._dataset_sampler.next_conversation_id()
+        conversation = self.dataset[session_id]
+        self.trace_or_debug(
+            lambda: f"Sending conversation response: {conversation}",
+            lambda: f"Sending conversation response with id: {conversation.session_id}",
+        )
         return ConversationResponseMessage(
             service_id=self.service_id,
             request_id=request_id,

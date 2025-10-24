@@ -45,3 +45,14 @@ class PromptSource(CaseInsensitiveStrEnum):
     SYNTHETIC = "synthetic"
     FILE = "file"
     PAYLOAD = "payload"
+
+
+class DatasetSamplingStrategy(CaseInsensitiveStrEnum):
+    SEQUENTIAL = "sequential"
+    """Iterate through the dataset sequentially, then wrap around to the beginning."""
+
+    RANDOM = "random"
+    """Randomly select a conversation from the dataset. Will randomly sample with replacement."""
+
+    SHUFFLE = "shuffle"
+    """Shuffle the dataset and iterate through it. Will randomly sample without replacement."""

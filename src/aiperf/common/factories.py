@@ -23,6 +23,7 @@ from aiperf.common.enums import (
     TransportType,
     ZMQProxyType,
 )
+from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
 from aiperf.common.exceptions import (
     FactoryCreationError,
     InvalidOperationError,
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
         CommunicationProtocol,
         ConsoleExporterProtocol,
         DataExporterProtocol,
+        DatasetSamplingStrategyProtocol,
         RecordProcessorProtocol,
         RequestRateGeneratorProtocol,
         ResultsProcessorProtocol,
@@ -446,6 +448,26 @@ class DataExporterFactory(AIPerfFactory[DataExporterType, "DataExporterProtocol"
     ) -> "DataExporterProtocol":
         return super().create_instance(
             class_type, exporter_config=exporter_config, **kwargs
+        )
+
+
+class DatasetSamplingStrategyFactory(
+    AIPerfFactory[DatasetSamplingStrategy, "DatasetSamplingStrategyProtocol"]
+):
+    """Factory for registering and creating DatasetSamplingStrategyProtocol instances based on the specified dataset sampling strategy type.
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
+
+    @classmethod
+    def create_instance(  # type: ignore[override]
+        cls,
+        class_type: DatasetSamplingStrategy | str,
+        conversation_ids: list[str],
+        seed: int | None = None,
+        **kwargs,
+    ) -> "DatasetSamplingStrategyProtocol":
+        return super().create_instance(
+            class_type, conversation_ids=conversation_ids, seed=seed, **kwargs
         )
 
 
