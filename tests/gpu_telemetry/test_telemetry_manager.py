@@ -663,7 +663,7 @@ class TestProfileConfigureCommand:
         # Should report both default endpoints as configured and reachable
         assert len(call_args.endpoints_configured) == 2
         assert len(call_args.endpoints_reachable) == 2
-        for endpoint in DEFAULT_DCGM_ENDPOINTS:
+        for endpoint in Environment.GPU.DEFAULT_DCGM_ENDPOINTS:
             assert endpoint in call_args.endpoints_configured
             assert endpoint in call_args.endpoints_reachable
 
