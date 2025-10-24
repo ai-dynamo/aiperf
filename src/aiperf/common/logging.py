@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import logging
 import multiprocessing
 import queue
@@ -36,7 +37,7 @@ def get_global_log_queue() -> multiprocessing.Queue:
     return _global_log_queue
 
 
-def cleanup_global_log_queue() -> None:
+async def cleanup_global_log_queue() -> None:
     """Clean up the global log queue to prevent semaphore leaks.
 
     This should be called during shutdown to properly close and join the queue,
@@ -48,7 +49,9 @@ def cleanup_global_log_queue() -> None:
         if _global_log_queue is not None:
             try:
                 _global_log_queue.close()
-                _global_log_queue.join_thread()
+                await asyncio.wait_for(
+                    asyncio.to_thread(_global_log_queue.join_thread), timeout=1.0
+                )
                 _logger.debug("Cleaned up global log queue")
             except Exception as e:
                 _logger.debug(f"Error cleaning up log queue: {e}")

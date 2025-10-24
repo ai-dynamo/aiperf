@@ -565,7 +565,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             print_developer_mode_warning()
 
         # Clean up the global log queue to prevent semaphore leaks
-        cleanup_global_log_queue()
+        await cleanup_global_log_queue()
 
         # Exit the process in a more explicit way, to ensure that it stops
         os._exit(1 if self._exit_errors else 0)
