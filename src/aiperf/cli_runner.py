@@ -95,7 +95,3 @@ def run_system_controller(
         raise
     finally:
         logger.debug("AIPerf System exited")
-        if log_queue is not None:
-            from aiperf.common.logging import cleanup_global_log_queue
-
-            cleanup_global_log_queue()
