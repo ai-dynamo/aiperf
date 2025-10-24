@@ -15,7 +15,7 @@ from aiperf.common.models.model_endpoint_info import (
 )
 from aiperf.common.models.record_models import RankingsResponseData
 from aiperf.common.protocols import InferenceServerResponse
-from aiperf.endpoints.nim_rankings import RankingsEndpoint
+from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
 
 
 class TestRankingsEndpointParseResponse:
@@ -30,7 +30,7 @@ class TestRankingsEndpointParseResponse:
                 model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
             ),
             endpoint=EndpointInfo(
-                type=EndpointType.RANKINGS,
+                type=EndpointType.NIM_RANKINGS,
                 base_url="http://localhost:8000",
             ),
         )
@@ -38,7 +38,7 @@ class TestRankingsEndpointParseResponse:
             "aiperf.common.factories.TransportFactory.create_instance"
         ) as mock_transport:
             mock_transport.return_value = MagicMock()
-            return RankingsEndpoint(model_endpoint=model_endpoint)
+            return NIMRankingsEndpoint(model_endpoint=model_endpoint)
 
     def test_parse_response_basic_rankings(self, endpoint):
         """Test parsing basic rankings response."""

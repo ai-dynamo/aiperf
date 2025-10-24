@@ -15,7 +15,10 @@ from aiperf.endpoints.base_rankings_endpoint import BaseRankingsEndpoint
 @implements_protocol(EndpointProtocol)
 @EndpointFactory.register(EndpointType.NIM_RANKINGS)
 class NIMRankingsEndpoint(BaseRankingsEndpoint):
-    """NIM Rankings endpoint."""
+    """NIM Rankings endpoint.
+
+    Processes ranking requests by taking a query and a set of passages,
+    returning their relevance scores."""
 
     @classmethod
     def metadata(cls) -> EndpointMetadata:

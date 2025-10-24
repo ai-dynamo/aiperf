@@ -8,25 +8,25 @@ import pytest
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Text, Turn
 from aiperf.common.models.record_models import RequestInfo
-from aiperf.endpoints.nim_rankings import RankingsEndpoint
+from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
 from tests.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
 )
 
 
-class TestRankingsRequestConverter:
-    """Test cases for RankingsRequestConverter."""
+class TestRankingsEndpoint:
+    """Test cases for NIMRankingsEndpoint."""
 
     @pytest.fixture
     def model_endpoint(self):
         """Create a test ModelEndpointInfo for rankings."""
-        return create_model_endpoint(EndpointType.RANKINGS)
+        return create_model_endpoint(EndpointType.NIM_RANKINGS)
 
     @pytest.fixture
     def converter(self, model_endpoint):
-        """Create a RankingsRequestConverter instance."""
-        return create_endpoint_with_mock_transport(RankingsEndpoint, model_endpoint)
+        """Create a NIMRankingsEndpoint instance."""
+        return create_endpoint_with_mock_transport(NIMRankingsEndpoint, model_endpoint)
 
     @pytest.fixture
     def basic_turn(self):
@@ -236,8 +236,12 @@ class TestRankingsRequestConverter:
     def test_format_payload_extra_parameters(self):
         """Test that extra parameters from endpoint config are included."""
         extra_params = [("top_k", 5), ("return_scores", True)]
-        test_endpoint = create_model_endpoint(EndpointType.RANKINGS, extra=extra_params)
-        converter = create_endpoint_with_mock_transport(RankingsEndpoint, test_endpoint)
+        test_endpoint = create_model_endpoint(
+            EndpointType.NIM_RANKINGS, extra=extra_params
+        )
+        converter = create_endpoint_with_mock_transport(
+            NIMRankingsEndpoint, test_endpoint
+        )
 
         turn = Turn(
             texts=[

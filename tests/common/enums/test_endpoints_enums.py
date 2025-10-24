@@ -38,8 +38,8 @@ class TestEndpointType:
                 "Embeddings Metrics",
             ),
             (
-                EndpointType.RANKINGS,
-                "rankings",
+                EndpointType.NIM_RANKINGS,
+                "nim_rankings",
                 False,
                 False,
                 "/v1/ranking",
@@ -69,7 +69,7 @@ class TestEndpointType:
 
     @pytest.mark.parametrize(
         "tag_value",
-        ["chat", "completions", "embeddings", "rankings"],
+        ["chat", "completions", "embeddings", "nim_rankings"],
     )
     def test_enum_string_comparison(self, tag_value):
         """Test that enum values can be compared with strings."""
