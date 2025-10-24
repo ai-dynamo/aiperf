@@ -13,7 +13,7 @@ from aiperf.endpoints.base_rankings_endpoint import BaseRankingsEndpoint
 
 
 @implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.RANKINGS)
+@EndpointFactory.register(EndpointType.NIM_RANKINGS)
 class NIMRankingsEndpoint(BaseRankingsEndpoint):
     """NIM Rankings endpoint."""
 
