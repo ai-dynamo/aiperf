@@ -91,6 +91,7 @@ from aiperf.common.enums.service_enums import (
     ServiceType,
 )
 from aiperf.common.enums.sse_enums import (
+    SSEEventType,
     SSEFieldType,
 )
 from aiperf.common.enums.system_enums import (
@@ -155,6 +156,7 @@ __all__ = [
     "RecordProcessorType",
     "RequestRateMode",
     "ResultsProcessorType",
+    "SSEEventType",
     "SSEFieldType",
     "ServiceRegistrationStatus",
     "ServiceRunType",

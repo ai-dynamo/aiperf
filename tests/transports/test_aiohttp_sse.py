@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEMessage
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
@@ -448,7 +449,7 @@ class TestAsyncSSEStreamReader:
         """Test __aiter__ with CRLF and all SSE field types."""
         chunks = [
             b"data: test\r\nevent: custom\r\nid: msg-123\r\nretry: 5000\r\n: comment\r\n\r\n"
-        ]
+        ]  # fmt: skip
 
         reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
         messages = await self._collect_messages(reader)
@@ -529,3 +530,47 @@ class TestAsyncSSEStreamReader:
         assert processing_time < 3.0, (
             f"CRLF processing took {processing_time:.3f}s, expected < 3s"
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "chunks,expected_error",
+        [
+            ([b"data: Normal message\n\n", b"event: error\n: Rate limit\ndata: {}\n\n"], "Rate limit"),
+            ([b"event: error\ndata: Something went wrong\n\n"], "Unknown error in SSE response"),
+            ([b"event: error\r\n: Server error\r\ndata: {}\r\n\r\n"], "Server error"),
+            ([b"event: error\n: Connection timeout\n\n"], "Connection timeout"),
+            ([b"data: Message 1\n\n", b"data: Message 2\n\n", b"event: error\n: Fatal error\n\n"], "Fatal error"),
+            ([b'event: error\n: Internal error\ndata: {"error_code": 500}\n\n'], "Internal error"),
+        ],
+    )  # fmt: skip
+    async def test_error_events_raise_in_read_complete_stream(
+        self, chunks: list[bytes], expected_error: str
+    ) -> None:
+        """Test that various error events raise SSEResponseError."""
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+
+        with pytest.raises(SSEResponseError) as exc_info:
+            await reader.read_complete_stream()
+
+        assert expected_error in str(exc_info.value)
+        assert exc_info.value.error_code == 502
+
+    @pytest.mark.asyncio
+    async def test_error_in_manual_iteration_with_inspect(self) -> None:
+        """Test that manual iteration with inspect raises on error event."""
+        chunks = [
+            b"data: First message\n\n",
+            b"event: error\n: Authentication failed\n\n",
+            b"data: Should not reach\n\n",
+        ]
+
+        reader = AsyncSSEStreamReader(self._create_byte_iterator(chunks))
+        messages = []
+
+        with pytest.raises(SSEResponseError) as exc_info:
+            async for message in reader:
+                AsyncSSEStreamReader.inspect_message_for_error(message)
+                messages.append(message)
+
+        assert len(messages) == 1
+        assert "Authentication failed" in str(exc_info.value)
