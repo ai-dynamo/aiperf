@@ -9,7 +9,6 @@ from typing import Any, AnyStr
 
 import orjson
 from pydantic import (
-    BaseModel,
     Field,
     RootModel,
     SerializeAsAny,
@@ -573,7 +572,7 @@ class RequestRecord(AIPerfBaseModel):
         )
 
 
-class BaseResponseData(BaseModel):
+class BaseResponseData(AIPerfBaseModel):
     """Base class for all response data."""
 
     def get_text(self) -> str:

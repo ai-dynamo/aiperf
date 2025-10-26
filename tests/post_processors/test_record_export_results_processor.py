@@ -616,7 +616,7 @@ class TestRecordExportResultsProcessorLifecycle:
 
         contents = mock_aiofiles_stringio.getvalue()
         lines = contents.splitlines()
-        assert contents.endswith("\n"), (
+        assert contents.endswith(b"\n"), (
             f"Contents should end with newline but got: {repr(contents[-20:])}"
         )
         assert len(lines) == Environment.RECORD.EXPORT_BATCH_SIZE * 2
