@@ -34,17 +34,17 @@ class TTSTMetric(BaseRecordMetric[int]):
         RequestRecord object, computes the difference (TTST), and returns the result.
 
         Raises:
-            NoMetricValue: If the record does not have at least two responses
+            NoMetricValue: If the record does not have at least two content responses
             ValueError: If the second response is before the first response.
         """
 
-        if len(record.responses) < 2:
+        if len(record.content_responses) < 2:
             raise NoMetricValue(
-                "Record must have at least two responses to calculate TTST."
+                "Record must have at least two content responses to calculate TTST."
             )
 
-        first_response_ts: int = record.responses[0].perf_ns
-        second_response_ts: int = record.responses[1].perf_ns
+        first_response_ts: int = record.content_responses[0].perf_ns
+        second_response_ts: int = record.content_responses[1].perf_ns
         if second_response_ts < first_response_ts:
             raise ValueError(
                 "Second response timestamp must be greater than or equal to the first response timestamp."

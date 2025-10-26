@@ -60,12 +60,12 @@ class TestTTSTMetric:
             metric.parse_record(record, MetricRecordDict())
 
     def test_ttst_insufficient_responses(self):
-        """Test error when less than two responses"""
+        """Test error when less than two content responses"""
         record = create_record(start_ns=100, responses=[110])  # Only one response
 
         metric = TTSTMetric()
         with pytest.raises(
             NoMetricValue,
-            match="Record must have at least two responses to calculate TTST",
+            match="Record must have at least two content responses to calculate TTST",
         ):
             metric.parse_record(record, MetricRecordDict())

@@ -31,9 +31,19 @@ class RequestLatencyMetric(BaseRecordMetric[int]):
     ) -> int:
         """
         This method extracts the request and last response timestamps, and calculates the differences in time.
+
+        Note: Uses the last content response (with actual data), not usage-only chunks.
         """
         request_ts: int = record.start_perf_ns
-        final_response_ts: int = record.responses[-1].perf_ns
+
+        # Use content_responses to get last response with actual content
+        content_responses = record.content_responses
+        final_response_ts = (
+            content_responses[-1].perf_ns
+            if content_responses
+            else record.responses[-1].perf_ns  # Fallback to last response
+        )
+
         if final_response_ts < request_ts:
             raise ValueError("Final response timestamp is less than request timestamp.")
         return final_response_ts - request_ts

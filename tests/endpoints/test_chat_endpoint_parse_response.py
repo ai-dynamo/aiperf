@@ -58,7 +58,7 @@ class TestChatEndpointParseResponse:
         assert parsed.data.text == "Hello"
 
     def test_parse_response_with_reasoning_content(self, endpoint):
-        """Test parsing response with reasoning_content (o1 models)."""
+        """Test parsing response with reasoning_content (reasoning-capable models)."""
         mock_response = create_mock_response(
             123456789,
             {

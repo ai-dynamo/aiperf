@@ -94,7 +94,7 @@ class TestInterChunkLatencyMetric:
         metric = InterChunkLatencyMetric()
         with pytest.raises(
             NoMetricValue,
-            match="Record must have at least two responses to calculate Inter Chunk Latency",
+            match="Record must have at least two content responses to calculate Inter Chunk Latency",
         ):
             metric.parse_record(record, MetricRecordDict())
 
@@ -105,7 +105,7 @@ class TestInterChunkLatencyMetric:
         metric = InterChunkLatencyMetric()
         with pytest.raises(
             NoMetricValue,
-            match="Record must have at least two responses to calculate Inter Chunk Latency",
+            match="Record must have at least two content responses to calculate Inter Chunk Latency",
         ):
             metric.parse_record(record, MetricRecordDict())
 

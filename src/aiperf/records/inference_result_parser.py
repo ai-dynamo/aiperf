@@ -154,6 +154,8 @@ class InferenceResultParser(CommunicationMixin):
         output_texts: list[str] = []
         reasoning_texts: list[str] = []
         for response in resp:
+            if not response.data:
+                continue
             if isinstance(response.data, ReasoningResponseData):
                 if response.data.reasoning:
                     reasoning_texts.append(response.data.reasoning)

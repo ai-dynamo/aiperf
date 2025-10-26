@@ -86,3 +86,21 @@ def mock_transport_factory():
     with patch("aiperf.common.factories.TransportFactory.create_instance") as mock:
         mock.return_value = MagicMock()
         yield mock
+
+
+def create_mock_response(perf_ns: int, json_data: dict | None) -> MagicMock:
+    """Helper to create a mock InferenceServerResponse.
+
+    Args:
+        perf_ns: Performance timestamp
+        json_data: JSON data to return from get_json()
+
+    Returns:
+        Mock InferenceServerResponse
+    """
+    from aiperf.common.protocols import InferenceServerResponse
+
+    mock_response = MagicMock(spec=InferenceServerResponse)
+    mock_response.perf_ns = perf_ns
+    mock_response.get_json.return_value = json_data
+    return mock_response
