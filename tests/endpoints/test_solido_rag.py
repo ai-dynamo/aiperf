@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import Mock
-
 import pytest
 
 from aiperf.common.enums import EndpointType
@@ -11,22 +9,13 @@ from aiperf.common.models.record_models import (
     RequestInfo,
     TextResponseData,
 )
-from aiperf.common.protocols import InferenceServerResponse
 from aiperf.endpoints.solido_rag import SolidoEndpoint
 from tests.endpoints.conftest import (
     create_endpoint_with_mock_transport,
+    create_mock_response,
     create_model_endpoint,
     create_request_info,
 )
-
-
-def create_mock_response(perf_ns: int, json_data: dict | None) -> Mock:
-    """Helper to create a mock InferenceServerResponse."""
-    mock_response = Mock(spec=InferenceServerResponse)
-    mock_response.perf_ns = perf_ns
-    mock_response.get_json.return_value = json_data
-    mock_response.get_raw.return_value = str(json_data) if json_data else None
-    return mock_response
 
 
 class TestSolidoEndpointMetadata:

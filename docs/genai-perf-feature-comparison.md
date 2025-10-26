@@ -48,7 +48,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **multimodal** | Multi-modal (text + image/audio) endpoints | ✅ | 🟡 | use `chat` for AIPerf instead |
 | **generate** | Generic text generation endpoints | ✅ | ❌ | |
 | **kserve** | KServe model serving endpoints | ✅ | ❌ | |
-| **template** | Template-based inference endpoints | ✅ | ❌ | |
+| **template** | Template-based inference endpoints | ✅ | ✅ | AIPerf supports multimodal and multi-turn templates |
 | **tensorrtllm_engine** | TensorRT-LLM engine direct access | ✅ | ❌ | |
 | **vision** | Computer vision model endpoints | ✅ | ❌ | |
 | **solido_rag** | SOLIDO RAG endpoint | 🟡 | ✅ | |

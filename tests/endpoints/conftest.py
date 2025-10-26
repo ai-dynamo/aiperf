@@ -3,7 +3,7 @@
 """Shared fixtures and helpers for endpoint tests."""
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -16,6 +16,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.models.record_models import RequestInfo
+from aiperf.common.protocols import InferenceServerResponse
 
 
 def create_model_endpoint(
@@ -64,6 +65,19 @@ def create_request_info(
         **turn_kwargs,
     )
     return RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+
+
+def create_mock_response(
+    perf_ns: int = 123456789,
+    json_data: dict | None = None,
+    text: str | None = None,
+) -> Mock:
+    """Helper to create a mock InferenceServerResponse."""
+    mock_response = Mock(spec=InferenceServerResponse)
+    mock_response.perf_ns = perf_ns
+    mock_response.get_json.return_value = json_data
+    mock_response.get_text.return_value = text
+    return mock_response
 
 
 @pytest.fixture

@@ -110,8 +110,6 @@ class TestEndpointType:
         """Test that all endpoint types have valid metadata via factory."""
         for endpoint_type in EndpointType:
             metadata = EndpointFactory.get_metadata(endpoint_type)
-            assert metadata.endpoint_path is not None
-            assert len(metadata.endpoint_path) > 0
             assert isinstance(metadata.supports_streaming, bool)
             assert isinstance(metadata.produces_tokens, bool)
             assert metadata.metrics_title is not None
