@@ -212,6 +212,7 @@ class TelemetryManager(BaseComponentService):
         endpoints_for_display = self._compute_endpoints_for_display(reachable_defaults)
 
         if not self._collectors:
+            # Telemetry manager shutdown occurs in _on_start_profiling to prevent hang
             await self._send_telemetry_status(
                 enabled=False,
                 reason="no DCGM endpoints reachable",
@@ -242,9 +243,8 @@ class TelemetryManager(BaseComponentService):
         )
 
         if not self._collectors:
-            await self._send_telemetry_disabled_status_and_shutdown(
-                "no DCGM endpoints reachable"
-            )
+            # Telemetry disabled status already sent in _profile_configure_command, only shutdown here
+            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
             return
 
         started_count = 0
@@ -295,25 +295,6 @@ class TelemetryManager(BaseComponentService):
         """
         await asyncio.sleep(Environment.GPU.SHUTDOWN_DELAY)
         await self.stop()
-
-    async def _send_telemetry_disabled_status_and_shutdown(self, reason: str) -> None:
-        """Send telemetry disabled status to SystemController and schedule delayed shutdown.
-
-        Sends status message immediately, then schedules service shutdown after a delay
-        to ensure command response is sent before service stops.
-
-        Args:
-            reason: Human-readable reason for disabling telemetry
-        """
-        await self._send_telemetry_status(
-            enabled=False,
-            reason=reason,
-            endpoints_configured=self._compute_endpoints_for_display([]),
-            endpoints_reachable=[],
-        )
-
-        # Schedule delayed shutdown to allow command response to be sent
-        self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
 
     async def _stop_all_collectors(self) -> None:
         """Stop all telemetry collectors.
