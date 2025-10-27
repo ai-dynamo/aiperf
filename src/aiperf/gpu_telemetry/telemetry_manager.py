@@ -15,7 +15,6 @@ from aiperf.common.environment import Environment
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
-    CommandAcknowledgedResponse,
     ProfileCancelCommand,
     ProfileConfigureCommand,
     TelemetryRecordsMessage,
@@ -227,10 +226,6 @@ class TelemetryManager(BaseComponentService):
         Args:
             message: Profile start command from SystemController
         """
-        await self.publish(
-            CommandAcknowledgedResponse.from_command_message(message, self.service_id)
-        )
-
         if not self._collectors:
             # Telemetry disabled status already sent in _profile_configure_command, only shutdown here
             self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
