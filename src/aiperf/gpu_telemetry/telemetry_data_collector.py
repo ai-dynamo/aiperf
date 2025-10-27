@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import inspect
 import time
 from collections.abc import Awaitable, Callable
 
@@ -36,10 +35,10 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
     Args:
         dcgm_url: URL of the DCGM metrics endpoint (e.g., "http://localhost:9400/metrics")
         collection_interval: Interval in seconds between metric collections (default: 1.0)
-        record_callback: Optional async/sync callback to receive collected records.
-            Signature: (records: list[TelemetryRecord], collector_id: str) -> None
-        error_callback: Optional async/sync callback to receive collection errors.
-            Signature: (error: ErrorDetails, collector_id: str) -> None
+        record_callback: Optional async callback to receive collected records.
+            Signature: async (records: list[TelemetryRecord], collector_id: str) -> None
+        error_callback: Optional async callback to receive collection errors.
+            Signature: async (error: ErrorDetails, collector_id: str) -> None
         collector_id: Unique identifier for this collector instance
     """
 
@@ -47,10 +46,9 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         self,
         dcgm_url: str,
         collection_interval: float | None = None,
-        record_callback: Callable[[list[TelemetryRecord], str], Awaitable[None] | None]
+        record_callback: Callable[[list[TelemetryRecord], str], Awaitable[None]]
         | None = None,
-        error_callback: Callable[[ErrorDetails, str], Awaitable[None] | None]
-        | None = None,
+        error_callback: Callable[[ErrorDetails, str], Awaitable[None]] | None = None,
         collector_id: str = "telemetry_collector",
     ) -> None:
         self._dcgm_url = dcgm_url
@@ -155,9 +153,7 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
         except Exception as e:
             if self._error_callback:
                 try:
-                    res = self._error_callback(ErrorDetails.from_exception(e), self.id)
-                    if inspect.isawaitable(res):
-                        await res
+                    await self._error_callback(ErrorDetails.from_exception(e), self.id)
                 except Exception as callback_error:
                     self.error(f"Failed to send error via callback: {callback_error}")
             else:
@@ -182,9 +178,7 @@ class TelemetryDataCollector(AIPerfLifecycleMixin):
 
             if records and self._record_callback:
                 try:
-                    res = self._record_callback(records, self.id)
-                    if inspect.isawaitable(res):
-                        await res
+                    await self._record_callback(records, self.id)
                 except Exception as e:
                     self.warning(f"Failed to send telemetry records via callback: {e}")
 

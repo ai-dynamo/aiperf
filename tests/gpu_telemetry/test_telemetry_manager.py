@@ -371,35 +371,48 @@ class TestStatusMessaging:
         manager.error.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_send_telemetry_disabled_status_and_shutdown(self):
-        """Test _send_telemetry_disabled_status_and_shutdown schedules shutdown."""
+    async def test_start_sends_status_when_all_collectors_fail(self):
+        """Test that status is sent and shutdown scheduled when all collectors fail to start."""
 
         # Side effect to close coroutines and prevent unawaited coroutine warnings
         def close_coroutine(coro):
             coro.close()
-            return MagicMock()  # Return a mock Task
+            return MagicMock()
 
         with patch(
             "asyncio.create_task", side_effect=close_coroutine
         ) as mock_create_task:
             manager = self._create_test_manager()
-
-            # Mock dependencies
             manager.publish = AsyncMock()
-            manager._dcgm_endpoints = ["http://node1:9401/metrics"]
+            manager.warning = MagicMock()
+            manager.error = MagicMock()  # Mock error logging
 
-            reason = "all collectors failed"
+            # Add a mock collector that will fail to start
+            mock_collector = AsyncMock(spec=TelemetryDataCollector)
+            mock_collector.initialize.side_effect = Exception("Failed to initialize")
+            manager._collectors["http://localhost:9400/metrics"] = mock_collector
 
-            await manager._send_telemetry_disabled_status_and_shutdown(reason)
+            start_msg = ProfileStartCommand(
+                command_id="test", service_id="system_controller"
+            )
+            await manager._on_start_profiling(start_msg)
 
-            # Verify status was sent
-            manager.publish.assert_called_once()
-            call_args = manager.publish.call_args[0][0]
-            assert call_args.enabled is False
-            assert call_args.reason == reason
+            # Should have published acknowledgment AND disabled status
+            assert manager.publish.call_count == 2
 
-            # Verify delayed shutdown was scheduled
+            # First call is acknowledgment
+            first_call = manager.publish.call_args_list[0][0][0]
+            assert isinstance(first_call, CommandAcknowledgedResponse)
+
+            # Second call is disabled status
+            second_call = manager.publish.call_args_list[1][0][0]
+            assert isinstance(second_call, TelemetryStatusMessage)
+            assert second_call.enabled is False
+            assert second_call.reason == "all collectors failed to start"
+
+            # Verify shutdown was scheduled
             mock_create_task.assert_called_once()
+            assert hasattr(manager, "_shutdown_task")
 
 
 class TestCollectorManagement:
@@ -632,6 +645,10 @@ class TestProfileConfigureCommand:
         # Should NOT have collectors
         assert len(manager._collectors) == 0
 
+        # When user didn't explicitly configure and no defaults reachable, should report nothing
+        assert len(call_args.endpoints_configured) == 0
+        assert len(call_args.endpoints_reachable) == 0
+
     @pytest.mark.asyncio
     async def test_configure_sends_enabled_status_when_endpoints_reachable(self):
         """Test that configure phase sends enabled status with reachable endpoints."""
@@ -655,6 +672,13 @@ class TestProfileConfigureCommand:
 
         # Should have collectors
         assert len(manager._collectors) == 2
+
+        # Should report both default endpoints as configured and reachable
+        assert len(call_args.endpoints_configured) == 2
+        assert len(call_args.endpoints_reachable) == 2
+        for endpoint in Environment.GPU.DEFAULT_DCGM_ENDPOINTS:
+            assert endpoint in call_args.endpoints_configured
+            assert endpoint in call_args.endpoints_reachable
 
 
 class TestProfileStartCommand:
@@ -701,7 +725,9 @@ class TestProfileStartCommand:
             coro.close()
             return MagicMock()
 
-        with patch("asyncio.create_task", side_effect=close_coroutine):
+        with patch(
+            "asyncio.create_task", side_effect=close_coroutine
+        ) as mock_create_task:
             manager = self._create_test_manager()
             manager.publish = AsyncMock()
             manager._collectors = {}  # No collectors
@@ -711,8 +737,14 @@ class TestProfileStartCommand:
             )
             await manager._on_start_profiling(start_msg)
 
-            # Should have acknowledged and sent shutdown
-            assert manager.publish.call_count == 2
+            # Should only have acknowledged (status already sent in configure phase)
+            assert manager.publish.call_count == 1
+            call_args = manager.publish.call_args[0][0]
+            assert isinstance(call_args, CommandAcknowledgedResponse)
+
+            # Verify shutdown was scheduled
+            mock_create_task.assert_called_once()
+            assert hasattr(manager, "_shutdown_task")
 
     @pytest.mark.asyncio
     async def test_start_no_redundant_reachability_check(self):

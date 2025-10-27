@@ -41,6 +41,19 @@ class ServiceConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_ui_type_from_verbose_flags(self) -> Self:
+        """Set UI type based on verbose flags."""
+        # If the user has explicitly set the UI type, use that.
+        if "ui_type" in self.model_fields_set:
+            return self
+
+        # If the user selected verbose or extra verbose flags, set the UI type to simple.
+        # This will allow the user to see the verbose output in the console easier.
+        if self.verbose or self.extra_verbose:
+            self.ui_type = AIPerfUIType.SIMPLE
+        return self
+
+    @model_validator(mode="after")
     def validate_comm_config(self) -> Self:
         """Initialize the comm_config based on the zmq_tcp or zmq_ipc config."""
         _logger.debug(
