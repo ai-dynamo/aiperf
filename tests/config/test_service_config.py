@@ -7,10 +7,8 @@ from typing import cast
 
 import pytest
 
-from aiperf.common.config import ServiceConfig
-from aiperf.common.config.zmq_config import ZMQIPCConfig, ZMQTCPConfig
-from aiperf.common.enums import CommunicationBackend
-from aiperf.common.enums.ui_enums import AIPerfUIType
+from aiperf.common.config import ServiceConfig, ZMQIPCConfig, ZMQTCPConfig
+from aiperf.common.enums import AIPerfUIType, CommunicationBackend
 
 
 @pytest.fixture
