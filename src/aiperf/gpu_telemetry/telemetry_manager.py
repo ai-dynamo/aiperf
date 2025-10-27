@@ -257,10 +257,14 @@ class TelemetryManager(BaseComponentService):
                 self.error(f"Failed to start collector for {dcgm_url}: {e}")
 
         if started_count == 0:
-            self.warning("No telemetry collectors successfully started")
-            await self._send_telemetry_disabled_status_and_shutdown(
-                "all collectors failed to start"
+            self.warning("No GPU telemetry collectors successfully started")
+            await self._send_telemetry_status(
+                enabled=False,
+                reason="all collectors failed to start",
+                endpoints_configured=self._compute_endpoints_for_display([]),
+                endpoints_reachable=[],
             )
+            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
             return
 
     @on_command(CommandType.PROFILE_CANCEL)
