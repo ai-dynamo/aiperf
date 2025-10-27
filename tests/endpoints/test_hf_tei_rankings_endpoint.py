@@ -8,15 +8,15 @@ import pytest
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Text, Turn
 from aiperf.common.models.record_models import RequestInfo
-from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsxEndpoint
+from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
 from tests.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
 )
 
 
-class TestHFTeiRankingsxEndpoint:
-    """Test cases for HFTeiRankingsxEndpoint."""
+class TestHFTeiRankingsEndpoint:
+    """Test cases for HFTeiRankingsEndpoint."""
 
     @pytest.fixture
     def model_endpoint(self):
@@ -25,9 +25,9 @@ class TestHFTeiRankingsxEndpoint:
 
     @pytest.fixture
     def converter(self, model_endpoint):
-        """Create an HFTeiRankingsxEndpoint instance."""
+        """Create an HFTeiRankingsEndpoint instance."""
         return create_endpoint_with_mock_transport(
-            HFTeiRankingsxEndpoint, model_endpoint
+            HFTeiRankingsEndpoint, model_endpoint
         )
 
     @pytest.fixture
@@ -185,7 +185,7 @@ class TestHFTeiRankingsxEndpoint:
             EndpointType.HF_TEI_RANKINGS, extra=extra_params
         )
         converter = create_endpoint_with_mock_transport(
-            HFTeiRankingsxEndpoint, test_endpoint
+            HFTeiRankingsEndpoint, test_endpoint
         )
 
         turn = Turn(

@@ -16,7 +16,7 @@ from aiperf.common.models.model_endpoint_info import (
 from aiperf.common.models.record_models import RankingsResponseData
 from aiperf.common.protocols import InferenceServerResponse
 from aiperf.endpoints.cohere_rankings import CohereRankingsEndpoint
-from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsxEndpoint
+from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
 from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
 
 
@@ -52,7 +52,7 @@ class TestRankingsEndpointParseResponse:
             (EndpointType.NIM_RANKINGS, NIMRankingsEndpoint, mock_response_nim),
             (
                 EndpointType.HF_TEI_RANKINGS,
-                HFTeiRankingsxEndpoint,
+                HFTeiRankingsEndpoint,
                 mock_response_hf_tei,
             ),
             (

@@ -11,7 +11,7 @@ from aiperf.endpoints.cohere_rankings import (
     CohereRankingsEndpoint,
 )
 from aiperf.endpoints.hf_tei_rankings import (
-    HFTeiRankingsxEndpoint,
+    HFTeiRankingsEndpoint,
 )
 from aiperf.endpoints.nim_rankings import (
     NIMRankingsEndpoint,
@@ -33,6 +33,6 @@ __all__ = [
     "CohereRankingsEndpoint",
     "CompletionsEndpoint",
     "EmbeddingsEndpoint",
-    "HFTeiRankingsxEndpoint",
+    "HFTeiRankingsEndpoint",
     "NIMRankingsEndpoint",
 ]

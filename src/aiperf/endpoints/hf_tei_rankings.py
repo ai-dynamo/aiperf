@@ -13,7 +13,7 @@ from aiperf.endpoints.base_rankings_endpoint import BaseRankingsEndpoint
 
 @implements_protocol(EndpointProtocol)
 @EndpointFactory.register(EndpointType.HF_TEI_RANKINGS)
-class HFTeiRankingsxEndpoint(BaseRankingsEndpoint):
+class HFTeiRankingsEndpoint(BaseRankingsEndpoint):
     """HuggingFace TEI Rankings Endpoint."""
 
     @classmethod
