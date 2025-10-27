@@ -154,7 +154,6 @@ This path works with **vLLM, SGLang, TRT-LLM, or any inference server**. We'll u
 
 The setup includes three steps: creating a custom metrics configuration, starting the DCGM Exporter, and launching the vLLM server.
 
-<!-- setup-vllm-gpu-telemetry-default-openai-endpoint-server -->
 ```bash
 # Step 1: Create a custom metrics configuration
 cat > custom_gpu_metrics.csv << 'EOF'
@@ -218,7 +217,6 @@ docker run -d --name vllm-server \
   --host 0.0.0.0 \
   --port 8000
 ```
-<!-- /setup-vllm-gpu-telemetry-default-openai-endpoint-server -->
 
 > [!TIP]
 > You can customize the `custom_gpu_metrics.csv` file by commenting out metrics you don't need. Lines starting with `#` are ignored.
@@ -261,7 +259,6 @@ uv pip install ./aiperf
 
 ## Verify Everything is Running
 
-<!-- health-check-vllm-gpu-telemetry-default-openai-endpoint-server -->
 ```bash
 # Wait for vLLM inference server to be ready (up to 15 minutes)
 timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
@@ -271,11 +268,9 @@ echo "vLLM ready, waiting for DCGM metrics to be available..."
 timeout 120 bash -c 'while true; do OUTPUT=$(curl -s localhost:9401/metrics); if echo "$OUTPUT" | grep -q "DCGM_FI_DEV_GPU_UTIL"; then break; fi; echo "Waiting for DCGM metrics..."; sleep 5; done' || { echo "GPU utilization metrics not found after 2min"; exit 1; }
 echo "DCGM GPU metrics are now available"
 ```
-<!-- /health-check-vllm-gpu-telemetry-default-openai-endpoint-server -->
 
 ## Run AIPerf Benchmark
 
-<!-- aiperf-run-vllm-gpu-telemetry-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -296,17 +291,19 @@ aiperf profile \
     --random-seed 100 \
     --gpu-telemetry
 ```
-<!-- /aiperf-run-vllm-gpu-telemetry-default-openai-endpoint-server -->
+
+> [!TIP]
+> The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
 
 > [!TIP]
 > The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
 
 ## Multi-Node GPU Telemetry Example
 
-For distributed setups with multiple nodes, you can collect GPU telemetry from all nodes simultaneously:
+For distributed setups with multiple nodes, you can collect GPU telemetry from all nodes simultaneously. Combine the `dashboard` keyword with custom URLs to enable real-time visualization of multi-node GPU metrics:
 
 ```bash
-# Example: Collecting telemetry from 3 nodes in a distributed setup
+# Example: Collecting telemetry from 3 nodes with live dashboard visualization
 # Note: The default endpoints http://localhost:9400/metrics and http://localhost:9401/metrics
 #       are always attempted in addition to these custom URLs
 aiperf profile \
