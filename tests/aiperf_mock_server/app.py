@@ -182,28 +182,34 @@ async def embeddings(req: EmbeddingRequest) -> EmbeddingResponse:
 
 
 # ============================================================================
-# Ranking
+# Rankings
+# ============================================================================
+
+
+def _compute_mock_score(query: str, passage: str) -> float:
+    """Compute deterministic mock relevance score for all ranking mocks."""
+    combined = f"{query}|{passage}"
+    digest = hashlib.blake2s(combined.encode("utf-8")).digest()
+    int_digest = int.from_bytes(digest, byteorder="big")
+    return (int_digest % 1000) / 1000.0
+
+
+# ============================================================================
+# NIM Rankings Endpoint
 # ============================================================================
 
 
 @app.post("/v1/ranking", response_model=None)
 @with_error_injection
 async def rankings(req: RankingRequest) -> RankingResponse:
-    """Ranking endpoint."""
+    """Mock NVIDIA NIM /v1/ranking endpoint."""
     ctx = RequestContext(req)
-
-    def compute_relevance_score(query: str, passage: str) -> float:
-        """Compute deterministic relevance score using stable hash."""
-        combined = f"{query}|{passage}"
-        digest = hashlib.blake2s(combined.encode("utf-8")).digest()
-        int_digest = int.from_bytes(digest, byteorder="big")
-        return (int_digest % 1000) / 1000.0
 
     rankings = sorted(
         [
             Ranking(
                 index=i,
-                relevance_score=compute_relevance_score(req.query_text, text),
+                relevance_score=_compute_mock_score(req.query_text, text),
             )
             for i, text in enumerate(req.passage_texts)
         ],
@@ -218,6 +224,48 @@ async def rankings(req: RankingRequest) -> RankingResponse:
         rankings=rankings,
         usage=ctx.tokenized.create_usage(),
     )
+
+
+# ============================================================================
+# HuggingFace TEI Rankings Endpoint
+# ============================================================================
+
+
+@app.post("/rerank", response_model=None)
+@with_error_injection
+async def hf_tei_rerank(req: dict) -> dict:
+    """Mock HuggingFace TEI /rerank endpoint."""
+    query = req.get("query", "")
+    passages = req.get("texts") or req.get("documents") or []
+
+    results = [
+        {"index": i, "score": _compute_mock_score(query, p)}
+        for i, p in enumerate(passages)
+    ]
+    results.sort(key=lambda r: r["score"], reverse=True)
+
+    return {"results": results}
+
+
+# ============================================================================
+# Cohere Rankings Endpoint
+# ============================================================================
+
+
+@app.post("/v2/rerank", response_model=None)
+@with_error_injection
+async def cohere_rerank(req: dict) -> dict:
+    """Mock Cohere /v2/rerank endpoint."""
+    query = req.get("query", "")
+    passages = req.get("documents") or []
+
+    results = [
+        {"index": i, "relevance_score": _compute_mock_score(query, p)}
+        for i, p in enumerate(passages)
+    ]
+    results.sort(key=lambda r: r["relevance_score"], reverse=True)
+
+    return {"results": results}
 
 
 # ============================================================================

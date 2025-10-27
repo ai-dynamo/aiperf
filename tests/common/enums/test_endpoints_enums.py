@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -38,12 +38,28 @@ class TestEndpointType:
                 "Embeddings Metrics",
             ),
             (
-                EndpointType.RANKINGS,
-                "rankings",
+                EndpointType.NIM_RANKINGS,
+                "nim_rankings",
                 False,
                 False,
                 "/v1/ranking",
                 "Rankings Metrics",
+            ),
+            (
+                EndpointType.HF_TEI_RANKINGS,
+                "hf_tei_rankings",
+                False,
+                False,
+                "/rerank",
+                "Ranking Metrics",
+            ),
+            (
+                EndpointType.COHERE_RANKINGS,
+                "cohere_rankings",
+                False,
+                False,
+                "/v2/rerank",
+                "Ranking Metrics",
             ),
         ],
     )
@@ -69,7 +85,14 @@ class TestEndpointType:
 
     @pytest.mark.parametrize(
         "tag_value",
-        ["chat", "completions", "embeddings", "rankings"],
+        [
+            "chat",
+            "completions",
+            "embeddings",
+            "nim_rankings",
+            "hf_tei_rankings",
+            "cohere_rankings",
+        ],
     )
     def test_enum_string_comparison(self, tag_value):
         """Test that enum values can be compared with strings."""
