@@ -8,7 +8,6 @@ import pytest
 from aiperf.common.config import UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
-    CommandAcknowledgedResponse,
     ProfileConfigureCommand,
     ProfileStartCommand,
     TelemetryRecordsMessage,
@@ -411,15 +410,11 @@ class TestStatusMessaging:
             )
             await manager._on_start_profiling(start_msg)
 
-            # Should have published acknowledgment AND disabled status
-            assert manager.publish.call_count == 2
+            # Should have published disabled status
+            assert manager.publish.call_count == 1
 
-            # First call is acknowledgment
-            first_call = manager.publish.call_args_list[0][0][0]
-            assert isinstance(first_call, CommandAcknowledgedResponse)
-
-            # Second call is disabled status
-            second_call = manager.publish.call_args_list[1][0][0]
+            # Verify disabled status was published
+            second_call = manager.publish.call_args_list[0][0][0]
             assert isinstance(second_call, TelemetryStatusMessage)
             assert second_call.enabled is False
             assert second_call.reason == "all collectors failed to start"
@@ -735,11 +730,6 @@ class TestProfileStartCommand:
                 command_id="test", service_id="system_controller"
             )
             await manager._on_start_profiling(start_msg)
-
-            # Should only have acknowledged (status already sent in configure phase)
-            assert manager.publish.call_count == 1
-            call_args = manager.publish.call_args[0][0]
-            assert isinstance(call_args, CommandAcknowledgedResponse)
 
             # Verify shutdown was scheduled
             mock_create_task.assert_called_once()
