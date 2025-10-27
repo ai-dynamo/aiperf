@@ -141,17 +141,18 @@ class TelemetryManager(BaseComponentService):
 
         Returns:
             List of endpoint URLs to display in console/export output:
-            - Empty list if user did not configure telemetry (implicit acceptance only)
-            - reachable_defaults if user configured telemetry with no custom endpoints
-            - user_provided_endpoints + reachable_defaults if custom endpoints provided
+            - reachable_defaults if any defaults are reachable
+            - user_provided_endpoints + reachable_defaults if custom endpoints and defaults reachable
+            - user_provided_endpoints if user configured but no defaults reachable
+            - Empty list if no reachable defaults and user did not configure telemetry
         """
-        if not self._user_explicitly_configured_telemetry:
-            return []
-
-        if self._user_provided_endpoints:
+        if reachable_defaults and self._user_provided_endpoints:
             return list(self._user_provided_endpoints) + reachable_defaults
-
-        return reachable_defaults
+        elif reachable_defaults:
+            return reachable_defaults
+        elif self._user_provided_endpoints:
+            return self._user_provided_endpoints
+        return []
 
     @on_init
     async def _initialize(self) -> None:
@@ -211,6 +212,7 @@ class TelemetryManager(BaseComponentService):
         endpoints_for_display = self._compute_endpoints_for_display(reachable_defaults)
 
         if not self._collectors:
+            # Telemetry manager shutdown occurs in _on_start_profiling to prevent hang
             await self._send_telemetry_status(
                 enabled=False,
                 reason="no DCGM endpoints reachable",
@@ -241,9 +243,8 @@ class TelemetryManager(BaseComponentService):
         )
 
         if not self._collectors:
-            await self._send_telemetry_disabled_status_and_shutdown(
-                "no DCGM endpoints reachable"
-            )
+            # Telemetry disabled status already sent in _profile_configure_command, only shutdown here
+            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
             return
 
         started_count = 0
@@ -256,10 +257,14 @@ class TelemetryManager(BaseComponentService):
                 self.error(f"Failed to start collector for {dcgm_url}: {e}")
 
         if started_count == 0:
-            self.warning("No telemetry collectors successfully started")
-            await self._send_telemetry_disabled_status_and_shutdown(
-                "all collectors failed to start"
+            self.warning("No GPU telemetry collectors successfully started")
+            await self._send_telemetry_status(
+                enabled=False,
+                reason="all collectors failed to start",
+                endpoints_configured=self._compute_endpoints_for_display([]),
+                endpoints_reachable=[],
             )
+            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
             return
 
     @on_command(CommandType.PROFILE_CANCEL)
@@ -294,25 +299,6 @@ class TelemetryManager(BaseComponentService):
         """
         await asyncio.sleep(Environment.GPU.SHUTDOWN_DELAY)
         await self.stop()
-
-    async def _send_telemetry_disabled_status_and_shutdown(self, reason: str) -> None:
-        """Send telemetry disabled status to SystemController and schedule delayed shutdown.
-
-        Sends status message immediately, then schedules service shutdown after a delay
-        to ensure command response is sent before service stops.
-
-        Args:
-            reason: Human-readable reason for disabling telemetry
-        """
-        await self._send_telemetry_status(
-            enabled=False,
-            reason=reason,
-            endpoints_configured=self._compute_endpoints_for_display([]),
-            endpoints_reachable=[],
-        )
-
-        # Schedule delayed shutdown to allow command response to be sent
-        self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
 
     async def _stop_all_collectors(self) -> None:
         """Stop all telemetry collectors.

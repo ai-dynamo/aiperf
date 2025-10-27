@@ -25,40 +25,22 @@ class TestTelemetryDataCollectorCore:
     - Error handling and resilience
     """
 
-    def setup_method(self):
-        """Set up test fixtures for callback testing."""
-        self.records_received = []
-        self.errors_received = []
-
-        def record_callback(records, _collector_id):
-            self.records_received.extend(records)
-
-        def error_callback(error, _collector_id):
-            self.errors_received.append(error)
-
-        self.record_callback = record_callback
-        self.error_callback = error_callback
-
     def test_collector_initialization_complete(self):
-        """Test TelemetryDataCollector initialization with all parameters.
+        """Test TelemetryDataCollector initialization with custom parameters.
 
-        Verifies that the collector properly stores all configuration parameters
-        including DCGM URL, collection interval, callbacks, and collector ID.
+        Verifies that the collector properly stores configuration parameters
+        including DCGM URL, collection interval, and collector ID.
         Also checks that the initial lifecycle state is correct.
         """
         collector = TelemetryDataCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
-            record_callback=self.record_callback,
-            error_callback=self.error_callback,
             collector_id="test_collector",
         )
 
         assert collector._dcgm_url == "http://localhost:9401/metrics"
         assert collector._collection_interval == 0.1
         assert collector.id == "test_collector"
-        assert collector._record_callback is not None
-        assert collector._error_callback is not None
         assert collector._session is None  # Not initialized yet
         assert not collector.was_initialized
         assert not collector.was_started
@@ -339,15 +321,12 @@ class TestCollectionLifecycle:
     @pytest.mark.asyncio
     async def test_successful_collection_loop(self, sample_dcgm_data):
         """Test successful telemetry collection with proper lifecycle management."""
-        records_received = []
-
-        def record_callback(records, _collector_id):
-            records_received.extend(records)
+        mock_callback = AsyncMock()
 
         collector = TelemetryDataCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
-            record_callback=record_callback,
+            record_callback=mock_callback,
         )
 
         with patch("aiohttp.ClientSession.get") as mock_get:
@@ -355,121 +334,80 @@ class TestCollectionLifecycle:
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.text.return_value = sample_dcgm_data
-            mock_response.raise_for_status.return_value = None
+            mock_response.raise_for_status = Mock(return_value=None)
             mock_get.return_value.__aenter__.return_value = mock_response
 
-            await collector.initialize_and_start()
+            await collector.initialize()
 
-            # Let collection run briefly and ensure at least one cycle completes
-            await asyncio.sleep(0.5)  # Give more time for background task to run
+            await collector._collect_and_process_metrics()
 
             await collector.stop()
 
-            # Should have collected some records or encountered timing issues during shutdown
-            # Give a small grace period for any pending callbacks
-            await asyncio.sleep(0.1)
-
-            # With mocked HTTP, we should get records unless there's a race condition during shutdown
-            # In practice, the background task may get "HTTP session is closed" error
-            if len(records_received) == 0:
-                # This can happen due to race condition - session closes before background task completes
-                print(
-                    "No records received - likely due to session cleanup race condition"
-                )
-            else:
-                assert all(isinstance(r, TelemetryRecord) for r in records_received)
+            mock_callback.assert_called_once()
+            call_args = mock_callback.call_args[0]
+            records = call_args[0]
+            assert len(records) == 1
+            assert all(isinstance(r, TelemetryRecord) for r in records)
 
     @pytest.mark.asyncio
     async def test_error_handling_in_collection_loop(self):
-        """Test error handling during collection loop."""
-        errors_received = []
+        """Test error handling by directly calling collection task wrapper.
 
-        def error_callback(error, _collector_id):
-            errors_received.append(error)
+        Tests that errors during collection are caught and sent via error callback.
+        """
+        mock_error_callback = AsyncMock()
 
         collector = TelemetryDataCollector(
             dcgm_url="http://localhost:9401/metrics",
-            collection_interval=0.05,  # Shorter interval for faster test
-            error_callback=error_callback,
+            collection_interval=0.05,
+            error_callback=mock_error_callback,
         )
 
         with patch("aiohttp.ClientSession.get") as mock_get:
             # Mock HTTP error
             mock_get.side_effect = aiohttp.ClientError("Connection failed")
 
-            await collector.initialize_and_start()
+            await collector.initialize()
 
-            # Let collection attempt and fail multiple times
-            await asyncio.sleep(0.2)  # Give time for multiple collection cycles
+            await collector._collect_telemetry_task()
+            await collector._collect_telemetry_task()
 
             await collector.stop()
 
-            # Should have received error callbacks
-            # Give a small grace period for any pending callbacks
-            await asyncio.sleep(0.1)
-
-            # Due to race conditions in test environment, the background task
-            # might be cancelled before it gets a chance to run and fail
-            # This is acceptable behavior - the key is that the error handling
-            # mechanism is properly set up
-            print(f"Errors received: {len(errors_received)}")
-            if len(errors_received) > 0:
-                # If errors were captured, verify they are the right type
-                assert all(
-                    hasattr(e, "message") or isinstance(e, Exception)
-                    for e in errors_received
-                )
-                print("Error handling mechanism working correctly")
-            else:
-                # No errors captured due to timing - this is acceptable in test environment
-                print(
-                    "No errors captured due to race condition - test setup completed successfully"
-                )
+            assert mock_error_callback.call_count == 2
+            for call in mock_error_callback.call_args_list:
+                error = call[0][0]
+                assert hasattr(error, "message")
 
     @pytest.mark.asyncio
     async def test_callback_exception_resilience(self, sample_dcgm_data):
-        """Test that collection continues even if callback raises exceptions."""
-        call_count = 0
+        """Test that collection continues even if callback raises exceptions.
 
-        def failing_callback(records, _collector_id):
-            nonlocal call_count
-            call_count += 1
-            raise ValueError("Callback failed")
+        Verifies that exceptions in callbacks don't crash the collection process.
+        """
+        mock_callback = AsyncMock(side_effect=ValueError("Callback failed"))
 
         collector = TelemetryDataCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
-            record_callback=failing_callback,
+            record_callback=mock_callback,
         )
 
         with patch("aiohttp.ClientSession.get") as mock_get:
-            # Mock successful response
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.text.return_value = sample_dcgm_data
-            mock_response.raise_for_status.return_value = None
+            mock_response.raise_for_status = Mock(return_value=None)
             mock_get.return_value.__aenter__.return_value = mock_response
 
-            await collector.initialize_and_start()
+            await collector.initialize()
 
-            # Let collection run despite callback failures
-            await asyncio.sleep(0.5)  # Give more time for background task to run
+            await collector._collect_and_process_metrics()
+            await collector._collect_and_process_metrics()
 
             await collector.stop()
 
-            # Collection should have continued despite callback failures
-            # Give a small grace period for any pending callbacks
-            await asyncio.sleep(0.1)
-
-            # With mocked HTTP, we should get callback calls unless there's a race condition during shutdown
-            if call_count == 0:
-                # This can happen due to race condition - session closes before background task completes
-                print(
-                    "No callback calls received - likely due to session cleanup race condition"
-                )
-            else:
-                print(f"Successfully made {call_count} callback calls despite failures")
-                assert call_count > 0
+            assert mock_callback.call_count == 2
 
     @pytest.mark.asyncio
     async def test_multiple_start_calls_safety(self):
@@ -500,74 +438,6 @@ class TestCollectionLifecycle:
 
         # Should handle stop before start gracefully
         await collector.stop()  # Should not raise exceptions
-
-    @pytest.mark.asyncio
-    async def test_async_record_callback(self, sample_dcgm_data):
-        """Test that async record callbacks are properly awaited."""
-        records_received = []
-
-        async def async_record_callback(records, _collector_id):
-            """Async callback that needs to be awaited."""
-            await asyncio.sleep(0.01)  # Simulate async work
-            records_received.extend(records)
-
-        collector = TelemetryDataCollector(
-            dcgm_url="http://localhost:9401/metrics",
-            collection_interval=0.1,
-            record_callback=async_record_callback,
-        )
-
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.text.return_value = sample_dcgm_data
-            mock_response.raise_for_status.return_value = None
-            mock_get.return_value.__aenter__.return_value = mock_response
-
-            await collector.initialize_and_start()
-            await asyncio.sleep(0.3)
-            await collector.stop()
-
-            # Give time for callbacks to complete
-            await asyncio.sleep(0.1)
-
-            # Should have received records through async callback
-            if len(records_received) > 0:
-                assert all(hasattr(r, "gpu_uuid") for r in records_received), (
-                    "Records should be TelemetryRecord objects"
-                )
-
-    @pytest.mark.asyncio
-    async def test_async_error_callback(self):
-        """Test that async error callbacks are properly awaited."""
-        errors_received = []
-
-        async def async_error_callback(error, _collector_id):
-            """Async error callback that needs to be awaited."""
-            await asyncio.sleep(0.01)  # Simulate async work
-            errors_received.append(error)
-
-        collector = TelemetryDataCollector(
-            dcgm_url="http://localhost:9401/metrics",
-            collection_interval=0.05,
-            error_callback=async_error_callback,
-        )
-
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_get.side_effect = aiohttp.ClientError("Connection failed")
-
-            await collector.initialize_and_start()
-            await asyncio.sleep(0.2)
-            await collector.stop()
-
-            # Give time for error callbacks to complete
-            await asyncio.sleep(0.1)
-
-            # If errors were captured, they should be ErrorDetails objects
-            if len(errors_received) > 0:
-                assert all(hasattr(e, "message") for e in errors_received), (
-                    "Errors should be ErrorDetails objects"
-                )
 
 
 class TestDataProcessingEdgeCases:
@@ -685,84 +555,67 @@ class TestDataProcessingEdgeCases:
 
     @pytest.mark.asyncio
     async def test_error_callback_exception_handling(self):
-        """Test that exceptions in error callback are handled gracefully."""
-        errors_received = []
-
-        def failing_error_callback(error, _collector_id):
-            errors_received.append(error)
-            raise RuntimeError("Error callback failed")
+        mock_error_callback = AsyncMock(
+            side_effect=RuntimeError("Error callback failed")
+        )
 
         collector = TelemetryDataCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.05,
-            error_callback=failing_error_callback,
+            error_callback=mock_error_callback,
         )
 
         with patch("aiohttp.ClientSession.get") as mock_get:
-            # Mock HTTP error
             mock_get.side_effect = aiohttp.ClientError("Connection failed")
 
-            await collector.initialize_and_start()
-            await asyncio.sleep(0.2)
+            await collector.initialize()
+            await collector._collect_telemetry_task()
             await collector.stop()
-            await asyncio.sleep(0.1)
 
-            # Error callback should have been called even though it raised exception
-            # The collection should continue despite callback failure
-            if len(errors_received) > 0:
-                assert all(hasattr(e, "message") for e in errors_received)
+            mock_error_callback.assert_called_once()
+            error = mock_error_callback.call_args[0][0]
+            assert hasattr(error, "message")
 
     @pytest.mark.asyncio
     async def test_collection_without_callbacks(self, sample_dcgm_data):
-        """Test that collection works without any callbacks configured."""
         collector = TelemetryDataCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
-            # No callbacks
         )
 
         with patch("aiohttp.ClientSession.get") as mock_get:
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.text.return_value = sample_dcgm_data
-            mock_response.raise_for_status.return_value = None
+            mock_response.raise_for_status = Mock(return_value=None)
             mock_get.return_value.__aenter__.return_value = mock_response
 
-            await collector.initialize_and_start()
-            await asyncio.sleep(0.3)
+            await collector.initialize()
+            await collector._collect_and_process_metrics()
             await collector.stop()
-
-            # Should not crash even without callbacks
 
     @pytest.mark.asyncio
     async def test_collection_with_empty_records(self):
-        """Test that callback is not called when parsing returns empty records."""
-        records_received = []
-
-        def record_callback(records, _collector_id):
-            records_received.extend(records)
+        mock_callback = AsyncMock()
 
         collector = TelemetryDataCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
-            record_callback=record_callback,
+            record_callback=mock_callback,
         )
 
         with patch("aiohttp.ClientSession.get") as mock_get:
-            # Mock response with only comments (no actual metrics)
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.text.return_value = "# HELP comment\n# TYPE comment"
-            mock_response.raise_for_status.return_value = None
+            mock_response.raise_for_status = Mock(return_value=None)
             mock_get.return_value.__aenter__.return_value = mock_response
 
-            await collector.initialize_and_start()
-            await asyncio.sleep(0.3)
+            await collector.initialize()
+            await collector._collect_and_process_metrics()
             await collector.stop()
-            await asyncio.sleep(0.1)
 
-            # Callback should not be called with empty records
-            assert len(records_received) == 0
+            mock_callback.assert_not_called()
 
     def test_scaling_factors_with_none_values(self):
         """Test that scaling factors handle None values correctly."""

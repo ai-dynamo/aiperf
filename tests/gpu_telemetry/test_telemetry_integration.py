@@ -8,7 +8,6 @@ Tests the end-to-end flow from TelemetryDataCollector through TelemetryResultsPr
 with realistic mock data and callback mechanisms.
 """
 
-import asyncio
 from unittest.mock import Mock, create_autospec, patch
 
 import aiohttp
@@ -94,18 +93,19 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
         self.collected_records = []
         self.collection_errors = []
 
-        def record_callback(records, collector_id):
+        async def record_callback(records, collector_id):
             """Callback to collect telemetry records."""
             self.collected_records.extend(records)
 
-        def error_callback(error, collector_id):
+        async def error_callback(error, collector_id):
             """Callback to collect errors."""
             self.collection_errors.append(error)
 
         self.record_callback = record_callback
         self.error_callback = error_callback
 
-    def test_multi_node_telemetry_collection_and_processing(
+    @pytest.mark.asyncio
+    async def test_multi_node_telemetry_collection_and_processing(
         self, mock_dcgm_response_node1, mock_dcgm_response_node2, user_config
     ):
         """
@@ -141,10 +141,9 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             return mock_context_manager
 
         with patch("aiohttp.ClientSession.get", side_effect=mock_aiohttp_get):
-            # Set up telemetry collectors for two DCGM endpoints
             collector1 = TelemetryDataCollector(
                 dcgm_url="http://node1:9401/metrics",
-                collection_interval=0.05,  # Faster collection
+                collection_interval=0.05,
                 record_callback=self.record_callback,
                 error_callback=self.error_callback,
                 collector_id="node1_collector",
@@ -152,62 +151,31 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
             collector2 = TelemetryDataCollector(
                 dcgm_url="http://node2:9401/metrics",
-                collection_interval=0.05,  # Faster collection
+                collection_interval=0.05,
                 record_callback=self.record_callback,
                 error_callback=self.error_callback,
                 collector_id="node2_collector",
             )
 
-            # Set up telemetry results processor
             processor = TelemetryResultsProcessor(user_config=user_config)
 
-            # Start collectors and collect for a short period
-            async def run_collectors():
-                await collector1.initialize_and_start()
-                await collector2.initialize_and_start()
+            await collector1.initialize()
+            await collector2.initialize()
 
-                # Allow time for collection from both nodes
-                await asyncio.sleep(0.5)
+            await collector1._collect_and_process_metrics()
+            await collector2._collect_and_process_metrics()
 
-                # Stop collectors
-                await collector1.stop()
-                await collector2.stop()
+            await collector1.stop()
+            await collector2.stop()
 
-            # Run the async collection
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(run_collectors())
-            finally:
-                loop.close()
+            assert len(self.collected_records) > 0
+            assert len(self.collection_errors) == 0
 
-            # Verify records were collected
-            assert len(self.collected_records) > 0, (
-                "No telemetry records were collected"
-            )
-            assert len(self.collection_errors) == 0, (
-                f"Collection errors occurred: {self.collection_errors}"
-            )
+            for record in self.collected_records:
+                await processor.process_telemetry_record(record)
+            metric_results = await processor.summarize()
 
-            # Process all collected records through the processor
-            async def process_all_records():
-                for record in self.collected_records:
-                    await processor.process_telemetry_record(record)
-                return await processor.summarize()
-
-            # Run the async processing
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                metric_results = loop.run_until_complete(process_all_records())
-            finally:
-                loop.close()
-
-            # Verify hierarchical structure was created
-            # Note: Due to race conditions in test environment, at least 1 endpoint should collect data
-            assert len(processor._telemetry_hierarchy.dcgm_endpoints) >= 1, (
-                f"Expected at least 1 DCGM endpoint, got {len(processor._telemetry_hierarchy.dcgm_endpoints)}"
-            )
+            assert len(processor._telemetry_hierarchy.dcgm_endpoints) == 2
 
             node1_data = processor._telemetry_hierarchy.dcgm_endpoints.get(
                 "http://node1:9401/metrics", {}
@@ -216,100 +184,63 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
                 "http://node2:9401/metrics", {}
             )
 
-            # Check that at least one endpoint has data
-            has_node1_data = len(node1_data) > 0
-            has_node2_data = len(node2_data) > 0
+            assert len(node1_data) == 2
+            assert len(node2_data) == 2
 
-            assert has_node1_data or has_node2_data, (
-                "At least one node should have collected data"
-            )
+            node1_gpu0 = node1_data.get("GPU-ef6ef310-1234-5678-9abc-def012345678")
+            assert node1_gpu0 is not None
+            assert node1_gpu0.metadata.gpu_index == 0
+            assert node1_gpu0.metadata.model_name == "NVIDIA RTX 6000 Ada Generation"
+            assert node1_gpu0.metadata.hostname == "node1"
 
-            if has_node1_data:
-                assert len(node1_data) == 2, (
-                    f"Expected 2 GPUs for node1, got {len(node1_data)}. Available GPUs: {list(node1_data.keys())}"
-                )
-                # Verify GPU metadata was captured correctly for node1
-                node1_gpu0 = node1_data.get("GPU-ef6ef310-1234-5678-9abc-def012345678")
-                assert node1_gpu0 is not None, "Node1 GPU0 not found"
-                assert node1_gpu0.metadata.gpu_index == 0
-                assert (
-                    node1_gpu0.metadata.model_name == "NVIDIA RTX 6000 Ada Generation"
-                )
-                assert node1_gpu0.metadata.hostname == "node1"
+            node2_gpu0 = node2_data.get("GPU-f5e6d7c8-9abc-def0-1234-56789abcdef0")
+            assert node2_gpu0 is not None
+            assert node2_gpu0.metadata.gpu_index == 0
+            assert node2_gpu0.metadata.model_name == "NVIDIA H100 PCIe"
+            assert node2_gpu0.metadata.hostname == "node2"
 
-            if has_node2_data:
-                assert len(node2_data) == 2, (
-                    f"Expected 2 GPUs for node2, got {len(node2_data)}. Available GPUs: {list(node2_data.keys())}"
-                )
-                # Verify GPU metadata was captured correctly for node2
-                node2_gpu0 = node2_data.get("GPU-f5e6d7c8-9abc-def0-1234-56789abcdef0")
-                assert node2_gpu0 is not None, "Node2 GPU0 not found"
-                assert node2_gpu0.metadata.gpu_index == 0
-                assert node2_gpu0.metadata.model_name == "NVIDIA H100 PCIe"
-                assert node2_gpu0.metadata.hostname == "node2"
+            assert len(metric_results) > 0
 
-            # Verify metric results were generated
-            assert len(metric_results) > 0, "No metric results generated"
-
-            # Find specific metrics to validate
             power_metrics = [r for r in metric_results if "gpu_power_usage" in r.tag]
             util_metrics = [r for r in metric_results if "gpu_utilization" in r.tag]
             memory_metrics = [r for r in metric_results if "gpu_memory_used" in r.tag]
 
-            assert len(power_metrics) > 0, "No power usage metrics found"
-            assert len(util_metrics) > 0, "No utilization metrics found"
-            assert len(memory_metrics) > 0, "No memory usage metrics found"
+            assert len(power_metrics) > 0
+            assert len(util_metrics) > 0
+            assert len(memory_metrics) > 0
 
-            # Verify metric tag format (hierarchical naming)
             sample_power_metric = power_metrics[0]
-            assert "dcgm_" in sample_power_metric.tag, (
-                "Metric tag should include DCGM endpoint identifier"
-            )
-            assert "gpu" in sample_power_metric.tag, (
-                "Metric tag should include GPU identifier"
-            )
+            assert "dcgm_" in sample_power_metric.tag
+            assert "gpu" in sample_power_metric.tag
 
-            # Verify units are correctly assigned
             power_metric_units = {r.unit for r in power_metrics}
             util_metric_units = {r.unit for r in util_metrics}
             memory_metric_units = {r.unit for r in memory_metrics}
 
-            assert "W" in power_metric_units, "Power metrics should have Watts unit"
-            assert "%" in util_metric_units, (
-                "Utilization metrics should have percentage unit"
-            )
-            assert "GB" in memory_metric_units, "Memory metrics should have GB unit"
+            assert "W" in power_metric_units
+            assert "%" in util_metric_units
+            assert "GB" in memory_metric_units
 
-            # Verify statistical computation (should have realistic values)
             for metric in power_metrics:
-                assert metric.min > 0, (
-                    f"Power metric {metric.tag} should have positive minimum"
-                )
-                assert metric.max >= metric.min, (
-                    f"Power metric {metric.tag} max should be >= min"
-                )
-                assert 0 <= metric.avg <= 1000, (
-                    f"Power metric {metric.tag} average should be reasonable"
-                )
-                assert metric.count > 0, (
-                    f"Power metric {metric.tag} should have data points"
-                )
+                assert metric.min > 0
+                assert metric.max >= metric.min
+                assert 0 <= metric.avg <= 1000
+                assert metric.count > 0
 
             for metric in util_metrics:
-                assert 0 <= metric.min <= 100, (
-                    f"Utilization metric {metric.tag} minimum should be 0-100%"
-                )
-                assert 0 <= metric.max <= 100, (
-                    f"Utilization metric {metric.tag} maximum should be 0-100%"
-                )
-                assert metric.count > 0, (
-                    f"Utilization metric {metric.tag} should have data points"
-                )
+                assert 0 <= metric.min <= 100
+                assert 0 <= metric.max <= 100
+                assert metric.count > 0
 
-    def test_callback_pipeline_error_handling(
+    @pytest.mark.asyncio
+    async def test_callback_pipeline_error_handling(
         self, mock_dcgm_response_node1, user_config
     ):
-        """Test error handling in the callback pipeline during processing."""
+        """Test error handling in the callback pipeline during processing.
+
+        Tests that errors during record processing are captured properly
+        by directly calling collection method.
+        """
 
         # Create a processor that will fail during processing
         faulty_processor = TelemetryResultsProcessor(user_config=user_config)
@@ -324,22 +255,16 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
         faulty_processor.process_telemetry_record = failing_process_result
 
-        def failing_record_callback(records, collector_id):
-            """Callback that processes records and may encounter errors."""
+        async def failing_record_callback(records, collector_id):
+            """Async callback that processes records and may encounter errors."""
             try:
                 self.collected_records.extend(records)
-                # Simulate processing each record (this would normally be done by RecordsManager)
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    for record in records:
-                        loop.run_until_complete(
-                            faulty_processor.process_telemetry_record(record)
-                        )
-                except Exception as e:
-                    self.collection_errors.append(f"Processing error: {e}")
-                finally:
-                    loop.close()
+                # Process each record (this would normally be done by RecordsManager)
+                for record in records:
+                    try:
+                        await faulty_processor.process_telemetry_record(record)
+                    except Exception as e:
+                        self.collection_errors.append(f"Processing error: {e}")
             except Exception as e:
                 self.collection_errors.append(f"Callback error: {e}")
 
@@ -358,72 +283,47 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
         with patch("aiohttp.ClientSession.get", side_effect=mock_aiohttp_get_error):
             collector = TelemetryDataCollector(
                 dcgm_url="http://node1:9401/metrics",
-                collection_interval=0.05,  # Faster collection
+                collection_interval=0.05,
                 record_callback=failing_record_callback,
                 error_callback=self.error_callback,
                 collector_id="test_collector",
             )
 
-            async def run_collector():
-                await collector.initialize_and_start()
-                await asyncio.sleep(0.3)  # More time for collection
-                await collector.stop()
+            # Initialize collector but don't start background task
+            await collector.initialize()
 
-            # Run the async collection
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(run_collector())
-            finally:
-                loop.close()
+            # Call collection method directly (simulates multiple collection cycles)
+            await collector._collect_and_process_metrics()
+            await collector._collect_and_process_metrics()
 
-            # Verify that the test setup worked (timing can cause race conditions in CI)
-            # The important part is that the error handling pipeline is properly set up
-            records_collected = len(self.collected_records) > 0
-            errors_collected = len(self.collection_errors) > 0
+            await collector.stop()
 
-            # In test environment, race conditions may prevent data collection
-            # but the setup should complete without exceptions
-            print(
-                f"Test results: Records={len(self.collected_records)}, Errors={len(self.collection_errors)}"
+            # Verify records and errors were collected
+            assert len(self.collected_records) > 0, "Expected records to be collected"
+            assert all(hasattr(r, "gpu_uuid") for r in self.collected_records), (
+                "All records should be TelemetryRecord objects"
             )
 
-            # If we got any activity, verify it behaves correctly
-            if records_collected:
-                # Records should be TelemetryRecord objects
-                assert all(hasattr(r, "gpu_uuid") for r in self.collected_records), (
-                    "Records should be TelemetryRecord objects"
-                )
+            # Verify errors were captured from the faulty processor
+            assert len(self.collection_errors) > 0, (
+                "Expected processing errors to be captured"
+            )
+            assert all(isinstance(e, str) for e in self.collection_errors), (
+                "All errors should be string messages"
+            )
 
-            if errors_collected:
-                # Errors should be string messages
-                assert all(isinstance(e, str) for e in self.collection_errors), (
-                    "Errors should be strings"
-                )
-                processing_errors = [
-                    e for e in self.collection_errors if "processing error" in e.lower()
-                ]
-                if len(processing_errors) > 0:
-                    assert "Simulated processing error" in str(processing_errors), (
-                        "Should contain simulated error message"
-                    )
+            # Verify we captured the simulated processing error
+            processing_errors = [
+                e
+                for e in self.collection_errors
+                if "simulated processing error" in e.lower()
+            ]
+            assert len(processing_errors) > 0, (
+                "Should have captured simulated processing errors"
+            )
 
-    def test_empty_dcgm_response_handling(self, user_config):
-        """Test end-to-end pipeline handling of empty DCGM responses.
-
-        INTEGRATION TEST SCOPE: Tests the complete telemetry pipeline behavior
-        (collector + processor) when DCGM endpoint returns empty responses.
-
-        This test ensures:
-        - Collector handles empty HTTP responses gracefully
-        - Processor handles lack of records correctly
-        - Pipeline produces expected empty results
-        - No errors are generated for valid but empty responses
-
-        Note: For unit testing of parsing logic with empty data, see
-        test_telemetry_data_collector.py::test_empty_response_handling()
-        """
-
+    @pytest.mark.asyncio
+    async def test_empty_dcgm_response_handling(self, user_config):
         def mock_aiohttp_get_empty(url, **kwargs):
             from unittest.mock import AsyncMock
 
@@ -431,9 +331,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.raise_for_status = Mock()
-            mock_response.text.return_value = (
-                "# No metrics available\n"  # Empty response
-            )
+            mock_response.text.return_value = "# No metrics available\n"
 
             mock_context_manager.__aenter__.return_value = mock_response
             return mock_context_manager
@@ -449,47 +347,20 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
             processor = TelemetryResultsProcessor(user_config=user_config)
 
-            async def run_empty_collector():
-                await collector.initialize_and_start()
-                await asyncio.sleep(0.25)
-                await collector.stop()
+            await collector.initialize()
+            await collector._collect_and_process_metrics()
+            await collector.stop()
 
-            # Run the async collection
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(run_empty_collector())
-            finally:
-                loop.close()
+            for record in self.collected_records:
+                await processor.process_telemetry_record(record)
+            metric_results = await processor.summarize()
 
-            # Process any records that were collected
-            async def process_records():
-                for record in self.collected_records:
-                    await processor.process_telemetry_record(record)
-                return await processor.summarize()
+            assert len(self.collected_records) == 0
+            assert len(metric_results) == 0
+            assert len(self.collection_errors) == 0
 
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                metric_results = loop.run_until_complete(process_records())
-            finally:
-                loop.close()
-
-            # With empty responses, we should have no records and no metric results
-            assert len(self.collected_records) == 0, (
-                "No records should be collected from empty responses"
-            )
-            assert len(metric_results) == 0, (
-                "No metric results should be generated from empty data"
-            )
-            assert len(self.collection_errors) == 0, (
-                "Empty responses should not generate errors"
-            )
-
-    def test_metric_unit_scaling_in_pipeline(self, user_config):
-        """Test that metric unit scaling is applied correctly through the pipeline."""
-
-        # Mock response with specific values to test scaling
+    @pytest.mark.asyncio
+    async def test_metric_unit_scaling_in_pipeline(self, user_config):
         mock_response = """# HELP DCGM_FI_DEV_FB_USED Framebuffer memory used (in MiB).
 # TYPE DCGM_FI_DEV_FB_USED gauge
 DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-test-1234",device="nvidia0",modelName="Test GPU",Hostname="testnode"} 1024.0
@@ -521,52 +392,27 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
 
             processor = TelemetryResultsProcessor(user_config=user_config)
 
-            async def run_scaling_collector():
-                await collector.initialize_and_start()
-                await asyncio.sleep(0.25)
-                await collector.stop()
+            await collector.initialize()
+            await collector._collect_and_process_metrics()
+            await collector.stop()
 
-            # Run the async collection
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(run_scaling_collector())
-            finally:
-                loop.close()
+            for record in self.collected_records:
+                await processor.process_telemetry_record(record)
+            metric_results = await processor.summarize()
 
-            # Process records and generate metrics
-            async def process_records():
-                for record in self.collected_records:
-                    await processor.process_telemetry_record(record)
-                return await processor.summarize()
-
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                metric_results = loop.run_until_complete(process_records())
-            finally:
-                loop.close()
-
-            # Find memory and energy metrics to verify scaling
             memory_metrics = [r for r in metric_results if "gpu_memory_used" in r.tag]
             energy_metrics = [
                 r for r in metric_results if "energy_consumption" in r.tag
             ]
 
-            if memory_metrics:
-                memory_metric = memory_metrics[0]
-                # 1024 MiB should be scaled to 1.073741824 GB (1024 * 0.001048576)
-                expected_gb = 1024 * 0.001048576  # MiB to GB scaling factor
-                assert abs(memory_metric.avg - expected_gb) < 0.01, (
-                    f"Memory scaling incorrect: expected {expected_gb:.3f} GB, got {memory_metric.avg}"
-                )
-                assert memory_metric.unit == "GB", "Memory metric should have GB unit"
+            assert len(memory_metrics) > 0
+            memory_metric = memory_metrics[0]
+            expected_gb = 1024 * 0.001048576
+            assert abs(memory_metric.avg - expected_gb) < 0.01
+            assert memory_metric.unit == "GB"
 
-            if energy_metrics:
-                energy_metric = energy_metrics[0]
-                # Verify energy scaling: 1000000 mJ scaled to 0.001 MJ
-                expected_mj = 1000000 * 1e-9  # mJ to MJ scaling factor
-                assert abs(energy_metric.avg - expected_mj) < 0.001, (
-                    f"Energy scaling incorrect: expected {expected_mj:.6f} MJ, got {energy_metric.avg}"
-                )
-                assert energy_metric.unit == "MJ", "Energy metric should have MJ unit"
+            assert len(energy_metrics) > 0
+            energy_metric = energy_metrics[0]
+            expected_mj = 1000000 * 1e-9
+            assert abs(energy_metric.avg - expected_mj) < 0.001
+            assert energy_metric.unit == "MJ"
