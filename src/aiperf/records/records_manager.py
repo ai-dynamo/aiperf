@@ -74,15 +74,13 @@ class TelemetryTrackingState:
 
     error_counts: dict[ErrorDetails, int] = field(default_factory=dict)
     error_counts_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    warnings_logged: set[str] = field(default_factory=set)
-    endpoints_contacted: set[str] = field(default_factory=set)
 
     task_runs: int = 0
     total_gen_time_ms: float = 0.0
     total_pub_time_ms: float = 0.0
     total_metrics_generated: int = 0
     mode_enabled_time: float | None = None
-    last_metric_values: dict[str, float] | None = None
+    last_metric_values: dict[str, float | None] | None = None
 
 
 @implements_protocol(ServiceProtocol)
@@ -222,10 +220,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         Args:
             message: Batch of telemetry records from a DCGM collector
         """
-        # Track that this endpoint was contacted (even if empty or error)
-        if message.dcgm_url:
-            self._telemetry_state.endpoints_contacted.add(message.dcgm_url)
-
         if message.valid:
             try:
                 await self._send_telemetry_to_results_processors(message.records)
@@ -498,8 +492,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                             )
                         )
                         self._telemetry_state.last_metric_values = new_values
-                else:
-                    await self._log_telemetry_warnings()
 
                 await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
             else:
@@ -507,55 +499,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 await self._telemetry_enable_event.wait()
                 self._telemetry_enable_event.clear()
 
-    def _log_telemetry_warning(self, warning_key: str, message: str) -> None:
-        """Log a telemetry warning once per unique warning key.
-
-        Args:
-            warning_key: Unique identifier for this warning type/endpoint combination
-            message: The warning message to log
-        """
-        if warning_key not in self._telemetry_state.warnings_logged:
-            self._telemetry_state.warnings_logged.add(warning_key)
-            self.warning(message)
-
-    async def _log_telemetry_warnings(self) -> None:
-        """Log warnings about telemetry endpoint issues when no metrics are available."""
-        if not self._telemetry_results_processors:
-            return
-
-        processor = self._telemetry_results_processors[0]
-        telemetry_hierarchy = processor.get_telemetry_hierarchy()
-        endpoints_with_data = set(telemetry_hierarchy.dcgm_endpoints.keys())
-
-        self.info(
-            f"Configured endpoints: {self._configured_telemetry_endpoints}, "
-            f"Endpoints with data: {endpoints_with_data}"
-        )
-
-        for endpoint in self._configured_telemetry_endpoints:
-            has_data = endpoint in endpoints_with_data
-            was_contacted = endpoint in self._telemetry_state.endpoints_contacted
-            has_gpus = has_data and telemetry_hierarchy.dcgm_endpoints[endpoint]
-
-            if has_data and not has_gpus:
-                self._log_telemetry_warning(
-                    f"no_gpus_{endpoint}",
-                    f"GPU telemetry: {endpoint} is reachable but returning no GPU data",
-                )
-            elif not has_data and was_contacted:
-                self._log_telemetry_warning(
-                    f"empty_{endpoint}",
-                    f"GPU telemetry: {endpoint} is reachable but not collecting GPU data (check DCGM configuration)",
-                )
-            elif not has_data and not was_contacted:
-                self._log_telemetry_warning(
-                    f"unreachable_{endpoint}",
-                    f"GPU telemetry: {endpoint} unreachable (DCGM may not be running)",
-                )
-
-    def _extract_metric_values(self, metrics: list[MetricResult]) -> dict[str, float]:
-        """Extract key metric values for comparison (name -> value mapping)."""
-        return {m.name: m.value for m in metrics}
+    def _extract_metric_values(
+        self, metrics: list[MetricResult]
+    ) -> dict[str, float | None]:
+        """Extract key metric values for comparison (tag -> current value mapping)."""
+        return {m.tag: m.current for m in metrics}
 
     @on_command(CommandType.REALTIME_METRICS)
     async def _on_realtime_metrics_command(
