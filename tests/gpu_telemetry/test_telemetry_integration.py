@@ -93,11 +93,11 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
         self.collected_records = []
         self.collection_errors = []
 
-        def record_callback(records, collector_id):
+        async def record_callback(records, collector_id):
             """Callback to collect telemetry records."""
             self.collected_records.extend(records)
 
-        def error_callback(error, collector_id):
+        async def error_callback(error, collector_id):
             """Callback to collect errors."""
             self.collection_errors.append(error)
 
