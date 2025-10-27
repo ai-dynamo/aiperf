@@ -189,11 +189,9 @@ class AIPerfTextualApp(App):
                 )
 
             # Broadcast command to start telemetry background task
-            # Pass the mode explicitly since user_config is not shared between services
             await self.controller.publish(
                 StartRealtimeTelemetryCommand(
                     service_id=self.controller.service_id,
-                    telemetry_mode=GPUTelemetryMode.REALTIME_DASHBOARD,
                 )
             )
 

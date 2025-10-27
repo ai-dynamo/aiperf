@@ -31,6 +31,7 @@ from aiperf.common.messages.command_messages import (
     ShutdownCommand,
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
+    StartRealtimeTelemetryCommand,
     TargetedServiceMessage,
 )
 from aiperf.common.messages.credit_messages import (
@@ -76,7 +77,6 @@ from aiperf.common.messages.service_messages import (
 from aiperf.common.messages.telemetry_messages import (
     ProcessTelemetryResultMessage,
     RealtimeTelemetryMetricsMessage,
-    StartRealtimeTelemetryCommand,
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
 )

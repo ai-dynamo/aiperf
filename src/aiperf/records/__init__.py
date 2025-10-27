@@ -24,6 +24,7 @@ from aiperf.records.record_processor_service import (
 )
 from aiperf.records.records_manager import (
     RecordsManager,
+    TelemetryTrackingState,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "PhaseCompletionContext",
     "RecordProcessor",
     "RecordsManager",
+    "TelemetryTrackingState",
 ]

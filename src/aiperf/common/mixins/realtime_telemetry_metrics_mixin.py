@@ -28,10 +28,7 @@ class RealtimeTelemetryMetricsMixin(MessageBusClientMixin):
         self, message: RealtimeTelemetryMetricsMessage
     ):
         """Update the telemetry metrics from a real-time telemetry metrics message."""
-        from aiperf.common.aiperf_logger import AIPerfLogger
-
-        logger = AIPerfLogger(__name__)
-        logger.debug(
+        self.debug(
             f"Mixin received telemetry message with {len(message.metrics)} metrics, triggering hook"
         )
 

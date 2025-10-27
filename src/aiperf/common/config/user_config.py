@@ -224,23 +224,8 @@ class UserConfig(BaseConfig):
         ),
     ]
 
-    gpu_telemetry_mode: Annotated[
-        GPUTelemetryMode,
-        Field(
-            default=GPUTelemetryMode.SUMMARY,
-            description="GPU telemetry display mode (parsed from gpu_telemetry list)",
-        ),
-        DisableCLI(reason="Automatically parsed from --gpu-telemetry argument"),
-    ] = GPUTelemetryMode.SUMMARY
-
-    gpu_telemetry_urls: Annotated[
-        list[str],
-        Field(
-            default_factory=list,
-            description="Parsed GPU telemetry DCGM endpoint URLs",
-        ),
-        DisableCLI(reason="Automatically parsed from --gpu-telemetry argument"),
-    ]
+    _gpu_telemetry_mode: GPUTelemetryMode = GPUTelemetryMode.SUMMARY
+    _gpu_telemetry_urls: list[str] = []
 
     @model_validator(mode="after")
     def _parse_gpu_telemetry_config(self) -> Self:
@@ -257,9 +242,24 @@ class UserConfig(BaseConfig):
             elif item.startswith("http"):
                 urls.append(item)
 
-        self.gpu_telemetry_mode = mode
-        self.gpu_telemetry_urls = urls
+        self._gpu_telemetry_mode = mode
+        self._gpu_telemetry_urls = urls
         return self
+
+    @property
+    def gpu_telemetry_mode(self) -> GPUTelemetryMode:
+        """Get the GPU telemetry display mode (parsed from gpu_telemetry list)."""
+        return self._gpu_telemetry_mode
+
+    @gpu_telemetry_mode.setter
+    def gpu_telemetry_mode(self, value: GPUTelemetryMode) -> None:
+        """Set the GPU telemetry display mode."""
+        self._gpu_telemetry_mode = value
+
+    @property
+    def gpu_telemetry_urls(self) -> list[str]:
+        """Get the parsed GPU telemetry DCGM endpoint URLs."""
+        return self._gpu_telemetry_urls
 
     @model_validator(mode="after")
     def _compute_config(self) -> Self:
