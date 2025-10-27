@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: "PR Install Instructions"
+
+on:
+  pull_request_target:
+    types:
+      - opened
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to comment on'
+        required: true
+        type: number
+
+permissions:
+  pull-requests: write
+
+jobs:
+  comment-install-instructions:
+    name: Comment with install instructions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post install instructions
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Get PR number and branch name based on trigger type
+            let prNumber, branchName;
+
+            if (context.eventName === 'workflow_dispatch') {
+              // Manual trigger - fetch PR details
+              prNumber = context.payload.inputs.pr_number;
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              branchName = pr.head.ref;
+            } else {
+              // Automatic trigger on PR opened
+              prNumber = context.issue.number;
+              branchName = context.payload.pull_request.head.ref;
+            }
+
+            const commentBody = `### Try out this PR
+
+            **Quick install:**
+            \`\`\`bash
+            pip install --upgrade --force-reinstall git+https://github.com/ai-dynamo/aiperf.git@${branchName}
+            \`\`\`
+
+            **Recommended with virtual environment (using [uv](https://docs.astral.sh/uv/)):**
+            \`\`\`bash
+            uv venv --python 3.12 && source .venv/bin/activate
+            uv pip install --upgrade --force-reinstall git+https://github.com/ai-dynamo/aiperf.git@${branchName}
+            \`\`\``;
+
+            await github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: commentBody
+            });
