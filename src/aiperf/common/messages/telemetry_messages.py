@@ -1,12 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Literal
-
 from pydantic import Field
 
-from aiperf.common.enums import CommandType, GPUTelemetryMode, MessageType
-from aiperf.common.messages.command_messages import CommandMessage
+from aiperf.common.enums import MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import (
     ErrorDetails,
