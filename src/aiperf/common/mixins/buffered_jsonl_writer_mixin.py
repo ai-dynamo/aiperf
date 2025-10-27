@@ -8,6 +8,7 @@ from typing import Generic
 
 import aiofiles
 
+from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.types import BaseModelT
@@ -45,6 +46,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self.output_file = output_file
         self.lines_written = 0
         self._file_handle = None
+        self._file_lock = asyncio.Lock()
         self._buffer: list[str] = []
         self._batch_size = batch_size
         self._buffer_lock = asyncio.Lock()
@@ -52,9 +54,10 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
     @on_init
     async def _open_file(self) -> None:
         """Open the file handle for writing (called automatically on initialization)."""
-        self._file_handle = await aiofiles.open(
-            self.output_file, mode="w", encoding="utf-8"
-        )
+        async with self._file_lock:
+            self._file_handle = await aiofiles.open(
+                self.output_file, mode="w", encoding="utf-8"
+            )
 
     async def buffered_write(self, record: BaseModelT) -> None:
         """Write a Pydantic model to the buffer with automatic flushing.
@@ -92,21 +95,34 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         Args:
             buffer_to_flush: List of JSON strings to write
         """
-        if not buffer_to_flush or self._file_handle is None:
+        if not buffer_to_flush:
             return
+        async with self._file_lock:
+            if self._file_handle is None:
+                self.error(
+                    f"Tried to flush buffer, but file handle is not open: {self.output_file}"
+                )
+                return
 
-        try:
-            self.debug(lambda: f"Flushing {len(buffer_to_flush)} records to file")
-            for json_str in buffer_to_flush:
-                await self._file_handle.write(json_str)
-                await self._file_handle.write("\n")
-            await self._file_handle.flush()
-        except Exception as e:
-            self.exception(f"Failed to flush buffer: {e!r}")
+            try:
+                self.debug(lambda: f"Flushing {len(buffer_to_flush)} records to file")
+                for json_str in buffer_to_flush:
+                    await self._file_handle.write(json_str)
+                    await self._file_handle.write("\n")
+                await self._file_handle.flush()
+            except Exception as e:
+                self.exception(f"Failed to flush buffer: {e!r}")
 
     @on_stop
     async def _close_file(self) -> None:
         """Flush remaining buffer and close the file handle (called automatically on shutdown)."""
+        # Wait for any pending flush tasks to complete
+        if self.tasks:
+            await asyncio.wait_for(
+                self.wait_for_tasks(),
+                timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
+            )
+
         async with self._buffer_lock:
             buffer_to_flush = self._buffer
             self._buffer = []
@@ -116,13 +132,15 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         except Exception as e:
             self.error(f"Failed to flush remaining buffer during shutdown: {e}")
 
-        if self._file_handle is not None:
-            try:
-                await self._file_handle.close()
-            except Exception as e:
-                self.error(f"Failed to close file handle during shutdown: {e}")
-            finally:
-                self._file_handle = None
+        async with self._file_lock:
+            if self._file_handle is not None:
+                try:
+                    await self._file_handle.close()
+                    self.debug(lambda: f"File handle closed: {self.output_file}")
+                except Exception as e:
+                    self.exception(f"Failed to close file handle during shutdown: {e}")
+                finally:
+                    self._file_handle = None
 
         self.debug(
             f"{self.__class__.__name__}: {self.lines_written} JSONL lines written to {self.output_file}"
