@@ -300,10 +300,10 @@ aiperf profile \
 
 ## Multi-Node GPU Telemetry Example
 
-For distributed setups with multiple nodes, you can collect GPU telemetry from all nodes simultaneously. Combine the `dashboard` keyword with custom URLs to enable real-time visualization of multi-node GPU metrics:
+For distributed setups with multiple nodes, you can collect GPU telemetry from all nodes simultaneously:
 
 ```bash
-# Example: Collecting telemetry from 3 nodes with live dashboard visualization
+# Example: Collecting telemetry from 3 nodes in a distributed setup
 # Note: The default endpoints http://localhost:9400/metrics and http://localhost:9401/metrics
 #       are always attempted in addition to these custom URLs
 aiperf profile \
