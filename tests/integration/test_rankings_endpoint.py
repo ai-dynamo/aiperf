@@ -29,7 +29,7 @@ class TestRankingsEndpoint:
                 --model nvidia/nv-rerank-qa-mistral-4b \
                 --url {aiperf_mock_server.url} \
                 --tokenizer gpt2 \
-                --endpoint-type rankings \
+                --endpoint-type nim_rankings \
                 --input-file {dataset_path} \
                 --custom-dataset-type single_turn \
                 --request-count {defaults.request_count} \
