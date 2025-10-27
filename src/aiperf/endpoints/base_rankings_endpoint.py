@@ -52,14 +52,15 @@ class BaseRankingsEndpoint(BaseEndpoint):
         passage_texts = []
 
         for text in turn.texts:
-            if text.name == "query":
-                query_texts.extend(text.contents)
-            elif text.name == "passages":
-                passage_texts.extend(text.contents)
-            else:
-                self.warning(
-                    f"Ignoring text with name '{text.name}' - rankings expects 'query' and 'passages'"
-                )
+            match text.name:
+                case "passages":
+                    passage_texts.extend(text.contents)
+                case "query":
+                    query_texts.extend(text.contents)
+                case _:
+                    self.warning(
+                        f"Ignoring text with name '{text.name}' - rankings expects 'query' and 'passages'"
+                    )
 
         if not query_texts:
             raise ValueError(
@@ -105,6 +106,8 @@ class BaseRankingsEndpoint(BaseEndpoint):
         if not json_obj:
             return None
 
+        # Use the subclass's implementation to extract ranking data
+        # according to its specific API response format.
         rankings = self.extract_rankings(json_obj)
         if not rankings:
             self.debug(lambda: f"No rankings found in response: {json_obj}")
