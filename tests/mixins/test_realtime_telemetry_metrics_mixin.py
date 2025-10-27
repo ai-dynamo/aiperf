@@ -36,6 +36,7 @@ class TestRealtimeTelemetryMetricsMixin:
             mixin._controller = mock_controller
             mixin._telemetry_metrics = []
             mixin.run_hooks = AsyncMock()
+            mixin.debug = MagicMock()
 
         return mixin
 

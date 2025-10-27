@@ -485,17 +485,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self._telemetry_state.total_metrics_generated += len(telemetry_metrics)
 
                 if telemetry_metrics:
-                    # Only publish if values have changed
-                    if self._telemetry_metrics_have_changed(telemetry_metrics):
+                    # Only publish if values have changed - extract once for efficiency
+                    new_values = self._extract_metric_values(telemetry_metrics)
+                    if (
+                        self._telemetry_state.last_metric_values is None
+                        or new_values != self._telemetry_state.last_metric_values
+                    ):
                         await self.publish(
                             RealtimeTelemetryMetricsMessage(
                                 service_id=self.service_id,
                                 metrics=telemetry_metrics,
                             )
                         )
-                        self._telemetry_state.last_metric_values = (
-                            self._extract_metric_values(telemetry_metrics)
-                        )
+                        self._telemetry_state.last_metric_values = new_values
                 else:
                     await self._log_telemetry_warnings()
 
@@ -554,14 +556,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     def _extract_metric_values(self, metrics: list[MetricResult]) -> dict[str, float]:
         """Extract key metric values for comparison (name -> value mapping)."""
         return {m.name: m.value for m in metrics}
-
-    def _telemetry_metrics_have_changed(self, new_metrics: list[MetricResult]) -> bool:
-        """Check if telemetry metric values have changed since last publish."""
-        if self._telemetry_state.last_metric_values is None:
-            return True  # First time, always publish
-
-        new_values = self._extract_metric_values(new_metrics)
-        return new_values != self._telemetry_state.last_metric_values
 
     @on_command(CommandType.REALTIME_METRICS)
     async def _on_realtime_metrics_command(
