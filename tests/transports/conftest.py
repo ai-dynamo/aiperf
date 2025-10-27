@@ -88,44 +88,6 @@ def edge_case_inputs() -> dict[str, str]:
     }
 
 
-def setup_sse_content_mock(
-    mock_response: Mock,
-    chunks: list[tuple[bytes, bytes]],
-    timestamps: list[int] | None = None,
-) -> None:
-    """Setup SSE content mock with chunks and timing."""
-    num_chunks = len(chunks)
-    mock_response.content.at_eof.side_effect = [False] * num_chunks + [True]
-
-    read_calls = [chunk[0] for chunk in chunks]
-    readuntil_calls = [chunk[1] for chunk in chunks]
-
-    mock_response.content.read = AsyncMock(side_effect=read_calls)
-    mock_response.content.readuntil = AsyncMock(side_effect=readuntil_calls)
-
-
-def setup_single_sse_chunk(
-    mock_response: Mock,
-    first_byte: bytes = b"d",
-    remaining: bytes = b"ata: Hello\n\n",
-) -> None:
-    """Setup a single SSE chunk for testing."""
-    setup_sse_content_mock(mock_response, [(first_byte, remaining)])
-
-
-def create_sse_chunk_list(messages: list[str]) -> list[tuple[bytes, bytes]]:
-    """Create SSE chunk list from messages."""
-    chunks = []
-    for message in messages:
-        # Split on first space to separate data: from content
-        if message.startswith("data: "):
-            remaining_content = message[6:]  # Remove "data: " prefix
-            chunks.append((b"d", f"ata: {remaining_content}\n\n".encode()))
-        else:
-            chunks.append((b"d", f"ata: {message}\n\n".encode()))
-    return chunks
-
-
 @pytest.fixture
 def user_config() -> UserConfig:
     """Fixture providing a sample UserConfig."""
@@ -186,16 +148,6 @@ def mock_sse_response() -> Mock:
         content_type="text/event-stream",
         content=Mock(),
     )
-
-
-@pytest.fixture
-def sample_sse_chunks() -> list[tuple[bytes, bytes]]:
-    """Fixture providing sample SSE chunks as (first_byte, remaining_chunk) tuples."""
-    return [
-        (b"d", b"ata: Hello\nevent: message\n\n"),
-        (b"d", b"ata: World\nid: msg-2\n\n"),
-        (b"d", b"ata: [DONE]\n\n"),
-    ]
 
 
 @pytest.fixture
