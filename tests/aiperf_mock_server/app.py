@@ -221,6 +221,45 @@ async def rankings(req: RankingRequest) -> RankingResponse:
 
 
 # ============================================================================
+# HuggingFace TEI Rerank (mock)
+# ============================================================================
+
+
+@app.post("/rerank", response_model=None)
+@with_error_injection
+async def hf_tei_rerank(req: dict) -> dict:
+    """Mock HuggingFace TEI /rerank endpoint."""
+    query = req.get("query", "")
+    passages = req.get("texts") or req.get("documents") or []
+    results = [
+        {"index": i, "score": ((hash(f"{query}-{p}") % 1000) / 1000.0)}
+        for i, p in enumerate(passages)
+    ]
+    # Sort descending by score
+    results.sort(key=lambda r: r["score"], reverse=True)
+    return {"results": results}
+
+
+# ============================================================================
+# Cohere Rerank (mock)
+# ============================================================================
+
+
+@app.post("/v2/rerank", response_model=None)
+@with_error_injection
+async def cohere_rerank(req: dict) -> dict:
+    """Mock Cohere /v2/rerank endpoint."""
+    query = req.get("query", "")
+    passages = req.get("documents") or []
+    results = [
+        {"index": i, "relevance_score": ((hash(f"{query}-{p}") % 1000) / 1000.0)}
+        for i, p in enumerate(passages)
+    ]
+    results.sort(key=lambda r: r["relevance_score"], reverse=True)
+    return {"results": results}
+
+
+# ============================================================================
 # Health & Info
 # ============================================================================
 
