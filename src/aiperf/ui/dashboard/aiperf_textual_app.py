@@ -96,10 +96,23 @@ class AIPerfTextualApp(App):
         self._warmup_stats: RequestsStats | None = None
         self._profiling_stats: RequestsStats | None = None
         self._records_stats: RecordsStats | None = None
+        self._has_result_data = False
 
     def on_mount(self) -> None:
         self.register_theme(AIPERF_THEME)
         self.theme = AIPERF_THEME.name
+        # Maximize log viewer initially until result data arrives
+        if not self._has_result_data and self.log_viewer:
+            self.screen.maximize(self.log_viewer)
+
+    def _on_first_result_data(self) -> None:
+        """Called when the first result data arrives - minimizes the log viewer."""
+        self._has_result_data = True
+        # Restore to normal view when data starts coming in
+        self.screen.minimize()
+        if self.log_viewer:
+            # Scroll down as things may have shifted when the log viewer is un-maximized
+            self.log_viewer.scroll_end(duration=0.2)
 
     def compose(self) -> ComposeResult:
         """Compose the full application layout."""
@@ -169,8 +182,8 @@ class AIPerfTextualApp(App):
 
     async def on_warmup_progress(self, warmup_stats: RequestsStats) -> None:
         """Forward warmup progress updates to the Textual App."""
-        if not self._warmup_stats:
-            self.query_one("#progress-section").remove_class("hidden")
+        if not self._has_result_data:
+            self._on_first_result_data()
         self._warmup_stats = warmup_stats
         if self.progress_dashboard:
             async with self.progress_dashboard.batch():
@@ -184,8 +197,8 @@ class AIPerfTextualApp(App):
 
     async def on_profiling_progress(self, profiling_stats: RequestsStats) -> None:
         """Forward requests phase progress updates to the Textual App."""
-        if not self._profiling_stats:
-            self.query_one("#progress-section").remove_class("hidden")
+        if not self._has_result_data:
+            self._on_first_result_data()
         self._profiling_stats = profiling_stats
         if self.progress_dashboard:
             async with self.progress_dashboard.batch():
