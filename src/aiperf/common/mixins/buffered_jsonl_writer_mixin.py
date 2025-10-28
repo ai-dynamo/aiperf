@@ -12,6 +12,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.types import BaseModelT
+from aiperf.common.utils import yield_to_event_loop
 
 
 class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
@@ -118,10 +119,19 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         """Flush remaining buffer and close the file handle (called automatically on shutdown)."""
         # Wait for any pending flush tasks to complete
         if self.tasks:
-            await asyncio.wait_for(
-                self.wait_for_tasks(),
-                timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
-            )
+            try:
+                await asyncio.wait_for(
+                    self.wait_for_tasks(),
+                    timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
+                )
+            except asyncio.TimeoutError:
+                self.warning(
+                    f"Timeout waiting for {len(self.tasks)} pending flush tasks during shutdown. "
+                    "Cancelling tasks and proceeding with cleanup."
+                )
+                # Cancel any remaining tasks to prevent resource leaks
+                await self.cancel_all_tasks()
+                yield_to_event_loop()
 
         async with self._buffer_lock:
             buffer_to_flush = self._buffer
