@@ -1,12 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import Mock, patch
+
 import pytest
 from rich.text import Text
+from textual.widgets.data_table import RowDoesNotExist
 
+from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.models import MetricResult
 from aiperf.ui.dashboard.realtime_telemetry_dashboard import (
     GPUMetricsTable,
+    RealtimeTelemetryDashboard,
     SingleNodeView,
 )
 
@@ -343,3 +348,360 @@ class TestSingleNodeView:
             "Metric 2",
             "Metric 3",
         ]
+
+
+class TestGPUMetricsTableLifecycle:
+    """Test lifecycle methods of GPUMetricsTable."""
+
+    @pytest.fixture
+    def gpu_metrics_table(self):
+        """Create a GPUMetricsTable instance for testing."""
+        return GPUMetricsTable(
+            endpoint="localhost:9400",
+            gpu_uuid="GPU-12345678-90ab",
+            gpu_index=0,
+            model_name="NVIDIA RTX 4090",
+        )
+
+    def test_compose_creates_widgets(self, gpu_metrics_table):
+        """Test that compose yields the correct widgets."""
+        widgets = list(gpu_metrics_table.compose())
+
+        assert len(widgets) == 2
+        assert widgets[0].__class__.__name__ == "Static"
+        assert widgets[1].__class__.__name__ == "NonFocusableDataTable"
+
+    def test_initialize_columns(self, gpu_metrics_table):
+        """Test that _initialize_columns sets up all columns correctly."""
+        mock_table = Mock()
+        mock_column_key = Mock()
+        mock_table.add_column.return_value = mock_column_key
+
+        gpu_metrics_table.data_table = mock_table
+        gpu_metrics_table._initialize_columns()
+
+        assert mock_table.add_column.call_count == len(gpu_metrics_table.COLUMNS)
+        assert gpu_metrics_table._columns_initialized is True
+        assert len(gpu_metrics_table._column_keys) == len(gpu_metrics_table.COLUMNS)
+
+    def test_update_with_no_data_table(self, gpu_metrics_table):
+        """Test update method when data_table is None."""
+        gpu_metrics_table.data_table = None
+        metrics = [
+            MetricResult(
+                tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
+                header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
+                unit="%",
+                avg=75.0,
+            )
+        ]
+
+        gpu_metrics_table.update(metrics)
+
+    def test_update_with_unmounted_table(self, gpu_metrics_table):
+        """Test update method when data_table is not mounted."""
+        mock_table = Mock()
+        mock_table.is_mounted = False
+        gpu_metrics_table.data_table = mock_table
+
+        metrics = [
+            MetricResult(
+                tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
+                header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
+                unit="%",
+                avg=75.0,
+            )
+        ]
+
+        gpu_metrics_table.update(metrics)
+        mock_table.add_row.assert_not_called()
+
+    def test_update_adds_new_row(self, gpu_metrics_table):
+        """Test that update adds a new row for a new metric."""
+        mock_table = Mock()
+        mock_table.is_mounted = True
+        mock_column_key = Mock()
+        mock_row_key = Mock()
+        mock_table.add_column.return_value = mock_column_key
+        mock_table.add_row.return_value = mock_row_key
+
+        gpu_metrics_table.data_table = mock_table
+        gpu_metrics_table._initialize_columns()
+
+        metrics = [
+            MetricResult(
+                tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
+                header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
+                unit="%",
+                current=75.0,
+                avg=75.0,
+                min=70.0,
+                max=80.0,
+                p99=79.0,
+                p90=78.0,
+                p50=75.0,
+                std=2.5,
+            )
+        ]
+
+        gpu_metrics_table.update(metrics)
+
+        mock_table.add_row.assert_called_once()
+        assert (
+            gpu_metrics_table._metric_row_keys[
+                "gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678"
+            ]
+            == mock_row_key
+        )
+
+    def test_update_filters_non_matching_gpus(self, gpu_metrics_table):
+        """Test that update only processes metrics for this GPU."""
+        mock_table = Mock()
+        mock_table.is_mounted = True
+        mock_column_key = Mock()
+        mock_table.add_column.return_value = mock_column_key
+
+        gpu_metrics_table.data_table = mock_table
+        gpu_metrics_table._initialize_columns()
+
+        metrics = [
+            MetricResult(
+                tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu1_GPU-99999999",
+                header="GPU Utilization | localhost:9400 | GPU 1 | NVIDIA RTX 4090",
+                unit="%",
+                avg=75.0,
+            )
+        ]
+
+        gpu_metrics_table.update(metrics)
+
+        mock_table.add_row.assert_not_called()
+
+    def test_update_single_row_with_exception(self, gpu_metrics_table):
+        """Test that _update_single_row handles exceptions gracefully."""
+        mock_table = Mock()
+        mock_table.update_cell.side_effect = Exception("Update failed")
+        gpu_metrics_table.data_table = mock_table
+
+        mock_row_key = Mock()
+        mock_column_key = Mock()
+        gpu_metrics_table._column_keys = {
+            col: mock_column_key for col in gpu_metrics_table.COLUMNS
+        }
+
+        row_cells = [Text("Test", justify="left") for _ in gpu_metrics_table.COLUMNS]
+
+        gpu_metrics_table._update_single_row(row_cells, mock_row_key)
+
+    def test_update_handles_row_does_not_exist(self, gpu_metrics_table):
+        """Test that update handles RowDoesNotExist exception and re-adds row."""
+        mock_table = Mock()
+        mock_table.is_mounted = True
+        mock_column_key = Mock()
+        mock_row_key = Mock()
+        mock_table.add_column.return_value = mock_column_key
+        mock_table.add_row.return_value = mock_row_key
+
+        mock_table.get_row_index.side_effect = RowDoesNotExist("Row not found")
+
+        gpu_metrics_table.data_table = mock_table
+        gpu_metrics_table._initialize_columns()
+
+        metrics = [
+            MetricResult(
+                tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
+                header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
+                unit="%",
+                current=75.0,
+                avg=75.0,
+                min=70.0,
+                max=80.0,
+                p99=79.0,
+                p90=78.0,
+                p50=75.0,
+                std=2.5,
+            )
+        ]
+
+        gpu_metrics_table._metric_row_keys[
+            "gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678"
+        ] = Mock()
+
+        gpu_metrics_table.update(metrics)
+
+        assert mock_table.add_row.call_count == 1
+
+
+class TestSingleNodeViewLifecycle:
+    """Test lifecycle methods of SingleNodeView."""
+
+    @pytest.fixture
+    def single_node_view(self):
+        """Create a SingleNodeView instance for testing."""
+        return SingleNodeView()
+
+    def test_compose_yields_nothing(self, single_node_view):
+        """Test that compose yields nothing initially (GPU tables added dynamically)."""
+        widgets = list(single_node_view.compose())
+        assert len(widgets) == 0
+
+    def test_update_creates_gpu_table_when_mounted(self, single_node_view):
+        """Test that update creates GPU tables for new GPUs."""
+        with (
+            patch.object(
+                type(single_node_view),
+                "is_mounted",
+                new_callable=lambda: property(lambda self: True),
+            ),
+            patch.object(single_node_view, "mount") as mock_mount,
+        ):
+            metrics = [
+                MetricResult(
+                    tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
+                    header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
+                    unit="%",
+                    avg=75.0,
+                )
+            ]
+
+            single_node_view.update(metrics)
+
+            assert len(single_node_view.gpu_tables) == 1
+            mock_mount.assert_called_once()
+
+    def test_update_skips_creation_when_unmounted(self, single_node_view):
+        """Test that update doesn't create GPU tables when not mounted."""
+        with patch.object(
+            type(single_node_view),
+            "is_mounted",
+            new_callable=lambda: property(lambda self: False),
+        ):
+            metrics = [
+                MetricResult(
+                    tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
+                    header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
+                    unit="%",
+                    avg=75.0,
+                )
+            ]
+
+            single_node_view.update(metrics)
+
+            assert len(single_node_view.gpu_tables) == 0
+
+    def test_update_updates_existing_gpu_table(self, single_node_view):
+        """Test that update calls update on existing GPU tables."""
+        mock_gpu_table = Mock()
+        gpu_key = "http___localhost_9400_metrics_0_GPU-12345678"
+        single_node_view.gpu_tables[gpu_key] = mock_gpu_table
+
+        with patch.object(
+            type(single_node_view),
+            "is_mounted",
+            new_callable=lambda: property(lambda self: True),
+        ):
+            metrics = [
+                MetricResult(
+                    tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
+                    header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
+                    unit="%",
+                    avg=75.0,
+                )
+            ]
+
+            single_node_view.update(metrics)
+
+            mock_gpu_table.update.assert_called_once()
+
+
+class TestRealtimeTelemetryDashboard:
+    """Test RealtimeTelemetryDashboard widget."""
+
+    @pytest.fixture
+    def service_config(self):
+        """Create a mock ServiceConfig."""
+        return Mock(spec=ServiceConfig)
+
+    @pytest.fixture
+    def dashboard(self, service_config):
+        """Create a RealtimeTelemetryDashboard instance for testing."""
+        return RealtimeTelemetryDashboard(service_config=service_config)
+
+    def test_init(self, dashboard, service_config):
+        """Test dashboard initialization."""
+        assert dashboard.service_config == service_config
+        assert dashboard.all_nodes_view is None
+        assert dashboard.metrics == []
+        assert dashboard.border_title == "Real-Time GPU Telemetry"
+
+    def test_compose_creates_widgets(self, dashboard):
+        """Test that compose yields the correct widgets."""
+        widgets = list(dashboard.compose())
+
+        assert len(widgets) == 2
+        assert widgets[0].__class__.__name__ == "Static"
+        assert widgets[1].__class__.__name__ == "SingleNodeView"
+
+    def test_set_status_message(self, dashboard):
+        """Test set_status_message updates the status widget."""
+        mock_status = Mock()
+        mock_all_nodes = Mock()
+
+        with patch.object(dashboard, "query_one", return_value=mock_status):
+            dashboard.all_nodes_view = mock_all_nodes
+
+            dashboard.set_status_message("Test message")
+
+            mock_status.update.assert_called_once_with("Test message")
+            mock_status.remove_class.assert_called_once_with("hidden")
+            mock_all_nodes.add_class.assert_called_once_with("hidden")
+
+    def test_set_status_message_handles_exception(self, dashboard):
+        """Test set_status_message handles exceptions gracefully."""
+        with patch.object(
+            dashboard, "query_one", side_effect=Exception("Widget not found")
+        ):
+            dashboard.set_status_message("Test message")
+
+    def test_on_realtime_telemetry_metrics_first_update(self, dashboard):
+        """Test on_realtime_telemetry_metrics on first metrics update."""
+        mock_all_nodes = Mock()
+        mock_status = Mock()
+        dashboard.all_nodes_view = mock_all_nodes
+
+        with patch.object(dashboard, "query_one", return_value=mock_status):
+            metrics = [
+                MetricResult(
+                    tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
+                    header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
+                    unit="%",
+                    avg=75.0,
+                )
+            ]
+
+            dashboard.on_realtime_telemetry_metrics(metrics)
+
+            assert dashboard.metrics == metrics
+            mock_status.add_class.assert_called_once_with("hidden")
+            mock_all_nodes.remove_class.assert_called_once_with("hidden")
+            mock_all_nodes.update.assert_called_once_with(metrics)
+
+    def test_on_realtime_telemetry_metrics_subsequent_update(self, dashboard):
+        """Test on_realtime_telemetry_metrics on subsequent updates."""
+        mock_all_nodes = Mock()
+        dashboard.all_nodes_view = mock_all_nodes
+        dashboard.metrics = [Mock()]
+
+        metrics = [
+            MetricResult(
+                tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
+                header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
+                unit="%",
+                avg=80.0,
+            )
+        ]
+
+        dashboard.on_realtime_telemetry_metrics(metrics)
+
+        assert dashboard.metrics == metrics
+        mock_all_nodes.update.assert_called_once_with(metrics)
