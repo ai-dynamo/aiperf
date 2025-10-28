@@ -40,10 +40,11 @@ class HuggingfaceGenerate(BaseEndpoint):
         Returns:
             Hugging Face Generate payload
         """
-        turn = request_info.turns[0]
-        if not turn.texts or not turn.texts[0].contents:
-            raise ValueError("Hugging Face Generate requires at least one text prompt.")
 
+        if not request_info.turns:
+            raise ValueError("Hugging Face Generate requires at least one turn.")
+
+        turn = request_info.turns[0]
         prompt = turn.texts[0].contents[0]
 
         payload = {"inputs": prompt, "parameters": {}}
