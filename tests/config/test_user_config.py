@@ -6,16 +6,94 @@ from unittest.mock import mock_open, patch
 import pytest
 
 from aiperf.common.config import (
+    ConversationConfig,
     EndpointConfig,
     EndpointDefaults,
     InputConfig,
     LoadGeneratorConfig,
     OutputConfig,
     TokenizerConfig,
+    TurnConfig,
+    TurnDelayConfig,
     UserConfig,
 )
 from aiperf.common.enums import EndpointType
+from aiperf.common.enums.dataset_enums import CustomDatasetType
 from aiperf.common.enums.timing_enums import TimingMode
+
+"""
+Test suite for the UserConfig class.
+"""
+
+
+class TestUserConfig:
+    """Test suite for the UserConfig class."""
+
+    def test_user_config_serialization_to_json_string(self):
+        """Test the serialization and deserialization of a UserConfig object to and from a JSON string."""
+        config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["model1", "model2"],
+                type=EndpointType.CHAT,
+                custom_endpoint="custom_endpoint",
+                streaming=True,
+                url="http://custom-url",
+                extra=[
+                    ("key1", "value1"),
+                    ("key2", "value2"),
+                    ("key3", "value3"),
+                ],
+                headers=[
+                    ("Authorization", "Bearer token"),
+                    ("Content-Type", "application/json"),
+                ],
+                api_key="test_api_key",
+                ssl_options={"verify": False},
+                timeout=10,
+            ),
+            conversation_config=ConversationConfig(
+                num=10,
+                turn=TurnConfig(
+                    mean=10,
+                    stddev=10,
+                    delay=TurnDelayConfig(
+                        mean=10,
+                        stddev=10,
+                    ),
+                ),
+            ),
+            input=InputConfig(
+                custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+            ),
+            output=OutputConfig(
+                artifact_directory="test_artifacts",
+            ),
+            tokenizer=TokenizerConfig(
+                model_name="test_tokenizer",
+            ),
+            loadgen=LoadGeneratorConfig(
+                concurrency=10,
+                request_rate=10,
+            ),
+            verbose=True,
+            template_filename="test_template.yaml",
+            cli_command="test_cli_command",
+        )
+
+        # NOTE: Currently, we have validation logic that uses the concept of whether a field was set by the user, so
+        # exclude_unset must be used. exclude_defaults should also be able to work.
+        assert (
+            UserConfig.model_validate_json(
+                config.model_dump_json(indent=4, exclude_unset=True)
+            )
+            == config
+        )
+        assert (
+            UserConfig.model_validate_json(
+                config.model_dump_json(indent=4, exclude_defaults=True)
+            )
+            == config
+        )
 
 
 def test_user_config_serialization_to_file():
