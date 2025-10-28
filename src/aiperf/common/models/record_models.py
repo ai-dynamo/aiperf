@@ -11,6 +11,7 @@ import orjson
 from pydantic import (
     BaseModel,
     Field,
+    RootModel,
     SerializeAsAny,
 )
 from typing_extensions import Self
@@ -575,16 +576,16 @@ class ReasoningResponseData(BaseResponseData):
         return "".join([self.reasoning or "", self.content or ""])
 
 
+class RAGSources(RootModel[dict[str, Any] | list[Any]]):
+    """RAG sources can be either a dictionary or list format."""
+
+
 class EmbeddingResponseData(BaseResponseData):
     """Parsed embedding response data."""
 
     embeddings: list[list[float]] = Field(
         ..., description="The embedding vectors from the response."
     )
-
-    def get_text(self) -> str:
-        """Get the text of the response (empty for embeddings)."""
-        return ""
 
 
 class RankingsResponseData(BaseResponseData):
@@ -593,10 +594,6 @@ class RankingsResponseData(BaseResponseData):
     rankings: list[dict[str, Any]] = Field(
         ..., description="The rankings results from the response."
     )
-
-    def get_text(self) -> str:
-        """Get the text of the response (empty for rankings)."""
-        return ""
 
 
 class ParsedResponse(AIPerfBaseModel):
@@ -610,6 +607,11 @@ class ParsedResponse(AIPerfBaseModel):
         | RankingsResponseData
         | BaseResponseData
     ] = Field(..., description="The parsed response data.")
+    sources: RAGSources | None = Field(
+        default=None,
+        description="The sources used in the RAG query of the response. This can be a dictionary of source documents, "
+        "a list of sources, or None. Only applicable to responses with RAG response data.",
+    )
 
 
 class ParsedResponseRecord(AIPerfBaseModel):

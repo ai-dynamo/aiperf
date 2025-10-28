@@ -51,6 +51,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **template** | Template-based inference endpoints | ✅ | ❌ | |
 | **tensorrtllm_engine** | TensorRT-LLM engine direct access | ✅ | ❌ | |
 | **vision** | Computer vision model endpoints | ✅ | ❌ | |
+| **solido_rag** | SOLIDO RAG endpoint | 🟡 | ✅ | |
 
 ---
 
