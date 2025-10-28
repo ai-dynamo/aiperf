@@ -18,7 +18,7 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 @implements_protocol(EndpointProtocol)
 @EndpointFactory.register(EndpointType.HUGGINGFACE_GENERATE)
-class HuggingfaceGenerateEndpoint(BaseEndpoint):
+class HuggingFaceGenerateEndpoint(BaseEndpoint):
     """Hugging Face Generate Endpoint."""
 
     @classmethod
