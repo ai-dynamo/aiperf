@@ -118,6 +118,7 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
         into key and value, trims any whitespace, and coerces the value to the correct type.
     - If the input is a dictionary, it is converted to a list of tuples by key and value pairs.
     - If the input is a list, it recursively calls this function on each item, and aggregates the results.
+        - If the item is already a 2-element sequence (key-value pair), it is converted directly to a tuple.
     - Otherwise, a ValueError is raised.
 
     Args:
@@ -133,9 +134,14 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
     if isinstance(input, list | tuple | set):
         output = []
         for item in input:
-            res = parse_str_or_dict_as_tuple_list(item)
-            if res is not None:
-                output.extend(res)
+            # If item is already a 2-element sequence (key-value pair), convert directly to tuple
+            if isinstance(item, list | tuple) and len(item) == 2:
+                key, value = item
+                output.append((str(key), coerce_value(value)))
+            else:
+                res = parse_str_or_dict_as_tuple_list(item)
+                if res is not None:
+                    output.extend(res)
         return output
 
     if isinstance(input, dict):
@@ -150,11 +156,16 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
                     f"User Config: {input} - must be a valid JSON string"
                 ) from e
         else:
-            return [
-                (key.strip(), coerce_value(value.strip()))
-                for item in input.split(",")
-                for key, value in [item.split(":")]
-            ]
+            result = []
+            for item in input.split(","):
+                parts = item.split(":", 1)
+                if len(parts) != 2:
+                    raise ValueError(
+                        f"User Config: {input} - each item must be in 'key:value' format"
+                    )
+                key, value = parts
+                result.append((key.strip(), coerce_value(value.strip())))
+            return result
 
     raise ValueError(f"User Config: {input} - must be a valid string, list, or dict")
 
