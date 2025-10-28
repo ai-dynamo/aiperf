@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import Mock
+
 import pytest
 
 from aiperf.common.enums import EndpointType, ModelSelectionStrategy
@@ -15,7 +17,7 @@ from aiperf.endpoints.huggingface_generate import HuggingFaceGenerateEndpoint
 
 
 class TestHuggingFaceGenerateEndpoint:
-    """Tests for the Hugging Face TGI /generate endpoint."""
+    """Tests for the Hugging Face TGI /generate and /generate_stream endpoints."""
 
     @pytest.fixture
     def model_endpoint(self):
@@ -39,10 +41,10 @@ class TestHuggingFaceGenerateEndpoint:
         request_info = RequestInfo(model_endpoint=model_endpoint, turns=turns)
 
         payload = endpoint.format_payload(request_info)
-
         expected_payload = {
             "inputs": turn.texts[0].contents[0],
             "parameters": {},
+            "stream": False,
         }
         assert payload == expected_payload
 
@@ -99,8 +101,78 @@ class TestHuggingFaceGenerateEndpoint:
         parsed = endpoint.parse_response(fake_response)
         assert parsed.data.text == "Hi there!"
 
+    def test_parse_response_list_multiple(self, model_endpoint):
+        """List with multiple entries should concatenate text."""
+        endpoint = HuggingFaceGenerateEndpoint(model_endpoint)
+        fake_response = type(
+            "Resp",
+            (),
+            {
+                "perf_ns": 123,
+                "get_json": lambda _: [
+                    {"generated_text": "Part1"},
+                    {"generated_text": " Part2"},
+                    {"generated_text": " End"},
+                ],
+            },
+        )()
+
+        parsed = endpoint.parse_response(fake_response)
+        assert parsed.data.text.strip() == "Part1 Part2 End"
+
     def test_parse_response_empty(self, model_endpoint):
         """Empty or invalid JSON returns None."""
         endpoint = HuggingFaceGenerateEndpoint(model_endpoint)
         fake_response = type("Resp", (), {"perf_ns": 123, "get_json": lambda _: {}})()
         assert endpoint.parse_response(fake_response) is None
+
+    def make_event(self, data: str | None):
+        """Helper for simulating SSE stream events."""
+        mock_event = Mock()
+        mock_event.data = data
+        if data:
+            import json
+
+            def to_json():
+                return json.loads(data)
+
+            mock_event.json = to_json
+        else:
+            mock_event.json = lambda: {}
+        return mock_event
+
+    def test_stream_response_basic(self, model_endpoint):
+        """Streaming events yield correct token order."""
+        endpoint = HuggingFaceGenerateEndpoint(model_endpoint)
+        events = [
+            self.make_event('{"token": {"text": "Hello"}}'),
+            self.make_event('{"token": {"text": " "}}'),
+            self.make_event('{"token": {"text": "World"}}'),
+            self.make_event('{"token": {"text": "!"}}'),
+        ]
+
+        result = [chunk.text for chunk in endpoint.stream_response(events)]
+        assert result == ["Hello", " ", "World", "!"]
+
+    def test_stream_response_skips_empty_or_bad_events(self, model_endpoint):
+        """Handles missing data or malformed events gracefully."""
+        endpoint = HuggingFaceGenerateEndpoint(model_endpoint)
+        events = [
+            self.make_event(None),
+            self.make_event(""),
+            self.make_event('{"token": {}}'),
+            self.make_event('{"token": {"text": "valid"}}'),
+        ]
+        result = [chunk.text for chunk in endpoint.stream_response(events)]
+        assert result == ["valid"]
+
+    def test_stream_response_unicode_and_emojis(self, model_endpoint):
+        """Streaming responses should support unicode."""
+        endpoint = HuggingFaceGenerateEndpoint(model_endpoint)
+        events = [
+            self.make_event('{"token": {"text": "😀"}}'),
+            self.make_event('{"token": {"text": "こんにちは"}}'),
+            self.make_event('{"token": {"text": "🚀"}}'),
+        ]
+        result = [chunk.text for chunk in endpoint.stream_response(events)]
+        assert result == ["😀", "こんにちは", "🚀"]

@@ -14,6 +14,7 @@ from aiperf.endpoints.hf_tei_rankings import (
     HFTeiRankingsEndpoint,
 )
 from aiperf.endpoints.huggingface_generate import (
+    LOGGER,
     HuggingFaceGenerateEndpoint,
 )
 from aiperf.endpoints.nim_rankings import (
@@ -41,6 +42,7 @@ __all__ = [
     "EmbeddingsEndpoint",
     "HFTeiRankingsEndpoint",
     "HuggingFaceGenerateEndpoint",
+    "LOGGER",
     "NIMRankingsEndpoint",
     "SolidoEndpoint",
 ]

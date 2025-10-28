@@ -61,6 +61,14 @@ class TestEndpointType:
                 "/v2/rerank",
                 "Ranking Metrics",
             ),
+            (
+                EndpointType.HUGGINGFACE_GENERATE,
+                "huggingface_generate",
+                True,  # supports /generate_stream
+                True,  # produces token-like outputs
+                "/generate",
+                "LLM Metrics",
+            ),
         ],
     )
     def test_endpoint_type_metadata(
@@ -92,6 +100,7 @@ class TestEndpointType:
             "nim_rankings",
             "hf_tei_rankings",
             "cohere_rankings",
+            "huggingface_generate",
         ],
     )
     def test_enum_string_comparison(self, tag_value):
