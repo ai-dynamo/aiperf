@@ -111,7 +111,7 @@ class TgiEndpoint(BaseEndpoint):
                 except Exception:
                     continue
         except Exception:
-            self.debug(lambda: "Error reading stream")
+            self.debug(lambda: "Error reading stream: {e}")
 
         if not chunks:
             return None
