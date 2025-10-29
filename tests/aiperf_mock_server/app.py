@@ -4,6 +4,7 @@
 
 import asyncio
 import hashlib
+import json
 import logging
 import random
 import time
@@ -296,17 +297,29 @@ async def huggingface_generate(req: dict) -> list[dict]:
 @app.post("/generate_stream", response_model=None)
 @with_error_injection
 async def huggingface_generate_stream(req: dict):
-    """Mock Hugging Face Text Generation Inference /generate_stream endpoint."""
+    """Mock Hugging Face /generate_stream endpoint (TGI-compatible JSON format)."""
     logger.info("Mock HF /generate_stream request received: %s", req)
 
     async def event_stream():
         input_text = req.get("inputs", "")
-        full_response = f"Streaming response for: {input_text}"
-        tokens = full_response.split()
+        tokens = f"Streaming response for: {input_text}".split()
 
+        token_id = 1000
         for token in tokens:
-            yield f'data: {{"token": {{"text": "{token} "}}}}\n\n'
-            await asyncio.sleep(0.02)
+            event = {
+                "token": {
+                    "id": token_id,
+                    "text": token,
+                    "logprob": -0.1,
+                    "special": False,
+                }
+            }
+            yield f"data: {json.dumps(event)}\n\n"
+            token_id += 1
+            await asyncio.sleep(0.01)
+
+        final_event = {"generated_text": " ".join(tokens)}
+        yield f"data: {json.dumps(final_event)}\n\n"
 
         yield "data: [DONE]\n\n"
 

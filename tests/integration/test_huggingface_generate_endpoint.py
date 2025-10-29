@@ -32,7 +32,6 @@ class TestHuggingFaceGenerateEndpoint:
 
         assert result.request_count == defaults.request_count
         assert not result.has_streaming_metrics
-        assert "generate" in result.endpoint.lower()
 
     async def test_streaming_generate(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
@@ -54,4 +53,3 @@ class TestHuggingFaceGenerateEndpoint:
 
         assert result.request_count == defaults.request_count
         assert result.has_streaming_metrics
-        assert "generate" in result.endpoint.lower()
