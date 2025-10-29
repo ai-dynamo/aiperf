@@ -44,7 +44,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **cohere_rankings** | Cohere re-ranker API | ❌ | ✅ | |
 | **responses** | OpenAI responses endpoint | ❌ | ❌ | |
 | **dynamic_grpc** | Dynamic gRPC service calls | ✅ | ❌ | |
-| **huggingface_generate** | HuggingFace transformers generate API | ✅ | ✅ | |
+| **huggingface_generate** | HuggingFace transformers generate API | ✅ | ✅ | `/generate` and `/generate_stream` supported |
 | **image_retrieval** | Image search and retrieval endpoints | ✅ | ❌ | |
 | **nvclip** | NVIDIA CLIP model endpoints | ✅ | ❌ | |
 | **multimodal** | Multi-modal (text + image/audio) endpoints | ✅ | 🟡 | use `chat` for AIPerf instead |
