@@ -128,7 +128,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.worker_stats_lock: asyncio.Lock = asyncio.Lock()
 
         self._previous_realtime_records: int | None = None
-        self._previous_realtime_telemetry_samples: int = 0
 
         self._telemetry_state = TelemetryTrackingState()
         self._telemetry_enable_event = asyncio.Event()
@@ -436,9 +435,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _report_realtime_inference_metrics_task(self) -> None:
         """Report inference metrics at regular intervals (dashboard only)."""
         if self.service_config.ui_type != AIPerfUIType.DASHBOARD:
-            return  # Exit permanently - UI type never changes
+            return
 
-        # Self-managing loop - runs continuously when dashboard enabled
         while not self.stop_requested:
             await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
             async with self.processing_status_lock:
@@ -449,20 +447,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     continue  # No new records have been processed, so no need to update the metrics
                 self._previous_realtime_records = self.processing_stats.processed
             await self._report_realtime_metrics()
-
-        async with self.processing_status_lock:
-            if self.processing_stats.total_records == self._previous_realtime_records:
-                return
-            self._previous_realtime_records = self.processing_stats.processed
-
-        metrics = await self._generate_realtime_metrics()
-        if metrics:
-            await self.publish(
-                RealtimeMetricsMessage(
-                    service_id=self.service_id,
-                    metrics=metrics,
-                )
-            )
 
     @background_task(interval=None, immediate=True)
     async def _report_realtime_telemetry_metrics_task(self) -> None:
