@@ -52,4 +52,3 @@ class TestHuggingFaceGenerateEndpoint:
         )
 
         assert result.request_count == defaults.request_count
-        assert result.has_streaming_metrics

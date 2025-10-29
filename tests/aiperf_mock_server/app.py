@@ -294,32 +294,36 @@ async def huggingface_generate(req: dict) -> list[dict]:
     return response
 
 
-@app.post("/generate_stream", response_model=None)
+@app.post("/generate_stream")
 @with_error_injection
 async def huggingface_generate_stream(req: dict):
-    """Mock Hugging Face /generate_stream endpoint (TGI-compatible JSON format)."""
+    """Mock Hugging Face / generate_stream endpoint — TGI-compatible."""
     logger.info("Mock HF /generate_stream request received: %s", req)
 
     async def event_stream():
-        input_text = req.get("inputs", "")
-        tokens = f"Streaming response for: {input_text}".split()
+        text = req.get("inputs", "")
+        tokens = f"Streaming response for: {text}".split()
 
-        token_id = 1000
-        for token in tokens:
+        for idx, tok in enumerate(tokens, start=1000):
             event = {
                 "token": {
-                    "id": token_id,
-                    "text": token,
+                    "id": idx,
+                    "text": tok,
                     "logprob": -0.1,
                     "special": False,
-                }
+                },
+                "generated_text": None,
+                "details": None,
             }
             yield f"data: {json.dumps(event)}\n\n"
-            token_id += 1
             await asyncio.sleep(0.01)
 
-        final_event = {"generated_text": " ".join(tokens)}
-        yield f"data: {json.dumps(final_event)}\n\n"
+        final = {
+            "token": None,
+            "generated_text": " ".join(tokens),
+            "details": None,
+        }
+        yield f"data: {json.dumps(final)}\n\n"
 
         yield "data: [DONE]\n\n"
 
