@@ -1,5 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+
+import asyncio
 import hashlib
 import logging
 import random
@@ -266,6 +269,48 @@ async def cohere_rerank(req: dict) -> dict:
     results.sort(key=lambda r: r["relevance_score"], reverse=True)
 
     return {"results": results}
+
+
+# ============================================================================
+# HuggingFace Generate (TGI-compatible) Endpoints
+# ============================================================================
+
+
+@app.post("/generate", response_model=None)
+@with_error_injection
+async def huggingface_generate(req: dict) -> list[dict]:
+    """Mock Hugging Face Text Generation Inference /generate endpoint."""
+    logger.info("Mock HF /generate request received: %s", req)
+
+    await asyncio.sleep(random.uniform(0.05, 0.15))
+
+    input_text = req.get("inputs", "")
+    generated_text = f"Generated response for: {input_text}"
+
+    response = [{"generated_text": generated_text}]
+
+    logger.debug("Mock HF /generate response: %s", response)
+    return response
+
+
+@app.post("/generate_stream", response_model=None)
+@with_error_injection
+async def huggingface_generate_stream(req: dict):
+    """Mock Hugging Face Text Generation Inference /generate_stream endpoint."""
+    logger.info("Mock HF /generate_stream request received: %s", req)
+
+    async def event_stream():
+        input_text = req.get("inputs", "")
+        full_response = f"Streaming response for: {input_text}"
+        tokens = full_response.split()
+
+        for token in tokens:
+            yield f'data: {{"token": {{"text": "{token} "}}}}\n\n'
+            await asyncio.sleep(0.02)
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ============================================================================
