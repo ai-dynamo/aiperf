@@ -30,6 +30,7 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
         """Return endpoint metadata for TGI."""
         return EndpointMetadata(
             endpoint_path="/generate",
+            streaming_path="/generate_stream",
             supports_streaming=True,
             produces_tokens=True,
             tokenizes_input=True,

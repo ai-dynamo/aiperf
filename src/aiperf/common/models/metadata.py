@@ -14,6 +14,10 @@ class EndpointMetadata(AIPerfBaseModel):
     endpoint_path: str | None = Field(
         default=None, description="API path (e.g., /v1/chat/completions)."
     )
+    streaming_path: str | None = Field(
+        default=None,
+        description="Streaming API path if different from the endpoint path (e.g., /generate_stream).",
+    )
     service_kind: str = Field(
         default="openai",
         description="The service kind of the endpoint (used for artifact naming).",

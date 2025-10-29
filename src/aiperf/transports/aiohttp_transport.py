@@ -107,11 +107,18 @@ class AioHttpTransport(BaseTransport):
             from aiperf.common.factories import EndpointFactory
 
             endpoint_metadata = EndpointFactory.get_metadata(endpoint_info.type)
-            if not endpoint_metadata.endpoint_path:
+            endpoint_path = endpoint_metadata.endpoint_path
+            if (
+                self.model_endpoint.endpoint.streaming
+                and endpoint_metadata.streaming_path is not None
+            ):
+                endpoint_path = endpoint_metadata.streaming_path
+            if not endpoint_path:
                 # No endpoint path, just use base URL
                 url = base_url
+
             else:
-                path = endpoint_metadata.endpoint_path.lstrip("/")
+                path = endpoint_path.lstrip("/")
                 # Handle /v1 base URL with v1/ path prefix to avoid duplication
                 if base_url.endswith("/v1") and path.startswith("v1/"):
                     path = path.removeprefix("v1/")
