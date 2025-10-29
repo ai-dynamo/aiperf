@@ -99,6 +99,7 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
     ) -> ParsedResponse | None:
         """Handle token stream (SSE or chunked) responses."""
         chunks = []
+        final_text: str | None = None
         try:
             for packet in response.packets:
                 # Each packet is an SSEField(name='data', value='...')
@@ -106,15 +107,21 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
                     continue
                 try:
                     json_obj = json.loads(packet.value)
-                    if "token" in json_obj and json_obj["token"]:
-                        chunks.append(json_obj["token"]["text"])
-                    elif "generated_text" in json_obj and json_obj["generated_text"]:
-                        chunks.append(json_obj["generated_text"])
+                    generated_text = json_obj.get("generated_text")
+                    if generated_text:
+                        final_text = generated_text
+                        break
+                    token_text = json_obj.get("token", {}).get("text")
+                    if token_text:
+                        chunks.append(token_text)
                 except Exception:
-                    self.debug(lambda: "JSON parse error in packet: {e}")
+                    self.debug(lambda: "JSON parse error in packet")
                     continue
         except Exception:
-            self.debug(lambda: "Error reading stream: {e}")
+            self.debug(lambda: "Error reading stream")
+
+        if final_text is not None:
+            chunks = [final_text]
 
         if not chunks:
             self.debug(lambda: "No chunks collected from stream.")

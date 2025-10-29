@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -17,12 +16,10 @@ from tests.integration.models import AIPerfMockServer
 class TestHuggingFaceGenerateEndpoint:
     """Integration tests for huggingface_generate endpoint."""
 
-    async def _create_input_file(self, lines: list[str]) -> Path:
+    async def _create_input_file(self, lines: list[str], tmp_path: Path) -> Path:
         """Helper to create a temporary input file with given text lines."""
-        tmpdir = tempfile.TemporaryDirectory()
-        input_file = Path(tmpdir.name) / "inputs.jsonl"
+        input_file = tmp_path / "inputs.jsonl"
         input_file.write_text("".join(f'{{"text": "{line}"}}\n' for line in lines))
-        self._tmpdir_ref = tmpdir
         return input_file
 
     async def _run_profile(
@@ -66,20 +63,20 @@ class TestHuggingFaceGenerateEndpoint:
         result = await self._run_profile(cli, aiperf_mock_server, streaming=True)
         assert result.has_streaming_metrics
 
-    async def test_file_input_non_streaming(self, cli, aiperf_mock_server):
+    async def test_file_input_non_streaming(self, cli, aiperf_mock_server, tmp_path):
         """File input non-streaming run."""
         input_file = await self._create_input_file(
-            ["Hello TinyLlama!", "Tell me a joke."]
+            ["Hello TinyLlama!", "Tell me a joke."], tmp_path
         )
         result = await self._run_profile(
             cli, aiperf_mock_server, streaming=False, input_file=input_file
         )
         assert not result.has_streaming_metrics
 
-    async def test_file_input_streaming(self, cli, aiperf_mock_server):
+    async def test_file_input_streaming(self, cli, aiperf_mock_server, tmp_path):
         """File input streaming run."""
         input_file = await self._create_input_file(
-            ["Stream something poetic.", "Give me a haiku."]
+            ["Stream something poetic.", "Give me a haiku."], tmp_path
         )
         result = await self._run_profile(
             cli, aiperf_mock_server, streaming=True, input_file=input_file
