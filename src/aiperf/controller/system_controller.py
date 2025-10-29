@@ -591,7 +591,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         exporter_manager = ExporterManager(
             results=self._profile_results.results,
-            input_config=self.user_config,
+            user_config=self.user_config,
             service_config=self.service_config,
             telemetry_results=self._telemetry_results,
         )

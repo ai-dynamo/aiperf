@@ -40,6 +40,8 @@ from aiperf.common.models.export_models import (
     JsonMetricResult,
     TelemetryExportData,
     TelemetrySummary,
+    TimesliceCollectionExportData,
+    TimesliceData,
 )
 from aiperf.common.models.health_models import (
     CPUTimes,
@@ -186,6 +188,8 @@ __all__ = [
     "Text",
     "TextResponse",
     "TextResponseData",
+    "TimesliceCollectionExportData",
+    "TimesliceData",
     "TransportMetadata",
     "Turn",
     "Usage",

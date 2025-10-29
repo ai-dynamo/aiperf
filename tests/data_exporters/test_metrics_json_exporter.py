@@ -14,7 +14,7 @@ from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import JsonExportData
 from aiperf.exporters.exporter_config import ExporterConfig
-from aiperf.exporters.json_exporter import JsonExporter
+from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
 
 
 @pytest.fixture
@@ -78,9 +78,9 @@ def mock_results(sample_records):
     return MockResults(sample_records)
 
 
-class TestJsonExporter:
+class TestMetricsJsonExporter:
     @pytest.mark.asyncio
-    async def test_json_exporter_creates_expected_json(
+    async def test_metrics_json_exporter_creates_expected_json(
         self, mock_results, mock_user_config
     ):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -94,7 +94,7 @@ class TestJsonExporter:
                 telemetry_results=None,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -118,7 +118,7 @@ class TestJsonExporter:
             # )
 
 
-class TestJsonExporterTelemetry:
+class TestMetricsJsonExporterTelemetry:
     """Test JSON export with telemetry data."""
 
     @pytest.mark.asyncio
@@ -137,7 +137,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=sample_telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -181,7 +181,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=None,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -209,7 +209,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=sample_telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -289,7 +289,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             # Should not raise exception despite metric retrieval failures
             await exporter.export()
 
@@ -348,7 +348,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -385,7 +385,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -444,7 +444,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -527,7 +527,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -591,7 +591,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE

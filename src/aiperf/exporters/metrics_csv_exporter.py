@@ -8,16 +8,15 @@ from collections.abc import Mapping, Sequence
 from decimal import Decimal
 
 from aiperf.common.constants import STAT_KEYS
-from aiperf.common.enums.metric_enums import MetricFlags
-from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models import MetricResult, TelemetryResults
-from aiperf.exporters.display_units_utils import (
-    convert_all_metrics_to_display_units,
-    normalize_endpoint_display,
-)
-from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.common.decorators import implements_protocol
+from aiperf.common.enums.data_exporter_enums import DataExporterType
+from aiperf.common.factories import DataExporterFactory
+from aiperf.common.models import MetricResult
+from aiperf.common.protocols import DataExporterProtocol
+from aiperf.exporters.display_units_utils import normalize_endpoint_display
+from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
-from aiperf.metrics.metric_registry import MetricRegistry
 
 
 def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
@@ -25,28 +24,29 @@ def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
     return [k for k in stat_keys if len(k) >= 2 and k[0] == "p" and k[1:].isdigit()]
 
 
-class BaseCsvExporter(AIPerfLoggerMixin):
-    """Description"""
+@DataExporterFactory.register(DataExporterType.CSV)
+@implements_protocol(DataExporterProtocol)
+class MetricsCsvExporter(MetricsBaseExporter):
+    """Exports records to a CSV file in a legacy, two-section format."""
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self._results = exporter_config.results
-        self._telemetry_results = exporter_config.telemetry_results
-        self._output_directory = exporter_config.user_config.output.artifact_directory
-        self._metric_registry = MetricRegistry
+        super().__init__(exporter_config, **kwargs)
+        self.debug(
+            lambda: f"Initializing MetricsCsvExporter with config: {exporter_config}"
+        )
         self._file_path = exporter_config.user_config.output.profile_export_csv_file
         self._percentile_keys = _percentile_keys_from(STAT_KEYS)
 
-    def _generate_csv_content(
-        self,
-        metric_results: Mapping[str, MetricResult],
-        telemetry_results: TelemetryResults | None = None,
-    ) -> str:
+    def get_export_info(self) -> FileExportInfo:
+        return FileExportInfo(
+            export_type="CSV Export",
+            file_path=self._file_path,
+        )
+
+    def _generate_content(self) -> str:
         """Generate CSV content string from inference and telemetry data.
 
-        Args:
-            records: Mapping of metric tags to MetricResult objects (inference metrics)
-            telemetry_results: Optional GPU telemetry data to include
+        Uses instance data members self._results.records and self._telemetry_results.
 
         Returns:
             str: Complete CSV content with all sections formatted and ready to write
@@ -54,11 +54,10 @@ class BaseCsvExporter(AIPerfLoggerMixin):
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        metric_results = convert_all_metrics_to_display_units(
-            metric_results, self._metric_registry
-        )
+        # Use base class method to prepare metrics
+        prepared_metrics = self._prepare_metrics(self._results.records)
 
-        request_metrics, system_metrics = self._split_metrics(metric_results)
+        request_metrics, system_metrics = self._split_metrics(prepared_metrics)
 
         if request_metrics:
             self._write_request_metrics(writer, request_metrics)
@@ -69,8 +68,8 @@ class BaseCsvExporter(AIPerfLoggerMixin):
             self._write_system_metrics(writer, system_metrics)
 
         # Add telemetry data section if available
-        if telemetry_results:
-            self._write_telemetry_section(writer, telemetry_results)
+        if self._telemetry_results:
+            self._write_telemetry_section(writer)
 
         return buf.getvalue()
 
@@ -110,15 +109,6 @@ class BaseCsvExporter(AIPerfLoggerMixin):
                 row.append(self._format_number(value))
             writer.writerow(row)
 
-    def _should_export(self, metric: MetricResult) -> bool:
-        """Check if a metric should be exported."""
-        metric_class = MetricRegistry.get_class(metric.tag)
-        res = metric_class.missing_flags(
-            MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
-        )
-        self.debug(lambda: f"Metric '{metric.tag}' should be exported: {res}")
-        return res
-
     def _write_system_metrics(
         self,
         writer: csv.writer,
@@ -155,8 +145,10 @@ class BaseCsvExporter(AIPerfLoggerMixin):
 
         return str(value)
 
-    def _write_telemetry_section(self, writer) -> None:
+    def _write_telemetry_section(self, writer: csv.writer) -> None:
         """Write GPU telemetry data section to CSV in structured table format.
+
+        Uses self._telemetry_results instance data member.
 
         Creates a single flat table with all GPU telemetry metrics that's easy to
         parse programmatically for visualization platforms (pandas, Tableau, Excel, etc.).
