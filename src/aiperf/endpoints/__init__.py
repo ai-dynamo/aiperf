@@ -13,6 +13,9 @@ from aiperf.endpoints.cohere_rankings import (
 from aiperf.endpoints.hf_tei_rankings import (
     HFTeiRankingsEndpoint,
 )
+from aiperf.endpoints.huggingface_generate import (
+    TgiEndpoint,
+)
 from aiperf.endpoints.nim_rankings import (
     NIMRankingsEndpoint,
 )
