@@ -111,10 +111,10 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
                     elif "generated_text" in json_obj and json_obj["generated_text"]:
                         chunks.append(json_obj["generated_text"])
                 except Exception:
-                    self.debug(lambda: "JSON parse error in packet")
+                    self.debug(lambda: "JSON parse error in packet: {e}")
                     continue
         except Exception:
-            self.debug(lambda: "Error reading stream")
+            self.debug(lambda: "Error reading stream: {e}")
 
         if not chunks:
             self.debug(lambda: "No chunks collected from stream.")
