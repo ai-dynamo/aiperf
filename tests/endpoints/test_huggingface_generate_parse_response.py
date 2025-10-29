@@ -45,28 +45,30 @@ class TestHuggingFaceGenerateParseResponse:
         assert parsed.data.text == "Hello world"
 
     def test_parse_response_list_of_dicts(self, endpoint):
-        """Parses a list response and uses first generated_text (per current implementation)."""
-        mock_response = create_mock_response(222, [{"generated_text": "Hi!"}])
+        """Parses a list response and concatenates all generated_text entries."""
+        mock_response = create_mock_response(
+            222, [{"generated_text": "Hi"}, {"generated_text": " there!"}]
+        )
         parsed = endpoint.parse_response(mock_response)
 
         assert parsed is not None
         assert parsed.perf_ns == 222
-        assert parsed.data.text == "Hi!"
+        assert parsed.data.text.strip() == "Hi there!"
 
     def test_parse_response_list_multiple_entries(self, endpoint):
-        """Concatenates multiple generated_text entries correctly."""
+        """Handles multiple dicts and concatenates text entries."""
         mock_response = create_mock_response(
             333,
             [
-                {"generated_text": "Text1"},
-                {"generated_text": " Text2"},
+                {"generated_text": "Part1"},
+                {"generated_text": " Part2"},
                 {"generated_text": " End"},
             ],
         )
         parsed = endpoint.parse_response(mock_response)
 
         assert parsed is not None
-        assert parsed.data.text.strip() == "Text1 Text2 End"
+        assert parsed.data.text.strip() == "Part1 Part2 End"
 
     def test_parse_response_empty_list(self, endpoint):
         """Empty list response returns None."""

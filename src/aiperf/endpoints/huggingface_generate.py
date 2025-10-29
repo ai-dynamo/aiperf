@@ -7,7 +7,7 @@ from typing import Any
 
 from aiperf.common.enums import EndpointType
 from aiperf.common.factories import EndpointFactory
-from aiperf.common.models.model_endpoint_info import EndpointMetadata
+from aiperf.common.models.metadata import EndpointMetadata
 from aiperf.common.models.record_models import TextResponseData
 from aiperf.common.protocols import InferenceServerResponse, ParsedResponse
 from aiperf.endpoints.base_endpoint import BaseEndpoint

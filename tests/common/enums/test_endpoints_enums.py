@@ -64,8 +64,8 @@ class TestEndpointType:
             (
                 EndpointType.HUGGINGFACE_GENERATE,
                 "huggingface_generate",
-                True,  # supports /generate_stream
-                True,  # produces token-like outputs
+                True,
+                True,
                 "/generate",
                 "LLM Metrics",
             ),
