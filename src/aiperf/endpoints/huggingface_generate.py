@@ -34,7 +34,7 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             supports_streaming=True,
             produces_tokens=True,
             tokenizes_input=True,
-            metrics_title="TGI Metrics",
+            metrics_title="LLM Metrics",
         )
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
@@ -100,21 +100,24 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
         """Handle token stream (SSE or chunked) responses."""
         chunks = []
         try:
-            for line in response.iter_lines():
-                if not line or not line.strip().startswith(b"data:"):
+            for packet in response.packets:
+                # Each packet is an SSEField(name='data', value='...')
+                if packet.name != "data":
                     continue
                 try:
-                    json_obj = json.loads(line.split(b"data:", 1)[1])
-                    if "token" in json_obj:
+                    json_obj = json.loads(packet.value)
+                    if "token" in json_obj and json_obj["token"]:
                         chunks.append(json_obj["token"]["text"])
-                    elif "generated_text" in json_obj:
+                    elif "generated_text" in json_obj and json_obj["generated_text"]:
                         chunks.append(json_obj["generated_text"])
                 except Exception:
+                    self.debug(lambda: "JSON parse error in packet")
                     continue
         except Exception:
-            self.debug(lambda: "Error reading stream: {e}")
+            self.debug(lambda: "Error reading stream")
 
         if not chunks:
+            self.debug(lambda: "No chunks collected from stream.")
             return None
 
         full_text = "".join(chunks)

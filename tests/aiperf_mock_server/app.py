@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+import asyncio
 import hashlib
 import logging
 import random
@@ -30,7 +32,7 @@ from aiperf_mock_server.utils import (
     with_error_injection,
 )
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 dcgm_fakers: list[DCGMFaker] = []
 logger = logging.getLogger(__name__)
@@ -352,6 +354,39 @@ async def custom_multimodal(req: dict) -> dict:
     except Exception as e:
         logger.error(f"Error in custom_multimodal endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ============================================================================
+# HuggingFace Generate Endpoint
+# ============================================================================
+
+
+@app.post("/generate", response_model=None)
+@with_error_injection
+async def huggingface_generate(req: dict):
+    """Mock HuggingFace TGI /generate endpoint (non-streaming)."""
+    prompt = req.get("inputs") or req.get("prompt") or "Hello!"
+    max_new_tokens = req.get("parameters", {}).get("max_new_tokens", 50)
+
+    fake_text = f"{prompt} [mocked generation, {max_new_tokens} tokens]"
+    return JSONResponse(content={"generated_text": fake_text})
+
+
+@app.post("/generate_stream", response_model=None)
+@with_error_injection
+async def huggingface_generate_stream(req: dict):
+    """Mock HuggingFace TGI /generate_stream endpoint (streaming)."""
+    prompt = req.get("inputs") or req.get("prompt") or "Hello!"
+    max_new_tokens = req.get("parameters", {}).get("max_new_tokens", 10)
+
+    async def event_stream():
+        for i in range(max_new_tokens):
+            yield f'data: {{"token": {{"text": " token_{i}"}}}}\n\n'
+            await asyncio.sleep(0.001)
+        yield f'data: {{"generated_text": "{prompt} [mocked streaming done]"}}\n\n'
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ============================================================================

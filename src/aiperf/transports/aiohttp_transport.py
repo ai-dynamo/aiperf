@@ -123,7 +123,6 @@ class AioHttpTransport(BaseTransport):
                 if base_url.endswith("/v1") and path.startswith("v1/"):
                     path = path.removeprefix("v1/")
                 url = f"{base_url}/{path}"
-
         return url if url.startswith("http") else f"http://{url}"
 
     async def send_request(
