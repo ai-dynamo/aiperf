@@ -17,8 +17,8 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 
 @implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.TGI)
-class TgiEndpoint(BaseEndpoint):
+@EndpointFactory.register(EndpointType.HUGGINGFACE_GENERATE)
+class HuggingFaceGenerateEndpoint(BaseEndpoint):
     """Hugging Face TGI (Text Generation Inference) endpoint.
 
     Supports both non-streaming (/ or /generate) and streaming (/generate_stream)
