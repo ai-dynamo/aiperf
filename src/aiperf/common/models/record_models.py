@@ -20,6 +20,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import NANOS_PER_SECOND, STAT_KEYS
 from aiperf.common.enums import CreditPhase, SSEFieldType
 from aiperf.common.enums.metric_enums import MetricValueTypeT
+from aiperf.common.exceptions import InvalidInferenceResultError
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
@@ -474,6 +475,26 @@ class RequestRecord(AIPerfBaseModel):
             and len(self.responses) > 0
             and all(0 < response.perf_ns < sys.maxsize for response in self.responses)
         )
+
+    def create_error_from_invalid(self) -> None:
+        """Convert any invalid request records to error records for combined processing."""
+        if not self.valid and not self.has_error:
+            _logger.debug(
+                lambda: f"Converting invalid request record to error record: {self}"
+            )
+            err = InvalidInferenceResultError("Invalid inference result")
+            if len(self.responses) == 0:
+                err.add_note("No responses were received")
+            if self.start_perf_ns <= 0 or self.start_perf_ns >= sys.maxsize:
+                err.add_note(
+                    f"Start perf ns timestamp is invalid: {self.start_perf_ns}"
+                )
+            for i, response in enumerate(self.responses):
+                if response.perf_ns <= 0 or response.perf_ns >= sys.maxsize:
+                    err.add_note(
+                        f"Response {i} perf ns timestamp is invalid: {response.perf_ns}"
+                    )
+            self.error = ErrorDetails.from_exception(err)
 
     @property
     def time_to_first_response_ns(self) -> int | None:
