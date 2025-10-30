@@ -9,7 +9,7 @@ from aiperf.common.models import ErrorDetails, RequestRecord
 from tests.records.conftest import create_invalid_record
 
 
-def create_request_record(has_error=False, is_invalid=False, model_name="test-model"):
+def create_request_record(has_error=False, model_name="test-model"):
     """Helper to create request records with various states."""
     record = RequestRecord(conversation_id="cid", turn_index=0, model_name=model_name)
 
@@ -17,8 +17,6 @@ def create_request_record(has_error=False, is_invalid=False, model_name="test-mo
         record.error = ErrorDetails(
             code=500, message="Server error", type="ServerError"
         )
-    if is_invalid:
-        record._valid = False
 
     return record
 
@@ -109,7 +107,7 @@ async def test_error_records_compute_input_tokens(
     if record_type == "error":
         record = create_request_record(has_error=True)
     elif record_type == "invalid":
-        record = create_request_record(is_invalid=True)
+        record = create_invalid_record(no_responses=True)
     else:  # processing_exception
         record = create_request_record()
 
