@@ -232,6 +232,7 @@ class TestAIPerfTextualAppProgressHandlers:
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
+        app._has_result_data = True
         mock_section = Mock()
 
         warmup_stats = Mock()
@@ -254,6 +255,7 @@ class TestAIPerfTextualAppProgressHandlers:
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
+        app._has_result_data = True
         mock_section = Mock()
 
         profiling_stats = Mock()
