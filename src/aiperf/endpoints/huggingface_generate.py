@@ -103,7 +103,7 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
 
             json_obj = response.get_json()
             if not json_obj:
-                self.debug(lambda: "Empty or invalid streaming JSON response.")
+                self.debug("Empty or invalid streaming JSON response.")
                 return None
 
             token_obj = json_obj.get("token")
