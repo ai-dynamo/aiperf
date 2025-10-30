@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-FROM python:3.12-slim AS base
+FROM python:3.12-slim-bookworm AS base
 
 ENV USERNAME=appuser
 ENV APP_NAME=aiperf
@@ -11,6 +11,15 @@ RUN groupadd -r $USERNAME \
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Create virtual environment
+RUN mkdir /opt/$APP_NAME \
+    && uv venv /opt/$APP_NAME/venv --python 3.12 \
+    && chown -R $USERNAME:$USERNAME /opt/$APP_NAME
+
+# Activate virtual environment
+ENV VIRTUAL_ENV=/opt/$APP_NAME/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 #######################################
 ########## Local Development ##########
@@ -54,42 +63,57 @@ RUN mkdir -p /home/$USERNAME/.cache/
 ENTRYPOINT ["/bin/bash"]
 
 ############################################
+############ Wheel Builder #################
+############################################
+FROM base AS wheel-builder
+
+WORKDIR /workspace
+
+# Copy the entire application
+COPY . /workspace
+
+# Build the wheel
+RUN uv build --wheel --out-dir /dist
+
+############################################
 ############# Env Builder ##################
 ############################################
 FROM base AS env-builder
 
-# Create virtual environment
-RUN mkdir /opt/$APP_NAME \
-    && uv venv /opt/$APP_NAME/venv --python 3.12 \
-    && chown -R $USERNAME:$USERNAME /opt/$APP_NAME
-
-# Activate virtual environment
-ENV VIRTUAL_ENV=/opt/$APP_NAME/venv
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
-
-### INSTALLATION ###
-
-# Copy pyproject first for better layer caching
-COPY pyproject.toml .
+WORKDIR /workspace
 
 # Install only the dependencies using uv
+COPY pyproject.toml .
 RUN uv sync --active --no-install-project
 
 # Copy the rest of the application
-COPY . .
+COPY --from=wheel-builder /dist /dist
+RUN uv pip install /dist/aiperf-*.whl \
+    && rm -rf /dist /workspace/pyproject.toml
 
-# Install the project
-RUN uv pip install --no-deps .
+# Create directories for the nvs user (UID 1000 in NVIDIA distroless)
+RUN mkdir -p /app /app/artifacts /app/.cache && \
+    chown -R 1000:1000 /app && \
+    chmod -R 755 /app
+
 
 ############################################
 ############# Final Build ##################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.12-v3.4.17-dev AS final
+FROM nvcr.io/nvidia/distroless/python:3.12-v3.4.17-dev AS runtime
 
-COPY --from=env-builder /opt/aiperf/venv /opt/aiperf/venv
+# Copy bash with executable permissions preserved using --chmod
+COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
+
+COPY --from=env-builder --chown=1000:1000 /opt/aiperf/venv /opt/aiperf/venv
+
+# Copy the app directory for nvs user
+COPY --from=env-builder --chown=1000:1000 /app /app
 
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
-    PATH="/opt/aiperf/venv/bin:${PATH}"
+    PATH="/opt/aiperf/venv/bin:${PATH}" \
+    HOME=/app
+WORKDIR /app
 
-# Command to run the application
-ENTRYPOINT ["aiperf"]
+# Set bash as entrypoint
+ENTRYPOINT ["/bin/bash"]
