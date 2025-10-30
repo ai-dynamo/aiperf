@@ -734,7 +734,7 @@ class ParsedResponseRecord(AIPerfBaseModel):
 
         Checks:
         - Request has no errors
-        - Has at least one response
+        - Has at least one content response
         - Start time is before the end time
         - Response timestamps are within valid ranges
 
@@ -743,7 +743,7 @@ class ParsedResponseRecord(AIPerfBaseModel):
         """
         return (
             not self.has_error
-            and len(self.responses) > 0
+            and len(self.content_responses) > 0
             and 0 <= self.start_perf_ns < self.end_perf_ns < sys.maxsize
             and all(0 < response.perf_ns < sys.maxsize for response in self.responses)
         )

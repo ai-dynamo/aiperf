@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -37,12 +38,11 @@ class RequestLatencyMetric(BaseRecordMetric[int]):
         request_ts: int = record.start_perf_ns
 
         # Use content_responses to get last response with actual content
-        content_responses = record.content_responses
-        final_response_ts = (
-            content_responses[-1].perf_ns
-            if content_responses
-            else record.responses[-1].perf_ns  # Fallback to last response
-        )
+        if not record.content_responses:
+            raise NoMetricValue(
+                "Request latency requires at least 1 non-empty content response."
+            )
+        final_response_ts = record.content_responses[-1].perf_ns
 
         if final_response_ts < request_ts:
             raise ValueError("Final response timestamp is less than request timestamp.")
