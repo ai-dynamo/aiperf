@@ -3,12 +3,12 @@
 
 import base64
 import io
-import random
 
 import numpy as np
 import pytest
 import soundfile as sf
 
+from aiperf.common import random_generator as rng
 from aiperf.common.config import AudioConfig, AudioLengthConfig
 from aiperf.common.enums import AudioFormat
 from aiperf.common.exceptions import ConfigurationError
@@ -86,20 +86,22 @@ def test_negative_length_raises_error(base_config):
     ],
 )
 def test_generator_deterministic(mean, stddev, sampling_rate, bit_depth, base_config):
-    np.random.seed(123)
-    random.seed(123)
-
     base_config.length.mean = mean
     base_config.length.stddev = stddev
     base_config.sample_rates = [sampling_rate]
     base_config.depths = [bit_depth]
 
-    audio_generator = AudioGenerator(base_config)
-    data_uri1 = audio_generator.generate()
+    # First generation with seed 123
+    rng.reset()
+    rng.init(123)
+    audio_generator1 = AudioGenerator(base_config)
+    data_uri1 = audio_generator1.generate()
 
-    np.random.seed(123)
-    random.seed(123)
-    data_uri2 = audio_generator.generate()
+    # Second generation with same seed 123
+    rng.reset()
+    rng.init(123)
+    audio_generator2 = AudioGenerator(base_config)
+    data_uri2 = audio_generator2.generate()
 
     # Compare the actual audio data
     audio_data1, _ = decode_audio(data_uri1)
@@ -169,14 +171,29 @@ def test_audio_parameters(sampling_rate_khz, bit_depth, base_config):
     assert sample_rate == sampling_rate_khz * 1000, "unexpected sampling rate"
 
 
-def test_mp3_unsupported_sampling_rate(base_config):
-    base_config.sample_rates = [96]  # 96kHz is not supported for MP3
-    base_config.format = AudioFormat.MP3
+@pytest.mark.parametrize(
+    "config_changes,expected_error",
+    [
+        ({"sample_rates": [96], "format": AudioFormat.MP3}, "MP3 format only supports"),
+        ({"num_channels": 3}, r"mono \(1\) and stereo \(2\)"),
+        (
+            {"length": {"mean": 0.005, "stddev": 0.0}},
+            "must be greater than 0.01 seconds",
+        ),
+        ({"format": "UNSUPPORTED"}, "Unsupported audio format"),
+    ],
+)
+def test_audio_validation_errors(base_config, config_changes, expected_error):
+    """Test that invalid configurations raise appropriate ConfigurationErrors."""
+    # Apply configuration changes
+    for key, value in config_changes.items():
+        if key == "length":
+            base_config.length.mean = value["mean"]
+            base_config.length.stddev = value["stddev"]
+        else:
+            setattr(base_config, key, value)
 
-    with pytest.raises(ConfigurationError) as exc_info:
-        audio_generator = AudioGenerator(base_config)
+    audio_generator = AudioGenerator(base_config)
+
+    with pytest.raises(ConfigurationError, match=expected_error):
         audio_generator.generate()
-
-        assert "MP3 format only supports" in str(exc_info.value), (
-            "error message should mention supported rates"
-        )

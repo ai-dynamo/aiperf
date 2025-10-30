@@ -101,7 +101,6 @@ markers = [
     "performance: marks tests as performance tests (deselected by default)",
     "ffmpeg: marks tests that require ffmpeg to be installed (deselected by default)",
     "stress: marks tests as stress tests that generate high load (deselected by default)",
-    "macos: marks tests as macOS-specific tests (deselected by default)",
 ]
 # Better console output
 console_output_style = "progress"
@@ -110,7 +109,7 @@ verbosity_assertions = 2
 # Deselect integration, performance, ffmpeg, and stress tests by default
 # To run them: pytest -m integration, pytest -m performance, pytest -m ffmpeg, pytest -m stress
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not integration and not performance and not ffmpeg and not stress and not macos'"
+addopts = "--strict-markers -m 'not integration and not performance and not ffmpeg and not stress'"
 
 [tool.codespell]
-skip = "*.pyc,*build*,tests/transports/test_aiohttp_sse.py"
+skip = "*.pyc,*build*,tests/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json"

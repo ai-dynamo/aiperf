@@ -429,9 +429,13 @@ class CustomDatasetFactory(
     def create_instance(  # type: ignore[override]
         cls,
         class_type: CustomDatasetType | str,
+        filename: str,
+        user_config: "UserConfig",
         **kwargs,
     ) -> "CustomDatasetLoaderProtocol":
-        return super().create_instance(class_type, **kwargs)
+        return super().create_instance(
+            class_type, filename=filename, user_config=user_config, **kwargs
+        )
 
 
 class DataExporterFactory(AIPerfFactory[DataExporterType, "DataExporterProtocol"]):
@@ -463,11 +467,10 @@ class DatasetSamplingStrategyFactory(
         cls,
         class_type: DatasetSamplingStrategy | str,
         conversation_ids: list[str],
-        seed: int | None = None,
         **kwargs,
     ) -> "DatasetSamplingStrategyProtocol":
         return super().create_instance(
-            class_type, conversation_ids=conversation_ids, seed=seed, **kwargs
+            class_type, conversation_ids=conversation_ids, **kwargs
         )
 
 

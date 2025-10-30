@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
-import random
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from aiperf.common import random_generator as rng
 from aiperf.common.config import PromptConfig
 from aiperf.common.exceptions import (
     ConfigurationError,
@@ -13,7 +13,6 @@ from aiperf.common.exceptions import (
     NotInitializedError,
 )
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.dataset import utils
 from aiperf.dataset.generator.base import BaseGenerator
 
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
@@ -37,6 +36,12 @@ class PromptGenerator(BaseGenerator):
         self._tokenized_corpus = None
         self._corpus_size = 0
         self._prefix_prompts: list[str] = []
+
+        # Separate RNGs for independent concerns
+        self._length_rng = rng.derive("dataset.prompt.length")
+        self._corpus_rng = rng.derive("dataset.prompt.corpus")
+        self._prefix_rng = rng.derive("dataset.prompt.prefix")
+
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
 
         # Cached prompts: block ID -> list of tokens
@@ -52,24 +57,53 @@ class PromptGenerator(BaseGenerator):
             self._create_prefix_prompt_pool()
 
     def _initialize_corpus(self) -> None:
-        """Load and tokenize the corpus once, storing it for reuse."""
+        """Load and tokenize the corpus once, storing it for reuse.
+
+        Uses character-based chunking for reproducibility across different machines.
+        The chunk size is fixed (not CPU-dependent) to ensure the same tokenization
+        boundaries regardless of hardware, which guarantees identical prompts with
+        the same random seed across all environments.
+        """
         corpus_path = Path(__file__).parent / DEFAULT_CORPUS_FILE
 
         with open(corpus_path) as f:
             lines = f.readlines()
 
+        # Pre-filter empty lines for efficiency
+        non_empty_lines = [line.strip() for line in lines if line.strip()]
+
         def tokenize_chunk(chunk):
-            cleaned_text = " ".join(line.strip() for line in chunk if line.strip())
-            tokens = self.tokenizer.encode(cleaned_text)
+            """Tokenize a chunk of pre-cleaned lines."""
+            text = " ".join(chunk)
+            tokens = self.tokenizer.encode(text)
             return tokens
 
-        num_threads = os.cpu_count()
-        if num_threads is None:
-            num_threads = 4
+        # Character-based chunking: Fixed chunk size ensures reproducibility
+        # across machines with different CPU counts. Creates ~486 chunks for
+        # optimal thread utilization (~294 lines per chunk).
+        MAX_CHARS_PER_CHUNK = 10_000
 
-        # Ensure chunk_size is at least 1 to avoid division by zero in range()
-        chunk_size = max(1, len(lines) // num_threads)
-        chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
+        # Build chunks based on character count (deterministic chunking)
+        chunks = []
+        buffer = []
+        char_count = 0
+
+        for line in non_empty_lines:
+            buffer.append(line)
+            char_count += len(line)
+
+            if char_count >= MAX_CHARS_PER_CHUNK:
+                chunks.append(buffer)
+                buffer = []
+                char_count = 0
+
+        # Add remaining lines as final chunk
+        if buffer:
+            chunks.append(buffer)
+
+        # Use reasonable thread count for performance (up to 8 threads is efficient)
+        # Thread count doesn't affect reproducibility since chunks are deterministic
+        num_threads = min(os.cpu_count() or 4, 8)
 
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             tokenized_chunks = list(executor.map(tokenize_chunk, chunks))
@@ -78,7 +112,10 @@ class PromptGenerator(BaseGenerator):
             token for chunk in tokenized_chunks for token in chunk
         ]
         self._corpus_size = len(self._tokenized_corpus)
-        self.debug(lambda: f"Initialized corpus with {self._corpus_size} tokens")
+        self.debug(
+            lambda: f"Initialized corpus with {self._corpus_size} tokens "
+            f"from {len(chunks)} chunks using {num_threads} threads"
+        )
 
     def _create_prefix_prompt_pool(self) -> None:
         """Generate a pool of prefix prompts to sample from."""
@@ -114,7 +151,7 @@ class PromptGenerator(BaseGenerator):
                 mean, hash_ids, self.config.input_tokens.block_size
             )
 
-        num_tokens = utils.sample_positive_normal_integer(mean, stddev)
+        num_tokens = self._length_rng.sample_positive_normal_integer(mean, stddev)
         return self._generate_prompt(num_tokens)
 
     def _generate_prompt(self, num_tokens: int) -> str:
@@ -206,7 +243,7 @@ class PromptGenerator(BaseGenerator):
                 f"Returning a prompt of length {self._corpus_size}."
             )
 
-        start_idx = random.randrange(self._corpus_size)
+        start_idx = self._corpus_rng.randrange(self._corpus_size)
 
         end_idx = start_idx + num_tokens
         prompt_tokens = self._tokenized_corpus[start_idx:end_idx]
@@ -231,4 +268,4 @@ class PromptGenerator(BaseGenerator):
                 "Attempted to sample a prefix prompt but the prefix prompts pool is empty. "
                 "Please ensure that the prefix prompts pool is initialized."
             )
-        return random.choice(self._prefix_prompts)
+        return self._prefix_rng.choice(self._prefix_prompts)

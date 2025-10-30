@@ -1,0 +1,564 @@
+{
+  "data": [
+    {
+      "session_id": "session_000000",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " ever but slenderly known himself GONERIL The best and soundest of his time hath been but rash then must we look from his age to receive not alone the imperfections of longengrafted condition but therewithal the unruly waywardness that infirm and choleric years bring with them REGAN Such unconstant starts are we like to have from him as this of Kents banishment GONERIL There is further compliment of leavetaking between France and him Pray you let us hit together if our father carry authority with such disposition as"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "UklGRiIFAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0Yf4EAADuBmytfUooxVLyMw0BFjAXSBgAJcuzLT3wtqD3OhbI4I7r2/0/3brgqwM3FVfZQxQgHv75zPGfCogHRAEpFBAkyzBD6WAzGfWo6HpNmFEyIEcGsQEMLRRLfcciPbPgXBasGK7TNwoSA+zHk/uBNHUHVx2HICwp1wyHNcf91QdaAAs5Ke4wO3nxQuToDfIXLlDt1gEVHemx48r6/srF88oQKQZd0qYR3vzP84gPzBqV2A4jOQpsS8H9OuT2BWjsYEIf/0Uicfx7HNTSHg92GC/Mvgub8+r2iRlm3gEtrMJJ9UsPhz1+9L1phvhoFCDxShILOCz4HPys5026+O/o1/4kLwJUBcvsnrVb7XIvRSLu5vbuvwSDFsIapfZOyvbwgCWu/ycbxQd/+x4Atgt89QUo4Cks69YFbuoJCYb4vUGw5ZXi6u4wRvr139uj6GfCLP/pXHrdjN/aBqW8B+8oKysS/VE7Ggvp8BTXJhwrjuDJIYdDRBKq3wQI4vueJLgM298LrFIBW/SQEuTom71NPn706tZpD1FNNN6QDjj0PxJe64Et+rmsAi3509FUEbudcup39QGkABNiyBg6mgDK2g8N2R498QLtDVlK9e0Pl7zk+iDWVd30Cc81suBQ+Dv8Vg0JN+HknvxrEH3lsATvuMC+4tbsLjkY1xnIHTAieTVLDrgtgj2PEF4e0kaBQTsGBwsBzbUAQAiiIl0syhVj1LPBe6+fA/kMCUZB3bb0NxgmGxFKs/eeN4LffDntJY4cywVz5/AN9Awpz8XuZ/Tq+mH3ienorPfkM9TDQFXFbOyYFmnsS8tOwwLye9eQN4McTdvi2FwhizNsPMPe4SqpNNME8tqZGY/fSdyU+/0YAfbq8nFMuvNWK9HcWgPOi0EFpbgAGvYKbysDCMJLsfYAxaobAxisRYwRZvMtOBsWBx1jEOP/9NguBtkmfKyqFE37h0UPxWYj59xeO7IpweyU8DAVc9qvJU72rORc46bgm5X5LjogHxzErYz84+ZUCEoV+gZs2+0OBiI3KrH02i2XPqLqlc8a3jcAuksdBdMORtk6EE8qxBWxPYUVaCweAnDYqeTcEz0cr/lj4TgpFMQ2+do0/g+I3X3lSgjJNLj6Kip1NJEr/Q2YEWgBpQB++SoF6zDZ6TTskUJAy3vsDelG1MoqdAmx/m00pOw8Aqz7hDkMq1zKYBYhxzMBhAhv3T0iygTXGL8Fp/WLFHbZYh4wQhjq9hr4/M0HA8imyYXV2BcgHu3g0OzLcY/S/d563fgwPsYb49L5XdmL7dkUvdRK7fsAivYX0lIx1OcV+9EdUPhyKZLkj/opQWfUCBSJHMchEgsp7qkSXxVe2EEbzhLj8Z3koy1hKVzxcNcl4iD+uvy1N6L6eugMMezVnevy2oHLGhS3Gj0N8OWqPBz/EeCHAfjfzyvYHKVIEIiV6XnVUeVAMxS1eFs/6rUIX5lO4NT4c+DH79FItw7oO3wuE9No4a0dQSrrCnH8VvkcHtPzy/GDCZzQ8MMeFXQlAYBPLgAD5ytfMTzxCwjjCw/3KviwKaoeKsWZufUHjxkVDoz3xvtmCeDwWexn5F73L+VdCoIKP0p/q0e/SCXjLE3EydsqEVHPze5kF1vT9BzF5a4vMuFz9nMA2AIl/jbUBTDDONPq1BH4CknA0uAVFYH/LeNw17IeTji3EafU50Ki4/wdTNc=",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-20b",
+          "stream": false,
+          "max_completion_tokens": 57
+        }
+      ]
+    },
+    {
+      "session_id": "session_000001",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " it to my wife and fetch your money ANGELO Come come you know I gave it you even now Either send the chain or send by me some token ANTIPHOLUS OF EPHESUS Fie now you run this humour out of breath Come wheres the chain I pray you let me see it MERCHANT My business cannot brook this dalliance Good sir say wheer youll answer me or no If not Ill leave him to the officer ANTIPHOLUS OF EPHESUS I answer you What should"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 42
+        }
+      ]
+    },
+    {
+      "session_id": "session_000002",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " the judges clerk Would he were gelt that had it for my part Since you do take it love so much at heart PORTIA A quarrel ho already Whats the matter GRATIANO About a hoop of gold a paltry ring That she did give me whose posy was For all the world like cutlers poetry Upon a knife Love me and leave me not NERISSA What talk you of the posy or the value You swore to me when I did give it you That you would wear"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "UklGRooFAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YWYFAABTHZnIdfWW66HyowQNFBcXxClf6Nr7LkIM9+UCcfwm96z99Pkj078ALCinBavd9sEO/DbfONyGDvESRRhM2A3Wfd/sKJH0m/5x7Ej3/eoQJ6XiDTTd5YDGr+F+2fITtO35M4oUGyQsLfUGbkRL3mYwlQ4J+rkUs+ZXAREmIAhtJ+cVl/zpzOqZTdRzGwsELA0OIB5Zo8lfPOcSEws2IQ7DjiYx17sCwwjQBSi5JxtfHW4INxsJ7JTi9i+J5ooOalPULgR6zATU0bi1EzAQGmDZB98Ywk73NPlkzQI1+diMwFT/mfK+5KYIEy0V6unhetaY/STrXOF3PWtRgtG4SPwPfA/MKHz2zCbWHS0GsOwlBjnjGwkSFUUMcOT+F7Ik7hVz+69dZNQC78c7bSEMD4XK5SW0BL/w4UQI4HPuP+dcB0THKCb5DycdRRikSCIVnvAZ8dbeJw/Rzt76VPNQGdIOLUXlsxw/T/Y93KXyshWP/q0yEfoo+SEKIeKUKentC0ACHsbzZrNUIUQUsfKb6TwePNJRDLU2APPp6vAenNfxDhrrQfUe/0j6d9qrCFkY+wBw2pj7Gv0l/8kLXzDdBkjVh/NbIc4FneEI9fYADQPa8h/HszWnz63shRCmKGwYJy/iRSI7Y+D5Oxz5vBCtD1b9ty8mJSQiIrO42mD6FuKNClkRZuAfv2QcZyKwCXrY9QcYwokF7yQpB5nj4hD0DucFSxH2+6fupNhKKdfr9+Ia92Iv+cP2HAb3nkTbsk2439+PNNAHwEEpEuwGM9ztTE8zovXRFRQaCB9lGagMxTEy4NAwsQAZH78kwwVSD37UbfRyCz41PDjm5+wDmi1eGX+1FgyqHcgy5wZ7CBKzvZn1I3n9cg4ID1pVWOF8N/NYXRHVI27Hvue63f4HOhN6IxTgZOQr8W/rMzNH2/It1Ao9yXftsO7X5KkBihx+2/YojQk5BHocDONBDo3gNO6LLUwJ4hzn3vI01e6eJCjPPvqjBZ00Efu+G70dvgDC5am65h0754b2Kdfb/hgYuwLLLsZyuMwK8Ck4nef06h0DHwg0ykrpmf2GFdEROi7q60rRUQvc9REa/PxWLqX3q/5c74kKvPcsPkX5Q+kV9QHrJv4w7Egs3Q0gKQQ2UDSf8zbMFuBaF0UxsSbr8ij0ARUl+rkl9CpH2nz1FA0z8fEh7Nby6D74S+Su6ZH6NgvP92TukvV++DEDhvZl/6k3uA9V0EsV9OV83bVkEd5hAZX9Vv7+Su0UEv1mO/ruXjG1Kq0whifA5tYWvPAd1L4BOAPX0ZXEdw6u7fsF6isiMoXWyeRVLJcFa/XezgzMmAoDE0fk5AgvGUL9VzyhBeLOiQdT/WgODdtxwqU2XbOiKiDGAd0rODz2Jw1WEYElWLNkHRdUVQEl8pvmjy2FF/ILUhYIGtbx3BS+D6QXxRrjNM83tfJOy5UzLxbpLe/BgkLiMEPspOPzGf/eza7UE6oF3+hH1OIAZAqHak3gZC2eN7MBIcNFCAnRiwLq/SkDvzBm+0g+0NbEHFsQr+gIFYsd3uotSz4oSfxZWBXagBu0+R1VycIm9iv5qdhN99U0ae4KvXA5KbiS9YF8ASlTyYPuyQPt+MIbEyEKIqP4nOd78EAM3D62Bt0kCu+F+Lc+M8e7BCH8khCLFUPZCyNVFXX0aipQyjo93wWN3d8QeAMgEzTe6+cmLGkvcLOt289MEvaRPuU1atgU6iIPnQG3M0zaFQwX5VSggzZQInv6wTZnH2DiT6RTJrRtWDpn+m8Rsgx6+lsWMPxNC2w2peRXyu7uSANA/uTZbgUY/WUcreh41CgFhS9/Ir8AnfPV1Q==",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-20b",
+          "stream": false,
+          "max_completion_tokens": 50
+        }
+      ]
+    },
+    {
+      "session_id": "session_000003",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " his wife Exeunt SCENE V A Room in Olivias House Enter Maria and Clown MARIA Nay either tell me where thou hast been or I will not open my lips so wide as a bristle may enter in way of thy excuse my lady will hang thee for thy absenceCLOWN Let her hang me he that is well hanged in this world needs to fear no colours MARIA Make that good CLOWN He shall see none to fear MARIA A good lenten answer I can tell thee where that saying was born of I fear no colours CLOWN Where"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "UklGRnoFAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YVYFAABvLXL5z8t4Ky4HiRnIP/fXSDtBK5NVt/JK+rjo8hK37LwIOASt5/gPXr9RuUv0fDGK0srZ2u0f55MVxU3x0Nfoqjjq8p7cK+1V45zrGg+i03kufBT6tAjJLvs3+94TXw/+JSj4TPTKFFIIaxMDDaOhKO/8/7LCEfGo528xWBb+CXcf4A51GBEDkQdCMkwDB/ye01vn88lF0tol4bP98sH7dfycGwLbPxLw0viN9z/Z/IqiQTY9/v76LgB4FYLBWyCT7fnoeSKXDCUQCefZzSLUlLx50/MMXgzmCQPtqfou9nFCBt1yNb9Kvt2jA7zPQfGY1Lq9t9PeBarsAR1dG3rwsPLr3TYgjRKP8QQP9AfsGM4D9Pv0AR/Rdf6FAsP/dxlRC4j8Q/zg1T/gubeeEQsZgt3r2fb5rwpYB27S49qI0PvR/hgzKO3jVs4774cPdgH616rcBgtj5t3VcAvT8/flj/fSREYVsRoLQvv45RCbCiFDQdSuGtUAeRDaEOgeyAhfLVLnGsgNJm/iQ8fh8d716SHfIJlD7z+z0Q3TrOcI4kkYzNtv3ULR9OzN8TTSf7Vl41qvshCg8bvnhDq60xhS0s5Jw/DPqRFq/yjwkbM3ICrCFvSF1TDxxOPnGpr88fMj2S7lrdDKK4L7k//YAHAmjzlz6K0qvuLU78gD1yxm3jTU4tyrGwvwYiEZHmHcTdzP5SsLSiZg7REzH+RfEi75HQkV0znYSUcXPrPn2+3cETQLU/C6ASEiov5KC0P4fvDxJcjroQy38I7lMQ95BPPkZBUPMgQcDeKz+5ztJTz8IgRIrfpm/5cryO3C8GG/Kfie9DoFTt75Pgfw2BO43E3e6gqkLTEAg/Oy+GnwoGQKKbDwxOTsUoEBbOoNLTvA/hWPEyETVQLDzdrxYB1S7mGR/qRdCGjXx2mEIxAoGjaH8ybo0PGC4p4yCA8m9AYsnfkMyFAlFuJoF44NnhCjBCQXUNlTynP9EgP7MKkmW9zpHxnbjRAsWzAEbs5X7xYRXSVAHtnbU/1A12TXc8VnCL7Jkeke3DPl2BPV91D8QvmZNlL0tNgC67H3yvziDgXhhgh/GwjcFz/+BrUO+NLQ0Zr059Dc4z/z89FxE8Tr1e4+BITOSSeG3JFI5KQcAMzPRBi5A0kkcyE9M30BtigkENf3WbVE8+7eHRR9x3X1o6lUJoU1KPDy7NIhKP6PAx7g1GfrFefiGgFA3PgdK7eyFbYEWM/TFzEplTI+HM0JgZXf/2pEDht1ucgEBv9w8s4V1txc4/EHfDCUDW0s+53V+NM2C/Qpx0z5qTnlKvn7ND4lEAboMhRyDBn7ayAPMCTk9/cuGKD90xqACVhXZ+1h/HwOyQ8e7+oNPoZo6BDcYju6DcwL3uRR3si5wA5X7vPp5iS3BqzjA90KIDomllgs0Tv+0wDUACHEGBn+GnDbWTsc/MMvIt4q+mgdtu1kRuHns1pRBkLxwBJQDZkU/LhXr17iSeTEBpwht/Xa8KX+wO3CHVD5UdSL+Dbg1iinHWrhfP9EOsoUOOre+UjMnDEL4L0NCNo9Kl0TqNOU2ukFvTsoKWAAeQDC8fPg3DpiAdAFSzKyRwDPcb44G2X+OPZP/zsJwjZgDCHqVNiL4rcm9edE8G4zAs4wEhMGKRcSUZgdnvll9T4QmdlC7uQtGebO+YMTb1jP/GgIwC0pxawF2urBGugY6uzFQOPyVToXx30WQ/Rg4wUQlOcS1hMK38Iz6Eib4wYpSIbxejedTP4JnugO+SkeXRKG/24Y5PkO/agbRChJJQwEywN1DLTGSfcjGhVOt3GsD6xU",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-20b",
+          "stream": false,
+          "max_completion_tokens": 57
+        }
+      ]
+    },
+    {
+      "session_id": "session_000004",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " Officers Soldiers c EDMUND Some officers take them away good guard Until their greater pleasures first be known That are to censure them CORDELIA We are not the first Who with best meaning have incurrd the worst For thee oppressed King I am cast down Myself could else outfrown false fortunes frown Shall we not see these daughters and these sisters LEAR No no no no Come lets away to prison"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "UklGRuIEAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0Yb4EAACbztPl5iAO+61awObgKzrfW9oz2kgOJB9DStUXd9ll+Jziy9v03BvsIS9Y/FzEzv169sgs3BsIye4ivxHFLfQG/iEpBEQCDyPEDejtTgM5+VxQhRua79MRVxBy6GnwiejdxIcyJBMa3KXJDAbwGgj4l///ACPdSvt0N/ELRvZn8N3M3RWAAREoyd7r7sT/bgM1PyIdfex+EqkBl/McSSlsTwL+AVXydD2UDnbes/eiNQf7UszP6l+m7PnB5flPDv9E4v9yswZ/9pfbLNtArwXNI8Kl9144+p5EB2028gK6JXUM2AWh7vMoiuO8Cvz8WGH+/nkIKz9V7QbnJxxIMVvvwOka7suzD+Ds/xL0KwIJ+/xK4LYmF+Jwa/IywXz19cRwPIrqUxwSvswbyBR6PmEA+hTABUkXxDBX5SYkhBVCB2AUZgSK7C37iu8U4BbsftauRhLmmgoIy8Tg1RAo+GnrcPTmBdhHODZI2Lr1Wif2wYbebU+y9lX++xl48YP9OAPUCvgFodjG3wAeGe1BLqInQA4FV+bC4hxH1Sj86eYuuAj7TfSLHjQCWv85JvswOCw0z5T6tQmlIisR6+3qPXnwldiw54UM1u8v6ZIOKvNI4qESsRsH96sIdBj1R+383x4crlr6VToNAwUHH/bk8JK77j3UGU0jhuINI+UOD/7NKu4XItgLBwBIngXLJhQP5wpeICP6ICbNGkMOoftuJI4Iay1e0ovpTbZ0Acj7WfAw8aAGHC8SCcfzqAEzvawDZe4rDcP6uuBdEEEi0hI/+EzrDuN1+DLgNiip8dvvvTEtMcO62h4Uyybjggpq+ghmB78M/TYDIfKU/r/TMwia++8VMQziGNnerfdENbz6T//MC68FPATTGloPBt046qhwaPMHDzwAiPsTCc4hHfeZ6kLv8UC6DBre1iZaBmL1pRXZDz4UgheVND3+xRPK/HciW9Y87KHIigjsyRpZbhn7FngCfdEMMYsTcw1P7Jn1ykUqClv48CZiFzsXxf3K8lUI6zKHED6SHxufIeP6gPEGGQhPfzv7GKKtPPNpEZ/6GhWAFwTQWNaGwGMDQhpr5dvqExyqNy3KtCsCCCYDzwXYMkjoxO2xW7sBPfPc6wY/3Oln1nwfAMc8BN3fxTtaztjfIegNtCzh/DBd5GsgGAK1FoHt1yyVFIn0NytuMwUVRBRR//oIVQHB2GQY/duR854SH/fWvakWzfSL9NMBJdU8AFrlCfKa8wvk/NDcGnvIVjPa60o02OycEyYAlh3nHHvyBRm8DJX6ePY48mfUQCbs8CH9d+emgVjGx9oQ3jPt1N8k597nCBo35lXhCShMAL4XEPeG15sAIBM10o7yz9QRNrIhze+Gw7niINlAx2PqOwxVD3zvwCuk9DPY2BLwFeu2XNZVEAMdUyQrxHT4JwaOI7H6wPLauyoBKfxxwm4YUvri58kHbCWR5NPJqRoN3Im1IQwMGFroiM22DkXR1sPg0c0RHi/hCBEjP9OQHDG/MfBRFHvouDPK8KMB9+bbtm0QHN0wHS9k9+AdRt7tGrSlEFz/wuG959PlNaib+JsaxRRJ5oDEmebR6kpg8C5SNrEhIfl0tpzG2jzo7QTo4LEg+g==",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 57
+        }
+      ]
+    },
+    {
+      "session_id": "session_000005",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " Enter Diomedes and a Servant DIOMEDES Go go my servant take thou Troilus horse Present the fair steed to my lady Cressid Fellow commend my service to her beauty Tell her I have chastisd the amorous Trojan And am her knight by proof SERVANT I go my lord Exit Enter Agamemnon AGAMEMNON Renew renew The fierce Polydamas Hath beat down Menon bastard Margarelon Hath D"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 55
+        }
+      ]
+    },
+    {
+      "session_id": "session_000006",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " in love shall not deny me this BASSANIO This ring good sir Alas it is a trifle I will not shame myself to give you this PORTIA I will have nothing else but only this And now methinks I have a mind to it BASSANIO Theres more depends on this than on the value The dearest ring in Venice will I give you And find it out by proclamation Only for this I pray you pardon me PORTIA I see sir you"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 53
+        }
+      ]
+    },
+    {
+      "session_id": "session_000007",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " damns himself to do and dares better be damnd than to dot SECOND LORD You do not know him my lord as we do certain it is that he will steal himself into a mans favour and for a week escape a great deal of discoveries but when you find him out you have him ever after BERTRAM Why do you think he will make no deed at all of this that so seriously he does address himself unto FIRST LORD None in the world but return with an invention and clap upon you two or three probable lies but we have almost"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "UklGRiwFAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQgFAADsKB4YB81XDI/vjevMO4nN1wi1Fui3nOJ5807Xn/B0+aITFRbtTe/R5gTgB2H0qCId9RTuj7xXOeYMytnU53bZjNsH+ITZfS+gGL8CTsr/KcT38xhW7fMKowNdGB7tqg9IPvnlNNV54sDocyS32HOg9NHnB10CtLvn/8Yl5NisJDEy9huK+Er/D+a7LcfXbQwf6fUMf9yWKdcePe1l4eAVpNpcRAg/PP5QR7IkHQcjMmmrWNfyL2E7M9zzQZovRdePcc471C+E0TzKsxblslTikwOyKUfpmeKx2VkHDxHJ68T4qAWC2e8Wvch4J1PqzRlNJrH4lhH9zy9G68uauZRFIwZ7GHYsAvv8u6HTNUed/mAJsTIME8o2hq3ACuUXFNLGF2UrM/Xy/ELKovriF0sOaRVGAe7d/gjYEkxRwQdn3i0zfQx06moK0+m2Gu/2VtSXCe4kWBh492Mq5A/SD/DndOcv5jHHIOTmwlzOTxYVEGIoztIKWBAQV+kSAI0fzAYQG28rRhks4Wb0lvRMW/m3j+ggBuD65wwM/Y9utdp60irqx+lrJMQHZ+Tj85kBCLPVKz7t5pxfBE/2GBw1/rYKVMMr0oMgqwaK0iJDBBxsA0EsnPV4uPnH5PuV5/b/cA9hR5fasv/j02bmiOVH5JQZx+Oj6UX95ehU8wAJTOpI/pftLv6hBzyo/slLHi0bzja4NspArwiA0DYuyPz/CJOmkOaREn8az7sdCM0hkt2p7/sP/TMP+q4XogZ0CYHMgyW99krbYBIc3BRYnxFF4p07EsJbHX3TaR7NT+TCefJZNFY3VAbpAfkxFPuR6eMLCB1QCZXe/xy60BT2dUIqwiT+Y/+QE521pt3T+W4TeBXgI83NFuJ65EXvCeUq0AHnhTtAEPUCkt+i8WDnVscZ/+D1+xYq90K/P/3/0FQXoNb00Lg8B81vDXXtP9pb/ZPmivtxQqX2hfgoGCz3aR/2EMspg/fOAVcSytIfC7/hVuE8uOny8/38W9C/lSjQNvRKDOeIEbb/XuB1XQb5ADVR1qUlHepEn4zm0PBUH3b4ydk78yM+5fHMDKv+u/RD7iQPPOsc2ztAK+yB3/XDJ/qpwli+kxW1Dk79CFQr+V4NIRt0xNIXb7xOyJKm2yNYNPACezu040DrUTxoDTDO6fecF435yyKJ96oV9B791vQHAQKW/07e0P3j8E8FkEa582bykDJyHEvozgO183OgYcnnv3bho+U3F9DjHfdAEOH/juKlAFbLQAsJ7xTZAg2u9cgFDvCk6ifuYewlt821Bs876xzyp46QUyPVKvyp28oNqOzJ+YS3TwOOEYMfJQBP6zig0R9P/SkX4d9B7VoUQwBDweXL6OlG3s7orh/L0+dOgKwnT337qf9ouubW6ifa57AJ+vH/6TsFeescAdy++fEq9Lb/RRCG7J4UcNTfyl3RvjJyEyD+URtMTfomd/SK1ELzjwjhwDsVd7sVM3wlsiDI2jznOgdrQI4KVdwwkLWz3iPt1hv8IcaHA+fwqMAhDQEcst4Z5a0MuxdT3D4Q0il0mH3fBOii+k0itOYvRjMINdfdFC0mghAY+Rr3Sf6LxHBbPwqlAOIFIebhKJwGQx5dIOD7GSyjGZL+PAHbBicKcd9HEZnCKvlX/TYlCB57DyvgMhJ1+WslghkH/zcchtRi2roUWegZ9ojtv9bPvoD/xs2PHrW2yRYKHqyu",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 51
+        }
+      ]
+    },
+    {
+      "session_id": "session_000008",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " the author thou the instrument Therefore that I may conquer Fortunes spite By living low where Fortune cannot hurt me And that the people of this blessed land May not be punished with my thwarting stars Warwick although my head still wear the crown I here resign my government to thee For thou art fortunate in all thy deeds WARWICK Your Grace hath still been famed for virtuous And now may seem as wise as virtuous By spying and avoiding Fortunes malice For few men rightly temper with the stars Yet in this one thing let me blame"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 52
+        }
+      ]
+    },
+    {
+      "session_id": "session_000009",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " Theres a fearful point Shall I not then be stifled in the vault To whose foul mouth no healthsome air breathes in And there die strangled ere my Romeo comes Or if I live is it not very like The horrible conceit of death and night Together with the terror of the place As in a vault an ancient receptacle Where for this many hundred years the bones Of all my buried ancestors are packd Where bloody Tybalt yet but green in earth Lies festering in his shroud where as they say"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 41
+        }
+      ]
+    },
+    {
+      "session_id": "session_000010",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " happy being feard Than they in fearing What drinkst thou oft instead of homage sweet But poisond flattery O be sick great greatness And bid thy Ceremony give thee cure Thinkst thou the fiery fever will go out With titles blown from adulation Will it give place to flexure and low bending Canst thou when thou commandst the beggars knee Command the health of it No thou proud dream That playst so subtly with a kings repose I am a king that find thee and I"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-20b",
+          "stream": false,
+          "max_completion_tokens": 54
+        }
+      ]
+    },
+    {
+      "session_id": "session_000011",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " never with more care Read to her sons than she hath read to thee Sweet poetry and Tullys Orator MARCUS Canst thou not guess wherefore she plies thee thus YOUNG LUCIUS My lord I know not I nor can I guess Unless some fit or frenzy do possess her For I have heard my grandsire say full oft Extremity of griefs would make men mad And I have read that Hecuba"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "UklGRnoEAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YVYEAAAaDcMFkOyqDiMErNT7ENgWbwKQ8Fj0CcXz134z8R884+cnTSnx43EiRfKJBA/cbv6cO1vkeRW++cs3/On3DW0W6AgfQQj0+F/zCBAUAgqH27PT8elBIJEtr9fzC9IAn/vxxUfOuLETDhonmNiG8MDv4B0GErn6cdF/8T/pawyOKLwYDQGiMTQi7igIyroiKQ1W3xknSOGQAFjA59ZQx8DBl/Hp5xrNy+lPGeYwbhhJ8wEg/QInCxqzGu9O/5Izv/VuANwHPuQN6IPcOQtL6FvhqfKhJxg7fBB9OTIHBcEY/AHtk/U/GsrM6Rdx/lAHWeff+lg2Dw1U25kAcPJb9yI7jf1FFwYBtOGI8bscu95r/cBHvybv7w+6VgBuJe/cIg9BS4/sVSH7C/742zpTUVMFeiLmNRnTEig1AkToZv3fs/7ZFc9eFuX+D8PA/h8+bRMWSzo/DuIf5G8YqP317Ij9jQRMNmrvQwzH+XLXc9pP2zMJ1zGe6q3n3wKw+L0ajTnPIbge3QgkJtnEtyGKU8bluxuG8mkSztrS/PnC8veALGT39fIxpMTtzyPi8RMC+gsxDjb6ewe0zoztIxCeKTu0aRiJzMgRqPeN/yIetdV3AOI08SSO8QhHMtb3PXYPF9TqxTTp1eeHCmrBWBR7wcXnollZ2E0hmf7z3psSQdNvHAnhDugu/LbvvLuxHNv+Ptz340A1ljmz7M3bEzN0AIRUB+YmGJQcUuYq9/8nvfdx3wALvL5j5rsu3eZ+JpgZvixaxz3j7QPp+bcUiOZUCp//ksq/CeAFVrljMrEDqTS71tdFWRV1+dIIa1KXQOr3QskW0WjlAf9+Dt/yoECBK3hfDM5I3OgOv+xNQYwz5tN39dUhKgAW+DnCBwdbz3E7vB+m9IDaOfedzZIYmAkJD5IS1BoT374wDESlEzf5GafT5O3sFBUfJTEsIhVS4loVfv/Z57b3uwiLAGja3WK7v9D26drtz2XX0uhimDIz+c+GDDwTveEeA84l9Rd+O7ci8O/W9oUx1vZM22YHDCOY3EbPdP+o/f0h4+fi/qjJ5QvgMd/Hjcn/It8BOxrB0WciqQ3DBxX0fu+aFzkM8cCW81H9uMj881AEwjqh1pQpPOjn6xDkmR6IPDfLKetTKtwdagcaHWksnd8m6dcIys63Bur9zfTM/MhfutBssEAnVPCFFYMtsvOI/0wdkjaeHCoFng0j29X10/VnE54SFQGVETYHbj9fCNQcB/TrNGTvwByZMQ0nIAnA6AQik9QX0Q/qSzEzDHcgYOZDE9YaZRyFFlbls+gMD64HlwPSWxw8EDED71zsG/CYDl8ASvNb2/D72x5Q4mTWyOoF2ya26jBQBtP9pA6E7pPasBogBW4/QkL8Bd8UQhiFGLUuw0PlQQj0weo98H/esJ3dCcUOXfK0DMIw2uOj3vXoDzXQIYYLwLD7+znXdcRd5nIdvuzWG/UBnwreEeT0SSw=",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 62
+        }
+      ]
+    },
+    {
+      "session_id": "session_000012",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " look you there look how it steals away My father in his habit as he livd Look where he goes even now out at the portal Exit Ghost QUEEN This is the very coinage of your brain This bodiless creation ecstasy Is very cunning in HAMLET Ecstasy My pulse as yours doth temperately keep time And makes as healthful music It is not madness That I have utterd Bring me to the test And I the matter will reword which madness Would gambol from"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-20b",
+          "stream": false,
+          "max_completion_tokens": 48
+        }
+      ]
+    },
+    {
+      "session_id": "session_000013",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " eyes of man ALCIBIADES What is thy name Is man so hateful to thee That art thyself a man TIMON I am Misanthropos and hate mankind For thy part I do wish thou wert a dog That I might love thee something ALCIBIADES I know thee well But in thy fortunes am unlearned and strange TIMON I know thee too and more than that I know thee I not desire to know Follow thy drum With mans blood paint the ground gules gules Religious canons"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-20b",
+          "stream": false,
+          "max_completion_tokens": 38
+        }
+      ]
+    },
+    {
+      "session_id": "session_000014",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " fool Was not a man my father Hadst thou foxship To banish him that struck more blows for Rome Than thou hast spoken words SICINIUS O blessed heavens VOLUMNIA More noble blows than ever thou wise words And for Romes good Ill tell thee whatyet go Nay but thou shalt stay too I would my son Were in Arabia and thy tribe before him His good sword in his hand SICINIUS What then VIRGILIA What then Hed make an end of thy poster"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "UklGRnQFAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YVAFAAAKHSUMAPF07XgRQ/bT9iPgkq5y/936ZC/iXq8Ur90m5lkMAPzJC5ouy/ujFzfc2+H2AmjQjBn4DrC/MgVMmvUIy0hR/rj6qwm9VBkueuT78yEbpR5mIHYFSwD9AO7/MslRBoLX3Cdz+csT8xJyPWkfWKFu09QsYAlksF8KwegI/mbXnceFFDK8jRBG+imnRkUn+/HgoAREC7MGaBA11LvaH+MZAGowwftk9Qf/IeTyADj6VA/YECDXnNAy2nPdD/EyswGA8i9q+BvsZPVpvyENPBCZPYDsKeBa+98ISxRgA9cVGCMl4bgWZtrA+8bVqOrJ2BwRog7yFuQbjAKsy7cdmPUPGxn7SjBn9So+YtPC5DTdxA75GNsIC+9gEuI6pQoG+z8CTyqg+uu9Wvrv4K/rQ+ow3XP/3RP/FvnP4uUZEIYC1Aw41EctXiTxvpPd5zS13R4Rf9teCNzcexzhrZDXzeMuI0MEAiqJ4QkUQgJRKY/ubPnZVpr9S88KFfgfnuRD+CcBHev/M541gx6FANEQQhnv4M8YaFrVORHw7+zuFhkBYw2X4wA0WMQQDdr76Rjj8Wf3FawcJMTcct35IUMV4e8CFVW4COkf+oX/2PUI5Nz3RynrQ1ASu+ioGuDMjCKczPshaNEcvhTujSD25LLoKQaKRskGtSHvL30o0S1GE1cJU+VVT2XYPkovCvUUwGSW7/24nutQ04/7kfea5tz2CQYxH0UTLwtN/unZXN1mDqP5bRtkHjbVaQ5b14sS6RK87CUauEnQIwvfdudbp6jpue5yC7L9FN5sFtnw00tUCzf89wxr5LMjO/3TI90T//7iKTbnntys2JcJp/C9Kf/mpRe74rIdHsMA5Kf0MLbi2O3bWQ+q0ZTxbSwU5P73jRWi61AlSfjhKzDQiiuU8bTFKyjG1f3DHPrlP6gbSwduBL3QVzXaD8MKIRO6/hQQmD7TIj/xozLmApneTBCGHu/2g9lHBOpto8WY6drWM/Dez8n9M95bMebRC0Vs8bTYZQFsLPgF/ywA3KMXtQJxEogOTdAu5JITSAvKHsu6A7S7RscEix0eBTsMYyte5HGzoeKP6S0MowPNFcL4bRVF/C0JhQmIAQgSj90uJdwzRvX5FCsPI9kWfdmqC+h85rb5P+wcxIP/zepSIrbmAtDQ2zXpYPnXCfvAebk72+npqgXJ91oUXrIp8NQPuyg+/gIc0uvj4B3OVOCe8fbyx/+ZIDb80veoAAwxPgnDK1DopO57JqMQyx44soi2Guhb+PHu6gXO+vv3ZuQtGLLpCjG5/rLly/G87w0Zgu2ktI7aq7o07Z8TEOayCN0OxAUB8qohYguY15D1aqvi0Yzi7gVp7gH9lCatG5wonB5q96PysQ9l6C0K6yUL8LRAIuWCBUgpiDlg/BQ20REaB8Eb/tCrEWPNSQCGTh4hRNLLAZc8xASDLI3WuOqf/Qgg5u2lHrfOG0ex5SkxnCDr7IUP+8q+J+8ctEa46McRXM8s3lrhZpdW74RRfT5tCGThSOf2ptru6R4h5ZTGefcXGTP9KRxGKI7rCI3LAuQagCC59qEhqg6E74sPEhKL92UgZRVEBicSxQWX8zEhkAOpBqU4AdRn0uAjDwM4x4cf8T4OFLTOn/b+KJYByOdQ1SX9Ryc8M4AiXAGiHq0CaCK56UAgeuqKV9gI6UhtOeTB6gLEFkwLESWmIMP/FPn/M7UcHEJR4kHnV+D3L7ip66Q5QX0Anxey8Y0YGQdLGuvJL+uDDdPYPAgjITDWtgbY4Hs8qAHDKlBEifBLKQTzr8+fJVU8h+AKATz/",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 61
+        }
+      ]
+    },
+    {
+      "session_id": "session_000015",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " barren ground Long heath brown furze anything The wills above be done but I would fain die a dry death Exit SCENE II The Island Before the cell of Prospero Enter Prospero and Miranda MIRANDA If by your art my dearest father you have Put the wild waters in this roar allay them The sky it seems would pour down stinking pitch But that the sea mounting to th welkins cheek Dashes the fire out O I have suffered With those that I saw suffer A"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-20b",
+          "stream": false,
+          "max_completion_tokens": 61
+        }
+      ]
+    },
+    {
+      "session_id": "session_000016",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " climb The generals disdaind By him one step below he by the next That next by him beneath so every step Exampld by the first pace that is sick Of his superior grows to an envious fever Of pale and bloodless emulation And tis this fever that keeps Troy on foot Not her own sinews To end a tale of length Troy in our weakness stands not in her strength NESTOR Most wisely hath Ulysses here discoverd The fever whereof all our power is sick AGAMEMNON The nature of the"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "UklGRhIGAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0Ye4FAADoIN4jWh/b0A0KOgImLf0CQeu/ERscceRr3dzT7rHS8KwVdxrbEkwImgjZGzgaAhXcQWjsXD8DKY3n3eXdE+YJGAnx/5H9EN3PHP4JE1q4/sgIhypH+g9DRQX/BBAmbfiC6aIHiD+VFKL+zghNJprxXA7J1V3x2CkzLIviLroE4O/cfyJuMgHxZ+kQQk22wAlk49P5c+AvKV3X9xmb8Oj4wt4x2dXwbR055Y0FbusTEJjvOwyHSzIN+PjOPTTLAQoQ67UApuHYYyu64ysEJCfhvwBIClPxNBIe8q8JWMn5xiw5mOKMzjUceAZZDATl+Ax5Gf0L8PO/RIr8u6kh5cq3SFhv77kjJTRalO/y5OCV87C2mc64xRX3XAPY/TeqZfDd88/a+QBVOfLxzxPsNFT7PwVP0O0FPhDqYLO88Rk7698W5bAYAccPzjLtyToHMcp+vJ7tvztjLX/K1t3s1c4Noswm6nMlQ/stzdm7NvwZFTUMSDg19NDV6SKVFc0WNww3ziUuVb+rBFDrNI9A9jHMZvw7E/odsOHxCxAtux1xj334/QNVx8pOTfrn+hvVKCYA6EU4nki6mcTZigbKQGQO5xlAAFzbEPhtMpIH5BsTSRvz7wtMDebb7AJWK8bJfvHvtNo52bDL4CN1cr2UAGASxe/pQsYTjOu2+qzRRdREFYQfqwMJyj7Ucu4C/vziSy7dw5vglxr7Jijd+Pon09vooD4NLRfW/gEZGdrvlxoKAwkGpQVnvCjfCBCW5xMWsxUE89DZpyExLwkNX9moDZX7ngj5Eh3kswg4M8/9RvqZG7XbKNhkyOzqfe1iBu4J9OYiBu/vpOR/Ppk3ifyPRtHjt9shy9n6xfji23YdlC8V2qPzdxPqACrdVxn8CdcTNd9WNtgNvi7d9gsEQLwhoGsYoP2a90buLwp0JnP5Ye8uRk0p9v1iBJHgoxboIaYScBizzmTgOSXqPUgNJb3fADQdnBOZCDQQ/3958EjrVesi1+gHPAYEBSzKmgeZRHr7R9AZp2b8meSHYF0ULx0rEWGexyA58KYNIfR4LMHZ3ARkAHQfLrqUFQYOxuAkM0TRi+OfEoLGNghT9Y3s8K0MCtX8BQlNF4kUUhM657INLSABOQzWFiGi2ckCPdtUBm8Zeybgy4ceoOhJFRny+WkcL0wBHBsy7lwpxN5v7V/6z/UDMgnW5xIB99zYVgK7Par14w4/8vvpS9kpqePjnBBp/+P7rx0wFnA6LFAtRKM3qb6gMlDV3SS+81vtBfsi8pn3dQ8qvYENiU8qDWgSBrne5qcLSO1iHtgKZtBtHvfydQ8gA0jlf+ihCNzBnEceB0g9L8l/yILXfTOWJkTjBOHCEfrv9/OxILLoDR5tH8a8oBzQ2rYkKPTYxrS4fAa6Vtwvj9lPE38J0vv4Qy+rqwkm3ekDhBjc0nggyNpG5Gb9SC2gaakaGhpMLD4pHtG4LyWcFNdyQgLo5PXh9FvhafzdoLgrh+WeD9RhEQP31lPg03AoIH8EK95E5+kLJAl77rrV6v0ZM2bi0iiJTB7Ivtmg/zf1TiShD2zX0fGT88D6UeJxGfBClkAr6VwMXRB1ysEVzldFFDXMRjCTKcMYJBb05i/TEuxvzczsCBjqGHrdihPL8i/e3hr6PZTlqy+7z1UFsywbxef/JvApElL4kvjM2JC9rQS4F6Ph+AQa6HUK8CSZ3o/sd4t0Ij9e59UFEW37Utqc5gwxiMGSA6EHvyKrAuLWV64X2ErmTPpA4TbnjSkGI5z9Uu9r/lW2oDCR5B0RDlPjIl7tSwpE8moAhCqYGHE/F/UxXfTer93T3m0OeBgOBi3RJ0UTZHb3m9sKCPzeB+DaBynh4iOl+UnA+wEY018C8dvkCNjdW/HgK2kkehXqB1cS0BW8LQPTOxAyJL8EncdIEn5BJyubInyeqwBk1KbFecBeAQEhlxDYAlsAeyH7JOm27QCuEIP+1ARK4xwvVsyr8CgNPAIv8IAMguBqBOEO5Nme+8PuLOm/1x/Wrvo=",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-20b",
+          "stream": false,
+          "max_completion_tokens": 35
+        }
+      ]
+    },
+    {
+      "session_id": "session_000017",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " that knows it O thou thinkest To serve me last that I may longest keep Thy sorrow in my breast Come ladies go To meet at London Londons king in woe What was I born to this that my sad look Should grace the triumph of great Bolingbroke Gardner for telling me these news of woe Pray God the plants thou graftst may never grow Exeunt Queen and Ladies GARDENER Poor Queen so that thy state might be no worse I"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 45
+        }
+      ]
+    },
+    {
+      "session_id": "session_000018",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " Shall cumber all the parts of Italy Blood and destruction shall be so in use And dreadful objects so familiar That mothers shall but smile when they behold Their infants quartered with the hands of war All pity chokd with custom of fell deeds And Caesars spirit ranging for revenge With Ate by his side come hot from Hell Shall in these confines with a monarchs voice Cry havoc and let slip the dogs of war That this foul deed shall smell above the earth With carrion men groaning"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "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",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 48
+        }
+      ]
+    },
+    {
+      "session_id": "session_000019",
+      "payloads": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " the subjects to his hate And he to yours and all of you to Gods Exit BUCKINGHAM My hair doth stand on end to hear her curses RIVERS And so doth mine I muse why shes at liberty RICHARD I cannot blame her By Gods holy mother She hath had too much wrong and I repent My part thereof that I have done to her QUEEN ELIZABETH I never did her any to my knowledge RICHARD Yet you have all the vantage of her wrong"
+                },
+                {
+                  "type": "input_audio",
+                  "input_audio": {
+                    "data": "UklGRiQFAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAFAABxDqXMlupAH2XRyf2yK/fzz/6W6K4UlAWauI0xJvYQ2uwAjQPcz/9/7MHV9rsXfDvA2zT3UvpcERUwLSzTmwYGgt/JJpj3wv5AN1i8/sNg+K0BGjPZ86YPmeCdS/n1uRUSJRIDb+tGKl/s3EGCKD4D0N41/KsTqAFL8CoGUM/e/rnagkekAFsYweqlH9QKLx78DQ94tsdYAwAeFQr15gTqzdgHq368XP9KBNwT7Ck78/0Q5vTxL03og/XdAHEOwOY9UDbF1fpq3pb+ku3stpzodcv/CDLceT5wJSkTV0N5wp8anv1I4LcJYBWvGVDAXuhrIEdDh6+m/0Ti5dngyY0Omvd6/d4AdLk+9HbxIAu0z2TxORtznjcoiw1ZHLgtB81n+AP8LPZnAO3apvdi4tBGo98f8QwyTgFKCpkujQAt8i7tFAytF3nyhMbKAxhL2DDQ1/UQblaXHEg5KFCDDIeoHgK8Sr4n7ese63r1JPG78Wf2k+N8Do/5reke2a8fPj0uxWbgePva5PnROi6WDUzOfAa5ANL5vsZe3LoWAmQGIBj1z9RdCrBR9+fR6A8W7D//+jUQgtuVJmjkKPuXE7DprT7s2l8CrT0WlhXrD/CU6fMaN8i3IUW/YSXkOIYI72+v/K7TxRqhNLEVZ/ZjAj7nLhQRGYMIDRZ/7ZkGdPwcLsDTC/eM/JXZRCC7GCPnfAk8ZNIkB/q7KxDE0uoc2Fwl3/AR308opvBT1xT2RendFF0R0ifcFZIEQjEy7YyRif3zNky4qx4MWPPlnQAyIsE8jBYh7W3BmxvwEHYhUxVFuFbzffSJHMvt5/gL8FfdtPo1JLsWHTBt97a7xPJbLAs7dP2X+pv6BQBn+lXAuzRj+UUNQPi5NukfTOXa3q3gIRc6x3gCcvU+D3kf0grX0+7fnC47EwVBfAjQH04eJRbAJoEAiwCWCqkvu95K9UPB+EvmBYb3lrTPAYPrAtg6/II8DCde3jT7o/x8Izz7BdwTMt8giQJTCai1IvUXCFfWh8W5DCLrUU1vKoEBX+Vr7Jbm3RoIptQoy6FH4Hv9zRvtC5Hykdct8ML46yBJSiXrNP4v/cjvBR/4387l3AJhHSMnlzY9KvYWOvoF683iyz2VGwGAoiBHNyD4Rhq75IDYK/rUH2gG+hQMDmsVTvKu4CP4s/VzNCE2eiNA8zW09jK+S9/l6dQeHPU8u/Vs3rzPJBgF+AD6OlrsDFQ13AvkHb2t9d0iOI74EcIP5IUGpgjqDgfGdjvGu0oO9/FkNtbeLAhQF2StF7s6ZgTsEi2n4eXsNAn/HH8edSw0EccYc+fB68c21QmBt3DDAdE8Rg/8fgPn18T/Wzuix+7PCOyaDFz8xB1h0zNiIhwO3UXJFLvEAa74CE+v//kvwxC3/s3vcPbWIFcgmJbebpbas9UX5kkMeQEN6nkVxPlz5vccMu5tHlDMNRgcLHNGKYo6/1bM1q/0K0IsVddaB2r8hBImMccB3w68PK4jMu2UOQoCfCVMBygZmSyz/AL69Q1V7IwKUyQH/8jmy+Qm5m/4p9KO3XX4cgpdCpq5N+JB9uQvBeToNijL2UPAQHcVuCFY76UBmhrX8pDoEjPfQdH4Kgxx6Yzv9B+44B8VfUTj9GvezwCm7MT7MdPJ9jn09Mon6vMkYjW9EgcKkr2b6T0/At3f/K4Qm9OvAI/EzfuU5LogCxqYFA==",
+                    "format": "wav"
+                  }
+                }
+              ]
+            }
+          ],
+          "model": "openai/gpt-oss-120b",
+          "stream": false,
+          "max_completion_tokens": 50
+        }
+      ]
+    }
+  ]
+}

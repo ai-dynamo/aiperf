@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import random
-
+from aiperf.common import random_generator as rng
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.timing.config import TimingManagerConfig
 
@@ -11,7 +10,7 @@ class RequestCancellationStrategy:
     """
     Strategy for determining which requests to cancel and when to cancel them.
 
-    Provides deterministic cancellation decisions when a random seed is provided,
+    Uses the global RandomGenerator for deterministic cancellation decisions,
     enabling reproducible benchmarking scenarios with request cancellation.
     """
 
@@ -23,7 +22,7 @@ class RequestCancellationStrategy:
         """
         self.config = config
 
-        self._rng = random.Random(config.random_seed)
+        self._rng = rng.derive("timing.request.cancellation")
 
         self._cancellation_rate = config.request_cancellation_rate / 100.0
         self._cancellation_delay_ns = int(

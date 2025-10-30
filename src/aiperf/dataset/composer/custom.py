@@ -39,14 +39,18 @@ class CustomDatasetComposer(BaseDatasetComposer):
         Args:
             dataset_type: The type of custom dataset to create.
         """
-        kwargs = {"filename": self.config.input.file}
+        kwargs = {}
         if dataset_type == CustomDatasetType.MOONCAKE_TRACE:
             kwargs["prompt_generator"] = self.prompt_generator
-            kwargs["user_config"] = self.config
         elif dataset_type == CustomDatasetType.RANDOM_POOL:
             kwargs["num_conversations"] = self.config.input.conversation.num
 
-        self.loader = CustomDatasetFactory.create_instance(dataset_type, **kwargs)
+        self.loader = CustomDatasetFactory.create_instance(
+            dataset_type,
+            filename=self.config.input.file,
+            user_config=self.config,
+            **kwargs,
+        )
 
     def _finalize_conversations(self, conversations: list[Conversation]) -> None:
         """Finalize all turns in conversations by adding metadata."""

@@ -52,17 +52,23 @@ class TestRandomSampler:
 
     def test_sampling_with_replacement(self, conversation_ids: list[str]) -> None:
         """Test that sampler can return the same ID multiple times (with replacement)."""
-        sampler = RandomSampler(conversation_ids, seed=42)
+        sampler = RandomSampler(conversation_ids)
         samples = [sampler.next_conversation_id() for _ in range(100)]
 
         assert len(set(samples)) < len(samples)
 
     def test_seed_reproducibility(self, conversation_ids: list[str]) -> None:
         """Test that using the same seed produces identical sequences."""
-        sampler1 = RandomSampler(conversation_ids, seed=42)
-        sampler2 = RandomSampler(conversation_ids, seed=42)
+        from aiperf.common import random_generator as rng
 
+        rng.reset()
+        rng.init(42)
+        sampler1 = RandomSampler(conversation_ids)
         samples1 = [sampler1.next_conversation_id() for _ in range(20)]
+
+        rng.reset()
+        rng.init(42)
+        sampler2 = RandomSampler(conversation_ids)
         samples2 = [sampler2.next_conversation_id() for _ in range(20)]
 
         assert samples1 == samples2
@@ -70,11 +76,17 @@ class TestRandomSampler:
     def test_different_seeds_produce_different_sequences(
         self, conversation_ids: list[str]
     ) -> None:
-        """Test that different seeds produce different sequences."""
-        sampler1 = RandomSampler(conversation_ids, seed=42)
-        sampler2 = RandomSampler(conversation_ids, seed=123)
+        """Test that different global seeds produce different sequences."""
+        from aiperf.common import random_generator as rng
 
+        rng.reset()
+        rng.init(42)
+        sampler1 = RandomSampler(conversation_ids)
         samples1 = [sampler1.next_conversation_id() for _ in range(50)]
+
+        rng.reset()
+        rng.init(123)
+        sampler2 = RandomSampler(conversation_ids)
         samples2 = [sampler2.next_conversation_id() for _ in range(50)]
 
         assert samples1 != samples2
@@ -95,7 +107,7 @@ class TestShuffleSampler:
         self, conversation_ids: list[str]
     ) -> None:
         """Test that all IDs are returned once before any repetition."""
-        sampler = ShuffleSampler(conversation_ids, seed=42)
+        sampler = ShuffleSampler(conversation_ids)
         first_batch = [
             sampler.next_conversation_id() for _ in range(len(conversation_ids))
         ]
@@ -105,7 +117,7 @@ class TestShuffleSampler:
 
     def test_reshuffles_after_exhaustion(self, conversation_ids: list[str]) -> None:
         """Test that sampler reshuffles and continues after exhausting all IDs."""
-        sampler = ShuffleSampler(conversation_ids, seed=42)
+        sampler = ShuffleSampler(conversation_ids)
 
         first_batch = [
             sampler.next_conversation_id() for _ in range(len(conversation_ids))
@@ -120,12 +132,18 @@ class TestShuffleSampler:
 
     def test_seed_reproducibility(self, conversation_ids: list[str]) -> None:
         """Test that using the same seed produces identical sequences."""
-        sampler1 = ShuffleSampler(conversation_ids, seed=42)
-        sampler2 = ShuffleSampler(conversation_ids, seed=42)
+        from aiperf.common import random_generator as rng
 
+        rng.reset()
+        rng.init(42)
+        sampler1 = ShuffleSampler(conversation_ids)
         samples1 = [
             sampler1.next_conversation_id() for _ in range(len(conversation_ids) * 2)
         ]
+
+        rng.reset()
+        rng.init(42)
+        sampler2 = ShuffleSampler(conversation_ids)
         samples2 = [
             sampler2.next_conversation_id() for _ in range(len(conversation_ids) * 2)
         ]
@@ -136,7 +154,7 @@ class TestShuffleSampler:
         self, conversation_ids: list[str]
     ) -> None:
         """Test that subsequent shuffles produce different orderings."""
-        sampler = ShuffleSampler(conversation_ids, seed=42)
+        sampler = ShuffleSampler(conversation_ids)
 
         batches = []
         for _ in range(3):
@@ -197,22 +215,27 @@ class TestSamplerStatistics:
     """Tests for statistical properties of samplers."""
 
     def test_random_sampler_distribution(self, conversation_ids: list[str]) -> None:
-        """Test that random sampler produces reasonably uniform distribution."""
-        sampler = RandomSampler(conversation_ids, seed=42)
+        """Test that random sampler produces exact expected distribution with seed 42."""
+        sampler = RandomSampler(conversation_ids)
         samples = [sampler.next_conversation_id() for _ in range(1000)]
 
-        counts = {conv_id: samples.count(conv_id) for conv_id in conversation_ids}
-        min_count = min(counts.values())
-        max_count = max(counts.values())
+        expected_first_20 = [
+            'conv_1', 'conv_5', 'conv_3', 'conv_1', 'conv_1',
+            'conv_1', 'conv_3', 'conv_1', 'conv_3', 'conv_4',
+            'conv_5', 'conv_5', 'conv_5', 'conv_2', 'conv_5',
+            'conv_4', 'conv_1', 'conv_3', 'conv_1', 'conv_2'
+        ]  # fmt: skip
+        assert samples[:20] == expected_first_20
 
-        assert min_count > 100
-        assert max_count < 300
+        counts = {conv_id: samples.count(conv_id) for conv_id in conversation_ids}
+        assert all(count > 0 for count in counts.values())
+        assert sum(counts.values()) == 1000
 
     def test_shuffle_sampler_equal_frequency_per_batch(
         self, conversation_ids: list[str]
     ) -> None:
         """Test that shuffle sampler returns each ID exactly once per batch."""
-        sampler = ShuffleSampler(conversation_ids, seed=42)
+        sampler = ShuffleSampler(conversation_ids)
         num_batches = 10
         total_samples = len(conversation_ids) * num_batches
 

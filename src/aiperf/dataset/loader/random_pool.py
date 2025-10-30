@@ -1,15 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import random
-import uuid
 from collections import defaultdict
 from pathlib import Path
 from typing import TypeAlias
 
+from aiperf.common import random_generator as rng
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import CustomDatasetType, MediaType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.models import Conversation, Turn
+from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
 
@@ -18,7 +19,7 @@ Filename: TypeAlias = str
 
 
 @CustomDatasetFactory.register(CustomDatasetType.RANDOM_POOL)
-class RandomPoolDatasetLoader(MediaConversionMixin):
+class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
     """A dataset loader that loads data from a single file or a directory.
 
     Each line in the file represents single-turn conversation data,
@@ -69,8 +70,16 @@ class RandomPoolDatasetLoader(MediaConversionMixin):
     and loader will later sample from these two pools to create conversations.
     """
 
-    def __init__(self, filename: str, num_conversations: int = 1):
-        self.filename = filename
+    def __init__(
+        self,
+        *,
+        filename: str,
+        user_config: UserConfig,
+        num_conversations: int = 1,
+        **kwargs,
+    ):
+        super().__init__(filename=filename, user_config=user_config, **kwargs)
+        self._rng = rng.derive("dataset.loader.random_pool")
         self.num_conversations = num_conversations
 
     def load_dataset(self) -> dict[Filename, list[RandomPool]]:
@@ -125,7 +134,7 @@ class RandomPoolDatasetLoader(MediaConversionMixin):
         """
         data: dict[Filename, list[RandomPool]] = defaultdict(list)
 
-        for file_path in dir_path.iterdir():
+        for file_path in sorted(dir_path.iterdir()):
             if file_path.is_file():
                 dataset_pool = self._load_dataset_from_file(file_path)
                 data[file_path.name].extend(dataset_pool)
@@ -146,7 +155,7 @@ class RandomPoolDatasetLoader(MediaConversionMixin):
             A list of conversations.
         """
         conversations = [
-            Conversation(session_id=str(uuid.uuid4()))
+            Conversation(session_id=self.session_id_generator.next())
             for _ in range(self.num_conversations)
         ]
 
@@ -155,7 +164,7 @@ class RandomPoolDatasetLoader(MediaConversionMixin):
 
         # Randomly sample (with replacement) from each dataset pool
         for filename, dataset_pool in data.items():
-            samples = random.choices(dataset_pool, k=self.num_conversations)
+            samples = self._rng.choices(dataset_pool, k=self.num_conversations)
             turns: list[Turn] = []
             for sample in samples:
                 media = self.convert_to_media_objects(sample, name=Path(filename).stem)

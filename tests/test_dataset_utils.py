@@ -5,7 +5,6 @@ import base64
 import tempfile
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from PIL import Image, UnidentifiedImageError
@@ -84,63 +83,3 @@ class TestEncodeImage:
         decoded_bytes = base64.b64decode(encoded)
         decoded_img = Image.open(BytesIO(decoded_bytes))
         assert decoded_img.mode == "RGB"
-
-
-class TestSampleNormal:
-    @patch("numpy.random.normal", return_value=5.0)
-    def test_basic(self, mock_normal):
-        """Test basic normal distribution sampling."""
-        result = utils.sample_normal(5.0, 1.0)
-        assert result == 5.0
-
-    @patch("numpy.random.normal", side_effect=[0.5, 2.0, 3.0])
-    def test_with_bounds(self, mock_normal):
-        """Test normal distribution sampling with bounds."""
-        result = utils.sample_normal(2.0, 1.0, lower=1.0, upper=4.0)
-        assert result == 2.0  # First value in bounds
-
-    @patch("numpy.random.normal", side_effect=[10.0, -5.0, 2.5])
-    def test_rejection_sampling(self, mock_normal):
-        """Test that rejection sampling works for out-of-bounds values."""
-        result = utils.sample_normal(2.0, 1.0, lower=0.0, upper=5.0)
-        assert result == 2.5
-
-
-class TestSamplePositiveNormal:
-    @patch("numpy.random.normal", return_value=3.0)
-    def test_valid_mean(self, mock_normal):
-        """Test sampling from positive normal distribution."""
-        result = utils.sample_positive_normal(3.0, 1.0)
-        assert result == 3.0
-
-    @patch("numpy.random.normal", return_value=-1.0)
-    def test_negative_mean(self, mock_normal):
-        """Test that ValueError is raised for negative mean."""
-        with pytest.raises(ValueError, match="Mean value.*should be greater than 0"):
-            _ = utils.sample_positive_normal(-1.0, 1.0)
-
-    @patch("numpy.random.normal", return_value=2.0)
-    def test_zero_mean(self, mock_normal):
-        """Test that zero mean raises ValueError."""
-        result = utils.sample_positive_normal(0.0, 1.0)
-        assert result == 2.0
-
-
-class TestSamplePositiveNormalInteger:
-    @patch("aiperf.dataset.utils.sample_positive_normal", return_value=2.3)
-    def test_basic(self, mock_sample_positive_normal):
-        """Test sampling positive integer from normal distribution."""
-        result = utils.sample_positive_normal_integer(2.0, 1.0)
-        assert result == 3  # ceil(2.3)
-
-    @patch("numpy.random.normal", return_value=-1.0)
-    def test_negative_mean(self, mock_normal):
-        """Test that ValueError is raised for negative mean."""
-        with pytest.raises(ValueError, match="Mean value.*should be greater than 0"):
-            _ = utils.sample_positive_normal(-1.0, 1.0)
-
-    @patch("aiperf.dataset.utils.sample_positive_normal", return_value=0.1)
-    def test_small_value(self, mock_sample_positive_normal):
-        """Test that small positive values are ceiled to at least 1."""
-        result = utils.sample_positive_normal_integer(0.5, 0.1)
-        assert result == 1  # ceil(0.1)

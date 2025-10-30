@@ -126,7 +126,9 @@ class TestSingleTurn:
 class TestSingleTurnDatasetLoader:
     """Basic functionality tests for SingleTurnDatasetLoader."""
 
-    def test_load_dataset_basic_functionality(self, create_jsonl_file):
+    def test_load_dataset_basic_functionality(
+        self, create_jsonl_file, default_user_config
+    ):
         """Test basic JSONL file loading."""
         content = [
             '{"text": "What is deep learning?"}',
@@ -134,7 +136,9 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = SingleTurnDatasetLoader(filename)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
         dataset = loader.load_dataset()
 
         assert isinstance(dataset, dict)
@@ -153,7 +157,9 @@ class TestSingleTurnDatasetLoader:
         assert turn2[0].image == "/path/to/image.png"
         assert turn2[0].audio is None
 
-    def test_load_dataset_skips_empty_lines(self, create_jsonl_file):
+    def test_load_dataset_skips_empty_lines(
+        self, create_jsonl_file, default_user_config
+    ):
         """Test that empty lines are skipped."""
         content = [
             '{"text": "Hello"}',
@@ -162,12 +168,16 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = SingleTurnDatasetLoader(filename)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
         dataset = loader.load_dataset()
 
         assert len(dataset) == 2  # Should skip empty line
 
-    def test_load_dataset_with_batched_inputs(self, create_jsonl_file):
+    def test_load_dataset_with_batched_inputs(
+        self, create_jsonl_file, default_user_config
+    ):
         """Test loading dataset with batched inputs."""
         content = [
             '{"texts": ["What is the weather?", "What is AI?"], "images": ["/path/1.png", "/path/2.png"]}',
@@ -175,7 +185,9 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = SingleTurnDatasetLoader(filename)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
         dataset = loader.load_dataset()
 
         # Check that there are two sessions
@@ -190,7 +202,7 @@ class TestSingleTurnDatasetLoader:
         assert turn2[0].images is None
         assert turn2[0].audios == ["/path/3.wav", "/path/4.wav"]
 
-    def test_load_dataset_with_timestamp(self, create_jsonl_file):
+    def test_load_dataset_with_timestamp(self, create_jsonl_file, default_user_config):
         """Test loading dataset with timestamp field."""
         content = [
             '{"text": "What is deep learning?", "timestamp": 1000}',
@@ -198,7 +210,9 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = SingleTurnDatasetLoader(filename)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
         dataset = loader.load_dataset()
 
         assert len(dataset) == 2
@@ -212,7 +226,7 @@ class TestSingleTurnDatasetLoader:
         assert turn2[0].timestamp == 2000
         assert turn2[0].delay is None
 
-    def test_load_dataset_with_delay(self, create_jsonl_file):
+    def test_load_dataset_with_delay(self, create_jsonl_file, default_user_config):
         """Test loading dataset with delay field."""
         content = [
             '{"text": "What is deep learning?", "delay": 0}',
@@ -220,7 +234,9 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = SingleTurnDatasetLoader(filename)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
         dataset = loader.load_dataset()
 
         assert len(dataset) == 2
@@ -234,7 +250,9 @@ class TestSingleTurnDatasetLoader:
         assert turn2[0].delay == 1234
         assert turn2[0].timestamp is None
 
-    def test_load_dataset_with_full_featured_version(self, create_jsonl_file):
+    def test_load_dataset_with_full_featured_version(
+        self, create_jsonl_file, default_user_config
+    ):
         """Test loading dataset with full-featured version."""
 
         content = [
@@ -256,7 +274,9 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = SingleTurnDatasetLoader(filename)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
         dataset = loader.load_dataset()
 
         assert len(dataset) == 1
@@ -279,9 +299,11 @@ class TestSingleTurnDatasetLoader:
 class TestSingleTurnDatasetLoaderConvertToConversations:
     """Test convert_to_conversations method for SingleTurnDatasetLoader."""
 
-    def test_convert_simple_text_data(self):
+    def test_convert_simple_text_data(self, default_user_config):
         """Test converting simple text data to conversations."""
-        loader = SingleTurnDatasetLoader("dummy.jsonl")
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
         data = {
             "session_1": [SingleTurn(text="Hello world")],
             "session_2": [SingleTurn(text="How are you?")],
@@ -298,9 +320,11 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert len(conversations[1].turns) == 1
         assert conversations[1].turns[0].texts[0].contents == ["How are you?"]
 
-    def test_convert_multimodal_data(self):
+    def test_convert_multimodal_data(self, default_user_config):
         """Test converting multimodal data to conversations."""
-        loader = SingleTurnDatasetLoader("dummy.jsonl")
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
         data = {
             "session_1": [
                 SingleTurn(
@@ -322,9 +346,11 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert len(turn.audios) == 1
         assert turn.audios[0].contents == ["/path/to/audio.wav"]
 
-    def test_convert_batched_data(self):
+    def test_convert_batched_data(self, default_user_config):
         """Test converting batched data to conversations."""
-        loader = SingleTurnDatasetLoader("dummy.jsonl")
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
         data = {
             "session_1": [
                 SingleTurn(
@@ -343,9 +369,11 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert len(turn.images) == 1
         assert turn.images[0].contents == ["/path/1.png", "/path/2.png"]
 
-    def test_convert_with_timing_data(self):
+    def test_convert_with_timing_data(self, default_user_config):
         """Test converting data with timestamp and delay."""
-        loader = SingleTurnDatasetLoader("dummy.jsonl")
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
         data = {
             "session_1": [
                 SingleTurn(text="First", timestamp=1000),
@@ -368,9 +396,11 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert second_turn.delay == 500
         assert second_turn.role == "user"
 
-    def test_convert_structured_text_objects(self):
+    def test_convert_structured_text_objects(self, default_user_config):
         """Test converting data with structured Text objects."""
-        loader = SingleTurnDatasetLoader("dummy.jsonl")
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
         text_objects = [
             Text(name="query", contents=["What is AI?"]),
             Text(name="context", contents=["AI stands for artificial intelligence"]),

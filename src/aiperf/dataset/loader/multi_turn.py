@@ -1,18 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import uuid
 from collections import defaultdict
 
 from aiperf.common.enums import CustomDatasetType, MediaType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.models import Conversation, Turn
+from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import MultiTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.MULTI_TURN)
-class MultiTurnDatasetLoader(MediaConversionMixin):
+class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     """A dataset loader that loads multi-turn data from a file.
 
     The multi-turn type
@@ -90,9 +90,6 @@ class MultiTurnDatasetLoader(MediaConversionMixin):
     ```
     """
 
-    def __init__(self, filename: str):
-        self.filename = filename
-
     def load_dataset(self) -> dict[str, list[MultiTurn]]:
         """Load multi-turn data from a JSONL file.
 
@@ -110,7 +107,9 @@ class MultiTurnDatasetLoader(MediaConversionMixin):
                     continue  # Skip empty lines
 
                 multi_turn_data = MultiTurn.model_validate_json(line)
-                session_id = multi_turn_data.session_id or str(uuid.uuid4())
+                session_id = (
+                    multi_turn_data.session_id or self.session_id_generator.next()
+                )
                 data[session_id].append(multi_turn_data)
 
         return data

@@ -84,7 +84,7 @@ class TestRandomPool:
 class TestRandomPoolDatasetLoader:
     """Tests for RandomPoolDatasetLoader functionality."""
 
-    def test_load_simple_single_file(self, create_jsonl_file):
+    def test_load_simple_single_file(self, create_jsonl_file, default_user_config):
         """Test loading from a single file with simple content."""
         content = [
             '{"text": "What is deep learning?"}',
@@ -92,7 +92,9 @@ class TestRandomPoolDatasetLoader:
         ]
         filepath = create_jsonl_file(content)
 
-        loader = RandomPoolDatasetLoader(filepath)
+        loader = RandomPoolDatasetLoader(
+            filename=filepath, user_config=default_user_config
+        )
         dataset = loader.load_dataset()
 
         filename = Path(filepath).name
@@ -106,7 +108,7 @@ class TestRandomPoolDatasetLoader:
         assert dataset_pool[1].text == "Explain neural networks"
         assert dataset_pool[1].image == "/chart.png"
 
-    def test_load_multimodal_single_file(self, create_jsonl_file):
+    def test_load_multimodal_single_file(self, create_jsonl_file, default_user_config):
         """Test loading multimodal content from single file."""
         content = [
             '{"text": "Analyze this image", "image": "/data.png"}',
@@ -115,7 +117,9 @@ class TestRandomPoolDatasetLoader:
         ]
         filepath = create_jsonl_file(content)
 
-        loader = RandomPoolDatasetLoader(filepath)
+        loader = RandomPoolDatasetLoader(
+            filename=filepath, user_config=default_user_config
+        )
         dataset = loader.load_dataset()
 
         filename = Path(filepath).name
@@ -127,7 +131,9 @@ class TestRandomPoolDatasetLoader:
         assert dataset_pool[2].texts == ["Query 1", "Query 2"]
         assert dataset_pool[2].images == ["/img1.jpg", "/img2.jpg"]
 
-    def test_load_dataset_skips_empty_lines(self, create_jsonl_file):
+    def test_load_dataset_skips_empty_lines(
+        self, create_jsonl_file, default_user_config
+    ):
         """Test that empty lines are skipped during loading."""
         content = [
             '{"text": "First entry"}',
@@ -138,14 +144,16 @@ class TestRandomPoolDatasetLoader:
         ]
         filepath = create_jsonl_file(content)
 
-        loader = RandomPoolDatasetLoader(filepath)
+        loader = RandomPoolDatasetLoader(
+            filename=filepath, user_config=default_user_config
+        )
         dataset = loader.load_dataset()
 
         filename = Path(filepath).name
         dataset_pool = dataset[filename]
         assert len(dataset_pool) == 3  # Should skip empty lines
 
-    def test_load_directory_with_multiple_files(self):
+    def test_load_directory_with_multiple_files(self, default_user_config):
         """Test loading from directory with multiple files."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -178,7 +186,9 @@ class TestRandomPoolDatasetLoader:
                     '{"images": [{"name": "image", "contents": ["/path/to/image2.png"]}]}\n'
                 )
 
-            loader = RandomPoolDatasetLoader(str(temp_path))
+            loader = RandomPoolDatasetLoader(
+                filename=str(temp_path), user_config=default_user_config
+            )
             dataset = loader.load_dataset()
 
             assert len(dataset) == 3
@@ -209,18 +219,20 @@ class TestRandomPoolDatasetLoader:
             assert images_pool[0].images[0].contents == ["/path/to/image1.png"]
             assert images_pool[1].images[0].contents == ["/path/to/image2.png"]
 
-    def test_convert_simple_pool_data(self):
+    def test_convert_simple_pool_data(self, default_user_config):
         """Test converting simple random pool data to conversations."""
         data = {"file1.jsonl": [RandomPool(text="Hello world")]}
 
-        loader = RandomPoolDatasetLoader("dummy.jsonl")
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
         conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 1
         assert len(conversations[0].turns) == 1
         assert conversations[0].turns[0].texts[0].contents == ["Hello world"]
 
-    def test_convert_multimodal_pool_data(self):
+    def test_convert_multimodal_pool_data(self, default_user_config):
         """Test converting multimodal random pool data."""
         data = {
             "multimodal.jsonl": [
@@ -232,7 +244,9 @@ class TestRandomPoolDatasetLoader:
             ]
         }
 
-        loader = RandomPoolDatasetLoader("dummy.jsonl")
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
         conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 1
@@ -244,7 +258,7 @@ class TestRandomPoolDatasetLoader:
         assert len(turn.audios) == 1
         assert turn.audios[0].contents == ["/path/to/audio.wav"]
 
-    def test_convert_batched_pool_data(self):
+    def test_convert_batched_pool_data(self, default_user_config):
         """Test converting pool data with batched content."""
         data = {
             "batched.jsonl": [
@@ -255,7 +269,9 @@ class TestRandomPoolDatasetLoader:
             ]
         }
 
-        loader = RandomPoolDatasetLoader("dummy.jsonl")
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
         conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 1
@@ -265,7 +281,7 @@ class TestRandomPoolDatasetLoader:
         assert len(turn.images) == 1
         assert turn.images[0].contents == ["/image1.png", "/image2.png"]
 
-    def test_convert_multiple_files_no_name_specified(self):
+    def test_convert_multiple_files_no_name_specified(self, default_user_config):
         """Test converting data from multiple files without name specified."""
         # Simplified version with no name specified
         data = {
@@ -275,7 +291,9 @@ class TestRandomPoolDatasetLoader:
             "contexts.jsonl": [RandomPool(text="AI is artificial intelligence")],
         }
 
-        loader = RandomPoolDatasetLoader("dummy_dir")
+        loader = RandomPoolDatasetLoader(
+            filename="dummy_dir", user_config=default_user_config
+        )
         conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 1  # merged queries & contexts
@@ -287,7 +305,7 @@ class TestRandomPoolDatasetLoader:
         assert turn.texts[1].name == "contexts"  # use filename if not specified
         assert turn.texts[1].contents == ["AI is artificial intelligence"]
 
-    def test_convert_multiple_files_with_name_specified(self):
+    def test_convert_multiple_files_with_name_specified(self, default_user_config):
         """Test converting data from multiple files with name specified."""
         data = {
             "queries.jsonl": [
@@ -302,7 +320,9 @@ class TestRandomPoolDatasetLoader:
             ],
         }
 
-        loader = RandomPoolDatasetLoader("dummy_dir")
+        loader = RandomPoolDatasetLoader(
+            filename="dummy_dir", user_config=default_user_config
+        )
         conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 1  # merged queries & contexts
@@ -314,7 +334,7 @@ class TestRandomPoolDatasetLoader:
         assert turn.texts[1].name == "def456"  # uses name from Text object
         assert turn.texts[1].contents == ["AI is artificial intelligence"]
 
-    def test_convert_multiple_files_with_multiple_samples(self):
+    def test_convert_multiple_files_with_multiple_samples(self, default_user_config):
         """Test converting data from multiple files with multiple samples."""
         data = {
             "queries.jsonl": [
@@ -327,7 +347,9 @@ class TestRandomPoolDatasetLoader:
             ],
         }
 
-        loader = RandomPoolDatasetLoader("dummy_dir", num_conversations=2)
+        loader = RandomPoolDatasetLoader(
+            filename="dummy_dir", user_config=default_user_config, num_conversations=2
+        )
         conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 2

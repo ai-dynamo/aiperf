@@ -2,11 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
-import math
 from io import BytesIO
 from pathlib import Path
 
-import numpy as np
 from PIL import Image
 
 from aiperf.common.enums import ImageFormat
@@ -67,58 +65,14 @@ def encode_image(img: Image, format: str) -> str:
         img = img.convert("RGB")
 
     buffer = BytesIO()
-    img.save(buffer, format=format)
+    # Use explicit compression settings to ensure deterministic output across platforms
+    # (macOS and Linux may have different library versions that produce different output)
+    if format == "PNG":
+        # PNG: Explicit compress_level and disable optimize to ensure consistent zlib compression
+        img.save(buffer, format=format, compress_level=6, optimize=False)
+    elif format == "JPEG":
+        # JPEG: Explicit quality and subsampling to ensure consistent libjpeg output
+        img.save(buffer, format=format, quality=85, subsampling=0)
+    else:
+        img.save(buffer, format=format)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-
-def sample_normal(
-    mean: float, stddev: float, lower: float = -np.inf, upper: float = np.inf
-) -> int:
-    """Sample from a normal distribution with support for bounds using rejection sampling.
-
-    Args:
-        mean: The mean of the normal distribution.
-        stddev: The standard deviation of the normal distribution.
-        lower: The lower bound of the distribution.
-        upper: The upper bound of the distribution.
-
-    Returns:
-        An integer sampled from the distribution.
-    """
-    while True:
-        n = np.random.normal(mean, stddev)
-        if lower <= n <= upper:
-            return n
-
-
-def sample_positive_normal(mean: float, stddev: float) -> float:
-    """Sample from a normal distribution ensuring positive values
-    without distorting the distribution.
-
-    Args:
-        mean: Mean value for the normal distribution
-        stddev: Standard deviation for the normal distribution
-
-    Returns:
-        A positive sample from the normal distribution
-
-    Raises:
-        ValueError: If mean is less than 0
-    """
-    if mean < 0:
-        raise ValueError(f"Mean value ({mean}) should be greater than 0")
-    return sample_normal(mean, stddev, lower=0)
-
-
-def sample_positive_normal_integer(mean: float, stddev: float) -> int:
-    """Sample a random positive integer from a normal distribution.
-
-    Args:
-        mean: The mean of the normal distribution.
-        stddev: The standard deviation of the normal distribution.
-
-    Returns:
-        A positive integer sampled from the distribution. If the sampled
-        number is less than 1, it returns 1.
-    """
-    return math.ceil(sample_positive_normal(mean, stddev))

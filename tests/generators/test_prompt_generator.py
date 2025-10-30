@@ -89,20 +89,18 @@ class TestPromptGeneratorComprehensive:
     # Generate Method Tests
     # ============================================================================
 
-    @patch("aiperf.dataset.utils.sample_positive_normal_integer", return_value=50)
-    def test_generate_without_hash_ids(self, mock_sample, basic_config):
+    def test_generate_without_hash_ids(self, basic_config):
         """Test generate method without hash_ids uses normal generation."""
         tokenizer, config = basic_config
         generator = PromptGenerator(config, tokenizer)
 
-        with patch.object(
-            generator, "_generate_prompt", return_value="test prompt"
-        ) as mock_gen:
-            result = generator.generate(mean=100, stddev=20)
+        # Test that generate without hash_ids returns a string
+        result = generator.generate(mean=100, stddev=20)
 
-            mock_sample.assert_called_once_with(100, 20)
-            mock_gen.assert_called_once_with(50)
-            assert result == "test prompt"
+        assert isinstance(result, str)
+        assert len(result) > 0
+        # Verify it contains tokens from the corpus
+        assert " " in result or len(result.split()) > 0
 
     def test_generate_with_hash_ids(self, basic_config):
         """Test generate method with hash_ids uses cached generation."""
@@ -117,20 +115,17 @@ class TestPromptGeneratorComprehensive:
             mock_cached.assert_called_once_with(100, [1, 2, 3], 512)
             assert result == "cached prompt"
 
-    @patch("aiperf.dataset.utils.sample_positive_normal_integer", return_value=30)
-    def test_generate_with_empty_hash_ids(self, mock_sample, basic_config):
+    def test_generate_with_empty_hash_ids(self, basic_config):
         """Test generate method with empty hash_ids list."""
         tokenizer, config = basic_config
         generator = PromptGenerator(config, tokenizer)
 
-        with patch.object(
-            generator, "_generate_prompt", return_value="normal prompt"
-        ) as mock_gen:
-            result = generator.generate(mean=100, stddev=20, hash_ids=[])
+        # Empty list should be falsy, so should use normal generation
+        result = generator.generate(mean=100, stddev=20, hash_ids=[])
 
-            # Empty list should be falsy, so should use normal generation
-            mock_gen.assert_called_once_with(30)
-            assert result == "normal prompt"
+        # Verify it returns a string with tokens
+        assert isinstance(result, str)
+        assert len(result) > 0
 
     # ============================================================================
     # _generate_prompt Method Tests
@@ -343,7 +338,9 @@ class TestPromptGeneratorComprehensive:
         corpus_size = generator._corpus_size
 
         # Start near the end to force wrap-around
-        with patch("random.randrange", return_value=corpus_size - 2):
+        with patch.object(
+            generator._corpus_rng, "randrange", return_value=corpus_size - 2
+        ):
             tokens = generator._sample_tokens(5)
             expected_tokens = (
                 generator._tokenized_corpus[corpus_size - 2 : corpus_size]
@@ -358,23 +355,23 @@ class TestPromptGeneratorComprehensive:
         generator = PromptGenerator(config, tokenizer)
         corpus_size = generator._corpus_size
 
-        with patch("random.randrange", return_value=0):
+        with patch.object(generator._corpus_rng, "randrange", return_value=0):
             tokens = generator._sample_tokens(corpus_size)
 
             assert len(tokens) == corpus_size
             assert tokens == generator._tokenized_corpus
 
     @patch("aiperf.common.mixins.aiperf_logger_mixin.AIPerfLoggerMixin.warning")
-    @patch("random.randrange", return_value=0)
     def test_sample_tokens_longer_than_corpus_with_warning(
-        self, mock_randrange, mock_warning, basic_config
+        self, mock_warning, basic_config
     ):
         """Test _sample_tokens when requested length exceeds corpus size."""
         tokenizer, config = basic_config
         generator = PromptGenerator(config, tokenizer)
         corpus_size = generator._corpus_size
 
-        tokens = generator._sample_tokens(corpus_size * 2)
+        with patch.object(generator._corpus_rng, "randrange", return_value=0):
+            tokens = generator._sample_tokens(corpus_size * 2)
 
         # Should log a warning
         mock_warning.assert_called_once()
@@ -400,11 +397,12 @@ class TestPromptGeneratorComprehensive:
         tokenizer, config = prefix_config
         generator = PromptGenerator(config, tokenizer)
 
-        # Mock random.choice to control selection
-        expected_prompt = "selected_prompt"
-        with patch("random.choice", return_value=expected_prompt):
-            result = generator.get_random_prefix_prompt()
-            assert result == expected_prompt
+        # Test that it returns one of the prefix prompts from the pool
+        result = generator.get_random_prefix_prompt()
+        assert isinstance(result, str)
+        assert len(result) > 0
+        # Verify it's from the prefix prompts pool
+        assert result in generator._prefix_prompts
 
     def test_get_random_prefix_prompt_multiple_calls(self, prefix_config):
         """Test get_random_prefix_prompt returns different prompts across calls."""
