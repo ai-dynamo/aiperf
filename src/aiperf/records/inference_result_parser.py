@@ -90,6 +90,9 @@ class InferenceResultParser(CommunicationMixin):
             lambda: "Received inference results",
         )
 
+        # Make sure any invalid request records are converted to error records for combined processing.
+        request_record.create_error_from_invalid()
+
         if request_record.has_error:
             # Even for error records, compute input token count if possible
             try:
@@ -104,7 +107,7 @@ class InferenceResultParser(CommunicationMixin):
                 input_token_count=input_token_count,
             )
 
-        elif request_record.valid:
+        else:
             try:
                 record = await self.process_valid_record(request_record)
                 self.debug(
@@ -129,25 +132,6 @@ class InferenceResultParser(CommunicationMixin):
                     responses=[],
                     input_token_count=input_token_count,
                 )
-        else:
-            self.warning(f"Received invalid inference results: {request_record}")
-            # TODO: We should add an ErrorDetails to response record and not the request record.
-            request_record.error = ErrorDetails(
-                code=None,
-                message="Invalid inference results",
-                type="InvalidInferenceResults",
-            )
-
-            try:
-                input_token_count = await self.compute_input_token_count(request_record)
-            except Exception:
-                input_token_count = None
-
-            return ParsedResponseRecord(
-                request=request_record,
-                responses=[],
-                input_token_count=input_token_count,
-            )
 
     async def process_valid_record(
         self, request_record: RequestRecord
