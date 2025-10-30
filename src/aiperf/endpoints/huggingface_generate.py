@@ -80,7 +80,6 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
         """Handle standard (non-streaming) JSON response."""
         json_obj = response.get_json()
         if not json_obj:
-            self.debug(lambda: "Empty or invalid streaming JSON response.")
             return None
 
         if isinstance(json_obj, list) and json_obj:
@@ -122,5 +121,5 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             return ParsedResponse(perf_ns=response.perf_ns, data=data)
 
         except Exception:
-            self.debug(lambda: "Error parsing TGI stream")
+            self.debug(lambda: "Error parsing TGI stream: {e}")
             return None
