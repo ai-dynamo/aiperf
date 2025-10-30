@@ -28,6 +28,9 @@ from aiperf.endpoints.openai_embeddings import (
 from aiperf.endpoints.solido_rag import (
     SolidoEndpoint,
 )
+from aiperf.endpoints.template_endpoint import (
+    TemplateEndpoint,
+)
 
 __all__ = [
     "BaseEndpoint",
@@ -39,4 +42,5 @@ __all__ = [
     "HFTeiRankingsEndpoint",
     "NIMRankingsEndpoint",
     "SolidoEndpoint",
+    "TemplateEndpoint",
 ]

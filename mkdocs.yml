@@ -17,6 +17,7 @@ nav:
     - Time-based Benchmarking: tutorials/time-based-benchmarking.md
     - Sequence Distributions: tutorials/sequence-distributions.md
     - Goodput: tutorials/goodput.md
+    - Template Endpoint: tutorials/template-endpoint.md
   - Reference:
     - Architecture: architecture.md
     - Benchmark Datasets: benchmark_datasets.md
