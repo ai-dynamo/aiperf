@@ -119,5 +119,5 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             return ParsedResponse(perf_ns=response.perf_ns, data=data)
 
         except Exception:
-            self.debug(lambda: "Error parsing stream")
+            self.debug(lambda: "Error parsing stream: {e}")
             return None
