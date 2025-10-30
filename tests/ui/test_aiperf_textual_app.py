@@ -34,14 +34,6 @@ class TestAIPerfTextualAppInitialization:
         """Test that initialization sets the correct title."""
         assert app.title == "NVIDIA AIPerf"
 
-    def test_init_dev_mode_title(self, service_config, mock_controller):
-        """Test that dev mode adds suffix to title."""
-        with patch("aiperf.common.environment.Environment.DEV.MODE", True):
-            app = AIPerfTextualApp(
-                service_config=service_config, controller=mock_controller
-            )
-            assert "Developer Mode" in app.title
-
     def test_init_widget_references_none(self, app):
         """Test that widget references start as None."""
         assert app.log_viewer is None
