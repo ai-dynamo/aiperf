@@ -193,7 +193,7 @@ class TestAIPerfTextualAppActions:
             ),
             patch.object(app, "query_one", return_value=mock_panel),
         ):
-            await app.action_toggle_maximize("telemetry")
+            await app.action_toggle_maximize_telemetry()
 
             assert (
                 mock_controller.user_config.gpu_telemetry_mode

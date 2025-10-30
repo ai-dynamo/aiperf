@@ -29,39 +29,6 @@ class TestGPUMetricsTable:
             model_name="NVIDIA RTX 4090",
         )
 
-    def test_is_for_this_gpu_matching(self, gpu_metrics_table):
-        """Test that _is_for_this_gpu returns True for matching GPU."""
-        metric = MetricResult(
-            tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
-            header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
-            unit="%",
-            avg=75.0,
-        )
-
-        assert gpu_metrics_table._is_for_this_gpu(metric) is True
-
-    def test_is_for_this_gpu_non_matching_index(self, gpu_metrics_table):
-        """Test that _is_for_this_gpu returns False for different GPU index."""
-        metric = MetricResult(
-            tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu1_GPU-12345678",
-            header="GPU Utilization | localhost:9400 | GPU 1 | NVIDIA RTX 4090",
-            unit="%",
-            avg=75.0,
-        )
-
-        assert gpu_metrics_table._is_for_this_gpu(metric) is False
-
-    def test_is_for_this_gpu_non_matching_uuid(self, gpu_metrics_table):
-        """Test that _is_for_this_gpu returns False for different UUID."""
-        metric = MetricResult(
-            tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-99999999",
-            header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
-            unit="%",
-            avg=75.0,
-        )
-
-        assert gpu_metrics_table._is_for_this_gpu(metric) is False
-
     def test_format_metric_row_with_all_stats(self, gpu_metrics_table):
         """Test _format_metric_row formats all statistics correctly."""
         metric = MetricResult(
@@ -453,29 +420,6 @@ class TestGPUMetricsTableLifecycle:
             ]
             == mock_row_key
         )
-
-    def test_update_filters_non_matching_gpus(self, gpu_metrics_table):
-        """Test that update only processes metrics for this GPU."""
-        mock_table = Mock()
-        mock_table.is_mounted = True
-        mock_column_key = Mock()
-        mock_table.add_column.return_value = mock_column_key
-
-        gpu_metrics_table.data_table = mock_table
-        gpu_metrics_table._initialize_columns()
-
-        metrics = [
-            MetricResult(
-                tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu1_GPU-99999999",
-                header="GPU Utilization | localhost:9400 | GPU 1 | NVIDIA RTX 4090",
-                unit="%",
-                avg=75.0,
-            )
-        ]
-
-        gpu_metrics_table.update(metrics)
-
-        mock_table.add_row.assert_not_called()
 
     def test_update_single_row_with_exception(self, gpu_metrics_table):
         """Test that _update_single_row handles exceptions gracefully."""

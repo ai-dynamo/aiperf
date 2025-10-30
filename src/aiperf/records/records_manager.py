@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -72,7 +73,7 @@ class TelemetryTrackingState:
     statistics for GPU telemetry collection and processing.
     """
 
-    error_counts: dict[ErrorDetails, int] = field(default_factory=dict)
+    error_counts: dict[ErrorDetails, int] = field(default_factory=defaultdict(int))
     error_counts_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     task_runs: int = 0
@@ -227,16 +228,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     message=f"Telemetry processor error: {str(e)}"
                 )
                 async with self._telemetry_state.error_counts_lock:
-                    self._telemetry_state.error_counts[error_details] = (
-                        self._telemetry_state.error_counts.get(error_details, 0) + 1
-                    )
+                    self._telemetry_state.error_counts[error_details] += 1
                 self.debug(f"Failed to process telemetry batch: {e}")
         else:
             if message.error:
                 async with self._telemetry_state.error_counts_lock:
-                    self._telemetry_state.error_counts[message.error] = (
-                        self._telemetry_state.error_counts.get(message.error, 0) + 1
-                    )
+                    self._telemetry_state.error_counts[message.error] += 1
 
     def _should_include_request_by_duration(
         self, record_data: MetricRecordsData
@@ -457,37 +454,31 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         while not self.stop_requested:
             if (
                 self.user_config.gpu_telemetry_mode
-                == GPUTelemetryMode.REALTIME_DASHBOARD
+                != GPUTelemetryMode.REALTIME_DASHBOARD
             ):
-                telemetry_metrics = await self._generate_realtime_telemetry_metrics()
-                self._telemetry_state.total_metrics_generated += len(telemetry_metrics)
-
-                if telemetry_metrics:
-                    # Only publish if values have changed - extract once for efficiency
-                    new_values = self._extract_metric_values(telemetry_metrics)
-                    if (
-                        self._telemetry_state.last_metric_values is None
-                        or new_values != self._telemetry_state.last_metric_values
-                    ):
-                        await self.publish(
-                            RealtimeTelemetryMetricsMessage(
-                                service_id=self.service_id,
-                                metrics=telemetry_metrics,
-                            )
-                        )
-                        self._telemetry_state.last_metric_values = new_values
-
-                await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
-            else:
                 # Disabled - sleep until command wakes us
                 await self._telemetry_enable_event.wait()
                 self._telemetry_enable_event.clear()
 
-    def _extract_metric_values(
-        self, metrics: list[MetricResult]
-    ) -> dict[str, float | None]:
-        """Extract key metric values for comparison (tag -> current value mapping)."""
-        return {m.tag: m.current for m in metrics}
+            telemetry_metrics = await self._generate_realtime_telemetry_metrics()
+            self._telemetry_state.total_metrics_generated += len(telemetry_metrics)
+
+            if telemetry_metrics:
+                # Only publish if values have changed - extract once for efficiency
+                new_values = {m.tag: m.current for m in telemetry_metrics}
+                if (
+                    self._telemetry_state.last_metric_values is None
+                    or new_values != self._telemetry_state.last_metric_values
+                ):
+                    await self.publish(
+                        RealtimeTelemetryMetricsMessage(
+                            service_id=self.service_id,
+                            metrics=telemetry_metrics,
+                        )
+                    )
+                    self._telemetry_state.last_metric_values = new_values
+
+            await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
 
     @on_command(CommandType.REALTIME_METRICS)
     async def _on_realtime_metrics_command(

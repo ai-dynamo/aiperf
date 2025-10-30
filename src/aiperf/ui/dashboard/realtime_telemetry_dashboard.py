@@ -88,9 +88,7 @@ class GPUMetricsTable(Widget):
         if not self._columns_initialized:
             self._initialize_columns()
 
-        gpu_metrics = [m for m in metrics if self._is_for_this_gpu(m)]
-
-        for metric in sorted(gpu_metrics, key=lambda m: m.header):
+        for metric in sorted(metrics, key=lambda m: m.header):
             row_cells = self._format_metric_row(metric)
             if metric.tag in self._metric_row_keys:
                 row_key = self._metric_row_keys[metric.tag]
@@ -118,10 +116,6 @@ class GPUMetricsTable(Widget):
                 _logger.warning(
                     f"Error updating cell {col_name} with value {cell_value}: {e!r}"
                 )
-
-    def _is_for_this_gpu(self, metric: MetricResult) -> bool:
-        """Check if metric belongs to this GPU."""
-        return f"gpu{self.gpu_index}_{self.gpu_uuid[:12]}" in metric.tag
 
     def _format_metric_row(self, metric: MetricResult) -> list[Text]:
         """Format metric data into table row cells.
@@ -204,9 +198,7 @@ class SingleNodeView(VerticalScroll):
         gpus = {}
         for metric in metrics:
             gpu_key = self._extract_gpu_key_from_tag(metric.tag)
-            if gpu_key not in gpus:
-                gpus[gpu_key] = []
-            gpus[gpu_key].append(metric)
+            gpus.setdefault(gpu_key, []).append(metric)
         return gpus
 
     def _extract_gpu_key_from_tag(self, tag: str) -> str:

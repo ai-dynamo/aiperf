@@ -239,8 +239,9 @@ class UserConfig(BaseConfig):
         for item in self.gpu_telemetry:
             if item in ["dashboard"]:
                 mode = GPUTelemetryMode.REALTIME_DASHBOARD
-            elif item.startswith("http"):
-                urls.append(item)
+            elif item.startswith("http") or ":" in item:
+                normalized_url = item if item.startswith("http") else f"http://{item}"
+                urls.append(normalized_url)
 
         self._gpu_telemetry_mode = mode
         self._gpu_telemetry_urls = urls

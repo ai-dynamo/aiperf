@@ -29,11 +29,7 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
         self._telemetry_hierarchy = TelemetryHierarchy()
 
     def get_telemetry_hierarchy(self) -> TelemetryHierarchy:
-        """Get the accumulated telemetry hierarchy.
-
-        Returns:
-            TelemetryHierarchy: Full hierarchical telemetry data accumulated during the run
-        """
+        """Get the accumulated telemetry hierarchy."""
         return self._telemetry_hierarchy
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:

@@ -76,7 +76,7 @@ class AIPerfTextualApp(App):
         ("2", "toggle_maximize('progress')", "Progress"),
         ("3", "toggle_maximize('metrics')", "Metrics"),
         ("4", "toggle_maximize('workers')", "Workers"),
-        ("5", "toggle_maximize('telemetry')", "GPU Telemetry"),
+        ("5", "toggle_maximize_telemetry", "GPU Telemetry"),
         ("6", "toggle_maximize('logs')", "Logs"),
         ("escape", "restore_all_panels", "Restore View"),
         Binding("ctrl+s", "screenshot", "Save Screenshot", show=False),
@@ -175,9 +175,16 @@ class AIPerfTextualApp(App):
 
     async def action_toggle_maximize(self, panel_id: str) -> None:
         """Toggle the maximize state of the panel with the given id."""
+        panel = self.query_one(f"#{panel_id}")
+        if panel and panel.is_maximized:
+            self.screen.minimize()
+        else:
+            self.screen.maximize(panel)
+
+    async def action_toggle_maximize_telemetry(self) -> None:
+        """Toggle the maximize state of the telemetry panel and enable realtime GPU telemetry if needed."""
         if (
-            panel_id == "telemetry"
-            and self.controller.user_config.gpu_telemetry_mode
+            self.controller.user_config.gpu_telemetry_mode
             != GPUTelemetryMode.REALTIME_DASHBOARD
         ):
             self.controller.user_config.gpu_telemetry_mode = (
@@ -188,18 +195,13 @@ class AIPerfTextualApp(App):
                     "Enabling live GPU telemetry..."
                 )
 
-            # Broadcast command to start telemetry background task
             await self.controller.publish(
                 StartRealtimeTelemetryCommand(
                     service_id=self.controller.service_id,
                 )
             )
 
-        panel = self.query_one(f"#{panel_id}")
-        if panel and panel.is_maximized:
-            self.screen.minimize()
-        else:
-            self.screen.maximize(panel)
+        await self.action_toggle_maximize("telemetry")
 
     async def on_warmup_progress(self, warmup_stats: RequestsStats) -> None:
         """Forward warmup progress updates to the Textual App."""
