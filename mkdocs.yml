@@ -19,6 +19,7 @@ nav:
     - Goodput: tutorials/goodput.md
     - Request Rate with Max Concurrency: tutorials/request-rate-concurrency.md
     - GPU Telemetry: tutorials/gpu-telemetry.md
+    - Template Endpoint: tutorials/template-endpoint.md
   - Reference:
     - Architecture: architecture.md
     - Benchmark Datasets: benchmark_datasets.md

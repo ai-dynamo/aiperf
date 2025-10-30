@@ -29,6 +29,7 @@ Examples:
     print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
 """
 
+import platform
 from typing import Annotated
 
 from pydantic import BeforeValidator, Field, model_validator
@@ -404,6 +405,16 @@ class _ServiceSettings(BaseSettings):
         default=2.0,
         description="Maximum time in seconds to wait for simple tasks to complete when cancelling",
     )
+
+    @model_validator(mode="after")
+    def auto_disable_uvloop_on_windows(self) -> Self:
+        """Automatically disable uvloop on Windows as it's not supported."""
+        if platform.system() == "Windows" and not self.DISABLE_UVLOOP:
+            _logger.info(
+                "Windows detected: automatically disabling uvloop (not supported on Windows)"
+            )
+            self.DISABLE_UVLOOP = True
+        return self
 
 
 class _UISettings(BaseSettings):

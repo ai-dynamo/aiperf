@@ -210,8 +210,10 @@ class ProgressTrackerMixin(MessageBusClientMixin):
         async with self._phase_progress_lock:
             phase_progress = self._phase_progress_map.get(phase)
             if phase_progress is None:
-                self.warning(
-                    f"Phase '{phase.title()}' not found in current profile run"
+                self.debug(
+                    f"Received early progress update for '{phase.title()}' phase before it officially started. "
+                    "This can happen with very fast responding servers. "
+                    "No action needed - the benchmark will continue normally."
                 )
                 return
             yield phase_progress

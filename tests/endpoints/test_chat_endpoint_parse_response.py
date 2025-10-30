@@ -2,26 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for ChatEndpoint parse_response functionality."""
 
-from unittest.mock import Mock
-
 import pytest
 
 from aiperf.common.enums import EndpointType
 from aiperf.common.models.record_models import ReasoningResponseData, TextResponseData
-from aiperf.common.protocols import InferenceServerResponse
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from tests.endpoints.conftest import (
     create_endpoint_with_mock_transport,
+    create_mock_response,
     create_model_endpoint,
 )
-
-
-def create_mock_response(perf_ns: int, json_data: dict) -> Mock:
-    """Helper to create a mock InferenceServerResponse."""
-    mock_response = Mock(spec=InferenceServerResponse)
-    mock_response.perf_ns = perf_ns
-    mock_response.get_json.return_value = json_data
-    return mock_response
 
 
 class TestChatEndpointParseResponse:

@@ -269,6 +269,92 @@ async def cohere_rerank(req: dict) -> dict:
 
 
 # ============================================================================
+# Custom Multimodal Endpoint
+# ============================================================================
+
+
+@app.post("/v1/custom-multimodal", response_model=None)
+@with_error_injection
+async def custom_multimodal(req: dict) -> dict:
+    """Mock endpoint with custom multi-modal format.
+
+    Expected format:
+    {
+        "modality_bundle": {
+            "text_fragments": ["text1", "text2"],
+            "visual_assets": {
+                "images": ["base64..."],
+                "videos": ["base64..."]
+            },
+            "audio_streams": ["base64..."]
+        },
+        "inference_params": {
+            "model_id": "...",
+            "sampling_config": {...}
+        }
+    }
+
+    Returns format:
+    {
+        "completion": {
+            "generated_text": "...",
+            "metadata": {
+                "tokens_used": {...}
+            }
+        }
+    }
+    """
+    try:
+        # Extract the multimodal bundle
+        bundle = req.get("modality_bundle", {})
+        text_fragments = bundle.get("text_fragments", [])
+        visual_assets = bundle.get("visual_assets", {})
+        images = visual_assets.get("images", [])
+        videos = visual_assets.get("videos", [])
+        audio_streams = bundle.get("audio_streams", [])
+
+        # Extract inference params
+        inference_params = req.get("inference_params", {})
+        model_id = inference_params.get("model_id", "default-model")
+
+        # Create a mock request for timing - use a simple valid ChatCompletionRequest
+        text_content = " ".join(text_fragments) if text_fragments else "default text"
+        mock_req = ChatCompletionRequest(
+            model=model_id or "default-model",
+            messages=[{"role": "user", "content": text_content}],
+        )
+        ctx = RequestContext(mock_req)
+        await ctx.wait_until_completion()
+
+        # Build response with custom format
+        response_text = f"Processed {len(text_fragments)} text fragments"
+        if images:
+            response_text += f", {len(images)} images"
+        if videos:
+            response_text += f", {len(videos)} videos"
+        if audio_streams:
+            response_text += f", {len(audio_streams)} audio streams"
+
+        usage = ctx.tokenized.create_usage()
+        return {
+            "text": response_text,  # Use "text" field for auto-detection
+            "completion": {
+                "generated_text": response_text,
+                "metadata": {
+                    "tokens_used": {
+                        "input": usage.prompt_tokens,
+                        "output": usage.completion_tokens,
+                        "total": usage.total_tokens,
+                    }
+                },
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error in custom_multimodal endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ============================================================================
 # Health & Info
 # ============================================================================
 
