@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from aiperf.common.decorators import implements_protocol
@@ -49,8 +48,6 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             [content for text in turn.texts for content in text.contents if content]
         )
 
-        payload: dict[str, Any] = {"inputs": inputs}
-
         parameters: dict[str, Any] = {}
         if turn.max_tokens is not None:
             parameters["max_new_tokens"] = turn.max_tokens
@@ -58,7 +55,10 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
         if model_endpoint.endpoint.extra:
             parameters.update(model_endpoint.endpoint.extra)
 
-        payload["parameters"] = parameters
+        payload: dict[str, Any] = {
+            "inputs": inputs,
+            "parameters": parameters,
+        }
 
         self.debug(lambda: f"Formatted TGI payload: {payload}")
         return payload
@@ -97,36 +97,27 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
     def _parse_streaming(
         self, response: InferenceServerResponse
     ) -> ParsedResponse | None:
-        """Handle token stream (SSE or chunked) responses."""
-        chunks = []
-        final_text: str | None = None
+        """Handle streaming responses using built-in packet parsing."""
         try:
-            for packet in response.packets:
-                # Each packet is an SSEField(name='data', value='...')
-                if packet.name != "data":
-                    continue
-                try:
-                    json_obj = json.loads(packet.value)
-                    generated_text = json_obj.get("generated_text")
-                    if generated_text:
-                        final_text = generated_text
-                        break
-                    token_text = json_obj.get("token", {}).get("text")
-                    if token_text:
-                        chunks.append(token_text)
-                except Exception:
-                    self.debug(lambda: "JSON parse error in packet: {e}")
-                    continue
+            chunks = []
+            for json_obj in response.get_json():
+                generated_text = json_obj.get("generated_text")
+                if generated_text:
+                    chunks = [generated_text]
+                    break
+
+                token = json_obj.get("token", {})
+                if token and (text := token.get("text")):
+                    chunks.append(text)
+
+            if not chunks:
+                self.debug(lambda: "No chunks collected from stream.")
+                return None
+
+            full_text = "".join(chunks)
+            data = self.make_text_response_data(full_text)
+            return ParsedResponse(perf_ns=response.perf_ns, data=data)
+
         except Exception:
-            self.debug(lambda: "Error reading stream: {e}")
-
-        if final_text is not None:
-            chunks = [final_text]
-
-        if not chunks:
-            self.debug(lambda: "No chunks collected from stream.")
+            self.debug(lambda: "Error parsing stream")
             return None
-
-        full_text = "".join(chunks)
-        data = self.make_text_response_data(full_text)
-        return ParsedResponse(perf_ns=response.perf_ns, data=data)
