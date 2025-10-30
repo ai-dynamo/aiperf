@@ -73,7 +73,9 @@ class TelemetryTrackingState:
     statistics for GPU telemetry collection and processing.
     """
 
-    error_counts: dict[ErrorDetails, int] = field(default_factory=defaultdict(int))
+    error_counts: dict[ErrorDetails, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
     error_counts_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     task_runs: int = 0
