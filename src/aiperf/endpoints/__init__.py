@@ -13,6 +13,9 @@ from aiperf.endpoints.cohere_rankings import (
 from aiperf.endpoints.hf_tei_rankings import (
     HFTeiRankingsEndpoint,
 )
+from aiperf.endpoints.huggingface_generate import (
+    HuggingFaceGenerateEndpoint,
+)
 from aiperf.endpoints.nim_rankings import (
     NIMRankingsEndpoint,
 )
@@ -40,6 +43,7 @@ __all__ = [
     "CompletionsEndpoint",
     "EmbeddingsEndpoint",
     "HFTeiRankingsEndpoint",
+    "HuggingFaceGenerateEndpoint",
     "NIMRankingsEndpoint",
     "SolidoEndpoint",
     "TemplateEndpoint",

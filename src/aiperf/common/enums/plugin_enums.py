@@ -28,6 +28,7 @@ class EndpointType(CaseInsensitiveStrEnum):
     COHERE_RANKINGS = "cohere_rankings"
     EMBEDDINGS = "embeddings"
     HF_TEI_RANKINGS = "hf_tei_rankings"
+    HUGGINGFACE_GENERATE = "huggingface_generate"
     NIM_RANKINGS = "nim_rankings"
     SOLIDO_RAG = "solido_rag"
     TEMPLATE = "template"

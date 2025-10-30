@@ -8,7 +8,7 @@ from aiperf.common.factories import EndpointFactory
 
 
 class TestEndpointType:
-    """Test class for EndpointType enum."""
+    """Tests for EndpointType enum and its associated metadata."""
 
     @pytest.mark.parametrize(
         "endpoint_type,expected_tag,expected_streaming,expected_tokens,expected_path,expected_title",
@@ -61,6 +61,14 @@ class TestEndpointType:
                 "/v2/rerank",
                 "Ranking Metrics",
             ),
+            (
+                EndpointType.HUGGINGFACE_GENERATE,
+                "huggingface_generate",
+                True,
+                True,
+                "/generate",
+                "LLM Metrics",
+            ),
         ],
     )
     def test_endpoint_type_metadata(
@@ -72,16 +80,21 @@ class TestEndpointType:
         expected_path,
         expected_title,
     ):
-        """Test EndpointType metadata is retrieved from factory."""
+        """Verify EndpointType metadata returned by factory."""
         assert str(endpoint_type) == expected_tag
         assert endpoint_type.value == expected_tag
 
-        # Get metadata from factory
         metadata = EndpointFactory.get_metadata(endpoint_type)
+        assert metadata.endpoint_path == expected_path
         assert metadata.supports_streaming == expected_streaming
         assert metadata.produces_tokens == expected_tokens
-        assert metadata.endpoint_path == expected_path
         assert metadata.metrics_title == expected_title
+
+        # Optional sanity check for completeness
+        assert hasattr(metadata, "endpoint_path")
+        assert hasattr(metadata, "supports_streaming")
+        assert hasattr(metadata, "produces_tokens")
+        assert hasattr(metadata, "metrics_title")
 
     @pytest.mark.parametrize(
         "tag_value",
@@ -92,25 +105,27 @@ class TestEndpointType:
             "nim_rankings",
             "hf_tei_rankings",
             "cohere_rankings",
+            "huggingface_generate",
         ],
     )
     def test_enum_string_comparison(self, tag_value):
-        """Test that enum values can be compared with strings."""
+        """Ensure string comparisons and casts work correctly."""
         endpoint_type = EndpointType(tag_value)
         assert endpoint_type == tag_value
         assert str(endpoint_type) == tag_value
+        assert EndpointType(tag_value).value == tag_value
 
     def test_endpoint_type_case_insensitive(self):
-        """Test case insensitive enum behavior."""
+        """Verify EndpointType is case-insensitive."""
         assert EndpointType("CHAT") == EndpointType.CHAT
         assert EndpointType("Chat") == EndpointType.CHAT
         assert EndpointType("chat") == EndpointType.CHAT
 
     def test_all_endpoint_types_have_valid_metadata(self):
-        """Test that all endpoint types have valid metadata via factory."""
+        """Ensure all EndpointType members have valid metadata via factory."""
         for endpoint_type in EndpointType:
             metadata = EndpointFactory.get_metadata(endpoint_type)
             assert isinstance(metadata.supports_streaming, bool)
             assert isinstance(metadata.produces_tokens, bool)
-            assert metadata.metrics_title is not None
-            assert len(metadata.metrics_title) > 0
+            assert metadata.metrics_title
+            assert isinstance(metadata.metrics_title, str)
