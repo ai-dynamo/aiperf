@@ -80,6 +80,7 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
         """Handle standard (non-streaming) JSON response."""
         json_obj = response.get_json()
         if not json_obj:
+            self.debug(lambda: "Empty or invalid streaming JSON response.")
             return None
 
         if isinstance(json_obj, list) and json_obj:
@@ -97,27 +98,29 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
     def _parse_streaming(
         self, response: InferenceServerResponse
     ) -> ParsedResponse | None:
-        """Handle streaming responses using built-in packet parsing."""
+        """Parse Hugging Face TGI streaming response (single-packet version)."""
         try:
-            chunks = []
-            for json_obj in response.get_json():
-                generated_text = json_obj.get("generated_text")
-                if generated_text:
-                    chunks = [generated_text]
-                    break
+            chunks: list[str] = []
 
-                token = json_obj.get("token", {})
-                if token and (text := token.get("text")):
-                    chunks.append(text)
-
-            if not chunks:
-                self.debug(lambda: "No chunks collected from stream.")
+            json_obj = response.get_json()
+            if not json_obj:
+                self.debug(lambda: "Empty or invalid streaming JSON response.")
                 return None
 
-            full_text = "".join(chunks)
-            data = self.make_text_response_data(full_text)
+            token_obj = json_obj.get("token")
+            if token_obj and (text := token_obj.get("text")):
+                chunks.append(text)
+
+            if text := json_obj.get("generated_text"):
+                chunks.append(text)
+
+            if not chunks:
+                self.debug(lambda: "No text chunks collected from TGI stream.")
+                return None
+
+            data = self.make_text_response_data("".join(chunks))
             return ParsedResponse(perf_ns=response.perf_ns, data=data)
 
         except Exception:
-            self.debug(lambda: "Error parsing stream: {e}")
+            self.debug(lambda: "Error parsing TGI stream")
             return None

@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 from unittest.mock import Mock
 
 import pytest
@@ -123,25 +122,22 @@ class TestHuggingFaceGenerateEndpoint:
         assert endpoint._parse_non_streaming(response) is None
 
     def test_parse_streaming_basic_tokens(self, endpoint):
-        p1 = Mock(name="p1")
-        p1.name = "data"
-        p1.value = json.dumps({"token": {"text": "hi "}})
-        p2 = Mock(name="p2")
-        p2.name = "data"
-        p2.value = json.dumps({"token": {"text": "there"}})
-        response = Mock(spec=InferenceServerResponse, packets=[p1, p2], perf_ns=321)
+        response = Mock(spec=InferenceServerResponse)
+        response.get_json.return_value = {"token": {"text": "hi there"}}
+        response.perf_ns = 321
 
         result = endpoint._parse_streaming(response)
+
         assert isinstance(result, ParsedResponse)
         endpoint.make_text_response_data.assert_called_once_with("hi there")
 
     def test_parse_streaming_generated_text_field(self, endpoint):
-        packet = Mock()
-        packet.name = "data"
-        packet.value = json.dumps({"generated_text": "final"})
-        response = Mock(spec=InferenceServerResponse, packets=[packet], perf_ns=123)
+        response = Mock(spec=InferenceServerResponse)
+        response.get_json.return_value = {"generated_text": "final"}
+        response.perf_ns = 123
 
         result = endpoint._parse_streaming(response)
+
         assert isinstance(result, ParsedResponse)
         endpoint.make_text_response_data.assert_called_once_with("final")
 
