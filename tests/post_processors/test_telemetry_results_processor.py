@@ -83,6 +83,26 @@ class TestTelemetryResultsProcessor:
         assert gpu_uuid in processor._telemetry_hierarchy.dcgm_endpoints[dcgm_url]
 
     @pytest.mark.asyncio
+    async def test_get_telemetry_hierarchy(
+        self, mock_user_config: UserConfig, sample_telemetry_record: TelemetryRecord
+    ) -> None:
+        """Test get_telemetry_hierarchy returns accumulated data."""
+        processor = TelemetryResultsProcessor(mock_user_config)
+
+        # Add some records
+        await processor.process_telemetry_record(sample_telemetry_record)
+
+        # Get hierarchy
+        hierarchy = processor.get_telemetry_hierarchy()
+
+        assert isinstance(hierarchy, TelemetryHierarchy)
+        assert sample_telemetry_record.dcgm_url in hierarchy.dcgm_endpoints
+        assert (
+            sample_telemetry_record.gpu_uuid
+            in hierarchy.dcgm_endpoints[sample_telemetry_record.dcgm_url]
+        )
+
+    @pytest.mark.asyncio
     async def test_summarize_with_valid_data(
         self, mock_user_config: UserConfig, sample_telemetry_record: TelemetryRecord
     ) -> None:

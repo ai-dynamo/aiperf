@@ -19,7 +19,7 @@ from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, GPUTelemetryMode
 from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
 from aiperf.common.utils import load_json_str
 
@@ -223,6 +223,44 @@ class UserConfig(BaseConfig):
             group=Groups.TELEMETRY,
         ),
     ]
+
+    _gpu_telemetry_mode: GPUTelemetryMode = GPUTelemetryMode.SUMMARY
+    _gpu_telemetry_urls: list[str] = []
+
+    @model_validator(mode="after")
+    def _parse_gpu_telemetry_config(self) -> Self:
+        """Parse gpu_telemetry list into mode and URLs."""
+        if not self.gpu_telemetry:
+            return self
+
+        mode = GPUTelemetryMode.SUMMARY
+        urls = []
+
+        for item in self.gpu_telemetry:
+            if item in ["dashboard"]:
+                mode = GPUTelemetryMode.REALTIME_DASHBOARD
+            elif item.startswith("http") or ":" in item:
+                normalized_url = item if item.startswith("http") else f"http://{item}"
+                urls.append(normalized_url)
+
+        self._gpu_telemetry_mode = mode
+        self._gpu_telemetry_urls = urls
+        return self
+
+    @property
+    def gpu_telemetry_mode(self) -> GPUTelemetryMode:
+        """Get the GPU telemetry display mode (parsed from gpu_telemetry list)."""
+        return self._gpu_telemetry_mode
+
+    @gpu_telemetry_mode.setter
+    def gpu_telemetry_mode(self, value: GPUTelemetryMode) -> None:
+        """Set the GPU telemetry display mode."""
+        self._gpu_telemetry_mode = value
+
+    @property
+    def gpu_telemetry_urls(self) -> list[str]:
+        """Get the parsed GPU telemetry DCGM endpoint URLs."""
+        return self._gpu_telemetry_urls
 
     @model_validator(mode="after")
     def _compute_config(self) -> Self:

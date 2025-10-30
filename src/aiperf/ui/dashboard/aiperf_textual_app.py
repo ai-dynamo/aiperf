@@ -12,14 +12,16 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer
 
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import WorkerStatus
+from aiperf.common.enums import GPUTelemetryMode, WorkerStatus
 from aiperf.common.environment import Environment
+from aiperf.common.messages import StartRealtimeTelemetryCommand
 from aiperf.common.models import MetricResult, RecordsStats, RequestsStats, WorkerStats
 from aiperf.controller.system_controller import SystemController
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
 from aiperf.ui.dashboard.progress_dashboard import ProgressDashboard
 from aiperf.ui.dashboard.progress_header import ProgressHeader
 from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsDashboard
+from aiperf.ui.dashboard.realtime_telemetry_dashboard import RealtimeTelemetryDashboard
 from aiperf.ui.dashboard.rich_log_viewer import RichLogViewer
 from aiperf.ui.dashboard.worker_dashboard import WorkerDashboard
 
@@ -53,6 +55,10 @@ class AIPerfTextualApp(App):
     #workers-section {
         height: 3;
     }
+    #telemetry-section {
+        height: 3fr;
+        min-height: 14;
+    }
     #progress-section {
         width: 1fr;
     }
@@ -70,7 +76,8 @@ class AIPerfTextualApp(App):
         ("2", "toggle_maximize('progress')", "Progress"),
         ("3", "toggle_maximize('metrics')", "Metrics"),
         ("4", "toggle_maximize('workers')", "Workers"),
-        ("5", "toggle_maximize('logs')", "Logs"),
+        ("5", "toggle_maximize_telemetry", "GPU Telemetry"),
+        ("6", "toggle_maximize('logs')", "Logs"),
         ("escape", "restore_all_panels", "Restore View"),
         Binding("ctrl+s", "screenshot", "Save Screenshot", show=False),
         Binding("l", "toggle_hide_log_viewer", "Toggle Logs", show=False),
@@ -90,6 +97,7 @@ class AIPerfTextualApp(App):
         self.progress_header: ProgressHeader | None = None
         self.worker_dashboard: WorkerDashboard | None = None
         self.realtime_metrics_dashboard: RealtimeMetricsDashboard | None = None
+        self.realtime_telemetry_dashboard: RealtimeTelemetryDashboard | None = None
         self.profile_results: list[RenderableType] = []
         self.service_config = service_config
         self.controller: SystemController = controller
@@ -137,6 +145,12 @@ class AIPerfTextualApp(App):
                 self.worker_dashboard = WorkerDashboard(id="workers")
                 yield self.worker_dashboard
 
+            with Container(id="telemetry-section", classes="hidden"):
+                self.realtime_telemetry_dashboard = RealtimeTelemetryDashboard(
+                    service_config=self.service_config, id="telemetry"
+                )
+                yield self.realtime_telemetry_dashboard
+
             with Container(id="logs-section"):
                 self.log_viewer = RichLogViewer(id="logs")
                 yield self.log_viewer
@@ -179,6 +193,28 @@ class AIPerfTextualApp(App):
             self.screen.minimize()
         else:
             self.screen.maximize(panel)
+
+    async def action_toggle_maximize_telemetry(self) -> None:
+        """Toggle the maximize state of the telemetry panel and enable realtime GPU telemetry if needed."""
+        if (
+            self.controller.user_config.gpu_telemetry_mode
+            != GPUTelemetryMode.REALTIME_DASHBOARD
+        ):
+            self.controller.user_config.gpu_telemetry_mode = (
+                GPUTelemetryMode.REALTIME_DASHBOARD
+            )
+            if self.realtime_telemetry_dashboard:
+                self.realtime_telemetry_dashboard.set_status_message(
+                    "Enabling live GPU telemetry..."
+                )
+
+            await self.controller.publish(
+                StartRealtimeTelemetryCommand(
+                    service_id=self.controller.service_id,
+                )
+            )
+
+        await self.action_toggle_maximize("telemetry")
 
     async def on_warmup_progress(self, warmup_stats: RequestsStats) -> None:
         """Forward warmup progress updates to the Textual App."""
@@ -245,3 +281,9 @@ class AIPerfTextualApp(App):
         if self.realtime_metrics_dashboard:
             async with self.realtime_metrics_dashboard.batch():
                 self.realtime_metrics_dashboard.on_realtime_metrics(metrics)
+
+    async def on_realtime_telemetry_metrics(self, metrics: list[MetricResult]) -> None:
+        """Forward real-time GPU telemetry metrics updates to the Textual App."""
+        if self.realtime_telemetry_dashboard:
+            async with self.realtime_telemetry_dashboard.batch():
+                self.realtime_telemetry_dashboard.on_realtime_telemetry_metrics(metrics)

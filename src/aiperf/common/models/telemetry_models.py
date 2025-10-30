@@ -212,6 +212,7 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
             avg=float(np.mean(values)),
             std=float(np.std(values)),
             count=len(values),
+            current=float(data_points[-1][0]),
             p1=p1,
             p5=p5,
             p10=p10,

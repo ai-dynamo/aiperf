@@ -41,6 +41,7 @@ class MessageType(CaseInsensitiveStrEnum):
     PROFILE_PROGRESS = "profile_progress"
     PROFILE_RESULTS = "profile_results"
     REALTIME_METRICS = "realtime_metrics"
+    REALTIME_TELEMETRY_METRICS = "realtime_telemetry_metrics"
     REGISTRATION = "registration"
     SERVICE_ERROR = "service_error"
     STATUS = "status"

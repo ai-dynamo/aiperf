@@ -3,6 +3,8 @@
 import asyncio
 import copy
 import time
+from collections import defaultdict
+from dataclasses import dataclass, field
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -13,6 +15,7 @@ from aiperf.common.enums import (
     CommAddress,
     CommandType,
     CreditPhase,
+    GPUTelemetryMode,
     MessageType,
     ServiceType,
 )
@@ -30,7 +33,9 @@ from aiperf.common.messages import (
     ProcessTelemetryResultMessage,
     ProfileCancelCommand,
     RealtimeMetricsMessage,
+    RealtimeTelemetryMetricsMessage,
     RecordsProcessingStatsMessage,
+    StartRealtimeTelemetryCommand,
     TelemetryRecordsMessage,
 )
 from aiperf.common.messages.command_messages import RealtimeMetricsCommand
@@ -57,6 +62,28 @@ from aiperf.common.protocols import (
     TelemetryResultsProcessorProtocol,
 )
 from aiperf.records.phase_completion import PhaseCompletionChecker
+
+
+@dataclass
+class TelemetryTrackingState:
+    """
+    Tracks telemetry-related state and performance metrics.
+
+    Consolidates error tracking, warnings, endpoint status, and performance
+    statistics for GPU telemetry collection and processing.
+    """
+
+    error_counts: dict[ErrorDetails, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    error_counts_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    task_runs: int = 0
+    total_gen_time_ms: float = 0.0
+    total_pub_time_ms: float = 0.0
+    total_metrics_generated: int = 0
+    mode_enabled_time: float | None = None
+    last_metric_values: dict[str, float | None] | None = None
 
 
 @implements_protocol(ServiceProtocol)
@@ -105,13 +132,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._previous_realtime_records: int | None = None
 
-        # Telemetry data storage
-        self._telemetry_hierarchy = TelemetryHierarchy()
-        self._telemetry_hierarchy_lock = asyncio.Lock()
-        self._telemetry_error_counts: dict[
-            ErrorDetails, int
-        ] = {}  # Track telemetry-specific errors with counts
-        self._telemetry_error_counts_lock = asyncio.Lock()
+        self._telemetry_state = TelemetryTrackingState()
+        self._telemetry_enable_event = asyncio.Event()
 
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
         self._telemetry_results_processors: list[TelemetryResultsProcessorProtocol] = []
@@ -200,7 +222,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         Args:
             message: Batch of telemetry records from a DCGM collector
         """
-
         if message.valid:
             try:
                 await self._send_telemetry_to_results_processors(message.records)
@@ -208,21 +229,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 error_details = ErrorDetails(
                     message=f"Telemetry processor error: {str(e)}"
                 )
-                async with self._telemetry_error_counts_lock:
-                    self._telemetry_error_counts[error_details] = (
-                        self._telemetry_error_counts.get(error_details, 0) + 1
-                    )
+                async with self._telemetry_state.error_counts_lock:
+                    self._telemetry_state.error_counts[error_details] += 1
                 self.debug(f"Failed to process telemetry batch: {e}")
-
-            async with self._telemetry_hierarchy_lock:
-                for record in message.records:
-                    self._telemetry_hierarchy.add_record(record)
         else:
             if message.error:
-                async with self._telemetry_error_counts_lock:
-                    self._telemetry_error_counts[message.error] = (
-                        self._telemetry_error_counts.get(message.error, 0) + 1
-                    )
+                async with self._telemetry_state.error_counts_lock:
+                    self._telemetry_state.error_counts[message.error] += 1
 
     def _should_include_request_by_duration(
         self, record_data: MetricRecordsData
@@ -418,10 +431,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         return await self._process_results(cancelled=True)
 
     @background_task(interval=None, immediate=True)
-    async def _report_realtime_metrics_task(self) -> None:
-        """Report the real-time metrics at a regular interval (only if the UI type is dashboard)."""
+    async def _report_realtime_inference_metrics_task(self) -> None:
+        """Report inference metrics at regular intervals (dashboard only)."""
         if self.service_config.ui_type != AIPerfUIType.DASHBOARD:
             return
+
         while not self.stop_requested:
             await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
             async with self.processing_status_lock:
@@ -433,6 +447,41 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self._previous_realtime_records = self.processing_stats.processed
             await self._report_realtime_metrics()
 
+    @background_task(interval=None, immediate=True)
+    async def _report_realtime_telemetry_metrics_task(self) -> None:
+        """Report telemetry metrics - sleeps when disabled, resumes on command."""
+        if self.service_config.ui_type != AIPerfUIType.DASHBOARD:
+            return
+
+        while not self.stop_requested:
+            if (
+                self.user_config.gpu_telemetry_mode
+                != GPUTelemetryMode.REALTIME_DASHBOARD
+            ):
+                # Disabled - sleep until command wakes us
+                await self._telemetry_enable_event.wait()
+                self._telemetry_enable_event.clear()
+
+            telemetry_metrics = await self._generate_realtime_telemetry_metrics()
+            self._telemetry_state.total_metrics_generated += len(telemetry_metrics)
+
+            if telemetry_metrics:
+                # Only publish if values have changed - extract once for efficiency
+                new_values = {m.tag: m.current for m in telemetry_metrics}
+                if (
+                    self._telemetry_state.last_metric_values is None
+                    or new_values != self._telemetry_state.last_metric_values
+                ):
+                    await self.publish(
+                        RealtimeTelemetryMetricsMessage(
+                            service_id=self.service_id,
+                            metrics=telemetry_metrics,
+                        )
+                    )
+                    self._telemetry_state.last_metric_values = new_values
+
+            await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
+
     @on_command(CommandType.REALTIME_METRICS)
     async def _on_realtime_metrics_command(
         self, message: RealtimeMetricsCommand
@@ -440,17 +489,43 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a real-time metrics command."""
         await self._report_realtime_metrics()
 
+    @on_command(CommandType.START_REALTIME_TELEMETRY)
+    async def _on_start_realtime_telemetry_command(
+        self, message: StartRealtimeTelemetryCommand
+    ) -> None:
+        """Handle command to start the realtime telemetry background task.
+
+        This is called when the user dynamically enables the telemetry dashboard
+        by pressing the telemetry option in the UI without having passed the 'dashboard' parameter
+        at startup.
+        """
+        self.info("Received START_REALTIME_TELEMETRY command")
+
+        self.user_config.gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
+
+        # Wake up the sleeping telemetry task
+        self._telemetry_enable_event.set()
+
     async def _report_realtime_metrics(self) -> None:
-        """Report the real-time metrics."""
+        """Report both inference and telemetry metrics (used by command handler)."""
         metrics = await self._generate_realtime_metrics()
-        if not metrics:
-            return
-        await self.publish(
-            RealtimeMetricsMessage(
-                service_id=self.service_id,
-                metrics=metrics,
+        if metrics:
+            await self.publish(
+                RealtimeMetricsMessage(
+                    service_id=self.service_id,
+                    metrics=metrics,
+                )
             )
-        )
+
+        if self.user_config.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD:
+            telemetry_metrics = await self._generate_realtime_telemetry_metrics()
+            if telemetry_metrics:
+                await self.publish(
+                    RealtimeTelemetryMetricsMessage(
+                        service_id=self.service_id,
+                        metrics=telemetry_metrics,
+                    )
+                )
 
     async def _generate_realtime_metrics(self) -> list[MetricResult]:
         """Generate the real-time metrics for the profile run."""
@@ -461,13 +536,39 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             ],
             return_exceptions=True,
         )
-        return [
+
+        # Flatten results: each processor returns list[MetricResult], so we have
+        # list[list[MetricResult] | Exception]. Flatten to single list[MetricResult].
+        metric_results = [
             res
             for result in results
             if isinstance(result, list)
             for res in result
             if isinstance(res, MetricResult)
         ]
+
+        return metric_results
+
+    async def _generate_realtime_telemetry_metrics(self) -> list[MetricResult]:
+        """Generate the real-time GPU telemetry metrics."""
+        telemetry_results = await asyncio.gather(
+            *[
+                results_processor.summarize()
+                for results_processor in self._telemetry_results_processors
+            ],
+            return_exceptions=True,
+        )
+
+        # Flatten results: each processor returns list[MetricResult], so we have
+        # list[list[MetricResult] | Exception]. Flatten to single list[MetricResult].
+        telemetry_metrics = [
+            res
+            for result in telemetry_results
+            if isinstance(result, list)
+            for res in result
+            if isinstance(res, MetricResult)
+        ]
+        return telemetry_metrics
 
     async def _process_results(self, cancelled: bool) -> ProcessRecordsResult:
         """Process the results."""
@@ -521,27 +622,33 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         This method provides a separate export path for telemetry data that doesn't
         interfere with the inference results pipeline.
 
+        Retrieves the accumulated telemetry hierarchy from the TelemetryResultsProcessor,
+        which serves as the single source of truth for all telemetry data.
+
         Returns:
             TelemetryResults if telemetry data was collected, None otherwise
         """
-        async with self._telemetry_hierarchy_lock:
-            if not self._telemetry_hierarchy.dcgm_endpoints:
-                return None
+        # Get hierarchy from the telemetry results processor (single source of truth)
+        if not self._telemetry_results_processors:
+            return None
 
-            telemetry_results = TelemetryResults(
-                telemetry_data=self._telemetry_hierarchy,
-                start_ns=self.start_time_ns or time.time_ns(),
-                end_ns=self.end_time_ns or time.time_ns(),
-                endpoints_configured=list(
-                    self._telemetry_hierarchy.dcgm_endpoints.keys()
-                ),
-                endpoints_successful=list(
-                    self._telemetry_hierarchy.dcgm_endpoints.keys()
-                ),
-                error_summary=await self.get_telemetry_error_summary(),
-            )
+        # Get hierarchy from first processor (typically only one telemetry processor)
+        processor = self._telemetry_results_processors[0]
+        telemetry_hierarchy = processor.get_telemetry_hierarchy()
 
-            return telemetry_results
+        if not telemetry_hierarchy.dcgm_endpoints:
+            return None
+
+        telemetry_results = TelemetryResults(
+            telemetry_data=telemetry_hierarchy,
+            start_ns=self.start_time_ns or time.time_ns(),
+            end_ns=self.end_time_ns or time.time_ns(),
+            endpoints_tested=list(telemetry_hierarchy.dcgm_endpoints.keys()),
+            endpoints_successful=list(telemetry_hierarchy.dcgm_endpoints.keys()),
+            error_summary=await self.get_telemetry_error_summary(),
+        )
+
+        return telemetry_results
 
     async def _process_telemetry_results(self) -> ProcessTelemetryResult:
         """Process telemetry results by calling summarize on all telemetry processors.
@@ -578,13 +685,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=self.end_time_ns or time.time_ns(),
             )
 
-        async with self._telemetry_hierarchy_lock:
-            # Reset hierarchy once we've captured a snapshot for this result
-            self._telemetry_hierarchy = TelemetryHierarchy()
-
-        async with self._telemetry_error_counts_lock:
-            unique_errors = list(self._telemetry_error_counts.keys())
-            self._telemetry_error_counts.clear()
+        async with self._telemetry_state.error_counts_lock:
+            unique_errors = list(self._telemetry_state.error_counts.keys())
 
         return ProcessTelemetryResult(
             results=telemetry_results,
@@ -616,10 +718,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     async def get_telemetry_error_summary(self) -> list[ErrorDetailsCount]:
         """Generate a summary of the telemetry error records."""
-        async with self._telemetry_error_counts_lock:
+        async with self._telemetry_state.error_counts_lock:
             return [
                 ErrorDetailsCount(error_details=error_details, count=count)
-                for error_details, count in self._telemetry_error_counts.items()
+                for error_details, count in self._telemetry_state.error_counts.items()
             ]
 
 

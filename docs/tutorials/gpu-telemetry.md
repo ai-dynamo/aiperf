@@ -12,7 +12,7 @@ This guide shows you how to collect GPU metrics (power, utilization, memory, tem
 This guide covers two setup paths depending on your inference backend:
 
 ### Path 1: Dynamo (Built-in DCGM)
-If you're using **Dynamo**, it comes with DCGM pre-configured on port 9401. No additional setup needed! Just use the `--gpu-telemetry` flag to enable console display and optionally add additional DCGM url endpoints.
+If you're using **Dynamo**, it comes with DCGM pre-configured on port 9401. No additional setup needed! Just use the `--gpu-telemetry` flag to enable console display and optionally add additional DCGM url endpoints. URLs can be specified with or without the `http://` prefix (e.g., `localhost:9400` or `http://localhost:9400`).
 
 ### Path 2: Other Inference Servers (Custom DCGM)
 If you're using **any other inference backend**, you'll need to set up DCGM separately.
@@ -28,14 +28,27 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 
 ### How the `--gpu-telemetry` Flag Works
 
-| Usage | Command | What Gets Collected (If Available) | Console Display | CSV/JSON Export |
-|-------|---------|---------------------|-----------------|-----------------|
-| **No flag** | `aiperf profile --model MODEL ...` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ❌ No | ✅ Yes |
-| **Flag only** | `aiperf profile --model MODEL ... --gpu-telemetry` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ✅ Yes | ✅ Yes |
-| **Custom URLs** | `aiperf profile --model MODEL ... --gpu-telemetry http://node1:9400/metrics http://node2:9400/metrics` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + custom URLs | ✅ Yes | ✅ Yes |
+| Usage | Command | What Gets Collected (If Available) | Console Display | Dashboard View | CSV/JSON Export |
+|-------|---------|---------------------|-----------------|----------------|-----------------|
+| **No flag** | `aiperf profile --model MODEL ...` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ❌ No | ❌ No | ✅ Yes |
+| **Flag only** | `aiperf profile --model MODEL ... --gpu-telemetry` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ✅ Yes | ❌ No | ✅ Yes |
+| **Dashboard mode** | `aiperf profile --model MODEL ... --gpu-telemetry dashboard` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Custom URLs** | `aiperf profile --model MODEL ... --gpu-telemetry node1:9400 http://node2:9400/metrics` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + custom URLs | ✅ Yes | ❌ No | ✅ Yes |
+| **Dashboard + URLs** | `aiperf profile --model MODEL ... --gpu-telemetry dashboard localhost:9400` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + custom URLs | ✅ Yes | ✅ Yes | ✅ Yes |
 
 > [!IMPORTANT]
 > The default endpoints `http://localhost:9400/metrics` and `http://localhost:9401/metrics` are ALWAYS attempted for telemetry collection, regardless of whether the `--gpu-telemetry` flag is used. The flag primarily controls whether metrics are displayed on the console and allows you to specify additional custom DCGM exporter endpoints.
+
+> [!NOTE]
+> When specifying custom DCGM exporter URLs, the `http://` prefix is optional. URLs like `localhost:9400` will automatically be treated as `http://localhost:9400`. Both formats work identically.
+
+### Real-Time Dashboard View
+
+Adding `dashboard` to the `--gpu-telemetry` flag enables a live terminal UI (TUI) that displays GPU metrics in real-time during your benchmark runs:
+
+```bash
+aiperf profile --model MODEL ... --gpu-telemetry dashboard
+```
 
 ---
 
@@ -48,7 +61,7 @@ Dynamo includes DCGM out of the box on port 9401 - no extra setup needed!
 ```bash
 # Set environment variables
 export AIPERF_REPO_TAG="main"
-export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.5.0"
+export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.5.1"
 export MODEL="Qwen/Qwen3-0.6B"
 
 # Download the Dynamo container
@@ -99,7 +112,7 @@ uv pip install ./aiperf
 
 ```bash
 # Wait for Dynamo API to be ready (up to 15 minutes)
-timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"a\"}],\"max_completion_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "Dynamo not ready after 15min"; exit 1; }
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"a\"}],\"max_completion_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "Dynamo not ready after 15min"; exit 1; }
 ```
 ```bash
 # Wait for DCGM Exporter to be ready (up to 2 minutes after Dynamo is ready)
@@ -116,7 +129,7 @@ aiperf profile \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --streaming \
-    --url localhost:8080 \
+    --url localhost:8000 \
     --synthetic-input-tokens-mean 100 \
     --synthetic-input-tokens-stddev 0 \
     --output-tokens-mean 200 \
@@ -130,6 +143,9 @@ aiperf profile \
     --random-seed 100 \
     --gpu-telemetry
 ```
+
+> [!TIP]
+> The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
 
 ---
 
@@ -279,6 +295,12 @@ aiperf profile \
     --gpu-telemetry
 ```
 
+> [!TIP]
+> The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
+
+> [!TIP]
+> The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
+
 ## Multi-Node GPU Telemetry Example
 
 For distributed setups with multiple nodes, you can collect GPU telemetry from all nodes simultaneously:
@@ -287,12 +309,13 @@ For distributed setups with multiple nodes, you can collect GPU telemetry from a
 # Example: Collecting telemetry from 3 nodes in a distributed setup
 # Note: The default endpoints http://localhost:9400/metrics and http://localhost:9401/metrics
 #       are always attempted in addition to these custom URLs
+# URLs can be specified with or without the http:// prefix
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --streaming \
-    --url localhost:8080 \
+    --url localhost:8000 \
     --synthetic-input-tokens-mean 100 \
     --synthetic-input-tokens-stddev 0 \
     --output-tokens-mean 200 \
@@ -304,14 +327,14 @@ aiperf profile \
     --warmup-request-count 1 \
     --conversation-num 8 \
     --random-seed 100 \
-    --gpu-telemetry http://node1:9400/metrics http://node2:9400/metrics http://node3:9400/metrics
+    --gpu-telemetry node1:9400 node2:9400 http://node3:9400/metrics
 ```
 
 This will collect GPU metrics from:
 - `http://localhost:9400/metrics` (default, always attempted)
 - `http://localhost:9401/metrics` (default, always attempted)
-- `http://node1:9400/metrics` (custom node 1)
-- `http://node2:9400/metrics` (custom node 2)
+- `http://node1:9400` (custom node 1, normalized from `node1:9400`)
+- `http://node2:9400` (custom node 2, normalized from `node2:9400`)
 - `http://node3:9400/metrics` (custom node 3)
 
 All metrics are displayed on the console and saved to the output CSV and JSON files, with GPU indices and hostnames distinguishing metrics from different nodes.

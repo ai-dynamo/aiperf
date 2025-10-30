@@ -44,6 +44,10 @@ class MetricResult(JsonMetricResult):
         default=None,
         description="The total number of records used to calculate the metric",
     )
+    current: float | None = Field(
+        default=None,
+        description="The most recent value of the metric (used for realtime dashboard display only)",
+    )
 
     def to_display_unit(self) -> "MetricResult":
         """Convert the metric result to its display unit."""

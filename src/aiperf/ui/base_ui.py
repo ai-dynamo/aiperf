@@ -4,19 +4,27 @@
 from aiperf.common.mixins import (
     ProgressTrackerMixin,
     RealtimeMetricsMixin,
+    RealtimeTelemetryMetricsMixin,
     WorkerTrackerMixin,
 )
 
 
-class BaseAIPerfUI(ProgressTrackerMixin, WorkerTrackerMixin, RealtimeMetricsMixin):
+class BaseAIPerfUI(
+    ProgressTrackerMixin,
+    WorkerTrackerMixin,
+    RealtimeMetricsMixin,
+    RealtimeTelemetryMetricsMixin,
+):
     """Base class for AIPerf UI implementations.
 
     This class provides a simple starting point for a UI for AIPerf components.
-    It inherits from the :class:`ProgressTrackerMixin`, :class:`WorkerTrackerMixin`, and :class:`RealtimeMetricsMixin`
+    It inherits from the :class:`ProgressTrackerMixin`, :class:`WorkerTrackerMixin`,
+    :class:`RealtimeMetricsMixin`, and :class:`RealtimeTelemetryMetricsMixin`
     to provide a simple starting point for a UI for AIPerf components.
 
-    Now, you can use the various hooks defined in the :class:`ProgressTrackerMixin`, :class:`WorkerTrackerMixin`, and :class:`RealtimeMetricsMixin`
-    to create a UI for AIPerf components.
+    Now, you can use the various hooks defined in the :class:`ProgressTrackerMixin`,
+    :class:`WorkerTrackerMixin`, :class:`RealtimeMetricsMixin`, and
+    :class:`RealtimeTelemetryMetricsMixin` to create a UI for AIPerf components.
 
     Example:
     ```python

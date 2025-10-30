@@ -17,6 +17,8 @@ nav:
     - Time-based Benchmarking: tutorials/time-based-benchmarking.md
     - Sequence Distributions: tutorials/sequence-distributions.md
     - Goodput: tutorials/goodput.md
+    - Request Rate with Max Concurrency: tutorials/request-rate-concurrency.md
+    - GPU Telemetry: tutorials/gpu-telemetry.md
     - Template Endpoint: tutorials/template-endpoint.md
   - Reference:
     - Architecture: architecture.md

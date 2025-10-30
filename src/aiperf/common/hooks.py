@@ -44,6 +44,7 @@ class AIPerfHook(CaseInsensitiveStrEnum):
     ON_INIT = "@on_init"
     ON_MESSAGE = "@on_message"
     ON_REALTIME_METRICS = "@on_realtime_metrics"
+    ON_REALTIME_TELEMETRY_METRICS = "@on_realtime_telemetry_metrics"
     ON_PROFILING_PROGRESS = "@on_profiling_progress"
     ON_PULL_MESSAGE = "@on_pull_message"
     ON_RECORDS_PROGRESS = "@on_records_progress"
@@ -346,6 +347,21 @@ def on_realtime_metrics(func: Callable) -> Callable:
     ```
     """
     return _hook_decorator(AIPerfHook.ON_REALTIME_METRICS, func)
+
+
+def on_realtime_telemetry_metrics(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when real-time GPU telemetry metrics are received.
+    See :func:`aiperf.common.hooks._hook_decorator`.
+
+    Example:
+    ```python
+    class MyPlugin(RealtimeMetricsMixin):
+        @on_realtime_telemetry_metrics
+        def _on_realtime_telemetry_metrics(self, metrics: list[MetricResult]) -> None:
+            pass
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_REALTIME_TELEMETRY_METRICS, func)
 
 
 def on_pull_message(

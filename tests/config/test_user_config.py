@@ -17,7 +17,7 @@ from aiperf.common.config import (
     TurnDelayConfig,
     UserConfig,
 )
-from aiperf.common.enums import EndpointType
+from aiperf.common.enums import EndpointType, GPUTelemetryMode
 from aiperf.common.enums.dataset_enums import CustomDatasetType
 from aiperf.common.enums.timing_enums import TimingMode
 
@@ -279,3 +279,191 @@ def test_compute_artifact_directory(
 
     artifact_dir = config._compute_artifact_directory()
     assert artifact_dir == Path(expected_dir)
+
+
+@pytest.mark.parametrize(
+    "gpu_telemetry_input,expected_mode,expected_urls",
+    [
+        # No telemetry configured
+        ([], GPUTelemetryMode.SUMMARY, []),
+        # Dashboard mode only
+        (["dashboard"], GPUTelemetryMode.REALTIME_DASHBOARD, []),
+        # URLs only (no dashboard)
+        (
+            ["http://node1:9401/metrics"],
+            GPUTelemetryMode.SUMMARY,
+            ["http://node1:9401/metrics"],
+        ),
+        # Dashboard + URLs
+        (
+            ["dashboard", "http://node1:9401/metrics"],
+            GPUTelemetryMode.REALTIME_DASHBOARD,
+            ["http://node1:9401/metrics"],
+        ),
+        # Multiple URLs
+        (
+            ["http://node1:9401/metrics", "http://node2:9401/metrics"],
+            GPUTelemetryMode.SUMMARY,
+            ["http://node1:9401/metrics", "http://node2:9401/metrics"],
+        ),
+        # Dashboard + multiple URLs
+        (
+            [
+                "dashboard",
+                "http://node1:9401/metrics",
+                "http://node2:9401/metrics",
+            ],
+            GPUTelemetryMode.REALTIME_DASHBOARD,
+            ["http://node1:9401/metrics", "http://node2:9401/metrics"],
+        ),
+    ],
+)
+def test_parse_gpu_telemetry_config(gpu_telemetry_input, expected_mode, expected_urls):
+    """Test parsing of gpu_telemetry list into mode and URLs."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        gpu_telemetry=gpu_telemetry_input,
+    )
+
+    assert config.gpu_telemetry_mode == expected_mode
+    assert config.gpu_telemetry_urls == expected_urls
+
+
+def test_parse_gpu_telemetry_config_with_defaults():
+    """Test that gpu_telemetry_mode and gpu_telemetry_urls have correct defaults."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        )
+    )
+
+    # Should have default values
+    assert config.gpu_telemetry_mode == GPUTelemetryMode.SUMMARY
+    assert config.gpu_telemetry_urls == []
+
+
+def test_parse_gpu_telemetry_config_preserves_existing_fields():
+    """Test that parsing GPU telemetry config doesn't affect other fields."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+            streaming=True,
+        ),
+        gpu_telemetry=["dashboard", "http://custom:9401/metrics"],
+    )
+
+    # Telemetry fields should be set
+    assert config.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+    assert config.gpu_telemetry_urls == ["http://custom:9401/metrics"]
+
+    # Other fields should be unchanged
+    assert config.endpoint.streaming is True
+    assert config.endpoint.model_names == ["test-model"]
+
+
+def test_gpu_telemetry_urls_extraction():
+    """Test that only http URLs are extracted from gpu_telemetry list."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        gpu_telemetry=[
+            "dashboard",  # Not a URL
+            "http://node1:9401/metrics",  # Valid URL
+            "https://node2:9401/metrics",  # Valid URL
+            "summary",  # Not a URL
+        ],
+    )
+
+    # Should extract only http/https URLs
+    assert len(config.gpu_telemetry_urls) == 2
+    assert "http://node1:9401/metrics" in config.gpu_telemetry_urls
+    assert "https://node2:9401/metrics" in config.gpu_telemetry_urls
+    assert "dashboard" not in config.gpu_telemetry_urls
+    assert "summary" not in config.gpu_telemetry_urls
+
+
+def test_gpu_telemetry_mode_detection():
+    """Test that dashboard mode is detected correctly in various positions."""
+    # Dashboard at beginning
+    config1 = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        gpu_telemetry=["dashboard", "http://node1:9401/metrics"],
+    )
+    assert config1.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+
+    # Dashboard at end
+    config2 = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        gpu_telemetry=["http://node1:9401/metrics", "dashboard"],
+    )
+    assert config2.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+
+    # No dashboard
+    config3 = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        gpu_telemetry=["http://node1:9401/metrics"],
+    )
+    assert config3.gpu_telemetry_mode == GPUTelemetryMode.SUMMARY
+
+
+def test_gpu_telemetry_url_normalization():
+    """Test that URLs without http:// prefix are normalized correctly."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        gpu_telemetry=[
+            "localhost:9400",
+            "node1:9401/metrics",
+            "http://node2:9400",
+            "https://node3:9401/metrics",
+        ],
+    )
+
+    assert len(config.gpu_telemetry_urls) == 4
+    assert "http://localhost:9400" in config.gpu_telemetry_urls
+    assert "http://node1:9401/metrics" in config.gpu_telemetry_urls
+    assert "http://node2:9400" in config.gpu_telemetry_urls
+    assert "https://node3:9401/metrics" in config.gpu_telemetry_urls
+
+
+def test_gpu_telemetry_mixed_formats():
+    """Test that mixed URL formats (with and without http://) work correctly."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        gpu_telemetry=["dashboard", "localhost:9400", "http://node1:9401"],
+    )
+
+    assert config.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+    assert len(config.gpu_telemetry_urls) == 2
+    assert "http://localhost:9400" in config.gpu_telemetry_urls
+    assert "http://node1:9401" in config.gpu_telemetry_urls

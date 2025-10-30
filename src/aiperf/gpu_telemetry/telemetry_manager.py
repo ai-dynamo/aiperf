@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from urllib.parse import urlparse
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -16,7 +15,6 @@ from aiperf.common.environment import Environment
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
-    CommandAcknowledgedResponse,
     ProfileCancelCommand,
     ProfileConfigureCommand,
     TelemetryRecordsMessage,
@@ -71,29 +69,17 @@ class TelemetryManager(BaseComponentService):
         )
 
         self._collectors: dict[str, TelemetryDataCollector] = {}
+        self._collector_id_to_url: dict[str, str] = {}
 
         self._user_explicitly_configured_telemetry = (
             user_config.gpu_telemetry is not None
         )
 
-        # Normalize to list
-        user_endpoints = (
-            []
-            if user_config.gpu_telemetry is None
-            else [user_config.gpu_telemetry]
-            if isinstance(user_config.gpu_telemetry, str)
-            else list(user_config.gpu_telemetry)
-        )
+        user_endpoints = user_config.gpu_telemetry_urls or []
+        if isinstance(user_endpoints, str):
+            user_endpoints = [user_endpoints]
 
-        # Validate and normalize URLs
-        valid_endpoints = []
-        for endpoint in user_endpoints:
-            try:
-                parsed = urlparse(endpoint)
-                if parsed.scheme in ("http", "https") and parsed.netloc:
-                    valid_endpoints.append(self._normalize_dcgm_url(endpoint))
-            except Exception:
-                continue
+        valid_endpoints = [self._normalize_dcgm_url(url) for url in user_endpoints]
 
         # Store user-provided endpoints separately for display filtering (excluding auto-inserted defaults)
         self._user_provided_endpoints = [
@@ -179,9 +165,11 @@ class TelemetryManager(BaseComponentService):
         """
 
         self._collectors.clear()
+        self._collector_id_to_url.clear()
         for dcgm_url in self._dcgm_endpoints:
             self.debug(f"GPU Telemetry: Testing reachability of {dcgm_url}")
             collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
+            self._collector_id_to_url[collector_id] = dcgm_url
             collector = TelemetryDataCollector(
                 dcgm_url=dcgm_url,
                 collection_interval=self._collection_interval,
@@ -238,10 +226,6 @@ class TelemetryManager(BaseComponentService):
         Args:
             message: Profile start command from SystemController
         """
-        await self.publish(
-            CommandAcknowledgedResponse.from_command_message(message, self.service_id)
-        )
-
         if not self._collectors:
             # Telemetry disabled status already sent in _profile_configure_command, only shutdown here
             self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
@@ -337,9 +321,11 @@ class TelemetryManager(BaseComponentService):
             return
 
         try:
+            dcgm_url = self._collector_id_to_url.get(collector_id, "")
             message = TelemetryRecordsMessage(
                 service_id=self.service_id,
                 collector_id=collector_id,
+                dcgm_url=dcgm_url,
                 records=records,
                 error=None,
             )
@@ -361,9 +347,11 @@ class TelemetryManager(BaseComponentService):
         """
 
         try:
+            dcgm_url = self._collector_id_to_url.get(collector_id, "")
             error_message = TelemetryRecordsMessage(
                 service_id=self.service_id,
                 collector_id=collector_id,
+                dcgm_url=dcgm_url,
                 records=[],
                 error=error,
             )

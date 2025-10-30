@@ -13,6 +13,7 @@ from aiperf.common.models.telemetry_models import TelemetryHierarchy, TelemetryR
 from aiperf.common.protocols import (
     TelemetryResultsProcessorProtocol,
 )
+from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
@@ -27,13 +28,16 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
 
         self._telemetry_hierarchy = TelemetryHierarchy()
 
+    def get_telemetry_hierarchy(self) -> TelemetryHierarchy:
+        """Get the accumulated telemetry hierarchy."""
+        return self._telemetry_hierarchy
+
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
         """Process individual telemetry record into hierarchical storage.
 
         Args:
             record: TelemetryRecord containing GPU metrics and hierarchical metadata
         """
-
         self._telemetry_hierarchy.add_record(record)
 
     async def summarize(self) -> list[MetricResult]:
@@ -41,19 +45,20 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
 
         This method is called by RecordsManager for:
         1. Final results generation when profiling completes
-        2. [AIP-355] TODO: @ilana-n [FUTURE] real-time dashboard updates (every DEFAULT_REALTIME_METRICS_INTERVAL)
-          when user-set flag is enabled
+        2. Real-time dashboard updates when --gpu-telemetry dashboard is enabled
 
         Returns:
             List of MetricResult objects, one per GPU per metric type.
             Tags follow hierarchical naming pattern for dashboard filtering.
         """
-
         results = []
 
         for dcgm_url, gpu_data in self._telemetry_hierarchy.dcgm_endpoints.items():
+            endpoint_display = normalize_endpoint_display(dcgm_url)
+
             for gpu_uuid, telemetry_data in gpu_data.items():
                 gpu_index = telemetry_data.metadata.gpu_index
+                model_name = telemetry_data.metadata.model_name
 
                 for (
                     metric_display,
@@ -66,12 +71,9 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
                             .replace("/", "_")
                             .replace(".", "_")
                         )
-                        # Use first 12 chars of UUID for readability while maintaining uniqueness
                         tag = f"{metric_name}_dcgm_{dcgm_tag}_gpu{gpu_index}_{gpu_uuid[:12]}"
 
-                        header = (
-                            f"{metric_display} (GPU {gpu_index}, {gpu_uuid[:12]}...)"
-                        )
+                        header = f"{metric_display} | {endpoint_display} | GPU {gpu_index} | {model_name}"
 
                         unit = unit_enum.value
 

@@ -242,6 +242,17 @@ class RealtimeMetricsCommand(CommandMessage):
     command: CommandTypeT = CommandType.REALTIME_METRICS
 
 
+class StartRealtimeTelemetryCommand(CommandMessage):
+    """Command to start the realtime telemetry background task in RecordsManager.
+
+    This command is sent when the user dynamically enables the telemetry dashboard
+    by pressing the telemetry option in the UI. This always sets the GPU telemetry
+    mode to REALTIME_DASHBOARD.
+    """
+
+    command: CommandTypeT = CommandType.START_REALTIME_TELEMETRY
+
+
 class SpawnWorkersCommand(CommandMessage):
     command: CommandTypeT = CommandType.SPAWN_WORKERS
 
