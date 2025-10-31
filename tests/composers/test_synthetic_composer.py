@@ -474,6 +474,23 @@ class TestSyntheticDatasetComposer:
         assert len(conversations) == 2
         assert all(len(conv.turns) == 1 for conv in conversations)  # mocked return
 
+    def test_multi_turn_does_not_control_dataset_entries(self, mock_tokenizer):
+        """Test that multi-turn settings do not affect num_dataset_entries."""
+        config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+            ),
+            input=InputConfig(
+                conversation=ConversationConfig(num_dataset_entries=10, num=2),
+            ),
+        )
+
+        composer = SyntheticDatasetComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        # Verify that num_dataset_entries controls the number of conversations generated
+        assert len(conversations) == 10
+
     @pytest.mark.parametrize("num_conversations", [1, 5, 10, 50])
     def test_different_conversation_counts(
         self, synthetic_config, num_conversations, mock_tokenizer
