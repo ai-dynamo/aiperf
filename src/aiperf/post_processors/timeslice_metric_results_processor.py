@@ -103,10 +103,16 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
         await self.update_derived_metrics()
 
         # Compute and return the metric results.
-        return {
-            timeslice_index: [
+        timeslice_metric_results = {}
+
+        # Start timeslice indices at zero
+        for counter, timeslice_index in enumerate[TimeSliceT](
+            sorted(self._timeslice_results.keys())
+        ):
+            metric_results = [
                 self._create_metric_result(tag, values)
-                for tag, values in timeslice_results.items()
+                for tag, values in self._timeslice_results[timeslice_index].items()
             ]
-            for timeslice_index, timeslice_results in self._timeslice_results.items()
-        }
+            timeslice_metric_results[counter] = metric_results
+
+        return timeslice_metric_results

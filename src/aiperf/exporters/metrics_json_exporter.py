@@ -1,48 +1,41 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Iterable
 from datetime import datetime
-
-import aiofiles
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import DataExporterType, MetricFlags
+from aiperf.common.enums import DataExporterType
 from aiperf.common.factories import DataExporterFactory
-from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import (
     EndpointData,
     GpuSummary,
     JsonExportData,
+    JsonMetricResult,
     TelemetryExportData,
     TelemetrySummary,
 )
 from aiperf.common.protocols import DataExporterProtocol
-from aiperf.common.types import MetricTagT
-from aiperf.exporters.display_units_utils import (
-    convert_all_metrics_to_display_units,
-    normalize_endpoint_display,
-)
+from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
-from aiperf.metrics.metric_registry import MetricRegistry
 
 
 @DataExporterFactory.register(DataExporterType.JSON)
 @implements_protocol(DataExporterProtocol)
-class JsonExporter(AIPerfLoggerMixin):
+class MetricsJsonExporter(MetricsBaseExporter):
     """
     A class to export records to a JSON file.
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self._results = exporter_config.results
-        self._telemetry_results = exporter_config.telemetry_results
-        self._input_config = exporter_config.user_config
-        self._metric_registry = MetricRegistry
-        self._output_directory = exporter_config.user_config.output.artifact_directory
+        super().__init__(exporter_config, **kwargs)
+        self.debug(
+            lambda: f"Initializing MetricsJsonExporter with config: {exporter_config}"
+        )
         self._file_path = exporter_config.user_config.output.profile_export_json_file
 
     def get_export_info(self) -> FileExportInfo:
@@ -51,29 +44,16 @@ class JsonExporter(AIPerfLoggerMixin):
             file_path=self._file_path,
         )
 
-    def _should_export(self, metric: MetricResult) -> bool:
-        """Check if a metric should be exported."""
-        metric_class = MetricRegistry.get_class(metric.tag)
-        res = metric_class.missing_flags(
-            MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
-        )
-        self.debug(lambda: f"Metric '{metric.tag}' should be exported: {res}")
-        return res
+    def _generate_content(self) -> str:
+        """Generate JSON content string from inference and telemetry data.
 
-    async def export(self) -> None:
-        """Export inference and telemetry data to JSON file.
+        Uses instance data members self._results.records and self._telemetry_results.
 
-        Creates a JSON file containing:
-        - Input configuration
-        - Inference metric results (converted to display units)
-        - Telemetry data with statistical summaries per endpoint/GPU
-        - Error summaries
-        - Timestamps
-
-        Raises:
-            Exception: If file writing fails
+        Returns:
+            str: Complete JSON content with all sections formatted and ready to write
         """
-        self._output_directory.mkdir(parents=True, exist_ok=True)
+        # Use helper method to prepare metrics
+        prepared_json_metrics = self._prepare_metrics_for_json(self._results.records)
 
         start_time = (
             datetime.fromtimestamp(self._results.start_ns / NANOS_PER_SECOND)
@@ -85,15 +65,6 @@ class JsonExporter(AIPerfLoggerMixin):
             if self._results.end_ns
             else None
         )
-
-        converted_records: dict[MetricTagT, MetricResult] = {}
-        if self._results.records:
-            converted_records = convert_all_metrics_to_display_units(
-                self._results.records, self._metric_registry
-            )
-            converted_records = {
-                k: v for k, v in converted_records.items() if self._should_export(v)
-            }
 
         telemetry_export_data = None
         if self._telemetry_results:
@@ -113,20 +84,36 @@ class JsonExporter(AIPerfLoggerMixin):
             )
 
         export_data = JsonExportData(
-            input_config=self._input_config,
+            input_config=self._user_config,
             was_cancelled=self._results.was_cancelled,
             error_summary=self._results.error_summary,
             start_time=start_time,
             end_time=end_time,
             telemetry_data=telemetry_export_data,
         )
-        for metric, result in converted_records.items():
-            setattr(export_data, metric, result.to_json_result())
+
+        # Add all prepared metrics dynamically
+        for metric_tag, json_result in prepared_json_metrics.items():
+            setattr(export_data, metric_tag, json_result)
 
         self.debug(lambda: f"Exporting data to JSON file: {export_data}")
-        export_data_json = export_data.model_dump_json(indent=2, exclude_unset=True)
-        async with aiofiles.open(self._file_path, "w") as f:
-            await f.write(export_data_json)
+        return export_data.model_dump_json(indent=2, exclude_unset=True)
+
+    def _prepare_metrics_for_json(
+        self, metric_results: Iterable[MetricResult]
+    ) -> dict[str, JsonMetricResult]:
+        """Prepare and convert metrics to JsonMetricResult objects.
+
+        Applies unit conversion, filtering, and conversion to JSON format.
+
+        Args:
+            metric_results: Raw metric results to prepare
+
+        Returns:
+            dict mapping metric tags to JsonMetricResult objects ready for export
+        """
+        prepared = self._prepare_metrics(metric_results)
+        return {tag: result.to_json_result() for tag, result in prepared.items()}
 
     def _generate_telemetry_statistical_summary(self) -> dict[str, EndpointData]:
         """Generate clean statistical summary of telemetry data for JSON export.

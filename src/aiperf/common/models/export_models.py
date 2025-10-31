@@ -70,6 +70,28 @@ class TelemetryExportData(AIPerfBaseModel):
     endpoints: dict[str, EndpointData]
 
 
+class TimesliceData(AIPerfBaseModel):
+    """Data for a single timeslice.
+
+    Contains metrics for one time slice with dynamic metric fields
+    added via Pydantic's extra="allow" setting.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    timeslice_index: int
+
+
+class TimesliceCollectionExportData(AIPerfBaseModel):
+    """Export data for all timeslices in a single file.
+
+    Contains an array of timeslice data objects with metadata.
+    """
+
+    timeslices: list[TimesliceData]
+    input_config: UserConfig | None = None
+
+
 class JsonExportData(AIPerfBaseModel):
     """Summary data to be exported to a JSON file.
 

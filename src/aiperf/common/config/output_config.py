@@ -64,6 +64,12 @@ class OutputConfig(BaseConfig):
 
     _profile_export_csv_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
     _profile_export_json_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+    _profile_export_timeslices_csv_file: Path = (
+        OutputDefaults.PROFILE_EXPORT_AIPERF_TIMESLICES_CSV_FILE
+    )
+    _profile_export_timeslices_json_file: Path = (
+        OutputDefaults.PROFILE_EXPORT_AIPERF_TIMESLICES_JSON_FILE
+    )
     _profile_export_jsonl_file: Path = OutputDefaults.PROFILE_EXPORT_JSONL_FILE
     _profile_export_raw_jsonl_file: Path = OutputDefaults.PROFILE_EXPORT_RAW_JSONL_FILE
 
@@ -76,7 +82,14 @@ class OutputConfig(BaseConfig):
         base_path = self.profile_export_prefix
         base_str = str(base_path)
 
-        suffixes_to_strip = ["_raw.jsonl", ".csv", ".json", ".jsonl"]
+        suffixes_to_strip = [
+            "_timeslices.csv",
+            "_timeslices.json",
+            "_raw.jsonl",
+            ".csv",
+            ".json",
+            ".jsonl",
+        ]
         for suffix in suffixes_to_strip:
             if base_str.endswith(suffix):
                 base_str = base_str[: -len(suffix)]
@@ -84,6 +97,8 @@ class OutputConfig(BaseConfig):
 
         self._profile_export_csv_file = Path(f"{base_str}.csv")
         self._profile_export_json_file = Path(f"{base_str}.json")
+        self._profile_export_timeslices_csv_file = Path(f"{base_str}_timeslices.csv")
+        self._profile_export_timeslices_json_file = Path(f"{base_str}_timeslices.json")
         self._profile_export_jsonl_file = Path(f"{base_str}.jsonl")
         self._profile_export_raw_jsonl_file = Path(f"{base_str}_raw.jsonl")
 
@@ -107,6 +122,14 @@ class OutputConfig(BaseConfig):
     @property
     def profile_export_json_file(self) -> Path:
         return self.artifact_directory / self._profile_export_json_file
+
+    @property
+    def profile_export_timeslices_csv_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_timeslices_csv_file
+
+    @property
+    def profile_export_timeslices_json_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_timeslices_json_file
 
     @property
     def profile_export_jsonl_file(self) -> Path:

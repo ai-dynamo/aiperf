@@ -4,6 +4,7 @@
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -14,7 +15,7 @@ from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import JsonExportData
 from aiperf.exporters.exporter_config import ExporterConfig
-from aiperf.exporters.json_exporter import JsonExporter
+from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
 
 
 @pytest.fixture
@@ -78,9 +79,9 @@ def mock_results(sample_records):
     return MockResults(sample_records)
 
 
-class TestJsonExporter:
+class TestMetricsJsonExporter:
     @pytest.mark.asyncio
-    async def test_json_exporter_creates_expected_json(
+    async def test_metrics_json_exporter_creates_expected_json(
         self, mock_results, mock_user_config
     ):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -94,7 +95,7 @@ class TestJsonExporter:
                 telemetry_results=None,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -117,8 +118,176 @@ class TestJsonExporter:
             #     output_dir
             # )
 
+    def test_metrics_json_exporter_inherits_from_base(self, mock_user_config):
+        """Verify MetricsJsonExporter inherits from MetricsBaseExporter."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
 
-class TestJsonExporterTelemetry:
+            mock_results = type(
+                "MockResults",
+                (),
+                {
+                    "records": [],
+                    "start_ns": None,
+                    "end_ns": None,
+                    "has_results": False,
+                    "was_cancelled": False,
+                    "error_summary": [],
+                },
+            )()
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+
+            exporter = MetricsJsonExporter(exporter_config)
+
+            from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
+
+            assert isinstance(exporter, MetricsBaseExporter)
+
+    @pytest.mark.asyncio
+    async def test_metrics_json_exporter_uses_base_export(
+        self, mock_results, mock_user_config
+    ):
+        """Verify uses base class export() method."""
+        from unittest.mock import AsyncMock, patch
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+
+            exporter = MetricsJsonExporter(exporter_config)
+
+            # Mock the base class export method
+            from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
+
+            mock_export = AsyncMock()
+
+            with patch.object(MetricsBaseExporter, "export", mock_export):
+                await exporter.export()
+
+                # Verify base export was called
+                mock_export.assert_called_once()
+
+    def test_generate_content_uses_instance_data_members(
+        self, mock_results, mock_user_config
+    ):
+        """Verify _generate_content() uses instance data members."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+
+            exporter = MetricsJsonExporter(exporter_config)
+
+            # Mock conversion
+            import aiperf.exporters.metrics_base_exporter as mbe
+
+            def mock_convert(metrics, reg):
+                return {m.tag: m for m in metrics}
+
+            with (
+                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
+                patch.object(exporter, "_should_export", return_value=True),
+            ):
+                content = exporter._generate_content()
+
+            # Should contain data from instance members
+            data = json.loads(content)
+            assert "input_config" in data
+
+    def test_generate_content_uses_telemetry_results_from_instance(
+        self, mock_results, mock_user_config, sample_telemetry_results
+    ):
+        """Verify _generate_content() uses self._telemetry_results."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=sample_telemetry_results,
+            )
+
+            exporter = MetricsJsonExporter(exporter_config)
+
+            import aiperf.exporters.metrics_base_exporter as mbe
+
+            def mock_convert(metrics, reg):
+                return {}
+
+            with patch.object(
+                mbe, "convert_all_metrics_to_display_units", mock_convert
+            ):
+                content = exporter._generate_content()
+
+            # Should contain telemetry data
+            data = json.loads(content)
+            assert "telemetry_data" in data
+
+    @pytest.mark.asyncio
+    async def test_export_calls_generate_content_internally(
+        self, mock_results, mock_user_config
+    ):
+        """Verify export() calls _generate_content() internally."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            exporter_config = ExporterConfig(
+                results=mock_results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+
+            exporter = MetricsJsonExporter(exporter_config)
+
+            test_json_content = '{"test": "data"}'
+
+            with patch.object(
+                exporter, "_generate_content", return_value=test_json_content
+            ) as mock_generate:
+                await exporter.export()
+
+                # Verify _generate_content was called
+                mock_generate.assert_called_once()
+
+                # Verify file contains the returned content
+                expected_file = (
+                    output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+                )
+                with open(expected_file) as f:
+                    actual_content = f.read()
+
+                assert actual_content == test_json_content
+
+
+class TestMetricsJsonExporterTelemetry:
     """Test JSON export with telemetry data."""
 
     @pytest.mark.asyncio
@@ -137,7 +306,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=sample_telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -181,7 +350,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=None,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -209,7 +378,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=sample_telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -289,7 +458,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             # Should not raise exception despite metric retrieval failures
             await exporter.export()
 
@@ -348,7 +517,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -385,7 +554,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -444,7 +613,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -527,7 +696,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -591,7 +760,7 @@ class TestJsonExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = JsonExporter(exporter_config)
+            exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
