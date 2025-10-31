@@ -15,7 +15,6 @@ TGI exposes two standard HTTP endpoints for text generation:
 | `/generate` | Returns the full text completion in one response (non-streaming). | *(default)* |
 | `/generate_stream` | Streams generated tokens as they are produced (SSE). | `--streaming` |
 
-> These are non-chat endpoints — you send one text prompt (`inputs`) and receive a text completion.
 
 ## Start a Hugging Face TGI Server
 
