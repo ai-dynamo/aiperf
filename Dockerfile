@@ -82,6 +82,41 @@ FROM base AS env-builder
 
 WORKDIR /workspace
 
+# Build ffmpeg from source
+RUN apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        nasm \
+        pkg-config \
+        wget \
+        yasm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and build ffmpeg
+RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz \
+    && tar -xf ffmpeg-7.1.tar.xz \
+    && cd ffmpeg-7.1 \
+    && ./configure \
+        --prefix=/opt/ffmpeg \
+        --disable-gpl \
+        --disable-nonfree \
+        --enable-shared \
+        --disable-static \
+        --disable-doc \
+        --disable-htmlpages \
+        --disable-manpages \
+        --disable-podpages \
+        --disable-txtpages \
+    && make -j$(nproc) \
+    && make install \
+    && cd .. \
+    && rm -rf ffmpeg-7.1 ffmpeg-7.1.tar.xz
+
+# Create directories for the nvs user (UID 1000 in NVIDIA distroless)
+RUN mkdir -p /app /app/artifacts /app/.cache \
+    && chown -R 1000:1000 /app \
+    && chmod -R 755 /app
+
 # Install only the dependencies using uv
 COPY pyproject.toml .
 RUN uv sync --active --no-install-project
@@ -91,29 +126,32 @@ COPY --from=wheel-builder /dist /dist
 RUN uv pip install /dist/aiperf-*.whl \
     && rm -rf /dist /workspace/pyproject.toml
 
-# Create directories for the nvs user (UID 1000 in NVIDIA distroless)
-RUN mkdir -p /app /app/artifacts /app/.cache && \
-    chown -R 1000:1000 /app && \
-    chmod -R 755 /app
-
-
 ############################################
-############# Final Build ##################
+############# Runtime Image ################
 ############################################
 FROM nvcr.io/nvidia/distroless/python:3.12-v3.4.17-dev AS runtime
+
+# Include license and attribution files
+COPY LICENSE ATTRIBUTIONS.md ATTRIBUTIONS-container.md /legal/
 
 # Copy bash with executable permissions preserved using --chmod
 COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
 
+# Copy ffmpeg binaries and libraries
+COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg
+ENV PATH="/opt/ffmpeg/bin:${PATH}" \
+    LD_LIBRARY_PATH="/opt/ffmpeg/lib:${LD_LIBRARY_PATH}"
+
+# Setup the directories with permissions for nvs user
+COPY --from=env-builder --chown=1000:1000 /app /app
+WORKDIR /app
+ENV HOME=/app
+
+# Copy the virtual environment and set up
 COPY --from=env-builder --chown=1000:1000 /opt/aiperf/venv /opt/aiperf/venv
 
-# Copy the app directory for nvs user
-COPY --from=env-builder --chown=1000:1000 /app /app
-
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
-    PATH="/opt/aiperf/venv/bin:${PATH}" \
-    HOME=/app
-WORKDIR /app
+    PATH="/opt/aiperf/venv/bin:${PATH}"
 
 # Set bash as entrypoint
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["/bin/bash", "-c"]
