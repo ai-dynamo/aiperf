@@ -94,6 +94,7 @@ class VideoDefaults:
 @dataclass(frozen=True)
 class PromptDefaults:
     BATCH_SIZE = 1
+    NUM = 100
 
 
 @dataclass(frozen=True)
