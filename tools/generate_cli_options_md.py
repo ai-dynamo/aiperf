@@ -45,9 +45,10 @@ def get_help_output() -> str:
 
 
 def format_help_as_markdown(help_output: str) -> str:
-    """Format the help output as markdown with proper header and code blocks."""
-    # Split the output into sections based on the ╭─ ... ─╮ headers
-    lines = help_output.split("\n")
+    """Format the help output as markdown tables."""
+    # Parse the help output into sections
+    sections = parse_help_sections(help_output)
+
     markdown_lines = [
         "<!--",
         "SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
@@ -59,39 +60,223 @@ def format_help_as_markdown(help_output: str) -> str:
         "",
     ]
 
-    current_section = []
+    # Convert each section to a markdown table
+    for section_name, options in sections.items():
+        if not options:
+            continue
+
+        markdown_lines.append(f"## {section_name}")
+        markdown_lines.append("")
+
+        # Create table header
+        markdown_lines.append("| Option | Description |")
+        markdown_lines.append("|:-------|:-----------:|")
+
+        # Add each option as a table row
+        for option in options:
+            option_col = format_option_column(option)
+            desc_col = option["description"]
+            markdown_lines.append(f"| {option_col} | {desc_col} |")
+
+        markdown_lines.append("")
+
+    return "\n".join(markdown_lines)
+
+
+def parse_help_sections(help_output: str) -> dict:
+    """Parse CLI help output into sections with options.
+
+    Returns:
+        Dict mapping section names to lists of option dicts
+    """
+    lines = help_output.split("\n")
+    sections = {}
+    current_section = None
+    current_section_lines = []
     in_section = False
 
     for line in lines:
-        # Check if this is a section header line (starts with ╭─)
+        # Check if this is a section header (╭─ ... ─╮)
         if line.strip().startswith("╭─"):
-            # If we were in a previous section, add it
-            if current_section:
-                markdown_lines.append("```")
-                markdown_lines.extend(current_section)
-                markdown_lines.append("```")
-                current_section = []
-            # Start new section
+            # Save previous section if exists
+            if current_section and current_section_lines:
+                sections[current_section] = parse_section_options(current_section_lines)
+
+            # Extract section name
+            title_start = line.find("─ ") + 2
+            title_end = line.rfind(" ─")
+            if title_start > 1 and title_end > title_start:
+                current_section = line[title_start:title_end].strip()
+            else:
+                current_section = "Options"
+
+            current_section_lines = []
             in_section = True
-            current_section.append(line)
+
         elif line.strip().startswith("╰─"):
-            # End of section
-            current_section.append(line)
-            markdown_lines.append("```")
-            markdown_lines.extend(current_section)
-            markdown_lines.append("```")
-            current_section = []
+            # End of section - save it
+            if current_section and current_section_lines:
+                sections[current_section] = parse_section_options(current_section_lines)
+            current_section = None
+            current_section_lines = []
             in_section = False
-        elif in_section:
-            current_section.append(line)
 
-    # Add any remaining section
-    if current_section:
-        markdown_lines.append("```")
-        markdown_lines.extend(current_section)
-        markdown_lines.append("```")
+        elif in_section and line.strip():
+            # Content line - strip box borders
+            if len(line) > 4 and line.startswith("│") and line.endswith("│"):
+                content = line[2:-2]  # Remove │ and surrounding spaces
+                current_section_lines.append(content)
 
-    return "\n".join(markdown_lines)
+    # Add any remaining section (shouldn't happen with proper box format)
+    if current_section and current_section_lines:
+        sections[current_section] = parse_section_options(current_section_lines)
+
+    return sections
+
+
+def parse_section_options(lines: list[str]) -> list[dict]:
+    """Parse option lines into structured option dictionaries.
+
+    Returns:
+        List of dicts with 'name', 'aliases', 'short', 'description', 'required'
+    """
+    options = []
+    current_option = None
+
+    for line in lines:
+        # Detect new option based on indentation:
+        # - Starts with * (required, no leading space)
+        # - Starts with exactly 3 spaces (some options in Endpoint section)
+        # - Starts with NO spaces and uppercase (options in Input, Output, etc.)
+        # - More than 3 spaces or starts with many spaces = continuation
+        is_new_option = False
+
+        if not line or line.isspace():
+            continue
+
+        if line[0] == "*":
+            # Required option (no leading space)
+            is_new_option = True
+        elif line.startswith("   ") and not line.startswith("    "):
+            # Exactly 3 spaces = new option (Endpoint section style)
+            is_new_option = True
+        elif not line.startswith(" ") and line[0].isupper():
+            # No leading space and uppercase = new option (Input/Output section style)
+            is_new_option = True
+
+        if is_new_option:
+            # Save previous option
+            if current_option:
+                options.append(current_option)
+
+            # Start new option
+            current_option = parse_option_line(line.lstrip())
+        elif current_option:
+            # Continuation of description
+            desc = line.strip()
+            if desc:
+                # Add space only if description already has content
+                if current_option["description"]:
+                    current_option["description"] += " " + desc
+                else:
+                    current_option["description"] = desc
+
+    # Add the last option
+    if current_option:
+        options.append(current_option)
+
+    return options
+
+
+def parse_option_line(line: str) -> dict:
+    """Parse a single option line into components.
+
+    Returns:
+        Dict with 'name', 'aliases', 'short', 'description', 'required'
+    """
+    import re
+
+    option = {
+        "name": "",
+        "aliases": [],
+        "short": "",
+        "description": "",
+        "required": False,
+    }
+
+    # Check if required (starts with *)
+    if line.lstrip().startswith("*"):
+        option["required"] = True
+        line = line.lstrip()[1:].lstrip()  # Remove the *
+
+    # Split on multiple spaces to separate option names from description
+    parts = re.split(r"\s{2,}", line.strip())
+
+    if not parts:
+        return option
+
+    # First part contains option names
+    option_names = parts[0]
+
+    # Extract option name and aliases
+    # Pattern: OPTION-NAME --long-name --alias -s
+    tokens = option_names.split()
+
+    for token in tokens:
+        token = token.strip()
+        if not token:
+            continue
+
+        if token.startswith("--"):
+            # Long option
+            if not option["name"]:
+                option["name"] = token
+            else:
+                option["aliases"].append(token)
+        elif token.startswith("-") and len(token) == 2:
+            # Short option
+            option["short"] = token
+        elif (token.isupper() or (token and token[0].isupper())) and not option["name"]:
+            # Environment variable style name
+            option["name"] = token
+
+    # Description is everything after the option names
+    if len(parts) > 1:
+        option["description"] = " ".join(parts[1:])
+
+    return option
+
+
+def format_option_column(option: dict) -> str:
+    """Format the option column with name, aliases, and required marker.
+
+    Returns:
+        Formatted string for the option column
+    """
+    parts = []
+
+    # Required marker
+    if option["required"]:
+        parts.append("**`*`**")
+
+    # Main option name
+    if option["name"]:
+        name = option["name"]
+        # Format as code
+        if name.startswith("--") or name.startswith("-"):
+            parts.append(f"`{name}`")
+        else:
+            parts.append(f"**{name}**")
+
+    # Aliases
+    for alias in option["aliases"]:
+        parts.append(f"`{alias}`")
+
+    # Short option
+    if option["short"]:
+        parts.append(f"`{option['short']}`")
+
+    return "<br>".join(parts) if parts else ""
 
 
 def stage_file(file_path: Path) -> None:
