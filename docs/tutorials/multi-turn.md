@@ -78,10 +78,6 @@ docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --host 0.0.0.0 --port 8000 &
 ```
 
-```bash
-# Wait for server to be ready
-timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
-```
 
 ## Basic Multi-Turn Examples
 
