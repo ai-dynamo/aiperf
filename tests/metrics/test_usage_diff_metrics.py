@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import patch
-
 import pytest
 
 from aiperf.common.enums import MetricFlags
@@ -479,11 +477,13 @@ class TestMultipleRecordsWithVariedDiscrepancies:
 class TestUsageDiscrepancyCountMetric:
     """Tests for UsageDiscrepancyCountMetric aggregate counter."""
 
-    @patch(
-        "aiperf.common.environment.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD", 10.0
-    )
-    def test_discrepancy_count_below_threshold(self):
+    def test_discrepancy_count_below_threshold(self, monkeypatch):
         """Test that records below threshold are not counted."""
+        monkeypatch.setattr(
+            "aiperf.metrics.types.usage_diff_metrics.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
+            10.0,
+        )
+
         records = [
             create_record_with_usage(
                 start_ns=100,
@@ -515,11 +515,13 @@ class TestUsageDiscrepancyCountMetric:
         # No records should be counted as discrepancies
         assert metric_results[UsageDiscrepancyCountMetric.tag] == 0
 
-    @patch(
-        "aiperf.common.environment.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD", 10.0
-    )
-    def test_discrepancy_count_above_threshold(self):
+    def test_discrepancy_count_above_threshold(self, monkeypatch):
         """Test that records above threshold are counted."""
+        monkeypatch.setattr(
+            "aiperf.metrics.types.usage_diff_metrics.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
+            10.0,
+        )
+
         records = [
             create_record_with_usage(
                 start_ns=100,
@@ -551,11 +553,13 @@ class TestUsageDiscrepancyCountMetric:
         # Both records should be counted as discrepancies
         assert metric_results[UsageDiscrepancyCountMetric.tag] == 2
 
-    @patch(
-        "aiperf.common.environment.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD", 10.0
-    )
-    def test_discrepancy_count_mixed(self):
+    def test_discrepancy_count_mixed(self, monkeypatch):
         """Test mixed scenario with some records above and some below threshold."""
+        monkeypatch.setattr(
+            "aiperf.metrics.types.usage_diff_metrics.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
+            10.0,
+        )
+
         records = [
             create_record_with_usage(
                 start_ns=100,
@@ -601,10 +605,7 @@ class TestUsageDiscrepancyCountMetric:
         # Records 2 and 4 should be counted (2 total)
         assert metric_results[UsageDiscrepancyCountMetric.tag] == 2
 
-    @patch(
-        "aiperf.common.environment.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD", 10.0
-    )
-    def test_discrepancy_count_with_missing_data(self):
+    def test_discrepancy_count_with_missing_data(self, monkeypatch):
         """
         Test that records with missing diff metrics (due to zero client tokens)
         are excluded from discrepancy count.
@@ -613,6 +614,11 @@ class TestUsageDiscrepancyCountMetric:
         then _check_metrics() will raise NoMetricValue for the discrepancy count too,
         and that record won't contribute to the count at all.
         """
+        monkeypatch.setattr(
+            "aiperf.metrics.types.usage_diff_metrics.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
+            10.0,
+        )
+
         records = [
             # Valid record with high discrepancy - SHOULD be counted
             create_record_with_usage(
@@ -657,11 +663,13 @@ class TestUsageDiscrepancyCountMetric:
         # The third record is not counted because it's below threshold
         assert metric_results[UsageDiscrepancyCountMetric.tag] == 1
 
-    @patch(
-        "aiperf.common.environment.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD", 5.0
-    )
-    def test_discrepancy_count_custom_threshold(self):
+    def test_discrepancy_count_custom_threshold(self, monkeypatch):
         """Test that custom threshold values work correctly."""
+        monkeypatch.setattr(
+            "aiperf.metrics.types.usage_diff_metrics.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
+            5.0,
+        )
+
         records = [
             create_record_with_usage(
                 start_ns=100,
@@ -693,11 +701,13 @@ class TestUsageDiscrepancyCountMetric:
         # Only first record should be counted with 5% threshold
         assert metric_results[UsageDiscrepancyCountMetric.tag] == 1
 
-    @patch(
-        "aiperf.common.environment.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD", 10.0
-    )
-    def test_discrepancy_count_with_reasoning_tokens(self):
+    def test_discrepancy_count_with_reasoning_tokens(self, monkeypatch):
         """Test that reasoning token discrepancies are also counted."""
+        monkeypatch.setattr(
+            "aiperf.metrics.types.usage_diff_metrics.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
+            10.0,
+        )
+
         records = [
             # Discrepancy in reasoning tokens only
             create_record_with_usage(
