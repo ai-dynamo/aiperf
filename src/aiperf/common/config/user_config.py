@@ -333,7 +333,6 @@ class UserConfig(BaseConfig):
         """Get the timing mode based on the user config."""
         return self._timing_mode
 
-    # TODO: disable until num-dataset-entries is separated from num-conversation
     @model_validator(mode="after")
     def validate_multi_turn_options(self) -> Self:
         """Validate multi-turn options."""
