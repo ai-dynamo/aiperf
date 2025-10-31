@@ -41,7 +41,7 @@ def synthetic_config() -> UserConfig:
     config = UserConfig(
         endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
-            conversation=ConversationConfig(num=5),
+            conversation=ConversationConfig(num_dataset_entries=5),
             prompt=PromptConfig(
                 input_tokens=InputTokensConfig(mean=10, stddev=2),
             ),
@@ -56,7 +56,7 @@ def image_config() -> UserConfig:
     config = UserConfig(
         endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
-            conversation=ConversationConfig(num=3),
+            conversation=ConversationConfig(num_dataset_entries=3),
             prompt=PromptConfig(
                 input_tokens=InputTokensConfig(mean=10, stddev=2),
             ),
@@ -76,7 +76,7 @@ def audio_config() -> UserConfig:
     config = UserConfig(
         endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
-            conversation=ConversationConfig(num=3),
+            conversation=ConversationConfig(num_dataset_entries=3),
             prompt=PromptConfig(
                 input_tokens=InputTokensConfig(mean=10, stddev=2),
             ),
@@ -95,7 +95,7 @@ def prefix_prompt_config() -> UserConfig:
     config = UserConfig(
         endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
-            conversation=ConversationConfig(num=5),
+            conversation=ConversationConfig(num_dataset_entries=5),
             prompt=PromptConfig(
                 input_tokens=InputTokensConfig(mean=10, stddev=2),
                 prefix_prompt=PrefixPromptConfig(pool_size=3, length=20),
@@ -111,7 +111,7 @@ def multimodal_config() -> UserConfig:
     config = UserConfig(
         endpoint=EndpointConfig(model_names=["test-model"]),
         input=InputConfig(
-            conversation=ConversationConfig(num=2),
+            conversation=ConversationConfig(num_dataset_entries=2),
             prompt=PromptConfig(
                 batch_size=2,
                 input_tokens=InputTokensConfig(mean=10, stddev=2),
@@ -139,6 +139,7 @@ def multiturn_config():
         input=InputConfig(
             conversation=ConversationConfig(
                 num=3,
+                num_dataset_entries=4,
                 turn=TurnConfig(
                     mean=2,
                     stddev=0,
@@ -168,7 +169,7 @@ def custom_config() -> UserConfig:
         input=InputConfig.model_construct(
             file="test_data.jsonl",
             custom_dataset_type=CustomDatasetType.SINGLE_TURN,
-            conversation=ConversationConfig(num=5),
+            conversation=ConversationConfig(num_dataset_entries=5),
         ),
     )
 

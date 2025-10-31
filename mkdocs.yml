@@ -11,6 +11,7 @@ nav:
     - CLI Options: cli_options.md
     - Migrating from GenAI-Perf: migrating.md
   - Advanced Features:
+    - Multi-Turn Conversations: tutorials/multi-turn.md
     - Request Cancellation: tutorials/request-cancellation.md
     - Trace Benchmarking: tutorials/trace-benchmarking.md
     - Fixed Schedule: tutorials/fixed-schedule.md

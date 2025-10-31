@@ -38,10 +38,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             list[Conversation]: A list of conversation objects.
         """
         conversations = []
-        # TODO: remove after --num-dataset-entries is separated from --num-conversations
-        if self.config.input.conversation.num is None:
-            self.config.input.conversation.num = 100
-        for _ in range(self.config.input.conversation.num):
+        for _ in range(self.config.input.conversation.num_dataset_entries):
             conversation = Conversation(session_id=str(uuid.uuid4()))
 
             num_turns = utils.sample_positive_normal_integer(

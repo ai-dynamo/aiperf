@@ -37,7 +37,7 @@ class TestSyntheticDatasetComposer:
         composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
 
         assert composer.config == synthetic_config
-        assert composer.config.input.conversation.num == 5
+        assert composer.config.input.conversation.num_dataset_entries == 5
         assert composer.prompt_generator is not None
         assert composer.include_image is False
         assert composer.include_audio is False
@@ -79,7 +79,7 @@ class TestSyntheticDatasetComposer:
                 model_names=["test_model"],
             ),
             input=InputConfig(
-                conversation=ConversationConfig(num=5),
+                conversation=ConversationConfig(num_dataset_entries=5),
                 prompt=PromptConfig(input_tokens=InputTokensConfig(mean=0)),
                 image=ImageConfig(
                     width=ImageWidthConfig(mean=0), height=ImageHeightConfig(mean=0)
@@ -178,7 +178,10 @@ class TestSyntheticDatasetComposer:
         conversations = composer.create_dataset()
 
         # Test conversations include both image and audio payloads
-        assert len(conversations) == multimodal_config.input.conversation.num
+        assert (
+            len(conversations)
+            == multimodal_config.input.conversation.num_dataset_entries
+        )
         for conversation in conversations:
             for turn in conversation.turns:
                 # Test correct batch sizes for all modalities
@@ -220,7 +223,7 @@ class TestSyntheticDatasetComposer:
         conversations = composer.create_dataset()
 
         # Test conversations have multiple turns
-        assert len(conversations) == 3
+        assert len(conversations) == 4
 
         for conversation in conversations:
             assert len(conversation.turns) == 2
@@ -434,7 +437,7 @@ class TestSyntheticDatasetComposer:
 
     def test_zero_conversations(self, synthetic_config, mock_tokenizer):
         """Test behavior with zero conversations requested."""
-        synthetic_config.input.conversation.num = 0
+        synthetic_config.input.conversation.num_dataset_entries = 0
 
         composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
         conversations = composer.create_dataset()
@@ -451,7 +454,7 @@ class TestSyntheticDatasetComposer:
                 model_names=["test-model"],
             ),
             input=InputConfig(
-                conversation=ConversationConfig(num=2),
+                conversation=ConversationConfig(num_dataset_entries=2),
                 prompt=PromptConfig(
                     mean=1,  # Very small mean
                     stddev=0,  # Zero stddev
@@ -471,12 +474,29 @@ class TestSyntheticDatasetComposer:
         assert len(conversations) == 2
         assert all(len(conv.turns) == 1 for conv in conversations)  # mocked return
 
+    def test_multi_turn_does_not_control_dataset_entries(self, mock_tokenizer):
+        """Test that multi-turn settings do not affect num_dataset_entries."""
+        config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+            ),
+            input=InputConfig(
+                conversation=ConversationConfig(num_dataset_entries=10, num=2),
+            ),
+        )
+
+        composer = SyntheticDatasetComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        # Verify that num_dataset_entries controls the number of conversations generated
+        assert len(conversations) == 10
+
     @pytest.mark.parametrize("num_conversations", [1, 5, 10, 50])
     def test_different_conversation_counts(
         self, synthetic_config, num_conversations, mock_tokenizer
     ):
         """Test dataset creation with different conversation counts."""
-        synthetic_config.input.conversation.num = num_conversations
+        synthetic_config.input.conversation.num_dataset_entries = num_conversations
 
         composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
         conversations = composer.create_dataset()

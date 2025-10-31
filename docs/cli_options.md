@@ -23,29 +23,43 @@ Use these options to profile with AIPerf.
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```
-╭─ Input ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ EXTRA-INPUTS --extra-inputs                                    Provide additional inputs to include with every request. Inputs should be in an 'input_name:value' format.             │
-│                                                                Alternatively, a string representing a json formatted dictionary can be provided. [default: []]                        │
-│ HEADER --header                                            -H  Adds a custom header to the requests. Headers must be specified as 'Header:Value' pairs. Alternatively, a string       │
-│                                                                representing a json formatted dictionary can be provided. [default: []]                                                │
-│ INPUT-FILE --input-file                                        The file or directory path that contains the dataset to use for profiling. This parameter is used in conjunction with  │
-│                                                                the --custom-dataset-type parameter to support different types of user provided datasets.                              │
-│ FIXED-SCHEDULE --fixed-schedule                                Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file parameter, but can be   │
-│                                                                set manually here. [default: False]                                                                                    │
-│ FIXED-SCHEDULE-AUTO-OFFSET --fixed-schedule-auto-offset        Specifies to automatically offset the timestamps in the fixed schedule, such that the first timestamp is considered 0, │
-│                                                                and the rest are shifted accordingly. If disabled, the timestamps will be assumed to be relative to 0. [default:       │
-│                                                                False]                                                                                                                 │
-│ FIXED-SCHEDULE-START-OFFSET --fixed-schedule-start-offset      Specifies the offset in milliseconds to start the fixed schedule at. By default, the schedule starts at 0, but this    │
-│                                                                option can be used to start at a reference point further in the schedule. This option cannot be used in conjunction    │
-│                                                                with the --fixed-schedule-auto-offset. The schedule will include any requests at the start offset.                     │
-│ FIXED-SCHEDULE-END-OFFSET --fixed-schedule-end-offset          Specifies the offset in milliseconds to end the fixed schedule at. By default, the schedule ends at the last timestamp │
-│                                                                in the trace dataset, but this option can be used to only run a subset of the trace. The schedule will include any     │
-│                                                                requests at the end offset.                                                                                            │
-│ CUSTOM-DATASET-TYPE --custom-dataset-type                      The type of custom dataset to use. This parameter is used in conjunction with the --input-file parameter. [choices:    │
-│                                                                single_turn, multi_turn, random_pool, mooncake_trace] [default: mooncake_trace]                                        │
-│ RANDOM-SEED --random-seed                                      The seed used to generate random values. Set to some value to make the synthetic data generation deterministic. It     │
-│                                                                will use system default if not provided.                                                                               │
-╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Input ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ EXTRA-INPUTS --extra-inputs                                    Provide additional inputs to include with every request. Inputs should be in an 'input_name:value'      │
+│                                                                format. Alternatively, a string representing a json formatted dict can be provided. [default: []]       │
+│ HEADER --header                                            -H  Adds a custom header to the requests. Headers must be specified as 'Header:Value' pairs. Alternatively, │
+│                                                                a string representing a json formatted dict can be provided. [default: []]                              │
+│ INPUT-FILE --input-file                                        The file or directory path that contains the dataset to use for profiling. This parameter is used in    │
+│                                                                conjunction with the custom_dataset_type parameter to support different types of user provided          │
+│                                                                datasets.                                                                                               │
+│ FIXED-SCHEDULE --fixed-schedule                                Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file          │
+│                                                                parameter, but can be set manually here. [default: False]                                               │
+│ FIXED-SCHEDULE-AUTO-OFFSET --fixed-schedule-auto-offset        Specifies to automatically offset the timestamps in the fixed schedule, such that the first timestamp   │
+│                                                                is considered 0, and the rest are shifted accordingly. If disabled, the timestamps will be assumed to   │
+│                                                                be relative to 0. [default: False]                                                                      │
+│ FIXED-SCHEDULE-START-OFFSET --fixed-schedule-start-offset      Specifies the offset in milliseconds to start the fixed schedule at. By default, the schedule starts at │
+│                                                                0, but this option can be used to start at a reference point further in the schedule. This option       │
+│                                                                cannot be used in conjunction with the --fixed-schedule-auto-offset. The schedule will include any      │
+│                                                                requests at the start offset.                                                                           │
+│ FIXED-SCHEDULE-END-OFFSET --fixed-schedule-end-offset          Specifies the offset in milliseconds to end the fixed schedule at. By default, the schedule ends at the │
+│                                                                last timestamp in the trace dataset, but this option can be used to only run a subset of the trace. The │
+│                                                                schedule will include any requests at the end offset.                                                   │
+│ PUBLIC-DATASET --public-dataset                                The public dataset to use for the requests. [choices: sharegpt]                                         │
+│ CUSTOM-DATASET-TYPE --custom-dataset-type                      The type of custom dataset to use. This parameter is used in conjunction with the --input-file          │
+│                                                                parameter. [choices: single_turn, multi_turn, random_pool, mooncake_trace]                              │
+│ DATASET-SAMPLING-STRATEGY --dataset-sampling-strategy          The strategy to use for sampling the dataset. sequential: Iterate through the dataset sequentially,     │
+│                                                                then wrap around to the beginning. random: Randomly select a conversation from the dataset. Will        │
+│                                                                randomly sample with replacement. shuffle: Shuffle the dataset and iterate through it. Will randomly    │
+│                                                                sample without replacement. Once the end of the dataset is reached, shuffle the dataset again and start │
+│                                                                over. [choices: sequential, random, shuffle]                                                            │
+│ RANDOM-SEED --random-seed                                      The seed used to generate random values. Set to some value to make the synthetic data generation        │
+│                                                                deterministic. It will use system default if not provided.                                              │
+│ GOODPUT --goodput                                              Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is  │
+│                                                                a metric tag and VALUE is a number in the metric’s display unit (falls back to its base unit if no      │
+│                                                                display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms),          │
+│                                                                output_token_throughput_per_user:600 (tokens/s). Only metrics applicable to the current endpoint/config │
+│                                                                are considered. For more context on the definition of goodput, refer to DistServe paper:                │
+│                                                                https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve             │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```
 ╭─ Output ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -78,22 +92,17 @@ Use these options to profile with AIPerf.
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```
-╭─ Conversation Input ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ CONVERSATION-NUM --conversation-num --num-conversations          The total number of unique conversations to generate. Each conversation represents a single request session between  │
-│   --num-sessions --num-dataset-entries                           client and server. Supported on synthetic mode and the custom random_pool dataset. The number of conversations will  │
-│                                                                  be used to determine the number of entries in both the custom random_pool and synthetic datasets and will be reused  │
-│                                                                  until benchmarking is complete. [default: 100]                                                                       │
-│ CONVERSATION-TURN-MEAN --conversation-turn-mean                  The mean number of turns within a conversation. [default: 1]                                                         │
-│   --session-turns-mean                                                                                                                                                                │
-│ CONVERSATION-TURN-STDDEV --conversation-turn-stddev              The standard deviation of the number of turns within a conversation. [default: 0]                                    │
-│   --session-turns-stddev                                                                                                                                                              │
-│ CONVERSATION-TURN-DELAY-MEAN --conversation-turn-delay-mean      The mean delay between turns within a conversation in milliseconds. [default: 0.0]                                   │
-│   --session-turn-delay-mean                                                                                                                                                           │
-│ CONVERSATION-TURN-DELAY-STDDEV --conversation-turn-delay-stddev  The standard deviation of the delay between turns within a conversation in milliseconds. [default: 0.0]              │
-│   --session-turn-delay-stddev                                                                                                                                                         │
-│ CONVERSATION-TURN-DELAY-RATIO --conversation-turn-delay-ratio    A ratio to scale multi-turn delays. [default: 1.0]                                                                   │
-│   --session-delay-ratio                                                                                                                                                               │
-╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Conversation Input ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ CONVERSATION-NUM --conversation-num --num-conversations --num-sessions                       The total number of unique conversations to generate. Each conversation represents a single request session between client and server. Supported on synthetic mode and    │
+│                                                                                              the custom random_pool dataset. The number of conversations will be used to determine the number of entries in both the custom random_pool and synthetic datasets and     │
+│                                                                                              will be reused until benchmarking is complete.                                                                                                                            │
+│ NUM-DATASET-ENTRIES --num-dataset-entries --num-prompts                                      The total number of unique dataset entries to generate for the dataset. Each entry represents a single turn used in a request. [default: 100]                             │
+│ CONVERSATION-TURN-MEAN --conversation-turn-mean --session-turns-mean                         The mean number of turns within a conversation. [default: 1]                                                                                                              │
+│ CONVERSATION-TURN-STDDEV --conversation-turn-stddev --session-turns-stddev                   The standard deviation of the number of turns within a conversation. [default: 0]                                                                                         │
+│ CONVERSATION-TURN-DELAY-MEAN --conversation-turn-delay-mean --session-turn-delay-mean        The mean delay between turns within a conversation in milliseconds. [default: 0.0]                                                                                        │
+│ CONVERSATION-TURN-DELAY-STDDEV --conversation-turn-delay-stddev --session-turn-delay-stddev  The standard deviation of the delay between turns within a conversation in milliseconds. [default: 0.0]                                                                   │
+│ CONVERSATION-TURN-DELAY-RATIO --conversation-turn-delay-ratio --session-delay-ratio          A ratio to scale multi-turn delays. [default: 1.0]                                                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```
 ╭─ Input Sequence Length (ISL) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮

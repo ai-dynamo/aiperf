@@ -9,6 +9,7 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import (
     ConversationDefaults,
+    PromptDefaults,
     TurnDefaults,
     TurnDelayDefaults,
 )
@@ -131,11 +132,25 @@ class ConversationConfig(BaseConfig):
                 "--conversation-num",
                 "--num-conversations",
                 "--num-sessions",  # GenAI-Perf
+            ),
+            group=_CLI_GROUP,
+        ),
+    ] = ConversationDefaults.NUM
+
+    num_dataset_entries: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="The total number of unique dataset entries to generate for the dataset.\n"
+            "Each entry represents a single turn used in a request.\n",
+        ),
+        CLIParameter(
+            name=(
                 "--num-dataset-entries",  # GenAI-Perf
                 "--num-prompts",  # GenAI-Perf
             ),
             group=_CLI_GROUP,
         ),
-    ] = ConversationDefaults.NUM
+    ] = PromptDefaults.NUM
 
     turn: TurnConfig = TurnConfig()
