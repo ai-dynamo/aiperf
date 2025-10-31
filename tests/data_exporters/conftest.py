@@ -6,6 +6,7 @@
 import pytest
 
 from aiperf.common.config import ServiceConfig
+from aiperf.common.models import MetricResult
 from aiperf.common.models.telemetry_models import (
     TelemetryHierarchy,
     TelemetryMetrics,
@@ -172,3 +173,96 @@ def create_exporter_config(
         service_config=ServiceConfig(verbose=verbose),
         telemetry_results=telemetry_results,
     )
+
+
+@pytest.fixture
+def sample_timeslice_metric_results():
+    """Create sample timeslice metric results for testing."""
+    return {
+        0: [
+            MetricResult(
+                tag="time_to_first_token",
+                header="Time to First Token",
+                unit="ms",
+                avg=45.2,
+                min=12.1,
+                max=89.3,
+                p50=44.0,
+                p90=78.0,
+                p99=88.0,
+                std=15.2,
+            ),
+            MetricResult(
+                tag="inter_token_latency",
+                header="Inter Token Latency",
+                unit="ms",
+                avg=5.1,
+                min=2.3,
+                max=12.4,
+                p50=4.8,
+                p90=9.2,
+                p99=11.8,
+                std=2.1,
+            ),
+        ],
+        1: [
+            MetricResult(
+                tag="time_to_first_token",
+                header="Time to First Token",
+                unit="ms",
+                avg=48.5,
+                min=15.2,
+                max=92.1,
+                p50=47.3,
+                p90=82.4,
+                p99=90.5,
+                std=16.1,
+            ),
+            MetricResult(
+                tag="inter_token_latency",
+                header="Inter Token Latency",
+                unit="ms",
+                avg=5.4,
+                min=2.5,
+                max=13.1,
+                p50=5.1,
+                p90=9.8,
+                p99=12.3,
+                std=2.3,
+            ),
+        ],
+    }
+
+
+@pytest.fixture
+def mock_results_with_timeslices(sample_timeslice_metric_results):
+    """Create mock results with timeslice data."""
+
+    class MockResultsWithTimeslices:
+        def __init__(self):
+            self.timeslice_metric_results = sample_timeslice_metric_results
+            self.records = []
+            self.start_ns = None
+            self.end_ns = None
+            self.has_results = True
+            self.was_cancelled = False
+            self.error_summary = []
+
+    return MockResultsWithTimeslices()
+
+
+@pytest.fixture
+def mock_results_without_timeslices():
+    """Create mock results without timeslice data."""
+
+    class MockResultsNoTimeslices:
+        def __init__(self):
+            self.timeslice_metric_results = None
+            self.records = []
+            self.start_ns = None
+            self.end_ns = None
+            self.has_results = False
+            self.was_cancelled = False
+            self.error_summary = []
+
+    return MockResultsNoTimeslices()

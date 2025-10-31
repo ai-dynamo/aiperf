@@ -4,6 +4,7 @@
 import re
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -11,8 +12,8 @@ from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
-from aiperf.exporters.csv_exporter import CsvExporter
 from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.exporters.metrics_csv_exporter import MetricsCsvExporter
 
 
 @pytest.fixture
@@ -34,7 +35,7 @@ class _MockResults:
 
     @property
     def records(self):
-        # CsvExporter expects a dict[str, MetricResult] *after conversion*
+        # MetricsCsvExporter expects a dict[str, MetricResult] *after conversion*
         # but we monkeypatch the converter to return a dict.
         # Before conversion, we return a list.
         return self._records_list
@@ -90,7 +91,7 @@ def _read(path: Path) -> str:
 
 
 @pytest.mark.asyncio
-async def test_csv_exporter_writes_two_sections_and_values(
+async def test_metrics_csv_exporter_writes_two_sections_and_values(
     monkeypatch, mock_user_config, mk_metric
 ):
     """
@@ -129,10 +130,10 @@ async def test_csv_exporter_writes_two_sections_and_values(
     results = _MockResults(list(converted.values()))
 
     # Monkeypatch converter to return our dict above
-    import aiperf.exporters.csv_exporter as ce
+    import aiperf.exporters.metrics_base_exporter as mbe
 
     monkeypatch.setattr(
-        ce, "convert_all_metrics_to_display_units", lambda records, reg: converted
+        mbe, "convert_all_metrics_to_display_units", lambda records, reg: converted
     )
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -145,7 +146,7 @@ async def test_csv_exporter_writes_two_sections_and_values(
             telemetry_results=None,
         )
 
-        exporter = CsvExporter(cfg)
+        exporter = MetricsCsvExporter(cfg)
         await exporter.export()
 
         expected = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
@@ -169,7 +170,7 @@ async def test_csv_exporter_writes_two_sections_and_values(
 
 
 @pytest.mark.asyncio
-async def test_csv_exporter_empty_records_creates_empty_file(
+async def test_metrics_csv_exporter_empty_records_creates_empty_file(
     monkeypatch, mock_user_config
 ):
     """
@@ -179,10 +180,10 @@ async def test_csv_exporter_empty_records_creates_empty_file(
     results = _MockResults([])
 
     # Converter returns empty dict to the generator
-    import aiperf.exporters.csv_exporter as ce
+    import aiperf.exporters.metrics_base_exporter as mbe
 
     monkeypatch.setattr(
-        ce, "convert_all_metrics_to_display_units", lambda records, reg: {}
+        mbe, "convert_all_metrics_to_display_units", lambda records, reg: {}
     )
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -195,7 +196,7 @@ async def test_csv_exporter_empty_records_creates_empty_file(
             telemetry_results=None,
         )
 
-        exporter = CsvExporter(cfg)
+        exporter = MetricsCsvExporter(cfg)
         await exporter.export()
 
         expected = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
@@ -205,7 +206,7 @@ async def test_csv_exporter_empty_records_creates_empty_file(
 
 
 @pytest.mark.asyncio
-async def test_csv_exporter_deterministic_sort_order(
+async def test_metrics_csv_exporter_deterministic_sort_order(
     monkeypatch, mock_user_config, mk_metric
 ):
     """
@@ -218,10 +219,10 @@ async def test_csv_exporter_deterministic_sort_order(
     }
     results = _MockResults(list(converted.values()))
 
-    import aiperf.exporters.csv_exporter as ce
+    import aiperf.exporters.metrics_base_exporter as mbe
 
     monkeypatch.setattr(
-        ce, "convert_all_metrics_to_display_units", lambda records, reg: converted
+        mbe, "convert_all_metrics_to_display_units", lambda records, reg: converted
     )
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -234,7 +235,7 @@ async def test_csv_exporter_deterministic_sort_order(
             telemetry_results=None,
         )
 
-        exporter = CsvExporter(cfg)
+        exporter = MetricsCsvExporter(cfg)
         await exporter.export()
 
         text = _read(outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE)
@@ -255,7 +256,7 @@ async def test_csv_exporter_deterministic_sort_order(
 
 
 @pytest.mark.asyncio
-async def test_csv_exporter_unit_aware_number_formatting(
+async def test_metrics_csv_exporter_unit_aware_number_formatting(
     monkeypatch, mock_user_config, mk_metric
 ):
     """
@@ -274,10 +275,10 @@ async def test_csv_exporter_unit_aware_number_formatting(
     }
     results = _MockResults(list(converted.values()))
 
-    import aiperf.exporters.csv_exporter as ce
+    import aiperf.exporters.metrics_base_exporter as mbe
 
     monkeypatch.setattr(
-        ce, "convert_all_metrics_to_display_units", lambda records, reg: converted
+        mbe, "convert_all_metrics_to_display_units", lambda records, reg: converted
     )
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -290,7 +291,7 @@ async def test_csv_exporter_unit_aware_number_formatting(
             telemetry_results=None,
         )
 
-        exporter = CsvExporter(cfg)
+        exporter = MetricsCsvExporter(cfg)
         await exporter.export()
 
         text = _read(outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE)
@@ -303,7 +304,7 @@ async def test_csv_exporter_unit_aware_number_formatting(
 
 
 @pytest.mark.asyncio
-async def test_csv_exporter_logs_and_raises_on_write_failure(
+async def test_metrics_csv_exporter_logs_and_raises_on_write_failure(
     monkeypatch, mock_user_config, mk_metric
 ):
     """
@@ -316,10 +317,10 @@ async def test_csv_exporter_logs_and_raises_on_write_failure(
     }
     results = _MockResults(list(converted.values()))
 
-    import aiperf.exporters.csv_exporter as ce
+    import aiperf.exporters.metrics_base_exporter as mbe
 
     monkeypatch.setattr(
-        ce, "convert_all_metrics_to_display_units", lambda records, reg: converted
+        mbe, "convert_all_metrics_to_display_units", lambda records, reg: converted
     )
 
     # Force aiofiles.open to throw
@@ -350,14 +351,14 @@ async def test_csv_exporter_logs_and_raises_on_write_failure(
             telemetry_results=None,
         )
 
-        exporter = CsvExporter(cfg)
+        exporter = MetricsCsvExporter(cfg)
         monkeypatch.setattr(exporter, "error", _err)
 
         with pytest.raises(OSError, match="disk full"):
             await exporter.export()
 
         assert called["err"] is not None
-        assert "Failed to export CSV" in called["err"]
+        assert "Failed to export" in called["err"]
 
 
 @pytest.mark.parametrize(
@@ -397,11 +398,11 @@ async def test_format_number_various_types(mock_user_config, value, expected):
         service_config=ServiceConfig(),
         telemetry_results=None,
     )
-    exporter = CsvExporter(cfg)
+    exporter = MetricsCsvExporter(cfg)
     assert exporter._format_number(value) == expected
 
 
-class TestCsvExporterTelemetry:
+class TestMetricsCsvExporterTelemetry:
     """Test CSV export with telemetry data."""
 
     @pytest.mark.asyncio
@@ -436,7 +437,7 @@ class TestCsvExporterTelemetry:
                 telemetry_results=sample_telemetry_results,
             )
 
-            exporter = CsvExporter(cfg)
+            exporter = MetricsCsvExporter(cfg)
             await exporter.export()
 
             csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
@@ -479,7 +480,7 @@ class TestCsvExporterTelemetry:
                 telemetry_results=None,
             )
 
-            exporter = CsvExporter(cfg)
+            exporter = MetricsCsvExporter(cfg)
             await exporter.export()
 
             csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
@@ -510,7 +511,7 @@ class TestCsvExporterTelemetry:
                 telemetry_results=sample_telemetry_results,
             )
 
-            exporter = CsvExporter(cfg)
+            exporter = MetricsCsvExporter(cfg)
             await exporter.export()
 
             csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
@@ -571,7 +572,7 @@ class TestCsvExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = CsvExporter(cfg)
+            exporter = MetricsCsvExporter(cfg)
             # Should not raise exception despite metric retrieval failures
             await exporter.export()
 
@@ -599,7 +600,7 @@ class TestCsvExporterTelemetry:
             telemetry_results=None,
         )
 
-        exporter = CsvExporter(cfg)
+        exporter = MetricsCsvExporter(cfg)
 
         # GPU data with working metric
         gpu_data_with_metric = Mock(spec=GpuTelemetryData)
@@ -709,7 +710,7 @@ class TestCsvExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = CsvExporter(cfg)
+            exporter = MetricsCsvExporter(cfg)
             await exporter.export()
 
             csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
@@ -769,7 +770,7 @@ class TestCsvExporterTelemetry:
                 telemetry_results=telemetry_results,
             )
 
-            exporter = CsvExporter(cfg)
+            exporter = MetricsCsvExporter(cfg)
             await exporter.export()
 
             csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
@@ -794,7 +795,7 @@ class TestCsvExporterTelemetry:
             telemetry_results=None,
         )
 
-        exporter = CsvExporter(cfg)
+        exporter = MetricsCsvExporter(cfg)
 
         # Test very small value
         result = exporter._format_number(0.00123)
@@ -819,8 +820,160 @@ class TestCsvExporterTelemetry:
             telemetry_results=None,
         )
 
-        exporter = CsvExporter(cfg)
+        exporter = MetricsCsvExporter(cfg)
 
         # Test Decimal type
         result = exporter._format_number(Decimal("123.456"))
         assert result == "123.46"
+
+
+def test_metrics_csv_exporter_inherits_from_base(mock_user_config):
+    """Verify MetricsCsvExporter inherits from MetricsBaseExporter."""
+    from aiperf.common.models import ProfileResults
+
+    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    cfg = ExporterConfig(
+        results=results,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+        telemetry_results=None,
+    )
+
+    exporter = MetricsCsvExporter(cfg)
+
+    from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
+
+    assert isinstance(exporter, MetricsBaseExporter)
+
+
+@pytest.mark.asyncio
+async def test_metrics_csv_exporter_uses_base_export(mock_user_config):
+    """Verify uses base class export() method."""
+    from unittest.mock import AsyncMock
+
+    from aiperf.common.models import ProfileResults
+
+    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    cfg = ExporterConfig(
+        results=results,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+        telemetry_results=None,
+    )
+
+    exporter = MetricsCsvExporter(cfg)
+
+    # Mock the base class export method
+    from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
+
+    mock_export = AsyncMock()
+
+    with patch.object(MetricsBaseExporter, "export", mock_export):
+        await exporter.export()
+
+        # Verify base export was called
+        mock_export.assert_called_once()
+
+
+def test_metrics_csv_exporter_generate_content_uses_instance_data_members(
+    mock_user_config,
+):
+    """Verify _generate_content() uses instance data members."""
+    from aiperf.common.models import ProfileResults
+
+    # Create mock records
+    mock_records = [
+        MetricResult(
+            tag="time_to_first_token",
+            header="Time to First Token",
+            unit="ms",
+            avg=45.2,
+        )
+    ]
+
+    results = ProfileResults(records=mock_records, start_ns=0, end_ns=0, completed=0)
+    cfg = ExporterConfig(
+        results=results,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+        telemetry_results=None,
+    )
+
+    exporter = MetricsCsvExporter(cfg)
+
+    # Mock conversion
+    import aiperf.exporters.metrics_base_exporter as mbe
+
+    def mock_convert(metrics, reg):
+        return {m.tag: m for m in metrics}
+
+    with (
+        patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
+        patch.object(exporter, "_should_export", return_value=True),
+    ):
+        content = exporter._generate_content()
+
+    # Should contain data from instance members
+    assert "Time to First Token" in content
+
+
+def test_metrics_csv_exporter_generate_content_uses_telemetry_results_from_instance(
+    mock_user_config, sample_telemetry_results
+):
+    """Verify _generate_content() uses self._telemetry_results."""
+    from aiperf.common.models import ProfileResults
+
+    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    cfg = ExporterConfig(
+        results=results,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+        telemetry_results=sample_telemetry_results,
+    )
+
+    exporter = MetricsCsvExporter(cfg)
+
+    import aiperf.exporters.metrics_base_exporter as mbe
+
+    def mock_convert(metrics, reg):
+        return {}
+
+    with patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert):
+        content = exporter._generate_content()
+
+    # Should contain telemetry data
+    assert "GPU_Index" in content or "Endpoint" in content
+
+
+@pytest.mark.asyncio
+async def test_metrics_csv_exporter_export_calls_generate_content_internally(
+    mock_user_config,
+):
+    """Verify export() calls _generate_content() internally."""
+    from aiperf.common.models import ProfileResults
+
+    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    cfg = ExporterConfig(
+        results=results,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+        telemetry_results=None,
+    )
+
+    exporter = MetricsCsvExporter(cfg)
+
+    test_csv_content = "Metric,Value\nTest,42"
+
+    with patch.object(
+        exporter, "_generate_content", return_value=test_csv_content
+    ) as mock_generate:
+        await exporter.export()
+
+        # Verify _generate_content was called
+        mock_generate.assert_called_once()
+
+        # Verify file contains the returned content
+        with open(exporter._file_path) as f:
+            actual_content = f.read()
+
+        assert actual_content == test_csv_content
