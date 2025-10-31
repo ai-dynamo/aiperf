@@ -22,7 +22,7 @@ Multi-turn benchmarking provides several advantages:
 >
 > AIPerf provides different options for controlling the number of requests depending on whether you're running single-turn or multi-turn benchmarks:
 >
-> - **`--request-count`**: Controls the total number of **single-turn requests** to send. Use this for traditional single-request benchmarks.
+> - **`--request-count`**: Controls the total number of **single-turn requests** to send. Use this for traditional single-turn benchmarks.
 > - **`--conversation-num`**: Controls the total number of **conversations (sessions)** to send in multi-turn scenarios. Each conversation may contain multiple turns (requests).
 >
 > These options are mutually exclusive in their intent - use `--request-count` for single-turn benchmarking and `--conversation-num` for multi-turn benchmarking to avoid confusion.
@@ -36,7 +36,7 @@ Multi-turn benchmarking provides several advantages:
 > - `--request-count`: Number of single-turn requests to send (for single-turn benchmarks)
 > - `--conversation-num`: Number of conversations to send (for multi-turn benchmarks)
 >
-> The dataset entries are reused/sampled as needed to fulfill the total request or conversation count. For example, you might generate 100 unique prompts (`--num-dataset-entries 100`) but send 1000 requests that sample from those prompts.
+> The dataset entries are reused/sampled as needed to fulfill the total request or conversation count. For example, you might generate 100 unique prompts (`--num-dataset-entries 100`) but send 1000 requests that sample from those prompts. `--dataset-sampling-strategy` determines how the pool of prompts is sampled when building payloads.
 
 ## Core Parameters
 
@@ -350,7 +350,6 @@ In multi-turn conversations, each subsequent turn includes the complete conversa
 This accumulation means:
 - Input token count grows with each turn
 - Later turns have increasingly large context to process
-- Server must maintain conversation state and history
 
 ### Execution Flow
 
