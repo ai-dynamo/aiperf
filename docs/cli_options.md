@@ -78,22 +78,17 @@ Use these options to profile with AIPerf.
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```
-╭─ Conversation Input ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ CONVERSATION-NUM --conversation-num --num-conversations          The total number of unique conversations to generate. Each conversation represents a single request session between  │
-│   --num-sessions --num-dataset-entries                           client and server. Supported on synthetic mode and the custom random_pool dataset. The number of conversations will  │
-│                                                                  be used to determine the number of entries in both the custom random_pool and synthetic datasets and will be reused  │
-│                                                                  until benchmarking is complete. [default: 100]                                                                       │
-│ CONVERSATION-TURN-MEAN --conversation-turn-mean                  The mean number of turns within a conversation. [default: 1]                                                         │
-│   --session-turns-mean                                                                                                                                                                │
-│ CONVERSATION-TURN-STDDEV --conversation-turn-stddev              The standard deviation of the number of turns within a conversation. [default: 0]                                    │
-│   --session-turns-stddev                                                                                                                                                              │
-│ CONVERSATION-TURN-DELAY-MEAN --conversation-turn-delay-mean      The mean delay between turns within a conversation in milliseconds. [default: 0.0]                                   │
-│   --session-turn-delay-mean                                                                                                                                                           │
-│ CONVERSATION-TURN-DELAY-STDDEV --conversation-turn-delay-stddev  The standard deviation of the delay between turns within a conversation in milliseconds. [default: 0.0]              │
-│   --session-turn-delay-stddev                                                                                                                                                         │
-│ CONVERSATION-TURN-DELAY-RATIO --conversation-turn-delay-ratio    A ratio to scale multi-turn delays. [default: 1.0]                                                                   │
-│   --session-delay-ratio                                                                                                                                                               │
-╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Conversation Input ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ CONVERSATION-NUM --conversation-num --num-conversations --num-sessions                       The total number of unique conversations to generate. Each conversation represents a single request session between client and server. Supported on synthetic mode and    │
+│                                                                                              the custom random_pool dataset. The number of conversations will be used to determine the number of entries in both the custom random_pool and synthetic datasets and     │
+│                                                                                              will be reused until benchmarking is complete.                                                                                                                            │
+│ NUM-DATASET-ENTRIES --num-dataset-entries --num-prompts                                      The total number of unique dataset entries to generate for the dataset. Each entry represents a single turn used in a request. [default: 100]                             │
+│ CONVERSATION-TURN-MEAN --conversation-turn-mean --session-turns-mean                         The mean number of turns within a conversation. [default: 1]                                                                                                              │
+│ CONVERSATION-TURN-STDDEV --conversation-turn-stddev --session-turns-stddev                   The standard deviation of the number of turns within a conversation. [default: 0]                                                                                         │
+│ CONVERSATION-TURN-DELAY-MEAN --conversation-turn-delay-mean --session-turn-delay-mean        The mean delay between turns within a conversation in milliseconds. [default: 0.0]                                                                                        │
+│ CONVERSATION-TURN-DELAY-STDDEV --conversation-turn-delay-stddev --session-turn-delay-stddev  The standard deviation of the delay between turns within a conversation in milliseconds. [default: 0.0]                                                                   │
+│ CONVERSATION-TURN-DELAY-RATIO --conversation-turn-delay-ratio --session-delay-ratio          A ratio to scale multi-turn delays. [default: 1.0]                                                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```
 ╭─ Input Sequence Length (ISL) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
