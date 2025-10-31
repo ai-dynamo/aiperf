@@ -20,7 +20,8 @@
 		test-verbose init-files setup-venv setup-mkinit install-mock-server \
 		integration-tests integration-tests-ci integration-tests-verbose \
 		test-integration test-integration-ci test-integration-verbose \
-		test-stress stress-tests internal-help help
+		test-stress stress-tests internal-help help \
+		update-cli-docs check-cli-docs
 
 
 # Include user-defined environment variables
@@ -94,6 +95,15 @@ internal-help:
 
 init-files: #? run mkinit to generate the __init__.py files.
 	$(activate_venv) && tools/generate_init_files.sh
+
+update-cli-docs: #? regenerate docs/cli_options.md from aiperf profile --help.
+	@printf "$(bold)$(green)Regenerating CLI options documentation...$(reset)\n"
+	$(activate_venv) && python tools/generate_cli_options_md.py
+	@printf "$(bold)$(green)Done! docs/cli_options.md has been updated.$(reset)\n"
+
+check-cli-docs: #? check if docs/cli_options.md is in sync with aiperf profile --help.
+	@printf "$(bold)$(blue)Checking if CLI options documentation is up to date...$(reset)\n"
+	$(activate_venv) && python tools/generate_cli_options_md.py --check
 
 ruff lint: #? run the ruff linters
 	$(activate_venv) && ruff check . $(args)
