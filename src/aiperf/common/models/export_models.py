@@ -92,8 +92,6 @@ class TimesliceCollectionExportData(AIPerfBaseModel):
 
     timeslices: list[TimesliceData]
     input_config: UserConfig | None = None
-    total_slices: int
-    slice_duration: float | None = None
 
 
 class JsonExportData(AIPerfBaseModel):

@@ -4,6 +4,7 @@
 import re
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -824,3 +825,155 @@ class TestMetricsCsvExporterTelemetry:
         # Test Decimal type
         result = exporter._format_number(Decimal("123.456"))
         assert result == "123.46"
+
+
+def test_metrics_csv_exporter_inherits_from_base(mock_user_config):
+    """Verify MetricsCsvExporter inherits from MetricsBaseExporter."""
+    from aiperf.common.models import ProfileResults
+
+    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    cfg = ExporterConfig(
+        results=results,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+        telemetry_results=None,
+    )
+
+    exporter = MetricsCsvExporter(cfg)
+
+    from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
+
+    assert isinstance(exporter, MetricsBaseExporter)
+
+
+@pytest.mark.asyncio
+async def test_metrics_csv_exporter_uses_base_export(mock_user_config):
+    """Verify uses base class export() method."""
+    from unittest.mock import AsyncMock
+
+    from aiperf.common.models import ProfileResults
+
+    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    cfg = ExporterConfig(
+        results=results,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+        telemetry_results=None,
+    )
+
+    exporter = MetricsCsvExporter(cfg)
+
+    # Mock the base class export method
+    from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
+
+    mock_export = AsyncMock()
+
+    with patch.object(MetricsBaseExporter, "export", mock_export):
+        await exporter.export()
+
+        # Verify base export was called
+        mock_export.assert_called_once()
+
+
+def test_metrics_csv_exporter_generate_content_uses_instance_data_members(
+    mock_user_config,
+):
+    """Verify _generate_content() uses instance data members."""
+    from aiperf.common.models import ProfileResults
+
+    # Create mock records
+    mock_records = [
+        MetricResult(
+            tag="time_to_first_token",
+            header="Time to First Token",
+            unit="ms",
+            avg=45.2,
+        )
+    ]
+
+    results = ProfileResults(records=mock_records, start_ns=0, end_ns=0, completed=0)
+    cfg = ExporterConfig(
+        results=results,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+        telemetry_results=None,
+    )
+
+    exporter = MetricsCsvExporter(cfg)
+
+    # Mock conversion
+    import aiperf.exporters.metrics_base_exporter as mbe
+
+    def mock_convert(metrics, reg):
+        return {m.tag: m for m in metrics}
+
+    with (
+        patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
+        patch.object(exporter, "_should_export", return_value=True),
+    ):
+        content = exporter._generate_content()
+
+    # Should contain data from instance members
+    assert "Time to First Token" in content
+
+
+def test_metrics_csv_exporter_generate_content_uses_telemetry_results_from_instance(
+    mock_user_config, sample_telemetry_results
+):
+    """Verify _generate_content() uses self._telemetry_results."""
+    from aiperf.common.models import ProfileResults
+
+    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    cfg = ExporterConfig(
+        results=results,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+        telemetry_results=sample_telemetry_results,
+    )
+
+    exporter = MetricsCsvExporter(cfg)
+
+    import aiperf.exporters.metrics_base_exporter as mbe
+
+    def mock_convert(metrics, reg):
+        return {}
+
+    with patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert):
+        content = exporter._generate_content()
+
+    # Should contain telemetry data
+    assert "GPU_Index" in content or "Endpoint" in content
+
+
+@pytest.mark.asyncio
+async def test_metrics_csv_exporter_export_calls_generate_content_internally(
+    mock_user_config,
+):
+    """Verify export() calls _generate_content() internally."""
+    from aiperf.common.models import ProfileResults
+
+    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    cfg = ExporterConfig(
+        results=results,
+        user_config=mock_user_config,
+        service_config=ServiceConfig(),
+        telemetry_results=None,
+    )
+
+    exporter = MetricsCsvExporter(cfg)
+
+    test_csv_content = "Metric,Value\nTest,42"
+
+    with patch.object(
+        exporter, "_generate_content", return_value=test_csv_content
+    ) as mock_generate:
+        await exporter.export()
+
+        # Verify _generate_content was called
+        mock_generate.assert_called_once()
+
+        # Verify file contains the returned content
+        with open(exporter._file_path) as f:
+            actual_content = f.read()
+
+        assert actual_content == test_csv_content

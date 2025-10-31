@@ -25,8 +25,7 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
             {"timeslice_index": 0, "metric_1": {...}, "metric_2": {...}},
             {"timeslice_index": 1, "metric_1": {...}, "metric_2": {...}}
         ],
-        "input_config": {...},
-        "total_slices": 2
+        "input_config": {...}
     }
     """
 
@@ -84,7 +83,6 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
         export_data = TimesliceCollectionExportData(
             timeslices=timeslices_list,
             input_config=self._user_config,
-            total_slices=len(timeslices_list),
         )
 
         return export_data.model_dump_json(indent=2, exclude_unset=True)
