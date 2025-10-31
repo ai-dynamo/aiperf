@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from abc import ABC, abstractmethod
 from collections.abc import Iterable
 
 import aiofiles
@@ -13,7 +14,7 @@ from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.metric_registry import MetricRegistry
 
 
-class MetricsBaseExporter(AIPerfLoggerMixin):
+class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
     """Base class for all metrics exporters with common functionality."""
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
@@ -62,6 +63,7 @@ class MetricsBaseExporter(AIPerfLoggerMixin):
         self.debug(lambda: f"Metric '{metric.tag}' should be exported: {res}")
         return res
 
+    @abstractmethod
     def _generate_content(self) -> str:
         """Generate export content string.
 

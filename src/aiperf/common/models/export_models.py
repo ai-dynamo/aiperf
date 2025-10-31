@@ -80,8 +80,6 @@ class TimesliceData(AIPerfBaseModel):
     model_config = ConfigDict(extra="allow")
 
     timeslice_index: int
-    start_time: datetime | None = None
-    end_time: datetime | None = None
 
 
 class TimesliceCollectionExportData(AIPerfBaseModel):
