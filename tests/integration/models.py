@@ -82,11 +82,9 @@ class AIPerfResults:
     def _load_json_export(self) -> JsonExportData | None:
         """Load JSON export as Pydantic model."""
         file_path = self._find_file("**/*aiperf.json")
-        return (
-            JsonExportData.model_validate_json(file_path.read_text())
-            if file_path
-            else None
-        )
+        if not file_path:
+            return None
+        return JsonExportData.model_validate_json(file_path.read_text())
 
     def _load_inputs(self) -> InputsFile | None:
         """Load inputs file as Pydantic model."""

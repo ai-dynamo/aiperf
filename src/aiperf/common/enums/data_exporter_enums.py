@@ -10,6 +10,7 @@ class ConsoleExporterType(CaseInsensitiveStrEnum):
     INTERNAL_METRICS = "internal_metrics"
     METRICS = "metrics"
     TELEMETRY = "telemetry"
+    USAGE_DISCREPANCY_WARNING = "usage_discrepancy_warning"
 
 
 class DataExporterType(CaseInsensitiveStrEnum):

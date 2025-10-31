@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseDerivedMetric, BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
@@ -55,7 +56,10 @@ class ThinkingEfficiencyMetric(BaseRecordMetric[float]):
     ) -> float:
         reasoning_token_count = record_metrics.get_or_raise(ReasoningTokenCountMetric)
         output_token_count = record_metrics.get_or_raise(OutputTokenCountMetric)
-
+        if output_token_count == 0:
+            raise NoMetricValue(
+                "Output token count is zero, cannot calculate thinking efficiency metric"
+            )
         return reasoning_token_count / output_token_count  # type: ignore
 
 
@@ -102,5 +106,8 @@ class OverallThinkingEfficiencyMetric(BaseDerivedMetric[float]):
     ) -> float:
         total_reasoning_tokens = metric_results.get_or_raise(TotalReasoningTokensMetric)
         total_output_tokens = metric_results.get_or_raise(TotalOutputTokensMetric)
-
+        if total_output_tokens == 0:
+            raise NoMetricValue(
+                "Total output tokens is zero, cannot calculate overall thinking efficiency metric"
+            )
         return total_reasoning_tokens / total_output_tokens  # type: ignore

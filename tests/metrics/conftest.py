@@ -6,6 +6,7 @@ Shared fixtures for testing AIPerf metrics.
 """
 
 from aiperf.common.enums import MetricType
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
@@ -90,14 +91,20 @@ def run_simple_metrics_pipeline(
         metric_dict = MetricRecordDict()
         for metric in metrics:
             if metric.type in [MetricType.RECORD, MetricType.AGGREGATE]:
-                metric_dict[metric.tag] = metric.parse_record(record, metric_dict)
+                try:
+                    value = metric.parse_record(record, metric_dict)
+                    metric_dict[metric.tag] = value
+                except NoMetricValue:
+                    # If a metric can't be calculated, skip it for this record
+                    pass
 
         # STAGE 2: Aggregate the values of the aggregate metrics, and append new values for record metrics
         for metric in metrics:
             if metric.type == MetricType.AGGREGATE:
-                metric.aggregate_value(metric_dict[metric.tag])
-                metric_results[metric.tag] = metric.current_value
-            elif metric.type == MetricType.RECORD:
+                if metric.tag in metric_dict:
+                    metric.aggregate_value(metric_dict[metric.tag])
+                    metric_results[metric.tag] = metric.current_value
+            elif metric.type == MetricType.RECORD and metric.tag in metric_dict:
                 metric_results.setdefault(metric.tag, []).append(
                     metric_dict[metric.tag]
                 )

@@ -273,6 +273,12 @@ class _MetricsSettings(BaseSettings):
         default=10000,
         description="Initial array capacity for metric storage dictionaries to minimize reallocation",
     )
+    USAGE_PCT_DIFF_THRESHOLD: float = Field(
+        ge=0.0,
+        le=100.0,
+        default=10.0,
+        description="Percentage difference threshold for flagging discrepancies between API usage and client token counts (default: 10%)",
+    )
 
 
 class _RecordSettings(BaseSettings):

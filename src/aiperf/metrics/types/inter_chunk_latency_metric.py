@@ -46,20 +46,24 @@ class InterChunkLatencyMetric(BaseRecordMetric[list[int]]):
         ParsedResponseRecord object, computes the differences between consecutive responses (ICL),
         and returns the results.
 
+        Note: Only includes content responses (with actual data), excluding usage-only or [DONE] chunks.
+
         Raises:
-            NoMetricValue: If the record does not have at least two responses
+            NoMetricValue: If the record does not have at least two content responses
             ValueError: If any of the inter chunk latencies are not positive.
         """
-        responses = record.responses
+        content_responses = record.content_responses
 
-        if len(responses) < 2:
+        if len(content_responses) < 2:
             raise NoMetricValue(
-                "Record must have at least two responses to calculate Inter Chunk Latency."
+                "Record must have at least two content responses to calculate Inter Chunk Latency."
             )
 
         inter_chunk_latencies = []
-        for i in range(1, len(responses)):
-            chunk_latency_ns = responses[i].perf_ns - responses[i - 1].perf_ns
+        for i in range(1, len(content_responses)):
+            chunk_latency_ns = (
+                content_responses[i].perf_ns - content_responses[i - 1].perf_ns
+            )
             if chunk_latency_ns < 0:
                 raise ValueError(
                     f"Each inter chunk latency must be non-negative. got: {chunk_latency_ns}"

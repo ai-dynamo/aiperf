@@ -37,7 +37,7 @@ class BaseMetricDict(
     def get_or_raise(self, metric: type["BaseMetric"]) -> MetricDictValueTypeT:
         """Get the value of a metric, or raise NoMetricValue if it is not available."""
         value = self.get(metric.tag)
-        if not value:
+        if value is None:
             raise NoMetricValue(f"Metric {metric.tag} is not available for the record.")
         return value
 

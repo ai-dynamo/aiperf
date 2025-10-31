@@ -110,6 +110,9 @@ from aiperf.common.models.telemetry_models import (
     TelemetryRecord,
     TelemetryResults,
 )
+from aiperf.common.models.usage_models import (
+    Usage,
+)
 from aiperf.common.models.worker_models import (
     WorkerTaskStats,
 )
@@ -185,6 +188,7 @@ __all__ = [
     "TextResponseData",
     "TransportMetadata",
     "Turn",
+    "Usage",
     "Video",
     "WorkerStats",
     "WorkerTaskStats",

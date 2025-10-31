@@ -34,17 +34,17 @@ class TTFTMetric(BaseRecordMetric[int]):
         RequestRecord object, computes the difference (TTFT), and returns the result.
 
         Raises:
-            NoMetricValue: If the record does not have at least one response
+            NoMetricValue: If the record does not have at least one content response
             ValueError: If the first response is before the request start timestamp.
         """
 
-        if len(record.responses) < 1:
+        if len(record.content_responses) < 1:
             raise NoMetricValue(
-                "Record must have at least one response to calculate TTFT."
+                "Record must have at least one content response to calculate TTFT."
             )
 
         request_ts: int = record.request.start_perf_ns
-        first_response_ts: int = record.responses[0].perf_ns
+        first_response_ts: int = record.content_responses[0].perf_ns
         if first_response_ts < request_ts:
             raise ValueError(
                 "First response timestamp is before request start timestamp, cannot compute TTFT."

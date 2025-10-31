@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.record_models import ParsedResponseRecord
 from aiperf.metrics import BaseDerivedMetric, BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
@@ -41,6 +42,10 @@ class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
             BenchmarkDurationMetric,
             self.unit.time_unit,  # type: ignore
         )
+        if benchmark_duration_converted == 0:
+            raise NoMetricValue(
+                "Benchmark duration is zero, cannot calculate output token throughput metric"
+            )
         return total_osl / benchmark_duration_converted  # type: ignore
 
 
@@ -73,4 +78,8 @@ class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):
             InterTokenLatencyMetric,
             self.unit.time_unit,  # type: ignore
         )
+        if converted_itl == 0:
+            raise NoMetricValue(
+                "ITL is zero, cannot calculate output token throughput per user metric"
+            )
         return 1 / converted_itl

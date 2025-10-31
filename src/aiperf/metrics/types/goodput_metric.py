@@ -36,4 +36,6 @@ class GoodputMetric(BaseDerivedMetric[float]):
             BenchmarkDurationMetric,
             self.unit.time_unit,  # type: ignore
         )
+        if benchmark_duration_converted == 0:
+            raise NoMetricValue("Benchmark duration is zero, cannot calculate goodput")
         return good_request_count / benchmark_duration_converted  # type: ignore

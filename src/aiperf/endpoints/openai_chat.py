@@ -156,14 +156,17 @@ class ChatEndpoint(BaseEndpoint):
             response: Raw response from inference server
 
         Returns:
-            Parsed response with extracted text/reasoning content
+            Parsed response with extracted text/reasoning content and usage data
         """
         json_obj = response.get_json()
         if not json_obj:
             return None
 
-        if data := self.extract_chat_response_data(json_obj):
-            return ParsedResponse(perf_ns=response.perf_ns, data=data)
+        data = self.extract_chat_response_data(json_obj)
+        usage = json_obj.get("usage") or None
+
+        if data or usage:
+            return ParsedResponse(perf_ns=response.perf_ns, data=data, usage=usage)
 
         return None
 

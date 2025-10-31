@@ -78,11 +78,11 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Returns:
             List of successfully parsed responses
         """
-        results: list[ParsedResponse] = []
-        for response in record.responses:
-            if parsed := self.parse_response(response):
-                results.append(parsed)
-        return results
+        return [
+            parsed
+            for response in record.responses
+            if (parsed := self.parse_response(response))
+        ]
 
     @staticmethod
     def make_text_response_data(text: str | None) -> TextResponseData | None:

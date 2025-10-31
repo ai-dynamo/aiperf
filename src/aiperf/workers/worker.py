@@ -294,7 +294,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         """Process the response from the inference API call and convert it to a Turn object."""
         resp = self.inference_client.endpoint.extract_response_data(record)
         # TODO how do we handle reasoning responses in multi turn?
-        resp_text = "".join([r.data.get_text() for r in resp])
+        resp_text = "".join([r.data.get_text() for r in resp if r.data])
         if resp_text:
             return Turn(
                 role="assistant",

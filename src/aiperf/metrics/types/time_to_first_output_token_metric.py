@@ -64,7 +64,7 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
             # and has a non-empty text or content field. Note that ReasoningResponseData can have both reasoning and content.
             first_non_reasoning_token_perf_ns: int = next(
                 response.perf_ns
-                for response in record.responses
+                for response in record.content_responses
                 if (isinstance(response.data, TextResponseData) and response.data.text)
                 or (
                     isinstance(response.data, ReasoningResponseData)

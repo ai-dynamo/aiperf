@@ -60,14 +60,19 @@ class TestInterTokenLatencyMetric:
         """Test that ITL raises error when output tokens < 2"""
         record = create_record(output_tokens_per_response=1)
 
-        with pytest.raises(NoMetricValue):
-            run_simple_metrics_pipeline(
-                [record],
-                RequestLatencyMetric.tag,
-                OutputSequenceLengthMetric.tag,
-                TTFTMetric.tag,
-                InterTokenLatencyMetric.tag,
-            )
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            TTFTMetric.tag,
+            InterTokenLatencyMetric.tag,
+        )
+
+        # ITL should not be available when output tokens < 2
+        assert (
+            InterTokenLatencyMetric.tag not in metric_results
+            or len(metric_results[InterTokenLatencyMetric.tag]) == 0
+        )
 
     def test_inter_token_latency_missing_required_metrics(self):
         """Test that ITL requires all dependency metrics"""

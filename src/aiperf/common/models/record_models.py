@@ -26,6 +26,7 @@ from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.models.usage_models import Usage
 from aiperf.common.types import JsonObject, MetricTagT
 from aiperf.common.utils import load_json_str
 
@@ -625,17 +626,35 @@ class ParsedResponse(AIPerfBaseModel):
     """Parsed response from a inference client."""
 
     perf_ns: int = Field(description="The performance timestamp of the response.")
+    # NOTE: SerializeAsAny is used to allow for generic subclass support at runtime,
+    #       allowing for user-defined response data classes.
     data: SerializeAsAny[
         ReasoningResponseData
         | TextResponseData
         | EmbeddingResponseData
         | RankingsResponseData
         | BaseResponseData
-    ] = Field(..., description="The parsed response data.")
+        | None
+    ] = Field(
+        default=None,
+        description="The parsed response data. This can be any of the response data classes, "
+        "or a user-defined response data class that inherits from BaseResponseData. "
+        "May be None for usage-only responses in streaming mode.",
+    )
+    usage: Usage | None = Field(
+        default=None,
+        description="API-reported usage information. Structure varies by provider. "
+        "Access token counts via properties like: usage.prompt_tokens, usage.completion_tokens, or "
+        "by accessing the usage dictionary directly.",
+    )
     sources: RAGSources | None = Field(
         default=None,
         description="The sources used in the RAG query of the response. This can be a dictionary of source documents, "
         "a list of sources, or None. Only applicable to responses with RAG response data.",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional metadata from the response that is useful for analysis (rate limits, content filters, etc.)",
     )
 
 
@@ -646,15 +665,15 @@ class ParsedResponseRecord(AIPerfBaseModel):
     responses: list[ParsedResponse] = Field(description="The parsed responses.")
     input_token_count: int | None = Field(
         default=None,
-        description="The number of tokens in the input. If None, the number of tokens could not be calculated.",
+        description="The number of tokens in the input (client-side tokenization). If None, the number of tokens could not be calculated.",
     )
     output_token_count: int | None = Field(
         default=None,
-        description="The number of output tokens across all responses. If None, the number of tokens could not be calculated.",
+        description="The number of output tokens across all responses (client-side tokenization). If None, the number of tokens could not be calculated.",
     )
     reasoning_token_count: int | None = Field(
         default=None,
-        description="The number of reasoning tokens across all responses. If None, the number of tokens could not be calculated, or the model does not support reasoning.",
+        description="The number of reasoning tokens across all responses (client-side tokenization). If None, the number of tokens could not be calculated, or the model does not support reasoning.",
     )
 
     @cached_property
@@ -684,6 +703,15 @@ class ParsedResponseRecord(AIPerfBaseModel):
         )
 
     @cached_property
+    def content_responses(self) -> list[ParsedResponse]:
+        """Get only responses with actual content (data is not None or empty).
+
+        This excludes usage-only or [DONE] responses that may appear at the end of streaming responses.
+        Useful for timing metrics that should measure content delivery.
+        """
+        return [response for response in self.responses if response.data]
+
+    @cached_property
     def request_duration_ns(self) -> int:
         """Get the duration of the request in nanoseconds."""
         return self.end_perf_ns - self.start_perf_ns
@@ -706,7 +734,7 @@ class ParsedResponseRecord(AIPerfBaseModel):
 
         Checks:
         - Request has no errors
-        - Has at least one response
+        - Has at least one content response
         - Start time is before the end time
         - Response timestamps are within valid ranges
 
@@ -715,7 +743,7 @@ class ParsedResponseRecord(AIPerfBaseModel):
         """
         return (
             not self.has_error
-            and len(self.responses) > 0
+            and len(self.content_responses) > 0
             and 0 <= self.start_perf_ns < self.end_perf_ns < sys.maxsize
             and all(0 < response.perf_ns < sys.maxsize for response in self.responses)
         )
