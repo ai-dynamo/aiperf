@@ -156,7 +156,6 @@ class TestParseStrOrDictAsTupleList:
         [
             ["key1_no_colon"],  # Missing colon
             ["key1:value1", "key2_no_colon"],  # One valid, one invalid
-            ["key1:value1:extra"],  # Too many colons
         ],
     )
     def test_invalid_list_format_raises_value_error(self, invalid_list):
@@ -190,15 +189,36 @@ class TestParseStrOrDictAsTupleList:
         with pytest.raises(ValueError, match="must be a valid string, list, or dict"):
             parse_str_or_dict_as_tuple_list(invalid_input)
 
-    def test_string_with_multiple_colons_raises_value_error(self):
-        """Test that strings with multiple colons raise ValueError."""
-        with pytest.raises(ValueError):
-            parse_str_or_dict_as_tuple_list("key1:value1:extra,key2:value2")
-
-    def test_list_with_multiple_colons_raises_value_error(self):
-        """Test that list items with multiple colons raise ValueError."""
-        with pytest.raises(ValueError):
-            parse_str_or_dict_as_tuple_list(["key1:value1:extra", "key2:value2"])
+    @pytest.mark.parametrize(
+        "input_value,expected",
+        [
+            # String with multiple colons
+            (
+                "key1:value1:extra,key2:value2",
+                [("key1", "value1:extra"), ("key2", "value2")],
+            ),
+            # List with multiple colons
+            (
+                ["key1:value1:extra", "key2:value2"],
+                [("key1", "value1:extra"), ("key2", "value2")],
+            ),
+            # URL with port
+            ("url:http://example.com:8080", [("url", "http://example.com:8080")]),
+            # Multiple entries with colons in values (timestamps, ports, etc)
+            (
+                "server:localhost:8080,time:12:30:45,status:active",
+                [
+                    ("server", "localhost:8080"),
+                    ("time", "12:30:45"),
+                    ("status", "active"),
+                ],
+            ),
+        ],
+    )
+    def test_values_can_contain_colons(self, input_value, expected):
+        """Test that values can contain colons (URLs, timestamps, etc)."""
+        result = parse_str_or_dict_as_tuple_list(input_value)
+        assert result == expected
 
     def test_whitespace_handling_in_string_input(self):
         """Test that whitespace is properly trimmed in string input."""
@@ -247,6 +267,31 @@ class TestParseStrOrDictAsTupleList:
         """Test that none input returns none."""
         result = parse_str_or_dict_as_tuple_list(None)
         assert result is None
+
+    @pytest.mark.parametrize(
+        "input_list,expected",
+        [
+            (
+                [["temperature", 0.1], ["max_tokens", 150]],
+                [("temperature", 0.1), ("max_tokens", 150)],
+            ),
+            (
+                [("temperature", 0.1), ("max_tokens", 150)],
+                [("temperature", 0.1), ("max_tokens", 150)],
+            ),
+            (
+                [("key1", "value1"), ("key2", 123), ("key3", True)],
+                [("key1", "value1"), ("key2", 123), ("key3", True)],
+            ),
+        ],
+    )
+    def test_list_of_key_value_pairs_input(self, input_list, expected):
+        """Test that a list of key-value pairs (lists/tuples) is converted correctly to a list of tuples."""
+        result = parse_str_or_dict_as_tuple_list(input_list)
+        assert result == expected
+        # Make sure that the result is the same when parsed again.
+        result2 = parse_str_or_dict_as_tuple_list(result)
+        assert result2 == expected
 
 
 class TestParseStrOrListOfPositiveValues:

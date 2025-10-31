@@ -5,7 +5,6 @@ import pytest
 from rich.console import Console
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.config.dev_config import DeveloperConfig
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult, ProfileResults
@@ -33,7 +32,7 @@ def mock_endpoint_config():
 def sample_records():
     return [
         MetricResult(
-            tag="ttft",
+            tag="time_to_first_token",
             header="Time to First Token",
             unit="ms",
             avg=120.5,
@@ -86,6 +85,7 @@ def mock_exporter_config(sample_records, mock_endpoint_config):
         ),
         user_config=input_config,
         service_config=ServiceConfig(),
+        telemetry_results=None,
     )
 
 
@@ -127,9 +127,7 @@ class TestConsoleExporter:
     ):
         """Test that metrics are shown/hidden based on their flags"""
         user_config = UserConfig(endpoint=mock_endpoint_config)
-        service_config = ServiceConfig(
-            developer=DeveloperConfig(show_internal_metrics=False)
-        )
+        service_config = ServiceConfig()
         config = ExporterConfig(
             results=ProfileResults(
                 records=[],
@@ -139,6 +137,7 @@ class TestConsoleExporter:
             ),
             user_config=user_config,
             service_config=service_config,
+            telemetry_results=None,
         )
         exporter = ConsoleMetricsExporter(config)
 

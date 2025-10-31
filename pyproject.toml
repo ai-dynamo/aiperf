@@ -7,13 +7,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "aiperf/__init__.py"
+path = "src/aiperf/__init__.py"
 
 [tool.hatch.metadata]
 allow-direct-references = true
-
-[tool.hatch.build.targets.wheel]
-packages = ["aiperf"]
 
 [project]
 name = "aiperf"
@@ -30,10 +27,13 @@ dependencies = [
   "aiofiles~=24.1.0",
   "aiohttp~=3.12.14",
   "cyclopts>=3,<4",
-  "numpy~=2.2.6",
-  "openai[aiohttp]~=1.92.2",
+  "ffmpeg-python~=0.2.0",
+  "jinja2~=3.1.5",  # NOTE: Versions prior to 3.1.5 have vuln exploits
+  "jmespath~=1.0.1",
+  "numpy~=1.26.4",
   "orjson~=3.10.18",
   "pillow~=11.1.0",
+  "prometheus_client~=0.23.1",
   "psutil~=7.0.0",
   "pydantic~=2.11.4",
   "pydantic-settings~=2.10.0",
@@ -45,16 +45,17 @@ dependencies = [
   "textual~=5.3.0",
   "tqdm>=4.67.1",
   "transformers>=4.52.0",
-  "uvloop~=0.21.0",
+  "uvloop~=0.21.0; platform_system != 'Windows'",
 ]
 
-# CLI Entrypoint
+# CLI Entrypoints
 [project.scripts]
-aiperf = "aiperf.cli:app"
+aiperf = "aiperf.__main__:main"
 
 [project.optional-dependencies]
 dev = [
   "black>=25.1.0",
+  "httpx>=0.27.0",
   "mkinit>=1.1.0",
   "pre-commit>=4.2.0",
   "pytest-asyncio",
@@ -64,7 +65,6 @@ dev = [
   "ruff>=0.0.0",
   "scipy>=1.13.0",
 ]
-
 
 [tool.ruff]
 # Base settings for ruff
@@ -96,3 +96,21 @@ ignore = ["E501"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: marks tests as integration tests (deselected by default)",
+    "performance: marks tests as performance tests (deselected by default)",
+    "ffmpeg: marks tests that require ffmpeg to be installed (deselected by default)",
+    "stress: marks tests as stress tests that generate high load (deselected by default)",
+    "macos: marks tests as macOS-specific tests (deselected by default)",
+]
+# Better console output
+console_output_style = "progress"
+verbosity_assertions = 2
+# Show extra test summary info
+# Deselect integration, performance, ffmpeg, and stress tests by default
+# To run them: pytest -m integration, pytest -m performance, pytest -m ffmpeg, pytest -m stress
+# IDE note: When running a specific test file/function from IDE, markers are often bypassed
+addopts = "--strict-markers -m 'not integration and not performance and not ffmpeg and not stress and not macos'"
+
+[tool.codespell]
+skip = "*.pyc,*build*,tests/transports/test_aiohttp_sse.py"

@@ -10,7 +10,8 @@ and made available to test functions in the same directory and subdirectories.
 import asyncio
 import logging
 from collections.abc import Callable, Generator
-from unittest.mock import MagicMock, patch
+from io import StringIO
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -18,9 +19,18 @@ from aiperf.common.aiperf_logger import _TRACE
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType
 from aiperf.common.messages import Message
-from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models import (
+    Conversation,
+    ParsedResponse,
+    ParsedResponseRecord,
+    RequestRecord,
+    Text,
+    TextResponseData,
+    Turn,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
+from aiperf.module_loader import ensure_modules_loaded
 from tests.comms.mock_zmq import (
     mock_zmq_communication as mock_zmq_communication,  # import fixture globally
 )
@@ -34,52 +44,12 @@ from tests.utils.time_traveler import (  # noqa: E402
 
 logging.basicConfig(level=_TRACE)
 
-
-def pytest_addoption(parser):
-    """Add custom command line options for pytest."""
-    parser.addoption(
-        "--performance",
-        action="store_true",
-        default=False,
-        help="Run performance tests (disabled by default)",
-    )
-    parser.addoption(
-        "--integration",
-        action="store_true",
-        default=False,
-        help="Run integration tests (disabled by default)",
-    )
-
-
-def pytest_configure(config):
-    """Configure custom markers."""
-    config.addinivalue_line(
-        "markers",
-        "performance: marks tests as performance tests (disabled by default, use --performance to enable)",
-    )
-    config.addinivalue_line(
-        "markers",
-        "integration: marks tests as integration tests (disabled by default, use --integration to enable)",
-    )
-
-
-def pytest_collection_modifyitems(config, items):
-    """Skip performance and integration tests unless their respective options are given."""
-    performance_enabled = config.getoption("--performance")
-    integration_enabled = config.getoption("--integration")
-
-    skip_performance = pytest.mark.skip(
-        reason="performance tests disabled (use --performance to enable)"
-    )
-    skip_integration = pytest.mark.skip(
-        reason="integration tests disabled (use --integration to enable)"
-    )
-
-    for item in items:
-        if "performance" in item.keywords and not performance_enabled:
-            item.add_marker(skip_performance)
-        if "integration" in item.keywords and not integration_enabled:
-            item.add_marker(skip_integration)
+# Shared test constants for request/response records
+DEFAULT_START_TIME_NS = 1_000_000
+DEFAULT_FIRST_RESPONSE_NS = 1_050_000
+DEFAULT_LAST_RESPONSE_NS = 1_100_000
+DEFAULT_INPUT_TOKENS = 5
+DEFAULT_OUTPUT_TOKENS = 2
 
 
 @pytest.fixture(autouse=True)
@@ -98,6 +68,16 @@ def no_sleep(monkeypatch) -> None:
     monkeypatch.setattr(asyncio, "sleep", fast_sleep)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def load_aiperf_modules() -> None:
+    """Load all AIPerf modules for testing.
+
+    This fixture is automatically used for all tests and ensures that all AIPerf
+    modules are loaded for registration purposes.
+    """
+    ensure_modules_loaded()
+
+
 @pytest.fixture
 def mock_zmq_socket() -> Generator[MagicMock, None, None]:
     """Fixture to provide a mock ZMQ socket."""
@@ -114,6 +94,34 @@ def mock_zmq_context() -> Generator[MagicMock, None, None]:
 
     with patch("zmq.Context", new_callable=zmq_context):
         yield zmq_context
+
+
+@pytest.fixture(autouse=True)
+def reset_singleton_factories():
+    """Reset singleton factory instances between tests to prevent state leakage.
+
+    This fixture runs automatically for every test and clears the singleton
+    instances in factories like CommunicationFactory. This prevents tests from
+    interfering with each other when they create services that use singleton
+    communication instances.
+
+    The error "Communication clients must be created before the ZMQIPCCommunication
+    class is initialized" occurs when a singleton instance from a previous test
+    is reused in an invalid state.
+    """
+    yield  # Run the test first
+
+    # Clean up after test completes
+    from aiperf.common.factories import AIPerfUIFactory, CommunicationFactory
+
+    if hasattr(CommunicationFactory, "_instances"):
+        CommunicationFactory._instances.clear()
+    if hasattr(CommunicationFactory, "_instances_pid"):
+        CommunicationFactory._instances_pid.clear()
+    if hasattr(AIPerfUIFactory, "_instances"):
+        AIPerfUIFactory._instances.clear()
+    if hasattr(AIPerfUIFactory, "_instances_pid"):
+        AIPerfUIFactory._instances_pid.clear()
 
 
 @pytest.fixture
@@ -315,3 +323,177 @@ def sample_conversations() -> dict[str, Conversation]:
         ),
     }
     return conversations
+
+
+@pytest.fixture
+def sample_request_record() -> RequestRecord:
+    """Create a sample RequestRecord for testing."""
+    return RequestRecord(
+        conversation_id="test-conversation",
+        turn_index=0,
+        model_name="test-model",
+        start_perf_ns=DEFAULT_START_TIME_NS,
+        timestamp_ns=DEFAULT_START_TIME_NS,
+        end_perf_ns=DEFAULT_LAST_RESPONSE_NS,
+        error=None,
+    )
+
+
+@pytest.fixture
+def sample_parsed_record(sample_request_record: RequestRecord) -> ParsedResponseRecord:
+    """Create a valid ParsedResponseRecord for testing."""
+    responses = [
+        ParsedResponse(
+            perf_ns=DEFAULT_FIRST_RESPONSE_NS,
+            data=TextResponseData(text="Hello"),
+        ),
+        ParsedResponse(
+            perf_ns=DEFAULT_LAST_RESPONSE_NS,
+            data=TextResponseData(text=" world"),
+        ),
+    ]
+
+    return ParsedResponseRecord(
+        request=sample_request_record,
+        responses=responses,
+        input_token_count=DEFAULT_INPUT_TOKENS,
+        output_token_count=DEFAULT_OUTPUT_TOKENS,
+    )
+
+
+@pytest.fixture
+def mock_aiofiles_stringio():
+    """Mock aiofiles.open to write to a StringIO buffer instead of a file.
+
+    Automatically patches aiofiles.open for the duration of the test.
+
+    Returns:
+        StringIO: Buffer that captures all writes
+
+    Example:
+        def test_something(mock_aiofiles_stringio):
+            # aiofiles.open is already patched
+            # ... test code that writes to files ...
+
+            # Verify contents
+            contents = mock_aiofiles_stringio.getvalue()
+            assert "expected" in contents
+    """
+    string_buffer = StringIO()
+
+    mock_file = AsyncMock()
+    mock_file.write = AsyncMock(side_effect=lambda data: string_buffer.write(data))
+    mock_file.flush = AsyncMock()
+    mock_file.close = AsyncMock()
+
+    async def mock_aiofiles_open(*args, **kwargs):
+        return mock_file
+
+    with patch("aiofiles.open", side_effect=mock_aiofiles_open):
+        yield string_buffer
+
+
+@pytest.fixture
+def mock_macos_child_process():
+    """Mock for simulating a child process on macOS."""
+    mock_process = Mock()
+    mock_process.name = "DATASET_MANAGER_process"  # Not MainProcess
+    return mock_process
+
+
+@pytest.fixture
+def mock_macos_main_process():
+    """Mock for simulating the main process on macOS."""
+    mock_process = Mock()
+    mock_process.name = "MainProcess"
+    return mock_process
+
+
+@pytest.fixture
+def mock_platform_system():
+    """Mock platform.system() for testing OS-specific behavior."""
+    with patch("platform.system") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_platform_darwin(mock_platform_system):
+    """Mock platform.system() to return 'Darwin' for macOS testing."""
+    mock_platform_system.return_value = "Darwin"
+    return mock_platform_system
+
+
+@pytest.fixture
+def mock_platform_linux(mock_platform_system):
+    """Mock platform.system() to return 'Linux' for Linux testing."""
+    mock_platform_system.return_value = "Linux"
+    return mock_platform_system
+
+
+@pytest.fixture
+def mock_multiprocessing_set_start_method():
+    """Mock multiprocessing.set_start_method() for testing spawn method setup."""
+    with patch("multiprocessing.set_start_method") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_bootstrap_and_run_service():
+    """Mock aiperf.common.bootstrap.bootstrap_and_run_service() for testing."""
+    with patch("aiperf.common.bootstrap.bootstrap_and_run_service") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_get_global_log_queue():
+    """Mock aiperf.common.logging.get_global_log_queue() for testing."""
+    with patch("aiperf.common.logging.get_global_log_queue") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_psutil_process():
+    """Mock psutil.Process for testing."""
+    with patch("psutil.Process") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_setup_child_process_logging():
+    """Mock aiperf.common.logging.setup_child_process_logging() for testing."""
+    with patch("aiperf.common.logging.setup_child_process_logging") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_current_process():
+    """Mock multiprocessing.current_process() for testing."""
+    with patch("multiprocessing.current_process") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_darwin_child_process(
+    mock_platform_darwin, mock_current_process, mock_macos_child_process
+):
+    """Mock macOS child process environment (Darwin platform + child process)."""
+    mock_current_process.return_value = mock_macos_child_process
+    return mock_current_process
+
+
+@pytest.fixture
+def mock_darwin_main_process(
+    mock_platform_darwin, mock_current_process, mock_macos_main_process
+):
+    """Mock macOS main process environment (Darwin platform + main process)."""
+    mock_current_process.return_value = mock_macos_main_process
+    return mock_current_process
+
+
+@pytest.fixture
+def mock_linux_child_process(
+    mock_platform_linux, mock_current_process, mock_macos_child_process
+):
+    """Mock Linux child process environment (Linux platform + child process)."""
+    mock_current_process.return_value = mock_macos_child_process
+    return mock_current_process
