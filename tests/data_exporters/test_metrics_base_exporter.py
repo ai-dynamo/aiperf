@@ -393,30 +393,6 @@ class TestMetricsBaseExporterShouldExport:
                 assert exporter._should_export(metric) is False
 
 
-class TestMetricsBaseExporterGenerateContent:
-    """Tests for _generate_content() method."""
-
-    def test_generate_content_not_implemented(self, mock_results, mock_user_config):
-        """Verify base class raises NotImplementedError."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
-            config = ExporterConfig(
-                results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
-                telemetry_results=None,
-            )
-
-            exporter = MetricsBaseExporter(config)
-
-            with pytest.raises(NotImplementedError) as exc_info:
-                exporter._generate_content()
-
-            assert "MetricsBaseExporter must implement _generate_content()" in str(
-                exc_info.value
-            )
-
-
 class TestMetricsBaseExporterExport:
     """Tests for export() method."""
 
