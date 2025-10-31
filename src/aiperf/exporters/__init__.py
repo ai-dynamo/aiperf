@@ -14,6 +14,9 @@ from aiperf.exporters.console_error_exporter import (
 from aiperf.exporters.console_metrics_exporter import (
     ConsoleMetricsExporter,
 )
+from aiperf.exporters.console_usage_discrepancy_exporter import (
+    ConsoleUsageDiscrepancyExporter,
+)
 from aiperf.exporters.csv_exporter import (
     CsvExporter,
 )
@@ -47,6 +50,7 @@ __all__ = [
     "ConsoleExperimentalMetricsExporter",
     "ConsoleInternalMetricsExporter",
     "ConsoleMetricsExporter",
+    "ConsoleUsageDiscrepancyExporter",
     "CsvExporter",
     "ExporterConfig",
     "ExporterManager",

@@ -6,19 +6,26 @@ from unittest.mock import patch
 import pytest
 
 from aiperf.common.enums import MetricFlags
-from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponse, ParsedResponseRecord, RequestRecord
 from aiperf.common.models.record_models import TextResponseData
 from aiperf.common.models.usage_models import Usage
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.input_sequence_length_metric import InputSequenceLengthMetric
+from aiperf.metrics.types.output_sequence_length_metric import (
+    OutputSequenceLengthMetric,
+)
+from aiperf.metrics.types.reasoning_token_count import ReasoningTokenCountMetric
 from aiperf.metrics.types.usage_diff_metrics import (
     UsageCompletionTokensDiffMetric,
     UsageDiscrepancyCountMetric,
     UsagePromptTokensDiffMetric,
     UsageReasoningTokensDiffMetric,
 )
-from aiperf.metrics.types.usage_metrics import UsagePromptTokensMetric
+from aiperf.metrics.types.usage_metrics import (
+    UsageCompletionTokensMetric,
+    UsagePromptTokensMetric,
+    UsageReasoningTokensMetric,
+)
 from tests.metrics.conftest import run_simple_metrics_pipeline
 
 
@@ -118,6 +125,8 @@ class TestUsagePromptTokensDiffMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
             UsagePromptTokensDiffMetric.tag,
         )
 
@@ -133,6 +142,8 @@ class TestUsagePromptTokensDiffMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
             UsagePromptTokensDiffMetric.tag,
         )
 
@@ -148,6 +159,8 @@ class TestUsagePromptTokensDiffMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
             UsagePromptTokensDiffMetric.tag,
         )
 
@@ -155,17 +168,25 @@ class TestUsagePromptTokensDiffMetric:
         assert result == pytest.approx(50.0, rel=1e-9)
 
     def test_zero_client_tokens_raises_error(self):
-        """Test that zero client tokens raises NoMetricValue."""
+        """Test that zero client tokens results in no metric value."""
         record = create_record_with_usage(
             input_tokens=0,
             usage_prompt_tokens=10,
         )
 
-        with pytest.raises(NoMetricValue, match="zero client tokens"):
-            run_simple_metrics_pipeline(
-                [record],
-                UsagePromptTokensDiffMetric.tag,
-            )
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
+            UsagePromptTokensDiffMetric.tag,
+        )
+
+        # When input tokens are 0, InputSequenceLengthMetric raises NoMetricValue,
+        # which cascades to UsagePromptTokensDiffMetric also not being available
+        assert (
+            UsagePromptTokensDiffMetric.tag not in metric_results
+            or len(metric_results[UsagePromptTokensDiffMetric.tag]) == 0
+        )
 
     def test_metric_metadata(self):
         """Test that UsagePromptTokensDiffMetric has correct metadata."""
@@ -187,6 +208,8 @@ class TestUsageCompletionTokensDiffMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
             UsageCompletionTokensDiffMetric.tag,
         )
 
@@ -202,6 +225,8 @@ class TestUsageCompletionTokensDiffMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
             UsageCompletionTokensDiffMetric.tag,
         )
 
@@ -217,6 +242,8 @@ class TestUsageCompletionTokensDiffMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
             UsageCompletionTokensDiffMetric.tag,
         )
 
@@ -224,17 +251,25 @@ class TestUsageCompletionTokensDiffMetric:
         assert result == pytest.approx(10.0, rel=1e-9)
 
     def test_zero_client_tokens_raises_error(self):
-        """Test that zero client tokens raises NoMetricValue."""
+        """Test that zero client tokens results in no metric value."""
         record = create_record_with_usage(
             output_tokens=0,
             usage_completion_tokens=10,
         )
 
-        with pytest.raises(NoMetricValue, match="zero client tokens"):
-            run_simple_metrics_pipeline(
-                [record],
-                UsageCompletionTokensDiffMetric.tag,
-            )
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
+            UsageCompletionTokensDiffMetric.tag,
+        )
+
+        # When output tokens are 0, OutputSequenceLengthMetric raises NoMetricValue,
+        # which cascades to UsageCompletionTokensDiffMetric also not being available
+        assert (
+            UsageCompletionTokensDiffMetric.tag not in metric_results
+            or len(metric_results[UsageCompletionTokensDiffMetric.tag]) == 0
+        )
 
     def test_metric_metadata(self):
         """Test that UsageCompletionTokensDiffMetric has correct metadata."""
@@ -258,6 +293,8 @@ class TestUsageReasoningTokensDiffMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            ReasoningTokenCountMetric.tag,
+            UsageReasoningTokensMetric.tag,
             UsageReasoningTokensDiffMetric.tag,
         )
 
@@ -273,6 +310,8 @@ class TestUsageReasoningTokensDiffMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            ReasoningTokenCountMetric.tag,
+            UsageReasoningTokensMetric.tag,
             UsageReasoningTokensDiffMetric.tag,
         )
 
@@ -288,6 +327,8 @@ class TestUsageReasoningTokensDiffMetric:
 
         metric_results = run_simple_metrics_pipeline(
             [record],
+            ReasoningTokenCountMetric.tag,
+            UsageReasoningTokensMetric.tag,
             UsageReasoningTokensDiffMetric.tag,
         )
 
@@ -295,17 +336,25 @@ class TestUsageReasoningTokensDiffMetric:
         assert result == pytest.approx(20.0, rel=1e-9)
 
     def test_zero_client_tokens_raises_error(self):
-        """Test that zero client reasoning tokens raises NoMetricValue."""
+        """Test that zero client reasoning tokens results in no metric value."""
         record = create_record_with_usage(
             reasoning_tokens=0,
             usage_reasoning_tokens=10,
         )
 
-        with pytest.raises(NoMetricValue, match="zero client tokens"):
-            run_simple_metrics_pipeline(
-                [record],
-                UsageReasoningTokensDiffMetric.tag,
-            )
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            ReasoningTokenCountMetric.tag,
+            UsageReasoningTokensMetric.tag,
+            UsageReasoningTokensDiffMetric.tag,
+        )
+
+        # When reasoning tokens are 0, ReasoningTokenCountMetric raises NoMetricValue,
+        # which cascades to UsageReasoningTokensDiffMetric also not being available
+        assert (
+            UsageReasoningTokensDiffMetric.tag not in metric_results
+            or len(metric_results[UsageReasoningTokensDiffMetric.tag]) == 0
+        )
 
     def test_metric_metadata(self):
         """Test that UsageReasoningTokensDiffMetric has correct metadata."""
@@ -349,7 +398,11 @@ class TestMultipleRecordsWithVariedDiscrepancies:
 
         metric_results = run_simple_metrics_pipeline(
             records,
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
             UsagePromptTokensDiffMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
             UsageCompletionTokensDiffMetric.tag,
         )
 
@@ -400,7 +453,11 @@ class TestMultipleRecordsWithVariedDiscrepancies:
 
         metric_results = run_simple_metrics_pipeline(
             records,
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
             UsagePromptTokensDiffMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
             UsageCompletionTokensDiffMetric.tag,
         )
 
@@ -446,6 +503,12 @@ class TestUsageDiscrepancyCountMetric:
 
         metric_results = run_simple_metrics_pipeline(
             records,
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
+            UsagePromptTokensDiffMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
+            UsageCompletionTokensDiffMetric.tag,
             UsageDiscrepancyCountMetric.tag,
         )
 
@@ -476,6 +539,12 @@ class TestUsageDiscrepancyCountMetric:
 
         metric_results = run_simple_metrics_pipeline(
             records,
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
+            UsagePromptTokensDiffMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
+            UsageCompletionTokensDiffMetric.tag,
             UsageDiscrepancyCountMetric.tag,
         )
 
@@ -520,6 +589,12 @@ class TestUsageDiscrepancyCountMetric:
 
         metric_results = run_simple_metrics_pipeline(
             records,
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
+            UsagePromptTokensDiffMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
+            UsageCompletionTokensDiffMetric.tag,
             UsageDiscrepancyCountMetric.tag,
         )
 
@@ -568,6 +643,12 @@ class TestUsageDiscrepancyCountMetric:
 
         metric_results = run_simple_metrics_pipeline(
             records,
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
+            UsagePromptTokensDiffMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
+            UsageCompletionTokensDiffMetric.tag,
             UsageDiscrepancyCountMetric.tag,
         )
 
@@ -600,6 +681,12 @@ class TestUsageDiscrepancyCountMetric:
 
         metric_results = run_simple_metrics_pipeline(
             records,
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
+            UsagePromptTokensDiffMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
+            UsageCompletionTokensDiffMetric.tag,
             UsageDiscrepancyCountMetric.tag,
         )
 
@@ -636,6 +723,15 @@ class TestUsageDiscrepancyCountMetric:
 
         metric_results = run_simple_metrics_pipeline(
             records,
+            InputSequenceLengthMetric.tag,
+            UsagePromptTokensMetric.tag,
+            UsagePromptTokensDiffMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            UsageCompletionTokensMetric.tag,
+            UsageCompletionTokensDiffMetric.tag,
+            ReasoningTokenCountMetric.tag,
+            UsageReasoningTokensMetric.tag,
+            UsageReasoningTokensDiffMetric.tag,
             UsageDiscrepancyCountMetric.tag,
         )
 
