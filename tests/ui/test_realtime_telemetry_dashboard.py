@@ -50,8 +50,8 @@ class TestGPUMetricsTable:
         # Should have 9 cells: metric name + 8 stats
         assert len(row_cells) == 9
 
-        # First cell should be the metric name (before |)
-        assert row_cells[0].plain == "GPU Power Usage"
+        # First cell should be the metric name with unit
+        assert row_cells[0].plain == "GPU Power Usage (W)"
 
         # All cells should be Text objects
         assert all(isinstance(cell, Text) for cell in row_cells)
@@ -67,8 +67,8 @@ class TestGPUMetricsTable:
 
         row_cells = gpu_metrics_table._format_metric_row(metric)
 
-        # First cell should be the full header
-        assert row_cells[0].plain == "Simple Metric"
+        # First cell should be the full header with unit
+        assert row_cells[0].plain == "Simple Metric (ms)"
 
     def test_format_value_none(self, gpu_metrics_table):
         """Test _format_value with None returns 'N/A'."""

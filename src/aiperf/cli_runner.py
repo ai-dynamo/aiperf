@@ -6,6 +6,8 @@ import contextlib
 from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import AIPerfUIType
+from aiperf.gpu_telemetry import constants
+from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
 
 
 def run_system_controller(
@@ -81,6 +83,30 @@ def run_system_controller(
             f"Error loading modules: {e}",
             title="Error Loading Modules",
         )
+
+    # Load custom GPU metrics configuration
+    if user_config.gpu_telemetry_metrics_file:
+        try:
+            logger.info(
+                f"Loading custom GPU metrics from {user_config.gpu_telemetry_metrics_file}"
+            )
+
+            loader = MetricsConfigLoader()
+            custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
+                custom_csv_path=user_config.gpu_telemetry_metrics_file
+            )
+
+            # Apply custom metrics and their DCGM field mappings
+            constants.GPU_TELEMETRY_METRICS_CONFIG.extend(custom_metrics)
+            constants.DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
+
+            logger.info(
+                f"Loaded {len(custom_metrics)} custom GPU metrics from {user_config.gpu_telemetry_metrics_file}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Error loading custom GPU metrics: {e}. Continuing with default metrics."
+            )
 
     try:
         bootstrap_and_run_service(

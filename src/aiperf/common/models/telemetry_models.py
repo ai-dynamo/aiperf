@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -15,7 +15,11 @@ class TelemetryMetrics(AIPerfBaseModel):
 
     All fields are optional to handle cases where specific metrics are not available
     from the DCGM exporter or are filtered out due to invalid values.
+
+    Custom metrics from user-provided CSV files are supported via extra='allow'.
     """
+
+    model_config = ConfigDict(extra="allow")
 
     gpu_power_usage: float | None = Field(
         default=None, description="Current GPU power usage in W"
@@ -29,20 +33,8 @@ class TelemetryMetrics(AIPerfBaseModel):
     gpu_memory_used: float | None = Field(
         default=None, description="GPU memory used in GB"
     )
-    sm_clock_frequency: float | None = Field(
-        default=None, description="SM clock frequency in MHz"
-    )
-    memory_clock_frequency: float | None = Field(
-        default=None, description="Memory clock frequency in MHz"
-    )
-    memory_temperature: float | None = Field(
-        default=None, description="Memory temperature in °C"
-    )
     gpu_temperature: float | None = Field(
         default=None, description="GPU temperature in °C"
-    )
-    memory_copy_utilization: float | None = Field(
-        default=None, description="Memory copy utilization percentage (0-100)"
     )
     xid_errors: float | None = Field(
         default=None, description="Value of the last XID error encountered"
@@ -50,19 +42,6 @@ class TelemetryMetrics(AIPerfBaseModel):
     power_violation: float | None = Field(
         default=None,
         description="Throttling duration due to power constraints in microseconds",
-    )
-    thermal_violation: float | None = Field(
-        default=None,
-        description="Throttling duration due to thermal constraints in microseconds",
-    )
-    power_management_limit: float | None = Field(
-        default=None, description="Power management limit in W"
-    )
-    gpu_memory_free: float | None = Field(
-        default=None, description="GPU memory free in GB"
-    )
-    gpu_memory_total: float | None = Field(
-        default=None, description="Total GPU memory in GB"
     )
 
 

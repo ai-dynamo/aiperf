@@ -50,10 +50,9 @@ def sample_telemetry_record() -> TelemetryRecord:
             energy_consumption=1000.0,
             gpu_utilization=85.0,
             gpu_memory_used=15.26,
-            sm_clock_frequency=1500.0,
-            memory_clock_frequency=800.0,
-            memory_temperature=65.0,
             gpu_temperature=70.0,
+            xid_errors=0.0,
+            power_violation=120.0,
         ),
     )
 
