@@ -55,6 +55,7 @@ Features
 | **[Trace Benchmarking](docs/tutorials/trace-benchmarking.md)** | Deterministic workload replay with custom datasets | Regression testing, A/B testing |
 | **[Fixed Schedule](docs/tutorials/fixed-schedule.md)** | Precise timestamp-based request execution | Traffic replay, temporal analysis, burst testing |
 | **[Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md)** | Duration-based testing with grace period control | Stability testing, sustained performance |
+| **[Timeslice Metrics](docs/tutorials/timeslices.md)** | Split up benchmark into timeslices and calculate metrics for each timeslice | Load pattern impact, detecting warm-up effects, performance degradation analysis |
 | **[Sequence Distributions](docs/tutorials/sequence-distributions.md)** | Mixed ISL/OSL pairings | Benchmarking mixed use cases |
 | **[Goodput](docs/tutorials/goodput.md)** | Throughput of requests meeting user-defined SLOs | SLO validation, capacity planning, runtime/model comparisons |
 | **[Request Rate with Max Concurrency](docs/tutorials/request-rate-concurrency.md)** | Dual control of request timing and concurrent connection ceiling (Poisson or constant modes) | Testing API rate/concurrency limits, avoiding thundering herd, realistic client simulation |

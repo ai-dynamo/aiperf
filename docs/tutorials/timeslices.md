@@ -20,10 +20,11 @@ Time slicing divides your benchmark into equal duration segments, computing metr
 ## Core Parameters
 
 ### Slice Duration
-- `--slice-duration MILLISECONDS`: Duration of each time slice
+- `--slice-duration SECONDS`: Duration of each time slice (accepts integers or floats)
 - Recommended to be used with `--benchmark-duration`
 - Creates non-overlapping sequential time windows
-- Example: 10-second benchmark with 1000-millisecond slices creates 10 time windows
+- Example: 60-second benchmark with 10-second slices creates 6 time windows
+  - When using time-based benchmarking, a grace period may add additional time slices
 
 ### Benchmark Duration
 - `--benchmark-duration SECONDS`: Total benchmark duration
@@ -55,7 +56,7 @@ Run a 60-second benchmark with 10-second slices to analyze performance trends:
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
   --benchmark-duration 60 \
-  --slice-duration 10000
+  --slice-duration 10
 ```
 
 This creates 6 time slices (0-10s, 10-20s, 20-30s, 30-40s, 40-50s, 50-60s), each with independent metrics.
@@ -156,73 +157,30 @@ The JSON provides a hierarchical structure with all timeslices in a single file:
 
 ### Detecting Warm-up Effects
 
-Identify initial cold-start latency vs. steady-state performance:
-
-```bash
-aiperf profile \
-    --model Qwen/Qwen3-0.6B \
-    --endpoint-type chat \
-    --endpoint /v1/chat/completions \
-    --streaming \
-    --url localhost:8000 \
-    --benchmark-duration 120.0 \
-    --slice-duration 20.0 \
-    --concurrency 10 \
-    --synthetic-input-tokens-mean 200 \
-    --output-tokens-mean 100
-```
-
-Expected pattern: Higher latency in slice 0, stabilizing in later slices.
+* Identify initial cold-start latency vs. steady-state performance.
+* Expected pattern: Higher latency in slice 0, stabilizing in later slices.
 
 ### Performance Degradation Analysis
 
-Monitor for memory leaks or resource exhaustion:
-
-```bash
-aiperf profile \
-    --model Qwen/Qwen3-0.6B \
-    --endpoint-type chat \
-    --endpoint /v1/chat/completions \
-    --streaming \
-    --url localhost:8000 \
-    --benchmark-duration 300.0 \
-    --slice-duration 30.0 \
-    --concurrency 20 \
-    --synthetic-input-tokens-mean 500 \
-    --output-tokens-mean 200
-```
-
-Look for: Increasing latency or decreasing throughput in later slices.
+* Monitor for memory leaks or resource exhaustion.
+* Look for: Increasing latency or decreasing throughput in later slices.
 
 ### Load Pattern Impact
 
-Combine with varying concurrency patterns:
+* Combine with varying concurrency patterns.
+* Compare slice patterns across different load levels.
 
-```bash
-# Run multiple benchmarks with different concurrency levels
-for concurrency in 5 10 15 20; do
-    aiperf profile \
-        --model Qwen/Qwen3-0.6B \
-        --endpoint-type chat \
-        --endpoint /v1/chat/completions \
-        --streaming \
-        --url localhost:8000 \
-        --benchmark-duration 60.0 \
-        --slice-duration 10.0 \
-        --concurrency $concurrency \
-        --synthetic-input-tokens-mean 200 \
-        --output-tokens-mean 100 \
-        --output-dir "./artifact/concurrency_${concurrency}"
-done
-```
+## Visualizing Timeslice Data
 
-Compare slice patterns across different load levels.
-
-## Analyzing Timeslice Data
-
-Tutorial coming soon...
+To be announced...
 
 ## Best Practices
+
+> [!WARNING]
+> **Timeslice Boundaries:**
+> - Timeslices are calculated based on absolute wall clock time divisions
+> - The first timeslice may be shorter if requests don't start exactly at a timeslice boundary
+> - The last timeslice may be shorter if the benchmark ends mid-slice
 
 > [!WARNING]
 > **Statistical Considerations:**
@@ -236,7 +194,7 @@ Tutorial coming soon...
 **Problem**: Running with `--slice-duration` but no `*_timeslices.*` files appear.
 
 **Solutions**:
-- Verify `--slice-duration` (milliseconds) is less than the benchmark duration
+- Verify `--slice-duration` (in seconds) is less than the benchmark duration
 - Check that benchmark completed successfully (not cancelled/interrupted)
 - Confirm output directory is writable
 
