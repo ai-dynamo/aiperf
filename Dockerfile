@@ -82,7 +82,7 @@ FROM base AS env-builder
 
 WORKDIR /workspace
 
-# Build ffmpeg from source
+# Build ffmpeg from source with libvpx
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
@@ -90,9 +90,10 @@ RUN apt-get update -y && \
         pkg-config \
         wget \
         yasm \
+        libvpx-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and build ffmpeg
+# Download and build ffmpeg with libvpx (VP9 codec)
 RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz \
     && tar -xf ffmpeg-7.1.tar.xz \
     && cd ffmpeg-7.1 \
@@ -102,6 +103,7 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz \
         --disable-nonfree \
         --enable-shared \
         --disable-static \
+        --enable-libvpx \
         --disable-doc \
         --disable-htmlpages \
         --disable-manpages \
@@ -136,6 +138,9 @@ COPY LICENSE ATTRIBUTIONS*.md /legal/
 
 # Copy bash with executable permissions preserved using --chmod
 COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
+
+# Copy libvpx libraries
+COPY --from=env-builder --chown=1000:1000 /usr/lib/x86_64-linux-gnu/libvpx.so* /usr/lib/x86_64-linux-gnu/
 
 # Copy ffmpeg binaries and libraries
 COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg

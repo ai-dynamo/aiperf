@@ -17,7 +17,7 @@ This document provides attribution information for third-party software componen
 - **Website**: https://ffmpeg.org/
 - **License**: LGPL v2.1+
 - **Usage**: Video and audio processing library (included in runtime container)
-- **Build Configuration**: Built without GPL components (`--disable-gpl --disable-nonfree`)
+- **Build Configuration**: Built without GPL components (`--disable-gpl --disable-nonfree --enable-libvpx`)
 
 **License Text:**
 
@@ -47,6 +47,65 @@ The FFmpeg source code used to build this container is available at:
 - No FFmpeg source code modifications were made
 - Build configuration excludes GPL-licensed components
 - Apache 2.0 licensed code in this project remains separate from LGPL components
+
+### libvpx
+
+**Component Information:**
+- **Software**: libvpx (VP8/VP9 Codec SDK)
+- **Version**: 1.12.0 (from Debian Bookworm)
+- **Source**: Debian Bookworm
+- **Website**: https://www.webmproject.org/
+- **License**: BSD 3-Clause
+- **Usage**: VP9 video codec library (included in runtime container, used by FFmpeg)
+
+**License Text:**
+
+> Copyright (c) 2010, The WebM Project authors. All rights reserved.
+>
+> Redistribution and use in source and binary forms, with or without
+> modification, are permitted provided that the following conditions are
+> met:
+>
+>   * Redistributions of source code must retain the above copyright
+>     notice, this list of conditions and the following disclaimer.
+>
+>   * Redistributions in binary form must reproduce the above copyright
+>     notice, this list of conditions and the following disclaimer in
+>     the documentation and/or other materials provided with the
+>     distribution.
+>
+>   * Neither the name of Google, nor the WebM Project, nor the names
+>     of its contributors may be used to endorse or promote products
+>     derived from this software without specific prior written
+>     permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+> "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+> LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+> A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+> HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+> SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+> LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+> DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+> THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+> (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+> OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+>
+> Full license text: https://chromium.googlesource.com/webm/libvpx/+/refs/heads/main/LICENSE
+
+**Source Code Availability:**
+
+The libvpx source code is available at:
+- Debian package: https://packages.debian.org/bookworm/libvpx-dev
+- Debian source package: `apt-get source libvpx` from Debian Bookworm repositories
+- Upstream WebM Project source: https://chromium.googlesource.com/webm/libvpx/
+
+**Compliance Notes:**
+
+- libvpx binary is copied from Debian Bookworm base image
+- No modifications were made to libvpx source code
+- libvpx is dynamically linked with FFmpeg
+- BSD license is compatible with Apache 2.0
 
 ### Bash
 
@@ -96,6 +155,12 @@ LGPL is compatible with Apache 2.0 when:
 - FFmpeg binaries can be replaced by users
 - No modifications were made to FFmpeg source code
 - Proper attribution is provided (as above)
+
+### libvpx (BSD 3-Clause)
+BSD 3-Clause is compatible with Apache 2.0:
+- BSD is a permissive license that allows redistribution with minimal restrictions
+- Attribution requirements are satisfied through this document
+- No conflict with Apache 2.0 terms
 
 ### Bash (GPL v3+)
 GPL is compatible with Apache 2.0 when:
