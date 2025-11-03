@@ -467,3 +467,95 @@ def test_gpu_telemetry_mixed_formats():
     assert len(config.gpu_telemetry_urls) == 2
     assert "http://localhost:9400" in config.gpu_telemetry_urls
     assert "http://node1:9401" in config.gpu_telemetry_urls
+
+
+def test_gpu_telemetry_csv_file_not_found():
+    """Test that GPU metrics CSV file validation raises error if file doesn't exist."""
+    with pytest.raises(ValueError, match="GPU metrics file not found"):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                custom_endpoint="test",
+            ),
+            gpu_telemetry=["dashboard", "/nonexistent/path/metrics.csv"],
+        )
+
+
+def test_request_rate_mode_conflict_validation():
+    """Test that CONCURRENCY_BURST mode with request_rate raises validation error."""
+    from aiperf.common.enums.timing_enums import RequestRateMode
+
+    with pytest.raises(
+        ValueError,
+        match="Request rate mode cannot be .* when a request rate is specified",
+    ):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                custom_endpoint="test",
+            ),
+            loadgen=LoadGeneratorConfig(
+                request_rate=10.0,
+                request_rate_mode=RequestRateMode.CONCURRENCY_BURST,
+            ),
+        )
+
+
+def test_benchmark_duration_and_count_conflict():
+    """Test that both benchmark_duration and request_count raises validation error."""
+    with pytest.raises(
+        ValueError,
+        match="Count-based and duration-based benchmarking cannot be used together",
+    ):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                custom_endpoint="test",
+            ),
+            loadgen=LoadGeneratorConfig(
+                benchmark_duration=60,
+                request_count=100,
+            ),
+        )
+
+
+def test_grace_period_without_duration_validation():
+    """Test that grace period without duration raises validation error."""
+    with pytest.raises(
+        ValueError,
+        match="--benchmark-grace-period can only be used with duration-based benchmarking",
+    ):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                custom_endpoint="test",
+            ),
+            loadgen=LoadGeneratorConfig(
+                benchmark_grace_period=10,
+            ),
+        )
+
+
+def test_multi_turn_request_count_conflict():
+    """Test that both request_count and conversation num raises validation error."""
+    with pytest.raises(
+        ValueError,
+        match="Both a request-count and number of conversations are set",
+    ):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                custom_endpoint="test",
+            ),
+            input=InputConfig(
+                conversation=ConversationConfig(num=50),
+            ),
+            loadgen=LoadGeneratorConfig(
+                request_count=100,
+            ),
+        )

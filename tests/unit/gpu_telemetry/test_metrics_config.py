@@ -372,3 +372,57 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
         print(f"  Custom metrics parsed: {len(custom_metrics)}")
         print(f"  Total after extension: {initial_count + len(custom_metrics)}")
         print(f"  Custom field names: {sorted(custom_field_names)}")
+
+    def test_parse_csv_with_invalid_column_count(self):
+        """Test that parser skips lines with invalid column count."""
+        csv_content = """DCGM_FI_DEV_POWER_USAGE, gauge
+DCGM_FI_DEV_GPU_TEMP, gauge, Valid field (in C)
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            f.write(csv_content)
+            csv_path = Path(f.name)
+
+        try:
+            loader = MetricsConfigLoader()
+            metrics = loader.parse_custom_metrics_csv(csv_path)
+
+            assert len(metrics) == 1
+            assert metrics[0][0] == "DCGM_FI_DEV_GPU_TEMP"
+        finally:
+            csv_path.unlink()
+
+    def test_build_custom_metrics_from_csv_file_error(self):
+        """Test error handling when CSV file cannot be parsed."""
+
+        loader = MetricsConfigLoader()
+        non_existent_path = Path("/nonexistent/path/metrics.csv")
+
+        custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
+            custom_csv_path=non_existent_path
+        )
+
+        assert custom_metrics == []
+        assert new_dcgm_mappings == {}
+
+    def test_build_custom_metrics_from_csv_empty_result(self):
+        """Test handling of CSV file that results in no valid metrics."""
+        csv_content = """# All comments
+# No valid metrics
+INVALID_FIELD, gauge, Should be skipped
+DCGM_FI_DEV_GPU_UTIL, invalid_type, Should be skipped
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            f.write(csv_content)
+            csv_path = Path(f.name)
+
+        try:
+            loader = MetricsConfigLoader()
+
+            custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
+                custom_csv_path=csv_path
+            )
+
+            assert custom_metrics == []
+            assert new_dcgm_mappings == {}
+        finally:
+            csv_path.unlink()
