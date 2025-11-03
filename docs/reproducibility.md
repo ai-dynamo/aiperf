@@ -116,7 +116,7 @@ aiperf --random-seed 42 [...] --profile-export-file optimized.json
 **Stress Testing:** Vary patterns by omitting seed
 ```bash
 for i in {1..10}; do
-  aiperf --random-seed 42 [...] --profile-export-file run_$i.json
+  aiperf [...] --profile-export-file run_$i.json
 done
 ```
 

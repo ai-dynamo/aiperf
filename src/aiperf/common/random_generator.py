@@ -419,7 +419,9 @@ def init(seed: int | None) -> None:
     # This protects against third-party code or future changes that might use global state
     if seed is not None:
         random.seed(seed)
-        np.random.seed(seed)
+        # Normalize seed to numpy's 32-bit range by folding high and low bits
+        np_seed = (seed ^ (seed >> 32)) & 0xFFFFFFFF
+        np.random.seed(np_seed)
 
     _manager = _RNGManager(seed)
 
