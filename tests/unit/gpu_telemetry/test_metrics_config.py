@@ -29,11 +29,14 @@ class TestMetricsConfigLoader:
 
     @pytest.fixture(autouse=True)
     def reset_global_state(self):
-        """Reset global DCGM_TO_FIELD_MAPPING before each test for isolation."""
+        """Reset global state before each test for isolation."""
         original_mapping = DCGM_TO_FIELD_MAPPING.copy()
+        original_config = GPU_TELEMETRY_METRICS_CONFIG.copy()
         yield
         DCGM_TO_FIELD_MAPPING.clear()
         DCGM_TO_FIELD_MAPPING.update(original_mapping)
+        GPU_TELEMETRY_METRICS_CONFIG.clear()
+        GPU_TELEMETRY_METRICS_CONFIG.extend(original_config)
 
     def test_parse_valid_csv(self):
         """Test parsing a valid DCGM metrics CSV file."""
