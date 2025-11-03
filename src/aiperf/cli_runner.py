@@ -103,9 +103,9 @@ def run_system_controller(
             logger.info(
                 f"Loaded {len(custom_metrics)} custom GPU metrics from {user_config.gpu_telemetry_metrics_file}"
             )
-        except Exception as e:
-            logger.error(
-                f"Error loading custom GPU metrics: {e}. Continuing with default metrics."
+        except Exception:
+            logger.exception(
+                "Error loading custom GPU metrics. Continuing with default metrics."
             )
 
     try:
