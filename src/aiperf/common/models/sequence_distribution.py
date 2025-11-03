@@ -33,25 +33,15 @@ Examples:
 from __future__ import annotations
 
 import json
-import logging
 import re
 from dataclasses import dataclass
 
 import numpy as np
 
-logger = logging.getLogger(__name__)
+from aiperf.common import random_generator as rng
+from aiperf.common.aiperf_logger import AIPerfLogger
 
-
-def _sample_positive_normal_integer(mean: float, stddev: float) -> int:
-    """Sample a positive integer from normal distribution, clamped to be at least 1."""
-    if stddev <= 0:
-        return int(round(mean))
-
-    # Sample from normal distribution
-    sample = np.random.normal(mean, stddev)
-
-    # Ensure result is at least 1
-    return max(1, int(round(sample)))
+logger = AIPerfLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -115,6 +105,7 @@ class SequenceLengthDistribution:
                 "Distribution must contain at least one sequence length pair"
             )
 
+        self._rng = rng.derive("models.sequence.distribution")
         self._pairs = tuple(pairs)  # Immutable copy
         self._validate_probabilities()
         self._cumulative_probs = self._compute_cumulative_probabilities()
@@ -138,26 +129,14 @@ class SequenceLengthDistribution:
         probs = [pair.probability / 100.0 for pair in self._pairs]
         return np.cumsum(probs, dtype=np.float64)
 
-    def sample(
-        self, random_state: int | np.random.Generator | None = None
-    ) -> tuple[int, int]:
+    def sample(self) -> tuple[int, int]:
         """
         Sample an (ISL, OSL) pair according to the distribution.
-
-        Args:
-            random_state: Random number generator or seed for reproducible sampling.
 
         Returns:
             Tuple of (input_seq_len, output_seq_len)
         """
-        if isinstance(random_state, int):
-            rng = np.random.default_rng(random_state)
-        elif isinstance(random_state, np.random.Generator):
-            rng = random_state
-        else:
-            rng = np.random.default_rng()
-
-        rand_val = rng.random()
+        rand_val = self._rng.random()
 
         # Binary search for efficiency with large distributions
         idx = np.searchsorted(self._cumulative_probs, rand_val, side="right")
@@ -167,14 +146,14 @@ class SequenceLengthDistribution:
 
         # Sample from normal distribution if stddev is specified
         if pair.input_seq_len_stddev > 0:
-            isl = _sample_positive_normal_integer(
+            isl = self._rng.sample_positive_normal_integer(
                 pair.input_seq_len, pair.input_seq_len_stddev
             )
         else:
             isl = pair.input_seq_len
 
         if pair.output_seq_len_stddev > 0:
-            osl = _sample_positive_normal_integer(
+            osl = self._rng.sample_positive_normal_integer(
                 pair.output_seq_len, pair.output_seq_len_stddev
             )
         else:
@@ -182,15 +161,12 @@ class SequenceLengthDistribution:
 
         return (isl, osl)
 
-    def sample_batch(
-        self, batch_size: int, random_state: int | np.random.Generator | None = None
-    ) -> list[tuple[int, int]]:
+    def sample_batch(self, batch_size: int) -> list[tuple[int, int]]:
         """
         Sample multiple (ISL, OSL) pairs efficiently.
 
         Args:
             batch_size: Number of pairs to sample
-            random_state: Random number generator or seed
 
         Returns:
             List of (input_seq_len, output_seq_len) tuples
@@ -198,14 +174,7 @@ class SequenceLengthDistribution:
         if batch_size <= 0:
             raise ValueError(f"Batch size must be positive, got {batch_size}")
 
-        if isinstance(random_state, int):
-            rng = np.random.default_rng(random_state)
-        elif isinstance(random_state, np.random.Generator):
-            rng = random_state
-        else:
-            rng = np.random.default_rng()
-
-        rand_vals = rng.random(batch_size)
+        rand_vals = self._rng.random_batch(batch_size)
         indices = np.searchsorted(self._cumulative_probs, rand_vals, side="right")
         indices = np.clip(indices, 0, len(self._pairs) - 1)
 
@@ -213,14 +182,14 @@ class SequenceLengthDistribution:
         for idx in indices:
             pair = self._pairs[idx]
             if pair.input_seq_len_stddev > 0:
-                isl = _sample_positive_normal_integer(
+                isl = self._rng.sample_positive_normal_integer(
                     pair.input_seq_len, pair.input_seq_len_stddev
                 )
             else:
                 isl = pair.input_seq_len
 
             if pair.output_seq_len_stddev > 0:
-                osl = _sample_positive_normal_integer(
+                osl = self._rng.sample_positive_normal_integer(
                     pair.output_seq_len, pair.output_seq_len_stddev
                 )
             else:

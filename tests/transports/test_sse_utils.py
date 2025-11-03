@@ -5,7 +5,9 @@ import time
 import pytest
 
 from aiperf.common.enums import SSEFieldType
+from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEField, SSEMessage
+from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
 
 @pytest.fixture
@@ -482,3 +484,190 @@ class TestParseSSEMessagePerformance:
         assert (end_time - start_time) < 0.250
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1000
+
+
+class TestInspectMessageForError:
+    """Test suite for SSE error message inspection functionality."""
+
+    @pytest.mark.parametrize(
+        "raw_message",
+        [
+            'data: {"content": "Hello World"}\nevent: message\nid: msg_123',
+            "event: message\n: This is a comment\ndata: content",
+            ": This is just a comment",
+            "",
+        ],
+    )
+    def test_non_error_messages_pass_through(
+        self, raw_message: str, base_perf_ns: int
+    ) -> None:
+        """Test that messages without error events pass through without raising."""
+        message = SSEMessage.parse(raw_message, base_perf_ns)
+        AsyncSSEStreamReader.inspect_message_for_error(message)
+
+    @pytest.mark.parametrize(
+        "raw_message,expected_error_text",
+        [
+            (
+                "event: error\n: Authentication failed\ndata: {}",
+                "Authentication failed",
+            ),
+            (
+                "event: error\n: Rate limit exceeded\ndata: {}",
+                "Rate limit exceeded",
+            ),
+            (
+                "event: message\nevent: error\n: Multiple events error\ndata: {}",
+                "Multiple events error",
+            ),
+            (
+                "event: error\n: 你好世界 🚀 !@#$%^&*()\ndata: {}",
+                "你好世界 🚀 !@#$%^&*()",
+            ),
+        ],
+    )  # fmt: skip
+    def test_error_event_with_comment(
+        self, raw_message: str, expected_error_text: str, base_perf_ns: int
+    ) -> None:
+        """Test that error events with comments raise SSEResponseError with comment message."""
+        message = SSEMessage.parse(raw_message, base_perf_ns)
+
+        with pytest.raises(SSEResponseError) as exc_info:
+            AsyncSSEStreamReader.inspect_message_for_error(message)
+
+        assert expected_error_text in str(exc_info.value)
+        assert exc_info.value.error_code == 502
+
+    def test_error_event_without_comment(self, base_perf_ns: int) -> None:
+        """Test that error event without comment raises with full message."""
+        raw_message = 'event: error\ndata: {"error": "Something went wrong"}'
+        message = SSEMessage.parse(raw_message, base_perf_ns)
+
+        with pytest.raises(SSEResponseError) as exc_info:
+            AsyncSSEStreamReader.inspect_message_for_error(message)
+
+        assert "Unknown error in SSE response" in str(exc_info.value)
+        assert exc_info.value.error_code == 502
+
+    def test_error_event_with_multiple_comments_uses_first(
+        self, base_perf_ns: int
+    ) -> None:
+        """Test that when multiple comment fields exist, first one is used."""
+        raw_message = "event: error\n: First error\n: Second error\ndata: {}"
+        message = SSEMessage.parse(raw_message, base_perf_ns)
+
+        with pytest.raises(SSEResponseError) as exc_info:
+            AsyncSSEStreamReader.inspect_message_for_error(message)
+
+        assert "First error" in str(exc_info.value)
+        assert "Second error" not in str(exc_info.value)
+
+    @pytest.mark.parametrize("event_case", ["error", "ERROR", "Error", "eRrOr"])
+    def test_error_event_case_insensitive(
+        self, event_case: str, base_perf_ns: int
+    ) -> None:
+        """Test that error event detection is case-insensitive."""
+        raw_message = f"event: {event_case}\n: Error message"
+        message = SSEMessage.parse(raw_message, base_perf_ns)
+
+        with pytest.raises(SSEResponseError) as exc_info:
+            AsyncSSEStreamReader.inspect_message_for_error(message)
+
+        assert "Error message" in str(exc_info.value)
+        assert exc_info.value.error_code == 502
+
+
+@pytest.fixture
+def create_mock_sse_iterator():
+    """Factory fixture for creating mock SSE async iterators."""
+
+    def _factory(*chunks: bytes):
+        async def mock_async_iter():
+            for chunk in chunks:
+                yield chunk
+
+        return mock_async_iter()
+
+    return _factory
+
+
+class TestAsyncSSEStreamReaderErrorHandling:
+    """Test suite for AsyncSSEStreamReader integration with error handling."""
+
+    async def test_read_complete_stream_success_no_errors(
+        self, create_mock_sse_iterator
+    ) -> None:
+        """Test that read_complete_stream completes successfully when no errors."""
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(
+                b"data: Hello\n\n",
+                b"event: message\ndata: World\n\n",
+                b"data: [DONE]\n\n",
+            )
+        )
+        messages = await reader.read_complete_stream()
+
+        assert len(messages) == 3
+        assert all(isinstance(msg, SSEMessage) for msg in messages)
+
+    @pytest.mark.parametrize(
+        "chunks,expected_error,expected_msg_count",
+        [
+            (
+                (b"event: error\n: Rate limit exceeded\n\n",),
+                "Rate limit exceeded",
+                0,
+            ),
+            (
+                (
+                    b"data: Message 1\n\n",
+                    b"event: error\n: Server overloaded\n\n",
+                ),
+                "Server overloaded",
+                1,
+            ),
+            (
+                (
+                    b"data: Hello\n\n",
+                    b"event: error\n: Connection timeout\ndata: {}\n\n",
+                    b"data: Should not reach\n\n",
+                ),
+                "Connection timeout",
+                1,
+            ),
+            (
+                (
+                    b'data: {"content": "Hello"}\n\n',
+                    b'event: message\ndata: {"content": "World"}\n\n',
+                    b"event: error\n: Authentication expired\ndata: {}\n\n",
+                ),
+                "Authentication expired",
+                2,
+            ),
+        ],
+    )
+    async def test_stream_errors_at_various_positions(
+        self,
+        create_mock_sse_iterator,
+        chunks: tuple[bytes, ...],
+        expected_error: str,
+        expected_msg_count: int,
+    ) -> None:
+        """Test error handling at different positions in the stream."""
+        reader = AsyncSSEStreamReader(create_mock_sse_iterator(*chunks))
+
+        if expected_msg_count == 0:
+            # For read_complete_stream, error is raised immediately
+            with pytest.raises(SSEResponseError) as exc_info:
+                await reader.read_complete_stream()
+            assert expected_error in str(exc_info.value)
+        else:
+            # For manual iteration, we can count messages before error
+            messages = []
+            with pytest.raises(SSEResponseError) as exc_info:
+                async for message in reader:
+                    AsyncSSEStreamReader.inspect_message_for_error(message)
+                    messages.append(message)
+
+            assert len(messages) == expected_msg_count
+            assert expected_error in str(exc_info.value)

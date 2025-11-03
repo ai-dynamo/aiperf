@@ -1,18 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import uuid
 from collections import defaultdict
 
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import CustomDatasetType, MediaType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.models import Conversation, Turn
+from aiperf.common.session_id_generator import SessionIDGenerator
+from aiperf.dataset.loader.base_loader import BaseLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import SingleTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.SINGLE_TURN)
-class SingleTurnDatasetLoader(MediaConversionMixin):
+class SingleTurnDatasetLoader(BaseLoader, MediaConversionMixin):
     """A dataset loader that loads single turn data from a file.
 
     The single turn type
@@ -64,7 +66,11 @@ class SingleTurnDatasetLoader(MediaConversionMixin):
     ```
     """
 
-    def __init__(self, filename: str):
+    def __init__(self, filename: str, user_config: UserConfig, **kwargs):
+        super().__init__(filename=filename, user_config=user_config, **kwargs)
+        self.session_id_generator: SessionIDGenerator = SessionIDGenerator(
+            seed=user_config.input.random_seed
+        )
         self.filename = filename
 
     def load_dataset(self) -> dict[str, list[SingleTurn]]:
@@ -84,7 +90,7 @@ class SingleTurnDatasetLoader(MediaConversionMixin):
                     continue  # Skip empty lines
 
                 single_turn_data = SingleTurn.model_validate_json(line)
-                session_id = str(uuid.uuid4())
+                session_id = self.session_id_generator.next()
                 data[session_id].append(single_turn_data)
 
         return data

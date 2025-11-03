@@ -1,23 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import uuid
 from collections import defaultdict
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CustomDatasetType
 from aiperf.common.factories import CustomDatasetFactory
-from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.generator import PromptGenerator
+from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.protocol import CustomDatasetLoaderProtocol
 
 
 @implements_protocol(CustomDatasetLoaderProtocol)
 @CustomDatasetFactory.register(CustomDatasetType.MOONCAKE_TRACE)
-class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
+class MooncakeTraceDatasetLoader(BaseFileLoader):
     """A dataset loader that loads Mooncake trace data from a file.
 
     Loads Mooncake trace data from a file and converts the data into
@@ -41,18 +40,17 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
 
     def __init__(
         self,
+        *,
         filename: str,
         prompt_generator: PromptGenerator,
         user_config: UserConfig,
         **kwargs,
     ):
-        self.filename = filename
+        super().__init__(filename=filename, user_config=user_config, **kwargs)
         self.prompt_generator = prompt_generator
-        self.user_config = user_config
         self._skipped_traces = 0
         self._start_offset = user_config.input.fixed_schedule_start_offset
         self._end_offset = user_config.input.fixed_schedule_end_offset
-        super().__init__(user_config=user_config, **kwargs)
 
     def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
         """Load Mooncake trace data from a file.
@@ -76,7 +74,7 @@ class MooncakeTraceDatasetLoader(AIPerfLoggerMixin):
                     self._skipped_traces += 1
                     continue  # Skip traces before or after the fixed schedule offset
 
-                session_id = trace_data.session_id or str(uuid.uuid4())
+                session_id = trace_data.session_id or self.session_id_generator.next()
                 data[session_id].append(trace_data)
 
         if self._skipped_traces > 0:

@@ -9,8 +9,10 @@ from unittest.mock import AsyncMock, Mock, patch
 import aiohttp
 import pytest
 
-from aiperf.common.models import SSEMessage
+from aiperf.common.enums import SSEEventType, SSEFieldType
+from aiperf.common.models import SSEField, SSEMessage
 from aiperf.transports.aiohttp_client import AioHttpClient
+from aiperf.transports.sse_utils import AsyncSSEStreamReader
 from tests.transports.conftest import (
     assert_error_request_record,
     assert_successful_request_record,
@@ -122,6 +124,71 @@ class TestAioHttpClient:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        "comment_value,expected_error_text",
+        [
+            ("Rate limit exceeded", "Rate limit exceeded"),
+            (None, "Unknown error in SSE response"),
+        ],
+    )
+    async def test_sse_stream_error_event_handling(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_sse_response: Mock,
+        comment_value: str | None,
+        expected_error_text: str,
+    ) -> None:
+        """Test that SSE error events are properly caught and handled in the client."""
+
+        packets = [
+            SSEField(name=SSEFieldType.EVENT, value=SSEEventType.ERROR),
+        ]
+        if comment_value:
+            packets.append(SSEField(name=SSEFieldType.COMMENT, value=comment_value))
+        packets.append(SSEField(name=SSEFieldType.DATA, value="{}"))
+
+        mock_error_message = SSEMessage(perf_ns=123456789, packets=packets)
+
+        with (
+            patch("aiohttp.ClientSession") as mock_session_class,
+            patch(
+                "aiperf.transports.aiohttp_client.AsyncSSEStreamReader"
+            ) as mock_reader_class,
+        ):
+
+            async def mock_content_iter():
+                yield b"event: error\n"
+                if comment_value:
+                    yield f": {comment_value}\n".encode()
+                yield b"data: {}\n\n"
+
+            mock_sse_response.content = mock_content_iter()
+
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+
+            async def mock_aiter():
+                yield mock_error_message
+
+                AsyncSSEStreamReader.inspect_message_for_error(mock_error_message)
+
+            mock_reader = Mock()
+            mock_reader.__aiter__ = Mock(return_value=mock_aiter())
+            mock_reader_class.return_value = mock_reader
+
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream",
+                '{"stream": true}',
+                {"Accept": "text/event-stream"},
+            )
+
+            assert record.error is not None
+            assert record.error.code == 502
+            assert record.error.type == "SSEResponseError"
+            assert expected_error_text in record.error.message
+            assert len(record.responses) == 1
+            assert isinstance(record.responses[0], SSEMessage)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         "status_code,reason,error_text",
         [
             (400, "Bad Request", "Invalid request format"),
@@ -184,13 +251,9 @@ class TestAioHttpClient:
         "exception_class,message,expected_type",
         [
             (aiohttp.ClientConnectorError, "Connection failed", "ClientConnectorError"),
-            (
-                aiohttp.ClientResponseError,
-                "Internal Server Error",
-                "ClientResponseError",
-            ),
+            (aiohttp.ClientResponseError, "Internal Server Error", "ClientResponseError"),
         ],
-    )
+    )  # fmt: skip
     async def test_aiohttp_specific_exceptions(
         self,
         aiohttp_client: AioHttpClient,

@@ -28,6 +28,8 @@ from aiperf.dataset.generator import (
 )
 from aiperf.dataset.loader import (
     AIPERF_DATASET_CACHE_DIR,
+    BaseFileLoader,
+    BaseLoader,
     BasePublicDatasetLoader,
     CustomDatasetLoaderProtocol,
     CustomDatasetT,
@@ -46,9 +48,6 @@ from aiperf.dataset.utils import (
     check_file_exists,
     encode_image,
     open_image,
-    sample_normal,
-    sample_positive_normal,
-    sample_positive_normal_integer,
 )
 
 __all__ = [
@@ -56,7 +55,9 @@ __all__ = [
     "AudioGenerator",
     "BaseDatasetComposer",
     "BaseDatasetSampler",
+    "BaseFileLoader",
     "BaseGenerator",
+    "BaseLoader",
     "BasePublicDatasetLoader",
     "CustomDatasetComposer",
     "CustomDatasetLoaderProtocol",
@@ -86,7 +87,4 @@ __all__ = [
     "encode_image",
     "main",
     "open_image",
-    "sample_normal",
-    "sample_positive_normal",
-    "sample_positive_normal_integer",
 ]

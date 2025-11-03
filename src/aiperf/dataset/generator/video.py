@@ -24,8 +24,8 @@ class VideoGenerator(BaseGenerator):
     returned as base64 encoded strings. Currently only MP4 format is supported.
     """
 
-    def __init__(self, config: VideoConfig):
-        super().__init__()
+    def __init__(self, config: VideoConfig, **kwargs):
+        super().__init__(**kwargs)
         self.config = config
 
     def _check_ffmpeg_availability(self) -> bool:
@@ -383,7 +383,8 @@ class VideoGenerator(BaseGenerator):
                     )
 
                 frame_path = os.path.join(temp_dir, f"frame_{i:06d}.png")
-                frame.save(frame_path, "PNG")
+                # Use explicit compression settings for deterministic output across platforms
+                frame.save(frame_path, "PNG", compress_level=6, optimize=False)
 
             # Create output file in the same temp directory
             output_path = os.path.join(temp_dir, "output.mp4")

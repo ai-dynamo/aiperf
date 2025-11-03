@@ -3,7 +3,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 from aiperf.common.config import UserConfig
@@ -80,27 +79,7 @@ class TestBaseDatasetComposer:
         assert composer._seq_distribution is not None
         assert isinstance(composer._seq_distribution, SequenceLengthDistribution)
         assert len(composer._seq_distribution.pairs) == 2
-        assert composer._seq_rng is None  # No seed provided
         assert len(composer._turn_sequence_cache) == 0
-
-    def test_initialization_with_random_seed(
-        self, sequence_dist_config, mock_tokenizer
-    ):
-        """Test initialization with random seed."""
-        sequence_dist_config.input.random_seed = 42
-        composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)
-
-        assert composer._seq_rng is not None
-        assert isinstance(composer._seq_rng, np.random.Generator)
-
-    def test_initialization_without_sequence_distribution(
-        self, base_config, mock_tokenizer
-    ):
-        """Test initialization without sequence distribution."""
-        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
-
-        assert composer._seq_distribution is None
-        assert composer._seq_rng is None
 
     def test_model_selection_round_robin(self, base_config, mock_tokenizer):
         """Test round robin model selection."""
@@ -117,11 +96,9 @@ class TestBaseDatasetComposer:
         composer = ConcreteBaseComposer(base_config, mock_tokenizer)
 
         # Test random selection returns a valid model
-        with patch("random.choice") as mock_choice:
-            mock_choice.return_value = "test-model-1"
-            result = composer._select_model_name()
-            assert result == "test-model-1"
-            mock_choice.assert_called_once_with(["test-model-1", "test-model-2"])
+        # With the global RNG system, we just verify it returns one of the valid models
+        result = composer._select_model_name()
+        assert result in ["test-model-1", "test-model-2"]
 
     def test_model_selection_invalid_strategy(self, base_config, mock_tokenizer):
         """Test invalid model selection strategy raises error."""
@@ -207,23 +184,20 @@ class TestBaseDatasetComposer:
         composer._set_max_tokens(turn)
         assert turn.max_tokens == 75
 
-    @patch("aiperf.dataset.utils.sample_positive_normal_integer")
-    def test_set_max_tokens_without_distribution(
-        self, mock_sample, base_config, mock_tokenizer
-    ):
+    def test_set_max_tokens_without_distribution(self, base_config, mock_tokenizer):
         """Test setting max_tokens using legacy behavior."""
-        mock_sample.return_value = 45
-
         composer = ConcreteBaseComposer(base_config, mock_tokenizer)
         turn = Turn()
 
         composer._set_max_tokens(turn)
 
-        assert turn.max_tokens == 45
-        mock_sample.assert_called_once_with(
-            base_config.input.prompt.output_tokens.mean,
-            base_config.input.prompt.output_tokens.stddev,
-        )
+        # With global RNG seed 42, verify max_tokens is set to a positive integer
+        # based on the configured mean (50) and stddev (5)
+        assert turn.max_tokens is not None
+        assert turn.max_tokens > 0
+        assert isinstance(turn.max_tokens, int)
+        # Should be roughly around the mean of 50
+        assert 30 < turn.max_tokens < 70
 
     def test_set_max_tokens_without_distribution_none_mean(
         self, base_config, mock_tokenizer

@@ -15,11 +15,11 @@ This test suite covers all aspects of the sequence distribution feature includin
 import numpy as np
 import pytest
 
+from aiperf.common import random_generator as rng
 from aiperf.common.models.sequence_distribution import (
     DistributionParser,
     SequenceLengthDistribution,
     SequenceLengthPair,
-    _sample_positive_normal_integer,
     create_balanced_distribution,
     create_uniform_distribution,
 )
@@ -137,34 +137,48 @@ class TestSequenceLengthDistribution:
             assert osl == 128
 
     def test_multi_pair_distribution_sampling(self):
-        """Test sampling from multi-pair distribution."""
+        """Test sampling from multi-pair distribution with exact expected results."""
         dist = SequenceLengthDistribution(self.multi_pair)
 
-        # Sample many times and verify approximate distribution
-        rng = np.random.default_rng(42)
-        samples = [dist.sample(random_state=rng) for _ in range(10000)]
+        # With seed 42, sample 10000 times and check first 10 + overall distribution
+        samples = [dist.sample() for _ in range(10000)]
 
+        # Check exact sequence for first 10 samples (single RNG design)
+        expected_first_10 = [
+            (256, 128), (256, 128), (512, 256), (256, 128), (256, 128),
+            (256, 128), (256, 128), (256, 128), (512, 256), (256, 128)
+        ]  # fmt: skip
+        assert samples[:10] == expected_first_10
+
+        # Check exact counts for all 10000 samples with seed 42 (single RNG design)
         count_256_128 = sum(1 for s in samples if s == (256, 128))
         count_512_256 = sum(1 for s in samples if s == (512, 256))
-
-        # Should be approximately 60/40 split (±5%)
-        assert abs(count_256_128 / len(samples) - 0.6) < 0.05
-        assert abs(count_512_256 / len(samples) - 0.4) < 0.05
+        assert count_256_128 == 6113
+        assert count_512_256 == 3887
 
     def test_stddev_distribution_sampling(self):
-        """Test sampling from distribution with standard deviations."""
+        """Test sampling from distribution with standard deviations produces exact expected results."""
         dist = SequenceLengthDistribution(self.stddev_pairs)
 
-        # Sample many times to test variance
-        rng = np.random.default_rng(42)
-        samples = [dist.sample(random_state=rng) for _ in range(1000)]
+        # With seed 42, sample 1000 times and check first 10 + statistics
+        samples = [dist.sample() for _ in range(1000)]
 
+        # Check exact sequence for first 10 samples (single RNG design)
+        expected_first_10 = [
+            (318, 144), (264, 135), (247, 144), (272, 125), (272, 142),
+            (226, 116), (236, 127), (262, 134), (541, 243), (310, 133)
+        ]  # fmt: skip
+        assert samples[:10] == expected_first_10
+
+        # Verify exact statistics with seed 42 (single RNG design)
         isl_values = [s[0] for s in samples]
         osl_values = [s[1] for s in samples]
 
-        # Should have variance > 0 due to stddev
-        assert np.std(isl_values) > 5, "ISL should vary due to standard deviation"
-        assert np.std(osl_values) > 3, "OSL should vary due to standard deviation"
+        # Exact expected statistics with seed 42 and single RNG design
+        assert np.std(isl_values) == pytest.approx(125.977, abs=0.001)
+        assert np.std(osl_values) == pytest.approx(63.532, abs=0.001)
+        assert np.mean(isl_values) == pytest.approx(352.231, abs=0.001)
+        assert np.mean(osl_values) == pytest.approx(176.930, abs=0.001)
 
         # All values should be positive (clamped)
         assert all(isl > 0 for isl in isl_values)
@@ -174,7 +188,7 @@ class TestSequenceLengthDistribution:
         """Test efficient batch sampling."""
         dist = SequenceLengthDistribution(self.multi_pair)
 
-        batch = dist.sample_batch(1000, random_state=42)
+        batch = dist.sample_batch(1000)
         assert len(batch) == 1000
 
         # Verify all samples are valid
@@ -182,11 +196,19 @@ class TestSequenceLengthDistribution:
             assert (isl, osl) in [(256, 128), (512, 256)]
 
     def test_reproducible_sampling(self):
-        """Test that sampling is reproducible with same seed."""
-        dist = SequenceLengthDistribution(self.multi_pair)
+        """Test that sampling is reproducible with global RNG."""
+        # Initialize the global RNG to ensure reproducibility
+        from aiperf.common import random_generator as rng
 
-        samples1 = [dist.sample(random_state=123) for _ in range(100)]
-        samples2 = [dist.sample(random_state=123) for _ in range(100)]
+        rng.reset()
+        rng.init(123)
+        dist1 = SequenceLengthDistribution(self.multi_pair)
+        samples1 = [dist1.sample() for _ in range(100)]
+
+        rng.reset()
+        rng.init(123)
+        dist2 = SequenceLengthDistribution(self.multi_pair)
+        samples2 = [dist2.sample() for _ in range(100)]
 
         assert samples1 == samples2
 
@@ -242,39 +264,53 @@ class TestSequenceLengthDistribution:
 
 
 class TestSamplePositiveNormalInteger:
-    """Test the internal _sample_positive_normal_integer function."""
+    """Test the RandomGenerator.sample_positive_normal_integer method."""
 
     def test_zero_stddev_returns_mean(self):
         """Test that zero stddev returns the mean value."""
-        result = _sample_positive_normal_integer(100.0, 0.0)
+        test_rng = rng.derive("test")
+        result = test_rng.sample_positive_normal_integer(100.0, 0.0)
         assert result == 100
 
     def test_negative_stddev_returns_mean(self):
         """Test that negative stddev returns the mean value."""
-        result = _sample_positive_normal_integer(100.0, -5.0)
+        test_rng = rng.derive("test")
+        result = test_rng.sample_positive_normal_integer(100.0, -5.0)
         assert result == 100
 
     def test_positive_stddev_varies(self):
-        """Test that positive stddev produces variance around mean."""
-        np.random.seed(42)
-        samples = [_sample_positive_normal_integer(100.0, 20.0) for _ in range(1000)]
+        """Test that positive stddev produces exact expected variance with seed 42."""
+        test_rng = rng.derive("test")
 
-        # Should have variance > 0
-        assert np.std(samples) > 5
+        # Test exact first 10 samples with seed 42 (updated for Python gauss backend)
+        # Note: Switched from NumPy normal() to Python gauss() for 6x performance improvement
+        first_10_samples = [
+            test_rng.sample_positive_normal_integer(100.0, 10.0) for _ in range(10)
+        ]
+        expected_first_10 = [101, 103, 94, 98, 94, 86, 98, 92, 94, 101]
+        assert first_10_samples == expected_first_10
 
         # All values should be positive
-        assert all(s > 0 for s in samples)
+        assert all(s > 0 for s in first_10_samples)
 
-        # Mean should be approximately 100
-        assert abs(np.mean(samples) - 100.0) < 5.0
+        # Test variance - values should vary
+        assert len(set(first_10_samples)) > 5  # At least 5 different values
 
     def test_clamping_to_positive(self):
-        """Test that negative samples are clamped to 1."""
-        np.random.seed(123)  # Seed that might produce negative values
-        samples = [_sample_positive_normal_integer(2.0, 10.0) for _ in range(1000)]
+        """Test that negative samples are clamped to 1 with exact expected counts."""
+        test_rng = rng.derive("test")
+        samples = [
+            test_rng.sample_positive_normal_integer(5.0, 10.0) for _ in range(1000)
+        ]
 
         # All values must be at least 1
         assert all(s >= 1 for s in samples)
+
+        # With seed 42, exact count of clamped values (updated for Python gauss backend)
+        clamped_count = sum(1 for s in samples if s == 1)
+        assert (
+            clamped_count == 56
+        )  # Exact count with seed 42 and Python gauss (6x faster!)
 
 
 class TestDistributionParser:
@@ -438,39 +474,42 @@ class TestIntegration:
     """Integration tests combining multiple components."""
 
     def test_end_to_end_workflow(self):
-        """Test complete workflow from string to sampling."""
+        """Test complete workflow from string to sampling with exact expected results."""
         # Parse distribution
         dist_str = "128,64:30;256,128:50;512,256:20"
         dist = DistributionParser.parse(dist_str)
 
         # Sample many times
-        samples = dist.sample_batch(10000, random_state=42)
+        samples = dist.sample_batch(10000)
 
-        # Verify distribution
+        # Verify exact distribution with seed 42 (single RNG design)
         counts = {}
         for sample in samples:
             counts[sample] = counts.get(sample, 0) + 1
 
-        total = len(samples)
-        assert abs(counts[(128, 64)] / total - 0.3) < 0.05
-        assert abs(counts[(256, 128)] / total - 0.5) < 0.05
-        assert abs(counts[(512, 256)] / total - 0.2) < 0.05
+        # Exact expected counts with seed 42 and single RNG design
+        assert counts[(128, 64)] == 3014
+        assert counts[(256, 128)] == 4957
+        assert counts[(512, 256)] == 2029
 
     def test_end_to_end_workflow_with_stddev(self):
-        """Test complete workflow with standard deviations from string to sampling."""
+        """Test complete workflow with standard deviations produces exact expected statistics."""
         # Parse distribution with stddev
         dist_str = "128|20,64|10:30;256|30,128|15:70"
         dist = DistributionParser.parse(dist_str)
 
         # Sample many times
-        samples = dist.sample_batch(5000, random_state=42)
+        samples = dist.sample_batch(5000)
 
-        # Check that we have variance (due to stddev)
+        # Check exact variance with seed 42 (single RNG design)
         isl_values = [s[0] for s in samples]
         osl_values = [s[1] for s in samples]
 
-        assert np.std(isl_values) > 10, "Should have ISL variance due to stddev"
-        assert np.std(osl_values) > 5, "Should have OSL variance due to stddev"
+        # Exact expected statistics with seed 42 and single RNG design
+        assert np.std(isl_values) == pytest.approx(64.939, abs=0.001)
+        assert np.std(osl_values) == pytest.approx(32.499, abs=0.001)
+        assert np.mean(isl_values) == pytest.approx(218.620, abs=0.001)
+        assert np.mean(osl_values) == pytest.approx(109.770, abs=0.001)
 
         # All values should still be positive
         assert all(isl > 0 for isl in isl_values)
@@ -489,7 +528,7 @@ class TestIntegration:
         stats = dist.get_statistics()
 
         # Sample empirically
-        samples = dist.sample_batch(50000, random_state=123)
+        samples = dist.sample_batch(50000)
         empirical_isl = np.mean([s[0] for s in samples])
         empirical_osl = np.mean([s[1] for s in samples])
 
@@ -559,7 +598,6 @@ class TestSequenceCaching:
 
     def test_turn_sequence_caching(self):
         """Test that sequence lengths are cached per turn for consistency."""
-        import numpy as np
 
         from aiperf.common.models import Turn
         from aiperf.dataset.composer.base import BaseDatasetComposer
@@ -574,7 +612,8 @@ class TestSequenceCaching:
         dist = DistributionParser.parse("128,64:50;256,128:50")
         composer._seq_distribution = dist
         composer._turn_sequence_cache = {}
-        composer._seq_rng = np.random.default_rng(42)
+        # Use the global RNG instead of _seq_rng
+        composer._rng = rng.derive("test_composer")
 
         # Create a turn and get its ID
         turn = Turn()
@@ -602,7 +641,6 @@ class TestSequenceCaching:
 
     def test_different_turns_get_different_cache_entries(self):
         """Test that different turns can have different cached sequence lengths."""
-        import numpy as np
 
         from aiperf.common.models import Turn
         from aiperf.dataset.composer.base import BaseDatasetComposer
@@ -619,7 +657,8 @@ class TestSequenceCaching:
         )  # Single pair for predictable results
         composer._seq_distribution = dist
         composer._turn_sequence_cache = {}
-        composer._seq_rng = np.random.default_rng(42)
+        # Use the global RNG instead of _seq_rng
+        composer._rng = rng.derive("test_composer2")
 
         # Create two different turns
         turn1 = Turn()

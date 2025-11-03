@@ -62,7 +62,6 @@ class TestDeterministicBehavior:
         assert len(inputs_1) == len(inputs_2), "Session counts differ"
 
         for s1, s2 in zip(inputs_1, inputs_2, strict=True):
-            assert s1.session_id != s2.session_id
             assert s1.payloads == s2.payloads
 
     async def test_different_seeds_different_inputs(

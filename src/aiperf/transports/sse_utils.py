@@ -6,6 +6,8 @@ import time
 from collections.abc import AsyncIterator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.enums.sse_enums import SSEEventType, SSEFieldType
+from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEMessage
 
 _logger = AIPerfLogger(__name__)
@@ -71,8 +73,37 @@ class AsyncSSEStreamReader:
         """Read the complete SSE stream and return a list of SSE messages."""
         messages: list[SSEMessage] = []
         async for message in self:
+            AsyncSSEStreamReader.inspect_message_for_error(message)
             messages.append(message)
         return messages
+
+    @staticmethod
+    def inspect_message_for_error(message: SSEMessage):
+        """Check if the message contains an error event packet and raise an SSEResponseError if so.
+
+        If so, look for any comment field and raise an SSEResponseError
+        with that comment as the error message, otherwise use the full message.
+        """
+        has_error_event = any(
+            packet.name == SSEFieldType.EVENT and packet.value == SSEEventType.ERROR
+            for packet in message.packets
+        )
+
+        if has_error_event:
+            error_message = None
+            for packet in message.packets:
+                if packet.name == SSEFieldType.COMMENT:
+                    error_message = packet.value
+                    break
+
+            if error_message is None:
+                error_message = (
+                    f"Unknown error in SSE response: {message.model_dump_json()}"
+                )
+
+            raise SSEResponseError(
+                f"Error occurred in SSE response: {error_message}", error_code=502
+            )
 
     async def __aiter__(self) -> AsyncIterator[SSEMessage]:
         """Iterate over the SSE stream in a performant manner and yield parsed SSE messages as they arrive."""

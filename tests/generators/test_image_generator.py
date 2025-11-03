@@ -2,11 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
-import random
 from io import BytesIO
 from unittest.mock import Mock, patch
 
-import numpy as np
 import pytest
 from PIL import Image
 
@@ -65,15 +63,18 @@ def mock_file_system():
     """Mock file system for testing source image sampling."""
     with (
         patch("aiperf.dataset.generator.image.glob.glob") as mock_glob,
-        patch("aiperf.dataset.generator.image.random.choice") as mock_choice,
         patch("aiperf.dataset.generator.image.Image.open") as mock_open,
     ):
+        # Create mock images with copy() method
         mock_image = Mock(spec=Image.Image)
-        mock_open.return_value = mock_image
+        mock_image.copy.return_value = mock_image
+
+        # Support context manager protocol
+        mock_open.return_value.__enter__ = Mock(return_value=mock_image)
+        mock_open.return_value.__exit__ = Mock(return_value=None)
 
         yield {
             "mock_glob": mock_glob,
-            "mock_choice": mock_choice,
             "mock_open": mock_open,
             "mock_image": mock_image,
         }
@@ -163,22 +164,18 @@ class TestImageGenerator:
         self, mock_sample_image, base_config, test_image
     ):
         """Test that multiple generate calls can produce different results."""
+        from aiperf.common import random_generator as rng
+
         mock_sample_image.return_value = test_image
 
-        state = random.getstate()
-        np_state = np.random.get_state()
-        try:
-            # Set random seed to make the test deterministic
-            random.seed(42)
-            np.random.seed(42)
-            generator = ImageGenerator(base_config)
-            image1 = generator.generate()
-            image2 = generator.generate()
+        # Initialize global random generator to make the test deterministic
+        rng.reset()
+        rng.init(42)
+        generator = ImageGenerator(base_config)
+        image1 = generator.generate()
+        image2 = generator.generate()
 
-            assert image1 != image2
-        finally:
-            random.setstate(state)
-            np.random.set_state(np_state)
+        assert image1 != image2
 
     def test_sample_source_image_success(self, base_config, mock_file_system):
         """Test successful sampling of source image."""
@@ -188,30 +185,26 @@ class TestImageGenerator:
             "/path/image2.png",
             "/path/image3.gif",
         ]
-        mocks["mock_choice"].return_value = "/path/image2.png"
 
         generator = ImageGenerator(base_config)
-        result = generator._sample_source_image()
 
-        # Verify the correct path was constructed
+        # Verify images were pre-loaded during init
         mocks["mock_glob"].assert_called_once()
         glob_call_path = mocks["mock_glob"].call_args[0][0]
         assert "source_images" in glob_call_path and glob_call_path.endswith("*")
+        assert mocks["mock_open"].call_count == 3  # All images loaded
 
-        mocks["mock_choice"].assert_called_once_with(
-            ["/path/image1.jpg", "/path/image2.png", "/path/image3.gif"]
-        )
-        mocks["mock_open"].assert_called_once_with("/path/image2.png")
-        assert result == mocks["mock_image"]
+        # Test that sampling returns a copy
+        result = generator._sample_source_image()
+        assert result == mocks["mock_image"]  # Should be the copied mock image
 
     def test_sample_source_image_no_images_found(self, base_config, mock_file_system):
         """Test error handling when no source images are found."""
         mock_file_system["mock_glob"].return_value = []  # No files found
 
-        generator = ImageGenerator(base_config)
-
+        # Error should be raised during initialization (pre-loading)
         with pytest.raises(ValueError) as exc_info:
-            generator._sample_source_image()
+            ImageGenerator(base_config)
 
         assert "No source images found" in str(exc_info.value)
         mock_file_system["mock_glob"].assert_called_once()
@@ -220,14 +213,16 @@ class TestImageGenerator:
         """Test sampling when only one source image exists."""
         mocks = mock_file_system
         mocks["mock_glob"].return_value = ["/path/single_image.jpg"]
-        mocks["mock_choice"].return_value = "/path/single_image.jpg"
 
         generator = ImageGenerator(base_config)
-        result = generator._sample_source_image()
 
-        mocks["mock_choice"].assert_called_once_with(["/path/single_image.jpg"])
+        # Verify single image was pre-loaded
+        mocks["mock_glob"].assert_called_once()
         mocks["mock_open"].assert_called_once_with("/path/single_image.jpg")
-        assert result == mocks["mock_image"]
+
+        # Test that sampling works with single image
+        result = generator._sample_source_image()
+        assert result == mocks["mock_image"]  # Should be the copied mock image
 
     @patch.object(ImageGenerator, "_sample_source_image")
     def test_generate_integration_with_real_image(
@@ -298,3 +293,21 @@ class TestImageGenerator:
         # We can verify it's a valid image
         assert decoded_image.size[0] > 0
         assert decoded_image.size[1] > 0
+
+    @patch.object(ImageGenerator, "_sample_source_image")
+    def test_deterministic_image_generation(
+        self, mock_sample_image, base_config, test_image
+    ):
+        """Test that image generation is deterministic with same seed."""
+        from aiperf.common import random_generator as rng
+
+        mock_sample_image.return_value = test_image
+
+        def generate_with_seed(seed):
+            rng.reset()
+            rng.init(seed)
+            generator = ImageGenerator(base_config)
+            return generator.generate()
+
+        # Generate with same seed twice - should be identical
+        assert generate_with_seed(12345) == generate_with_seed(12345)

@@ -23,7 +23,7 @@ def _load_all_modules() -> None:
 
     This is called only when modules are actually needed, not during CLI startup.
     """
-    for module in Path(__file__).parent.iterdir():
+    for module in sorted(Path(__file__).parent.iterdir()):
         if (
             module.is_dir()
             and not module.name.startswith("_")

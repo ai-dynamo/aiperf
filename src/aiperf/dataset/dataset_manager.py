@@ -209,7 +209,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._dataset_sampler = DatasetSamplingStrategyFactory.create_instance(
             self.user_config.input.dataset_sampling_strategy,
             conversation_ids=self._session_ids_cache,
-            seed=self.user_config.input.random_seed,
         )
 
         self.dataset_configured.set()

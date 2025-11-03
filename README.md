@@ -50,6 +50,7 @@ Features
 ### Advanced Benchmarking Features
 | Feature | Description | Use Cases |
 |---------|-------------|-----------|
+| **[Random Number Generation & Reproducibility](docs/reproducibility.md)** | Deterministic dataset generation with `--random-seed` | Debugging, regression testing, controlled experiments |
 | **[Request Cancellation](docs/tutorials/request-cancellation.md)** | Test timeout behavior and service resilience | SLA validation, cancellation modeling |
 | **[Trace Benchmarking](docs/tutorials/trace-benchmarking.md)** | Deterministic workload replay with custom datasets | Regression testing, A/B testing |
 | **[Fixed Schedule](docs/tutorials/fixed-schedule.md)** | Precise timestamp-based request execution | Traffic replay, temporal analysis, burst testing |

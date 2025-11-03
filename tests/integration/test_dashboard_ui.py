@@ -9,7 +9,6 @@ from tests.integration.conftest import IntegrationTestDefaults as defaults
 from tests.integration.models import AIPerfMockServer
 
 
-@pytest.mark.macos
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestDashboardUI:

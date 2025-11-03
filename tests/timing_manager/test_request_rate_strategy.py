@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
+from aiperf.common import random_generator as rng
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, RequestRateMode, TimingMode
 from aiperf.common.messages import CreditReturnMessage
@@ -84,6 +85,8 @@ class TestRequestRateStrategyPoissonDistribution:
             request_rate_mode=RequestRateMode.POISSON,
             random_seed=random_seed,
         )
+        rng.reset()
+        rng.init(random_seed)
         phase_stats = profiling_phase_stats_from_config(config)
 
         strategy = RequestRateStrategy(config, mock_credit_manager)
@@ -112,7 +115,7 @@ class TestRequestRateStrategyPoissonDistribution:
         # Create time bins from start to end of execution
         start_time = timestamps_sec[0]
         end_time = timestamps_sec[-1]
-        num_intervals = int((end_time - start_time) / interval_duration) + 1
+        num_intervals = int((end_time - start_time) / interval_duration)
 
         # Count events in each interval
         event_counts = []

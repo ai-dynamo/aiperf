@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import glob
-import random
 from pathlib import Path
 
 from PIL import Image
 
+from aiperf.common import random_generator as rng
 from aiperf.common.config import ImageConfig
 from aiperf.common.enums import ImageFormat
 from aiperf.dataset import utils
@@ -22,9 +22,32 @@ class ImageGenerator(BaseGenerator):
     The dimensions can be randomized based on mean and standard deviation values.
     """
 
-    def __init__(self, config: ImageConfig):
-        super().__init__()
+    def __init__(self, config: ImageConfig, **kwargs):
+        super().__init__(**kwargs)
+
+        # Separate RNGs for independent concerns
+        self._dimensions_rng = rng.derive("dataset.image.dimensions")
+        self._format_rng = rng.derive("dataset.image.format")
+        self._source_rng = rng.derive("dataset.image.source")
+
         self.config = config
+
+        # Pre-load source images into memory for fast sampling
+        source_images_dir = Path(__file__).parent.resolve() / "assets" / "source_images"
+        image_paths = sorted(glob.glob(str(source_images_dir / "*")))
+        if not image_paths:
+            raise ValueError(
+                f"No source images found in '{source_images_dir}'. "
+                "Please ensure the source_images directory contains at least one image file."
+            )
+
+        self._source_images = []
+        for path in image_paths:
+            with Image.open(path) as img:
+                self._source_images.append(img.copy())
+        self.debug(
+            lambda: f"Pre-loaded {len(self._source_images)} source images into memory"
+        )
 
     def generate(self, *args, **kwargs) -> str:
         """Generate an image with the configured parameters.
@@ -34,14 +57,13 @@ class ImageGenerator(BaseGenerator):
         """
         image_format = self.config.format
         if image_format == ImageFormat.RANDOM:
-            image_format = random.choice(
-                [f for f in ImageFormat if f != ImageFormat.RANDOM]
-            )
+            formats = [f for f in ImageFormat if f != ImageFormat.RANDOM]
+            image_format = self._format_rng.choice(formats)
 
-        width = utils.sample_positive_normal_integer(
+        width = self._dimensions_rng.sample_positive_normal_integer(
             self.config.width.mean, self.config.width.stddev
         )
-        height = utils.sample_positive_normal_integer(
+        height = self._dimensions_rng.sample_positive_normal_integer(
             self.config.height.mean, self.config.height.stddev
         )
 
@@ -57,15 +79,10 @@ class ImageGenerator(BaseGenerator):
         return f"data:image/{image_format.name.lower()};base64,{base64_image}"
 
     def _sample_source_image(self):
-        """Sample one image among the source images.
+        """Sample one image among the pre-loaded source images.
 
         Returns:
             A PIL Image object randomly selected from the source images.
+            Returns a copy to prevent accidental mutation of cached images.
         """
-        filepath = Path(__file__).parent.resolve() / "assets" / "source_images" / "*"
-        filenames = glob.glob(str(filepath))
-        if not filenames:
-            raise ValueError(f"No source images found in '{filepath}'")
-
-        self.debug(lambda: f"Found {len(filenames)} source images in '{filepath}'")
-        return Image.open(random.choice(filenames))
+        return self._source_rng.choice(self._source_images).copy()

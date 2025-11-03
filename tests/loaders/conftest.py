@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.common.config import EndpointConfig, UserConfig
+
 
 @pytest.fixture
 def create_jsonl_file():
@@ -25,3 +27,9 @@ def create_jsonl_file():
     # Cleanup all created files
     if filename:
         Path(filename).unlink(missing_ok=True)
+
+
+@pytest.fixture
+def default_user_config():
+    """Create a default UserConfig for testing."""
+    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))

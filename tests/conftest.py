@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import _TRACE
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType
@@ -76,6 +77,27 @@ def load_aiperf_modules() -> None:
     modules are loaded for registration purposes.
     """
     ensure_modules_loaded()
+
+
+@pytest.fixture(autouse=True)
+def reset_random_generator() -> Generator[None, None, None]:
+    """Reset and seed the global random generator for each test.
+
+    This fixture is automatically used for all tests and ensures that:
+    1. Each test starts with a fresh random generator state
+    2. The random generator is seeded with a fixed value for reproducibility
+    3. The state is cleaned up after each test to prevent leakage
+
+    This ensures all tests have consistent, reproducible random behavior.
+    """
+    # Reset and seed before each test
+    rng.reset()
+    rng.init(42)  # Use a fixed seed for test reproducibility
+
+    yield  # Run the test
+
+    # Reset after each test to ensure clean state
+    rng.reset()
 
 
 @pytest.fixture

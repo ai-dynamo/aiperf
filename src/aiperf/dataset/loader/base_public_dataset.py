@@ -4,16 +4,17 @@
 from pathlib import Path
 from typing import Any, ClassVar
 
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DatasetLoaderError
-from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, RequestRecord
+from aiperf.dataset.loader.base_loader import BaseLoader
 from aiperf.transports.aiohttp_client import AioHttpClient
 
 AIPERF_DATASET_CACHE_DIR = Path(".cache/aiperf/datasets")
 
 
-class BasePublicDatasetLoader(AIPerfLoggerMixin):
+class BasePublicDatasetLoader(BaseLoader):
     """Base class for loading public datasets from remote URLs with caching support.
 
     This abstract base class provides a common interface and implementation for downloading,
@@ -43,8 +44,8 @@ class BasePublicDatasetLoader(AIPerfLoggerMixin):
     url: ClassVar[str]
     filename: ClassVar[str] = "dataset.json"
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, user_config: UserConfig, **kwargs):
+        super().__init__(user_config=user_config, **kwargs)
         self.http_client = AioHttpClient(
             timeout=Environment.DATASET.PUBLIC_DATASET_TIMEOUT
         )

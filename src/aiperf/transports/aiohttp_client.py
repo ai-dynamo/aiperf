@@ -6,6 +6,7 @@ from typing import Any
 
 import aiohttp
 
+from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -102,6 +103,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                     ):
                         # Parse SSE stream with optimal performance
                         async for message in AsyncSSEStreamReader(response.content):
+                            AsyncSSEStreamReader.inspect_message_for_error(message)
                             record.responses.append(message)
                     else:
                         raw_response = await response.text()
@@ -114,7 +116,10 @@ class AioHttpClient(AIPerfLoggerMixin):
                             )
                         )
                     record.end_perf_ns = time.perf_counter_ns()
-
+        except SSEResponseError as e:
+            record.end_perf_ns = time.perf_counter_ns()
+            self.error(f"Error in SSE response: {e!r}")
+            record.error = ErrorDetails.from_exception(e)
         except Exception as e:
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Error in aiohttp request: {e!r}")

@@ -19,7 +19,7 @@ htmlcov/
 .mypy_cache/
 
 # Virtual Environment
-.venv/
+.venv*/
 venv/
 ENV/
 
@@ -31,7 +31,11 @@ ENV/
 
 # Local development files
 *.log
+.editorconfig
 .DS_Store
+
+# CI
+.github/
 
 # Docker
 .dockerignore
@@ -39,5 +43,8 @@ Dockerfile
 docker-compose*.yml
 .devcontainer/
 
+# Build artifacts
+archive/
 artifacts/
+dist/
 *.jsonl
