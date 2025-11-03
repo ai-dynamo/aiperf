@@ -12,3 +12,9 @@ class SSEFieldType(CaseInsensitiveStrEnum):
     ID = "id"
     RETRY = "retry"
     COMMENT = "comment"
+
+
+class SSEEventType(CaseInsensitiveStrEnum):
+    """Event types in an SSE message."""
+
+    ERROR = "error"

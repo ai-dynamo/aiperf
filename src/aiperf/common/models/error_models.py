@@ -65,12 +65,15 @@ class ErrorDetails(AIPerfBaseModel):
     @classmethod
     def from_exception(cls, e: BaseException) -> "ErrorDetails":
         """Create an error details object from an exception."""
-        return cls(
+        error_details = cls(
             type=e.__class__.__name__,
             message=cls._safe_repr(e),
             cause=cls._safe_repr(e.__cause__) if e.__cause__ else None,
             details=[cls._safe_repr(arg) for arg in e.args] if e.args else None,
         )
+        if hasattr(e, "error_code") and isinstance(e.error_code, int):
+            error_details.code = e.error_code
+        return error_details
 
 
 class ExitErrorInfo(AIPerfBaseModel):

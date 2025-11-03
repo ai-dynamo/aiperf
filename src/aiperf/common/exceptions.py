@@ -185,6 +185,14 @@ class ShutdownError(AIPerfError):
     """Exception raised when a service encounters an error while shutting down."""
 
 
+class SSEResponseError(AIPerfError):
+    """Exception raised when a SSE response contains an error."""
+
+    def __init__(self, message: str, error_code: int = 500) -> None:
+        self.error_code = error_code
+        super().__init__(message)
+
+
 class UnsupportedHookError(AIPerfError):
     """Exception raised when a hook is defined on a class that does not have any base classes that provide that hook type."""
 
