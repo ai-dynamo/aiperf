@@ -6,7 +6,6 @@ import contextlib
 import multiprocessing
 import os
 import platform
-import random
 import sys
 
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -99,14 +98,12 @@ def bootstrap_and_run_service(
                     # Silently continue if FD operations fail
                     pass
 
-        if user_config.input.random_seed is not None:
-            random.seed(user_config.input.random_seed)
-            # Try and set the numpy random seed
-            # https://numpy.org/doc/stable/reference/random/index.html#random-quick-start
-            with contextlib.suppress(ImportError):
-                import numpy as np
+        # Initialize global RandomGenerator for reproducible random number generation
+        from aiperf.common import random_generator as rng
 
-                np.random.seed(user_config.input.random_seed)
+        # Always reset and then initialize the global random generator to ensure a clean state
+        rng.reset()
+        rng.init(user_config.input.random_seed)
 
         try:
             await service.initialize()

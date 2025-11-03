@@ -14,13 +14,6 @@ from aiperf.common.exceptions import (
     NotInitializedError,
 )
 
-# Silence tokenizer warning on import and first use
-with (
-    contextlib.redirect_stdout(io.StringIO()) as _,
-    contextlib.redirect_stderr(io.StringIO()),
-):
-    from transformers import AutoTokenizer
-
 
 class Tokenizer:
     """
@@ -53,10 +46,19 @@ class Tokenizer:
             revision: The specific model version to use.
         """
         try:
-            tokenizer_cls = cls()
-            tokenizer_cls._tokenizer = AutoTokenizer.from_pretrained(
-                name, trust_remote_code=trust_remote_code, revision=revision
-            )
+            # Silence tokenizer warning on import and first use
+            with (
+                contextlib.redirect_stdout(io.StringIO()) as _,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                from transformers import AutoTokenizer
+
+                tokenizer_cls = cls()
+
+                tokenizer_cls._tokenizer = AutoTokenizer.from_pretrained(
+                    name, trust_remote_code=trust_remote_code, revision=revision
+                )
+
         except Exception as e:
             raise InitializationError(e) from e
         return tokenizer_cls

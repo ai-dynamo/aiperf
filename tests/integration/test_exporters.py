@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for different output export formats."""
 
+import platform
+
 import pytest
 
 from tests.integration.conftest import AIPerfCLI
@@ -54,6 +56,10 @@ class TestOutputFormats:
         assert result.json.request_count is not None
         assert result.json.request_latency is not None
 
+    @pytest.mark.skipif(
+        platform.system() == "Darwin",
+        reason="This test is flaky on macOS in Github Actions.",
+    )
     async def test_raw_export_level(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):

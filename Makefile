@@ -18,8 +18,8 @@
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app docker docker-run first-time-setup \
 		test-verbose init-files setup-venv setup-mkinit install-mock-server \
-		integration-tests integration-tests-ci integration-tests-verbose \
-		test-integration test-integration-ci test-integration-verbose \
+		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
+		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-stress stress-tests internal-help help
 
 
@@ -196,10 +196,10 @@ integration-tests-ci test-integration-ci: #? run integration tests with with AIP
 	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -n auto -v --tb=long $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode) passed!$(reset)\n"
 
-integration-tests-macos test-integration-macos: #? run integration tests with AIPerf Mock Server on macOS.
-	@printf "$(bold)$(blue)Running integration tests on macOS with AIPerf Mock Server...$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress and macos' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
-	@printf "$(bold)$(green)AIPerf Mock Server macOS integration tests passed!$(reset)\n"
+integration-tests-ci-macos test-integration-ci-macos: #? run integration tests with with AIPerf Mock Server for CI on macOS (non-parallel, verbose, no performance and no ffmpeg tests).
+	@printf "$(bold)$(blue)Running integration tests (CI mode on macOS) with AIPerf Mock Server...$(reset)\n"
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -v --tb=long $(args)
+	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode on macOS) passed!$(reset)\n"
 
 integration-tests-verbose test-integration-verbose: #? run integration tests with verbose output with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests (verbose, sequential) with AIPerf Mock Server...$(reset)\n"

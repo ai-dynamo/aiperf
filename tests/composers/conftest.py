@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import Mock, patch
+
 import pytest
+from PIL import Image
 
 from aiperf.common.config import (
     AudioConfig,
@@ -20,6 +23,27 @@ from aiperf.common.config import (
     UserConfig,
 )
 from aiperf.common.enums import CustomDatasetType
+
+
+@pytest.fixture(autouse=True)
+def mock_image_loading():
+    """Mock image loading for all composer tests to avoid filesystem dependencies."""
+    with (
+        patch("aiperf.dataset.generator.image.glob.glob") as mock_glob,
+        patch("aiperf.dataset.generator.image.Image.open") as mock_open,
+    ):
+        # Return a fake image path
+        mock_glob.return_value = ["/fake/path/test_image.jpg"]
+
+        # Create a mock image with copy() method
+        mock_image = Mock(spec=Image.Image)
+        mock_image.copy.return_value = mock_image
+
+        # Support context manager protocol
+        mock_open.return_value.__enter__ = Mock(return_value=mock_image)
+        mock_open.return_value.__exit__ = Mock(return_value=None)
+
+        yield
 
 
 @pytest.fixture

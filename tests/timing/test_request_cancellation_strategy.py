@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from aiperf.common import random_generator as rng
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.timing.config import TimingManagerConfig
 from aiperf.timing.request_cancellation_strategy import RequestCancellationStrategy
@@ -38,12 +39,16 @@ class TestRequestCancellationStrategy:
             random_seed=42,
         )
 
-        # Create two strategies with the same seed
+        # Create first strategy and generate decisions
+        rng.reset()
+        rng.init(42)
         strategy1 = RequestCancellationStrategy(config)
-        strategy2 = RequestCancellationStrategy(config)
-
-        # Generate the same sequence of decisions
         decisions1 = [strategy1.should_cancel_request() for _ in range(100)]
+
+        # Create second strategy with same seed and generate decisions
+        rng.reset()
+        rng.init(42)
+        strategy2 = RequestCancellationStrategy(config)
         decisions2 = [strategy2.should_cancel_request() for _ in range(100)]
 
         # Should be identical

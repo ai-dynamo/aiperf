@@ -82,16 +82,18 @@ class TestCoreFunctionality:
         trace_config.input.prompt.output_tokens.stddev = 8.0
 
         composer = CustomDatasetComposer(trace_config, mock_tokenizer)
-
-        with patch(
-            "aiperf.dataset.utils.sample_positive_normal_integer", return_value=20
-        ):
-            conversations = composer.create_dataset()
+        conversations = composer.create_dataset()
 
         assert len(conversations) > 0
+        # With global RNG, verify max_tokens is set to a positive integer
+        # around the mean of 120
         for conversation in conversations:
             for turn in conversation.turns:
-                assert turn.max_tokens == 20
+                assert turn.max_tokens is not None
+                assert turn.max_tokens > 0
+                assert isinstance(turn.max_tokens, int)
+                # Should be roughly around the mean of 120 (within 3 stddev)
+                assert 96 < turn.max_tokens < 144
 
     @patch("aiperf.dataset.composer.custom.utils.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))

@@ -33,7 +33,7 @@ class TestVideo:
                 --video-fps 4 \
                 --video-synth-type moving_shapes \
                 --prompt-input-tokens-mean 50 \
-                --num-dataset-entries 1 \
+                --num-dataset-entries 4 \
                 --request-rate 2.0 \
                 --request-count 4 \
                 --workers-max {defaults.workers_max}
@@ -71,7 +71,7 @@ class TestVideo:
                 --video-fps 6 \
                 --video-synth-type grid_clock \
                 --prompt-input-tokens-mean 50 \
-                --num-dataset-entries 2 \
+                --num-dataset-entries 4 \
                 --request-rate 2.0 \
                 --request-count 4 \
                 --workers-max {defaults.workers_max}

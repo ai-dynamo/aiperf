@@ -11,6 +11,8 @@ class BaseGenerator(AIPerfLoggerMixin, ABC):
 
     Provides a consistent interface for generating synthetic data while allowing
     each generator type to use its own specific configuration and runtime parameters.
+
+    Each class should create its own unique RNG in its __init__ method.
     """
 
     @abstractmethod

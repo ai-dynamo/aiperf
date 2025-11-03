@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import random
 
+from aiperf.common import random_generator as rng
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import TimingMode
 from aiperf.common.enums.timing_enums import RequestRateMode
@@ -106,6 +106,8 @@ class PoissonRateGenerator:
     are exponentially distributed with parameter λ. This attempts to model more
     realistic traffic patterns where requests arrive randomly but at a consistent
     average rate.
+
+    Uses the global RandomGenerator for reproducibility.
     """
 
     def __init__(self, config: TimingManagerConfig) -> None:
@@ -113,10 +115,8 @@ class PoissonRateGenerator:
             raise ValueError(
                 f"Request rate {config.request_rate} must be set and greater than 0 for {config.request_rate_mode!r}"
             )
-        # Initialize random number generator for reproducibility
-        self._rng = (
-            random.Random(config.random_seed) if config.random_seed else random.Random()
-        )
+
+        self._rng = rng.derive("timing.request.poisson_interval")
         self._request_rate: float = config.request_rate
 
     def next_interval(self) -> float:
@@ -124,8 +124,8 @@ class PoissonRateGenerator:
         Generate the next inter-arrival time for a Poisson process.
 
         For Poisson process, inter-arrival times are exponentially distributed.
-        random.expovariate(lambd) generates exponentially distributed random numbers
-        where lambd is the rate parameter (requests per second)
+        expovariate(lambd) generates exponentially distributed random numbers
+        where lambd is the rate parameter (requests per second).
         """
         return self._rng.expovariate(self._request_rate)
 

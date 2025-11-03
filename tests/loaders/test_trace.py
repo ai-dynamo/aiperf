@@ -131,7 +131,9 @@ class TestMooncakeTraceDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MooncakeTraceDatasetLoader(
-            filename, mock_prompt_generator, default_user_config
+            filename=filename,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
 
@@ -165,7 +167,9 @@ class TestMooncakeTraceDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MooncakeTraceDatasetLoader(
-            filename, mock_prompt_generator, default_user_config
+            filename=filename,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
 
@@ -189,7 +193,9 @@ class TestMooncakeTraceDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MooncakeTraceDatasetLoader(
-            filename, mock_prompt_generator, default_user_config
+            filename=filename,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
 
@@ -221,7 +227,9 @@ class TestMooncakeTraceDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MooncakeTraceDatasetLoader(
-            filename, mock_prompt_generator, default_user_config
+            filename=filename,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
         )
         result = loader.load_dataset()
 
@@ -238,7 +246,9 @@ class TestMooncakeTraceDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MooncakeTraceDatasetLoader(
-            filename, mock_prompt_generator, default_user_config
+            filename=filename,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
 
@@ -275,7 +285,9 @@ class TestMooncakeTraceDatasetLoader:
 
         user_config = self.make_user_config(start_offset, end_offset)
         loader = MooncakeTraceDatasetLoader(
-            filename, mock_prompt_generator, user_config
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
 
@@ -307,7 +319,9 @@ class TestMooncakeTraceDatasetLoader:
 
         user_config = self.make_user_config(start_offset, end_offset)
         loader = MooncakeTraceDatasetLoader(
-            filename, mock_prompt_generator, user_config
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
         )
         loader.load_dataset()
 
@@ -345,7 +359,9 @@ class TestMooncakeTraceDatasetLoader:
         }
 
         loader = MooncakeTraceDatasetLoader(
-            "dummy.jsonl", mock_prompt_generator, default_user_config
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
 
@@ -374,7 +390,9 @@ class TestMooncakeTraceDatasetLoader:
     ):
         """Test conversion with empty trace data."""
         loader = MooncakeTraceDatasetLoader(
-            "dummy.jsonl", mock_prompt_generator, default_user_config
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations({})
 
@@ -393,7 +411,9 @@ class TestMooncakeTraceDatasetLoader:
         }
 
         loader = MooncakeTraceDatasetLoader(
-            "dummy.jsonl", mock_prompt_generator, default_user_config
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
         )
         conversations = loader.convert_to_conversations(trace_data)
 
@@ -416,7 +436,9 @@ class TestMooncakeTraceDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MooncakeTraceDatasetLoader(
-            filename, mock_prompt_generator, default_user_config
+            filename=filename,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
 
@@ -440,7 +462,9 @@ class TestMooncakeTraceDatasetLoader:
         filename = create_jsonl_file(content)
 
         loader = MooncakeTraceDatasetLoader(
-            filename, mock_prompt_generator, default_user_config
+            filename=filename,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
         )
         dataset = loader.load_dataset()
 

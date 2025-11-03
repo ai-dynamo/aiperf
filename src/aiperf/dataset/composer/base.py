@@ -1,17 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import random
 from abc import ABC, abstractmethod
 
-import numpy as np
-
+from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.dataset import utils
 from aiperf.dataset.generator import (
     AudioGenerator,
     ImageGenerator,
@@ -24,18 +21,23 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
     def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs):
         self.config = config
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
-        self.prompt_generator = PromptGenerator(config.input.prompt, tokenizer)
+
+        # Create generators
+        self.prompt_generator = PromptGenerator(
+            config.input.prompt,
+            tokenizer,
+        )
         self.image_generator = ImageGenerator(config.input.image)
         self.audio_generator = AudioGenerator(config.input.audio)
         self.video_generator = VideoGenerator(config.input.video)
+
+        self._model_selector_rng = rng.derive("composer.turn.model_selection")
+        self._max_tokens_rng = rng.derive("composer.turn.max_tokens")
+
         self.turn_count = 0
 
         # Initialize sequence distribution
         self._seq_distribution = config.input.prompt.get_sequence_distribution()
-
-        # Initialize RNG for sequence distribution sampling (avoid reseeding on each sample)
-        seed = getattr(self.config.input, "random_seed", None)
-        self._seq_rng = np.random.default_rng(seed) if seed is not None else None
 
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
@@ -50,12 +52,14 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         ...
 
+    # TODO: This can be refactored to be similar to the DatasetSamplingStrategyProtocol in order
+    # to allow for more flexible model selection strategies in the future.
     def _select_model_name(self) -> str:
         if (
             self.config.endpoint.model_selection_strategy
             == ModelSelectionStrategy.RANDOM
         ):
-            return random.choice(self.config.endpoint.model_names)
+            return self._model_selector_rng.choice(self.config.endpoint.model_names)
         elif (
             self.config.endpoint.model_selection_strategy
             == ModelSelectionStrategy.ROUND_ROBIN
@@ -92,7 +96,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 or max(128, self.config.input.prompt.input_tokens.mean // 2),
             )
         else:
-            seq_lengths = self._seq_distribution.sample(random_state=self._seq_rng)
+            seq_lengths = self._seq_distribution.sample()
 
         self._turn_sequence_cache[turn_id] = seq_lengths
         return seq_lengths
@@ -120,7 +124,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             output_tokens_config = self.config.input.prompt.output_tokens
             if output_tokens_config.mean is not None:
                 stddev = output_tokens_config.stddev
-                turn.max_tokens = utils.sample_positive_normal_integer(
+                turn.max_tokens = self._max_tokens_rng.sample_positive_normal_integer(
                     output_tokens_config.mean, stddev
                 )
 
