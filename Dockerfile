@@ -126,10 +126,6 @@ COPY --from=wheel-builder /dist /dist
 RUN uv pip install /dist/aiperf-*.whl \
     && rm -rf /dist /workspace/pyproject.toml
 
-# Write out the installed python packages to a requirements file
-# This is used in the generation of attribution files
-RUN uv pip list --format freeze > /python-requirements.txt
-
 ############################################
 ############# Runtime Image ################
 ############################################
