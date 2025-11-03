@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-FROM python:3.12-slim AS base
+FROM python:3.12-slim-bookworm AS base
 
 ENV USERNAME=appuser
 ENV APP_NAME=aiperf
@@ -11,6 +11,15 @@ RUN groupadd -r $USERNAME \
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Create virtual environment
+RUN mkdir /opt/$APP_NAME \
+    && uv venv /opt/$APP_NAME/venv --python 3.12 \
+    && chown -R $USERNAME:$USERNAME /opt/$APP_NAME
+
+# Activate virtual environment
+ENV VIRTUAL_ENV=/opt/$APP_NAME/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 #######################################
 ########## Local Development ##########
@@ -54,32 +63,95 @@ RUN mkdir -p /home/$USERNAME/.cache/
 ENTRYPOINT ["/bin/bash"]
 
 ############################################
-############# Final Build ##################
+############ Wheel Builder #################
 ############################################
-FROM base AS final
+FROM base AS wheel-builder
 
-# Create virtual environment
-RUN mkdir /opt/$APP_NAME \
-    && uv venv /opt/$APP_NAME/venv --python 3.12 \
-    && chown -R $USERNAME:$USERNAME /opt/$APP_NAME
+WORKDIR /workspace
 
-# Activate virtual environment
-ENV VIRTUAL_ENV=/opt/$APP_NAME/venv
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+# Copy the entire application
+COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md ./src/ /workspace/
 
-### INSTALLATION ###
+# Build the wheel
+RUN uv build --wheel --out-dir /dist
 
-# Copy pyproject first for better layer caching
-COPY pyproject.toml .
+############################################
+############# Env Builder ##################
+############################################
+FROM base AS env-builder
+
+WORKDIR /workspace
+
+# Build ffmpeg from source
+RUN apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        nasm \
+        pkg-config \
+        wget \
+        yasm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and build ffmpeg
+RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz \
+    && tar -xf ffmpeg-7.1.tar.xz \
+    && cd ffmpeg-7.1 \
+    && ./configure \
+        --prefix=/opt/ffmpeg \
+        --disable-gpl \
+        --disable-nonfree \
+        --enable-shared \
+        --disable-static \
+        --disable-doc \
+        --disable-htmlpages \
+        --disable-manpages \
+        --disable-podpages \
+        --disable-txtpages \
+    && make -j$(nproc) \
+    && make install \
+    && cd .. \
+    && rm -rf ffmpeg-7.1 ffmpeg-7.1.tar.xz
+
+# Create directories for the nvs user (UID 1000 in NVIDIA distroless)
+RUN mkdir -p /app /app/artifacts /app/.cache \
+    && chown -R 1000:1000 /app \
+    && chmod -R 755 /app
 
 # Install only the dependencies using uv
+COPY pyproject.toml .
 RUN uv sync --active --no-install-project
 
 # Copy the rest of the application
-COPY . .
+COPY --from=wheel-builder /dist /dist
+RUN uv pip install /dist/aiperf-*.whl \
+    && rm -rf /dist /workspace/pyproject.toml
 
-# Install the project
-RUN uv sync --active --no-dev
+############################################
+############# Runtime Image ################
+############################################
+FROM nvcr.io/nvidia/distroless/python:3.12-v3.4.17-dev AS runtime
 
-# Command to run the application
-ENTRYPOINT ["aiperf"]
+# Include license and attribution files
+COPY LICENSE ATTRIBUTIONS*.md /legal/
+
+# Copy bash with executable permissions preserved using --chmod
+COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
+
+# Copy ffmpeg binaries and libraries
+COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg
+ENV PATH="/opt/ffmpeg/bin:${PATH}" \
+    LD_LIBRARY_PATH="/opt/ffmpeg/lib:${LD_LIBRARY_PATH}"
+
+# Setup the directories with permissions for nvs user
+COPY --from=env-builder --chown=1000:1000 /app /app
+WORKDIR /app
+ENV HOME=/app
+
+# Copy the virtual environment and set up
+COPY --from=env-builder --chown=1000:1000 /opt/aiperf/venv /opt/aiperf/venv
+
+ENV VIRTUAL_ENV=/opt/aiperf/venv \
+    PATH="/opt/aiperf/venv/bin:${PATH}"
+
+# Set bash as entrypoint
+ENTRYPOINT ["/bin/bash", "-c"]
