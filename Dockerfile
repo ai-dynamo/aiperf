@@ -70,7 +70,7 @@ FROM base AS wheel-builder
 WORKDIR /workspace
 
 # Copy the entire application
-COPY . /workspace
+COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md ./src/ /workspace/
 
 # Build the wheel
 RUN uv build --wheel --out-dir /dist
@@ -132,7 +132,7 @@ RUN uv pip install /dist/aiperf-*.whl \
 FROM nvcr.io/nvidia/distroless/python:3.12-v3.4.17-dev AS runtime
 
 # Include license and attribution files
-COPY LICENSE ATTRIBUTIONS.md ATTRIBUTIONS-container.md /legal/
+COPY LICENSE ATTRIBUTIONS*.md /legal/
 
 # Copy bash with executable permissions preserved using --chmod
 COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
