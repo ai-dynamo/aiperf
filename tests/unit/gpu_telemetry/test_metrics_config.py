@@ -27,6 +27,14 @@ from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
 class TestMetricsConfigLoader:
     """Tests for MetricsConfigLoader class."""
 
+    @pytest.fixture(autouse=True)
+    def reset_global_state(self):
+        """Reset global DCGM_TO_FIELD_MAPPING before each test for isolation."""
+        original_mapping = DCGM_TO_FIELD_MAPPING.copy()
+        yield
+        DCGM_TO_FIELD_MAPPING.clear()
+        DCGM_TO_FIELD_MAPPING.update(original_mapping)
+
     def test_parse_valid_csv(self):
         """Test parsing a valid DCGM metrics CSV file."""
         csv_content = """# Test CSV
