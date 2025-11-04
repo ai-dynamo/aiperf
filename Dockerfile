@@ -139,8 +139,8 @@ COPY LICENSE ATTRIBUTIONS*.md /legal/
 # Copy bash with executable permissions preserved using --chmod
 COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
 
-# Copy libvpx libraries
-COPY --from=env-builder --chown=1000:1000 /usr/lib/x86_64-linux-gnu/libvpx.so* /usr/lib/x86_64-linux-gnu/
+# Copy libvpx libraries for the appropriate architecture
+COPY --from=env-builder --chown=1000:1000 /usr/lib/*/libvpx.so* /usr/lib/
 
 # Copy ffmpeg binaries and libraries
 COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg
