@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Any
 
 from aiperf.common.config import UserConfig
-from aiperf.common.constants import NANOS_PER_MILLIS
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ResultsProcessorType
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
@@ -34,8 +34,8 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
                 "TimesliceMetricResultsProcessor requires slice_duration to be set"
             )
 
-        self._slice_duration_ns: int = (
-            self.user_config.output.slice_duration * NANOS_PER_MILLIS
+        self._slice_duration_ns: int = int(
+            self.user_config.output.slice_duration * NANOS_PER_SECOND
         )
 
         # Set up aggregate metric object default initialization for each timeslice

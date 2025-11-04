@@ -105,9 +105,9 @@ class OutputConfig(BaseConfig):
         return self
 
     slice_duration: Annotated[
-        int | None,
+        float | None,
         Field(
-            description="The duration (in milliseconds) of an individual time slice to be used post-benchmark in time-slicing mode.",
+            description="The duration (in seconds) of an individual time slice to be used post-benchmark in time-slicing mode.",
         ),
         CLIParameter(
             name=("--slice-duration"),
