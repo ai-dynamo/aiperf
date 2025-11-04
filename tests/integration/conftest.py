@@ -207,6 +207,24 @@ async def aiperf_mock_server(
                     f"(URL: {url}/health)"
                 )
 
+            # Wait for DCGM endpoints to be ready
+            for _ in range(100):
+                try:
+                    async with session.get(
+                        f"{url}/dcgm1/metrics", timeout=aiohttp.ClientTimeout(total=2)
+                    ) as resp:
+                        if resp.status == 200:
+                            break
+                except (aiohttp.ClientError, asyncio.TimeoutError):
+                    pass
+                await real_sleep(0.1)
+            else:
+                # log warning but continue so that we have visibility but not fail the test
+                logging.warning(
+                    f"DCGM endpoints not ready after 100 attempts (URL: {url}/dcgm1/metrics). "
+                    f"GPU telemetry tests may fail."
+                )
+
         yield AIPerfMockServer(
             host=host, port=mock_server_port, url=url, process=process
         )
