@@ -112,7 +112,9 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz \
     && make -j$(nproc) \
     && make install \
     && cd .. \
-    && rm -rf ffmpeg-7.1 ffmpeg-7.1.tar.xz
+    && rm -rf ffmpeg-7.1 ffmpeg-7.1.tar.xz \
+    && cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
+       cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || true
 
 # Create directories for the nvs user (UID 1000 in NVIDIA distroless)
 RUN mkdir -p /app /app/artifacts /app/.cache \
@@ -139,10 +141,7 @@ COPY LICENSE ATTRIBUTIONS*.md /legal/
 # Copy bash with executable permissions preserved using --chmod
 COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
 
-# Copy libvpx libraries for the appropriate architecture
-COPY --from=env-builder --chown=1000:1000 /usr/lib/*/libvpx.so* /usr/lib/
-
-# Copy ffmpeg binaries and libraries
+# Copy ffmpeg binaries and libraries (includes libvpx)
 COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg
 ENV PATH="/opt/ffmpeg/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/ffmpeg/lib:${LD_LIBRARY_PATH}"
