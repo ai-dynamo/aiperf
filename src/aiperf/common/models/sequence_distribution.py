@@ -44,6 +44,29 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 logger = AIPerfLogger(__name__)
 
 
+def _validate_probability_sum(pairs: list[SequenceLengthPair]) -> None:
+    """
+    Validate that probabilities sum to approximately 100.0.
+
+    This is a module-level helper used by both SequenceLengthDistribution
+    and DistributionParser to avoid code duplication.
+
+    Args:
+        pairs: List of SequenceLengthPair objects to validate
+
+    Raises:
+        ValueError: If probabilities don't sum to 100.0 (within floating-point tolerance)
+    """
+    total_prob = sum(pair.probability for pair in pairs)
+
+    # Allow small floating-point errors
+    if not np.isclose(total_prob, 100.0, rtol=1e-6, atol=1e-6):
+        raise ValueError(
+            f"Probabilities must sum to 100.0, got {total_prob:.6f}. "
+            f"Pairs: {[str(p) for p in pairs]}"
+        )
+
+
 @dataclass(frozen=True)
 class SequenceLengthPair:
     """Immutable representation of an ISL/OSL pair with probability weight and optional stddevs."""
@@ -107,21 +130,10 @@ class SequenceLengthDistribution:
 
         self._rng = rng.derive("models.sequence.distribution")
         self._pairs = tuple(pairs)  # Immutable copy
-        self._validate_probabilities()
+        _validate_probability_sum(list(self._pairs))
         self._cumulative_probs = self._compute_cumulative_probabilities()
 
         logger.debug(f"Created distribution with {len(self._pairs)} pairs: {self}")
-
-    def _validate_probabilities(self) -> None:
-        """Validate that probabilities sum to approximately 100.0."""
-        total_prob = sum(pair.probability for pair in self._pairs)
-
-        # Allow small floating-point errors
-        if not np.isclose(total_prob, 100.0, rtol=1e-6, atol=1e-6):
-            raise ValueError(
-                f"Probabilities must sum to 100.0, got {total_prob:.6f}. "
-                f"Pairs: {[str(p) for p in self._pairs]}"
-            )
 
     def _compute_cumulative_probabilities(self) -> np.ndarray:
         """Compute cumulative probability distribution for efficient sampling."""
@@ -285,14 +297,17 @@ class DistributionParser:
         try:
             # Try JSON format first
             if dist_str.startswith("{"):
-                return cls._validate_json_format(dist_str)
-
+                pairs = cls._validate_json_format(dist_str)
             # Try bracket format
-            if dist_str.startswith("[") and dist_str.endswith("]"):
-                return cls._validate_bracket_format(dist_str[1:-1])
-
+            elif dist_str.startswith("[") and dist_str.endswith("]"):
+                pairs = cls._validate_bracket_format(dist_str[1:-1])
             # Default to semicolon format
-            return cls._validate_semicolon_format(dist_str)
+            else:
+                pairs = cls._validate_semicolon_format(dist_str)
+
+            # Validate probability sum without creating distribution object
+            _validate_probability_sum(pairs)
+            return pairs
 
         except Exception as e:
             raise ValueError(
