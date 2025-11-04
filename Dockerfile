@@ -114,7 +114,7 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz \
     && cd .. \
     && rm -rf ffmpeg-7.1 ffmpeg-7.1.tar.xz \
     && cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
-       cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || true
+       cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; }
 
 # Create directories for the nvs user (UID 1000 in NVIDIA distroless)
 RUN mkdir -p /app /app/artifacts /app/.cache \
