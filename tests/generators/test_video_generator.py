@@ -21,8 +21,8 @@ def base_config():
         height=64,
         duration=0.5,
         fps=2,
-        format=VideoFormat.MP4,
-        codec="libx264",
+        format=VideoFormat.WEBM,
+        codec="libvpx-vp9",
         synth_type=VideoSynthType.MOVING_SHAPES,
     )
 
@@ -107,8 +107,8 @@ class TestVideoGenerator:
             height=None,
             duration=1.0,
             fps=4,
-            format=VideoFormat.MP4,
-            codec="libx264",
+            format=VideoFormat.WEBM,
+            codec="libvpx-vp9",
             synth_type=VideoSynthType.MOVING_SHAPES,
         )
         generator = VideoGenerator(config)
@@ -129,8 +129,8 @@ class TestVideoGenerator:
             height=height,
             duration=duration,
             fps=fps,
-            format=VideoFormat.MP4,
-            codec="libx264",
+            format=VideoFormat.WEBM,
+            codec="libvpx-vp9",
             synth_type=synth_type,
         )
         generator = VideoGenerator(config)
@@ -188,31 +188,31 @@ class TestVideoGenerator:
             patch.object(generator, "_check_ffmpeg_availability", return_value=True),
             patch.object(
                 generator,
-                "_create_mp4_with_pipes",
+                "_create_video_with_pipes",
                 side_effect=Exception("Codec not supported"),
             ),
             patch.object(
                 generator,
-                "_create_mp4_with_temp_files",
+                "_create_video_with_temp_files",
                 side_effect=Exception("Codec not supported"),
             ),
             pytest.raises(RuntimeError, match="[Cc]odec"),
         ):
             generator._encode_frames_to_base64(frames)
 
-    def test_create_mp4_with_pipes_fallback(self, base_config):
+    def test_create_video_with_pipes_fallback(self, base_config):
         """Test fallback to temp files when pipes fail."""
         generator = VideoGenerator(base_config)
         frames = [Image.new("RGB", (64, 64), (255, 0, 0))]
-        mock_result = "data:video/mp4;base64,FAKE_BASE64"
+        mock_result = "data:video/webm;base64,FAKE_BASE64"
 
         with (
             patch.object(
-                generator, "_create_mp4_with_pipes", side_effect=BrokenPipeError
+                generator, "_create_video_with_pipes", side_effect=BrokenPipeError
             ),
             patch.object(
-                generator, "_create_mp4_with_temp_files", return_value=mock_result
+                generator, "_create_video_with_temp_files", return_value=mock_result
             ),
         ):
-            result = generator._create_mp4_with_ffmpeg(frames)
+            result = generator._create_video_with_ffmpeg(frames)
             assert result == mock_result
