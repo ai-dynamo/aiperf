@@ -182,7 +182,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         dataset = await loader.load_dataset()
         return await loader.convert_to_conversations(dataset)
 
-    async def _load_custom_dataset(self) -> list[Conversation]:
+    def _load_custom_dataset(self) -> list[Conversation]:
         composer = ComposerFactory.create_instance(
             ComposerType.CUSTOM,
             config=self.user_config,
@@ -190,10 +190,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         return composer.create_dataset()
 
-    async def _load_synthetic_dataset(self) -> list[Conversation]:
+    def _load_synthetic_dataset(self) -> list[Conversation]:
         endpoint_type = getattr(self.user_config.endpoint, "type", None)
+        endpoint_name = endpoint_type.name.lower() if endpoint_type else ""
 
-        if endpoint_type and endpoint_type.name.lower() == "rankings":
+        if "rankings" in endpoint_name:
             composer_type = ComposerType.SYNTHETIC_RANKINGS
         else:
             composer_type = ComposerType.SYNTHETIC

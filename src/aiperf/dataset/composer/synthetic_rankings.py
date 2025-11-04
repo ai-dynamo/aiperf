@@ -15,12 +15,11 @@ from aiperf.dataset.composer.base import BaseDatasetComposer
 class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
     """Composer that generates synthetic data for the Rankings endpoint.
 
-    Each entry contains one query and multiple passages.
+    Each dataset entry contains one query and multiple passages.
     """
 
     def __init__(self, config: UserConfig, tokenizer: Tokenizer):
         super().__init__(config, tokenizer)
-
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
         self._ranking_rng = rng.derive("composer.rankings")
 
@@ -33,11 +32,11 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
     def create_dataset(self) -> list[Conversation]:
         """Generate synthetic dataset for the rankings endpoint.
 
-        Each conversation contains a single turn with one query and multiple passages.
+        Each conversation contains one turn with one query and multiple passages.
         """
         conversations = []
-        num_entries = self.config.input.conversation.num_dataset_entries or 100
-        num_passages = self.config.input.prompt.batch_size or 10
+        num_entries = self.config.input.conversation.num_dataset_entries
+        num_passages = self.config.input.prompt.batch_size
 
         for _ in range(num_entries):
             conversation = Conversation(session_id=self.session_id_generator.next())
@@ -48,7 +47,7 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         return conversations
 
     def _create_turn(self, num_passages: int) -> Turn:
-        """Create a single ranking turn with one query and multiple passages."""
+        """Create a single ranking turn with one synthetic query and multiple synthetic passages."""
         turn = Turn()
 
         query_text = self.prompt_generator.generate(
@@ -66,7 +65,6 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
             passages.contents.append(passage_text)
 
         turn.texts.extend([query, passages])
-
         self._finalize_turn(turn)
         return turn
 
