@@ -142,8 +142,7 @@ The JSON provides a hierarchical structure with all timeslices in a single file:
     "model": "Qwen/Qwen3-0.6B",
     "endpoint": "/v1/chat/completions",
     ...
-  },
-  "total_slices": 6
+  }
 }
 ```
 
