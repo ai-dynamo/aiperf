@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from aiperf.common.config import OutputConfig, UserConfig
-from aiperf.common.constants import NANOS_PER_MILLIS
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
 from aiperf.common.models import MetricResult
@@ -37,20 +37,20 @@ class TestTimesliceMetricResultsProcessor:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test processor initialization sets up timeslice-specific data structures."""
-        mock_user_config.output = OutputConfig(slice_duration=1000)
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
 
         assert hasattr(processor, "_timeslice_instances_maps")
         assert hasattr(processor, "_timeslice_results")
         assert hasattr(processor, "_slice_duration_ns")
-        assert processor._slice_duration_ns == 1000 * NANOS_PER_MILLIS
+        assert processor._slice_duration_ns == 1.0 * NANOS_PER_SECOND
 
     @pytest.mark.asyncio
     async def test_get_instances_map_requires_request_start_ns(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test that get_instances_map raises ValueError when request_start_ns is None."""
-        mock_user_config.output = OutputConfig(slice_duration=1000)
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
 
         with pytest.raises(ValueError, match="must be passed a request_start_ns"):
@@ -61,7 +61,7 @@ class TestTimesliceMetricResultsProcessor:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test that get_results raises ValueError when request_start_ns is None."""
-        mock_user_config.output = OutputConfig(slice_duration=1000)
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
 
         with pytest.raises(ValueError, match="must be passed a request_start_ns"):
@@ -72,22 +72,22 @@ class TestTimesliceMetricResultsProcessor:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test that metrics are separated into different timeslices based on timestamp."""
-        mock_user_config.output = OutputConfig(slice_duration=1000)  # 1 second
+        mock_user_config.output = OutputConfig(slice_duration=1.0)  # 1 second
         processor = TimesliceMetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
-        # Process request in first timeslice (500ms)
+        # Process request in first timeslice (0.5 seconds)
         message1 = create_metric_records_message(
             x_request_id="test-1",
-            request_start_ns=500 * NANOS_PER_MILLIS,
+            request_start_ns=int(0.5 * NANOS_PER_SECOND),
             results=[{"test_record": 42.0}],
         )
         await processor.process_result(message1.to_data())
 
-        # Process request in second timeslice (1500ms)
+        # Process request in second timeslice (1.5 seconds)
         message2 = create_metric_records_message(
             x_request_id="test-2",
-            request_start_ns=1500 * NANOS_PER_MILLIS,
+            request_start_ns=int(1.5 * NANOS_PER_SECOND),
             results=[{"test_record": 84.0}],
         )
         await processor.process_result(message2.to_data())
@@ -103,21 +103,21 @@ class TestTimesliceMetricResultsProcessor:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test that metrics in the same timeslice are accumulated together."""
-        mock_user_config.output = OutputConfig(slice_duration=1000)  # 1 second
+        mock_user_config.output = OutputConfig(slice_duration=1.0)  # 1 second
         processor = TimesliceMetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         # Process two requests in same timeslice (both in first second)
         message1 = create_metric_records_message(
             x_request_id="test-1",
-            request_start_ns=300 * NANOS_PER_MILLIS,
+            request_start_ns=int(0.3 * NANOS_PER_SECOND),
             results=[{"test_record": 10.0}],
         )
         await processor.process_result(message1.to_data())
 
         message2 = create_metric_records_message(
             x_request_id="test-2",
-            request_start_ns=700 * NANOS_PER_MILLIS,
+            request_start_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{"test_record": 20.0}],
         )
         await processor.process_result(message2.to_data())
@@ -131,21 +131,21 @@ class TestTimesliceMetricResultsProcessor:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test that aggregate metrics work correctly per timeslice."""
-        mock_user_config.output = OutputConfig(slice_duration=1000)  # 1 second
+        mock_user_config.output = OutputConfig(slice_duration=1.0)  # 1 second
         processor = TimesliceMetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
 
         # First timeslice - two requests
         message1 = create_metric_records_message(
             x_request_id="test-1",
-            request_start_ns=500 * NANOS_PER_MILLIS,
+            request_start_ns=int(0.5 * NANOS_PER_SECOND),
             results=[{RequestCountMetric.tag: 5}],
         )
         await processor.process_result(message1.to_data())
 
         message2 = create_metric_records_message(
             x_request_id="test-2",
-            request_start_ns=700 * NANOS_PER_MILLIS,
+            request_start_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{RequestCountMetric.tag: 3}],
         )
         await processor.process_result(message2.to_data())
@@ -153,7 +153,7 @@ class TestTimesliceMetricResultsProcessor:
         # Second timeslice - one request
         message3 = create_metric_records_message(
             x_request_id="test-3",
-            request_start_ns=1500 * NANOS_PER_MILLIS,
+            request_start_ns=int(1.5 * NANOS_PER_SECOND),
             results=[{RequestCountMetric.tag: 7}],
         )
         await processor.process_result(message3.to_data())
@@ -167,30 +167,30 @@ class TestTimesliceMetricResultsProcessor:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test behavior at timeslice boundaries."""
-        mock_user_config.output = OutputConfig(slice_duration=1000)  # 1 second
+        mock_user_config.output = OutputConfig(slice_duration=1.0)  # 1 second
         processor = TimesliceMetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
-        # Request at 999ms (should be in timeslice 0)
+        # Request at 0.999s (should be in timeslice 0)
         message1 = create_metric_records_message(
             x_request_id="test-1",
-            request_start_ns=999 * NANOS_PER_MILLIS,
+            request_start_ns=int(0.999 * NANOS_PER_SECOND),
             results=[{"test_record": 1.0}],
         )
         await processor.process_result(message1.to_data())
 
-        # Request at 1000ms (should be in timeslice 1)
+        # Request at 1.0s (should be in timeslice 1)
         message2 = create_metric_records_message(
             x_request_id="test-2",
-            request_start_ns=1000 * NANOS_PER_MILLIS,
+            request_start_ns=int(1.0 * NANOS_PER_SECOND),
             results=[{"test_record": 2.0}],
         )
         await processor.process_result(message2.to_data())
 
-        # Request at 1001ms (should be in timeslice 1)
+        # Request at 1.001s (should be in timeslice 1)
         message3 = create_metric_records_message(
             x_request_id="test-3",
-            request_start_ns=1001 * NANOS_PER_MILLIS,
+            request_start_ns=int(1.001 * NANOS_PER_SECOND),
             results=[{"test_record": 3.0}],
         )
         await processor.process_result(message3.to_data())
@@ -209,7 +209,7 @@ class TestTimesliceMetricResultsProcessor:
             # Simple derive func that returns a constant based on existence of data
             return 100.0 if results_dict else 0.0
 
-        mock_user_config.output = OutputConfig(slice_duration=1000)
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
         processor.derive_funcs = {RequestThroughputMetric.tag: mock_derive_func}
 
@@ -232,7 +232,7 @@ class TestTimesliceMetricResultsProcessor:
         def failing_derive_func(results_dict: MetricResultsDict):
             raise NoMetricValue("Cannot derive value")
 
-        mock_user_config.output = OutputConfig(slice_duration=1000)
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
         processor.derive_funcs = {RequestThroughputMetric.tag: failing_derive_func}
         processor._timeslice_results[0]["base_metric"] = 42
@@ -256,7 +256,7 @@ class TestTimesliceMetricResultsProcessor:
         def failing_derive_func(results_dict: MetricResultsDict):
             raise ValueError("Calculation error")
 
-        mock_user_config.output = OutputConfig(slice_duration=1000)
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
         processor.derive_funcs = {RequestThroughputMetric.tag: failing_derive_func}
         processor._timeslice_results[0]["base_metric"] = 42
@@ -273,7 +273,7 @@ class TestTimesliceMetricResultsProcessor:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test summarize returns dict mapping timeslice indices to metric results."""
-        mock_user_config.output = OutputConfig(slice_duration=1000)
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {RequestLatencyMetric.tag: MetricType.RECORD}
 
@@ -311,7 +311,7 @@ class TestTimesliceMetricResultsProcessor:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test summarize handles empty timeslices correctly."""
-        mock_user_config.output = OutputConfig(slice_duration=1000)
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
 
         # No data processed
@@ -327,15 +327,15 @@ class TestTimesliceMetricResultsProcessor:
     ) -> None:
         """Test that a different slice_duration value works correctly."""
         # Test with 500ms slices (different from default 1000ms)
-        mock_user_config.output = OutputConfig(slice_duration=500)
+        mock_user_config.output = OutputConfig(slice_duration=0.5)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
-        # Process requests across multiple 500ms slices
+        # Process requests across multiple 0.5s slices
         for i in range(4):
             message = create_metric_records_message(
                 x_request_id=f"test-{i}",
-                request_start_ns=(i * 500 + 250) * NANOS_PER_MILLIS,
+                request_start_ns=int((i * 0.5 + 0.25) * NANOS_PER_SECOND),
                 results=[{"test_record": float(i)}],
             )
             await processor.process_result(message.to_data())
@@ -353,13 +353,13 @@ class TestTimesliceMetricResultsProcessor:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test that each timeslice gets its own metric instances."""
-        mock_user_config.output = OutputConfig(slice_duration=1000)
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = TimesliceMetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
 
         # Get instances for two different timestamps in different timeslices
-        request_start_ns_1 = 500 * NANOS_PER_MILLIS
-        request_start_ns_2 = 1500 * NANOS_PER_MILLIS
+        request_start_ns_1 = int(0.5 * NANOS_PER_SECOND)
+        request_start_ns_2 = int(1.5 * NANOS_PER_SECOND)
 
         instances_map_0 = await processor.get_instances_map(request_start_ns_1)
         instances_map_1 = await processor.get_instances_map(request_start_ns_2)
