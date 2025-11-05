@@ -190,11 +190,13 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         return composer.create_dataset()
 
+    def _is_rankings_endpoint(self, endpoint_type) -> bool:
+        return "rankings" in getattr(endpoint_type, "name", "").lower()
+
     def _load_synthetic_dataset(self) -> list[Conversation]:
         endpoint_type = getattr(self.user_config.endpoint, "type", None)
-        endpoint_name = endpoint_type.name.lower() if endpoint_type else ""
 
-        if "rankings" in endpoint_name:
+        if self._is_rankings_endpoint(endpoint_type):
             composer_type = ComposerType.SYNTHETIC_RANKINGS
         else:
             composer_type = ComposerType.SYNTHETIC

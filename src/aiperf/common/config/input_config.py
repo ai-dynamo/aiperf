@@ -318,6 +318,36 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.GOODPUT
 
+    rankings_passages_mean: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Mean number of passages per rankings entry (per query). "
+                "If not set, falls back to --prompt-batch-size (default 1)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-passages-mean",),
+            group=_CLI_GROUP,
+        ),
+    ] = 1
+
+    rankings_passages_stddev: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Stddev for passages per rankings entry. "
+                "If not set, defaults to 0 (fixed at mean)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-passages-stddev",),
+            group=_CLI_GROUP,
+        ),
+    ] = 0
+
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
     video: VideoConfig = VideoConfig()

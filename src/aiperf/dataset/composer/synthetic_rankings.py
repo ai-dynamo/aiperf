@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common import random_generator as rng
+import random
+
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import ComposerType
 from aiperf.common.factories import ComposerFactory
@@ -21,7 +22,7 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: UserConfig, tokenizer: Tokenizer):
         super().__init__(config, tokenizer)
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
-        self._ranking_rng = rng.derive("composer.rankings")
+        random.seed(config.input.random_seed)
 
         if not self.include_prompt:
             raise ValueError(
@@ -34,11 +35,15 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
 
         Each conversation contains one turn with one query and multiple passages.
         """
-        conversations = []
+        conversations: list[Conversation] = []
         num_entries = self.config.input.conversation.num_dataset_entries
-        num_passages = self.config.input.prompt.batch_size
+        num_passages_mean = self.config.input.rankings_passages_mean
+        num_passages_std = self.config.input.rankings_passages_stddev
 
         for _ in range(num_entries):
+            num_passages = self._sample_positive_int(
+                num_passages_mean, num_passages_std
+            )
             conversation = Conversation(session_id=self.session_id_generator.next())
             turn = self._create_turn(num_passages=num_passages)
             conversation.turns.append(turn)
@@ -66,7 +71,19 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
 
         turn.texts.extend([query, passages])
         self._finalize_turn(turn)
+
+        self.debug(
+            lambda: f"[rankings] query_len={len(query_text)} tokens, passages={num_passages}"
+        )
         return turn
+
+    @staticmethod
+    def _sample_positive_int(mean: float, std: float) -> int:
+        """Sample a positive integer using a normal distribution (minimum 1)."""
+        if std <= 0:
+            return max(1, int(mean))
+        value = int(round(random.gauss(mean, std)))
+        return max(1, value)
 
     @property
     def include_prompt(self) -> bool:
