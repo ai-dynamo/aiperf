@@ -323,8 +323,7 @@ class InputConfig(BaseConfig):
         Field(
             ge=1,
             description=(
-                "Mean number of passages per rankings entry (per query). "
-                "If not set, falls back to --prompt-batch-size (default 1)."
+                "Mean number of passages per rankings entry (per query)(default 1)."
             ),
         ),
         CLIParameter(
@@ -337,10 +336,7 @@ class InputConfig(BaseConfig):
         int,
         Field(
             ge=0,
-            description=(
-                "Stddev for passages per rankings entry. "
-                "If not set, defaults to 0 (fixed at mean)."
-            ),
+            description=("Stddev for passages per rankings entry (default 0)."),
         ),
         CLIParameter(
             name=("--rankings-passages-stddev",),

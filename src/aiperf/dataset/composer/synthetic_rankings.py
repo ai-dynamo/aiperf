@@ -73,7 +73,7 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         self._finalize_turn(turn)
 
         self.debug(
-            lambda: f"[rankings] query_len={len(query_text)} tokens, passages={num_passages}"
+            lambda: f"[rankings] query_len={len(query_text)} chars, passages={num_passages}"
         )
         return turn
 
