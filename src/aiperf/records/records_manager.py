@@ -17,6 +17,7 @@ from aiperf.common.enums import (
     CreditPhase,
     GPUTelemetryMode,
     MessageType,
+    ResultsProcessorType,
     ServiceType,
 )
 from aiperf.common.environment import Environment
@@ -137,6 +138,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
         self._telemetry_results_processors: list[TelemetryResultsProcessorProtocol] = []
+        self._telemetry_accumulator: TelemetryResultsProcessorProtocol | None = None
 
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
             try:
@@ -150,6 +152,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
                 if isinstance(results_processor, TelemetryResultsProcessorProtocol):
                     self._telemetry_results_processors.append(results_processor)
+
+                    # Store the accumulating processor separately for hierarchy access
+                    if results_processor_type == ResultsProcessorType.TELEMETRY_RESULTS:
+                        self._telemetry_accumulator = results_processor
                 else:
                     self._metric_results_processors.append(results_processor)
 
@@ -632,13 +638,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         Returns:
             TelemetryResults if telemetry data was collected, None otherwise
         """
-        # Get hierarchy from the telemetry results processor (single source of truth)
-        if not self._telemetry_results_processors:
+        if not self._telemetry_accumulator:
             return None
 
-        # Get hierarchy from first processor (typically only one telemetry processor)
-        processor = self._telemetry_results_processors[0]
-        telemetry_hierarchy = processor.get_telemetry_hierarchy()
+        # Get hierarchy from the accumulating processor
+        telemetry_hierarchy = self._telemetry_accumulator.get_telemetry_hierarchy()
 
         if not telemetry_hierarchy.dcgm_endpoints:
             return None
