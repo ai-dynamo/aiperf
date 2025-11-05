@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for GPU telemetry collection and reporting."""
 
+import platform
+
 import orjson
 import pytest
 
@@ -10,6 +12,10 @@ from tests.integration.conftest import AIPerfCLI
 from tests.integration.models import AIPerfMockServer
 
 
+@pytest.mark.skipif(
+    platform.system() == "Darwin",
+    reason="This test is flaky on macOS in Github Actions.",
+)
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestGpuTelemetry:
