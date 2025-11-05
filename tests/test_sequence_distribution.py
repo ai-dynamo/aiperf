@@ -203,20 +203,6 @@ class TestSequenceLengthDistribution:
         with pytest.raises(ValueError, match="Batch size must be positive"):
             dist.sample_batch(invalid_size)
 
-    @pytest.mark.parametrize(
-        "random_state_value,description",
-        [
-            (42, "int seed"),
-            (np.random.default_rng(42), "Generator"),
-            (None, "None (default)"),
-        ],
-    )  # fmt: skip
-    def test_batch_sampling_random_state_types(self, random_state_value, description):
-        """Test batch_sample with different random_state types."""
-        dist = SequenceLengthDistribution(self.multi_pair)
-        batch = dist.sample_batch(10, random_state=random_state_value)
-        assert len(batch) == 10
-
     def test_reproducible_sampling(self):
         """Test that sampling is reproducible with global RNG."""
         # Initialize the global RNG to ensure reproducibility

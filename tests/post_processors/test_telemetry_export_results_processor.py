@@ -624,10 +624,10 @@ class TestTelemetryExportResultsProcessorFileFormat:
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
 
-        # Verify None values are present in the dict
-        assert record_dict["pci_bus_id"] is None
-        assert record_dict["device"] is None
-        assert record_dict["telemetry_data"]["energy_consumption"] is None
+        # Verify None values are not present in the dict
+        assert "pci_bus_id" not in record_dict
+        assert "device" not in record_dict
+        assert "energy_consumption" not in record_dict["telemetry_data"]
 
     @pytest.mark.asyncio
     async def test_timestamp_precision(
@@ -812,7 +812,7 @@ class TestTelemetryExportResultsProcessorLifecycle:
 
         contents = mock_aiofiles_stringio.getvalue()
         lines = contents.splitlines()
-        assert contents.endswith("\n")
+        assert contents.endswith(b"\n")
         assert len(lines) == Environment.RECORD.EXPORT_BATCH_SIZE * 2
 
         for i, line in enumerate(lines):

@@ -38,10 +38,9 @@ from dataclasses import dataclass
 import numpy as np
 import orjson
 
-from aiperf.common.utils import load_json_str
-
 from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.utils import load_json_str
 
 logger = AIPerfLogger(__name__)
 
