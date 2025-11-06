@@ -70,9 +70,10 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
         """Task to handle incoming requests."""
         while not self.stop_requested:
             try:
-                message = await self.socket.recv_string()
-                self.trace(lambda msg=message: f"Received response: {msg}")
-                response_message = Message.from_json(message)
+                message_bytes = await self.socket.recv()
+                if self.is_trace_enabled:
+                    self.trace(f"Received response: {message_bytes}")
+                response_message = Message.from_json(message_bytes)
 
                 # Call the callback if it exists
                 if response_message.request_id in self.request_callbacks:
@@ -113,11 +114,11 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
 
         self.request_callbacks[message.request_id] = callback
 
-        request_json = message.model_dump_json()
-        self.trace(lambda msg=request_json: f"Sending request: {msg}")
+        request_json_bytes = message.to_json_bytes()
+        self.trace(lambda msg=request_json_bytes: f"Sending request: {msg}")
 
         try:
-            await self.socket.send_string(request_json)
+            await self.socket.send(request_json_bytes)
 
         except Exception as e:
             raise CommunicationError(

@@ -74,7 +74,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                input_config=mock_user_config,
+                user_config=mock_user_config,
                 service_config=ServiceConfig(),
                 telemetry_results=None,
             )
@@ -120,7 +120,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                input_config=mock_user_config,
+                user_config=mock_user_config,
                 service_config=ServiceConfig(),
                 telemetry_results=None,
             )

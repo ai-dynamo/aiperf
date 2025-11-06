@@ -64,8 +64,17 @@ class OutputConfig(BaseConfig):
 
     _profile_export_csv_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
     _profile_export_json_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+    _profile_export_timeslices_csv_file: Path = (
+        OutputDefaults.PROFILE_EXPORT_AIPERF_TIMESLICES_CSV_FILE
+    )
+    _profile_export_timeslices_json_file: Path = (
+        OutputDefaults.PROFILE_EXPORT_AIPERF_TIMESLICES_JSON_FILE
+    )
     _profile_export_jsonl_file: Path = OutputDefaults.PROFILE_EXPORT_JSONL_FILE
     _profile_export_raw_jsonl_file: Path = OutputDefaults.PROFILE_EXPORT_RAW_JSONL_FILE
+    _profile_export_gpu_telemetry_jsonl_file: Path = (
+        OutputDefaults.PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE
+    )
 
     @model_validator(mode="after")
     def set_export_filenames(self) -> Self:
@@ -76,7 +85,15 @@ class OutputConfig(BaseConfig):
         base_path = self.profile_export_prefix
         base_str = str(base_path)
 
-        suffixes_to_strip = ["_raw.jsonl", ".csv", ".json", ".jsonl"]
+        suffixes_to_strip = [
+            "_timeslices.csv",
+            "_timeslices.json",
+            "_gpu_telemetry.jsonl",
+            "_raw.jsonl",
+            ".csv",
+            ".json",
+            ".jsonl",
+        ]
         for suffix in suffixes_to_strip:
             if base_str.endswith(suffix):
                 base_str = base_str[: -len(suffix)]
@@ -84,10 +101,26 @@ class OutputConfig(BaseConfig):
 
         self._profile_export_csv_file = Path(f"{base_str}.csv")
         self._profile_export_json_file = Path(f"{base_str}.json")
+        self._profile_export_timeslices_csv_file = Path(f"{base_str}_timeslices.csv")
+        self._profile_export_timeslices_json_file = Path(f"{base_str}_timeslices.json")
         self._profile_export_jsonl_file = Path(f"{base_str}.jsonl")
         self._profile_export_raw_jsonl_file = Path(f"{base_str}_raw.jsonl")
+        self._profile_export_gpu_telemetry_jsonl_file = Path(
+            f"{base_str}_gpu_telemetry.jsonl"
+        )
 
         return self
+
+    slice_duration: Annotated[
+        float | None,
+        Field(
+            description="The duration (in seconds) of an individual time slice to be used post-benchmark in time-slicing mode.",
+        ),
+        CLIParameter(
+            name=("--slice-duration"),
+            group=_CLI_GROUP,
+        ),
+    ] = OutputDefaults.SLICE_DURATION
 
     @property
     def profile_export_csv_file(self) -> Path:
@@ -98,9 +131,21 @@ class OutputConfig(BaseConfig):
         return self.artifact_directory / self._profile_export_json_file
 
     @property
+    def profile_export_timeslices_csv_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_timeslices_csv_file
+
+    @property
+    def profile_export_timeslices_json_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_timeslices_json_file
+
+    @property
     def profile_export_jsonl_file(self) -> Path:
         return self.artifact_directory / self._profile_export_jsonl_file
 
     @property
     def profile_export_raw_jsonl_file(self) -> Path:
         return self.artifact_directory / self._profile_export_raw_jsonl_file
+
+    @property
+    def profile_export_gpu_telemetry_jsonl_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_gpu_telemetry_jsonl_file

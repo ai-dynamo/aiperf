@@ -9,7 +9,6 @@ from typing import Any, AnyStr
 
 import orjson
 from pydantic import (
-    BaseModel,
     Field,
     RootModel,
     SerializeAsAny,
@@ -27,7 +26,7 @@ from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.usage_models import Usage
-from aiperf.common.types import JsonObject, MetricTagT
+from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
@@ -136,6 +135,10 @@ class MetricRecordMetadata(AIPerfBaseModel):
 class ProfileResults(AIPerfBaseModel):
     records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
+    )
+    timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
+        default=None,
+        description="The timeslice metric results of the profile (if using timeslice mode)",
     )
     total_expected: int | None = Field(
         default=None,
@@ -569,7 +572,7 @@ class RequestRecord(AIPerfBaseModel):
         )
 
 
-class BaseResponseData(BaseModel):
+class BaseResponseData(AIPerfBaseModel):
     """Base class for all response data."""
 
     def get_text(self) -> str:

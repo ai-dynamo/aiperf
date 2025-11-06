@@ -195,6 +195,14 @@ class TestSequenceLengthDistribution:
         for isl, osl in batch:
             assert (isl, osl) in [(256, 128), (512, 256)]
 
+    @pytest.mark.parametrize("invalid_size", [0, -5, -100])
+    def test_batch_sampling_invalid_size(self, invalid_size):
+        """Test that batch_sample validates batch_size > 0."""
+        dist = SequenceLengthDistribution(self.multi_pair)
+
+        with pytest.raises(ValueError, match="Batch size must be positive"):
+            dist.sample_batch(invalid_size)
+
     def test_reproducible_sampling(self):
         """Test that sampling is reproducible with global RNG."""
         # Initialize the global RNG to ensure reproducibility
@@ -261,6 +269,14 @@ class TestSequenceLengthDistribution:
 
         assert "(256,128):60.0%" in str_repr
         assert "(512,256):40.0%" in str_repr
+
+    def test_repr_representation(self):
+        """Test __repr__() representation."""
+        dist = SequenceLengthDistribution(self.multi_pair)
+        repr_str = repr(dist)
+
+        assert "SequenceLengthDistribution" in repr_str
+        assert "SequenceLengthPair" in repr_str
 
 
 class TestSamplePositiveNormalInteger:
@@ -420,6 +436,45 @@ class TestDistributionParser:
             with pytest.raises(ValueError):
                 DistributionParser.parse(invalid_str)
 
+    @pytest.mark.parametrize(
+        "malformed_json",
+        [
+            "{not valid json}",  # Invalid syntax
+            '{"pairs": [',  # Incomplete JSON
+            '{"pairs": [{"isl": 256,}]}',  # Trailing comma
+            "{'pairs': []}",  # Single quotes instead of double quotes
+        ],
+    )
+    def test_malformed_json_raises_orjson_error(self, malformed_json):
+        """Test that malformed JSON syntax raises ValueError with orjson.JSONDecodeError."""
+        with pytest.raises(ValueError, match="Invalid JSON format"):
+            DistributionParser.parse(malformed_json)
+
+    @pytest.mark.parametrize(
+        "json_str",
+        [
+            '{"pairs": [{"isl": 256, "prob": 100}]}',  # Missing osl
+            '{"pairs": [{"osl": 128, "prob": 100}]}',  # Missing isl
+            '{"pairs": [{"isl": 256, "osl": 128}]}',  # Missing prob
+        ],
+    )  # fmt: skip
+    def test_json_missing_required_keys(self, json_str):
+        """Test JSON format with missing required keys (isl, osl, or prob)."""
+        with pytest.raises(ValueError, match="missing required keys"):
+            DistributionParser.parse(json_str)
+
+    @pytest.mark.parametrize(
+        "json_str",
+        [
+            '{"pairs": ["not_a_dict"]}',  # AttributeError: 'str' has no keys()
+            '{"pairs": [{"isl": null, "osl": 128, "prob": 100}]}',  # TypeError: null values
+        ],
+    )  # fmt: skip
+    def test_json_invalid_structure_raises_valueerror(self, json_str):
+        """Test JSON with invalid structure (KeyError/TypeError/AttributeError handling)."""
+        with pytest.raises(ValueError):
+            DistributionParser.parse(json_str)
+
     def test_decimal_probabilities(self):
         """Test parsing with decimal percentages."""
         dist_str = "256,128:33.3;512,256:66.7"
@@ -435,6 +490,31 @@ class TestDistributionParser:
 
         assert len(dist.pairs) == 2
         assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0)
+
+    @pytest.mark.parametrize(
+        "dist_str,description",
+        [
+            ("256,128:50;512,256:50;", "trailing semicolon"),
+            ("256,128:50;;512,256:50", "multiple semicolons"),
+            (";256,128:50;512,256:50", "leading semicolon"),
+        ],
+    )  # fmt: skip
+    def test_semicolon_format_with_empty_elements(self, dist_str, description):
+        """Test parsing semicolon format handles empty strings from extra semicolons."""
+        dist = DistributionParser.parse(dist_str)
+        assert len(dist.pairs) == 2
+
+    @pytest.mark.parametrize(
+        "dist_str,error_match",
+        [
+            ("  ;  ;  ", "No valid pairs found in semicolon format"),
+            ("[]", "No valid pairs found in bracket format"),
+        ],
+    )  # fmt: skip
+    def test_empty_format_raises_error(self, dist_str, error_match):
+        """Test that empty formats raise appropriate errors."""
+        with pytest.raises(ValueError, match=error_match):
+            DistributionParser.parse(dist_str)
 
 
 class TestUtilityFunctions:
