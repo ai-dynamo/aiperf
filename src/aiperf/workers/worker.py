@@ -180,7 +180,24 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
     async def _execute_single_credit_internal(
         self, message: CreditDropMessage, return_message: CreditReturnMessage
     ) -> None:
-        """Run a credit task for a single credit."""
+        """Run a credit task for a single credit.
+
+        For multi-turn conversations, this method simulates realistic user interaction
+        by applying turn delays between subsequent turns. The flow follows real-world
+        conversation behavior:
+
+        1. Turn 0 (first turn): User sends initial message → AI responds (no delay)
+        2. DELAY: User reads AI's response and thinks about next message
+        3. Turn 1 (second turn): User sends follow-up message → AI responds
+        4. DELAY: User reads AI's response and thinks about next message
+        5. Turn 2 (third turn): User sends next message → AI responds
+        ... and so on
+
+        Turn delays are configured via:
+        - --conversation-turn-delay-mean: Average delay between turns (milliseconds)
+        - --conversation-turn-delay-stddev: Standard deviation of delay (milliseconds)
+        - --conversation-turn-delay-ratio: Ratio to scale delays
+        """
         drop_perf_ns = time.perf_counter_ns()  # The time the credit was received
 
         if not self.inference_client:
@@ -194,8 +211,18 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
 
         turn_list = []
         for turn_index in range(len(conversation.turns)):
-            self.task_stats.total += 1
+            # Apply turn delay BEFORE sending the turn (simulating user thinking time)
+            # Skip delay for the first turn
             turn = conversation.turns[turn_index]
+            if turn_index > 0 and turn.delay is not None and turn.delay > 0:
+                delay_seconds = turn.delay / 1000.0  # Convert milliseconds to seconds
+                if self.is_trace_enabled:
+                    self.trace(
+                        f"Applying turn delay of {turn.delay}ms before sending turn {turn_index}"
+                    )
+                await asyncio.sleep(delay_seconds)
+
+            self.task_stats.total += 1
             turn_list.append(turn)
 
             request_info = RequestInfo(
@@ -217,6 +244,7 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                 drop_perf_ns=drop_perf_ns,
             )
             await self._send_inference_result_message(record)
+
             if resp_turn := await self._process_response(record):
                 turn_list.append(resp_turn)
 
