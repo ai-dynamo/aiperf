@@ -136,7 +136,7 @@ One PR=one goal | Comments only for "why?" not "what" | No persistent mutable st
 Communication: ZMQ message bus via `await self.publish(msg)`. Services auto-subscribe based on `@on_message` decorators during `@on_init`.
 
 ## Testing
-pytest. Auto-fixtures: time mocked, RNG=42, singletons reset. Use fixtures+helpers+parametrization: `@pytest.mark.parametrize("x,y", [(1,2)])`. put import statements at the top of the test file.
+pytest. Auto-fixtures: time mocked, RNG=42, singletons reset. Use fixtures+helpers+parametrization: `@pytest.mark.parametrize("x,y", [(1,2)])`. put import statements at the top of the test file. Use `# fmt: skip` for long parameterize blocks.
 
 ## Python 3.10
 `|` unions: `str | int | None`
