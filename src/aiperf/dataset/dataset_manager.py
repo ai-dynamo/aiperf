@@ -166,7 +166,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             inputs = self._generate_input_payloads(model_endpoint)
 
             async with aiofiles.open(file_path, "w") as f:
-                await f.write(inputs.model_dump_json(indent=2, exclude_unset=True))
+                await f.write(inputs.model_dump_json(indent=2, exclude_none=True))
 
             duration = time.perf_counter() - start_time
             self.info(f"inputs.json file generated in {duration:.2f} seconds")

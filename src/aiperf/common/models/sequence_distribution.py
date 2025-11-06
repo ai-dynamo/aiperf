@@ -32,14 +32,15 @@ Examples:
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 
 import numpy as np
+import orjson
 
 from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.utils import load_json_str
 
 logger = AIPerfLogger(__name__)
 
@@ -360,9 +361,9 @@ class DistributionParser:
     def _parse_pairs_from_json(cls, json_str: str) -> list[SequenceLengthPair]:
         """Parse JSON format and extract pairs: {"pairs": [{"isl": 256, "isl_stddev": 10, "osl": 128, "osl_stddev": 5, "prob": 40}, ...]}"""
         try:
-            data = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON format: {e}") from None
+            data = load_json_str(json_str)
+        except orjson.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON format: {e}") from e
 
         if "pairs" not in data:
             raise ValueError("JSON format must contain 'pairs' key")

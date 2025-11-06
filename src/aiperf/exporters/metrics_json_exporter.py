@@ -97,7 +97,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
             setattr(export_data, metric_tag, json_result)
 
         self.debug(lambda: f"Exporting data to JSON file: {export_data}")
-        return export_data.model_dump_json(indent=2, exclude_unset=True)
+        return export_data.model_dump_json(
+            indent=2, exclude_unset=True, exclude_none=True
+        )
 
     def _prepare_metrics_for_json(
         self, metric_results: Iterable[MetricResult]

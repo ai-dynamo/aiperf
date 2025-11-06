@@ -7,12 +7,9 @@ from pydantic import ConfigDict, Field
 
 from aiperf.common.config import UserConfig
 from aiperf.common.models import ErrorDetailsCount
-from aiperf.common.models.base_models import AIPerfBaseModel, exclude_if_none
+from aiperf.common.models.base_models import AIPerfBaseModel
 
 
-@exclude_if_none(
-    "min", "max", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "std"
-)
 class JsonMetricResult(AIPerfBaseModel):
     """The result values of a single metric for JSON export.
 
