@@ -137,13 +137,13 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|
-| **Number of Sessions** | `--num-sessions` | ✅ | 🟡 | |
-| **Session Concurrency** | `--session-concurrency` | ✅ | ❌ | |
+| **Number of Sessions** | `--num-sessions` | ✅ | ✅ | |
+| **Session Concurrency** | `--session-concurrency` | ✅ | ❌ | Use --concurrency |
 | **Session Delay Ratio** | `--session-delay-ratio` | ✅ | ❌ | Present in CLI, but does not do anything |
 | **Session Turn Delay Mean** | `--session-turn-delay-mean` | ✅ | 🟡 | |
 | **Session Turn Delay Stddev** | `--session-turn-delay-stddev` | ✅ | 🟡 | |
-| **Session Turns Mean** | `--session-turns-mean` | ✅ | 🟡 | |
-| **Session Turns Stddev** | `--session-turns-stddev` | ✅ | 🟡 | |
+| **Session Turns Mean** | `--session-turns-mean` | ✅ | ✅ | |
+| **Session Turns Stddev** | `--session-turns-stddev` | ✅ | ✅ | |
 
 ---
 
