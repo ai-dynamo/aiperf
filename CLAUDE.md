@@ -87,7 +87,7 @@ except Exception as e:
 - **BaseService**: Abstract base for services. Use BaseComponentService instead unless creating new service type.
 
 **Core Mixins** (usually via base class):
-- **AIPerfLifecycleMixin**: State machine (`CREATED`→`INITIALIZING`→`INITIALIZED`→`STARTING`→`RUNNING`→`STOPPING`→`STOPPED`). Provides `initialize()`, `start()`, `stop()`. Use for components with lifecycle.
+- **AIPerfLifecycleMixin**: State machine (`CREATED`→`INITIALIZING`→`INITIALIZED`→`STARTING`→`RUNNING`→`STOPPING`→`STOPPED`; `FAILED` is an additional terminal state). Provides `initialize()`, `start()`, `stop()`. Components may enter `FAILED` via `_fail()` when transitions error. Use for components with lifecycle.
 - **HooksMixin**: Hook registration. Enables `@on_init`, `@on_start`, `@on_stop`, etc.
 - **TaskManagerMixin**: Async task management. Provides `execute_async()`, `start_background_task()`. Auto-cancels tasks on stop.
 - **AIPerfLoggerMixin**: Logging. Provides `self.debug()`, `self.info()`, `self.warning()`, `self.error()`.
