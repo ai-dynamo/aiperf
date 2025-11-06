@@ -1,13 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import json
 import uuid
 from typing import Any, ClassVar
 
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
-from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
@@ -18,14 +16,10 @@ from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import (
     ErrorDetails,
     ProcessRecordsResult,
-    exclude_if_none,
 )
 from aiperf.common.types import CommandTypeT, MessageTypeT, ServiceTypeT
 
-_logger = AIPerfLogger(__name__)
 
-
-@exclude_if_none("target_service_id", "target_service_type")
 class TargetedServiceMessage(BaseServiceMessage):
     """Message that can be targeted to a specific service by id or type.
     If both `target_service_type` and `target_service_id` are None, the message is
@@ -55,16 +49,16 @@ class TargetedServiceMessage(BaseServiceMessage):
 
 
 class CommandMessage(TargetedServiceMessage):
-    """Message containing command data.
+    """Message containing command data with automatic routing by command field.
+
+    Uses AutoRoutedModel for nested routing:
+    1. First routes by message_type -> CommandMessage
+    2. Then routes by command -> specific command class (e.g., SpawnWorkersCommand)
+
     This message is sent by the system controller to a service to command it to do something.
     """
 
-    _command_type_lookup: ClassVar[dict[CommandTypeT, type["CommandMessage"]]] = {}
-
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-        if hasattr(cls, "command"):
-            cls._command_type_lookup[cls.command] = cls
+    discriminator_field: ClassVar[str] = "command"
 
     message_type: MessageTypeT = MessageType.COMMAND
 
@@ -77,53 +71,19 @@ class CommandMessage(TargetedServiceMessage):
         description="Unique identifier for this command. If not provided, a random UUID will be generated.",
     )
 
-    @classmethod
-    def from_json(cls, json_str: str | bytes | bytearray) -> "CommandMessage":
-        """Deserialize a command message from a JSON string, attempting to auto-detect the command type."""
-        data = json.loads(json_str)
-        command_type = data.get("command")
-        if not command_type:
-            raise ValueError(f"Missing command: {json_str}")
-
-        # Use cached command type lookup
-        command_class = cls._command_type_lookup[command_type]
-        if not command_class:
-            _logger.debug(
-                lambda: f"No command class found for command type: {command_type}"
-            )
-            # fallback to regular command class
-            command_class = cls
-
-        return command_class.model_validate(data)
-
 
 class CommandResponse(TargetedServiceMessage):
-    """Message containing a command response."""
+    """Message containing a command response with automatic routing by status.
 
-    # Specialized lookup for command response messages by status
-    _command_status_lookup: ClassVar[
-        dict[CommandResponseStatus, type["CommandResponse"]]
-    ] = {}
-    # Specialized lookup for command response messages by command type, for success messages
-    _command_success_type_lookup: ClassVar[
-        dict[CommandTypeT, type["CommandResponse"]]
-    ] = {}
+    Uses AutoRoutedModel for multi-level routing:
+    1. Routes by message_type -> CommandResponse
+    2. Routes by status -> specific status class
+    3. For success, routes by command -> specific command response
 
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-        if (
-            hasattr(cls, "status")
-            and cls.status is not None
-            and cls.status not in cls._command_status_lookup
-        ):
-            cls._command_status_lookup[cls.status] = cls
-        elif (
-            cls.__pydantic_fields__.get("status") is not None
-            and cls.__pydantic_fields__.get("status").default
-            == CommandResponseStatus.SUCCESS
-        ):
-            # Cache the specialized lookup by command type for success messages
-            cls._command_success_type_lookup[cls.command] = cls
+    This enables single-parse deserialization to the most specific response type.
+    """
+
+    discriminator_field: ClassVar[str] = "status"
 
     message_type: MessageTypeT = MessageType.COMMAND_RESPONSE
 
@@ -135,34 +95,6 @@ class CommandResponse(TargetedServiceMessage):
         ..., description="The ID of the command that is being responded to"
     )
     status: CommandResponseStatus = Field(..., description="The status of the command")
-
-    @classmethod
-    def from_json(cls, json_str: str | bytes | bytearray) -> "CommandResponse":
-        """Deserialize a command response message from a JSON string, attempting to auto-detect the command response type."""
-        data = json.loads(json_str)
-        status = data.get("status")
-        if not status:
-            raise ValueError(f"Missing command response status: {json_str}")
-        command = data.get("command")
-        if not command:
-            raise ValueError(f"Missing command in command response: {json_str}")
-
-        if status not in cls._command_status_lookup:
-            raise ValueError(
-                f"Unknown command response status: {status}. Valid statuses are: {list(cls._command_status_lookup.keys())}"
-            )
-
-        # Use cached command response type lookup by status
-        command_response_class = cls._command_status_lookup[status]
-
-        if (
-            status == CommandResponseStatus.SUCCESS
-            and command in cls._command_success_type_lookup
-        ):
-            # For success messages, use the specialized lookup by command type if it exists
-            command_response_class = cls._command_success_type_lookup[command]
-
-        return command_response_class.model_validate(data)
 
 
 class CommandErrorResponse(CommandResponse):
@@ -186,8 +118,13 @@ class CommandErrorResponse(CommandResponse):
 
 
 class CommandSuccessResponse(CommandResponse):
-    """Generic command response message when a command succeeds. It should be
-    subclassed for specific command types."""
+    """Generic command response message when a command succeeds.
+
+    Uses nested discriminator routing: success responses can be further
+    specialized by command type (e.g., ProcessRecordsResponse).
+    """
+
+    discriminator_field: ClassVar[str] = "command"
 
     status: CommandResponseStatus = CommandResponseStatus.SUCCESS
     data: Any | None = Field(
@@ -259,7 +196,6 @@ class SpawnWorkersCommand(CommandMessage):
     num_workers: int = Field(..., description="Number of workers to spawn")
 
 
-@exclude_if_none("worker_ids", "num_workers")
 class ShutdownWorkersCommand(CommandMessage):
     command: CommandTypeT = CommandType.SHUTDOWN_WORKERS
 

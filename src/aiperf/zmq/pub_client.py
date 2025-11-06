@@ -80,10 +80,11 @@ class ZMQPubClient(BaseZMQClient):
 
         try:
             topic = self._determine_topic(message)
-            message_json = message.model_dump_json()
+            message_json_bytes = message.to_json_bytes()
+
             # Publish message
-            self.trace(lambda: f"Publishing message {topic=} {message_json=}")
-            await self.socket.send_multipart([topic.encode(), message_json.encode()])
+            self.trace(lambda: f"Publishing message {topic=} {message_json_bytes=}")
+            await self.socket.send_multipart([topic.encode(), message_json_bytes])
 
         except (asyncio.CancelledError, zmq.ContextTerminated):
             self.debug(

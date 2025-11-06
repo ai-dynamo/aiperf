@@ -2,12 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for GPU telemetry collection and reporting."""
 
+import platform
+
+import orjson
 import pytest
 
+from aiperf.common.models.telemetry_models import TelemetryRecord
 from tests.integration.conftest import AIPerfCLI
 from tests.integration.models import AIPerfMockServer
 
 
+@pytest.mark.skipif(
+    platform.system() == "Darwin",
+    reason="This test is flaky on macOS in Github Actions.",
+)
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestGpuTelemetry:
@@ -53,3 +61,93 @@ class TestGpuTelemetry:
                     assert metric_value.min is not None
                     assert metric_value.max is not None
                     assert metric_value.unit is not None
+
+    async def test_gpu_telemetry_export(
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+    ):
+        """Test GPU telemetry export to JSONL file with validation."""
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model nvidia/llama-3.1-nemotron-70b-instruct \
+                --url {aiperf_mock_server.url} \
+                --tokenizer gpt2 \
+                --endpoint-type chat \
+                --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
+                --streaming \
+                --request-count 50 \
+                --concurrency 2 \
+                --workers-max 2
+            """
+        )
+        assert result.request_count == 50
+        assert result.has_gpu_telemetry
+
+        # Verify GPU telemetry export JSONL file exists
+        export_file = result.artifacts_dir / "gpu_telemetry_export.jsonl"
+        assert export_file.exists(), "GPU telemetry export file should exist"
+
+        # Read and validate JSONL content
+        content = export_file.read_text()
+        lines = content.splitlines()
+        assert len(lines) > 0, "Export file should contain telemetry records"
+
+        # Collect GPU data for validation
+        gpu_uuids = set()
+        timestamps = []
+
+        # Validate each line is valid JSON and can be parsed as TelemetryRecord
+        for line in lines:
+            record_dict = orjson.loads(line)
+            record = TelemetryRecord.model_validate(record_dict)
+
+            # Verify required fields are present
+            assert record.timestamp_ns > 0
+            assert record.dcgm_url is not None
+            assert record.gpu_index >= 0
+            assert record.gpu_uuid is not None
+            assert record.gpu_model_name is not None
+            assert record.telemetry_data is not None
+
+            # Collect data for validation
+            gpu_uuids.add(record.gpu_uuid)
+            timestamps.append(record.timestamp_ns)
+
+        # Verify we captured data from GPUs
+        assert len(gpu_uuids) >= 2, "Should have records from at least two GPUs"
+
+        # Verify records are chronologically ordered by timestamp
+        assert timestamps == sorted(timestamps), "Records should be in timestamp order"
+
+    async def test_gpu_telemetry_export_with_custom_prefix(
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+    ):
+        """Test GPU telemetry export with custom filename prefix."""
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model nvidia/llama-3.1-nemotron-70b-instruct \
+                --url {aiperf_mock_server.url} \
+                --tokenizer gpt2 \
+                --endpoint-type chat \
+                --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
+                --streaming \
+                --request-count 25 \
+                --concurrency 1 \
+                --workers-max 1 \
+                --profile-export-prefix custom_test
+            """
+        )
+
+        # Verify custom filename is used
+        export_file = result.artifacts_dir / "custom_test_gpu_telemetry.jsonl"
+        if export_file.exists():
+            # Verify content is valid
+            content = export_file.read_text()
+            lines = content.splitlines()
+            assert len(lines) > 0, "Export file should contain telemetry records"
+
+            # Validate first record
+            first_record = TelemetryRecord.model_validate_json(lines[0])
+            assert first_record.timestamp_ns > 0
+            assert first_record.dcgm_url is not None

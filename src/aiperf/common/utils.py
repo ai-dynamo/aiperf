@@ -76,13 +76,15 @@ async def call_all_functions(funcs: list[Callable], *args, **kwargs) -> None:
         raise AIPerfMultiError("Errors calling functions", exceptions)
 
 
-def load_json_str(json_str: str, func: Callable = lambda x: x) -> dict[str, Any]:
+def load_json_str(
+    json_str: str | bytes, func: Callable = lambda x: x
+) -> dict[str, Any]:
     """
-    Deserializes JSON encoded string into Python object.
+    Deserializes JSON encoded string or bytes into Python object.
 
     Args:
-      - json_str: string
-          JSON encoded string
+      - json_str: string or bytes
+          JSON encoded string or bytes
       - func: callable
           A function that takes deserialized JSON object. This can be used to
           run validation checks on the object. Defaults to identity function.

@@ -162,7 +162,7 @@ class ZMQRouterReplyClient(BaseZMQClient):
 
             # Send the response back to the client.
             await self.socket.send_multipart(
-                [*routing_envelope, response.model_dump_json().encode()]
+                [*routing_envelope, response.to_json_bytes()]
             )
         except Exception as e:
             self.exception(

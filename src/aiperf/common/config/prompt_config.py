@@ -180,8 +180,9 @@ class PromptConfig(BaseConfig):
                     DistributionParser,
                 )
 
-                # This will parse and validate the distribution, including probability sums
-                DistributionParser.parse(self.sequence_distribution)
+                # Only validate the format, don't create the full distribution yet
+                # This avoids requiring RNG initialization during config validation
+                DistributionParser.validate(self.sequence_distribution)
             except Exception as e:
                 raise ValueError(f"Invalid sequence distribution format: {e}") from e
         return self

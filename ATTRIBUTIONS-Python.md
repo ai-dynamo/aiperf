@@ -801,7 +801,7 @@ Apache License
   - `Homepage`: https://github.com/aio-libs/aiosignal
 
 
-## aiperf (0.1.1)
+## aiperf
 
 ### Licenses
 License: `Apache-2.0`

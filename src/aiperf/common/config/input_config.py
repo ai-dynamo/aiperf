@@ -6,6 +6,8 @@ from typing import Annotated, Any
 from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
+from aiperf.common import random_generator as rng
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
@@ -22,7 +24,9 @@ from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.config.video_config import VideoConfig
 from aiperf.common.enums import CustomDatasetType, PublicDatasetType
 from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
-from aiperf.common.exceptions import MetricTypeError
+from aiperf.common.exceptions import InvalidStateError, MetricTypeError
+
+_logger = AIPerfLogger(__name__)
 
 
 class InputConfig(BaseConfig):
@@ -31,6 +35,20 @@ class InputConfig(BaseConfig):
     """
 
     _CLI_GROUP = Groups.INPUT
+
+    @model_validator(mode="before")
+    @classmethod
+    def initialize_rng(cls, data: dict) -> dict:
+        """Initialize RNG with random seed before any field validation."""
+        if isinstance(data, dict):
+            seed = data.get("random_seed")
+            # Initialize RNG if not already initialized
+            try:
+                rng.init(seed)
+            except InvalidStateError:
+                # Already initialized, that's fine - skip reinitialization
+                _logger.debug("RNG already initialized, skipping reinitialization")
+        return data
 
     @model_validator(mode="after")
     def validate_fixed_schedule(self) -> Self:
