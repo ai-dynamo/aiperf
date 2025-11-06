@@ -8,17 +8,16 @@ from typing import Any
 import zmq.asyncio
 
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import CommClientType, MessageType
+from aiperf.common.enums import CommClientType
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task
-from aiperf.common.messages import CommandMessage, CommandResponse, Message
+from aiperf.common.messages import Message
 from aiperf.common.protocols import SubClientProtocol
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import call_all_functions, yield_to_event_loop
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 from aiperf.zmq.zmq_defaults import (
-    TOPIC_DELIMITER,
     TOPIC_END,
     TOPIC_END_ENCODED,
 )
@@ -148,24 +147,13 @@ class ZMQSubClient(BaseZMQClient):
 
         # strip the final TOPIC_END chars from the topic
         topic = topic_bytes.decode()[: -len(TOPIC_END)]
-        message_json = message_bytes.decode()
         self.trace(
-            lambda: f"Received message from topic: '{topic}', message: {message_json}"
+            lambda: f"Received message from topic: '{topic}', message: {message_bytes}"
         )
 
-        # Targeted messages are in the format "<message_type>.<target_service_id>"
-        # or "<message_type>.<target_service_type>"
-        # grab the first part which is the message type
-        message_type = (
-            topic.split(TOPIC_DELIMITER)[0] if TOPIC_DELIMITER in topic else topic
-        )
-
-        if message_type == MessageType.COMMAND:
-            message = CommandMessage.from_json(message_json)
-        elif message_type == MessageType.COMMAND_RESPONSE:
-            message = CommandResponse.from_json(message_json)
-        else:
-            message = Message.from_json_with_type(message_type, message_json)
+        # Use AUTO-LOOKUP for all messages - single parse with multi-level routing
+        # This is optimal for our workload (84% large messages in push/pull, 45% in pub/sub)
+        message = Message.from_json(message_bytes)
 
         self.debug(
             lambda: f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"

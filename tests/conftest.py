@@ -10,7 +10,7 @@ and made available to test functions in the same directory and subdirectories.
 import asyncio
 import logging
 from collections.abc import Callable, Generator
-from io import StringIO
+from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -385,12 +385,12 @@ def sample_parsed_record(sample_request_record: RequestRecord) -> ParsedResponse
 
 @pytest.fixture
 def mock_aiofiles_stringio():
-    """Mock aiofiles.open to write to a StringIO buffer instead of a file.
+    """Mock aiofiles.open to write to a BytesIO buffer instead of a file.
 
     Automatically patches aiofiles.open for the duration of the test.
 
     Returns:
-        StringIO: Buffer that captures all writes
+        BytesIO: Buffer that captures all writes
 
     Example:
         def test_something(mock_aiofiles_stringio):
@@ -399,9 +399,9 @@ def mock_aiofiles_stringio():
 
             # Verify contents
             contents = mock_aiofiles_stringio.getvalue()
-            assert "expected" in contents
+            assert b"expected" in contents
     """
-    string_buffer = StringIO()
+    string_buffer = BytesIO()
 
     mock_file = AsyncMock()
     mock_file.write = AsyncMock(side_effect=lambda data: string_buffer.write(data))

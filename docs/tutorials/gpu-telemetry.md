@@ -139,7 +139,7 @@ aiperf profile \
     --concurrency 4 \
     --request-count 64 \
     --warmup-request-count 1 \
-    --conversation-num 8 \
+    --num-dataset-entries 8 \
     --random-seed 100 \
     --gpu-telemetry
 ```
@@ -290,7 +290,7 @@ aiperf profile \
     --concurrency 4 \
     --request-count 64 \
     --warmup-request-count 1 \
-    --conversation-num 8 \
+    --num-dataset-entries 8 \
     --random-seed 100 \
     --gpu-telemetry
 ```
@@ -325,7 +325,7 @@ aiperf profile \
     --concurrency 4 \
     --request-count 64 \
     --warmup-request-count 1 \
-    --conversation-num 8 \
+    --num-dataset-entries 8 \
     --random-seed 100 \
     --gpu-telemetry node1:9400 node2:9400 http://node3:9400/metrics
 ```

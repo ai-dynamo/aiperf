@@ -27,19 +27,19 @@ class ExporterManager(AIPerfLoggerMixin):
     def __init__(
         self,
         results: ProfileResults,
-        input_config: UserConfig,
+        user_config: UserConfig,
         service_config: ServiceConfig,
         telemetry_results: TelemetryResults | None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._results = results
-        self._input_config = input_config
+        self._user_config = user_config
         self._tasks: set[asyncio.Task] = set()
         self._service_config = service_config
         self._exporter_config = ExporterConfig(
             results=self._results,
-            user_config=self._input_config,
+            user_config=self._user_config,
             service_config=self._service_config,
             telemetry_results=telemetry_results,
         )

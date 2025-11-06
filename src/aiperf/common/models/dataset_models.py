@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 from pydantic import Field
 
 from aiperf.common.enums import MediaType
-from aiperf.common.models.base_models import AIPerfBaseModel, exclude_if_none
+from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import MediaTypeT
 
 
@@ -45,7 +45,6 @@ class Video(Media):
     media_type: ClassVar[MediaTypeT] = MediaType.VIDEO
 
 
-@exclude_if_none("role")
 class Turn(AIPerfBaseModel):
     """A dataset representation of a single turn within a conversation.
 

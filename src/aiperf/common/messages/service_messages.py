@@ -2,14 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 
-from pydantic import (
-    Field,
-)
+from pydantic import Field
 
-from aiperf.common.enums import (
-    LifecycleState,
-    MessageType,
-)
+from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.messages.base_messages import Message
 from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.types import MessageTypeT, ServiceTypeT

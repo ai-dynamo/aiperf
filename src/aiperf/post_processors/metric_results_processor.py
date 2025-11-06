@@ -51,9 +51,9 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             metric.tag: metric.type for metric in _all_metric_classes
         }
 
-        # Pre-cache the instances for the metrics.
+        # Set up aggregate metric objects
         self._instances_map: dict[MetricTagT, BaseMetric] = {
-            tag: MetricRegistry.get_instance(tag) for tag in MetricRegistry.all_tags()
+            tag: MetricRegistry.get_class(tag)() for tag in MetricRegistry.all_tags()
         }
 
         # Pre-cache the aggregate functions for the aggregate metrics.
@@ -70,23 +70,28 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         if self.is_trace_enabled:
             self.trace(f"Processing incoming metrics: {record_data.metrics}")
 
+        # Get the appropriate results dict and instances map once to avoid multiple calls
+        request_start_ns = record_data.metadata.request_start_ns
+        instances_map = await self.get_instances_map(request_start_ns)
+        results_dict = await self.get_results(request_start_ns)
+
         for tag, value in record_data.metrics.items():
             try:
                 metric_type = self._tags_to_types[tag]
                 if metric_type == MetricType.RECORD:
-                    if tag not in self._results:
-                        self._results[tag] = MetricArray()
+                    if tag not in results_dict:
+                        results_dict[tag] = MetricArray()
                     if isinstance(value, list):
                         # NOTE: Right now we only support list-based metrics by extending the array.
                         #       In the future, we possibly could support having nested arrays.
-                        self._results[tag].extend(value)  # type: ignore
+                        results_dict[tag].extend(value)  # type: ignore
                     else:
-                        self._results[tag].append(value)  # type: ignore
+                        results_dict[tag].append(value)  # type: ignore
 
                 elif metric_type == MetricType.AGGREGATE:
-                    metric: BaseAggregateMetric = self._instances_map[tag]  # type: ignore
+                    metric: BaseAggregateMetric = instances_map[tag]  # type: ignore
                     metric.aggregate_value(value)
-                    self._results[tag] = metric.current_value
+                    results_dict[tag] = metric.current_value
 
                 else:
                     raise ValueError(f"Metric '{tag}' is not a valid metric type")
@@ -96,7 +101,27 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 self.warning(f"Error processing metric '{tag}': {e!r}")
 
         if self.is_trace_enabled:
-            self.trace(f"Results after processing incoming metrics: {self._results}")
+            self.trace(f"Results after processing incoming metrics: {results_dict}")
+
+    async def get_instances_map(
+        self, request_start_ns: int | None = None
+    ) -> dict[MetricTagT, BaseMetric]:
+        """Get the appropriate instances map based on mode.
+
+        In non-timeslice mode, returns the single shared instances map.
+        Subclasses can override to provide timeslice-specific behavior.
+        """
+        return self._instances_map
+
+    async def get_results(
+        self, request_start_ns: int | None = None
+    ) -> MetricResultsDict:
+        """Get the appropriate results dictionary based on mode.
+
+        In non-timeslice mode, returns the single shared results dict.
+        Subclasses can override to provide timeslice-specific behavior.
+        """
+        return self._results
 
     async def update_derived_metrics(self) -> None:
         """Computes the values for the derived metrics, and stores them in the results dict."""

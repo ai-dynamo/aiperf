@@ -83,9 +83,10 @@ class ZMQPushClient(BaseZMQClient):
             max_retries = Environment.ZMQ.PUSH_MAX_RETRIES
 
         try:
-            data_json = message.model_dump_json()
-            await self.socket.send_string(data_json)
-            self.trace(lambda msg=data_json: f"Pushed json data: {msg}")
+            data_json_bytes = message.to_json_bytes()
+            await self.socket.send(data_json_bytes)
+            if self.is_trace_enabled:
+                self.trace(f"Pushed json data: {data_json_bytes}")
         except (asyncio.CancelledError, zmq.ContextTerminated):
             self.debug("Push client cancelled or context terminated")
             return
