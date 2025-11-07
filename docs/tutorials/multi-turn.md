@@ -351,16 +351,46 @@ This accumulation means:
 - Input token count grows with each turn
 - Later turns have increasingly large context to process
 
+### Real-World Conversation Flow
+
+AIPerf simulates realistic multi-turn conversations by modeling natural user behavior patterns. Here's how a typical multi-turn conversation flows:
+
+**Turn 0 (First Turn):**
+- User sends initial message → AI responds
+- **No delay** before this turn (users don't wait to start conversations)
+
+**Turn 1 (Second Turn):**
+- **DELAY**: User reads AI's response and thinks about next message (configurable delay applied)
+- User sends follow-up message → AI responds
+
+**Turn 2 (Third Turn):**
+- **DELAY**: User reads AI's response and thinks about next message (configurable delay applied)
+- User sends next message → AI responds
+
+**...and so on for subsequent turns**
+
+This flow pattern ensures benchmarks reflect real-world usage where:
+- Users need time to read and process AI responses
+- There's natural thinking/typing time between messages
+- The first message is sent immediately when starting a conversation
+- Delays are applied **before** sending each subsequent turn
+
+The delays between turns are controlled by:
+- `--conversation-turn-delay-mean`: Average delay in milliseconds (e.g., 2000ms = 2 seconds)
+- `--conversation-turn-delay-stddev`: Variation in delays to simulate natural human behavior
+- `--conversation-turn-delay-ratio`: Scaling factor for all delays
+
 ### Execution Flow
 
 1. **Dataset Generation**: AIPerf generates the specified number of conversations, each with a random number of turns based on your mean and stddev
 2. **Conversation Distribution**: Conversations are distributed to workers according to concurrency and rate limits
 3. **Turn Execution**: For each conversation:
-   - Execute turn 1, wait for response
+   - Execute turn 1 (first turn, no delay), wait for response
    - Append assistant's response to conversation history
-   - Apply turn delay (if configured)
+   - Apply turn delay (simulating user reading/thinking time)
    - Execute turn 2 with accumulated history, wait for response
-   - Repeat for all turns in the conversation
+   - Apply turn delay
+   - Repeat for all remaining turns in the conversation
 4. **Metrics Collection**: Metrics are collected per-turn and aggregated across all conversations
 
 ## Quick Reference
