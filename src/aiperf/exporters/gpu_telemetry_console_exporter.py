@@ -12,7 +12,7 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.protocols import ConsoleExporterProtocol
 from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig
-from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
+from aiperf.gpu_telemetry.constants import get_gpu_telemetry_metrics_config
 
 
 @implements_protocol(ConsoleExporterProtocol)
@@ -189,7 +189,9 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         for stat in self.STAT_COLUMN_KEYS:
             metrics_table.add_column(stat, justify="right", style="green")
 
-        for metric_display, metric_key, unit_enum in GPU_TELEMETRY_METRICS_CONFIG:
+        metrics_config = get_gpu_telemetry_metrics_config()
+
+        for metric_display, metric_key, unit_enum in metrics_config:
             try:
                 unit = unit_enum.value
                 metric_result = gpu_data.get_metric_result(

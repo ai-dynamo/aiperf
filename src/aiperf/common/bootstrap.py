@@ -59,6 +59,19 @@ def bootstrap_and_run_service(
 
         ensure_modules_loaded()
 
+        # Load and apply custom GPU metrics in child process
+        if user_config.gpu_telemetry_metrics_file:
+            from aiperf.gpu_telemetry import constants
+            from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
+
+            loader = MetricsConfigLoader()
+            custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
+                custom_csv_path=user_config.gpu_telemetry_metrics_file
+            )
+
+            constants.GPU_TELEMETRY_METRICS_CONFIG.extend(custom_metrics)
+            constants.DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
+
         service = service_class(
             service_config=service_config,
             user_config=user_config,

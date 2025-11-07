@@ -21,7 +21,7 @@ from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
-from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
+from aiperf.gpu_telemetry.constants import get_gpu_telemetry_metrics_config
 
 
 @DataExporterFactory.register(DataExporterType.JSON)
@@ -149,7 +149,7 @@ class MetricsJsonExporter(MetricsBaseExporter):
                     _metric_display,
                     metric_key,
                     unit_enum,
-                ) in GPU_TELEMETRY_METRICS_CONFIG:
+                ) in get_gpu_telemetry_metrics_config():
                     try:
                         unit = unit_enum.value
                         metric_result = gpu_data.get_metric_result(
