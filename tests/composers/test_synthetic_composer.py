@@ -279,6 +279,99 @@ class TestSyntheticDatasetComposer:
         # Delay should be mean * ratio
         assert turn.delay == 1000  # 2000 * 0.5
 
+    def test_turn_delays_from_config_options(self, mock_tokenizer):
+        """Test that delays configured via CLI options properly show up in Turn.delay."""
+        # Configure delays using the same options available via CLI
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test_model"]),
+            input=InputConfig(
+                conversation=ConversationConfig(
+                    num_dataset_entries=5,
+                    turn=TurnConfig(
+                        mean=3,
+                        stddev=0,
+                        delay=TurnDelayConfig(
+                            mean=2500,  # --conversation-turn-delay-mean 2500
+                            stddev=500,  # --conversation-turn-delay-stddev 500
+                            ratio=1.0,  # --conversation-turn-delay-ratio 1.0
+                        ),
+                    ),
+                ),
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+            ),
+        )
+        rng.reset()
+        rng.init(42)  # Set seed for reproducibility
+        composer = SyntheticDatasetComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        # Verify conversations were created
+        assert len(conversations) == 5
+
+        # Check each conversation
+        for conversation in conversations:
+            assert len(conversation.turns) == 3  # mean=3, stddev=0
+
+            # First turn should have no delay
+            assert conversation.turns[0].delay is None
+
+            # Subsequent turns should have delays
+            for turn_idx in range(1, 3):
+                turn = conversation.turns[turn_idx]
+                assert turn.delay is not None
+                assert turn.delay > 0
+                # With stddev=500 and seed=42, delays should vary around mean=2500
+                # but generally be in reasonable range (e.g., 1000-4000 ms)
+                assert 1000 <= turn.delay <= 4000
+
+        # Test with ratio scaling
+        config.input.conversation.turn.delay.ratio = 0.5
+        rng.reset()
+        rng.init(42)  # Reset seed
+        composer = SyntheticDatasetComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conversation in conversations:
+            # First turn should still have no delay
+            assert conversation.turns[0].delay is None
+
+            # Check that ratio is applied (delays should be roughly half)
+            for turn_idx in range(1, 3):
+                turn = conversation.turns[turn_idx]
+                assert turn.delay is not None
+                # With ratio=0.5, delays should be roughly halved
+                assert 500 <= turn.delay <= 2000
+
+    def test_turn_delays_with_zero_mean(self, mock_tokenizer):
+        """Test that zero mean delay results in no delays on turns."""
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test_model"]),
+            input=InputConfig(
+                conversation=ConversationConfig(
+                    num_dataset_entries=3,
+                    turn=TurnConfig(
+                        mean=2,
+                        stddev=0,
+                        delay=TurnDelayConfig(
+                            mean=0,  # No delay
+                            stddev=0,
+                            ratio=1.0,
+                        ),
+                    ),
+                ),
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+            ),
+        )
+        rng.reset()
+        rng.init(42)
+        composer = SyntheticDatasetComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conversation in conversations:
+            # All turns should have None delay when mean=0
+            for turn in conversation.turns:
+                assert turn.delay is None
+
     # ============================================================================
     # Generate Payload Methods Tests
     # ============================================================================

@@ -79,7 +79,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if self.include_video:
             turn.videos.append(self._generate_video_payloads())
 
-        if not is_first:
+        if not is_first and self.config.input.conversation.turn.delay.mean > 0:
             delay = self._delay_sampler_rng.sample_positive_normal_integer(
                 self.config.input.conversation.turn.delay.mean,
                 self.config.input.conversation.turn.delay.stddev,
