@@ -2,12 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
-import os
 
 from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import AIPerfUIType
-from aiperf.gpu_telemetry import constants
 from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
 
 
@@ -85,46 +83,22 @@ def run_system_controller(
             title="Error Loading Modules",
         )
 
-    # Load custom GPU metrics configuration
+    # Validate custom GPU metrics CSV file
     if user_config.gpu_telemetry_metrics_file:
         try:
             csv_path = user_config.gpu_telemetry_metrics_file
-
-            # Debug logging to diagnose CI failures
-            logger.info(f"[DEBUG] CSV path: {csv_path}")
-            logger.info(f"[DEBUG] CSV path type: {type(csv_path)}")
-            logger.info(f"[DEBUG] CSV exists: {csv_path.exists()}")
-            logger.info(f"[DEBUG] CSV is_file: {csv_path.is_file()}")
-            logger.info(f"[DEBUG] CSV readable: {os.access(csv_path, os.R_OK)}")
-            logger.info(f"[DEBUG] Current PID: {os.getpid()}")
-            logger.info(f"[DEBUG] Current cwd: {os.getcwd()}")
-
-            logger.info(f"Loading custom GPU metrics from {csv_path}")
+            logger.info(f"Custom GPU metrics file configured: {csv_path}")
 
             loader = MetricsConfigLoader()
-            custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
-                custom_csv_path=csv_path
-            )
-
-            # Debug: Log what was loaded
-            logger.info(f"[DEBUG] Loaded {len(custom_metrics)} custom metrics")
+            custom_metrics, _ = loader.build_custom_metrics_from_csv(csv_path)
             logger.info(
-                f"[DEBUG] Custom metric names: {[m[1] for m in custom_metrics]}"
-            )
-
-            # Apply custom metrics and their DCGM field mappings
-            constants.GPU_TELEMETRY_METRICS_CONFIG.extend(custom_metrics)
-            constants.DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
-
-            logger.info(
-                f"Loaded {len(custom_metrics)} custom GPU metrics from {csv_path}"
+                f"Validated {len(custom_metrics)} custom metrics from {csv_path}"
             )
         except Exception as e:
-            # Enhanced exception logging to diagnose CI failures
-            logger.error(f"[DEBUG] Exception type: {type(e).__name__}")
-            logger.error(f"[DEBUG] Exception message: {str(e)}")
-            logger.exception(
-                "Error loading custom GPU metrics. Continuing with default metrics."
+            logger.exception("Error validating custom GPU metrics file")
+            raise_startup_error_and_exit(
+                f"Invalid custom GPU metrics file: {e}",
+                title="GPU Metrics Configuration Error",
             )
 
     try:
