@@ -121,7 +121,9 @@ class VideoConfig(BaseConfig):
         Field(
             description=(
                 "The video codec to use for encoding. Common options: "
-                "libx264 (CPU, widely compatible), libx265 (CPU, smaller files), "
+                "libvpx-vp9 (CPU, BSD-licensed, default for WebM), "
+                "libx264 (CPU, GPL-licensed, widely compatible), "
+                "libx265 (CPU, GPL-licensed, smaller files), "
                 "h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). "
                 "Any FFmpeg-supported codec can be used."
             ),

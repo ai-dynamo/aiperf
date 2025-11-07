@@ -40,7 +40,7 @@ The synthetic video feature provides:
 - Configurable resolution, frame rate, and duration
 - Hardware-accelerated encoding options (CPU and GPU codecs)
 - Base64-encoded video output for API requests
-- MP4 format support
+- MP4 and WebM format support
 
 ## Basic Usage
 
@@ -160,13 +160,15 @@ aiperf profile \
     --url localhost:8000 \
     --video-width 640 \
     --video-height 480 \
-    --video-codec libx264 \
+    --video-codec libvpx-vp9 \
+    --video-format webm \
     --request-count 20
 ```
 
 **Available CPU Codecs:**
-- `libx264`: H.264 encoding, widely compatible (default)
-- `libx265`: H.265 encoding, smaller file sizes, slower encoding
+- `libvpx-vp9`: VP9 encoding, BSD-licensed (default, WebM format)
+- `libx264`: H.264 encoding, GPL-licensed, widely compatible (MP4 format)
+- `libx265`: H.265 encoding, GPL-licensed, smaller file sizes, slower encoding (MP4 format)
 
 #### GPU Encoding (NVIDIA)
 
@@ -290,8 +292,22 @@ aiperf profile \
 
 ### Video Format
 
-Currently, AIPerf supports **MP4** format:
+AIPerf supports both **WebM** (default) and **MP4** formats:
 
+**WebM format (default):**
+```bash
+aiperf profile \
+    --model your-model-name \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --video-width 640 \
+    --video-height 480 \
+    --video-format webm \
+    --video-codec libvpx-vp9 \
+    --request-count 20
+```
+
+**MP4 format:**
 ```bash
 aiperf profile \
     --model your-model-name \
@@ -300,6 +316,7 @@ aiperf profile \
     --video-width 640 \
     --video-height 480 \
     --video-format mp4 \
+    --video-codec libx264 \
     --request-count 20
 ```
 
@@ -316,7 +333,7 @@ This allows seamless integration with vision-language model APIs that accept bas
 
 ### Encoding Performance
 
-- **CPU codecs** (`libx264`, `libx265`): Slower but universally available
+- **CPU codecs** (`libvpx-vp9`, `libx264`, `libx265`): Slower but universally available
 - **GPU codecs** (`h264_nvenc`, `hevc_nvenc`): Much faster, requires NVIDIA GPU
 - Higher resolution and frame rates increase encoding time
 
@@ -359,7 +376,7 @@ Error: Encoder 'h264_nvenc' not found
 Solutions:
 1. Verify NVIDIA GPU is available: `nvidia-smi`
 2. Check FFmpeg was compiled with NVENC support: `ffmpeg -encoders | grep nvenc`
-3. Fall back to CPU codec: `--video-codec libx264`
+3. Fall back to CPU codec: `--video-codec libvpx-vp9 --video-format webm` or `--video-codec libx264 --video-format mp4`
 
 ### Out of Memory
 

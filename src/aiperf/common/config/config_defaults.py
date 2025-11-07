@@ -87,8 +87,8 @@ class VideoDefaults:
     WIDTH = None
     HEIGHT = None
     SYNTH_TYPE = VideoSynthType.MOVING_SHAPES
-    FORMAT = VideoFormat.MP4
-    CODEC = "libx264"
+    FORMAT = VideoFormat.WEBM
+    CODEC = "libvpx-vp9"
 
 
 @dataclass(frozen=True)
