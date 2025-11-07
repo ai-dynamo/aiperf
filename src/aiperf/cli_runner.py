@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
+import os
 
 from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -87,13 +88,28 @@ def run_system_controller(
     # Load custom GPU metrics configuration
     if user_config.gpu_telemetry_metrics_file:
         try:
-            logger.info(
-                f"Loading custom GPU metrics from {user_config.gpu_telemetry_metrics_file}"
-            )
+            csv_path = user_config.gpu_telemetry_metrics_file
+
+            # Debug logging to diagnose CI failures
+            logger.info(f"[DEBUG] CSV path: {csv_path}")
+            logger.info(f"[DEBUG] CSV path type: {type(csv_path)}")
+            logger.info(f"[DEBUG] CSV exists: {csv_path.exists()}")
+            logger.info(f"[DEBUG] CSV is_file: {csv_path.is_file()}")
+            logger.info(f"[DEBUG] CSV readable: {os.access(csv_path, os.R_OK)}")
+            logger.info(f"[DEBUG] Current PID: {os.getpid()}")
+            logger.info(f"[DEBUG] Current cwd: {os.getcwd()}")
+
+            logger.info(f"Loading custom GPU metrics from {csv_path}")
 
             loader = MetricsConfigLoader()
             custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
-                custom_csv_path=user_config.gpu_telemetry_metrics_file
+                custom_csv_path=csv_path
+            )
+
+            # Debug: Log what was loaded
+            logger.info(f"[DEBUG] Loaded {len(custom_metrics)} custom metrics")
+            logger.info(
+                f"[DEBUG] Custom metric names: {[m[1] for m in custom_metrics]}"
             )
 
             # Apply custom metrics and their DCGM field mappings
@@ -101,9 +117,12 @@ def run_system_controller(
             constants.DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
 
             logger.info(
-                f"Loaded {len(custom_metrics)} custom GPU metrics from {user_config.gpu_telemetry_metrics_file}"
+                f"Loaded {len(custom_metrics)} custom GPU metrics from {csv_path}"
             )
-        except Exception:
+        except Exception as e:
+            # Enhanced exception logging to diagnose CI failures
+            logger.error(f"[DEBUG] Exception type: {type(e).__name__}")
+            logger.error(f"[DEBUG] Exception message: {str(e)}")
             logger.exception(
                 "Error loading custom GPU metrics. Continuing with default metrics."
             )
