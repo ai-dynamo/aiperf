@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-FROM python:3.12-slim-bookworm AS base
+FROM python:3.13-slim-bookworm AS base
 
 ENV USERNAME=appuser
 ENV APP_NAME=aiperf
@@ -14,7 +14,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Create virtual environment
 RUN mkdir /opt/$APP_NAME \
-    && uv venv /opt/$APP_NAME/venv --python 3.12 \
+    && uv venv /opt/$APP_NAME/venv --python 3.13 \
     && chown -R $USERNAME:$USERNAME /opt/$APP_NAME
 
 # Activate virtual environment
@@ -133,7 +133,7 @@ RUN uv pip install /dist/aiperf-*.whl \
 ############################################
 ############# Runtime Image ################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.12-v3.4.17-dev AS runtime
+FROM nvcr.io/nvidia/distroless/python:3.13-v3.1.1-dev AS runtime
 
 # Include license and attribution files
 COPY LICENSE ATTRIBUTIONS*.md /legal/
