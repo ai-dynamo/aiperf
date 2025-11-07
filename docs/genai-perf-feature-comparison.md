@@ -38,8 +38,8 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 |---------------|-------------|------------|---------|-------|
 | **chat** | Standard chat completion API (OpenAI-compatible) | ✅ | ✅ | |
 | **completions** | Text completion API for prompt completion | ✅ | ✅ | |
-| **embeddings** | Text embedding generation for similarity/search | ✅ | ✅ | renamed to `nim_rankings` in AIPerf |
-| **rankings** | Text ranking/re-ranking for search relevance | ✅ | ✅ | |
+| **embeddings** | Text embedding generation for similarity/search | ✅ | ✅ | |
+| **rankings** | Text ranking/re-ranking for search relevance | ✅ | ✅ | renamed to `nim_rankings` in AIPerf |
 | **huggingface_tei_rankings** | Huggingface TEI re-ranker API | ✅ | ✅ | |
 | **cohere_rankings** | Cohere re-ranker API | ❌ | ✅ | |
 | **responses** | OpenAI responses endpoint | ❌ | ❌ | |
