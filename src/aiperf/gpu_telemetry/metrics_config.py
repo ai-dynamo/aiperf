@@ -42,30 +42,13 @@ def _title_case_metric_name(name: str) -> str:
     """
     # List of acronyms that should be fully capitalized
     acronyms = {
-        "gpu",
-        "xid",
-        "sm",
-        "nvlink",
-        "pci",
-        "pcie",
-        "cpu",
-        "ram",
-        "vram",
-        "ecc",
-    }
+        "gpu", "xid", "sm", "nvlink", "pci", "pcie", "cpu", "ram", "vram", "ecc",
+    }  # fmt: skip
 
-    # Split into words and title case each word
-    words = name.split()
-    result = []
-
-    for word in words:
-        word_lower = word.lower()
-        if word_lower in acronyms:
-            result.append(word_lower.upper())
-        else:
-            result.append(word.capitalize())
-
-    return " ".join(result)
+    return " ".join(
+        word.upper() if word.lower() in acronyms else word.capitalize()
+        for word in name.split()
+    )
 
 
 class MetricsConfigLoader(AIPerfLoggerMixin):
