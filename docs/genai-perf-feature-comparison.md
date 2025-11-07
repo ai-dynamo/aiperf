@@ -47,12 +47,12 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **huggingface_generate** | HuggingFace transformers generate API | ✅ | ✅ | `/generate` and `/generate_stream` supported |
 | **image_retrieval** | Image search and retrieval endpoints | ✅ | ❌ | |
 | **nvclip** | NVIDIA CLIP model endpoints | ✅ | ❌ | |
-| **multimodal** | Multi-modal (text + image/audio) endpoints | ✅ | ✅ | use `chat` for AIPerf instead |
+| **multimodal** | Multi-modal (text + image/audio) endpoints | ✅ | ✅ | use `chat` endpoint in AIPerf |
 | **generate** | Generic text generation endpoints | ✅ | ❌ | |
 | **kserve** | KServe model serving endpoints | ✅ | ❌ | |
 | **template** | Template-based inference endpoints | 🟡 | ✅ | AIPerf supports multimodal and multi-turn templates |
 | **tensorrtllm_engine** | TensorRT-LLM engine direct access | ✅ | ❌ | |
-| **vision** | Computer vision model endpoints | ✅ | ❌ | |
+| **vision** | Computer vision model endpoints | ✅ | ✅ | use `chat` endpoint in AIPerf |
 | **solido_rag** | SOLIDO RAG endpoint | 🟡 | ✅ | |
 
 ---
@@ -281,7 +281,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Synthetic data generation** | ✅ | ✅ | |
 | **Bring Your Own Data (BYOD)** | ✅ | ✅ | Custom dataset support |
 | **Audio metrics** | ✅ | ❌ | Audio-specific performance metrics |
-| **Vision metrics** | ✅ | ❌ | Image-specific performance metrics |
+| **Vision metrics** | ✅ | ✅ | Image-specific performance metrics |
 | **Live Metrics** | ❌ | ✅ | Live metrics display |
 | **Dashboard UI** | ❌ | ✅ | Dashboard UI |
 | **Reasoning token parsing** | ❌ | ✅ | Parsing of reasoning tokens |

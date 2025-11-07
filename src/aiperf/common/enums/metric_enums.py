@@ -188,6 +188,10 @@ class GenericMetricUnit(BaseMetricUnit):
     RATIO = _unit("ratio")
     USER = _unit("user")
     PERCENT = _unit("%")
+    IMAGE = _unit("image")
+    IMAGES = _unit("images")
+    VIDEO = _unit("video")
+    VIDEOS = _unit("videos")
 
 
 class PowerMetricUnitInfo(BaseMetricUnitInfo):
@@ -289,7 +293,11 @@ class MetricOverTimeUnitInfo(BaseMetricUnitInfo):
     @model_validator(mode="after")
     def _set_tag(self: Self) -> Self:
         """Set the tag based on the existing units. ie. requests/sec, tokens/sec, etc."""
-        self.tag = f"{self.primary_unit}/{self.time_unit}"
+        self.tag = (
+            f"{self.primary_unit}/{self.time_unit}"
+            if not self.inverted
+            else f"{self.time_unit}/{self.primary_unit}"
+        )
         if self.third_unit:
             # If there is a third unit, add it to the tag. ie. tokens/sec/user
             self.tag += f"/{self.third_unit}"
@@ -302,6 +310,7 @@ class MetricOverTimeUnitInfo(BaseMetricUnitInfo):
     primary_unit: "MetricUnitT"
     time_unit: MetricTimeUnit | MetricTimeUnitInfo
     third_unit: "MetricUnitT | None" = None
+    inverted: bool = False
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
@@ -342,6 +351,24 @@ class MetricOverTimeUnit(BaseMetricUnit):
         time_unit=MetricTimeUnit.SECONDS,
         third_unit=GenericMetricUnit.USER,
     )
+    IMAGES_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=GenericMetricUnit.IMAGES,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
+    MS_PER_IMAGE = MetricOverTimeUnitInfo(
+        time_unit=MetricTimeUnit.MILLISECONDS,
+        primary_unit=GenericMetricUnit.IMAGE,
+        inverted=True,
+    )
+    VIDEOS_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=GenericMetricUnit.VIDEOS,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
+    MS_PER_VIDEO = MetricOverTimeUnitInfo(
+        time_unit=MetricTimeUnit.MILLISECONDS,
+        primary_unit=GenericMetricUnit.VIDEO,
+        inverted=True,
+    )
 
     @cached_property
     def info(self) -> MetricOverTimeUnitInfo:
@@ -362,6 +389,11 @@ class MetricOverTimeUnit(BaseMetricUnit):
     def third_unit(self) -> "MetricUnitT | None":
         """Get the third unit (if applicable)."""
         return self.info.third_unit
+
+    @cached_property
+    def inverted(self) -> bool:
+        """Whether the metric is inverted (e.g. time / metric)."""
+        return self.info.inverted
 
 
 class MetricType(CaseInsensitiveStrEnum):
@@ -642,6 +674,9 @@ class MetricFlags(Flag):
 
     TOKENIZES_INPUT_ONLY = 1 << 12
     """Metrics that are only applicable when the endpoint tokenizes input text."""
+
+    SUPPORTS_VIDEO_ONLY = 1 << 13
+    """Metrics that are only applicable to video-based endpoints."""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
