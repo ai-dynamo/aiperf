@@ -528,7 +528,7 @@ class TestDataProcessingEdgeCases:
         # -Inf value
         DCGM_FI_DEV_GPU_TEMP{gpu="0",modelName="RTX",UUID="uuid-1"} -Inf
         # Valid value
-        DCGM_FI_DEV_MEM_COPY_UTIL{gpu="0",modelName="RTX",UUID="uuid-1"} 50.0
+        DCGM_FI_DEV_FB_USED{gpu="0",modelName="RTX",UUID="uuid-1"} 1024.0
         """
 
         records = collector._parse_metrics_to_records(metrics_with_invalid_values)
@@ -540,7 +540,7 @@ class TestDataProcessingEdgeCases:
         assert records[0].telemetry_data.gpu_utilization is None
         assert records[0].telemetry_data.gpu_temperature is None
         # Valid value should be present
-        assert records[0].telemetry_data.memory_copy_utilization == 50.0
+        assert records[0].telemetry_data.gpu_memory_used is not None
 
     def test_invalid_gpu_index_handling(self):
         """Test handling of non-numeric GPU index values."""

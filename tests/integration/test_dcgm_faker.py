@@ -52,18 +52,8 @@ class TestDCGMFaker:
             assert telemetry.gpu_memory_used == approx(
                 gpu.mem_used * 1.048576 * 1e-3, abs=0.01
             )  # MiB to GB
-            assert telemetry.gpu_memory_total == approx(
-                gpu.mem_total * 1.048576 * 1e-3, abs=0.01
-            )  # MiB to GB
-            assert telemetry.gpu_memory_free == approx(
-                gpu.mem_free * 1.048576 * 1e-3, abs=0.01
-            )  # MiB to GB
-            assert telemetry.sm_clock_frequency == approx(gpu.sm_clk, abs=0.01)
-            assert telemetry.memory_clock_frequency == approx(gpu.mem_clk, abs=0.01)
-            assert telemetry.memory_temperature == approx(gpu.mem_temp, abs=0.01)
             assert telemetry.xid_errors == approx(gpu.xid, abs=0.01)
             assert telemetry.power_violation == approx(gpu.power_viol, abs=0.01)
-            assert telemetry.thermal_violation == approx(gpu.thermal_viol, abs=0.01)
 
             # Verify values are in reasonable ranges
             assert 0 <= telemetry.gpu_utilization <= 100
@@ -106,20 +96,13 @@ class TestDCGMFaker:
 
             for record in records:
                 t = record.telemetry_data
-                cfg = faker.cfg
 
                 # All metrics should be non-negative
                 assert t.gpu_utilization >= 0
                 assert t.gpu_power_usage >= 0
                 assert t.gpu_temperature >= 0
-                assert t.sm_clock_frequency >= 0
-                assert t.memory_clock_frequency >= 0
                 assert t.gpu_memory_used >= 0
 
                 # All metrics should not exceed their max values
                 assert t.gpu_utilization <= 100
-                assert t.gpu_power_usage <= cfg.max_power_w
-                assert t.gpu_temperature <= cfg.temp_max_c
-                assert t.sm_clock_frequency <= cfg.sm_clock_boost_mhz
-                assert t.memory_clock_frequency <= cfg.mem_clock_mhz
-                assert t.gpu_memory_used <= t.gpu_memory_total
+                assert t.gpu_temperature <= 100

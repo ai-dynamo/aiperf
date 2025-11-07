@@ -14,7 +14,7 @@ from aiperf.common.protocols import (
     TelemetryResultsProcessorProtocol,
 )
 from aiperf.exporters.display_units_utils import normalize_endpoint_display
-from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
+from aiperf.gpu_telemetry.constants import get_gpu_telemetry_metrics_config
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
@@ -64,7 +64,7 @@ class TelemetryResultsProcessor(BaseMetricsProcessor):
                     metric_display,
                     metric_name,
                     unit_enum,
-                ) in GPU_TELEMETRY_METRICS_CONFIG:
+                ) in get_gpu_telemetry_metrics_config():
                     try:
                         dcgm_tag = (
                             dcgm_url.replace(":", "_")

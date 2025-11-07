@@ -88,7 +88,7 @@ class GPUMetricsTable(Widget):
         if not self._columns_initialized:
             self._initialize_columns()
 
-        for metric in sorted(metrics, key=lambda m: m.header):
+        for metric in metrics:
             row_cells = self._format_metric_row(metric)
             if metric.tag in self._metric_row_keys:
                 row_key = self._metric_row_keys[metric.tag]
@@ -122,13 +122,16 @@ class GPUMetricsTable(Widget):
 
         Header format: "GPU Power Usage | localhost:9401 | GPU 0 | Model"
         We only want the metric name (first part before |).
+        Display format: "Metric name (unit)" to match console export.
         """
         metric_name = (
             metric.header.split(" | ")[0] if " | " in metric.header else metric.header
         )
 
+        metric_display = f"{metric_name} ({metric.unit})"
+
         return [
-            Text(metric_name, style="bold cyan", justify="left"),
+            Text(metric_display, style="bold cyan", justify="left"),
             *[
                 self._format_value(getattr(metric, field))
                 for field in self.STATS_FIELDS

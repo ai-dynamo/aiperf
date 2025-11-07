@@ -54,17 +54,9 @@ def sample_telemetry_record() -> TelemetryRecord:
             energy_consumption=1000.0,
             gpu_utilization=85.0,
             gpu_memory_used=15.26,
-            sm_clock_frequency=1500.0,
-            memory_clock_frequency=1215.0,
-            memory_temperature=65.0,
             gpu_temperature=70.0,
-            memory_copy_utilization=50.0,
             xid_errors=None,
             power_violation=0.0,
-            thermal_violation=0.0,
-            power_management_limit=300.0,
-            gpu_memory_free=8.74,
-            gpu_memory_total=24.0,
         ),
     )
 
@@ -86,17 +78,9 @@ def sample_telemetry_record_partial() -> TelemetryRecord:
             energy_consumption=None,
             gpu_utilization=95.0,
             gpu_memory_used=70.0,
-            sm_clock_frequency=None,
-            memory_clock_frequency=None,
-            memory_temperature=None,
             gpu_temperature=85.0,
-            memory_copy_utilization=None,
             xid_errors=None,
             power_violation=None,
-            thermal_violation=None,
-            power_management_limit=400.0,
-            gpu_memory_free=10.0,
-            gpu_memory_total=80.0,
         ),
     )
 
@@ -281,7 +265,7 @@ class TestTelemetryExportResultsProcessorProcessing:
         assert record.pci_bus_id is None
         assert record.device is None
         assert record.telemetry_data.energy_consumption is None
-        assert record.telemetry_data.sm_clock_frequency is None
+        assert record.telemetry_data.power_violation is None
 
     @pytest.mark.asyncio
     async def test_process_multiple_telemetry_records(

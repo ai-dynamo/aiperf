@@ -32,9 +32,10 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 |-------|---------|---------------------|-----------------|----------------|-----------------|
 | **No flag** | `aiperf profile --model MODEL ...` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ❌ No | ❌ No | ✅ Yes |
 | **Flag only** | `aiperf profile --model MODEL ... --gpu-telemetry` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ✅ Yes | ❌ No | ✅ Yes |
-| **Dashboard mode** | `aiperf profile --model MODEL ... --gpu-telemetry dashboard` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ✅ Yes | ✅ Yes | ✅ Yes |
-| **Custom URLs** | `aiperf profile --model MODEL ... --gpu-telemetry node1:9400 http://node2:9400/metrics` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + custom URLs | ✅ Yes | ❌ No | ✅ Yes |
-| **Dashboard + URLs** | `aiperf profile --model MODEL ... --gpu-telemetry dashboard localhost:9400` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + custom URLs | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Dashboard mode** | `aiperf profile --model MODEL ... --gpu-telemetry dashboard` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
+| **Custom URLs** | `aiperf profile --model MODEL ... --gpu-telemetry node1:9400 http://node2:9400/metrics` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + [custom URLs](#multi-node-gpu-telemetry-example) | ✅ Yes | ❌ No | ✅ Yes |
+| **Dashboard + URLs** | `aiperf profile --model MODEL ... --gpu-telemetry dashboard localhost:9400` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + [custom URLs](#multi-node-gpu-telemetry-example) | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
+| **Custom metrics** | `aiperf profile --model MODEL ... --gpu-telemetry custom_gpu_metrics.csv` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + [custom metrics from CSV](#customizing-displayed-metrics) | ✅ Yes | ❌ No | ✅ Yes |
 
 > [!IMPORTANT]
 > The default endpoints `http://localhost:9400/metrics` and `http://localhost:9401/metrics` are ALWAYS attempted for telemetry collection, regardless of whether the `--gpu-telemetry` flag is used. The flag primarily controls whether metrics are displayed on the console and allows you to specify additional custom DCGM exporter endpoints.
@@ -338,6 +339,35 @@ This will collect GPU metrics from:
 - `http://node3:9400/metrics` (custom node 3)
 
 All metrics are displayed on the console and saved to the output CSV and JSON files, with GPU indices and hostnames distinguishing metrics from different nodes.
+
+## Customizing Displayed Metrics
+
+You can customize which GPU metrics are displayed in AIPerf by creating a custom metrics CSV file and passing it to `--gpu-telemetry`:
+
+```bash
+aiperf profile --model MODEL ... --gpu-telemetry custom_gpu_metrics.csv
+
+aiperf profile --model MODEL ... --gpu-telemetry localhost:9400 dashboard custom_gpu_metrics.csv
+```
+
+### Custom Metrics CSV Format
+
+The CSV format is identical to DCGM exporter configuration. See the **vLLM setup section above** (Step 1: Create a custom metrics configuration) for the complete CSV format example with all available DCGM fields.
+
+**Behavior**: Custom metrics **extend** (not replace) the 7 core default metrics:
+- GPU Power Usage
+- Energy Consumption
+- GPU Utilization
+- GPU Memory Used
+- GPU Temperature
+- XID Errors
+- Power Violation
+
+> [!NOTE]
+> The file path can be absolute or relative. Use `.csv` extension so AIPerf can distinguish it from DCGM endpoint URLs.
+
+> [!TIP]
+> You can start with the example CSV from the vLLM setup section and customize it by commenting out metrics you don't need or adding new DCGM metrics.
 
 ## Example Console Display:
 
