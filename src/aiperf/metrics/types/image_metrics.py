@@ -56,6 +56,8 @@ class ImageThroughputMetric(BaseRecordMetric[float]):
         request_latency_sec = record_metrics.get_converted_or_raise(
             RequestLatencyMetric, self.unit.time_unit
         )
+        if request_latency_sec == 0:
+            raise NoMetricValue("Request latency must be greater than 0.")
         return num_images / request_latency_sec
 
 
@@ -81,4 +83,6 @@ class ImageLatencyMetric(BaseRecordMetric[float]):
         request_latency_ms = record_metrics.get_converted_or_raise(
             RequestLatencyMetric, self.unit.time_unit
         )
+        if num_images == 0:
+            raise NoMetricValue("Number of images must be greater than 0.")
         return request_latency_ms / num_images
