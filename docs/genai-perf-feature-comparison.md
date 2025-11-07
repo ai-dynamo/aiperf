@@ -26,7 +26,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **analyze** | Sweep through multiple scenarios | ✅ | ❌ | |
 | **config** | Run using YAML configuration files | ✅ | ❌ | |
 | **create-template** | Generate template configs | ✅ | ❌ | |
-| **process-export-files** | Multi-node result aggregation | ✅ | **`N/A`** | Not applicable to AIPerf |
+| **process-export-files** | Multi-node result aggregation | ✅ | **`N/A`** | AIPerf is desgined to be scalable |
 
 ---
 
@@ -47,10 +47,10 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **huggingface_generate** | HuggingFace transformers generate API | ✅ | ✅ | `/generate` and `/generate_stream` supported |
 | **image_retrieval** | Image search and retrieval endpoints | ✅ | ❌ | |
 | **nvclip** | NVIDIA CLIP model endpoints | ✅ | ❌ | |
-| **multimodal** | Multi-modal (text + image/audio) endpoints | ✅ | 🟡 | use `chat` for AIPerf instead |
+| **multimodal** | Multi-modal (text + image/audio) endpoints | ✅ | ✅ | use `chat` for AIPerf instead |
 | **generate** | Generic text generation endpoints | ✅ | ❌ | |
 | **kserve** | KServe model serving endpoints | ✅ | ❌ | |
-| **template** | Template-based inference endpoints | ✅ | ✅ | AIPerf supports multimodal and multi-turn templates |
+| **template** | Template-based inference endpoints | 🟡 | ✅ | AIPerf supports multimodal and multi-turn templates |
 | **tensorrtllm_engine** | TensorRT-LLM engine direct access | ✅ | ❌ | |
 | **vision** | Computer vision model endpoints | ✅ | ❌ | |
 | **solido_rag** | SOLIDO RAG endpoint | 🟡 | ✅ | |
@@ -153,7 +153,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 |---------|------------|------------|---------|-------|
 | **Input Tokens Mean** | `--synthetic-input-tokens-mean`<br>`--isl` | ✅ | ✅ | |
 | **Input Tokens Stddev** | `--synthetic-input-tokens-stddev` | ✅ | ✅ | |
-| **Input Tokens Block Size** | `--prompt-input-tokens-block-size`<br>`--isl-block-size` | ❌ | ✅ | |
+| **Input Tokens Block Size** | `--prompt-input-tokens-block-size`<br>`--isl-block-size` | ❌ | ✅ | Used for `mooncake_trace` hash_id blocks |
 
 ---
 
@@ -253,16 +253,16 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 |---------|------------|--------|-------|
 | Console output | ✅ | ✅ | |
 | JSON output | ✅ | ✅ | [See discrepancies below](#json-output) |
-| CSV output | ✅ | ✅ |  |
+| CSV output | ✅ | ✅ | |
 | API Error Summary | ❌ | ✅ | |
-| `profile_export.json` | ✅ | ❌ | |
-| `inputs.json` | ✅ | ❌ | |
+| `profile_export.json` | ✅ | ✅ | Use `--export-level raw` in AIPerf to get raw input/output payloads |
+| Per-Record Metrics | ❌ | ✅ | |
+| `inputs.json` | ✅ | ✅ | AIPerf format is slightly different |
 
 ### Discrepancies
 
 #### JSON Output
 
-- Currently, the result data is inside the `records` field in the JSON output. This is different from GenAI-Perf, where the result data is directly in the top-level of the JSON object.
 - Fields in the `input_config` section may differ between GenAI-Perf and AIPerf.
 
 ---
@@ -271,10 +271,10 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 
 | Feature | GenAI-Perf | AIPerf | Notes |
 |---------|------------|--------|-------|
-| **Multi-modal support** | ✅ | 🟡 | |
-| **GPU Telemetry** | ✅ | ❌ | |
+| **Multi-modal support** | ✅ | ✅ | |
+| **GPU Telemetry** | ✅ | ✅ | |
 | **Streaming API support** | ✅ | ✅ | |
-| **Multi-turn conversations** | ✅ | ❌ |  |
+| **Multi-turn conversations** | ✅ | ✅ | |
 | **Payload scheduling** | ✅ | ✅ | Fixed schedule workloads |
 | **Distributed testing** | ✅ | ❌ | Multi-node result aggregation |
 | **Custom endpoints** | ✅ | ✅ |  |
