@@ -26,7 +26,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **analyze** | Sweep through multiple scenarios | ✅ | ❌ | |
 | **config** | Run using YAML configuration files | ✅ | ❌ | |
 | **create-template** | Generate template configs | ✅ | ❌ | |
-| **process-export-files** | Multi-node result aggregation | ✅ | **`N/A`** | AIPerf is desgined to be scalable |
+| **process-export-files** | Multi-node result aggregation | ✅ | **`N/A`** | AIPerf will aggregate results in real-time |
 
 ---
 
