@@ -34,6 +34,7 @@ class AudioFormat(CaseInsensitiveStrEnum):
 
 class VideoFormat(CaseInsensitiveStrEnum):
     MP4 = "mp4"
+    WEBM = "webm"
 
 
 class VideoSynthType(CaseInsensitiveStrEnum):
