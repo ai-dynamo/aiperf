@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-FROM python:3.12-slim-bookworm AS base
+FROM python:3.13-slim-bookworm AS base
 
 ENV USERNAME=appuser
 ENV APP_NAME=aiperf
@@ -14,7 +14,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Create virtual environment
 RUN mkdir /opt/$APP_NAME \
-    && uv venv /opt/$APP_NAME/venv --python 3.12 \
+    && uv venv /opt/$APP_NAME/venv --python 3.13 \
     && chown -R $USERNAME:$USERNAME /opt/$APP_NAME
 
 # Activate virtual environment
@@ -82,7 +82,7 @@ FROM base AS env-builder
 
 WORKDIR /workspace
 
-# Build ffmpeg from source
+# Build ffmpeg from source with libvpx
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
@@ -90,9 +90,10 @@ RUN apt-get update -y && \
         pkg-config \
         wget \
         yasm \
+        libvpx-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and build ffmpeg
+# Download and build ffmpeg with libvpx (VP9 codec)
 RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz \
     && tar -xf ffmpeg-7.1.tar.xz \
     && cd ffmpeg-7.1 \
@@ -102,6 +103,7 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz \
         --disable-nonfree \
         --enable-shared \
         --disable-static \
+        --enable-libvpx \
         --disable-doc \
         --disable-htmlpages \
         --disable-manpages \
@@ -110,7 +112,9 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz \
     && make -j$(nproc) \
     && make install \
     && cd .. \
-    && rm -rf ffmpeg-7.1 ffmpeg-7.1.tar.xz
+    && rm -rf ffmpeg-7.1 ffmpeg-7.1.tar.xz \
+    && cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
+       cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; }
 
 # Create directories for the nvs user (UID 1000 in NVIDIA distroless)
 RUN mkdir -p /app /app/artifacts /app/.cache \
@@ -129,7 +133,7 @@ RUN uv pip install /dist/aiperf-*.whl \
 ############################################
 ############# Runtime Image ################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.12-v3.4.17-dev AS runtime
+FROM nvcr.io/nvidia/distroless/python:3.13-v3.1.1-dev AS runtime
 
 # Include license and attribution files
 COPY LICENSE ATTRIBUTIONS*.md /legal/
@@ -137,7 +141,7 @@ COPY LICENSE ATTRIBUTIONS*.md /legal/
 # Copy bash with executable permissions preserved using --chmod
 COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
 
-# Copy ffmpeg binaries and libraries
+# Copy ffmpeg binaries and libraries (includes libvpx)
 COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg
 ENV PATH="/opt/ffmpeg/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/ffmpeg/lib:${LD_LIBRARY_PATH}"
