@@ -129,7 +129,7 @@ RUN uv pip install /dist/aiperf-*.whl \
 ############################################
 ############# Runtime Image ################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.13-v3.1.1 AS runtime
+FROM nvcr.io/nvidia/distroless/python:3.13-v3.1.1-dev AS runtime
 
 # Include license and attribution files
 COPY LICENSE ATTRIBUTIONS*.md /legal/
