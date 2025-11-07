@@ -9,9 +9,7 @@ from collections.abc import Awaitable
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.constants import (
-    NANOS_PER_SECOND,
-)
+from aiperf.common.constants import MILLIS_PER_SECOND, NANOS_PER_SECOND
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -21,9 +19,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NotInitializedError
-from aiperf.common.factories import (
-    ServiceFactory,
-)
+from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import background_task, on_command, on_pull_message
 from aiperf.common.messages import (
     CommandAcknowledgedResponse,
@@ -47,10 +43,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import RequestInfo
-from aiperf.common.protocols import (
-    PushClientProtocol,
-    RequestClientProtocol,
-)
+from aiperf.common.protocols import PushClientProtocol, RequestClientProtocol
 from aiperf.workers.inference_client import InferenceClient
 
 
@@ -215,7 +208,9 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
             # Skip delay for the first turn
             turn = conversation.turns[turn_index]
             if turn_index > 0 and turn.delay is not None and turn.delay > 0:
-                delay_seconds = turn.delay / 1000.0  # Convert milliseconds to seconds
+                delay_seconds = (
+                    turn.delay / MILLIS_PER_SECOND
+                )  # Convert milliseconds to seconds
                 if self.is_trace_enabled:
                     self.trace(
                         f"Applying turn delay of {turn.delay}ms before sending turn {turn_index}"
