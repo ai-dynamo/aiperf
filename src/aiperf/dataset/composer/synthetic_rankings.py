@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-import random
-
+from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import ComposerType
 from aiperf.common.factories import ComposerFactory
@@ -21,8 +20,9 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
 
     def __init__(self, config: UserConfig, tokenizer: Tokenizer):
         super().__init__(config, tokenizer)
+
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
-        random.seed(config.input.random_seed)
+        self._passages_rng = rng.derive("dataset.rankings.passages")
 
         if not self.include_prompt:
             raise ValueError(
@@ -77,13 +77,9 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         )
         return turn
 
-    @staticmethod
-    def _sample_positive_int(mean: float, std: float) -> int:
-        """Sample a positive integer using a normal distribution (minimum 1)."""
-        if std <= 0:
-            return max(1, int(mean))
-        value = int(round(random.gauss(mean, std)))
-        return max(1, value)
+    def _sample_positive_int(self, mean: float, std: float) -> int:
+        """Sample a positive integer using a normal distribution"""
+        return self._passages_rng.sample_positive_normal_integer(mean, std)
 
     @property
     def include_prompt(self) -> bool:

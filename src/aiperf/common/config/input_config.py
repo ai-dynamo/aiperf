@@ -330,7 +330,7 @@ class InputConfig(BaseConfig):
             name=("--rankings-passages-mean",),
             group=_CLI_GROUP,
         ),
-    ] = 1
+    ] = InputDefaults.RANKINGS_PASSAGES_MEAN
 
     rankings_passages_stddev: Annotated[
         int,
@@ -342,7 +342,7 @@ class InputConfig(BaseConfig):
             name=("--rankings-passages-stddev",),
             group=_CLI_GROUP,
         ),
-    ] = 0
+    ] = InputDefaults.RANKINGS_PASSAGES_STDDEV
 
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()

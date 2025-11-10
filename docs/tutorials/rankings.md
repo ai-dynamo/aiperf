@@ -43,7 +43,7 @@ aiperf profile \
     --request-count 10 \
     --rankings-passages-mean 5 \
     --rankings-passages-stddev 1 \
-     --prompt-input-tokens-mean 32 \
+    --prompt-input-tokens-mean 32 \
     --prompt-input-tokens-stddev 8
 ```
 
