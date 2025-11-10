@@ -9,7 +9,10 @@ from pathlib import Path
 
 import orjson
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.integration.models import VideoDetails
+
+logger = AIPerfLogger(__name__)
 
 
 def create_rankings_dataset(tmp_path: Path, num_entries: int) -> Path:
@@ -36,7 +39,7 @@ def create_rankings_dataset(tmp_path: Path, num_entries: int) -> Path:
 
 
 def extract_base64_video_details(base64_data: str) -> VideoDetails:
-    """Decode base64 MP4 data and extract file details using ffprobe via stdin.
+    """Decode base64 video data and extract file details using ffprobe via stdin.
 
     Args:
         base64_data: Base64-encoded video data
@@ -54,6 +57,7 @@ def extract_base64_video_details(base64_data: str) -> VideoDetails:
         "json",
         "-show_format",
         "-show_streams",
+        "-count_frames",
         "pipe:0",
     ]
     result = subprocess.run(cmd, input=video_bytes, capture_output=True, check=True)
@@ -65,12 +69,31 @@ def extract_base64_video_details(base64_data: str) -> VideoDetails:
     fps_parts = video_stream["r_frame_rate"].split("/")
     fps = float(fps_parts[0]) / float(fps_parts[1])
 
-    return VideoDetails(
-        format_name=format_info["format_name"],
-        duration=float(format_info["duration"]),
-        codec_name=video_stream["codec_name"],
-        width=video_stream["width"],
-        height=video_stream["height"],
-        fps=fps,
-        pix_fmt=video_stream.get("pix_fmt"),
-    )
+    # Try to get duration from format first, fallback to stream, or calculate from frames
+    duration = format_info.get("duration")
+    if not duration:
+        duration = video_stream.get("duration")
+    if not duration:
+        # Use nb_read_frames (from -count_frames) or nb_frames if available
+        frame_count = video_stream.get("nb_read_frames") or video_stream.get(
+            "nb_frames"
+        )
+        if frame_count and fps:
+            duration = float(frame_count) / fps
+
+    try:
+        return VideoDetails(
+            format_name=format_info.get("format_name", "unknown"),
+            duration=float(duration) if duration else 0.0,
+            codec_name=video_stream.get("codec_name", "unknown"),
+            width=video_stream.get("width", 0),
+            height=video_stream.get("height", 0),
+            fps=fps,
+            pix_fmt=video_stream.get("pix_fmt"),
+        )
+    except Exception as e:
+        if result.stderr:
+            logger.error(result.stderr.decode())
+        if result.stdout:
+            logger.error(result.stdout.decode())
+        raise RuntimeError(f"Failed to extract video details: {e!r}") from e

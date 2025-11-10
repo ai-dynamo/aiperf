@@ -214,7 +214,14 @@ class UserConfig(BaseConfig):
         list[str] | None,
         Field(
             default=None,
-            description="Enable GPU telemetry console display and optionally specify custom DCGM exporter URLs (e.g., http://node1:9401/metrics http://node2:9401/metrics). Default localhost:9400 and localhost:9401 are always attempted",
+            description=(
+                "Enable GPU telemetry console display and optionally specify: "
+                "(1) 'dashboard' for realtime dashboard mode, "
+                "(2) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), "
+                "(3) custom metrics CSV file (e.g., custom_gpu_metrics.csv). "
+                "Default endpoints localhost:9400 and localhost:9401 are always attempted. "
+                "Example: --gpu-telemetry dashboard node1:9400 custom.csv"
+            ),
         ),
         BeforeValidator(parse_str_or_list),
         CLIParameter(
@@ -226,25 +233,37 @@ class UserConfig(BaseConfig):
 
     _gpu_telemetry_mode: GPUTelemetryMode = GPUTelemetryMode.SUMMARY
     _gpu_telemetry_urls: list[str] = []
+    _gpu_telemetry_metrics_file: Path | None = None
 
     @model_validator(mode="after")
     def _parse_gpu_telemetry_config(self) -> Self:
-        """Parse gpu_telemetry list into mode and URLs."""
+        """Parse gpu_telemetry list into mode, URLs, and metrics file."""
         if not self.gpu_telemetry:
             return self
 
         mode = GPUTelemetryMode.SUMMARY
         urls = []
+        metrics_file = None
 
         for item in self.gpu_telemetry:
+            # Check for CSV file (file extension heuristic)
+            if item.endswith(".csv"):
+                metrics_file = Path(item)
+                if not metrics_file.exists():
+                    raise ValueError(f"GPU metrics file not found: {item}")
+                continue
+
+            # Check for dashboard mode
             if item in ["dashboard"]:
                 mode = GPUTelemetryMode.REALTIME_DASHBOARD
+            # Check for URLs
             elif item.startswith("http") or ":" in item:
                 normalized_url = item if item.startswith("http") else f"http://{item}"
                 urls.append(normalized_url)
 
         self._gpu_telemetry_mode = mode
         self._gpu_telemetry_urls = urls
+        self._gpu_telemetry_metrics_file = metrics_file
         return self
 
     @property
@@ -261,6 +280,11 @@ class UserConfig(BaseConfig):
     def gpu_telemetry_urls(self) -> list[str]:
         """Get the parsed GPU telemetry DCGM endpoint URLs."""
         return self._gpu_telemetry_urls
+
+    @property
+    def gpu_telemetry_metrics_file(self) -> Path | None:
+        """Get the path to custom GPU metrics CSV file."""
+        return self._gpu_telemetry_metrics_file
 
     @model_validator(mode="after")
     def _compute_config(self) -> Self:

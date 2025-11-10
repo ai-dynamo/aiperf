@@ -33,10 +33,9 @@ def sample_telemetry_record():
             energy_consumption=1000.5,
             gpu_utilization=85.0,
             gpu_memory_used=72.5,
-            sm_clock_frequency=1410.0,
-            memory_clock_frequency=1215.0,
-            memory_temperature=65.0,
             gpu_temperature=70.0,
+            xid_errors=0.0,
+            power_violation=0.0,
         ),
     )
 
@@ -63,10 +62,9 @@ def sample_telemetry_results():
                     energy_consumption=1000.0 + time_offset * 100,
                     gpu_utilization=80.0 + time_offset * 2,
                     gpu_memory_used=70.0 + gpu_idx * 5 + time_offset * 1,
-                    sm_clock_frequency=1410.0,
-                    memory_clock_frequency=1215.0,
-                    memory_temperature=60.0 + time_offset,
                     gpu_temperature=65.0 + time_offset * 2,
+                    xid_errors=0.0,
+                    power_violation=100.0 + time_offset * 10,
                 ),
             )
             hierarchy.add_record(record)
@@ -87,10 +85,9 @@ def sample_telemetry_results():
                 energy_consumption=800.0 + time_offset * 80,
                 gpu_utilization=75.0 + time_offset * 3,
                 gpu_memory_used=60.0 + time_offset * 2,
-                sm_clock_frequency=1350.0,
-                memory_clock_frequency=1200.0,
-                memory_temperature=58.0 + time_offset,
                 gpu_temperature=63.0 + time_offset * 2,
+                xid_errors=0.0,
+                power_violation=50.0 + time_offset * 5,
             ),
         )
         hierarchy.add_record(record)

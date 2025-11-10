@@ -16,7 +16,7 @@ from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
-from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
+from aiperf.gpu_telemetry.constants import get_gpu_telemetry_metrics_config
 
 
 def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
@@ -187,7 +187,7 @@ class MetricsCsvExporter(MetricsBaseExporter):
                     metric_display,
                     metric_key,
                     unit_enum,
-                ) in GPU_TELEMETRY_METRICS_CONFIG:
+                ) in get_gpu_telemetry_metrics_config():
                     if not self._gpu_has_metric(gpu_data, metric_key):
                         continue
 
