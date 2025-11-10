@@ -24,7 +24,7 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
         self._passages_rng = rng.derive("dataset.rankings.passages")
 
-        if not self.include_prompt:
+        if self.config.input.prompt.input_tokens.mean <= 0:
             raise ValueError(
                 "Synthetic rankings data generation requires text prompts to be enabled. "
                 "Please set --prompt-input-tokens-mean > 0."
@@ -41,7 +41,7 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         num_passages_std = self.config.input.rankings_passages_stddev
 
         for _ in range(num_entries):
-            num_passages = self._sample_positive_int(
+            num_passages = self._passages_rng.sample_positive_normal_integer(
                 num_passages_mean, num_passages_std
             )
             conversation = Conversation(session_id=self.session_id_generator.next())
@@ -76,12 +76,3 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
             lambda: f"[rankings] query_len={len(query_text)} chars, passages={num_passages}"
         )
         return turn
-
-    def _sample_positive_int(self, mean: float, std: float) -> int:
-        """Sample a positive integer using a normal distribution"""
-        return self._passages_rng.sample_positive_normal_integer(mean, std)
-
-    @property
-    def include_prompt(self) -> bool:
-        """Rankings require prompts to be enabled."""
-        return self.config.input.prompt.input_tokens.mean > 0

@@ -102,6 +102,8 @@ class TestRankingsEndpoint:
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
                 --workers-max {defaults.workers_max} \
+                --rankings-passages-mean 6 \
+                --rankings-passages-stddev 2 \
                 --ui {defaults.ui}
             """
         )

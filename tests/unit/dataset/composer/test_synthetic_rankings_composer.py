@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import patch
 
 import pytest
 
@@ -13,7 +12,6 @@ from aiperf.dataset.composer.synthetic_rankings import SyntheticRankingsDatasetC
 def test_initialization_basic(synthetic_config, mock_tokenizer):
     """Ensure SyntheticRankingsDatasetComposer initializes correctly."""
     composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
-    assert composer.include_prompt
     assert composer.session_id_generator is not None
 
 
@@ -63,17 +61,6 @@ def test_passage_count_distribution(synthetic_config, mock_tokenizer):
     assert len(set(passage_counts)) > 1  # variation expected
 
 
-@patch(
-    "aiperf.dataset.composer.synthetic_rankings.SyntheticRankingsDatasetComposer._sample_positive_int"
-)
-def test_sample_positive_int_called(mock_sample, synthetic_config, mock_tokenizer):
-    """Ensure helper for sampling passage counts is called."""
-    mock_sample.return_value = 5
-    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
-    composer.create_dataset()
-    mock_sample.assert_called()
-
-
 def test_reproducibility_fixed_seed(synthetic_config, mock_tokenizer):
     """Dataset generation should be deterministic given a fixed random seed."""
     synthetic_config.input.rankings_passages_mean = 4
@@ -91,13 +78,3 @@ def test_reproducibility_fixed_seed(synthetic_config, mock_tokenizer):
         t1, t2 = c1.turns[0], c2.turns[0]
         assert t1.texts[0].contents == t2.texts[0].contents
         assert t1.texts[1].contents == t2.texts[1].contents
-
-
-def test_sample_positive_int_behavior(synthetic_config, mock_tokenizer):
-    """Test helper method produces only positive integers."""
-    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
-
-    for _ in range(10):
-        val = composer._sample_positive_int(5, 2)
-        assert isinstance(val, int)
-        assert val >= 1
