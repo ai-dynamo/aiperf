@@ -108,13 +108,13 @@ check-format check-fmt: #? check the formatting of the project using ruff.
 	$(activate_venv) && ruff format . --check $(args)
 
 test: #? run the tests using pytest-xdist.
-	$(activate_venv) && pytest -n auto -m 'not integration and not performance' $(args)
+	$(activate_venv) && pytest tests/unit -n auto -m 'not integration and not performance' $(args)
 
 test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
-	$(activate_venv) && pytest -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance'
+	$(activate_venv) && pytest tests/unit -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance'
 
 coverage: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance' $(args)
+	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance' $(args)
 
 install: install-app install-mock-server #? install the project and mock server in editable mode.
 

@@ -15,7 +15,6 @@ from pathlib import Path
 import aiohttp
 import pytest
 
-from tests.conftest import real_sleep
 from tests.integration.models import (
     AIPerfMockServer,
     AIPerfResults,
@@ -195,7 +194,7 @@ async def aiperf_mock_server(
                             break
                 except (aiohttp.ClientError, asyncio.TimeoutError):
                     pass
-                await real_sleep(0.1)
+                await asyncio.sleep(0.1)
             else:
                 # Loop completed without break - all health checks failed
                 if process.returncode is None:
@@ -217,7 +216,7 @@ async def aiperf_mock_server(
                             break
                 except (aiohttp.ClientError, asyncio.TimeoutError):
                     pass
-                await real_sleep(0.1)
+                await asyncio.sleep(0.1)
             else:
                 # log warning but continue so that we have visibility but not fail the test
                 logging.warning(

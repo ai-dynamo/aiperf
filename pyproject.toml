@@ -112,4 +112,4 @@ verbosity_assertions = 2
 addopts = "--strict-markers -m 'not integration and not performance and not ffmpeg and not stress'"
 
 [tool.codespell]
-skip = "*.pyc,*build*,tests/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json"
+skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json"
