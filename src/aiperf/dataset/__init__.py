@@ -5,6 +5,7 @@ from aiperf.dataset.composer import (
     BaseDatasetComposer,
     CustomDatasetComposer,
     SyntheticDatasetComposer,
+    SyntheticRankingsDatasetComposer,
 )
 from aiperf.dataset.dataset_manager import (
     DatasetManager,
@@ -82,6 +83,7 @@ __all__ = [
     "SingleTurn",
     "SingleTurnDatasetLoader",
     "SyntheticDatasetComposer",
+    "SyntheticRankingsDatasetComposer",
     "VideoGenerator",
     "check_file_exists",
     "encode_image",

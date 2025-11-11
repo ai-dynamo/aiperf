@@ -12,6 +12,7 @@ class ComposerType(CaseInsensitiveStrEnum):
     SYNTHETIC = "synthetic"
     CUSTOM = "custom"
     PUBLIC_DATASET = "public_dataset"
+    SYNTHETIC_RANKINGS = "synthetic_rankings"
 
 
 class CustomDatasetType(CaseInsensitiveStrEnum):

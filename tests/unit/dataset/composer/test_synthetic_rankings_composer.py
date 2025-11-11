@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-License-Identifier: Apache-2.0
+
+
+import pytest
+
+from aiperf.common.config import UserConfig
+from aiperf.common.models import Conversation, Turn
+from aiperf.dataset.composer.synthetic_rankings import SyntheticRankingsDatasetComposer
+
+
+def test_initialization_basic(synthetic_config, mock_tokenizer):
+    """Ensure SyntheticRankingsDatasetComposer initializes correctly."""
+    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    assert composer.session_id_generator is not None
+
+
+def test_initialization_fails_without_prompt(mock_tokenizer):
+    """Verify initialization raises error when prompt mean = 0."""
+    config = UserConfig.model_construct()
+    config.input.prompt.input_tokens.mean = 0
+
+    with pytest.raises(ValueError, match="requires text prompts"):
+        SyntheticRankingsDatasetComposer(config, mock_tokenizer)
+
+
+def test_create_dataset_structure(synthetic_config, mock_tokenizer):
+    """Test structure and content of generated synthetic ranking dataset."""
+    synthetic_config.input.rankings_passages_mean = 5
+    synthetic_config.input.rankings_passages_stddev = 1
+    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+
+    dataset = composer.create_dataset()
+    assert len(dataset) == synthetic_config.input.conversation.num_dataset_entries
+
+    for conv in dataset:
+        assert isinstance(conv, Conversation)
+        assert len(conv.turns) == 1
+        turn = conv.turns[0]
+        assert isinstance(turn, Turn)
+
+        assert len(turn.texts) == 2  # query + passages
+        query, passages = turn.texts
+        assert query.name == "query"
+        assert passages.name == "passages"
+        assert len(query.contents) == 1
+        assert len(passages.contents) >= 1
+        assert all(isinstance(x, str) for x in passages.contents)
+
+
+def test_passage_count_distribution(synthetic_config, mock_tokenizer):
+    """Test passages are generated following mean/stddev distribution."""
+    synthetic_config.input.rankings_passages_mean = 5
+    synthetic_config.input.rankings_passages_stddev = 2
+    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+
+    dataset = composer.create_dataset()
+    passage_counts = [len(conv.turns[0].texts[1].contents) for conv in dataset]
+
+    assert all(1 <= c <= 10 for c in passage_counts)
+    assert len(set(passage_counts)) > 1  # variation expected
+
+
+def test_reproducibility_fixed_seed(synthetic_config, mock_tokenizer):
+    """Dataset generation should be deterministic given a fixed random seed."""
+    synthetic_config.input.rankings_passages_mean = 4
+    synthetic_config.input.rankings_passages_stddev = 1
+    synthetic_config.input.random_seed = 42
+
+    composer1 = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    data1 = composer1.create_dataset()
+
+    composer2 = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    data2 = composer2.create_dataset()
+
+    # Session IDs differ (fresh), but text contents should match
+    for c1, c2 in zip(data1, data2, strict=True):
+        t1, t2 = c1.turns[0], c2.turns[0]
+        assert t1.texts[0].contents == t2.texts[0].contents
+        assert t1.texts[1].contents == t2.texts[1].contents

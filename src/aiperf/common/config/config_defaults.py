@@ -56,6 +56,8 @@ class InputDefaults:
     DATASET_SAMPLING_STRATEGY = DatasetSamplingStrategy.SHUFFLE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
+    RANKINGS_PASSAGES_MEAN = 1
+    RANKINGS_PASSAGES_STDDEV = 0
 
 
 @dataclass(frozen=True)

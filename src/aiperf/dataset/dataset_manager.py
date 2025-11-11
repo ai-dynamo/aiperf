@@ -177,31 +177,49 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 f"Error generating inputs.json file at {file_path.resolve()}: {e}"
             )
 
+    async def _load_public_dataset(self) -> list[Conversation]:
+        loader = ShareGPTLoader(self.user_config, self.tokenizer)
+        dataset = await loader.load_dataset()
+        return await loader.convert_to_conversations(dataset)
+
+    def _load_custom_dataset(self) -> list[Conversation]:
+        composer = ComposerFactory.create_instance(
+            ComposerType.CUSTOM,
+            config=self.user_config,
+            tokenizer=self.tokenizer,
+        )
+        return composer.create_dataset()
+
+    def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
+        return "rankings" in endpoint_type.lower()
+
+    def _load_synthetic_dataset(self) -> list[Conversation]:
+        endpoint_type = self.user_config.endpoint.type
+
+        if self._is_rankings_endpoint(endpoint_type):
+            composer_type = ComposerType.SYNTHETIC_RANKINGS
+        else:
+            composer_type = ComposerType.SYNTHETIC
+
+        composer = ComposerFactory.create_instance(
+            composer_type,
+            config=self.user_config,
+            tokenizer=self.tokenizer,
+        )
+        return composer.create_dataset()
+
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
             raise self._service_error("User config is required for dataset manager")
 
         self.dataset_configured.clear()
 
-        # Temporary as this will change with the following dataset processor service PR
         if self.user_config.input.public_dataset is not None:
-            loader = ShareGPTLoader(self.user_config, self.tokenizer)
-            dataset = await loader.load_dataset()
-            conversations = await loader.convert_to_conversations(dataset)
+            conversations = await self._load_public_dataset()
         elif self.user_config.input.custom_dataset_type is not None:
-            composer = ComposerFactory.create_instance(
-                ComposerType.CUSTOM,
-                config=self.user_config,
-                tokenizer=self.tokenizer,
-            )
-            conversations = composer.create_dataset()
+            conversations = self._load_custom_dataset()
         else:
-            composer = ComposerFactory.create_instance(
-                ComposerType.SYNTHETIC,
-                config=self.user_config,
-                tokenizer=self.tokenizer,
-            )
-            conversations = composer.create_dataset()
+            conversations = self._load_synthetic_dataset()
 
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._session_ids_cache = list(self.dataset.keys())
@@ -212,11 +230,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
 
         self.dataset_configured.set()
-        await self.publish(
-            DatasetConfiguredNotification(
-                service_id=self.service_id,
-            ),
-        )
+        await self.publish(DatasetConfiguredNotification(service_id=self.service_id))
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(

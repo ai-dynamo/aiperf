@@ -50,7 +50,7 @@ class TestRankingsEndpoint:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model Cohere/rerank-v3.5 \
+                --model BAAI/bge-reranker-base  \
                 --url {aiperf_mock_server.url} \
                 --tokenizer bert-base-uncased \
                 --endpoint-type hf_tei_rankings \
@@ -74,15 +74,36 @@ class TestRankingsEndpoint:
         result = await cli.run(
             f"""
             aiperf profile \
-                --model rerank-v3.5 \
+                --model BAAI/bge-reranker-base \
                 --url {aiperf_mock_server.url} \
-                --tokenizer bert-base-uncased \
                 --endpoint-type cohere_rankings \
                 --input-file {dataset_path} \
                 --custom-dataset-type single_turn \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
                 --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+
+        assert result.request_count == defaults.request_count
+
+    async def test_synthetic_nim_rankings(
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+    ):
+        """Synthetic dataset test for NIM Rankings endpoint (/v1/ranking)."""
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model nvidia/nv-rerank-qa-mistral-4b \
+                --url {aiperf_mock_server.url} \
+                --tokenizer gpt2 \
+                --endpoint-type nim_rankings \
+                --request-count {defaults.request_count} \
+                --concurrency {defaults.concurrency} \
+                --workers-max {defaults.workers_max} \
+                --rankings-passages-mean 6 \
+                --rankings-passages-stddev 2 \
                 --ui {defaults.ui}
             """
         )
