@@ -17,5 +17,13 @@ from aiperf.dataset.composer.custom import (
 from aiperf.dataset.composer.synthetic import (
     SyntheticDatasetComposer,
 )
+from aiperf.dataset.composer.synthetic_rankings import (
+    SyntheticRankingsDatasetComposer,
+)
 
-__all__ = ["BaseDatasetComposer", "CustomDatasetComposer", "SyntheticDatasetComposer"]
+__all__ = [
+    "BaseDatasetComposer",
+    "CustomDatasetComposer",
+    "SyntheticDatasetComposer",
+    "SyntheticRankingsDatasetComposer",
+]

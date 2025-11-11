@@ -159,6 +159,13 @@ Use these options to profile with AIPerf.
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 ```
+╭─ Rankings Input ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ RANKINGS-PASSAGES-MEAN --rankings-passages-mean        The mean number of passages per query when generating synthetic ranking datasets. [default: 1]                               │
+│ RANKINGS-PASSAGES-STDDEV --rankings-passages-stddev    The standard deviation of the number of passages per query when generating synthetic ranking datasets. [default: 0]          │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+```
+```
 ╭─ Service ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ LOG-LEVEL --log-level                                                 Logging level [choices: trace, debug, info, notice, warning, success, error, critical] [default: info]          │
 │ VERBOSE --verbose                                                -v   Equivalent to --log-level DEBUG. Enables more verbose logging output, but lacks some raw message logging.       │

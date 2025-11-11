@@ -134,3 +134,21 @@ def test_goodput_derived_metric_raises_error(monkeypatch):
         "Metric 'mock_derived' is a Derived metric and cannot be used for --goodput."
         in str(exc.value)
     )
+
+
+def test_rankings_passages_defaults_and_custom_values():
+    cfg_default = InputConfig()
+    assert cfg_default.rankings_passages_mean == 1
+    assert cfg_default.rankings_passages_stddev == 0
+
+    cfg_custom = InputConfig(rankings_passages_mean=5, rankings_passages_stddev=2)
+    assert cfg_custom.rankings_passages_mean == 5
+    assert cfg_custom.rankings_passages_stddev == 2
+
+
+def test_rankings_passages_validation_errors():
+    with pytest.raises(ValidationError):
+        InputConfig(rankings_passages_mean=0)
+
+    with pytest.raises(ValidationError):
+        InputConfig(rankings_passages_stddev=-1)

@@ -318,6 +318,32 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.GOODPUT
 
+    rankings_passages_mean: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Mean number of passages per rankings entry (per query)(default 1)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-passages-mean",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.RANKINGS_PASSAGES_MEAN
+
+    rankings_passages_stddev: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=("Stddev for passages per rankings entry (default 0)."),
+        ),
+        CLIParameter(
+            name=("--rankings-passages-stddev",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.RANKINGS_PASSAGES_STDDEV
+
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
     video: VideoConfig = VideoConfig()
