@@ -169,7 +169,16 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
             )
             if any(exceptions):
                 self.exception(f"Proxy Socket Initialization Failed: {exceptions}")
-                raise
+                # Find and raise the first actual exception, wrapped in LifecycleOperationError
+                from aiperf.common.exceptions import LifecycleOperationError
+
+                for exc in exceptions:
+                    if exc is not None:
+                        raise LifecycleOperationError(
+                            operation="initialize",
+                            original_exception=exc,
+                            lifecycle_id=self.proxy_id,
+                        ) from exc
 
             self.debug("Proxy Sockets Initialized Successfully")
 

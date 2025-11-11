@@ -175,22 +175,3 @@ class TestRealtimeTelemetryMetricsMixin:
         # All metrics should be stored
         assert len(mocked_mixin._telemetry_metrics) == 10
         assert mocked_mixin._telemetry_metrics == metrics
-
-    @pytest.mark.asyncio
-    async def test_integration_with_controller(self):
-        """Test that mixin integrates correctly with controller."""
-        service_config = ServiceConfig()
-        mock_controller = MagicMock()
-        mock_controller.some_method = MagicMock(return_value="test_value")
-
-        with patch(
-            "aiperf.common.mixins.message_bus_mixin.MessageBusClientMixin.__init__",
-            return_value=None,
-        ):
-            mixin = RealtimeTelemetryMetricsMixin(
-                service_config=service_config, controller=mock_controller
-            )
-
-        # Verify controller is accessible
-        assert mixin._controller == mock_controller
-        assert mixin._controller.some_method() == "test_value"

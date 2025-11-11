@@ -68,6 +68,8 @@ class TestDatasetManagerSequentialIteration:
             service_config = ServiceConfig()
             dataset_manager = DatasetManager(service_config, user_config)
 
+            await dataset_manager.initialize()
+
             # Configure the dataset to load conversations
             await dataset_manager._profile_configure_command(
                 ProfileConfigureCommand(config=user_config, service_id="test_service")
@@ -134,6 +136,8 @@ class TestDatasetManagerSequentialIteration:
             service_config = ServiceConfig()
             custom_manager = DatasetManager(service_config, custom_config)
 
+            await custom_manager.initialize()
+
             # Configure the dataset
             await custom_manager._profile_configure_command(
                 ProfileConfigureCommand(config=custom_config, service_id="test_service")
@@ -193,6 +197,8 @@ class TestDatasetManagerSequentialIteration:
 
             service_config = ServiceConfig()
             dataset_manager = DatasetManager(service_config, user_config)
+
+            await dataset_manager.initialize()
 
             # Configure the dataset
             await dataset_manager._profile_configure_command(
