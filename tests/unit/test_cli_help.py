@@ -31,19 +31,22 @@ class TestCLIHelp:
     def test_profile_help_does_not_show_parameters(self, capsys):
         """This test is to ensure that the help text for the profile command does
         not show miscellaneous un-grouped parameters."""
-        app(["profile", "-h"])
+        with pytest.raises(SystemExit):
+            app(["profile", "-h"])
         assert "─ Parameters ─" not in capsys.readouterr().out
 
     def test_no_args_does_not_crash(self, capsys):
         """This test is to ensure that the CLI does not crash when no arguments are provided."""
-        app([])
+        with pytest.raises(SystemExit):
+            app([])
         out = capsys.readouterr().out
         assert "Usage: aiperf COMMAND" in out
         assert "─ Commands ─" in out
 
     def test_disable_cli_parameters_not_in_help(self, capsys, disabled_parameters):
         """Test that certain parameters marked with DisableCLI() are not shown in help text."""
-        app(["profile", "-h"])
+        with pytest.raises(SystemExit):
+            app(["profile", "-h"])
         help_output = capsys.readouterr().out
 
         for param in disabled_parameters:

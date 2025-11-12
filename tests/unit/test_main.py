@@ -6,8 +6,6 @@ from unittest.mock import patch
 
 import pytest
 
-from aiperf.common.environment import Environment
-
 
 class TestMainFunction:
     """Test the main() function from __main__.py"""
@@ -20,43 +18,36 @@ class TestMainFunction:
         sys.argv = original
 
     @pytest.mark.parametrize(
-        "argv,expected_argv,expected_gpu_telemetry",
+        "argv,expected_gpu_telemetry",
         [
-            # --gpu-telemetry at end without value
+            # --gpu-telemetry at end without value (cyclopts v4 supports 0 args)
             (
                 ["--gpu-telemetry"],
-                ["--gpu-telemetry", *Environment.GPU.DEFAULT_DCGM_ENDPOINTS],
-                Environment.GPU.DEFAULT_DCGM_ENDPOINTS,
+                [],
             ),
             # --gpu-telemetry followed by single dash flag
             (
                 ["--gpu-telemetry", "-v"],
-                ["--gpu-telemetry", *Environment.GPU.DEFAULT_DCGM_ENDPOINTS, "-v"],
-                Environment.GPU.DEFAULT_DCGM_ENDPOINTS,
+                [],
             ),
             # --gpu-telemetry followed by double dash flag
             (
                 ["--gpu-telemetry", "--verbose"],
-                ["--gpu-telemetry", *Environment.GPU.DEFAULT_DCGM_ENDPOINTS, "--verbose"],
-                Environment.GPU.DEFAULT_DCGM_ENDPOINTS,
+                [],
             ),
             # --gpu-telemetry with custom value
             (
-                ["--gpu-telemetry", "http://custom:9401"],
                 ["--gpu-telemetry", "http://custom:9401"],
                 ["http://custom:9401"],
             ),
             # No --gpu-telemetry flag
             (
                 [],
-                [],
                 None,
             ),
         ],
     )  # fmt: skip
-    def test_gpu_telemetry_argument_handling(
-        self, argv, expected_argv, expected_gpu_telemetry
-    ):
+    def test_gpu_telemetry_argument_handling(self, argv, expected_gpu_telemetry):
         """Test --gpu-telemetry flag handling with various argument combinations"""
         from aiperf.__main__ import main
 
@@ -72,9 +63,10 @@ class TestMainFunction:
             "aiperf.cli_runner.run_system_controller",
             side_effect=mock_run_system_controller,
         ):
-            main()
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 0
 
-        assert sys.argv == ["aiperf", "profile", "-m", "test-model", *expected_argv]
         assert (
             captured_user_config.gpu_telemetry == expected_gpu_telemetry
             if captured_user_config
