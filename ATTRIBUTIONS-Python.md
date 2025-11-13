@@ -1199,7 +1199,7 @@ SOFTWARE.
   - `Issue tracker`: https://github.com/jawah/charset_normalizer/issues
 
 
-## cyclopts (3.24.0)
+## cyclopts (4.2.3)
 
 ### Licenses
 License: `Apache-2.0`
