@@ -7,7 +7,7 @@ from aiperf.cli import app
 
 
 def main() -> int:
-    return app(sys.argv[1:])
+    return app()
 
 
 if __name__ == "__main__":
