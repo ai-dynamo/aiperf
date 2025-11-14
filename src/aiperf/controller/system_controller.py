@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import os
-import sys
 import time
 from typing import cast
 
@@ -676,4 +675,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    sys.exit(0)
