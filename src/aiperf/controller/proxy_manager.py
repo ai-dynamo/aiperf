@@ -55,7 +55,7 @@ class ProxyManager(AIPerfLifecycleMixin):
         # 2. zmq_ctx_term() blocks in C code waiting for all sockets to close
         # 3. Even if called in a thread, Python may wait for that thread on shutdown
         # 4. asyncio timeouts CANNOT interrupt blocking C code in threads
-        # 5. This causes indefinite hangs (30+ hours observed in production)
+        # 5. This causes indefinite hangs
         #
         # Instead, we let the process handle cleanup:
         # - Normal completion: os._exit() forcefully cleans up (no ResourceWarnings)
