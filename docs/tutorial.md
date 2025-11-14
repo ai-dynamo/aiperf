@@ -21,10 +21,10 @@ models using various inference solutions.
 ```bash
 # Set environment variables
 export AIPERF_REPO_TAG="main"
-export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.5.0"
+export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.6.1"
 export MODEL="Qwen/Qwen3-0.6B"
 
-# Download the Dyanmo container
+# Download the Dynamo container
 docker pull ${DYNAMO_PREBUILT_IMAGE_TAG}
 
 export DYNAMO_REPO_TAG=$(docker run --rm --entrypoint "" ${DYNAMO_PREBUILT_IMAGE_TAG} cat /workspace/version.txt | cut -d'+' -f2)
@@ -72,7 +72,7 @@ uv pip install ./aiperf
 ```
 <!-- health-check-dynamo-default-openai-endpoint-server -->
 ```bash
-timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"a\"}],\"max_completion_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "Dynamo not ready after 15min"; exit 1; }
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"a\"}],\"max_completion_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "Dynamo not ready after 15min"; exit 1; }
 ```
 <!-- /health-check-dynamo-default-openai-endpoint-server -->
 <!-- aiperf-run-dynamo-default-openai-endpoint-server -->
@@ -83,7 +83,7 @@ aiperf profile \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --streaming \
-    --url localhost:8080 \
+    --url localhost:8000 \
     --synthetic-input-tokens-mean 100 \
     --synthetic-input-tokens-stddev 0 \
     --output-tokens-mean 200 \
