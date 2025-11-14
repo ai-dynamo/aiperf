@@ -62,7 +62,7 @@ Dynamo includes DCGM out of the box on port 9401 - no extra setup needed!
 ```bash
 # Set environment variables
 export AIPERF_REPO_TAG="main"
-export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.5.1"
+export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.6.1"
 export MODEL="Qwen/Qwen3-0.6B"
 
 # Download the Dynamo container
