@@ -24,7 +24,7 @@ export AIPERF_REPO_TAG="main"
 export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.6.1"
 export MODEL="Qwen/Qwen3-0.6B"
 
-# Download the Dyanmo container
+# Download the Dynamo container
 docker pull ${DYNAMO_PREBUILT_IMAGE_TAG}
 
 export DYNAMO_REPO_TAG=$(docker run --rm --entrypoint "" ${DYNAMO_PREBUILT_IMAGE_TAG} cat /workspace/version.txt | cut -d'+' -f2)
