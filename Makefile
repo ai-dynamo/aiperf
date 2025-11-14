@@ -37,9 +37,9 @@ PYTHON_VERSION ?= 3.12
 # The command to activate the virtual environment
 activate_venv = . $(VENV_PATH)/bin/activate
 
-# Try and get the app name and version from uv
-APP_NAME := $(shell $(activate_venv) 2>/dev/null && uv version 2>/dev/null | cut -d ' ' -f 1)
-APP_VERSION := $(shell $(activate_venv) 2>/dev/null && uv version 2>/dev/null | cut -d ' ' -f 2)
+# Try and get the app name and version from pyproject.toml
+APP_NAME := $(shell grep '^name = ' pyproject.toml 2>/dev/null | sed 's/name = "\(.*\)"/\1/')
+APP_VERSION := $(shell grep '^version = ' pyproject.toml 2>/dev/null | sed 's/version = "\(.*\)"/\1/')
 
 # The folder where uv is installed
 UV_PATH ?= $(HOME)/.local/bin
