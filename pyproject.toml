@@ -50,7 +50,7 @@ dependencies = [
 
 # CLI Entrypoints
 [project.scripts]
-aiperf = "aiperf.__main__:main"
+aiperf = "aiperf.cli:app"
 
 [project.optional-dependencies]
 dev = [
