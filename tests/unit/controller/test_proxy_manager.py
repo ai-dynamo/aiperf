@@ -23,7 +23,7 @@ class TestProxyManagerLifecycle:
         This is critical because:
         1. The context is a singleton shared by all ZMQ clients in the process
         2. zmq_ctx_term() blocks in C code waiting for all sockets to close
-        3. This causes indefinite hangs (30+ hours observed in production)
+        3. This causes indefinite hangs
         4. The OS kernel reliably cleans up resources on process exit
         """
         service_config = ServiceConfig()
