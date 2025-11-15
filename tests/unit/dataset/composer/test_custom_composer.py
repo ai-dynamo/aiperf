@@ -5,7 +5,7 @@ from unittest.mock import Mock, mock_open, patch
 
 import pytest
 
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, DatasetSamplingStrategy
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset import (
     MooncakeTraceDatasetLoader,
@@ -63,7 +63,7 @@ class TestCoreFunctionality:
         composer._create_loader_instance(dataset_type)
         assert isinstance(composer.loader, expected_instance)
 
-    @patch("aiperf.dataset.composer.custom.utils.check_file_exists")
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     def test_create_dataset_trace(self, mock_check_file, trace_config, mock_tokenizer):
         """Test that create_dataset returns correct type."""
@@ -75,7 +75,7 @@ class TestCoreFunctionality:
         assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
         assert all(len(turn.texts) == 1 for c in conversations for turn in c.turns)
 
-    @patch("aiperf.dataset.composer.custom.utils.check_file_exists")
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     def test_max_tokens_config(self, mock_check_file, trace_config, mock_tokenizer):
         trace_config.input.prompt.output_tokens.mean = 120
@@ -95,7 +95,7 @@ class TestCoreFunctionality:
                 # Should be roughly around the mean of 120 (within 3 stddev)
                 assert 96 < turn.max_tokens < 144
 
-    @patch("aiperf.dataset.composer.custom.utils.check_file_exists")
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     @patch("pathlib.Path.iterdir", return_value=[])
     def test_max_tokens_mooncake(
@@ -116,7 +116,7 @@ class TestCoreFunctionality:
 class TestErrorHandling:
     """Test class for CustomDatasetComposer error handling scenarios."""
 
-    @patch("aiperf.dataset.composer.custom.utils.check_file_exists")
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("aiperf.dataset.composer.custom.CustomDatasetFactory.create_instance")
     def test_create_dataset_empty_result(
         self, mock_factory, mock_check_file, custom_config, mock_tokenizer
@@ -133,3 +133,48 @@ class TestErrorHandling:
 
         assert isinstance(result, list)
         assert len(result) == 0
+
+
+class TestSamplingStrategy:
+    """Test class for CustomDatasetComposer sampling strategy configuration."""
+
+    @pytest.mark.parametrize(
+        "dataset_type,expected_strategy",
+        [
+            (CustomDatasetType.SINGLE_TURN, DatasetSamplingStrategy.SEQUENTIAL),
+            (CustomDatasetType.MULTI_TURN, DatasetSamplingStrategy.SEQUENTIAL),
+            (CustomDatasetType.RANDOM_POOL, DatasetSamplingStrategy.SHUFFLE),
+            (CustomDatasetType.MOONCAKE_TRACE, DatasetSamplingStrategy.SEQUENTIAL),
+        ],
+    )
+    def test_set_sampling_strategy_when_none(
+        self, custom_config, mock_tokenizer, dataset_type, expected_strategy
+    ):
+        """Test that _set_sampling_strategy sets the correct strategy when None."""
+        custom_config.input.dataset_sampling_strategy = None
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        composer._set_sampling_strategy(dataset_type)
+
+        assert composer.config.input.dataset_sampling_strategy == expected_strategy
+
+    @pytest.mark.parametrize(
+        "dataset_type",
+        [
+            CustomDatasetType.SINGLE_TURN,
+            CustomDatasetType.MULTI_TURN,
+            CustomDatasetType.RANDOM_POOL,
+            CustomDatasetType.MOONCAKE_TRACE,
+        ],
+    )
+    def test_set_sampling_strategy_does_not_override(
+        self, custom_config, mock_tokenizer, dataset_type
+    ):
+        """Test that _set_sampling_strategy does not override explicitly set strategy."""
+        explicit_strategy = DatasetSamplingStrategy.SHUFFLE
+        custom_config.input.dataset_sampling_strategy = explicit_strategy
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        composer._set_sampling_strategy(dataset_type)
+
+        assert composer.config.input.dataset_sampling_strategy == explicit_strategy

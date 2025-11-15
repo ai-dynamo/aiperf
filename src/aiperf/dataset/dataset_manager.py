@@ -216,7 +216,13 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         if self.user_config.input.public_dataset is not None:
             conversations = await self._load_public_dataset()
-        elif self.user_config.input.custom_dataset_type is not None:
+        elif (
+            self.user_config.input.custom_dataset_type is not None
+            or self.user_config.input.file is not None
+        ):
+            # Use CUSTOM composer if either:
+            # 1. custom_dataset_type is explicitly set, OR
+            # 2. input file is provided (composer will auto-infer type)
             conversations = self._load_custom_dataset()
         else:
             conversations = self._load_synthetic_dataset()

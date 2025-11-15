@@ -27,9 +27,12 @@ class BaseRankingsEndpoint(BaseEndpoint):
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format payload for a rankings request.
 
-        Expects texts with specific names:
-        - 'query': Single text containing the query to rank against
+        Accepts texts with specific names:
+        - 'query' or 'queries': Single text containing the query to rank against
         - 'passages': Multiple texts containing passages to be ranked
+
+        Note: Both 'query' and 'queries' are accepted for backward compatibility
+        with genai-perf datasets.
 
         Args:
             request_info: Request context including model endpoint, metadata, and turns
@@ -55,17 +58,17 @@ class BaseRankingsEndpoint(BaseEndpoint):
             match text.name:
                 case "passages":
                     passage_texts.extend(text.contents)
-                case "query":
+                case "query" | "queries":
                     query_texts.extend(text.contents)
                 case _:
                     self.warning(
-                        f"Ignoring text with name '{text.name}' - rankings expects 'query' and 'passages'"
+                        f"Ignoring text with name '{text.name}' - rankings expects 'query'/'queries' and 'passages'"
                     )
 
         if not query_texts:
             raise ValueError(
-                "Rankings request requires a text with name 'query'. "
-                "Provide a Text object with name='query' containing the search query."
+                "Rankings request requires a text with name 'query' or 'queries'. "
+                "Provide a Text object with name='query' or name='queries' containing the search query."
             )
 
         if len(query_texts) > 1:

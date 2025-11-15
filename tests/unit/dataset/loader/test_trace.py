@@ -4,6 +4,7 @@ import logging
 from unittest.mock import Mock
 
 import pytest
+from pydantic import ValidationError
 
 from aiperf.common.config import EndpointConfig, InputConfig, UserConfig
 from aiperf.common.enums import CustomDatasetType
@@ -34,18 +35,18 @@ class TestMooncakeTrace:
         assert data.hash_ids is None  # Not allowed with text_input
         assert data.timestamp == 1000
 
-    def test_create_with_both_input_fields(self):
-        """Test creating MooncakeTrace with both input_length and text_input."""
-        data = MooncakeTrace(
-            input_length=100,
-            text_input="This is test input text",
-            hash_ids=[123],
-            timestamp=1000,
-        )
-
-        # Both fields should be preserved
-        assert data.input_length == 100
-        assert data.text_input == "This is test input text"
+    def test_create_with_both_input_fields_and_hash_ids(self):
+        """Test that input_length and text_input cannot be provided together."""
+        with pytest.raises(
+            ValidationError,
+            match="'input_length' and 'text_input' cannot be provided together",
+        ):
+            MooncakeTrace(
+                input_length=100,
+                text_input="This is test input text",
+                hash_ids=[123],
+                timestamp=1000,
+            )
 
     def test_create_with_optional_output_length(self):
         """Test creating MooncakeTrace with optional output_length."""
@@ -82,13 +83,13 @@ class TestMooncakeTrace:
         assert data.hash_ids is None
 
     def test_validation_hash_ids_requires_input_length(self):
-        """Test that hash_ids requires input_length (current validation behavior)."""
+        """Test that hash_ids is only allowed with input_length, not text_input."""
         from pydantic import ValidationError
 
-        # Current validation prevents text_input + hash_ids combination
+        # Validation prevents text_input + hash_ids combination
         with pytest.raises(
             ValidationError,
-            match="'input_length' must be provided when 'hash_ids' is specified",
+            match="'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input' is provided",
         ):
             MooncakeTrace(text_input="test input", hash_ids=[123], timestamp=1000)
 
@@ -184,11 +185,11 @@ class TestMooncakeTraceDatasetLoader:
     def test_load_dataset_mixed_input_types(
         self, create_jsonl_file, mock_prompt_generator, default_user_config
     ):
-        """Test loading JSONL file with mixed input_length and text_input."""
+        """Test loading JSONL file with mixed input_length and text_input entries (but not both in same entry)."""
         content = [
             '{"input_length": 100, "hash_ids": [123], "timestamp": 1000}',
             '{"text_input": "Mixed input test", "timestamp": 2000}',
-            '{"input_length": 200, "text_input": "Both fields", "hash_ids": [789], "timestamp": 3000}',
+            '{"input_length": 200, "output_length": 50, "timestamp": 3000}',
         ]
         filename = create_jsonl_file(content)
 
@@ -202,18 +203,19 @@ class TestMooncakeTraceDatasetLoader:
         assert len(dataset) == 3
         traces = list(dataset.values())
 
-        # First entry: input_length only
+        # First entry: input_length with hash_ids
         assert traces[0][0].input_length == 100
         assert traces[0][0].text_input is None
+        assert traces[0][0].hash_ids == [123]
 
         # Second entry: text_input only
         assert traces[1][0].input_length is None
         assert traces[1][0].text_input == "Mixed input test"
 
-        # Third entry: both fields (input_length + text_input + hash_ids allowed together)
+        # Third entry: input_length with output_length
         assert traces[2][0].input_length == 200
-        assert traces[2][0].text_input == "Both fields"
-        assert traces[2][0].text_input == "Both fields"
+        assert traces[2][0].output_length == 50
+        assert traces[2][0].text_input is None
 
     def test_load_dataset_skips_empty_lines(
         self, create_jsonl_file, mock_prompt_generator, default_user_config

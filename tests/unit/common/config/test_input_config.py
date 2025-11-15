@@ -55,18 +55,20 @@ def test_input_config_custom_values():
     This test verifies that the InputConfig class correctly initializes its attributes
     when provided with a dictionary of custom values.
     """
-    config = InputConfig(
-        extra={"key": "value"},
-        headers={"Authorization": "Bearer token"},
-        random_seed=42,
-        custom_dataset_type=CustomDatasetType.MULTI_TURN,
-    )
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = InputConfig(
+            extra={"key": "value"},
+            headers={"Authorization": "Bearer token"},
+            random_seed=42,
+            custom_dataset_type=CustomDatasetType.MULTI_TURN,
+            file=temp_file.name,
+        )
 
-    assert config.extra == [("key", "value")]
-    assert config.headers == [("Authorization", "Bearer token")]
-    assert config.file is None
-    assert config.random_seed == 42
-    assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
+        assert config.extra == [("key", "value")]
+        assert config.headers == [("Authorization", "Bearer token")]
+        assert config.file == PosixPath(temp_file.name)
+        assert config.random_seed == 42
+        assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
 
 
 def test_input_config_file_validation():
@@ -134,6 +136,59 @@ def test_goodput_derived_metric_raises_error(monkeypatch):
         "Metric 'mock_derived' is a Derived metric and cannot be used for --goodput."
         in str(exc.value)
     )
+
+
+def test_custom_dataset_type_without_file_raises_error():
+    """
+    Test that setting custom_dataset_type without a file raises ValidationError.
+
+    This validates the validate_custom_dataset_file model validator.
+    """
+    with pytest.raises(ValidationError) as exc:
+        InputConfig(custom_dataset_type=CustomDatasetType.SINGLE_TURN, file=None)
+
+    assert "Custom dataset type requires --input-file to be provided" in str(exc.value)
+
+
+def test_custom_dataset_type_with_file_succeeds():
+    """
+    Test that setting custom_dataset_type with a file succeeds.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = InputConfig(
+            custom_dataset_type=CustomDatasetType.MULTI_TURN, file=temp_file.name
+        )
+        assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
+        assert config.file == PosixPath(temp_file.name)
+
+
+def test_file_without_custom_dataset_type_succeeds():
+    """
+    Test that providing a file without custom_dataset_type succeeds (allows auto-inference).
+    """
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = InputConfig(file=temp_file.name, custom_dataset_type=None)
+        assert config.file == PosixPath(temp_file.name)
+        assert config.custom_dataset_type is None
+
+
+@pytest.mark.parametrize(
+    "dataset_type",
+    [
+        CustomDatasetType.SINGLE_TURN,
+        CustomDatasetType.MULTI_TURN,
+        CustomDatasetType.RANDOM_POOL,
+        CustomDatasetType.MOONCAKE_TRACE,
+    ],
+)
+def test_all_custom_dataset_types_require_file(dataset_type):
+    """
+    Test that all custom dataset types require a file.
+    """
+    with pytest.raises(ValidationError) as exc:
+        InputConfig(custom_dataset_type=dataset_type, file=None)
+
+    assert "Custom dataset type requires --input-file to be provided" in str(exc.value)
 
 
 def test_rankings_passages_defaults_and_custom_values():

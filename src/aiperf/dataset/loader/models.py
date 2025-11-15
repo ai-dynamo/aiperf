@@ -156,25 +156,31 @@ class MooncakeTrace(AIPerfBaseModel):
     - With input_length: {"input_length": 10, "output_length": 4}
     - With text_input: {"text_input": "Hello world", "output_length": 4}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
+
+    Note:
+    Only one of the following input combinations is allowed:
+    - text_input only (uses text input directly)
+    - input_length only (uses input length to generate synthetic text input)
+    - input_length and hash_ids (uses input length and hash ids to generate reproducible synthetic text input)
     """
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
 
-    # Either input_length or text_input must be provided
+    # Exactly one of input_length or text_input must be provided
     input_length: int | None = Field(
-        None, description="The input sequence length of a request"
+        None,
+        description="The input sequence length of a request. Required if text_input is not provided.",
     )
     text_input: str | None = Field(
-        None, description="The actual text input for the request"
+        None,
+        description="The actual text input for the request. Required if input_length is not provided.",
     )
 
     # Optional fields
     output_length: int | None = Field(
         None, description="The output sequence length of a request"
     )
-    hash_ids: list[int] | None = Field(
-        None, description="The hash ids of a request (required if input_length is used)"
-    )
+    hash_ids: list[int] | None = Field(None, description="The hash ids of a request")
     timestamp: int | None = Field(None, description="The timestamp of a request")
     delay: int | None = Field(
         None, description="Amount of milliseconds to wait before sending the turn."
@@ -189,9 +195,14 @@ class MooncakeTrace(AIPerfBaseModel):
         if self.input_length is None and self.text_input is None:
             raise ValueError("Either 'input_length' or 'text_input' must be provided")
 
-        if self.input_length is None and self.hash_ids is not None:
+        if self.input_length is not None and self.text_input is not None:
             raise ValueError(
-                "'input_length' must be provided when 'hash_ids' is specified"
+                "'input_length' and 'text_input' cannot be provided together. Use only one of them."
+            )
+
+        if self.hash_ids is not None and self.input_length is None:
+            raise ValueError(
+                "'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input' is provided"
             )
 
         return self
