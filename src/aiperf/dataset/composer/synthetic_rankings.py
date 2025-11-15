@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import UserConfig
+from aiperf.common.config import InputDefaults, UserConfig
 from aiperf.common.enums import ComposerType
 from aiperf.common.factories import ComposerFactory
 from aiperf.common.models import Conversation, Text, Turn
@@ -23,6 +23,15 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
 
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
         self._passages_rng = rng.derive("dataset.rankings.passages")
+
+        # Set default sampling strategy for synthetic rankings dataset if not explicitly set
+        if self.config.input.dataset_sampling_strategy is None:
+            self.config.input.dataset_sampling_strategy = (
+                InputDefaults.DATASET_SAMPLING_STRATEGY
+            )
+            self.info(
+                f"Using default sampling strategy for synthetic rankings dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
+            )
 
         if self.config.input.prompt.input_tokens.mean <= 0:
             raise ValueError(

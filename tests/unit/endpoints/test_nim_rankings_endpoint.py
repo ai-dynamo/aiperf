@@ -118,7 +118,9 @@ class TestNIMRankingsEndpoint:
             texts=[Text(name="passages", contents=["Some passage"])], model="test-model"
         )
 
-        with pytest.raises(ValueError, match="requires a text with name 'query'"):
+        with pytest.raises(
+            ValueError, match="requires a text with name 'query' or 'queries'"
+        ):
             converter.format_payload(
                 RequestInfo(model_endpoint=model_endpoint, turns=[turn])
             )
@@ -133,7 +135,9 @@ class TestNIMRankingsEndpoint:
             model="test-model",
         )
 
-        with pytest.raises(ValueError, match="requires a text with name 'query'"):
+        with pytest.raises(
+            ValueError, match="requires a text with name 'query' or 'queries'"
+        ):
             converter.format_payload(
                 RequestInfo(model_endpoint=model_endpoint, turns=[turn])
             )
@@ -265,3 +269,28 @@ class TestNIMRankingsEndpoint:
         assert "query" in converter.__class__.__doc__
         assert "passages" in converter.__class__.__doc__
         assert "rankings" in converter.__class__.__doc__.lower()
+
+    def test_format_payload_queries_plural_backward_compatibility(
+        self, converter, model_endpoint
+    ):
+        """Test backward compatibility with genai-perf datasets using 'queries' (plural).
+
+        genai-perf uses queries.jsonl files which result in text name='queries'.
+        The endpoint should accept both 'query' and 'queries' for backward compatibility.
+        """
+        turn = Turn(
+            texts=[
+                Text(name="queries", contents=["What is AI?"]),  # plural form
+                Text(name="passages", contents=["AI definition"]),
+            ],
+            model="test-model",
+        )
+
+        payload = converter.format_payload(
+            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        )
+
+        # Should work just like "query" (singular)
+        assert payload["query"] == {"text": "What is AI?"}
+        assert len(payload["passages"]) == 1
+        assert payload["passages"][0] == {"text": "AI definition"}

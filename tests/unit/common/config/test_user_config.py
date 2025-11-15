@@ -18,7 +18,7 @@ from aiperf.common.config import (
     UserConfig,
 )
 from aiperf.common.enums import EndpointType, GPUTelemetryMode
-from aiperf.common.enums.dataset_enums import CustomDatasetType
+from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
 from aiperf.common.enums.timing_enums import TimingMode
 
 """
@@ -38,6 +38,12 @@ class TestUserConfig:
                 custom_endpoint="custom_endpoint",
                 streaming=True,
                 url="http://custom-url",
+                api_key="test_api_key",
+                timeout_seconds=10,
+            ),
+            input=InputConfig(
+                random_seed=42,
+                dataset_sampling_strategy=DatasetSamplingStrategy.SHUFFLE,
                 extra=[
                     ("key1", "value1"),
                     ("key2", "value2"),
@@ -47,36 +53,29 @@ class TestUserConfig:
                     ("Authorization", "Bearer token"),
                     ("Content-Type", "application/json"),
                 ],
-                api_key="test_api_key",
-                ssl_options={"verify": False},
-                timeout=10,
-            ),
-            conversation_config=ConversationConfig(
-                num=10,
-                turn=TurnConfig(
-                    mean=10,
-                    stddev=10,
-                    delay=TurnDelayConfig(
+                conversation=ConversationConfig(
+                    num=10,
+                    turn=TurnConfig(
                         mean=10,
                         stddev=10,
+                        delay=TurnDelayConfig(
+                            mean=10,
+                            stddev=10,
+                        ),
                     ),
                 ),
-            ),
-            input=InputConfig(
-                custom_dataset_type=CustomDatasetType.SINGLE_TURN,
             ),
             output=OutputConfig(
                 artifact_directory="test_artifacts",
             ),
             tokenizer=TokenizerConfig(
-                model_name="test_tokenizer",
+                name="test_tokenizer",
+                revision="test_revision",
             ),
             loadgen=LoadGeneratorConfig(
                 concurrency=10,
                 request_rate=10,
             ),
-            verbose=True,
-            template_filename="test_template.yaml",
             cli_command="test_cli_command",
         )
 

@@ -2,8 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections import defaultdict
+from pathlib import Path
+from typing import Any
 
-from aiperf.common.enums import CustomDatasetType, MediaType
+from pydantic import ValidationError
+
+from aiperf.common.enums import CustomDatasetType, DatasetSamplingStrategy, MediaType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_loader import BaseFileLoader
@@ -90,6 +94,29 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     ```
     """
 
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> bool:
+        """Check if this loader can handle the given data format.
+
+        For multi-turn data, simply validate the data against the MultiTurn model.
+        This will handle all of the validation logic for the different input combinations.
+        """
+        if data is None:
+            return False
+
+        try:
+            MultiTurn.model_validate(data)
+            return True
+        except ValidationError:
+            return False
+
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
+        """Get the preferred dataset sampling strategy for MultiTurn."""
+        return DatasetSamplingStrategy.SEQUENTIAL
+
     def load_dataset(self) -> dict[str, list[MultiTurn]]:
         """Load multi-turn data from a JSONL file.
 
@@ -138,6 +165,7 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                             texts=media[MediaType.TEXT],
                             images=media[MediaType.IMAGE],
                             audios=media[MediaType.AUDIO],
+                            videos=media[MediaType.VIDEO],
                             timestamp=single_turn.timestamp,
                             delay=single_turn.delay,
                             role=single_turn.role,

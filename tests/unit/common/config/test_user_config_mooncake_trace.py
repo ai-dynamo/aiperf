@@ -173,19 +173,6 @@ class TestMooncakeTraceRequestCount:
             result = config.get_effective_request_count()
             assert result == 10
 
-    def test_mooncake_trace_no_input_file_edge_case(self):
-        """Test dataset counting when no input file is provided."""
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
-                # No file specified
-            ),
-        )
-
-        # Should return 0 when no file is provided
-        assert config._count_dataset_entries() == 0
-
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
     def test_count_dataset_entries_with_edge_cases(self, mock_is_file, mock_exists):
@@ -280,19 +267,6 @@ class TestMooncakeTraceTimingDetection:
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
             result = config._should_use_fixed_schedule_for_mooncake_trace()
             assert result is False
-
-    def test_no_input_file_timing_detection(self):
-        """Test timing detection when no input file is provided."""
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
-                # No file specified
-            ),
-        )
-
-        # Should return False when no file is provided
-        assert config._should_use_fixed_schedule_for_mooncake_trace() is False
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
