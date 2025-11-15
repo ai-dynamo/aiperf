@@ -347,8 +347,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         timing_dataset = []
         for conversation_id, conversation in self.dataset.items():
-            for turn in conversation.turns:
-                timing_dataset.append((turn.timestamp, conversation_id))
+            if conversation.turns:
+                timing_dataset.append(
+                    (conversation.turns[0].timestamp, conversation_id)
+                )
 
         return DatasetTimingResponse(
             service_id=self.service_id,
