@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from pytest import param
 
-from aiperf.common.environment import _ServiceSettings
+from aiperf.common.environment import _Environment, _ServiceSettings
 
 
 class TestServiceSettingsUvloopWindows:
@@ -52,3 +52,44 @@ class TestServiceSettingsUvloopWindows:
         settings = _ServiceSettings(DISABLE_UVLOOP=manual_setting)
 
         assert settings.DISABLE_UVLOOP is expected_result
+
+
+class TestProfileConfigureTimeout:
+    """Test suite for profile configure timeout validation."""
+
+    @pytest.mark.parametrize(
+        "profile_timeout,dataset_timeout,should_raise",
+        [
+            param(300.0, 300.0, False, id="equal_timeouts_valid"),
+            param(400.0, 300.0, False, id="profile_greater_than_dataset_valid"),
+            param(200.0, 300.0, True, id="profile_less_than_dataset_invalid"),
+            param(1.0, 1.0, False, id="minimum_equal_timeouts_valid"),
+            param(100000.0, 100000.0, False, id="maximum_equal_timeouts_valid"),
+            param(100000.0, 1.0, False, id="maximum_difference_valid"),
+            param(1.0, 100000.0, True, id="maximum_difference_invalid"),
+        ],
+    )
+    def test_validate_profile_configure_timeout(
+        self, profile_timeout, dataset_timeout, should_raise, monkeypatch
+    ):
+        """Test that profile configure timeout validation enforces timeout >= dataset timeout."""
+        # Set environment variables to override the defaults
+        monkeypatch.setenv(
+            "AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT", str(profile_timeout)
+        )
+        monkeypatch.setenv("AIPERF_DATASET_CONFIGURATION_TIMEOUT", str(dataset_timeout))
+
+        if should_raise:
+            with pytest.raises(
+                ValueError,
+                match=r"AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT.*must be greater than or equal to.*AIPERF_DATASET_CONFIGURATION_TIMEOUT",
+            ):
+                _Environment()
+        else:
+            env = _Environment()
+            assert (
+                env.SERVICE.PROFILE_CONFIGURE_TIMEOUT
+                >= env.DATASET.CONFIGURATION_TIMEOUT
+            )
+            assert profile_timeout == env.SERVICE.PROFILE_CONFIGURE_TIMEOUT
+            assert dataset_timeout == env.DATASET.CONFIGURATION_TIMEOUT

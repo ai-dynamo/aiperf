@@ -683,6 +683,15 @@ class _Environment(BaseSettings):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_profile_configure_timeout(self) -> Self:
+        """Validate that the profile configure timeout is at least as long as the dataset configuration timeout."""
+        if self.SERVICE.PROFILE_CONFIGURE_TIMEOUT < self.DATASET.CONFIGURATION_TIMEOUT:
+            raise ValueError(
+                f"AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT: {self.SERVICE.PROFILE_CONFIGURE_TIMEOUT} must be greater than or equal to AIPERF_DATASET_CONFIGURATION_TIMEOUT: {self.DATASET.CONFIGURATION_TIMEOUT}"
+            )
+        return self
+
 
 # Global singleton instance
 Environment = _Environment()

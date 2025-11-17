@@ -12,6 +12,7 @@ from aiperf.common.enums import (
     MessageType,
     ServiceType,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
@@ -93,12 +94,14 @@ class TimingManager(PullClientMixin, BaseComponentService, CreditPhaseMessagesMi
 
         if self.config.timing_mode == TimingMode.FIXED_SCHEDULE:
             # This will block until the dataset is ready and the timing response is received
-            dataset_timing_response: DatasetTimingResponse = (
-                await self.dataset_request_client.request(
-                    message=DatasetTimingRequest(
-                        service_id=self.service_id,
-                    ),
-                )
+            dataset_timing_response: DatasetTimingResponse = await self.dataset_request_client.request(
+                message=DatasetTimingRequest(
+                    service_id=self.service_id,
+                ),
+                # NOTE: We use the dataset configuration timeout here because the dataset manager
+                # may take longer than a normal request timeout to respond to this request. This is
+                # because it blocks until the dataset is configured.
+                timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
             )
             self.debug(
                 lambda: f"Received dataset timing response: {dataset_timing_response}"
