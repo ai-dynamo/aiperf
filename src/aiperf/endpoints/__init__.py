@@ -28,6 +28,9 @@ from aiperf.endpoints.openai_completions import (
 from aiperf.endpoints.openai_embeddings import (
     EmbeddingsEndpoint,
 )
+from aiperf.endpoints.openai_image_generation import (
+    ImageGenerationEndpoint,
+)
 from aiperf.endpoints.solido_rag import (
     SolidoEndpoint,
 )
@@ -44,6 +47,7 @@ __all__ = [
     "EmbeddingsEndpoint",
     "HFTeiRankingsEndpoint",
     "HuggingFaceGenerateEndpoint",
+    "ImageGenerationEndpoint",
     "NIMRankingsEndpoint",
     "SolidoEndpoint",
     "TemplateEndpoint",
