@@ -9,6 +9,7 @@ from aiperf.common.enums import CommClientType, LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import Hook, HookType
 from aiperf.common.models import (
+    Conversation,
     MetricRecordMetadata,
     ParsedResponse,
     ParsedResponseRecord,
@@ -31,14 +32,17 @@ from aiperf.common.types import (
 
 if TYPE_CHECKING:
     import multiprocessing
+    from pathlib import Path
 
     from rich.console import Console
 
     from aiperf.common.config import ServiceConfig, UserConfig
+    from aiperf.common.enums import DatasetSamplingStrategy
     from aiperf.common.messages.inference_messages import MetricRecordsData
     from aiperf.common.models.metadata import EndpointMetadata, TransportMetadata
     from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
     from aiperf.common.models.record_models import MetricResult
+    from aiperf.dataset.loader.models import CustomDatasetT
     from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
     from aiperf.metrics.metric_dicts import MetricRecordDict
     from aiperf.timing.config import TimingManagerConfig
@@ -314,6 +318,42 @@ class ConsoleExporterProtocol(Protocol):
     def __init__(self, exporter_config: "ExporterConfig") -> None: ...
 
     async def export(self, console: "Console") -> None: ...
+
+
+@runtime_checkable
+class CustomDatasetLoaderProtocol(Protocol):
+    """Protocol for custom dataset loaders that load dataset from a file and convert it to a list of Conversation objects."""
+
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: "str | Path | None" = None
+    ) -> bool:
+        """Check if this loader can handle the given data format.
+
+        Args:
+            data: Optional dictionary representing a single line from the JSONL file.
+                  None indicates path-based detection only (e.g., for directories).
+            filename: Optional path to the input file/directory for path-based detection
+
+        Returns:
+            True if this loader can handle the data format, False otherwise
+        """
+        ...
+
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> "DatasetSamplingStrategy":
+        """Get the preferred dataset sampling strategy for this loader.
+
+        Returns:
+            DatasetSamplingStrategy: The preferred sampling strategy
+        """
+        ...
+
+    def load_dataset(self) -> dict[str, list["CustomDatasetT"]]: ...
+
+    def convert_to_conversations(
+        self, custom_data: dict[str, list["CustomDatasetT"]]
+    ) -> list[Conversation]: ...
 
 
 @runtime_checkable

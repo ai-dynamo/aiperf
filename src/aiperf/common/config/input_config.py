@@ -92,6 +92,13 @@ class InputConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_custom_dataset_file(self) -> Self:
+        """Validate that custom dataset type has a file."""
+        if self.custom_dataset_type is not None and self.file is None:
+            raise ValueError("Custom dataset type requires --input-file to be provided")
+        return self
+
+    @model_validator(mode="after")
     def validate_goodput(self) -> Self:
         """
         Validate that all keys provided to --goodput are known metric tags.
@@ -110,26 +117,6 @@ class InputConfig(BaseConfig):
                     raise ValueError(
                         f"Metric '{tag}' is a Derived metric and cannot be used for --goodput. "
                         "Use a per-record metric instead (e.g., 'inter_token_latency', 'time_to_first_token')."
-                    )
-
-        return self
-
-    @model_validator(mode="after")
-    def validate_dataset_sampling_strategy(self) -> Self:
-        """Validate the dataset sampling strategy configuration."""
-        if self.dataset_sampling_strategy is None:
-            match self.custom_dataset_type:
-                case CustomDatasetType.RANDOM_POOL:
-                    self.dataset_sampling_strategy = DatasetSamplingStrategy.SHUFFLE
-                case (
-                    CustomDatasetType.MOONCAKE_TRACE
-                    | CustomDatasetType.SINGLE_TURN
-                    | CustomDatasetType.MULTI_TURN
-                ):
-                    self.dataset_sampling_strategy = DatasetSamplingStrategy.SEQUENTIAL
-                case _:
-                    self.dataset_sampling_strategy = (
-                        InputDefaults.DATASET_SAMPLING_STRATEGY
                     )
 
         return self

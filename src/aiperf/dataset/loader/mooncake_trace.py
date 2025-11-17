@@ -2,19 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+from pydantic import ValidationError
 
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.enums import CustomDatasetType, DatasetSamplingStrategy
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.generator import PromptGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.models import MooncakeTrace
-from aiperf.dataset.loader.protocol import CustomDatasetLoaderProtocol
 
 
-@implements_protocol(CustomDatasetLoaderProtocol)
 @CustomDatasetFactory.register(CustomDatasetType.MOONCAKE_TRACE)
 class MooncakeTraceDatasetLoader(BaseFileLoader):
     """A dataset loader that loads Mooncake trace data from a file.
@@ -51,6 +52,29 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         self._skipped_traces = 0
         self._start_offset = user_config.input.fixed_schedule_start_offset
         self._end_offset = user_config.input.fixed_schedule_end_offset
+
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> bool:
+        """Check if this loader can handle the given data format.
+
+        For mooncake trace data, simply validate the data against the MooncakeTrace model.
+        This will handle all of the validation logic for the different input combinations.
+        """
+        if data is None:
+            return False
+
+        try:
+            MooncakeTrace.model_validate(data)
+            return True
+        except ValidationError:
+            return False
+
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
+        """Get the preferred dataset sampling strategy for MooncakeTrace."""
+        return DatasetSamplingStrategy.SEQUENTIAL
 
     def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
         """Load Mooncake trace data from a file.

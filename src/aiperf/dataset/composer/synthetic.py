@@ -3,6 +3,7 @@
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
+from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.enums import ComposerType
 from aiperf.common.factories import ComposerFactory
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
@@ -19,6 +20,15 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         self._turn_sampler_rng = rng.derive("composer.conversation.turn_count")
         self._delay_sampler_rng = rng.derive("composer.conversation.turn_delay")
+
+        # Set default sampling strategy for synthetic datasets if not explicitly set
+        if self.config.input.dataset_sampling_strategy is None:
+            self.config.input.dataset_sampling_strategy = (
+                InputDefaults.DATASET_SAMPLING_STRATEGY
+            )
+            self.info(
+                f"Using default sampling strategy for synthetic dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
+            )
 
         if (
             not self.include_prompt

@@ -32,9 +32,6 @@ from aiperf.dataset.loader.mooncake_trace import (
 from aiperf.dataset.loader.multi_turn import (
     MultiTurnDatasetLoader,
 )
-from aiperf.dataset.loader.protocol import (
-    CustomDatasetLoaderProtocol,
-)
 from aiperf.dataset.loader.random_pool import (
     RandomPoolDatasetLoader,
 )
@@ -50,7 +47,6 @@ __all__ = [
     "BaseFileLoader",
     "BaseLoader",
     "BasePublicDatasetLoader",
-    "CustomDatasetLoaderProtocol",
     "CustomDatasetT",
     "MediaConversionMixin",
     "MooncakeTrace",
