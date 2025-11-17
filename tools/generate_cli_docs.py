@@ -165,14 +165,10 @@ def _format_parameter_options(param: ParameterInfo) -> list[str]:
         options.append(f"<code>{param.short}</code>")
 
     for option in param.long_options.split(" --"):
-        option = option.strip()
-        if option:
+        if option := option.strip():
             if not option.startswith("--"):
-                option = "--" + option.lower().replace(" ", "-")
-            if option not in [
-                o.replace("<code>", "").replace("</code>", "") for o in options
-            ]:
-                options.append(f"<code>{option}</code>")
+                option = f"--{option.lower().replace(' ', '-')}"
+            options.append(f"<code>{option}</code>")
 
     if not options:
         return []
@@ -189,12 +185,10 @@ def _format_parameter_options(param: ParameterInfo) -> list[str]:
 def _add_parameter_details(lines: list[str], param: ParameterInfo) -> None:
     """Add description with choices and default value in definition list format."""
     lines.append("<dd>")
-
     lines.append(f"{param.description.strip().rstrip('.')}.\n")
 
     if param.choices:
-        choices_str = ", ".join(param.choices)
-        lines.append(f"**Choices:** {choices_str}<br>")
+        lines.append(f"**Choices:** {', '.join(param.choices)}<br>")
 
     if param.default_value and param.default_value != "False":
         lines.append(f"**Default:** `{param.default_value}`<br>")
@@ -210,12 +204,11 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
         "# SPDX-License-Identifier: Apache-2.0",
         "-->",
         "",
+        "# Command Line Options\n",
     ]
 
-    lines.extend(["# Command Line Options\n"])
-
     for group_name, parameters in parameter_groups.items():
-        lines.extend([f"\n## {group_name} Options\n"])
+        lines.append(f"\n## {group_name} Options\n")
         lines.append("<dl>")
 
         for param in parameters:
@@ -224,7 +217,10 @@ def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> 
 
         lines.append("</dl>")
 
-    return "\n".join([line.strip(" ") for line in lines]) + "\n"
+    clean_lines = []
+    for line in lines:
+        clean_lines.extend([line.strip() for line in line.split("\n")])
+    return "\n".join(clean_lines) + "\n"
 
 
 def main():
@@ -233,9 +229,7 @@ def main():
     markdown_content = generate_markdown_docs(parameter_groups)
 
     output_file = Path("docs/cli_options.md")
-    with open(output_file, "w") as f:
-        for line in markdown_content.split("\n"):
-            f.write(line.strip() + "\n")
+    output_file.write_text(markdown_content)
     print(f"Documentation written to {output_file}")
 
 
