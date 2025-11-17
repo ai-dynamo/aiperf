@@ -625,6 +625,51 @@ class RankingsResponseData(BaseResponseData):
     )
 
 
+class ImageDataItem(AIPerfBaseModel):
+    """Parsed image item response data."""
+
+    url: str | None = Field(
+        default=None,
+        description="The URL of the generated image.",
+    )
+    b64_json: str | None = Field(
+        default=None,
+        description="The base64 encoded image.",
+    )
+    revised_prompt: str | None = Field(
+        default=None,
+        description="The revised prompt that was used for image generation.",
+    )
+    partial_image_index: int | None = Field(
+        default=None,
+        description="The index of the partial image in the response.",
+    )
+
+
+class ImageResponseData(BaseResponseData):
+    """Parsed image response data."""
+
+    images: list[ImageDataItem] = Field(
+        default_factory=list, description="The generated images from the response."
+    )
+    size: str | None = Field(
+        default=None,
+        description="The size of the generated images.",
+    )
+    quality: str | None = Field(
+        default=None,
+        description="The quality of the generated images.",
+    )
+    output_format: str | None = Field(
+        default=None,
+        description="The output format of the generated images.",
+    )
+    background: str | None = Field(
+        default=None,
+        description="The background of the generated images.",
+    )
+
+
 class ParsedResponse(AIPerfBaseModel):
     """Parsed response from a inference client."""
 
@@ -636,6 +681,7 @@ class ParsedResponse(AIPerfBaseModel):
         | TextResponseData
         | EmbeddingResponseData
         | RankingsResponseData
+        | ImageResponseData
         | BaseResponseData
         | None
     ] = Field(
