@@ -17,7 +17,7 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app docker docker-run first-time-setup \
-		test-verbose init-files setup-venv setup-pre-commit-deps install-mock-server \
+		test-verbose init-files setup-venv install-mock-server \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		generate-cli-docs test-stress stress-tests internal-help help
@@ -159,9 +159,6 @@ setup-venv: #? create the virtual environment.
 	else \
 		printf "$(bold)$(green)Virtual environment already exists$(reset)\n"; \
 	fi
-
-setup-pre-commit-deps: #? install the mkinit, ruff, and cyclopts packages for pre-commit.
-	$(activate_venv) && uv pip install mkinit ruff "cyclopts>=4,<5"
 
 first-time-setup: #? convenience command to setup the environment for the first time
 	$(MAKE) setup-venv --no-print-directory
