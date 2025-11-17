@@ -25,7 +25,7 @@ jobs:
     - name: Install dependencies
       run: |
         make setup-venv
-        make setup-mkinit
+        make setup-pre-commit-deps
 
     - uses: pre-commit/action@v3.0.1
       env:
