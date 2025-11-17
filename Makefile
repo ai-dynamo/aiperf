@@ -161,7 +161,7 @@ setup-venv: #? create the virtual environment.
 	fi
 
 setup-pre-commit-deps: #? install the mkinit, ruff, and cyclopts packages for pre-commit.
-	$(activate_venv) && uv pip install mkinit ruff cyclopts>=4,<5
+	$(activate_venv) && uv pip install mkinit ruff "cyclopts>=4,<5"
 
 first-time-setup: #? convenience command to setup the environment for the first time
 	$(MAKE) setup-venv --no-print-directory
