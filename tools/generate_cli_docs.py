@@ -188,18 +188,18 @@ def _format_parameter_options(param: ParameterInfo) -> list[str]:
 
 def _add_parameter_details(lines: list[str], param: ParameterInfo) -> None:
     """Add description with choices and default value in definition list format."""
-    lines.append("<dd>\n")
+    lines.append("<dd>")
 
     lines.append(f"{param.description.strip().rstrip('.')}.\n")
 
     if param.choices:
         choices_str = ", ".join(param.choices)
-        lines.append(f"\n**Choices:** {choices_str}<br>")
+        lines.append(f"**Choices:** {choices_str}<br>")
 
     if param.default_value and param.default_value != "False":
         lines.append(f"**Default:** `{param.default_value}`<br>")
 
-    lines.append("</dd>\n")
+    lines.append("<br></dd>\n")
 
 
 def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> str:
