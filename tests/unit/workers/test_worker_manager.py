@@ -110,9 +110,13 @@ class TestMaxWorkers:
             "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=cpus
         ):
             service_config = ServiceConfig(workers=WorkersConfig(max=max_workers))
+            # Set request_count to be >= concurrency to avoid validation error
+            request_count = max(concurrency or 10, 10)
             user_config = UserConfig(
                 endpoint=EndpointConfig(model_names=["test-model"]),
-                loadgen=LoadGeneratorConfig(concurrency=concurrency),
+                loadgen=LoadGeneratorConfig(
+                    concurrency=concurrency, request_count=request_count
+                ),
             )
 
             worker_manager = WorkerManager(

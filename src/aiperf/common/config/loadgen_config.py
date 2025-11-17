@@ -47,7 +47,6 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = LoadGeneratorDefaults.BENCHMARK_GRACE_PERIOD
 
-    # TODO: Potentially add a validator to ensure that the concurrency is not greater than the request count
     concurrency: Annotated[
         int | None,
         Field(

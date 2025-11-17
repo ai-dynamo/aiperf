@@ -371,3 +371,27 @@ class UserConfig(BaseConfig):
             )
 
         return self
+
+    @model_validator(mode="after")
+    def validate_concurrency_limits(self) -> Self:
+        """Validate that concurrency does not exceed the appropriate limit."""
+        if self.loadgen.concurrency is None:
+            return self
+
+        # For multi-turn scenarios, check against conversation_num
+        if self.input.conversation.num is not None:
+            if self.loadgen.concurrency > self.input.conversation.num:
+                raise ValueError(
+                    f"Concurrency ({self.loadgen.concurrency}) cannot be greater than "
+                    f"the number of conversations ({self.input.conversation.num}). "
+                    "Either reduce --concurrency or increase --conversation-num."
+                )
+        # For single-turn scenarios, check against request_count
+        elif self.loadgen.concurrency > self.loadgen.request_count:
+            raise ValueError(
+                f"Concurrency ({self.loadgen.concurrency}) cannot be greater than "
+                f"the request count ({self.loadgen.request_count}). "
+                "Either reduce --concurrency or increase --request-count."
+            )
+
+        return self

@@ -558,3 +558,169 @@ def test_multi_turn_request_count_conflict():
                 request_count=100,
             ),
         )
+
+
+def test_concurrency_exceeds_request_count_single_turn():
+    """Test that concurrency > request_count raises validation error for single-turn."""
+    with pytest.raises(
+        ValueError,
+        match="Concurrency \\(100\\) cannot be greater than the request count \\(50\\)",
+    ):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                custom_endpoint="test",
+            ),
+            loadgen=LoadGeneratorConfig(
+                concurrency=100,
+                request_count=50,
+            ),
+        )
+
+
+def test_concurrency_equals_request_count_single_turn():
+    """Test that concurrency == request_count is valid for single-turn."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        loadgen=LoadGeneratorConfig(
+            concurrency=50,
+            request_count=50,
+        ),
+    )
+    assert config.loadgen.concurrency == 50
+    assert config.loadgen.request_count == 50
+
+
+def test_concurrency_less_than_request_count_single_turn():
+    """Test that concurrency < request_count is valid for single-turn."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        loadgen=LoadGeneratorConfig(
+            concurrency=25,
+            request_count=100,
+        ),
+    )
+    assert config.loadgen.concurrency == 25
+    assert config.loadgen.request_count == 100
+
+
+def test_concurrency_exceeds_conversation_num_multi_turn():
+    """Test that concurrency > conversation_num raises validation error for multi-turn."""
+    with pytest.raises(
+        ValueError,
+        match="Concurrency \\(100\\) cannot be greater than the number of conversations \\(50\\)",
+    ):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                custom_endpoint="test",
+            ),
+            input=InputConfig(
+                conversation=ConversationConfig(num=50),
+            ),
+            loadgen=LoadGeneratorConfig(
+                concurrency=100,
+            ),
+        )
+
+
+def test_concurrency_equals_conversation_num_multi_turn():
+    """Test that concurrency == conversation_num is valid for multi-turn."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        input=InputConfig(
+            conversation=ConversationConfig(num=50),
+        ),
+        loadgen=LoadGeneratorConfig(
+            concurrency=50,
+        ),
+    )
+    assert config.loadgen.concurrency == 50
+    assert config.input.conversation.num == 50
+
+
+def test_concurrency_less_than_conversation_num_multi_turn():
+    """Test that concurrency < conversation_num is valid for multi-turn."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        input=InputConfig(
+            conversation=ConversationConfig(num=100),
+        ),
+        loadgen=LoadGeneratorConfig(
+            concurrency=25,
+        ),
+    )
+    assert config.loadgen.concurrency == 25
+    assert config.input.conversation.num == 100
+
+
+def test_concurrency_none_is_valid():
+    """Test that concurrency=None doesn't trigger validation errors."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        loadgen=LoadGeneratorConfig(
+            request_count=50,
+        ),
+    )
+    assert config.loadgen.concurrency is None or config.loadgen.concurrency == 1
+
+
+def test_concurrency_validation_with_request_rate():
+    """Test that concurrency validation works when request_rate is also specified."""
+    with pytest.raises(
+        ValueError,
+        match="Concurrency \\(100\\) cannot be greater than the request count \\(50\\)",
+    ):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                custom_endpoint="test",
+            ),
+            loadgen=LoadGeneratorConfig(
+                concurrency=100,
+                request_count=50,
+                request_rate=10.0,
+            ),
+        )
+
+
+def test_concurrency_validation_applies_against_default_request_count():
+    """Test that concurrency validation applies even when request_count uses default value."""
+    # When concurrency exceeds the default request_count, validation should fail
+    with pytest.raises(
+        ValueError,
+        match="Concurrency \\(100\\) cannot be greater than the request count \\(10\\)",
+    ):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                custom_endpoint="test",
+            ),
+            loadgen=LoadGeneratorConfig(
+                concurrency=100,
+            ),
+        )
