@@ -17,10 +17,10 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app docker docker-run first-time-setup \
-		test-verbose init-files setup-venv setup-mkinit install-mock-server \
+		test-verbose init-files setup-venv install-mock-server \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
-		test-stress stress-tests internal-help help
+		generate-cli-docs test-stress stress-tests internal-help help
 
 
 # Include user-defined environment variables
@@ -160,9 +160,6 @@ setup-venv: #? create the virtual environment.
 		printf "$(bold)$(green)Virtual environment already exists$(reset)\n"; \
 	fi
 
-setup-mkinit: #? install the mkinit and ruff packages for pre-commit.
-	$(activate_venv) && uv pip install mkinit ruff
-
 first-time-setup: #? convenience command to setup the environment for the first time
 	$(MAKE) setup-venv --no-print-directory
 
@@ -206,3 +203,6 @@ integration-tests-verbose test-integration-verbose: #? run integration tests wit
 	@printf "$(yellow)Note: Sequential mode shows real-time AIPerf output$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests passed!$(reset)\n"
+
+generate-cli-docs: #? generate the CLI documentation.
+	$(activate_venv) && tools/generate_cli_docs.py
