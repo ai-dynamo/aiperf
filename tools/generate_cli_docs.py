@@ -38,13 +38,9 @@ class ParameterInfo:
     choices: list[str] | None = None
 
 
-@dataclass
-class HelpData:
-    """Structured help data from CLI."""
-
-    usage: str
-    description: str
-    parameter_groups: dict[str, list[ParameterInfo]]
+def _normalize_text(text: str) -> str:
+    """Normalize text by replacing newlines with spaces and stripping whitespace."""
+    return " ".join(text.strip().split())
 
 
 def extract_plain_text(obj: Any) -> str:
@@ -52,7 +48,8 @@ def extract_plain_text(obj: Any) -> str:
     if isinstance(obj, InlineText):
         console = Console(file=StringIO(), record=True, width=1000)
         console.print(obj)
-        return console.export_text(clear=False, styles=False).replace("\n", "").strip()
+        text = console.export_text(clear=False, styles=False)
+        return _normalize_text(text.replace("\r", ""))
     return str(obj) if obj else ""
 
 
@@ -74,10 +71,8 @@ def get_type_suffix(hint: Any) -> str:
 
 def _extract_display_name(arg: Argument) -> str:
     """Extract display name from argument, following cyclopts convention."""
-    first_name = arg.names[0].lstrip("-").upper().replace("-", " ").title()
-    if arg.required:
-        first_name = f"{first_name} _(Required)_"
-    return first_name
+    name = arg.names[0].lstrip("-").replace("-", " ").title()
+    return f"{name} _(Required)_" if arg.required else name
 
 
 def _extract_default_value(arg: Argument) -> str:
@@ -99,22 +94,17 @@ def _extract_default_value(arg: Argument) -> str:
 
 def _extract_choices(arg: Argument) -> list[str] | None:
     """Extract choices from argument using only public APIs."""
-    if not arg.parameter.show_choices:
-        return None
-
-    if isclass(arg.hint) and issubclass(arg.hint, Enum):
-        choices = list(arg.hint.__members__.values())
-        return [f"`{choice}`" for choice in choices]
-
+    if arg.parameter.show_choices and isclass(arg.hint) and issubclass(arg.hint, Enum):
+        return [f"`{choice}`" for choice in arg.hint.__members__.values()]
     return None
 
 
 def _split_argument_names(names: tuple[str, ...]) -> tuple[list[str], list[str]]:
     """Split argument names into short and long options."""
-    short_opts = [
-        name for name in names if name.startswith("-") and not name.startswith("--")
-    ]
     long_opts = [name for name in names if name.startswith("--")]
+    short_opts = [
+        name for name in names if name not in long_opts and name.startswith("-")
+    ]
     return short_opts, long_opts
 
 
@@ -148,6 +138,25 @@ def _extract_parameter_groups(
     return dict(groups)
 
 
+def extract_command_info() -> list[tuple[str, str]]:
+    """Extract available commands and their descriptions."""
+    skip_commands = {"--help", "-h", "--version"}
+    commands = []
+
+    for name, command_obj in app._commands.items():
+        if name in skip_commands:
+            continue
+
+        help_text = command_obj.help if hasattr(command_obj, "help") else ""
+        if callable(help_text):
+            help_text = help_text()
+        if help_text:
+            help_text = extract_plain_text(help_text).split("\n")[0].strip()
+
+        commands.append((name, help_text))
+    return commands
+
+
 def extract_help_data(subcommand: str) -> dict[str, list[ParameterInfo]]:
     """Extract structured help data from the CLI."""
     tokens = normalize_tokens(subcommand)
@@ -157,76 +166,103 @@ def extract_help_data(subcommand: str) -> dict[str, list[ParameterInfo]]:
     return _extract_parameter_groups(argument_collection)
 
 
-def _format_parameter_options(param: ParameterInfo) -> list[str]:
-    """Format parameter options for display as definition list term."""
-    options = []
+def _format_parameter_header(param: ParameterInfo) -> str:
+    """Format parameter header and extract aliases."""
+    all_opts = []
 
     if param.short:
-        options.append(f"<code>{param.short}</code>")
+        all_opts.append(f"`{param.short}`")
 
     for option in param.long_options.split(" --"):
         if option := option.strip():
             if not option.startswith("--"):
                 option = f"--{option.lower().replace(' ', '-')}"
-            options.append(f"<code>{option}</code>")
+            all_opts.append(f"`{option}`")
 
-    if not options:
-        return []
+    if not all_opts:
+        return ""
 
-    combined = ", ".join(options)
-    type_display = (
-        f" &lt;{param.type_suffix.strip(' <>')}&gt;" if param.type_suffix else ""
-    )
-    required_tag = " <em>(Required)</em>" if param.required else ""
+    primary = ", ".join(all_opts)
+    type_display = f" `{param.type_suffix.strip()}`" if param.type_suffix else ""
+    required_tag = " _(Required)_" if param.required else ""
 
-    return [f"\n<dt>{combined}{type_display}{required_tag}</dt>\n"]
+    return f"#### {primary}{type_display}{required_tag}"
 
 
-def _add_parameter_details(lines: list[str], param: ParameterInfo) -> None:
-    """Add description with choices and default value in definition list format."""
-    lines.append("<dd>")
-    lines.append(f"{param.description.strip().rstrip('.')}.\n")
+def _format_parameter_body(param: ParameterInfo) -> list[str]:
+    """Format parameter description and metadata as markdown list."""
+    lines = [f"{_normalize_text(param.description).rstrip('.')}."]
 
     if param.choices:
-        lines.append(f"**Choices:** {', '.join(param.choices)}<br>")
+        lines.append(f"<br>_Choices: [{', '.join(param.choices)}]_")
 
     if param.default_value and param.default_value != "False":
-        lines.append(f"**Default:** `{param.default_value}`<br>")
+        lines.append(f"<br>_Default: `{param.default_value}`_")
 
-    lines.append("<br></dd>\n")
+    lines.append("")
+    return lines
 
 
-def generate_markdown_docs(parameter_groups: dict[str, list[ParameterInfo]]) -> str:
-    """Generate markdown documentation from help data."""
+def generate_markdown_docs(
+    commands_data: dict[str, dict[str, list[ParameterInfo]]],
+) -> str:
+    """Generate markdown documentation from help data.
+
+    Args:
+        commands_data: Dictionary mapping command names to their parameter groups
+    """
     lines = [
         "<!--",
-        "# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
-        "# SPDX-License-Identifier: Apache-2.0",
+        "SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+        "SPDX-License-Identifier: Apache-2.0",
         "-->",
         "",
-        "# Command Line Options\n",
+        "# Command Line Options",
+        "",
     ]
 
-    for group_name, parameters in parameter_groups.items():
-        lines.append(f"\n## {group_name} Options\n")
-        lines.append("<dl>")
+    # Add Commands section with links
+    if commands_data:
+        lines.append("## `aiperf` Commands")
+        lines.append("")
+        commands = extract_command_info()
+        for name, description in commands:
+            if name in commands_data:
+                anchor = f"aiperf-{name}".lower().replace(" ", "-")
+                lines.append(f"- [`{name}`](#{anchor}) - {description}")
+        lines.append("")
 
-        for param in parameters:
-            lines.extend(_format_parameter_options(param))
-            _add_parameter_details(lines, param)
+    # Generate sections for each command
+    for command_name, parameter_groups in commands_data.items():
+        lines.append(f"## `aiperf {command_name}`")
+        lines.append("")
 
-        lines.append("</dl>")
+        for group_name, parameters in parameter_groups.items():
+            lines.append(f"## {group_name} Options")
+            lines.append("")
 
-    clean_lines = []
-    for line in lines:
-        clean_lines.extend([line.strip() for line in line.split("\n")])
-    return "\n".join(clean_lines) + "\n"
+            for param in parameters:
+                if header := _format_parameter_header(param):
+                    lines.append(header)
+                    lines.append("")
+                    lines.extend(_format_parameter_body(param))
+
+    return "\n".join(line.rstrip() for line in lines)
 
 
 def main():
     """Generate CLI documentation."""
-    parameter_groups = extract_help_data("profile")
-    markdown_content = generate_markdown_docs(parameter_groups)
+    commands_data = {}
+
+    for command_name, _ in extract_command_info():
+        try:
+            commands_data[command_name] = extract_help_data(command_name)
+        except Exception as e:
+            print(
+                f"Warning: Could not extract help data for command '{command_name}': {e}"
+            )
+
+    markdown_content = generate_markdown_docs(commands_data)
 
     output_file = Path("docs/cli_options.md")
     output_file.write_text(markdown_content)

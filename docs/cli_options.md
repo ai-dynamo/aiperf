@@ -1,874 +1,450 @@
 <!--
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 -->
 
 # Command Line Options
 
+## `aiperf` Commands
+
+- [`profile`](#aiperf-profile) - Run the Profile subcommand.
+
+## `aiperf profile`
 
 ## Endpoint Options
 
-<dl>
+#### `-m`, `--model-names`, `--model` `<list>` _(Required)_
 
-<dt><code>-m</code>, <code>--model-names</code>, <code>--model</code> &lt;list&gt; <em>(Required)</em></dt>
-
-<dd>
 Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.
 
-<br></dd>
+#### `--model-selection-strategy` `<str>`
 
+When multiple models are specified, this is how a specific model should be assigned to a prompt. round_robin: nth prompt in the list gets assigned to n-mod len(models). random: assignment is uniformly random.
+<br>_Choices: [`round_robin`, `random`]_
+<br>_Default: `round_robin`_
 
-<dt><code>--model-selection-strategy</code> &lt;str&gt;</dt>
+#### `--custom-endpoint`, `--endpoint` `<str>`
 
-<dd>
-When multiple models are specified, this is how a specific model should be assigned to a prompt.
-round_robin: nth prompt in the list gets assigned to n-mod len(models).
-random: assignment is uniformly random.
-
-**Choices:** `round_robin`, `random`<br>
-**Default:** `round_robin`<br>
-<br></dd>
-
-
-<dt><code>--custom-endpoint</code>, <code>--endpoint</code> &lt;str&gt;</dt>
-
-<dd>
 Set a custom endpoint that differs from the OpenAI defaults.
 
-<br></dd>
+#### `--endpoint-type` `<str>`
 
-
-<dt><code>--endpoint-type</code> &lt;str&gt;</dt>
-
-<dd>
 The endpoint type to send requests to on the server.
+<br>_Choices: [`chat`, `completions`, `cohere_rankings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `nim_rankings`, `solido_rag`, `template`]_
+<br>_Default: `chat`_
 
-**Choices:** `chat`, `completions`, `cohere_rankings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `nim_rankings`, `solido_rag`, `template`<br>
-**Default:** `chat`<br>
-<br></dd>
+#### `--streaming`
 
-
-<dt><code>--streaming</code></dt>
-
-<dd>
 An option to enable the use of the streaming API.
 
-<br></dd>
+#### `-u`, `--url` `<str>`
 
-
-<dt><code>-u</code>, <code>--url</code> &lt;str&gt;</dt>
-
-<dd>
 URL of the endpoint to target for benchmarking.
+<br>_Default: `localhost:8000`_
 
-**Default:** `localhost:8000`<br>
-<br></dd>
+#### `--request-timeout-seconds` `<float>`
 
-
-<dt><code>--request-timeout-seconds</code> &lt;float&gt;</dt>
-
-<dd>
 The timeout in floating-point seconds for each request to the endpoint.
+<br>_Default: `600.0`_
 
-**Default:** `600.0`<br>
-<br></dd>
+#### `--api-key` `<str>`
 
-
-<dt><code>--api-key</code> &lt;str&gt;</dt>
-
-<dd>
 The API key to use for the endpoint. If provided, it will be sent with every request as a header: `Authorization: Bearer <api_key>`.
 
-<br></dd>
+#### `--transport`, `--transport-type` `<str>`
 
-
-<dt><code>--transport</code>, <code>--transport-type</code> &lt;str&gt;</dt>
-
-<dd>
 The transport to use for the endpoint. If not provided, it will be auto-detected from the URL.This can also be used to force an alternative transport or implementation.
-
-**Choices:** `http`<br>
-<br></dd>
-
-</dl>
+<br>_Choices: [`http`]_
 
 ## Input Options
 
-<dl>
+#### `--extra-inputs` `<list>`
 
-<dt><code>--extra-inputs</code> &lt;list&gt;</dt>
+Provide additional inputs to include with every request. Inputs should be in an 'input_name:value' format. Alternatively, a string representing a json formatted dict can be provided.
+<br>_Default: `[]`_
 
-<dd>
-Provide additional inputs to include with every request.
-Inputs should be in an 'input_name:value' format.
-Alternatively, a string representing a json formatted dict can be provided.
+#### `-H`, `--header` `<list>`
 
-**Default:** `[]`<br>
-<br></dd>
+Adds a custom header to the requests. Headers must be specified as 'Header:Value' pairs. Alternatively, a string representing a json formatted dict can be provided.
+<br>_Default: `[]`_
 
+#### `--input-file` `<str>`
 
-<dt><code>-H</code>, <code>--header</code> &lt;list&gt;</dt>
+The file or directory path that contains the dataset to use for profiling. This parameter is used in conjunction with the `custom_dataset_type` parameter to support different types of user provided datasets.
 
-<dd>
-Adds a custom header to the requests.
-Headers must be specified as 'Header:Value' pairs.
-Alternatively, a string representing a json formatted dict can be provided.
+#### `--fixed-schedule`
 
-**Default:** `[]`<br>
-<br></dd>
-
-
-<dt><code>--input-file</code> &lt;str&gt;</dt>
-
-<dd>
-The file or directory path that contains the dataset to use for profiling.
-This parameter is used in conjunction with the `custom_dataset_type` parameter
-to support different types of user provided datasets.
-
-<br></dd>
-
-
-<dt><code>--fixed-schedule</code></dt>
-
-<dd>
 Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file parameter, but can be set manually here.
 
-<br></dd>
+#### `--fixed-schedule-auto-offset`
 
-
-<dt><code>--fixed-schedule-auto-offset</code></dt>
-
-<dd>
 Specifies to automatically offset the timestamps in the fixed schedule, such that the first timestamp is considered 0, and the rest are shifted accordingly. If disabled, the timestamps will be assumed to be relative to 0.
 
-<br></dd>
+#### `--fixed-schedule-start-offset` `<int>`
 
-
-<dt><code>--fixed-schedule-start-offset</code> &lt;int&gt;</dt>
-
-<dd>
 Specifies the offset in milliseconds to start the fixed schedule at. By default, the schedule starts at 0, but this option can be used to start at a reference point further in the schedule. This option cannot be used in conjunction with the --fixed-schedule-auto-offset. The schedule will include any requests at the start offset.
 
-<br></dd>
+#### `--fixed-schedule-end-offset` `<int>`
 
-
-<dt><code>--fixed-schedule-end-offset</code> &lt;int&gt;</dt>
-
-<dd>
 Specifies the offset in milliseconds to end the fixed schedule at. By default, the schedule ends at the last timestamp in the trace dataset, but this option can be used to only run a subset of the trace. The schedule will include any requests at the end offset.
 
-<br></dd>
+#### `--public-dataset` `<str>`
 
-
-<dt><code>--public-dataset</code> &lt;str&gt;</dt>
-
-<dd>
 The public dataset to use for the requests.
+<br>_Choices: [`sharegpt`]_
 
-**Choices:** `sharegpt`<br>
-<br></dd>
+#### `--custom-dataset-type` `<str>`
 
+The type of custom dataset to use. This parameter is used in conjunction with the --input-file parameter. [choices: single_turn, multi_turn, random_pool, mooncake_trace].
 
-<dt><code>--custom-dataset-type</code> &lt;str&gt;</dt>
+#### `--dataset-sampling-strategy` `<str>`
 
-<dd>
-The type of custom dataset to use.
-This parameter is used in conjunction with the --input-file parameter.
-[choices: single_turn, multi_turn, random_pool, mooncake_trace].
+The strategy to use for sampling the dataset. `sequential`: Iterate through the dataset sequentially, then wrap around to the beginning. `random`: Randomly select a conversation from the dataset. Will randomly sample with replacement. `shuffle`: Shuffle the dataset and iterate through it. Will randomly sample without replacement. Once the end of the dataset is reached, shuffle the dataset again and start over.
+<br>_Choices: [`sequential`, `random`, `shuffle`]_
 
-<br></dd>
+#### `--random-seed` `<int>`
 
+The seed used to generate random values. Set to some value to make the synthetic data generation deterministic. It will use system default if not provided.
 
-<dt><code>--dataset-sampling-strategy</code> &lt;str&gt;</dt>
+#### `--goodput` `<str>`
 
-<dd>
-The strategy to use for sampling the dataset.
-`sequential`: Iterate through the dataset sequentially, then wrap around to the beginning.
-`random`: Randomly select a conversation from the dataset. Will randomly sample with replacement.
-`shuffle`: Shuffle the dataset and iterate through it. Will randomly sample without replacement.
-Once the end of the dataset is reached, shuffle the dataset again and start over.
+Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric’s display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
 
-**Choices:** `sequential`, `random`, `shuffle`<br>
-<br></dd>
+#### `--rankings-passages-mean` `<int>`
 
-
-<dt><code>--random-seed</code> &lt;int&gt;</dt>
-
-<dd>
-The seed used to generate random values.
-Set to some value to make the synthetic data generation deterministic.
-It will use system default if not provided.
-
-<br></dd>
-
-
-<dt><code>--goodput</code> &lt;str&gt;</dt>
-
-<dd>
-Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric’s display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s).
-Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
-
-<br></dd>
-
-
-<dt><code>--rankings-passages-mean</code> &lt;int&gt;</dt>
-
-<dd>
 Mean number of passages per rankings entry (per query)(default 1).
+<br>_Default: `1`_
 
-**Default:** `1`<br>
-<br></dd>
+#### `--rankings-passages-stddev` `<int>`
 
-
-<dt><code>--rankings-passages-stddev</code> &lt;int&gt;</dt>
-
-<dd>
 Stddev for passages per rankings entry (default 0).
-
-**Default:** `0`<br>
-<br></dd>
-
-</dl>
+<br>_Default: `0`_
 
 ## Audio Input Options
 
-<dl>
+#### `--audio-batch-size`, `--batch-size-audio` `<int>`
 
-<dt><code>--audio-batch-size</code>, <code>--batch-size-audio</code> &lt;int&gt;</dt>
+The batch size of audio requests AIPerf should send. This is currently supported with the OpenAI `chat` endpoint type.
+<br>_Default: `1`_
 
-<dd>
-The batch size of audio requests AIPerf should send.
-This is currently supported with the OpenAI `chat` endpoint type.
+#### `--audio-length-mean` `<float>`
 
-**Default:** `1`<br>
-<br></dd>
-
-
-<dt><code>--audio-length-mean</code> &lt;float&gt;</dt>
-
-<dd>
 The mean length of the audio in seconds.
+<br>_Default: `0.0`_
 
-**Default:** `0.0`<br>
-<br></dd>
+#### `--audio-length-stddev` `<float>`
 
-
-<dt><code>--audio-length-stddev</code> &lt;float&gt;</dt>
-
-<dd>
 The standard deviation of the length of the audio in seconds.
+<br>_Default: `0.0`_
 
-**Default:** `0.0`<br>
-<br></dd>
+#### `--audio-format` `<str>`
 
-
-<dt><code>--audio-format</code> &lt;str&gt;</dt>
-
-<dd>
 The format of the audio files (wav or mp3).
+<br>_Choices: [`wav`, `mp3`]_
+<br>_Default: `wav`_
 
-**Choices:** `wav`, `mp3`<br>
-**Default:** `wav`<br>
-<br></dd>
+#### `--audio-depths` `<list>`
 
-
-<dt><code>--audio-depths</code> &lt;list&gt;</dt>
-
-<dd>
 A list of audio bit depths to randomly select from in bits.
+<br>_Default: `[16]`_
 
-**Default:** `[16]`<br>
-<br></dd>
+#### `--audio-sample-rates` `<list>`
 
+A list of audio sample rates to randomly select from in kHz. Common sample rates are 16, 44.1, 48, 96, etc.
+<br>_Default: `[16.0]`_
 
-<dt><code>--audio-sample-rates</code> &lt;list&gt;</dt>
+#### `--audio-num-channels` `<int>`
 
-<dd>
-A list of audio sample rates to randomly select from in kHz.
-Common sample rates are 16, 44.1, 48, 96, etc.
-
-**Default:** `[16.0]`<br>
-<br></dd>
-
-
-<dt><code>--audio-num-channels</code> &lt;int&gt;</dt>
-
-<dd>
 The number of audio channels to use for the audio data generation.
-
-**Default:** `1`<br>
-<br></dd>
-
-</dl>
+<br>_Default: `1`_
 
 ## Image Input Options
 
-<dl>
+#### `--image-width-mean` `<float>`
 
-<dt><code>--image-width-mean</code> &lt;float&gt;</dt>
-
-<dd>
 The mean width of images when generating synthetic image data.
+<br>_Default: `0.0`_
 
-**Default:** `0.0`<br>
-<br></dd>
+#### `--image-width-stddev` `<float>`
 
-
-<dt><code>--image-width-stddev</code> &lt;float&gt;</dt>
-
-<dd>
 The standard deviation of width of images when generating synthetic image data.
+<br>_Default: `0.0`_
 
-**Default:** `0.0`<br>
-<br></dd>
+#### `--image-height-mean` `<float>`
 
-
-<dt><code>--image-height-mean</code> &lt;float&gt;</dt>
-
-<dd>
 The mean height of images when generating synthetic image data.
+<br>_Default: `0.0`_
 
-**Default:** `0.0`<br>
-<br></dd>
+#### `--image-height-stddev` `<float>`
 
-
-<dt><code>--image-height-stddev</code> &lt;float&gt;</dt>
-
-<dd>
 The standard deviation of height of images when generating synthetic image data.
+<br>_Default: `0.0`_
 
-**Default:** `0.0`<br>
-<br></dd>
+#### `--image-batch-size`, `--batch-size-image` `<int>`
 
-
-<dt><code>--image-batch-size</code>, <code>--batch-size-image</code> &lt;int&gt;</dt>
-
-<dd>
 The image batch size of the requests AIPerf should send.
+<br>_Default: `1`_
 
-**Default:** `1`<br>
-<br></dd>
+#### `--image-format` `<str>`
 
-
-<dt><code>--image-format</code> &lt;str&gt;</dt>
-
-<dd>
 The compression format of the images.
-
-**Choices:** `png`, `jpeg`, `random`<br>
-**Default:** `png`<br>
-<br></dd>
-
-</dl>
+<br>_Choices: [`png`, `jpeg`, `random`]_
+<br>_Default: `png`_
 
 ## Video Input Options
 
-<dl>
+#### `--video-batch-size`, `--batch-size-video` `<int>`
 
-<dt><code>--video-batch-size</code>, <code>--batch-size-video</code> &lt;int&gt;</dt>
-
-<dd>
 The video batch size of the requests AIPerf should send.
+<br>_Default: `1`_
 
-**Default:** `1`<br>
-<br></dd>
+#### `--video-duration` `<float>`
 
-
-<dt><code>--video-duration</code> &lt;float&gt;</dt>
-
-<dd>
 Seconds per clip (default: 5.0).
+<br>_Default: `5.0`_
 
-**Default:** `5.0`<br>
-<br></dd>
+#### `--video-fps` `<int>`
 
-
-<dt><code>--video-fps</code> &lt;int&gt;</dt>
-
-<dd>
 Frames per second (default/recommended for Cosmos: 4).
+<br>_Default: `4`_
 
-**Default:** `4`<br>
-<br></dd>
+#### `--video-width` `<int>`
 
-
-<dt><code>--video-width</code> &lt;int&gt;</dt>
-
-<dd>
 Video width in pixels.
 
-<br></dd>
+#### `--video-height` `<int>`
 
-
-<dt><code>--video-height</code> &lt;int&gt;</dt>
-
-<dd>
 Video height in pixels.
 
-<br></dd>
+#### `--video-synth-type` `<str>`
 
-
-<dt><code>--video-synth-type</code> &lt;str&gt;</dt>
-
-<dd>
 Synthetic generator type.
+<br>_Choices: [`moving_shapes`, `grid_clock`]_
+<br>_Default: `moving_shapes`_
 
-**Choices:** `moving_shapes`, `grid_clock`<br>
-**Default:** `moving_shapes`<br>
-<br></dd>
+#### `--video-format` `<str>`
 
-
-<dt><code>--video-format</code> &lt;str&gt;</dt>
-
-<dd>
 The video format of the generated files.
+<br>_Choices: [`mp4`, `webm`]_
+<br>_Default: `webm`_
 
-**Choices:** `mp4`, `webm`<br>
-**Default:** `webm`<br>
-<br></dd>
+#### `--video-codec` `<str>`
 
-
-<dt><code>--video-codec</code> &lt;str&gt;</dt>
-
-<dd>
 The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), libx264 (CPU, GPL-licensed, widely compatible), libx265 (CPU, GPL-licensed, smaller files), h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). Any FFmpeg-supported codec can be used.
-
-**Default:** `libvpx-vp9`<br>
-<br></dd>
-
-</dl>
+<br>_Default: `libvpx-vp9`_
 
 ## Prompt Options
 
-<dl>
+#### `-b`, `--prompt-batch-size`, `--batch-size-text`, `--batch-size` `<int>`
 
-<dt><code>-b</code>, <code>--prompt-batch-size</code>, <code>--batch-size-text</code>, <code>--batch-size</code> &lt;int&gt;</dt>
-
-<dd>
-The batch size of text requests AIPerf should send.
-This is currently supported with the embeddings and rankings endpoint types.
-
-**Default:** `1`<br>
-<br></dd>
-
-</dl>
+The batch size of text requests AIPerf should send. This is currently supported with the embeddings and rankings endpoint types.
+<br>_Default: `1`_
 
 ## Input Sequence Length (ISL) Options
 
-<dl>
+#### `--prompt-input-tokens-mean`, `--synthetic-input-tokens-mean`, `--isl` `<int>`
 
-<dt><code>--prompt-input-tokens-mean</code>, <code>--synthetic-input-tokens-mean</code>, <code>--isl</code> &lt;int&gt;</dt>
-
-<dd>
 The mean of number of tokens in the generated prompts when using synthetic data.
+<br>_Default: `550`_
 
-**Default:** `550`<br>
-<br></dd>
+#### `--prompt-input-tokens-stddev`, `--synthetic-input-tokens-stddev`, `--isl-stddev` `<float>`
 
-
-<dt><code>--prompt-input-tokens-stddev</code>, <code>--synthetic-input-tokens-stddev</code>, <code>--isl-stddev</code> &lt;float&gt;</dt>
-
-<dd>
 The standard deviation of number of tokens in the generated prompts when using synthetic data.
+<br>_Default: `0.0`_
 
-**Default:** `0.0`<br>
-<br></dd>
+#### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-
-<dt><code>--prompt-input-tokens-block-size</code>, <code>--synthetic-input-tokens-block-size</code>, <code>--isl-block-size</code> &lt;int&gt;</dt>
-
-<dd>
 The block size of the prompt.
+<br>_Default: `512`_
 
-**Default:** `512`<br>
-<br></dd>
+#### `--seq-dist`, `--sequence-distribution` `<str>`
 
-
-<dt><code>--seq-dist</code>, <code>--sequence-distribution</code> &lt;str&gt;</dt>
-
-<dd>
 Sequence length distribution specification for varying ISL/OSL pairs.
-
-<br></dd>
-
-</dl>
 
 ## Output Sequence Length (OSL) Options
 
-<dl>
+#### `--prompt-output-tokens-mean`, `--output-tokens-mean`, `--osl` `<int>`
 
-<dt><code>--prompt-output-tokens-mean</code>, <code>--output-tokens-mean</code>, <code>--osl</code> &lt;int&gt;</dt>
-
-<dd>
 The mean number of tokens in each output.
 
-<br></dd>
+#### `--prompt-output-tokens-stddev`, `--output-tokens-stddev`, `--osl-stddev` `<float>`
 
-
-<dt><code>--prompt-output-tokens-stddev</code>, <code>--output-tokens-stddev</code>, <code>--osl-stddev</code> &lt;float&gt;</dt>
-
-<dd>
 The standard deviation of the number of tokens in each output.
-
-**Default:** `0`<br>
-<br></dd>
-
-</dl>
+<br>_Default: `0`_
 
 ## Prefix Prompt Options
 
-<dl>
+#### `--prompt-prefix-pool-size`, `--prefix-prompt-pool-size`, `--num-prefix-prompts` `<int>`
 
-<dt><code>--prompt-prefix-pool-size</code>, <code>--prefix-prompt-pool-size</code>, <code>--num-prefix-prompts</code> &lt;int&gt;</dt>
+The total size of the prefix prompt pool to select prefixes from. If this value is not zero, these are prompts that are prepended to input prompts. This is useful for benchmarking models that use a K-V cache.
+<br>_Default: `0`_
 
-<dd>
-The total size of the prefix prompt pool to select prefixes from.
-If this value is not zero, these are prompts that are prepended to input prompts.
-This is useful for benchmarking models that use a K-V cache.
+#### `--prompt-prefix-length`, `--prefix-prompt-length` `<int>`
 
-**Default:** `0`<br>
-<br></dd>
-
-
-<dt><code>--prompt-prefix-length</code>, <code>--prefix-prompt-length</code> &lt;int&gt;</dt>
-
-<dd>
-The number of tokens in each prefix prompt.
-This is only used if "num" is greater than zero.
-Note that due to the prefix and user prompts being concatenated,
-the number of tokens in the final prompt may be off by one.
-
-**Default:** `0`<br>
-<br></dd>
-
-</dl>
+The number of tokens in each prefix prompt. This is only used if "num" is greater than zero. Note that due to the prefix and user prompts being concatenated, the number of tokens in the final prompt may be off by one.
+<br>_Default: `0`_
 
 ## Conversation Input Options
 
-<dl>
+#### `--conversation-num`, `--num-conversations`, `--num-sessions` `<int>`
 
-<dt><code>--conversation-num</code>, <code>--num-conversations</code>, <code>--num-sessions</code> &lt;int&gt;</dt>
+The total number of unique conversations to generate. Each conversation represents a single request session between client and server. Supported on synthetic mode and the custom random_pool dataset. The number of conversations will be used to determine the number of entries in both the custom random_pool and synthetic datasets and will be reused until benchmarking is complete.
 
-<dd>
-The total number of unique conversations to generate.
-Each conversation represents a single request session between client and server.
-Supported on synthetic mode and the custom random_pool dataset. The number of conversations
-will be used to determine the number of entries in both the custom random_pool and synthetic
-datasets and will be reused until benchmarking is complete.
+#### `--num-dataset-entries`, `--num-prompts` `<int>`
 
-<br></dd>
+The total number of unique dataset entries to generate for the dataset. Each entry represents a single turn used in a request.
+<br>_Default: `100`_
 
+#### `--conversation-turn-mean`, `--session-turns-mean` `<int>`
 
-<dt><code>--num-dataset-entries</code>, <code>--num-prompts</code> &lt;int&gt;</dt>
-
-<dd>
-The total number of unique dataset entries to generate for the dataset.
-Each entry represents a single turn used in a request.
-
-**Default:** `100`<br>
-<br></dd>
-
-
-<dt><code>--conversation-turn-mean</code>, <code>--session-turns-mean</code> &lt;int&gt;</dt>
-
-<dd>
 The mean number of turns within a conversation.
+<br>_Default: `1`_
 
-**Default:** `1`<br>
-<br></dd>
+#### `--conversation-turn-stddev`, `--session-turns-stddev` `<int>`
 
-
-<dt><code>--conversation-turn-stddev</code>, <code>--session-turns-stddev</code> &lt;int&gt;</dt>
-
-<dd>
 The standard deviation of the number of turns within a conversation.
+<br>_Default: `0`_
 
-**Default:** `0`<br>
-<br></dd>
+#### `--conversation-turn-delay-mean`, `--session-turn-delay-mean` `<float>`
 
-
-<dt><code>--conversation-turn-delay-mean</code>, <code>--session-turn-delay-mean</code> &lt;float&gt;</dt>
-
-<dd>
 The mean delay between turns within a conversation in milliseconds.
+<br>_Default: `0.0`_
 
-**Default:** `0.0`<br>
-<br></dd>
+#### `--conversation-turn-delay-stddev`, `--session-turn-delay-stddev` `<float>`
 
+The standard deviation of the delay between turns within a conversation in milliseconds.
+<br>_Default: `0.0`_
 
-<dt><code>--conversation-turn-delay-stddev</code>, <code>--session-turn-delay-stddev</code> &lt;float&gt;</dt>
+#### `--conversation-turn-delay-ratio`, `--session-delay-ratio` `<float>`
 
-<dd>
-The standard deviation of the delay between turns
-within a conversation in milliseconds.
-
-**Default:** `0.0`<br>
-<br></dd>
-
-
-<dt><code>--conversation-turn-delay-ratio</code>, <code>--session-delay-ratio</code> &lt;float&gt;</dt>
-
-<dd>
 A ratio to scale multi-turn delays.
-
-**Default:** `1.0`<br>
-<br></dd>
-
-</dl>
+<br>_Default: `1.0`_
 
 ## Output Options
 
-<dl>
+#### `--output-artifact-dir`, `--artifact-dir` `<str>`
 
-<dt><code>--output-artifact-dir</code>, <code>--artifact-dir</code> &lt;str&gt;</dt>
-
-<dd>
 The directory to store all the (output) artifacts generated by AIPerf.
+<br>_Default: `artifacts`_
 
-**Default:** `artifacts`<br>
-<br></dd>
+#### `--profile-export-prefix`, `--profile-export-file` `<str>`
 
-
-<dt><code>--profile-export-prefix</code>, <code>--profile-export-file</code> &lt;str&gt;</dt>
-
-<dd>
 The prefix for the profile export file names. Will be suffixed with .csv, .json, .jsonl, and _raw.jsonl.If not provided, the default profile export file names will be used: profile_export_aiperf.csv, profile_export_aiperf.json, profile_export.jsonl, and profile_export_raw.jsonl.
 
-<br></dd>
+#### `--export-level`, `--profile-export-level` `<str>`
 
-
-<dt><code>--export-level</code>, <code>--profile-export-level</code> &lt;str&gt;</dt>
-
-<dd>
 The level of profile export files to create.
+<br>_Choices: [`summary`, `records`, `raw`]_
+<br>_Default: `records`_
 
-**Choices:** `summary`, `records`, `raw`<br>
-**Default:** `records`<br>
-<br></dd>
+#### `--slice-duration` `<float>`
 
-
-<dt><code>--slice-duration</code> &lt;float&gt;</dt>
-
-<dd>
 The duration (in seconds) of an individual time slice to be used post-benchmark in time-slicing mode.
-
-<br></dd>
-
-</dl>
 
 ## Tokenizer Options
 
-<dl>
+#### `--tokenizer` `<str>`
 
-<dt><code>--tokenizer</code> &lt;str&gt;</dt>
+The HuggingFace tokenizer to use to interpret token metrics from prompts and responses. The value can be the name of a tokenizer or the filepath of the tokenizer. The default value is the model name.
 
-<dd>
-The HuggingFace tokenizer to use to interpret token metrics from prompts and responses.
-The value can be the name of a tokenizer or the filepath of the tokenizer.
-The default value is the model name.
+#### `--tokenizer-revision` `<str>`
 
-<br></dd>
+The specific model version to use. It can be a branch name, tag name, or commit ID.
+<br>_Default: `main`_
 
+#### `--tokenizer-trust-remote-code`
 
-<dt><code>--tokenizer-revision</code> &lt;str&gt;</dt>
-
-<dd>
-The specific model version to use.
-It can be a branch name, tag name, or commit ID.
-
-**Default:** `main`<br>
-<br></dd>
-
-
-<dt><code>--tokenizer-trust-remote-code</code></dt>
-
-<dd>
-Allows custom tokenizer to be downloaded and executed.
-This carries security risks and should only be used for repositories you trust.
-This is only necessary for custom tokenizers stored in HuggingFace Hub.
-
-<br></dd>
-
-</dl>
+Allows custom tokenizer to be downloaded and executed. This carries security risks and should only be used for repositories you trust. This is only necessary for custom tokenizers stored in HuggingFace Hub.
 
 ## Load Generator Options
 
-<dl>
+#### `--benchmark-duration` `<float>`
 
-<dt><code>--benchmark-duration</code> &lt;float&gt;</dt>
-
-<dd>
 The duration in seconds for benchmarking.
 
-<br></dd>
+#### `--benchmark-grace-period` `<float>`
 
-
-<dt><code>--benchmark-grace-period</code> &lt;float&gt;</dt>
-
-<dd>
 The grace period in seconds to wait for responses after benchmark duration ends. Only applies when --benchmark-duration is set. Responses received within this period are included in metrics.
+<br>_Default: `30.0`_
 
-**Default:** `30.0`<br>
-<br></dd>
+#### `--concurrency` `<int>`
 
-
-<dt><code>--concurrency</code> &lt;int&gt;</dt>
-
-<dd>
 The concurrency value to benchmark.
 
-<br></dd>
+#### `--request-rate` `<float>`
 
-
-<dt><code>--request-rate</code> &lt;float&gt;</dt>
-
-<dd>
 Sets the request rate for the load generated by AIPerf. Unit: requests/second.
 
-<br></dd>
+#### `--request-rate-mode` `<str>`
 
+Sets the request rate mode for the load generated by AIPerf. Valid values: constant, poisson. constant: Generate requests at a fixed rate. poisson: Generate requests using a poisson distribution.
+<br>_Default: `poisson`_
 
-<dt><code>--request-rate-mode</code> &lt;str&gt;</dt>
+#### `--request-count`, `--num-requests` `<int>`
 
-<dd>
-Sets the request rate mode for the load generated by AIPerf. Valid values: constant, poisson.
-constant: Generate requests at a fixed rate.
-poisson: Generate requests using a poisson distribution.
-
-**Default:** `poisson`<br>
-<br></dd>
-
-
-<dt><code>--request-count</code>, <code>--num-requests</code> &lt;int&gt;</dt>
-
-<dd>
 The number of requests to use for measurement.
+<br>_Default: `10`_
 
-**Default:** `10`<br>
-<br></dd>
+#### `--warmup-request-count`, `--num-warmup-requests` `<int>`
 
-
-<dt><code>--warmup-request-count</code>, <code>--num-warmup-requests</code> &lt;int&gt;</dt>
-
-<dd>
 The number of warmup requests to send before benchmarking.
+<br>_Default: `0`_
 
-**Default:** `0`<br>
-<br></dd>
+#### `--request-cancellation-rate` `<float>`
 
-
-<dt><code>--request-cancellation-rate</code> &lt;float&gt;</dt>
-
-<dd>
 The percentage of requests to cancel.
+<br>_Default: `0.0`_
 
-**Default:** `0.0`<br>
-<br></dd>
+#### `--request-cancellation-delay` `<float>`
 
-
-<dt><code>--request-cancellation-delay</code> &lt;float&gt;</dt>
-
-<dd>
 The delay in seconds before cancelling requests. This is used when --request-cancellation-rate is greater than 0.
-
-**Default:** `0.0`<br>
-<br></dd>
-
-</dl>
+<br>_Default: `0.0`_
 
 ## Telemetry Options
 
-<dl>
+#### `--gpu-telemetry` `<list>`
 
-<dt><code>--gpu-telemetry</code> &lt;list&gt;</dt>
-
-<dd>
 Enable GPU telemetry console display and optionally specify: (1) 'dashboard' for realtime dashboard mode, (2) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (3) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default endpoints localhost:9400 and localhost:9401 are always attempted. Example: --gpu-telemetry dashboard node1:9400 custom.csv.
-
-<br></dd>
-
-</dl>
 
 ## ZMQ Communication Options
 
-<dl>
+#### `--zmq-host` `<str>`
 
-<dt><code>--zmq-host</code> &lt;str&gt;</dt>
-
-<dd>
 Host address for TCP connections.
+<br>_Default: `127.0.0.1`_
 
-**Default:** `127.0.0.1`<br>
-<br></dd>
+#### `--zmq-ipc-path` `<str>`
 
-
-<dt><code>--zmq-ipc-path</code> &lt;str&gt;</dt>
-
-<dd>
 Path for IPC sockets.
-
-<br></dd>
-
-</dl>
 
 ## Workers Options
 
-<dl>
+#### `--workers-max`, `--max-workers` `<int>`
 
-<dt><code>--workers-max</code>, <code>--max-workers</code> &lt;int&gt;</dt>
-
-<dd>
-Maximum number of workers to create. If not specified, the number of workers will be determined by the formula `min(concurrency, (num CPUs * 0.75) - 1)`,  with a default max cap of `32`. Any value provided will still be capped by the concurrency value (if specified), but not by the max cap.
-
-<br></dd>
-
-</dl>
+Maximum number of workers to create. If not specified, the number of workers will be determined by the formula `min(concurrency, (num CPUs * 0.75) - 1)`, with a default max cap of `32`. Any value provided will still be capped by the concurrency value (if specified), but not by the max cap.
 
 ## Service Options
 
-<dl>
+#### `--log-level` `<str>`
 
-<dt><code>--log-level</code> &lt;str&gt;</dt>
-
-<dd>
 Logging level.
+<br>_Choices: [`TRACE`, `DEBUG`, `INFO`, `NOTICE`, `WARNING`, `SUCCESS`, `ERROR`, `CRITICAL`]_
+<br>_Default: `INFO`_
 
-**Choices:** `TRACE`, `DEBUG`, `INFO`, `NOTICE`, `WARNING`, `SUCCESS`, `ERROR`, `CRITICAL`<br>
-**Default:** `INFO`<br>
-<br></dd>
+#### `-v`, `--verbose`
 
-
-<dt><code>-v</code>, <code>--verbose</code></dt>
-
-<dd>
 Equivalent to --log-level DEBUG. Enables more verbose logging output, but lacks some raw message logging.
 
-<br></dd>
+#### `-vv`, `--extra-verbose`
 
-
-<dt><code>-vv</code>, <code>--extra-verbose</code></dt>
-
-<dd>
 Equivalent to --log-level TRACE. Enables the most verbose logging output possible.
 
-<br></dd>
+#### `--record-processor-service-count`, `--record-processors` `<int>`
 
-
-<dt><code>--record-processor-service-count</code>, <code>--record-processors</code> &lt;int&gt;</dt>
-
-<dd>
 Number of services to spawn for processing records. The higher the request rate, the more services should be spawned in order to keep up with the incoming records. If not specified, the number of services will be automatically determined based on the worker count.
 
-<br></dd>
+#### `--ui-type`, `--ui` `<str>`
 
-
-<dt><code>--ui-type</code>, <code>--ui</code> &lt;str&gt;</dt>
-
-<dd>
 Type of UI to use.
-
-**Choices:** `none`, `simple`, `dashboard`<br>
-**Default:** `dashboard`<br>
-<br></dd>
-
-</dl>
+<br>_Choices: [`none`, `simple`, `dashboard`]_
+<br>_Default: `dashboard`_
