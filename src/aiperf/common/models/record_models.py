@@ -817,7 +817,7 @@ class ParsedResponseRecord(AIPerfBaseModel):
                     err.add_note(
                         f"Response {i} perf ns timestamp is invalid: {response.perf_ns}"
                     )
-            self.error = ErrorDetails.from_exception(err)
+            self.request.error = ErrorDetails.from_exception(err)
 
 
 class RequestInfo(AIPerfBaseModel):

@@ -107,7 +107,7 @@ async def test_no_content_responses_converted_to_error(
     assert record.error is not None
     assert record.error.type == "InvalidInferenceResultError"
     assert (
-        "No responses with actual content were received (only usage/metadata, null/empty data, or [DONE] markers)"
+        "No responses with actual content were received from the server (only usage/metadata, null/empty data, or [DONE] markers)"
         in record.error.message
     )
 
