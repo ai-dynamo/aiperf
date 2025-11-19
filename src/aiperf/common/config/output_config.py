@@ -75,6 +75,12 @@ class OutputConfig(BaseConfig):
     _profile_export_gpu_telemetry_jsonl_file: Path = (
         OutputDefaults.PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE
     )
+    _server_metrics_export_jsonl_file: Path = (
+        OutputDefaults.SERVER_METRICS_EXPORT_JSONL_FILE
+    )
+    _server_metrics_metadata_json_file: Path = (
+        OutputDefaults.SERVER_METRICS_METADATA_JSON_FILE
+    )
 
     @model_validator(mode="after")
     def set_export_filenames(self) -> Self:
@@ -86,10 +92,6 @@ class OutputConfig(BaseConfig):
         base_str = str(base_path)
 
         suffixes_to_strip = [
-            "_timeslices.csv",
-            "_timeslices.json",
-            "_gpu_telemetry.jsonl",
-            "_raw.jsonl",
             ".csv",
             ".json",
             ".jsonl",
@@ -108,7 +110,12 @@ class OutputConfig(BaseConfig):
         self._profile_export_gpu_telemetry_jsonl_file = Path(
             f"{base_str}_gpu_telemetry.jsonl"
         )
-
+        self._server_metrics_export_jsonl_file = Path(
+            f"{base_str}_server_metrics.jsonl"
+        )
+        self._server_metrics_metadata_json_file = Path(
+            f"{base_str}_server_metrics_metadata.json"
+        )
         return self
 
     slice_duration: Annotated[
@@ -149,3 +156,11 @@ class OutputConfig(BaseConfig):
     @property
     def profile_export_gpu_telemetry_jsonl_file(self) -> Path:
         return self.artifact_directory / self._profile_export_gpu_telemetry_jsonl_file
+
+    @property
+    def server_metrics_export_jsonl_file(self) -> Path:
+        return self.artifact_directory / self._server_metrics_export_jsonl_file
+
+    @property
+    def server_metrics_metadata_json_file(self) -> Path:
+        return self.artifact_directory / self._server_metrics_metadata_json_file

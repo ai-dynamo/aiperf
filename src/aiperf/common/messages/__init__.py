@@ -66,6 +66,11 @@ from aiperf.common.messages.progress_messages import (
     ProfileResultsMessage,
     RecordsProcessingStatsMessage,
 )
+from aiperf.common.messages.server_metrics_messages import (
+    ProcessServerMetricsResultMessage,
+    ServerMetricsRecordsMessage,
+    ServerMetricsStatusMessage,
+)
 from aiperf.common.messages.service_messages import (
     BaseServiceErrorMessage,
     BaseServiceMessage,
@@ -120,6 +125,7 @@ __all__ = [
     "ProcessRecordsCommand",
     "ProcessRecordsResponse",
     "ProcessRecordsResultMessage",
+    "ProcessServerMetricsResultMessage",
     "ProcessTelemetryResultMessage",
     "ProcessingStatsMessage",
     "ProfileCancelCommand",
@@ -134,6 +140,8 @@ __all__ = [
     "RegisterServiceCommand",
     "RegistrationMessage",
     "RequiresRequestNSMixin",
+    "ServerMetricsRecordsMessage",
+    "ServerMetricsStatusMessage",
     "ShutdownCommand",
     "ShutdownWorkersCommand",
     "SpawnWorkersCommand",

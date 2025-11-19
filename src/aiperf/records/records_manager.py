@@ -27,38 +27,39 @@ from aiperf.common.hooks import background_task, on_command, on_message, on_pull
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
     CreditPhaseCompleteMessage,
+    CreditPhaseSendingCompleteMessage,
     CreditPhaseStartMessage,
+    MetricRecordsData,
     MetricRecordsMessage,
     ProcessRecordsCommand,
     ProcessRecordsResultMessage,
     ProcessTelemetryResultMessage,
     ProfileCancelCommand,
+    RealtimeMetricsCommand,
     RealtimeMetricsMessage,
     RealtimeTelemetryMetricsMessage,
     RecordsProcessingStatsMessage,
+    ServerMetricsRecordsMessage,
     StartRealtimeTelemetryCommand,
     TelemetryRecordsMessage,
 )
-from aiperf.common.messages.command_messages import RealtimeMetricsCommand
-from aiperf.common.messages.credit_messages import CreditPhaseSendingCompleteMessage
-from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     ErrorDetails,
     ErrorDetailsCount,
+    MetricResult,
     ProcessingStats,
     ProcessRecordsResult,
-    ProfileResults,
-)
-from aiperf.common.models.record_models import MetricResult
-from aiperf.common.models.telemetry_models import (
     ProcessTelemetryResult,
+    ProfileResults,
+    ServerMetricsRecord,
     TelemetryHierarchy,
     TelemetryRecord,
     TelemetryResults,
 )
 from aiperf.common.protocols import (
     ResultsProcessorProtocol,
+    ServerMetricsResultsProcessorProtocol,
     ServiceProtocol,
     TelemetryResultsProcessorProtocol,
 )
@@ -66,12 +67,11 @@ from aiperf.records.phase_completion import PhaseCompletionChecker
 
 
 @dataclass
-class TelemetryTrackingState:
-    """
-    Tracks telemetry-related state and performance metrics.
+class ErrorTrackingState:
+    """Base class for tracking errors with counts and thread-safe access.
 
-    Consolidates error tracking, warnings, endpoint status, and performance
-    statistics for GPU telemetry collection and processing.
+    Provides common error tracking functionality for all metrics subsystems
+    (telemetry, server metrics, regular metrics).
     """
 
     error_counts: dict[ErrorDetails, int] = field(
@@ -79,12 +79,27 @@ class TelemetryTrackingState:
     )
     error_counts_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+
+@dataclass
+class TelemetryTrackingState(ErrorTrackingState):
+    """
+    Tracks telemetry-related state and performance metrics.
+
+    Consolidates error tracking, warnings, endpoint status, and performance
+    statistics for GPU telemetry collection and processing.
+    """
+
     task_runs: int = 0
     total_gen_time_ms: float = 0.0
     total_pub_time_ms: float = 0.0
     total_metrics_generated: int = 0
     mode_enabled_time: float | None = None
     last_metric_values: dict[str, float | None] | None = None
+
+
+# Type aliases for clarity - all use the base ErrorTrackingState
+ServerMetricsTrackingState = ErrorTrackingState
+MetricTrackingState = ErrorTrackingState
 
 
 @implements_protocol(ServiceProtocol)
@@ -134,10 +149,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._previous_realtime_records: int | None = None
 
         self._telemetry_state = TelemetryTrackingState()
+        self._server_metrics_state = ServerMetricsTrackingState()
+        self._metric_state = MetricTrackingState()
         self._telemetry_enable_event = asyncio.Event()
 
         self._metric_results_processors: list[ResultsProcessorProtocol] = []
         self._telemetry_results_processors: list[TelemetryResultsProcessorProtocol] = []
+        self._server_metrics_results_processors: list[
+            ServerMetricsResultsProcessorProtocol
+        ] = []
         self._telemetry_accumulator: TelemetryResultsProcessorProtocol | None = None
 
         for results_processor_type in ResultsProcessorFactory.get_all_class_types():
@@ -156,6 +176,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     # Store the accumulating processor separately for hierarchy access
                     if results_processor_type == ResultsProcessorType.TELEMETRY_RESULTS:
                         self._telemetry_accumulator = results_processor
+                elif isinstance(
+                    results_processor, ServerMetricsResultsProcessorProtocol
+                ):
+                    self._server_metrics_results_processors.append(results_processor)
                 else:
                     self._metric_results_processors.append(results_processor)
 
@@ -243,6 +267,26 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             if message.error:
                 async with self._telemetry_state.error_counts_lock:
                     self._telemetry_state.error_counts[message.error] += 1
+
+    @on_pull_message(MessageType.SERVER_METRICS_RECORDS)
+    async def _on_server_metrics_records(
+        self, message: ServerMetricsRecordsMessage
+    ) -> None:
+        """Handle server metrics records message from Server Metrics Manager.
+
+        Forwards full records to results processors.
+
+        Args:
+            message: Batch of server metrics records from a Prometheus collector
+        """
+        if message.valid:
+            # Forward full records to results processors
+            for record in message.records:
+                await self._send_server_metrics_to_results_processors(record)
+        else:
+            if message.error:
+                async with self._server_metrics_state.error_counts_lock:
+                    self._server_metrics_state.error_counts[message.error] += 1
 
     def _should_include_request_by_duration(
         self, record_data: MetricRecordsData
@@ -350,6 +394,29 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 for record in telemetry_records  # Process each record individually
             ]
         )
+
+    async def _send_server_metrics_to_results_processors(
+        self, record: ServerMetricsRecord
+    ) -> None:
+        """Send individual server metrics records to server metrics results processors only.
+
+        Args:
+            record: ServerMetricsRecord from single collection cycle
+        """
+        errors = await asyncio.gather(
+            *[
+                processor.process_server_metrics_record(record)
+                for processor in self._server_metrics_results_processors
+            ],
+            return_exceptions=True,
+        )
+        for error in errors:
+            if isinstance(error, BaseException):
+                self.exception(f"Failed to process server metrics record: {error!r}")
+                async with self._server_metrics_state.error_counts_lock:
+                    self._server_metrics_state.error_counts[
+                        ErrorDetails.from_exception(error)
+                    ] += 1
 
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(

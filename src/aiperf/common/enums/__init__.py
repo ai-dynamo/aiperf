@@ -84,6 +84,9 @@ from aiperf.common.enums.post_processor_enums import (
     RecordProcessorType,
     ResultsProcessorType,
 )
+from aiperf.common.enums.prometheus_enums import (
+    PrometheusMetricType,
+)
 from aiperf.common.enums.service_enums import (
     LifecycleState,
     ServiceRegistrationStatus,
@@ -155,6 +158,7 @@ __all__ = [
     "ModelSelectionStrategy",
     "PowerMetricUnit",
     "PowerMetricUnitInfo",
+    "PrometheusMetricType",
     "PromptSource",
     "PublicDatasetType",
     "RecordProcessorType",

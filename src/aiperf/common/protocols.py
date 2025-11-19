@@ -42,6 +42,9 @@ if TYPE_CHECKING:
     from aiperf.common.models.metadata import EndpointMetadata, TransportMetadata
     from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
     from aiperf.common.models.record_models import MetricResult
+    from aiperf.common.models.server_metrics_models import (
+        ServerMetricsRecord,
+    )
     from aiperf.dataset.loader.models import CustomDatasetT
     from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
     from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -540,6 +543,37 @@ class ResultsProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
     async def process_result(self, record_data: "MetricRecordsData") -> None: ...
 
     async def summarize(self) -> list["MetricResult"]: ...
+
+
+@runtime_checkable
+class ServerMetricsResultsProcessorProtocol(Protocol):
+    """Protocol for server metrics results processors that handle ServerMetricsRecord objects.
+
+    This protocol is separate from ResultsProcessorProtocol because server metrics data
+    has fundamentally different structure (hierarchical Prometheus snapshots) compared
+    to inference metrics (flat key-value pairs).
+
+    Processors implementing this protocol can handle both server metrics records
+    (time-varying data) and metadata messages (static endpoint information).
+    """
+
+    async def process_server_metrics_record(
+        self, record: "ServerMetricsRecord"
+    ) -> None:
+        """Process individual server metrics record with complete Prometheus snapshot.
+
+        Args:
+            record: ServerMetricsRecord containing Prometheus metrics snapshot and metadata
+        """
+        ...
+
+    async def summarize(self) -> list["MetricResult"]:
+        """Generate list of MetricResult for server metrics data.
+
+        Returns:
+            list of MetricResult containing the server metrics data and hierarchy.
+        """
+        ...
 
 
 @runtime_checkable

@@ -7,17 +7,18 @@ Provides a hierarchical, type-safe configuration system using Pydantic BaseSetti
 All settings can be configured via environment variables with the AIPERF_ prefix.
 
 Structure:
-    Environment.DATASET.*  - Dataset management
-    Environment.DEV.*      - Development and debugging settings
-    Environment.GPU.*      - GPU telemetry collection
-    Environment.HTTP.*     - HTTP client socket and connection settings
-    Environment.LOGGING.*  - Logging configuration
-    Environment.METRICS.*  - Metrics collection and storage
-    Environment.RECORD.*   - Record processing
-    Environment.SERVICE.*  - Service lifecycle and communication
-    Environment.UI.*       - User interface settings
-    Environment.WORKER.*   - Worker management and scaling
-    Environment.ZMQ.*      - ZMQ communication settings
+    Environment.DATASET.*        - Dataset management
+    Environment.DEV.*            - Development and debugging settings
+    Environment.GPU.*            - GPU telemetry collection
+    Environment.HTTP.*           - HTTP client socket and connection settings
+    Environment.LOGGING.*        - Logging configuration
+    Environment.METRICS.*        - Metrics collection and storage
+    Environment.RECORD.*         - Record processing
+    Environment.SERVER_METRICS.* - Server metrics collection
+    Environment.SERVICE.*        - Service lifecycle and communication
+    Environment.UI.*             - User interface settings
+    Environment.WORKER.*         - Worker management and scaling
+    Environment.ZMQ.*            - ZMQ communication settings
 
 Examples:
     # Via environment variables:
@@ -128,6 +129,12 @@ class _GPUSettings(BaseSettings):
         env_parse_enums=True,
     )
 
+    COLLECTION_FLUSH_PERIOD: float = Field(
+        ge=0.0,
+        le=30.0,
+        default=2.0,
+        description="Time in seconds to continue collecting metrics after profiling completes, allowing server-side metrics to flush/finalize (default: 2.0s)",
+    )
     COLLECTION_INTERVAL: float = Field(
         ge=0.01,
         le=300.0,
@@ -315,6 +322,52 @@ class _RecordSettings(BaseSettings):
         le=600.0,
         default=2.0,
         description="Interval in seconds between records progress report messages",
+    )
+
+
+class _ServerMetricsSettings(BaseSettings):
+    """Server metrics collection configuration.
+
+    Controls server metrics collection frequency, endpoint detection, and shutdown behavior.
+    Metrics are collected from Prometheus-compatible endpoints at the specified interval.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_SERVER_METRICS_",
+        env_parse_enums=True,
+    )
+
+    COLLECTION_FLUSH_PERIOD: float = Field(
+        ge=0.0,
+        le=30.0,
+        default=2.0,
+        description="Time in seconds to continue collecting metrics after profiling completes, "
+        "allowing server-side metrics to flush/finalize before shutting down (default: 2.0s)",
+    )
+    COLLECTION_INTERVAL: float = Field(
+        ge=0.01,
+        le=300.0,
+        default=0.1,
+        description="Server metrics collection interval in seconds (default: 0.1s, ~10Hz)",
+    )
+    DEFAULT_BACKEND_PORTS: Annotated[
+        str | list[int],
+        BeforeValidator(parse_str_or_csv_list),
+    ] = Field(
+        default=[],
+        description="Default backend ports to check on inference endpoint hostname (comma-separated string or JSON array)",
+    )
+    REACHABILITY_TIMEOUT: int = Field(
+        ge=1,
+        le=300,
+        default=5,
+        description="Timeout in seconds for checking server metrics endpoint reachability during init",
+    )
+    SHUTDOWN_DELAY: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=5.0,
+        description="Delay in seconds before shutting down server metrics service to allow command response transmission",
     )
 
 
@@ -648,6 +701,10 @@ class _Environment(BaseSettings):
     RECORD: _RecordSettings = Field(
         default_factory=_RecordSettings,
         description="Record processing and export settings",
+    )
+    SERVER_METRICS: _ServerMetricsSettings = Field(
+        default_factory=_ServerMetricsSettings,
+        description="Server metrics collection settings",
     )
     SERVICE: _ServiceSettings = Field(
         default_factory=_ServiceSettings,

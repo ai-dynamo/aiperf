@@ -24,6 +24,9 @@ from aiperf.post_processors.raw_record_writer_processor import (
 from aiperf.post_processors.record_export_results_processor import (
     RecordExportResultsProcessor,
 )
+from aiperf.post_processors.server_metrics_export_results_processor import (
+    ServerMetricsExportResultsProcessor,
+)
 from aiperf.post_processors.telemetry_export_results_processor import (
     TelemetryExportResultsProcessor,
 )
@@ -41,6 +44,7 @@ __all__ = [
     "RawRecordAggregator",
     "RawRecordWriterProcessor",
     "RecordExportResultsProcessor",
+    "ServerMetricsExportResultsProcessor",
     "TelemetryExportResultsProcessor",
     "TelemetryResultsProcessor",
     "TimesliceMetricResultsProcessor",

@@ -39,6 +39,7 @@ from aiperf.common.messages import (
     ProfileStartCommand,
     RealtimeMetricsCommand,
     RegisterServiceCommand,
+    ServerMetricsStatusMessage,
     ShutdownCommand,
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
@@ -132,6 +133,8 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._shutdown_lock = asyncio.Lock()
         self._endpoints_configured: list[str] = []
         self._endpoints_reachable: list[str] = []
+        self._server_metrics_endpoints_configured: list[str] = []
+        self._server_metrics_endpoints_reachable: list[str] = []
         self.debug("System Controller created")
 
     async def request_realtime_metrics(self) -> None:
@@ -182,6 +185,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         # Start optional services before waiting for registration so they can participate in configuration
         self.debug("Starting optional TelemetryManager service")
         await self.service_manager.run_service(ServiceType.TELEMETRY_MANAGER, 1)
+
+        self.debug("Starting optional ServerMetricsManager service")
+        await self.service_manager.run_service(ServiceType.SERVER_METRICS_MANAGER, 1)
 
         async with self.try_operation_or_stop("Register Services"):
             await self.service_manager.wait_for_all_services_registration(
@@ -378,6 +384,26 @@ class SystemController(SignalHandlerMixin, BaseService):
         else:
             self.info(
                 f"GPU telemetry enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_configured)} endpoint(s) reachable"
+            )
+
+    @on_message(MessageType.SERVER_METRICS_STATUS)
+    async def _on_server_metrics_status_message(
+        self, message: ServerMetricsStatusMessage
+    ) -> None:
+        """Handle server metrics status from ServerMetricsManager.
+
+        ServerMetricsStatusMessage informs SystemController if server metrics results will be available.
+        """
+
+        self._server_metrics_endpoints_configured = message.endpoints_configured
+        self._server_metrics_endpoints_reachable = message.endpoints_reachable
+
+        if not message.enabled:
+            reason_msg = f" - {message.reason}" if message.reason else ""
+            self.info(f"Server metrics disabled{reason_msg}")
+        else:
+            self.info(
+                f"Server metrics enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_configured)} endpoint(s) reachable"
             )
 
     @on_message(MessageType.COMMAND_RESPONSE)

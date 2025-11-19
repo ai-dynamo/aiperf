@@ -23,6 +23,7 @@ class Groups:
     IMAGE_INPUT = Group.create_ordered("Image Input")
     VIDEO_INPUT = Group.create_ordered("Video Input")
     SERVICE = Group.create_ordered("Service")
+    SERVER_METRICS = Group.create_ordered("Server Metrics")
     TELEMETRY = Group.create_ordered("Telemetry")
     UI = Group.create_ordered("UI")
     WORKERS = Group.create_ordered("Workers")

@@ -39,6 +39,9 @@ class ResultsProcessorType(CaseInsensitiveStrEnum):
     """Processor that exports per-record metrics to JSONL files with display unit conversion and filtering.
     Only enabled when export_level is set to RECORDS."""
 
+    SERVER_METRICS_EXPORT = "server_metrics_export"
+    """Processor that exports server metrics data to JSONL files."""
+
     TELEMETRY_EXPORT = "telemetry_export"
     """Processor that exports per-record GPU telemetry data to JSONL files.
     Writes each TelemetryRecord as it arrives from the TelemetryManager."""
