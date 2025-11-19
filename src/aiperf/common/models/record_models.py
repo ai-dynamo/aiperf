@@ -772,7 +772,7 @@ class ParsedResponseRecord(AIPerfBaseModel):
             return None
         return self.output_token_count / (self.request_duration_ns / NANOS_PER_SECOND)
 
-    @cached_property
+    @property
     def has_error(self) -> bool:
         """Check if the response record has an error."""
         return self.request.has_error
@@ -796,6 +796,24 @@ class ParsedResponseRecord(AIPerfBaseModel):
             and 0 <= self.start_perf_ns < self.end_perf_ns < sys.maxsize
             and all(0 < response.perf_ns < sys.maxsize for response in self.responses)
         )
+
+    def create_error_from_invalid(self) -> None:
+        """Convert invalid parsed response records to error records.
+
+        This should be called after parsing to catch cases where the parsed record
+        is invalid (no content responses, etc.).
+        """
+        if not self.valid and not self.has_error:
+            if len(self.responses) == 0:
+                msg = "No responses were received"
+            elif len(self.content_responses) == 0:
+                msg = "No responses with actual content were received (only usage/metadata, null/empty data, or [DONE] markers)"
+            else:
+                msg = "Invalid parsed response record"
+
+            self.request.error = ErrorDetails.from_exception(
+                InvalidInferenceResultError(msg)
+            )
 
 
 class RequestInfo(AIPerfBaseModel):

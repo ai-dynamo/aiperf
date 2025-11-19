@@ -110,6 +110,18 @@ class InferenceResultParser(CommunicationMixin):
         else:
             try:
                 record = await self.process_valid_record(request_record)
+
+                # Check if the parsed record is actually valid (e.g., has content responses)
+                record.create_error_from_invalid()
+
+                if record.has_error:
+                    # Parsed record was invalid, return as error record
+                    return ParsedResponseRecord(
+                        request=record.request,
+                        responses=[],
+                        input_token_count=record.input_token_count,
+                    )
+
                 self.debug(
                     lambda: f"Received {len(record.request.responses)} responses, input_token_count: {record.input_token_count}, "
                     f"output_token_count: {record.output_token_count}, reasoning_token_count: {record.reasoning_token_count}"

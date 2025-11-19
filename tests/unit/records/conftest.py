@@ -7,7 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.config import ServiceConfig
-from aiperf.common.models import ErrorDetails, RequestRecord, Text, TextResponse, Turn
+from aiperf.common.models import (
+    ErrorDetails,
+    RequestRecord,
+    SSEMessage,
+    Text,
+    TextResponse,
+    Turn,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.records.inference_result_parser import InferenceResultParser
 
@@ -75,6 +82,7 @@ def create_invalid_record(
     bad_start_timestamp: bool = False,
     bad_response_timestamps: list[int] | None = None,
     has_error: bool = False,
+    no_content_responses: bool = False,
     model_name: str = "test-model",
 ) -> RequestRecord:
     """Create an invalid RequestRecord for testing.
@@ -84,6 +92,7 @@ def create_invalid_record(
         bad_start_timestamp: If True, sets start_perf_ns to -1
         bad_response_timestamps: List of invalid perf_ns values for responses
         has_error: If True, adds an existing error to the record
+        no_content_responses: If True, creates responses without content (e.g., [DONE] markers)
         model_name: Model name for the record
 
     Returns:
@@ -101,6 +110,12 @@ def create_invalid_record(
 
     if no_responses:
         record.responses = []
+    elif no_content_responses:
+        # Create responses with valid timestamps but no actual content
+        record.responses = [
+            SSEMessage.parse("[DONE]", perf_ns=1000),
+            TextResponse(perf_ns=2000, content_type="text/plain", text=""),
+        ]
     elif bad_response_timestamps:
         record.responses = [
             TextResponse(
