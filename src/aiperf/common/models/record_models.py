@@ -798,22 +798,26 @@ class ParsedResponseRecord(AIPerfBaseModel):
         )
 
     def create_error_from_invalid(self) -> None:
-        """Convert invalid parsed response records to error records.
-
-        This should be called after parsing to catch cases where the parsed record
-        is invalid (no content responses, etc.).
-        """
+        """Convert any invalid request records to error records for combined processing."""
         if not self.valid and not self.has_error:
-            if len(self.responses) == 0:
-                msg = "No responses were received"
-            elif len(self.content_responses) == 0:
-                msg = "No responses with actual content were received (only usage/metadata, null/empty data, or [DONE] markers)"
-            else:
-                msg = "Invalid parsed response record"
-
-            self.request.error = ErrorDetails.from_exception(
-                InvalidInferenceResultError(msg)
+            _logger.debug(
+                lambda: f"Converting invalid request record to error record: {self}"
             )
+            err = InvalidInferenceResultError("Invalid inference result")
+            if len(self.responses) == 0 or len(self.content_responses) == 0:
+                err.add_note(
+                    "No responses with actual content were received from the server (only usage/metadata, null/empty data, or [DONE] markers)"
+                )
+            if self.start_perf_ns <= 0 or self.start_perf_ns >= sys.maxsize:
+                err.add_note(
+                    f"Start perf ns timestamp is invalid: {self.start_perf_ns}"
+                )
+            for i, response in enumerate(self.responses):
+                if response.perf_ns <= 0 or response.perf_ns >= sys.maxsize:
+                    err.add_note(
+                        f"Response {i} perf ns timestamp is invalid: {response.perf_ns}"
+                    )
+            self.error = ErrorDetails.from_exception(err)
 
 
 class RequestInfo(AIPerfBaseModel):
