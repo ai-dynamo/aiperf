@@ -30,7 +30,7 @@ def setup_parser_for_error_tests(parser, mock_tokenizer, sample_turn):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "invalid_config,expected_notes",
+    "invalid_config,expected_notes",  # fmt: skip
     [
         ({"no_responses": True}, ["No responses were received"]),
         ({"bad_start_timestamp": True}, ["Start perf ns timestamp is invalid: -1"]),
@@ -69,6 +69,47 @@ async def test_invalid_records_converted_to_errors(
         assert note in error_str, (
             f"Expected note '{note}' not found in error: {error_str}"
         )
+
+    # Verify parsed result structure
+    assert result.request == record
+    assert result.input_token_count == 8  # 8 words in sample_turn
+    assert result.responses == []
+
+
+@pytest.mark.asyncio
+async def test_no_content_responses_converted_to_error(
+    inference_result_parser, mock_tokenizer, sample_turn
+):
+    """Test that records with responses but no content are converted to error records."""
+    from aiperf.common.models import ParsedResponse
+
+    record = create_invalid_record(no_content_responses=True)
+    record.turns = [sample_turn]
+
+    # Mock the parser dependencies
+    inference_result_parser.get_tokenizer = AsyncMock(return_value=mock_tokenizer)
+    inference_result_parser.get_turn = AsyncMock(return_value=sample_turn)
+
+    # Mock extract_response_data to return parsed responses with no content (data=None)
+    # This simulates responses that only contain usage metadata or [DONE] markers
+    inference_result_parser.endpoint = MagicMock()
+    inference_result_parser.endpoint.extract_response_data = MagicMock(
+        return_value=[
+            ParsedResponse(perf_ns=1000, data=None),  # Usage-only response
+            ParsedResponse(perf_ns=2000, data=None),  # [DONE] marker
+        ]
+    )
+
+    result = await inference_result_parser.parse_request_record(record)
+
+    # Verify error was created after parsing
+    assert record.has_error
+    assert record.error is not None
+    assert record.error.type == "InvalidInferenceResultError"
+    assert (
+        "No responses with actual content were received from the server (only usage/metadata, null/empty data, or [DONE] markers)"
+        in record.error.message
+    )
 
     # Verify parsed result structure
     assert result.request == record
