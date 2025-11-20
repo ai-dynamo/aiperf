@@ -38,6 +38,7 @@ class EndpointDefaults:
     URL = "localhost:8000"
     TIMEOUT = 600.0
     API_KEY = None
+    USE_LEGACY_MAX_TOKENS = False
 
 
 @dataclass(frozen=True)

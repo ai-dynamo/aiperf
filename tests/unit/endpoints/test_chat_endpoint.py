@@ -3,8 +3,14 @@
 
 import pytest
 
-from aiperf.common.enums import EndpointType
+from aiperf.common.enums import EndpointType, ModelSelectionStrategy
 from aiperf.common.models import Audio, Image, Text, Turn, Video
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
 from aiperf.common.models.record_models import RequestInfo
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from tests.unit.endpoints.conftest import (
@@ -125,7 +131,7 @@ class TestChatEndpoint:
         assert video_content[0]["video_url"]["url"] == "https://example.com/video.mp4"
 
     def test_format_payload_max_completion_tokens(self, endpoint, model_endpoint):
-        """Test max_completion_tokens is set correctly."""
+        """Test max_completion_tokens is set correctly (default behavior)."""
         turn = Turn(
             texts=[Text(contents=["Generate text"])],
             model="test-model",
@@ -136,6 +142,7 @@ class TestChatEndpoint:
         payload = endpoint.format_payload(request_info)
 
         assert payload["max_completion_tokens"] == 500
+        assert "max_tokens" not in payload
 
     def test_format_payload_no_max_tokens(self, endpoint, model_endpoint):
         """Test that max_completion_tokens is not included when None."""
@@ -148,6 +155,97 @@ class TestChatEndpoint:
 
         payload = endpoint.format_payload(request_info)
 
+        assert "max_completion_tokens" not in payload
+        assert "max_tokens" not in payload
+
+    def test_format_payload_legacy_max_tokens(self):
+        """Test legacy max_tokens field is used when flag is enabled."""
+        # Create model endpoint with use_legacy_max_tokens=True
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000",
+                streaming=False,
+                extra=[],
+                use_legacy_max_tokens=True,
+            ),
+        )
+        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+
+        turn = Turn(
+            texts=[Text(contents=["Generate text"])],
+            model="test-model",
+            max_tokens=500,
+        )
+        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["max_tokens"] == 500
+        assert "max_completion_tokens" not in payload
+
+    def test_format_payload_legacy_max_tokens_disabled(self):
+        """Test max_completion_tokens is used when legacy flag is explicitly disabled."""
+        # Create model endpoint with use_legacy_max_tokens=False (explicit)
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000",
+                streaming=False,
+                extra=[],
+                use_legacy_max_tokens=False,
+            ),
+        )
+        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+
+        turn = Turn(
+            texts=[Text(contents=["Generate text"])],
+            model="test-model",
+            max_tokens=500,
+        )
+        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["max_completion_tokens"] == 500
+        assert "max_tokens" not in payload
+
+    def test_format_payload_legacy_max_tokens_none(self):
+        """Test neither field is set when max_tokens is None, regardless of legacy flag."""
+        # Create model endpoint with use_legacy_max_tokens=True
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000",
+                streaming=False,
+                extra=[],
+                use_legacy_max_tokens=True,
+            ),
+        )
+        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+
+        turn = Turn(
+            texts=[Text(contents=["Generate text"])],
+            model="test-model",
+            max_tokens=None,
+        )
+        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert "max_tokens" not in payload
         assert "max_completion_tokens" not in payload
 
     def test_format_payload_streaming_enabled(self, streaming_model_endpoint):

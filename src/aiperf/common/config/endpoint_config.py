@@ -166,3 +166,15 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = None
+
+    use_legacy_max_tokens: Annotated[
+        bool,
+        Field(
+            description="Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads. "
+            "The OpenAI API now prefers 'max_completion_tokens', but some older APIs or implementations may require 'max_tokens'.",
+        ),
+        CLIParameter(
+            name=("--use-legacy-max-tokens",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.USE_LEGACY_MAX_TOKENS

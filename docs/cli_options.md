@@ -56,6 +56,10 @@ The API key to use for the endpoint. If provided, it will be sent with every req
 The transport to use for the endpoint. If not provided, it will be auto-detected from the URL.This can also be used to force an alternative transport or implementation.
 <br>_Choices: [`http`]_
 
+#### `--use-legacy-max-tokens`
+
+Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads. The OpenAI API now prefers 'max_completion_tokens', but some older APIs or implementations may require 'max_tokens'.
+
 ## Input Options
 
 #### `--extra-inputs` `<list>`
