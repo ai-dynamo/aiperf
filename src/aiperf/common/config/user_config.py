@@ -386,8 +386,11 @@ class UserConfig(BaseConfig):
                     f"the number of conversations ({self.input.conversation.num}). "
                     "Either reduce --concurrency or increase --conversation-num."
                 )
-        # For single-turn scenarios, check against request_count
-        elif self.loadgen.concurrency > self.loadgen.request_count:
+        # For single-turn scenarios, check against request_count if it is set
+        elif (
+            "request_count" in self.loadgen.model_fields_set
+            and self.loadgen.concurrency > self.loadgen.request_count
+        ):
             raise ValueError(
                 f"Concurrency ({self.loadgen.concurrency}) cannot be greater than "
                 f"the request count ({self.loadgen.request_count}). "
