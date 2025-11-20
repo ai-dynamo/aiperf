@@ -25,6 +25,7 @@ def create_model_endpoint(
     streaming: bool = False,
     base_url: str = "http://localhost:8000",
     extra: list[tuple[str, Any]] | None = None,
+    use_legacy_max_tokens: bool = False,
 ) -> ModelEndpointInfo:
     """Helper to create a ModelEndpointInfo with common defaults."""
     return ModelEndpointInfo(
@@ -37,6 +38,7 @@ def create_model_endpoint(
             base_url=base_url,
             streaming=streaming,
             extra=extra or [],
+            use_legacy_max_tokens=use_legacy_max_tokens,
         ),
     )
 
