@@ -707,12 +707,27 @@ def test_concurrency_validation_with_request_rate():
         )
 
 
-def test_concurrency_validation_applies_against_default_request_count():
-    """Test that concurrency validation applies even when request_count uses default value."""
-    # When concurrency exceeds the default request_count, validation should fail
+def test_concurrency_validation_skipped_when_request_count_not_set():
+    """Test that concurrency validation is skipped when request_count is not explicitly set."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        loadgen=LoadGeneratorConfig(
+            concurrency=100,
+            request_rate=10.0,
+        ),
+    )
+    assert config.loadgen.concurrency == 100
+
+
+def test_concurrency_validation_applies_when_request_count_set():
+    """Test that concurrency validation applies when request_count is explicitly set."""
     with pytest.raises(
         ValueError,
-        match="Concurrency \\(100\\) cannot be greater than the request count \\(10\\)",
+        match="Concurrency \\(100\\) cannot be greater than the request count \\(50\\)",
     ):
         UserConfig(
             endpoint=EndpointConfig(
@@ -722,5 +737,23 @@ def test_concurrency_validation_applies_against_default_request_count():
             ),
             loadgen=LoadGeneratorConfig(
                 concurrency=100,
+                request_count=50,
             ),
         )
+
+
+def test_concurrency_validation_with_duration_benchmarking():
+    """Test that concurrency validation is skipped with duration-based benchmarking."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        loadgen=LoadGeneratorConfig(
+            concurrency=100,
+            benchmark_duration=60,
+        ),
+    )
+    assert config.loadgen.concurrency == 100
+    assert config.loadgen.benchmark_duration == 60
