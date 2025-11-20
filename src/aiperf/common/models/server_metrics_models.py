@@ -151,6 +151,10 @@ class MetricSchema(AIPerfBaseModel):
         default=None,
         description="Summary quantile labels in order. Only for summary metrics.",
     )
+    unique_label_values: dict[str, list[str]] | None = Field(
+        default=None,
+        description="Unique values seen for each label key during collection (e.g., {'status': ['success', 'error']}). Limited by AIPERF_SERVER_METRICS_MAX_UNIQUE_LABEL_VALUES per key.",
+    )
 
 
 class ServerMetricsSlimRecord(AIPerfBaseModel):

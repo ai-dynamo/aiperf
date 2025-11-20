@@ -411,6 +411,7 @@ Enable GPU telemetry console display and optionally specify: (1) 'dashboard' for
 #### `--server-metrics`, `--no-server-metrics` `<list>`
 
 Server metrics collection (ENABLED BY DEFAULT with automatic endpoint discovery). Automatically collects from inference endpoint base_url + `/metrics`. Optionally specify custom Prometheus-compatible endpoint URLs (e.g., http://node1:8081/metrics, http://node2:9090/metrics). Use `--no-server-metrics` to disable. Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints.
+<br>_Default: `[]`_
 
 ## ZMQ Communication Options
 

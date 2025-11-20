@@ -324,6 +324,117 @@ class TestMetadataExtraction:
         assert schema["bucket_labels"] == ["0.01", "0.1", "+Inf"]
 
     @pytest.mark.asyncio
+    async def test_metadata_includes_unique_label_values(
+        self,
+        user_config_server_metrics_export: UserConfig,
+        service_config: ServiceConfig,
+    ):
+        """Test that metadata includes unique label values seen across samples."""
+        record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8081/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={
+                "requests_total": MetricFamily(
+                    type=PrometheusMetricType.COUNTER,
+                    help="Total requests",
+                    samples=[
+                        MetricSample(
+                            labels={"status": "success", "endpoint": "chat"},
+                            value=100.0,
+                        ),
+                        MetricSample(
+                            labels={"status": "error", "endpoint": "chat"},
+                            value=10.0,
+                        ),
+                        MetricSample(
+                            labels={"status": "success", "endpoint": "completions"},
+                            value=50.0,
+                        ),
+                    ],
+                )
+            },
+        )
+
+        processor = ServerMetricsExportResultsProcessor(
+            service_id="records-manager",
+            service_config=service_config,
+            user_config=user_config_server_metrics_export,
+        )
+
+        async with aiperf_lifecycle(processor):
+            await processor.process_server_metrics_record(record)
+
+        metadata_file = (
+            user_config_server_metrics_export.output.server_metrics_metadata_json_file
+        )
+        metadata_content = orjson.loads(metadata_file.read_bytes())
+
+        schema = metadata_content["endpoints"]["http://localhost:8081/metrics"][
+            "metric_schemas"
+        ]["requests_total"]
+        assert "unique_label_values" in schema
+        assert schema["unique_label_values"] == {
+            "endpoint": ["chat", "completions"],
+            "status": ["error", "success"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_unique_label_values_respects_cardinality_limit(
+        self,
+        user_config_server_metrics_export: UserConfig,
+        service_config: ServiceConfig,
+        monkeypatch,
+    ):
+        """Test that unique_label_values respects MAX_UNIQUE_LABEL_VALUES limit."""
+        # Set a low limit for testing
+        from aiperf.common import environment
+
+        monkeypatch.setattr(
+            environment.Environment.SERVER_METRICS, "MAX_UNIQUE_LABEL_VALUES", 2
+        )
+
+        # Create record with 3 unique label values (exceeds limit of 2)
+        record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8081/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={
+                "requests_total": MetricFamily(
+                    type=PrometheusMetricType.COUNTER,
+                    help="Total requests",
+                    samples=[
+                        MetricSample(labels={"status": "success"}, value=100.0),
+                        MetricSample(labels={"status": "error"}, value=10.0),
+                        MetricSample(
+                            labels={"status": "timeout"}, value=5.0
+                        ),  # This should not be tracked
+                    ],
+                )
+            },
+        )
+
+        processor = ServerMetricsExportResultsProcessor(
+            service_id="records-manager",
+            service_config=service_config,
+            user_config=user_config_server_metrics_export,
+        )
+
+        async with aiperf_lifecycle(processor):
+            await processor.process_server_metrics_record(record)
+
+        metadata_file = (
+            user_config_server_metrics_export.output.server_metrics_metadata_json_file
+        )
+        metadata_content = orjson.loads(metadata_file.read_bytes())
+
+        schema = metadata_content["endpoints"]["http://localhost:8081/metrics"][
+            "metric_schemas"
+        ]["requests_total"]
+        # Should only have 2 values due to the limit
+        assert len(schema["unique_label_values"]["status"]) == 2
+
+    @pytest.mark.asyncio
     async def test_metadata_updated_for_multiple_endpoints(
         self,
         user_config_server_metrics_export: UserConfig,

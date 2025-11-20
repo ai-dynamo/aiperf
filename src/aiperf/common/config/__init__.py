@@ -37,6 +37,7 @@ from aiperf.common.config.config_defaults import (
     TokenizerDefaults,
     TurnDefaults,
     TurnDelayDefaults,
+    UserDefaults,
     VideoDefaults,
     WorkersDefaults,
 )
@@ -153,6 +154,7 @@ __all__ = [
     "TurnDelayConfig",
     "TurnDelayDefaults",
     "UserConfig",
+    "UserDefaults",
     "VideoConfig",
     "VideoDefaults",
     "WorkersConfig",

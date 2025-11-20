@@ -369,6 +369,12 @@ class _ServerMetricsSettings(BaseSettings):
         default=5.0,
         description="Delay in seconds before shutting down server metrics service to allow command response transmission",
     )
+    MAX_UNIQUE_LABEL_VALUES: int = Field(
+        ge=10,
+        le=10000,
+        default=1000,
+        description="Maximum unique values to track per label key in metadata to prevent unbounded memory growth with high-cardinality labels",
+    )
 
 
 class _ServiceSettings(BaseSettings):

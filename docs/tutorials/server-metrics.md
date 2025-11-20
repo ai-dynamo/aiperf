@@ -79,8 +79,8 @@ aiperf profile --model MODEL ... --server-metrics \
 
 > [!NOTE]
 > URLs can be specified with or without the `http://` prefix and `/metrics` suffix. AIPerf normalizes them automatically:
-> - `localhost:8081` → `http://localhost:8081/metrics`
-> - `http://server:9400` → `http://server:9400/metrics`
+> - `localhost:8000` → `http://localhost:8000/metrics`
+> - `http://server:9090` → `http://server:9090/metrics`
 
 ### Disabling Server Metrics
 
@@ -103,11 +103,13 @@ AIPerf collects **all metrics** exposed by Prometheus-compatible endpoints, with
 
 Common metrics from LLM inference servers include:
 
-#### vLLM Metrics Examples
-- **Request Metrics:** `vllm:request_success_total`, `vllm:request_failure_total`
-- **Latency Distributions:** `vllm:time_to_first_token_seconds`, `vllm:e2e_request_latency_seconds`
-- **Cache Performance:** `vllm:gpu_cache_usage_perc`, `vllm:cpu_cache_usage_perc`
-- **Throughput:** `vllm:prompt_tokens_total`, `vllm:generation_tokens_total`
+#### Dynamo Metrics Examples
+- **Request Metrics:** `dynamo_frontend_requests`, `dynamo_component_requests`
+- **Latency Distributions:** `dynamo_frontend_time_to_first_token_seconds`, `dynamo_frontend_request_duration_seconds`, `dynamo_frontend_inter_token_latency_seconds`
+- **Queue Metrics:** `dynamo_frontend_queued_requests`, `dynamo_frontend_inflight_requests`, `dynamo_component_inflight_requests`
+- **Token Metrics:** `dynamo_frontend_input_sequence_tokens`, `dynamo_frontend_output_sequence_tokens`
+- **Model Config:** `dynamo_frontend_model_context_length`, `dynamo_frontend_model_total_kv_blocks`
+- **NATS Metrics:** `dynamo_component_nats_client_in_messages`, `dynamo_component_nats_service_requests_total`
 
 #### Prometheus Metric Types Supported
 - **Counter:** Cumulative values (e.g., total requests, total tokens)
@@ -121,11 +123,11 @@ AIPerf generates two files per benchmark run:
 
 #### 1. Time-Series Data: `server_metrics_export.jsonl`
 
-Line-delimited JSON with metrics snapshots collected over time:
+Line-delimited JSON with metrics snapshots collected over time (from real Dynamo run):
 
 ```json
-{"endpoint_url":"http://localhost:8081/metrics","timestamp_ns":1700000000000000000,"endpoint_latency_ns":5234567,"metrics":{"vllm:request_success_total":[{"labels":{"model_name":"llama"},"value":150.0}],"vllm:gpu_cache_usage_perc":[{"labels":{"model_name":"llama"},"value":87.5}],"vllm:time_to_first_token_seconds":[{"labels":{"model_name":"llama"},"histogram":{"0.001":5,"0.005":12,"0.01":25,"0.1":100,"+Inf":100},"sum":45.2,"count":100}]}}
-{"endpoint_url":"http://localhost:8081/metrics","timestamp_ns":1700000100000000,"endpoint_latency_ns":5123456,"metrics":{"vllm:request_success_total":[{"labels":{"model_name":"llama"},"value":152.0}],"vllm:gpu_cache_usage_perc":[{"labels":{"model_name":"llama"},"value":88.2}],"vllm:time_to_first_token_seconds":[{"labels":{"model_name":"llama"},"histogram":{"0.001":5,"0.005":12,"0.01":27,"0.1":102,"+Inf":102},"sum":46.8,"count":102}]}}
+{"endpoint_url":"http://localhost:9009/metrics","timestamp_ns":1763591215213919629,"endpoint_latency_ns":712690779,"metrics":{"dynamo_component_requests":[{"labels":{"dynamo_component":"prefill","dynamo_endpoint":"generate","model":"openai/gpt-oss-20b"},"value":360.0}],"dynamo_component_nats_client_in_messages":[{"value":59284.0}],"dynamo_component_request_duration_seconds":[{"labels":{"dynamo_component":"prefill","dynamo_endpoint":"generate","model":"openai/gpt-oss-20b"},"histogram":{"0.005":0.0,"0.01":0.0,"0.025":123.0,"0.05":327.0,"0.1":348.0,"0.25":360.0,"+Inf":360.0},"sum":12.232215459,"count":360.0}]}}
+{"endpoint_url":"http://localhost:9007/metrics","timestamp_ns":1763591215220757503,"endpoint_latency_ns":719764167,"metrics":{"dynamo_frontend_requests":[{"labels":{"endpoint":"chat_completions","model":"openai/gpt-oss-20b","status":"success"},"value":1000.0}],"dynamo_frontend_queued_requests":[{"labels":{"model":"openai/gpt-oss-20b"},"value":0.0}],"dynamo_frontend_time_to_first_token_seconds":[{"labels":{"model":"openai/gpt-oss-20b"},"histogram":{"0":0.0,"0.0047":0.0,"0.1":835.0,"0.47":892.0,"1":899.0,"10":1000.0,"+Inf":1000.0},"sum":765.15823571,"count":1000.0}]}}
 ```
 
 **Each line contains:**
@@ -150,26 +152,76 @@ This ensures you have actual timestamp observations for when metrics changed, en
 
 #### 2. Metadata: `server_metrics_metadata.json`
 
-Pretty-printed JSON with metric schemas and documentation:
+Pretty-printed JSON with metric schemas and documentation (from real Dynamo run):
 
 ```json
 {
   "endpoints": {
-    "http://localhost:8081/metrics": {
-      "endpoint_url": "http://localhost:8081/metrics",
-      "endpoint_display": "http://localhost:8081/metrics",
+    "http://localhost:9007/metrics": {
+      "endpoint_url": "http://localhost:9007/metrics",
+      "endpoint_display": "http://localhost:9007/metrics",
       "metric_schemas": {
-        "vllm:request_success_total": {
-          "type": "counter",
-          "help": "Total number of successful requests",
-          "bucket_labels": null,
-          "quantile_labels": null
+        "dynamo_frontend_inflight_requests": {
+          "type": "gauge",
+          "help": "Number of inflight requests",
+          "unique_label_values": {
+            "model": ["openai/gpt-oss-20b"]
+          }
         },
-        "vllm:time_to_first_token_seconds": {
+        "dynamo_frontend_queued_requests": {
+          "type": "gauge",
+          "help": "Number of queued requests",
+          "unique_label_values": {
+            "model": ["openai/gpt-oss-20b"]
+          }
+        },
+        "dynamo_frontend_time_to_first_token_seconds": {
           "type": "histogram",
-          "help": "Histogram of time to first token in seconds",
-          "bucket_labels": ["0.001", "0.005", "0.01", "0.025", "0.05", "0.075", "0.1", "0.25", "0.5", "0.75", "1.0", "2.5", "5.0", "7.5", "10.0", "+Inf"],
-          "quantile_labels": null
+          "help": "Time to first token in seconds",
+          "bucket_labels": [
+            "0",
+            "0.0022",
+            "0.0047",
+            "0.01",
+            "0.022",
+            "0.047",
+            "0.1",
+            "0.22",
+            "0.47",
+            "1",
+            "2.2",
+            "4.7",
+            "10",
+            "22",
+            "48",
+            "100",
+            "220",
+            "480",
+            "+Inf"
+          ],
+          "unique_label_values": {
+            "model": ["openai/gpt-oss-20b"]
+          }
+        },
+        "dynamo_frontend_request_duration_seconds": {
+          "type": "histogram",
+          "help": "Request duration in seconds",
+          "bucket_labels": [
+            "0",
+            "1.9",
+            "3.4",
+            "6.3",
+            "12",
+            "22",
+            "40",
+            "75",
+            "140",
+            "260",
+            "+Inf"
+          ],
+          "unique_label_values": {
+            "model": ["openai/gpt-oss-20b"]
+          }
         }
       }
     }
@@ -181,6 +233,7 @@ Pretty-printed JSON with metric schemas and documentation:
 - Metric types and help text
 - Histogram bucket labels (for understanding distributions)
 - Summary quantile labels (for pre-computed percentiles)
+- Unique label values seen for each metric (for discovery and filtering)
 - Endpoint URLs and display names (currently identical)
 
 > [!TIP]
@@ -193,61 +246,58 @@ Pretty-printed JSON with metric schemas and documentation:
 > - `artifacts/{run-name}/custom_name_server_metrics.jsonl`
 > - `artifacts/{run-name}/custom_name_server_metrics_metadata.json`
 
-## Example Workflow: Benchmarking vLLM
+## Example Workflow: Benchmarking Dynamo
 
-### Setup vLLM with Prometheus Metrics
+### Setup Dynamo with Prometheus Metrics
 
-vLLM exposes Prometheus metrics on port 8000 by default (same as the inference endpoint):
+AI Dynamo exposes multiple Prometheus endpoints (one per component):
 
 ```bash
-# Start vLLM with Prometheus metrics enabled
-docker run -d --name vllm-server \
-  --gpus all \
-  -p 8000:8000 \
-  vllm/vllm-openai:latest \
-  --model Qwen/Qwen3-0.6B \
-  --host 0.0.0.0 \
-  --port 8000
+# Start Dynamo inference server with Prometheus metrics
+# Frontend metrics on port 9007, Component metrics on port 9009
+dynamo-server start \
+  --model meta-llama/Llama-3.1-8B \
+  --frontend-port 8000 \
+  --metrics-ports 9007,9009
 
 # Wait for server to be ready
-sleep 30
+sleep 10
 ```
 
-### Verify Prometheus Endpoint
+### Verify Prometheus Endpoints
 
 ```bash
-# Check if metrics are exposed
-curl http://localhost:8000/metrics | head -20
+# Check frontend metrics
+curl http://localhost:9007/metrics | head -20
 
 # Expected output:
-# # HELP vllm:request_success_total Total number of successful requests
-# # TYPE vllm:request_success_total counter
-# vllm:request_success_total{model_name="Qwen/Qwen3-0.6B"} 0.0
+# # HELP dynamo_frontend_requests Number of requests processed
+# # TYPE dynamo_frontend_requests counter
+# dynamo_frontend_requests{endpoint="chat_completions",model="meta-llama/Llama-3.1-8B",status="success"} 0.0
 # ...
+
+# Check component metrics
+curl http://localhost:9009/metrics | head -20
 ```
 
 ### Run AIPerf with Server Metrics
 
 ```bash
 aiperf profile \
-    --model Qwen/Qwen3-0.6B \
+    --model meta-llama/Llama-3.1-8B \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --url localhost:8000 \
     --streaming \
-    --synthetic-input-tokens-mean 100 \
-    --synthetic-input-tokens-stddev 0 \
-    --output-tokens-mean 200 \
-    --output-tokens-stddev 0 \
-    --extra-inputs ignore_eos:true \
-    --concurrency 4 \
-    --request-count 100 \
-    --warmup-request-count 10 \
-    --server-metrics
+    --synthetic-input-tokens-mean 1024 \
+    --output-tokens-mean 640 \
+    --concurrency 100 \
+    --request-count 1000 \
+    --server-metrics http://localhost:9007/metrics http://localhost:9009/metrics
 ```
 
 > [!NOTE]
-> Since vLLM exposes metrics on the same port as the inference endpoint (8000), AIPerf automatically discovers it at `http://localhost:8000/metrics`. You can also explicitly specify it with `--server-metrics http://localhost:8000/metrics` if preferred.
+> Dynamo exposes metrics on separate ports (9007 for frontend, 9009 for components). Since these differ from the inference port (8000), we explicitly specify them with `--server-metrics`.
 
 ### Inspect Output Files
 
@@ -260,10 +310,10 @@ ls -lh artifacts/*/server_metrics*
 # server_metrics_metadata.json      # Metric schemas and descriptions
 
 # Count how many metric snapshots were collected
-wc -l artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/server_metrics_export.jsonl
+wc -l artifacts/openai_gpt-oss-20b-openai-chat-concurrency100/server_metrics_export.jsonl
 
 # View metadata file (pretty-printed JSON)
-cat artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/server_metrics_metadata.json
+cat artifacts/openai_gpt-oss-20b-openai-chat-concurrency100/server_metrics_metadata.json
 ```
 
 ## Configuration Options
@@ -276,11 +326,14 @@ Customize collection behavior with environment variables:
 # Collect metrics every 500ms instead of default 100ms
 export AIPERF_SERVER_METRICS_COLLECTION_INTERVAL=0.5
 
-# Configure default ports for automatic discovery
-export AIPERF_SERVER_METRICS_DEFAULT_BACKEND_PORTS="8081,6880,9400"
+# Configure default ports for automatic discovery (if metrics are on different ports)
+export AIPERF_SERVER_METRICS_DEFAULT_BACKEND_PORTS="9090,9400"
 
 # Increase flush period to 5 seconds (wait longer for final metrics after benchmark ends)
 export AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD=5.0
+
+# Limit unique label values tracked per label key (prevents unbounded growth with high-cardinality labels)
+export AIPERF_SERVER_METRICS_MAX_UNIQUE_LABEL_VALUES=500
 
 # Run benchmark
 aiperf profile --model MODEL ... --server-metrics
@@ -294,25 +347,26 @@ aiperf profile --model MODEL ... --server-metrics
 | `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | 2.0s | 0.0s - 30s | Wait time for final metrics after benchmark |
 | `AIPERF_SERVER_METRICS_DEFAULT_BACKEND_PORTS` | empty list | comma-separated | Additional ports to check during auto-discovery (beyond inference endpoint port) |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | 5s | 1s - 300s | Timeout for endpoint reachability tests |
+| `AIPERF_SERVER_METRICS_MAX_UNIQUE_LABEL_VALUES` | 1000 | 10 - 10000 | Maximum unique values to track per label key in metadata |
 
 ## Multi-Node Server Metrics
 
 For distributed LLM deployments (tensor parallelism, pipeline parallelism), collect metrics from all nodes:
 
 ```bash
-# Example: 4-node distributed vLLM deployment
+# Example: 4-node distributed Dynamo deployment
 aiperf profile \
-    --model meta-llama/Llama-2-70b-hf \
+    --model meta-llama/Llama-3.1-70B \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --url http://head-node:8000 \
     --concurrency 16 \
     --request-count 500 \
     --server-metrics \
-        http://node-0:8081/metrics \
-        http://node-1:8081/metrics \
-        http://node-2:8081/metrics \
-        http://node-3:8081/metrics
+        http://node-0:8000/metrics \
+        http://node-1:8000/metrics \
+        http://node-2:8000/metrics \
+        http://node-3:8000/metrics
 ```
 
 **Output Structure:**
@@ -325,72 +379,79 @@ Each endpoint's metrics are stored separately in the JSONL file with its `endpoi
 
 ### JSONL Record Structure
 
-Each line in `server_metrics_export.jsonl` is a JSON object containing ALL metrics from one endpoint at one point in time:
+Each line in `server_metrics_export.jsonl` is a JSON object containing ALL metrics from one endpoint at one point in time.
+
+**Real example from Dynamo frontend (localhost:9007):**
 
 ```json
 {
-  "endpoint_url": "http://localhost:8081/metrics",
-  "timestamp_ns": 1700000000000000000,
-  "endpoint_latency_ns": 5234567,
+  "endpoint_url": "http://localhost:9007/metrics",
+  "timestamp_ns": 1763591215220757503,
+  "endpoint_latency_ns": 719764167,
   "metrics": {
-    "dynamo_frontend_requests_total": [
+    "dynamo_frontend_requests": [
       {
-        "labels": {"job": "inference-server", "instance": "localhost:8081", "server_id": "server-0"},
-        "value": 15420.0
+        "labels": {
+          "endpoint": "chat_completions",
+          "model": "openai/gpt-oss-20b",
+          "request_type": "unary",
+          "status": "success"
+        },
+        "value": 1000.0
       }
     ],
     "dynamo_frontend_queued_requests": [
       {
-        "labels": {"job": "inference-server", "instance": "localhost:8081", "server_id": "server-0"},
-        "value": 23.0
-      }
-    ],
-    "kvstats_gpu_cache_usage_percent": [
-      {
-        "labels": {"job": "inference-server", "instance": "localhost:8081", "server_id": "server-0"},
-        "value": 0.847
+        "labels": {"model": "openai/gpt-oss-20b"},
+        "value": 0.0
       }
     ],
     "dynamo_frontend_time_to_first_token_seconds": [
       {
-        "labels": {"job": "inference-server", "instance": "localhost:8081", "server_id": "server-0"},
+        "labels": {"model": "openai/gpt-oss-20b"},
         "histogram": {
-          "0.001": 5,
-          "0.005": 42,
-          "0.01": 128,
-          "0.02": 315,
-          "0.04": 412,
-          "+Inf": 450
+          "0": 0.0,
+          "0.0022": 0.0,
+          "0.0047": 0.0,
+          "0.01": 0.0,
+          "0.022": 0.0,
+          "0.047": 0.0,
+          "0.1": 835.0,
+          "0.22": 888.0,
+          "0.47": 892.0,
+          "1": 899.0,
+          "2.2": 900.0,
+          "4.7": 900.0,
+          "10": 1000.0,
+          "22": 1000.0,
+          "48": 1000.0,
+          "100": 1000.0,
+          "220": 1000.0,
+          "480": 1000.0,
+          "+Inf": 1000.0
         },
-        "sum": 8.234,
-        "count": 450
+        "sum": 765.1582357100003,
+        "count": 1000.0
       }
     ],
     "dynamo_frontend_request_duration_seconds": [
       {
-        "labels": {"job": "inference-server", "instance": "localhost:8081", "server_id": "server-0"},
+        "labels": {"model": "openai/gpt-oss-20b"},
         "histogram": {
-          "0.01": 12,
-          "0.025": 45,
-          "0.05": 123,
-          "0.1": 302,
-          "0.5": 438,
-          "+Inf": 450
+          "0": 0.0,
+          "1.9": 0.0,
+          "3.4": 10.0,
+          "6.3": 212.0,
+          "12": 554.0,
+          "22": 969.0,
+          "40": 1000.0,
+          "75": 1000.0,
+          "140": 1000.0,
+          "260": 1000.0,
+          "+Inf": 1000.0
         },
-        "sum": 67.8,
-        "count": 450
-      }
-    ],
-    "http_request_latency_seconds": [
-      {
-        "labels": {"job": "inference-server", "instance": "localhost:8081", "server_id": "server-0"},
-        "summary": {
-          "0.5": 0.023,
-          "0.9": 0.087,
-          "0.99": 0.234
-        },
-        "sum": 145.6,
-        "count": 1500
+        "sum": 11336.94603903602,
+        "count": 1000.0
       }
     ]
   }
@@ -410,15 +471,17 @@ Each line in `server_metrics_export.jsonl` is a JSON object containing ALL metri
 
 ### Multi-Endpoint Data (Interleaved)
 
-When collecting from multiple endpoints, records are **interleaved by write time** (when deduplication completes), not strictly by collection time:
+When collecting from multiple endpoints, records are **interleaved by write time** (when deduplication completes), not strictly by collection time.
+
+**Real example from Dynamo with component (9009) and frontend (9007) endpoints:**
 
 ```jsonl
-{"endpoint_url":"http://node1:8081/metrics","timestamp_ns":1700000000000000,"metrics":{...}}
-{"endpoint_url":"http://node1:8081/metrics","timestamp_ns":1700000300000000,"metrics":{...}}
-{"endpoint_url":"http://node2:8081/metrics","timestamp_ns":1700000000050000,"metrics":{...}}
-{"endpoint_url":"http://node2:8081/metrics","timestamp_ns":1700000400050000,"metrics":{...}}
-{"endpoint_url":"http://node1:8081/metrics","timestamp_ns":1700000500000000,"metrics":{...}}
-{"endpoint_url":"http://node2:8081/metrics","timestamp_ns":1700000500050000,"metrics":{...}}
+{"endpoint_url":"http://localhost:9009/metrics","timestamp_ns":1763591215213919629,"endpoint_latency_ns":712690779,"metrics":{...}}
+{"endpoint_url":"http://localhost:9007/metrics","timestamp_ns":1763591215220757503,"endpoint_latency_ns":719764167,"metrics":{...}}
+{"endpoint_url":"http://localhost:9009/metrics","timestamp_ns":1763591215313945146,"endpoint_latency_ns":100025517,"metrics":{...}}
+{"endpoint_url":"http://localhost:9007/metrics","timestamp_ns":1763591215320776712,"endpoint_latency_ns":100831209,"metrics":{...}}
+{"endpoint_url":"http://localhost:9009/metrics","timestamp_ns":1763591215414013463,"endpoint_latency_ns":100068317,"metrics":{...}}
+{"endpoint_url":"http://localhost:9007/metrics","timestamp_ns":1763591215421601721,"endpoint_latency_ns":100825009,"metrics":{...}}
 ```
 
 **Key Points:**
@@ -451,14 +514,15 @@ The `server_metrics_metadata.json` file describes all collected metrics:
 {
   "endpoints": {
     "endpoint_url": {
-      "endpoint_url": "http://localhost:8081/metrics",
-      "endpoint_display": "http://localhost:8081/metrics",
+      "endpoint_url": "http://localhost:8000/metrics",
+      "endpoint_display": "http://localhost:8000/metrics",
       "metric_schemas": {
         "metric_name": {
           "type": "counter|gauge|histogram|summary",
           "help": "Metric description from Prometheus",
           "bucket_labels": ["0.001", "0.01", ...],  // histogram only
-          "quantile_labels": ["0.5", "0.9", "0.99"]  // summary only
+          "quantile_labels": ["0.5", "0.9", "0.99"],  // summary only
+          "unique_label_values": {"label_key": ["value1", "value2"]}  // all metrics
         }
       }
     }
@@ -470,6 +534,7 @@ The `server_metrics_metadata.json` file describes all collected metrics:
 - Discover what metrics are available
 - Understand metric types and meanings
 - Know histogram bucket boundaries and summary quantiles
+- See unique label values for filtering and querying
 
 ## Troubleshooting
 
@@ -483,7 +548,7 @@ The `server_metrics_metadata.json` file describes all collected metrics:
 
 1. **Verify Prometheus endpoint is accessible:**
    ```bash
-   curl http://localhost:8081/metrics
+   curl http://localhost:8000/metrics
    ```
    If this fails, check:
    - Is the inference server running?
@@ -495,10 +560,10 @@ The `server_metrics_metadata.json` file describes all collected metrics:
    - If your Prometheus metrics are on a different port, either:
      ```bash
      # Option 1: Set additional ports for discovery
-     export AIPERF_SERVER_METRICS_DEFAULT_BACKEND_PORTS="8081,9400"
+     export AIPERF_SERVER_METRICS_DEFAULT_BACKEND_PORTS="9090,9400"
 
      # Option 2: Explicitly specify the endpoint (recommended)
-     aiperf profile --model MODEL ... --server-metrics http://localhost:8081/metrics
+     aiperf profile --model MODEL ... --server-metrics http://localhost:9090/metrics
      ```
 
 3. **Use explicit URLs instead of auto-discovery:**
@@ -522,7 +587,7 @@ The `server_metrics_metadata.json` file describes all collected metrics:
 2. **Verify metrics are exposed:**
    ```bash
    # Check if endpoint returns metric data
-   curl http://localhost:8081/metrics | grep -c "^vllm:"
+   curl http://localhost:8000/metrics | grep -c "^dynamo_"
    ```
 
 3. **Review AIPerf logs for errors:**
@@ -546,7 +611,7 @@ The `server_metrics_metadata.json` file describes all collected metrics:
 2. **Limit collection to specific endpoints:**
    ```bash
    # Only collect from primary node instead of all nodes
-   aiperf profile ... --server-metrics http://primary-node:8081/metrics
+   aiperf profile ... --server-metrics http://primary-node:8000/metrics
    ```
 
 3. **Check deduplication is working:**
@@ -568,7 +633,7 @@ The `server_metrics_metadata.json` file describes all collected metrics:
 2. **Check network connectivity:**
    ```bash
    # Test latency to endpoint
-   time curl -s http://localhost:8081/metrics > /dev/null
+   time curl -s http://localhost:8000/metrics > /dev/null
    ```
 
 3. **Verify endpoint health:**

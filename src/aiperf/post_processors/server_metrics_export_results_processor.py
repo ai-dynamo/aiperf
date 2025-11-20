@@ -165,6 +165,7 @@ class ServerMetricsExportResultsProcessor(
         - New metric names not in existing metadata
         - New histogram buckets for existing histogram metrics
         - New summary quantiles for existing summary metrics
+        - New unique label values for existing metrics
 
         Args:
             record: ServerMetricsRecord to check
@@ -183,7 +184,8 @@ class ServerMetricsExportResultsProcessor(
             )
             return True
 
-        # Check for histogram bucket changes
+        # Check for histogram bucket changes, summary quantile changes, and label value changes
+        max_values = Environment.SERVER_METRICS.MAX_UNIQUE_LABEL_VALUES
         for metric_name, metric_family in record.metrics.items():
             if metric_name not in existing_schemas:
                 continue
@@ -197,9 +199,11 @@ class ServerMetricsExportResultsProcessor(
 
                 new_buckets = current_buckets - existing_buckets
                 if new_buckets:
-                    self.info(
-                        f"Detected new histogram buckets for {record.endpoint_url}/{metric_name}: {sorted(new_buckets, key=lambda x: float(x))}"
-                    )
+                    # Use manual check instead of lambda to avoid binding loop variables
+                    if self.is_debug_enabled:
+                        self.debug(
+                            f"Detected new histogram buckets for {record.endpoint_url}/{metric_name}: {sorted(new_buckets, key=lambda x: float(x))}"
+                        )
                     return True
 
             # Check summary quantiles
@@ -211,20 +215,40 @@ class ServerMetricsExportResultsProcessor(
 
                 new_quantiles = current_quantiles - existing_quantiles
                 if new_quantiles:
-                    self.info(
-                        f"Detected new summary quantiles for {record.endpoint_url}/{metric_name}: {sorted(new_quantiles, key=lambda x: float(x))}"
-                    )
+                    # Use manual check instead of lambda to avoid binding loop variables
+                    if self.is_debug_enabled:
+                        self.debug(
+                            f"Detected new summary quantiles for {record.endpoint_url}/{metric_name}: {sorted(new_quantiles, key=lambda x: float(x))}"
+                        )
                     return True
+
+            # Check for new label values
+            existing_label_values = existing_schema.unique_label_values or {}
+            for sample in metric_family.samples:
+                if sample.labels:
+                    for label_key, label_value in sample.labels.items():
+                        existing_values = set(existing_label_values.get(label_key, []))
+                        # Only check if we haven't hit the limit yet
+                        if (
+                            len(existing_values) < max_values
+                            and label_value not in existing_values
+                        ):
+                            # Use manual check instead of lambda to avoid binding loop variables
+                            if self.is_debug_enabled:
+                                self.debug(
+                                    f"Detected new label value for {record.endpoint_url}/{metric_name}: {label_key}={label_value}"
+                                )
+                            return True
 
         return False
 
     def _extract_and_store_metadata(self, record: ServerMetricsRecord) -> None:
         """Extract metadata from a ServerMetricsRecord and merge with existing metadata.
 
-        Extracts endpoint URL, metric schemas (type, help text, bucket labels, quantile labels)
-        from the record and merges with existing metadata if present. This ensures that new
-        metrics, histogram buckets, or summary quantiles are captured even if they appear
-        in later scrapes.
+        Extracts endpoint URL, metric schemas (type, help text, bucket labels, quantile labels,
+        unique label values) from the record and merges with existing metadata if present.
+        This ensures that new metrics, histogram buckets, summary quantiles, or label values
+        are captured even if they appear in later scrapes.
 
         Args:
             record: ServerMetricsRecord to extract metadata from
@@ -243,6 +267,11 @@ class ServerMetricsExportResultsProcessor(
                 else None,
                 quantile_labels=list(schema.quantile_labels)
                 if schema.quantile_labels
+                else None,
+                unique_label_values={
+                    k: list(v) for k, v in schema.unique_label_values.items()
+                }
+                if schema.unique_label_values
                 else None,
             )
             for name, schema in existing_schemas.items()
@@ -287,12 +316,42 @@ class ServerMetricsExportResultsProcessor(
 
                 quantile_labels = sorted(merged_quantiles, key=lambda x: float(x))
 
+            # Extract unique label values from all samples
+            unique_label_values: dict[str, set[str]] = defaultdict(set)
+            max_values = Environment.SERVER_METRICS.MAX_UNIQUE_LABEL_VALUES
+
+            # Merge with existing label values if present
+            if (
+                metric_name in existing_schemas
+                and existing_schemas[metric_name].unique_label_values
+            ):
+                for key, values in existing_schemas[
+                    metric_name
+                ].unique_label_values.items():
+                    unique_label_values[key] = set(values)
+
+            # Collect label values from current samples
+            for sample in metric_family.samples:
+                if sample.labels:
+                    for label_key, label_value in sample.labels.items():
+                        # Only track up to max_values per label key
+                        if len(unique_label_values[label_key]) < max_values:
+                            unique_label_values[label_key].add(label_value)
+
+            # Convert to sorted lists for consistent output (None if no labels)
+            final_label_values: dict[str, list[str]] | None = None
+            if unique_label_values:
+                final_label_values = {
+                    k: sorted(v) for k, v in sorted(unique_label_values.items())
+                }
+
             # Create or update metric schema
             metric_schemas[metric_name] = MetricSchema(
                 type=metric_family.type,
                 help=metric_family.help,
                 bucket_labels=bucket_labels,
                 quantile_labels=quantile_labels,
+                unique_label_values=final_label_values,
             )
 
         metadata = ServerMetricsMetadata(

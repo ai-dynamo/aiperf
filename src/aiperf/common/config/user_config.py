@@ -13,6 +13,7 @@ from typing_extensions import Self
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
+from aiperf.common.config.config_defaults import UserDefaults
 from aiperf.common.config.config_validators import coerce_value, parse_str_or_list
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.groups import Groups
@@ -290,7 +291,7 @@ class UserConfig(BaseConfig):
     server_metrics: Annotated[
         list[str] | None,
         Field(
-            default_factory=list,
+            default=UserDefaults.SERVER_METRICS,
             description=(
                 "Server metrics collection (ENABLED BY DEFAULT with automatic endpoint discovery). "
                 "Automatically collects from inference endpoint base_url + `/metrics`. "
@@ -307,7 +308,7 @@ class UserConfig(BaseConfig):
             consume_multiple=True,
             group=Groups.SERVER_METRICS,
         ),
-    ] = None
+    ] = UserDefaults.SERVER_METRICS
 
     _server_metrics_urls: list[str] = []
 

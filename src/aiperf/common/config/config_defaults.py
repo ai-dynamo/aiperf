@@ -131,6 +131,12 @@ class TurnDelayDefaults:
 
 
 @dataclass(frozen=True)
+class UserDefaults:
+    SERVER_METRICS = []  # Empty list enables automatic discovery by default
+    GPU_TELEMETRY = None
+
+
+@dataclass(frozen=True)
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
     RAW_RECORDS_FOLDER = Path("raw_records")
