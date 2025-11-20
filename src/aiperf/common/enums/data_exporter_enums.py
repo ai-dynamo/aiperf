@@ -5,6 +5,7 @@ from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
 class ConsoleExporterType(CaseInsensitiveStrEnum):
+    API_ERRORS = "api_errors"
     ERRORS = "errors"
     EXPERIMENTAL_METRICS = "experimental_metrics"
     INTERNAL_METRICS = "internal_metrics"
