@@ -98,6 +98,10 @@ class EndpointInfo(AIPerfBaseModel):
         "You can repeat this flag for multiple inputs. Inputs should be in an 'input_name:value' format. "
         "Alternatively, a string representing a json formatted dict can be provided.",
     )
+    use_legacy_max_tokens: bool = Field(
+        default=False,
+        description="Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads.",
+    )
 
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> "EndpointInfo":
@@ -111,6 +115,7 @@ class EndpointInfo(AIPerfBaseModel):
             extra=user_config.input.extra,
             timeout=user_config.endpoint.timeout_seconds,
             api_key=user_config.endpoint.api_key,
+            use_legacy_max_tokens=user_config.endpoint.use_legacy_max_tokens,
         )
 
 

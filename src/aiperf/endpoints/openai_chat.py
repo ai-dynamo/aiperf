@@ -68,7 +68,12 @@ class ChatEndpoint(BaseEndpoint):
         }
 
         if turns[-1].max_tokens is not None:
-            payload["max_completion_tokens"] = turns[-1].max_tokens
+            token_field = (
+                "max_tokens"
+                if model_endpoint.endpoint.use_legacy_max_tokens
+                else "max_completion_tokens"
+            )
+            payload[token_field] = turns[-1].max_tokens
 
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
