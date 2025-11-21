@@ -52,9 +52,20 @@ class PromptGenerator(BaseGenerator):
         if self._tokenized_corpus is None:
             self._initialize_corpus()
 
-        # Initialize prefix prompts pool if the pool size > 0
-        if self.config.prefix_prompt.pool_size > 0:
-            self._create_prefix_prompt_pool()
+        # Initialize prefix prompts pool
+        # If cache_hit_rate is set, use pool_size of 1 and calculate length from ISL
+        # Otherwise use the configured pool_size
+        if self.config.prefix_prompt.cache_hit_rate > 0:
+            effective_pool_size = 1
+            # Calculate prefix length as: ISL * cache_hit_rate
+            effective_length = int(
+                self.config.input_tokens.mean * self.config.prefix_prompt.cache_hit_rate
+            )
+            self._create_prefix_prompt_pool(effective_pool_size, effective_length)
+        elif self.config.prefix_prompt.pool_size > 0:
+            self._create_prefix_prompt_pool(
+                self.config.prefix_prompt.pool_size, self.config.prefix_prompt.length
+            )
 
     def _initialize_corpus(self) -> None:
         """Load and tokenize the corpus once, storing it for reuse.
@@ -117,17 +128,19 @@ class PromptGenerator(BaseGenerator):
             f"from {len(chunks)} chunks using {num_threads} threads"
         )
 
-    def _create_prefix_prompt_pool(self) -> None:
-        """Generate a pool of prefix prompts to sample from."""
+    def _create_prefix_prompt_pool(self, pool_size: int, length: int) -> None:
+        """Generate a pool of prefix prompts to sample from.
+
+        Args:
+            pool_size: The size of the prefix prompt pool to create.
+            length: The length (in tokens) of each prefix prompt.
+        """
         if self._tokenized_corpus is None:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
-        self._prefix_prompts = [
-            self._generate_prompt(self.config.prefix_prompt.length)
-            for _ in range(self.config.prefix_prompt.pool_size)
-        ]
+        self._prefix_prompts = [self._generate_prompt(length) for _ in range(pool_size)]
         self.debug(
-            lambda: f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            lambda: f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts of length {length}"
         )
 
     def generate(
@@ -269,3 +282,16 @@ class PromptGenerator(BaseGenerator):
                 "Please ensure that the prefix prompts pool is initialized."
             )
         return self._prefix_rng.choice(self._prefix_prompts)
+
+    def get_prefix_length(self) -> int:
+        """
+        Get the calculated prefix length based on cache_hit_rate and ISL mean.
+
+        Returns:
+            The prefix length in tokens. Returns 0 if cache_hit_rate is not set.
+        """
+        if self.config.prefix_prompt.cache_hit_rate > 0:
+            return int(
+                self.config.input_tokens.mean * self.config.prefix_prompt.cache_hit_rate
+            )
+        return 0

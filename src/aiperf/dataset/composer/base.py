@@ -148,4 +148,12 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
     @property
     def prefix_prompt_enabled(self) -> bool:
-        return self.config.input.prompt.prefix_prompt.length > 0
+        # When cache_hit_rate is used, prefix is enabled if cache_hit_rate > 0
+        if self.config.input.prompt.prefix_prompt.cache_hit_rate > 0:
+            return True
+
+        # Otherwise, prefix is enabled if both length and pool_size are set
+        return (
+            self.config.input.prompt.prefix_prompt.length > 0
+            and self.config.input.prompt.prefix_prompt.pool_size > 0
+        )

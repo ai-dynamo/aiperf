@@ -285,8 +285,13 @@ The total size of the prefix prompt pool to select prefixes from. If this value 
 
 #### `--prompt-prefix-length`, `--prefix-prompt-length` `<int>`
 
-The number of tokens in each prefix prompt. This is only used if "num" is greater than zero. Note that due to the prefix and user prompts being concatenated, the number of tokens in the final prompt may be off by one.
+The number of tokens in each prefix prompt. This is only used if "num" is greater than zero. Note that due to the prefix and user prompts being concatenated, the number of tokens in the final prompt may be off by one. This field is ignored when --cache-hit-rate is used.
 <br>_Default: `0`_
+
+#### `--cache-hit-rate` `<float>`
+
+The fraction of input sequence length (ISL) that should be from a cached prefix. This option automatically sets the prefix prompt pool size to 1. The prefix length will be calculated as: ISL * cache_hit_rate. For example, with ISL=1000 and cache-hit-rate=0.5, the prefix will be 500 tokens. Value must be between 0.0 and 1.0. Cannot be used with --prefix-prompt-pool-size. Requires --isl (input sequence length mean) to be set.
+<br>_Default: `0.0`_
 
 ## Conversation Input Options
 

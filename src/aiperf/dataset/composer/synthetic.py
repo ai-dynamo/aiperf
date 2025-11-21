@@ -131,13 +131,26 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         )
 
         for _ in range(self.config.input.prompt.batch_size):
-            # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
-
-            # Add prefix prompt if this is the first turn and prefix is enabled
+            # If prefix is enabled and this is the first turn
             if is_first and self.prefix_prompt_enabled:
+                # Get the prefix
                 prefix = self.prompt_generator.get_random_prefix_prompt()
-                content = f"{prefix} {content}"
+
+                # Calculate unique content length
+                # Total ISL = prefix length + unique content length
+                prefix_length = self.prompt_generator.get_prefix_length()
+                unique_content_length = max(1, isl - prefix_length)
+
+                # Generate unique content with adjusted length
+                unique_content = self.prompt_generator.generate(
+                    mean=unique_content_length, stddev=stddev
+                )
+
+                # Concatenate prefix + unique content (no space to avoid extra tokens)
+                content = f"{prefix} {unique_content}"
+            else:
+                # Generate prompt content using the sampled input sequence length
+                content = self.prompt_generator.generate(mean=isl, stddev=stddev)
 
             text.contents.append(content)
 

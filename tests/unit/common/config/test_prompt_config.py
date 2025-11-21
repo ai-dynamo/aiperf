@@ -92,6 +92,7 @@ def test_prefix_prompt_config_defaults():
     config = PrefixPromptConfig()
     assert config.pool_size == PrefixPromptDefaults.POOL_SIZE
     assert config.length == PrefixPromptDefaults.LENGTH
+    assert config.cache_hit_rate == PrefixPromptDefaults.CACHE_HIT_RATE
 
 
 def test_prefix_prompt_config_custom_values():
@@ -161,3 +162,117 @@ def test_prompt_config_sequence_distribution_none_handling():
     config = PromptConfig(sequence_distribution=None)
     assert config.sequence_distribution is None
     assert config.get_sequence_distribution() is None
+
+
+def test_prefix_prompt_config_cache_hit_rate_defaults():
+    """
+    Test the default value of cache_hit_rate in PrefixPromptConfig.
+    """
+    config = PrefixPromptConfig()
+    assert config.cache_hit_rate == 0.0
+
+
+def test_prefix_prompt_config_cache_hit_rate_custom_value():
+    """
+    Test the PrefixPromptConfig class with a custom cache_hit_rate value.
+    """
+    config = PrefixPromptConfig(cache_hit_rate=0.5)
+    assert config.cache_hit_rate == 0.5
+    assert config.pool_size == 0  # pool_size should remain 0
+
+
+def test_prefix_prompt_config_cache_hit_rate_conflicts_with_pool_size():
+    """
+    Test that using cache_hit_rate with pool_size raises a validation error.
+    """
+    with pytest.raises(
+        ValueError, match="Cannot use --cache-hit-rate with --prefix-prompt-pool-size"
+    ):
+        PrefixPromptConfig(cache_hit_rate=0.5, pool_size=5)
+
+
+def test_prefix_prompt_config_cache_hit_rate_zero_with_pool_size():
+    """
+    Test that cache_hit_rate=0 is allowed with pool_size > 0 (no conflict).
+    """
+    config = PrefixPromptConfig(cache_hit_rate=0.0, pool_size=5, length=100)
+    assert config.cache_hit_rate == 0.0
+    assert config.pool_size == 5
+
+
+def test_prefix_prompt_config_pool_size_zero_with_cache_hit_rate():
+    """
+    Test that pool_size=0 is allowed with cache_hit_rate > 0 (no conflict).
+    """
+    config = PrefixPromptConfig(cache_hit_rate=0.5, pool_size=0)
+    assert config.cache_hit_rate == 0.5
+    assert config.pool_size == 0
+
+
+def test_prefix_prompt_config_cache_hit_rate_bounds():
+    """
+    Test that cache_hit_rate is bounded between 0.0 and 1.0.
+    """
+    # Valid values
+    config = PrefixPromptConfig(cache_hit_rate=0.0)
+    assert config.cache_hit_rate == 0.0
+
+    config = PrefixPromptConfig(cache_hit_rate=1.0)
+    assert config.cache_hit_rate == 1.0
+
+    # Invalid values
+    with pytest.raises(ValueError):
+        PrefixPromptConfig(cache_hit_rate=-0.1)
+
+    with pytest.raises(ValueError):
+        PrefixPromptConfig(cache_hit_rate=1.1)
+
+
+def test_prompt_config_cache_hit_rate_requires_isl():
+    """
+    Test that cache_hit_rate requires ISL (input_tokens.mean) to be set.
+    """
+    # Should fail when cache_hit_rate > 0 but ISL mean = 0
+    config = PromptConfig()
+    config.input_tokens.mean = 0
+    config.prefix_prompt.cache_hit_rate = 0.5
+
+    with pytest.raises(
+        ValueError, match="When using --cache-hit-rate, you must also specify --isl"
+    ):
+        config.model_validate(config.model_dump())
+
+    # Should succeed when both are set
+    config = PromptConfig()
+    config.input_tokens.mean = 1000
+    config.prefix_prompt.cache_hit_rate = 0.5
+    validated = config.model_validate(config.model_dump())
+    assert validated.prefix_prompt.cache_hit_rate == 0.5
+    assert validated.input_tokens.mean == 1000
+
+    # Should succeed when cache_hit_rate = 0 (feature disabled)
+    config = PromptConfig()
+    config.input_tokens.mean = 0
+    config.prefix_prompt.cache_hit_rate = 0.0
+    validated = config.model_validate(config.model_dump())
+    assert validated.prefix_prompt.cache_hit_rate == 0.0
+    assert validated.input_tokens.mean == 0
+
+
+def test_prefix_prompt_config_cache_hit_rate_conflicts_with_length():
+    """
+    Test that using cache_hit_rate with prefix_prompt_length raises a validation error.
+    """
+    with pytest.raises(
+        ValueError, match="Cannot use --cache-hit-rate with --prefix-prompt-length"
+    ):
+        PrefixPromptConfig(cache_hit_rate=0.5, length=100)
+
+
+def test_prefix_prompt_config_cache_hit_rate_zero_with_length():
+    """
+    Test that cache_hit_rate=0 is allowed with length > 0 (no conflict).
+    """
+    config = PrefixPromptConfig(cache_hit_rate=0.0, length=100)
+    assert config.cache_hit_rate == 0.0
+    assert config.length == 100

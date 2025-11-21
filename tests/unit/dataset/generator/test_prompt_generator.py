@@ -461,7 +461,7 @@ class TestPromptGeneratorComprehensive:
         generator._tokenized_corpus = None
 
         with pytest.raises(NotInitializedError):
-            generator._create_prefix_prompt_pool()
+            generator._create_prefix_prompt_pool(pool_size=5, length=10)
 
     def test_create_prefix_prompt_pool_zero_length(self, prefix_config):
         """Test _create_prefix_prompt_pool with zero length prompts."""
