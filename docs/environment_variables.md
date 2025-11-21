@@ -17,6 +17,11 @@ export AIPERF_WORKER_CPU_UTILIZATION_FACTOR=0.8
 export AIPERF_ZMQ_RCVTIMEO=600000
 ```
 
+> [!WARNING]
+> Environment variable names, default values, and definitions are subject to change.
+> These settings may be modified, renamed, or removed in future releases. Always refer to the
+> documentation for your specific release version and test thoroughly when upgrading AIPerf.
+
 ## DATASET
 
 Dataset loading and configuration. Controls timeouts and behavior for dataset loading operations.

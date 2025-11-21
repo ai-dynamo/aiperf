@@ -239,6 +239,11 @@ def generate_markdown_docs(settings_classes: list[SettingsClass]) -> str:
         "export AIPERF_ZMQ_RCVTIMEO=600000",
         "```",
         "",
+        "> [!WARNING]",
+        "> Environment variable names, default values, and definitions are subject to change.",
+        "> These settings may be modified, renamed, or removed in future releases. Always refer to the",
+        "> documentation for your specific release version and test thoroughly when upgrading AIPerf.",
+        "",
     ]
     # Sort by env_prefix for consistent output, except DEV which should be last (least important to end users)
     settings_classes = sorted(
