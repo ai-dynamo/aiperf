@@ -60,7 +60,7 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             "parameters": parameters,
         }
 
-        self.debug(lambda: f"Formatted TGI payload: {payload}")
+        self.trace(lambda: f"Formatted TGI payload: {payload}")
         return payload
 
     def parse_response(

@@ -300,17 +300,15 @@ class SystemController(SignalHandlerMixin, BaseService):
         service_type = message.service_type
         timestamp = message.request_ns
 
-        self.debug(lambda: f"Received heartbeat from {service_type} (ID: {service_id})")
-
         # Update the last heartbeat timestamp if the component exists
         try:
             service_info = self.service_manager.service_id_map[service_id]
             service_info.last_seen = timestamp
             service_info.state = message.state
-            self.debug(f"Updated heartbeat for {service_id} to {timestamp}")
+            self.debug(lambda: f"Updated heartbeat for '{service_id}' to {timestamp}")
         except Exception:
             self.warning(
-                f"Received heartbeat from unknown service: {service_id} ({service_type})"
+                f"Received heartbeat from unknown service: '{service_id}' ('{service_type}')"
             )
 
     @on_message(MessageType.CREDITS_COMPLETE)
@@ -324,7 +322,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             message: The credits complete message to process
         """
         service_id = message.service_id
-        self.info(f"Received credits complete from {service_id}")
+        self.info(f"Received credits complete from '{service_id}'")
 
     @on_message(MessageType.STATUS)
     async def _process_status_message(self, message: StatusMessage) -> None:
@@ -341,7 +339,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         state = message.state
 
         self.debug(
-            lambda: f"Received status update from {service_type} (ID: {service_id}): {state}"
+            lambda: f"Received status update from '{service_type}' (ID: '{service_id}'): {state}"
         )
 
         # Update the component state if the component exists

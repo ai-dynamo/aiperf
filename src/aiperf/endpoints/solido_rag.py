@@ -72,7 +72,7 @@ class SolidoEndpoint(BaseEndpoint):
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
-        self.debug(lambda: f"Formatted SOLIDO payload: {payload}")
+        self.trace(lambda: f"Formatted SOLIDO payload: {payload}")
         return payload
 
     def parse_response(

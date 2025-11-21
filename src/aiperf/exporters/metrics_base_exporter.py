@@ -60,7 +60,7 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
         res = metric_class.missing_flags(
             MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
         )
-        self.debug(lambda: f"Metric '{metric.tag}' should be exported: {res}")
+        self.trace(lambda: f"Metric '{metric.tag}' should be exported: {res}")
         return res
 
     @abstractmethod

@@ -155,7 +155,7 @@ class TemplateEndpoint(BaseEndpoint):
         if self._extra_fields:
             payload.update(self._extra_fields)
 
-        self.debug(lambda: f"Formatted payload: {payload}")
+        self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
     def parse_response(

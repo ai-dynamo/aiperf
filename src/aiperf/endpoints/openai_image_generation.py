@@ -83,7 +83,7 @@ class ImageGenerationEndpoint(BaseEndpoint):
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
-        self.debug(lambda: f"Formatted payload: {payload}")
+        self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
     def parse_response(

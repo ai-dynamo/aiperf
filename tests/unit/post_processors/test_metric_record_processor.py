@@ -172,14 +172,16 @@ class TestMetricRecordProcessor:
         processor = MetricRecordProcessor(mock_user_config)
         metadata = create_metric_metadata()
 
-        with patch.object(processor, "debug") as mock_debug:
+        with patch.object(processor, "trace") as mock_trace:
             result = await processor.process_record(sample_parsed_record, metadata)
 
             assert isinstance(result, MetricRecordDict)
             assert FailingMetricNoValue.tag not in result
-            mock_debug.assert_called_once()
+            mock_trace.assert_called_once()
             assert f"No metric value for metric '{FailingMetricNoValue.tag}'" in str(
-                mock_debug.call_args
+                mock_trace.call_args[0][0](
+                    tag=FailingMetricNoValue.tag, e=NoMetricValue("No value available")
+                )
             )
 
     @pytest.mark.asyncio

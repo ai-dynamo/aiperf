@@ -150,10 +150,8 @@ class AioHttpTransport(BaseTransport):
 
             # Serialize with orjson for performance
             json_str = orjson.dumps(payload).decode("utf-8")
-
             record = await self.aiohttp_client.post_request(url, json_str, headers)
             record.request_headers = headers
-
         except Exception as e:
             # Capture all exceptions with timing and error details
             record = RequestRecord(

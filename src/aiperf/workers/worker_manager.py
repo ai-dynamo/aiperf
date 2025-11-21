@@ -190,7 +190,6 @@ class WorkerManager(BaseComponentService):
                 worker_id: info.status for worker_id, info in self.worker_infos.items()
             },
         )
-        self.debug(lambda: f"Publishing worker status summary: {summary}")
         await self.publish(summary)
 
 
