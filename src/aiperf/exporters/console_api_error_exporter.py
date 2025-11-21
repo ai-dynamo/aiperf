@@ -4,7 +4,9 @@
 
 import contextlib
 import json
+from typing import ClassVar
 
+from pydantic import BaseModel
 from rich.console import Console
 from rich.panel import Panel
 
@@ -16,22 +18,14 @@ from aiperf.common.protocols import ConsoleExporterProtocol
 from aiperf.exporters.exporter_config import ExporterConfig
 
 
-class ErrorInsight:
-    """Model to describe a detected API error insight."""
+class ErrorInsight(BaseModel):
+    """Model describing a detected API error insight."""
 
-    def __init__(
-        self,
-        title: str,
-        problem: str,
-        causes: list[str],
-        investigation: list[str],
-        fixes: list[str],
-    ):
-        self.title = title
-        self.problem = problem
-        self.causes = causes
-        self.investigation = investigation
-        self.fixes = fixes
+    title: str
+    problem: str
+    causes: list[str]
+    investigation: list[str]
+    fixes: list[str]
 
 
 class MaxCompletionTokensDetector:
@@ -43,7 +37,6 @@ class MaxCompletionTokensDetector:
         for item in error_summary:
             err = getattr(item, "error_details", None)
             if err is None:
-                print("No error_details, skipping")
                 continue
 
             raw_msg = err.message or ""
@@ -91,8 +84,8 @@ class MaxCompletionTokensDetector:
 class ConsoleApiErrorExporter(AIPerfLoggerMixin):
     """Displays helpful diagnostic panels for known API error patterns."""
 
-    DETECTORS = [
-        MaxCompletionTokensDetector(),
+    DETECTORS: ClassVar[list] = [
+        MaxCompletionTokensDetector,
     ]
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs):
@@ -100,7 +93,7 @@ class ConsoleApiErrorExporter(AIPerfLoggerMixin):
         self._results = exporter_config.results
 
     async def export(self, console: Console) -> None:
-        error_summary = getattr(self._results, "error_summary", None)
+        error_summary = self._results.error_summary
 
         for detector in self.DETECTORS:
             insight = detector.detect(error_summary)
