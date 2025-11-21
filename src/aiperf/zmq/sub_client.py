@@ -155,7 +155,7 @@ class ZMQSubClient(BaseZMQClient):
         # This is optimal for our workload (84% large messages in push/pull, 45% in pub/sub)
         message = Message.from_json(message_bytes)
 
-        self.debug(
+        self.trace(
             lambda: f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"
         )
 

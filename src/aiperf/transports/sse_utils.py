@@ -144,15 +144,16 @@ class AsyncSSEStreamReader:
 
                 raw_message = message_bytes.decode("utf-8", errors="replace").strip()
                 if not raw_message:
-                    _logger.debug(
-                        f"Skipping empty SSE message at chunk {chunk_perf_ns}"
-                    )
+                    if _logger.is_trace_enabled:
+                        _logger.trace(
+                            f"Skipping empty SSE message at chunk {chunk_perf_ns}"
+                        )
                     continue
 
                 yield SSEMessage.parse(raw_message, chunk_perf_ns)
 
-                if _logger.is_debug_enabled:
-                    _logger.debug(f"Parsed SSE message: {raw_message}...")
+                if _logger.is_trace_enabled:
+                    _logger.trace(f"Parsed SSE message: {raw_message}...")
 
         # Handle any remaining data in buffer after stream ends
         # Some servers don't send final delimiter
@@ -161,5 +162,5 @@ class AsyncSSEStreamReader:
             raw_message = buffer_remaining.decode("utf-8", errors="replace")
             yield SSEMessage.parse(raw_message, final_perf_ns)
 
-            if _logger.is_debug_enabled:
-                _logger.debug(f"Parsed final SSE message: {raw_message}...")
+            if _logger.is_trace_enabled:
+                _logger.trace(f"Parsed final SSE message: {raw_message}...")

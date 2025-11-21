@@ -96,7 +96,9 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 else:
                     raise ValueError(f"Metric '{tag}' is not a valid metric type")
             except NoMetricValue as e:
-                self.debug(f"No metric value for metric '{tag}': {e!r}")
+                self.trace(
+                    lambda tag=tag, e=e: f"No metric value for metric '{tag}': {e!r}"
+                )
             except Exception as e:
                 self.warning(f"Error processing metric '{tag}': {e!r}")
 

@@ -79,10 +79,14 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         Process a command message received from the controller or another service, and forward it to the appropriate handler.
         Wait for the handler to complete and publish the response, or handle the error and publish the failure response.
         """
-        self.debug(lambda: f"Received command message: {message}")
+        self.trace_or_debug(
+            lambda: f"Received command message: {message}",
+            lambda: f"Received '{message.command}' command from '{message.service_id}' (id: {message.command_id})",
+        )
         if message.command_id in self._processed_command_ids:
-            self.debug(
-                lambda: f"Received duplicate command message: {message}. Ignoring."
+            self.trace_or_debug(
+                lambda: f"Received duplicate command message: {message}. Ignoring.",
+                lambda: f"Received duplicate command message '{message.command}' from '{message.service_id}' (id: {message.command_id}). Ignoring.",
             )
             # If we receive a duplicate command message, we just send an acknowledged response.
             await self._publish_command_acknowledged_response(message)
@@ -236,7 +240,10 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         a command response is received, and we use it to set the result of the future for the command ID.
         This will alert the the task that is waiting for the response to continue.
         """
-        self.debug(lambda: f"Received command response message: {message}")
+        self.trace_or_debug(
+            lambda: f"Received command response message: {message}",
+            lambda: f"Received {message.status} response for command '{message.command}' from '{message.service_id}' (id: {message.command_id})",
+        )
 
         # If the command ID is in the single response futures, we set the result of the future.
         # This will alert the the task that is waiting for the response to continue.

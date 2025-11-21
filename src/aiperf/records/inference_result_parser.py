@@ -87,7 +87,7 @@ class InferenceResultParser(CommunicationMixin):
         """Handle an inference results message."""
         self.trace_or_debug(
             lambda: f"Received inference results message: {request_record}",
-            lambda: "Received inference results",
+            lambda: f"Received inference results for credit '{request_record.credit_num}' (id: {request_record.x_request_id})",
         )
 
         # Make sure any invalid request records are converted to error records for combined processing.
@@ -123,7 +123,7 @@ class InferenceResultParser(CommunicationMixin):
                     )
 
                 self.debug(
-                    lambda: f"Received {len(record.request.responses)} responses, input_token_count: {record.input_token_count}, "
+                    lambda: f"Received {len(record.request.responses)} response packet(s), input_token_count: {record.input_token_count}, "
                     f"output_token_count: {record.output_token_count}, reasoning_token_count: {record.reasoning_token_count}"
                 )
                 return record
