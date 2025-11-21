@@ -20,7 +20,7 @@
 		test-verbose init-files setup-venv install-mock-server \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
-		generate-cli-docs test-stress stress-tests internal-help help
+		generate-cli-docs generate-env-vars-docs test-stress stress-tests internal-help help
 
 
 # Include user-defined environment variables
@@ -206,3 +206,6 @@ integration-tests-verbose test-integration-verbose: #? run integration tests wit
 
 generate-cli-docs: #? generate the CLI documentation.
 	$(activate_venv) && tools/generate_cli_docs.py
+
+generate-env-vars-docs: #? generate the environment variables documentation.
+	$(activate_venv) && tools/generate_env_vars_docs.py

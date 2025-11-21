@@ -10,6 +10,13 @@ repos:
         types: [python]
         pass_filenames: false
         args: []
+      - id: generate-env-vars-docs
+        name: generate-env-vars-docs
+        entry: make generate-env-vars-docs
+        language: python
+        files: ^src/aiperf/common/environment\.py$
+        pass_filenames: false
+        args: []
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0  # Use the latest stable version
     hooks:
