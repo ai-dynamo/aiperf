@@ -31,9 +31,6 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)
-        self.debug(
-            lambda: f"Initializing TimesliceMetricsJsonExporter with config: {exporter_config}"
-        )
 
         if not self._results.timeslice_metric_results:
             raise DataExporterDisabled(
@@ -44,9 +41,9 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
         self._file_path = (
             exporter_config.user_config.output.profile_export_timeslices_json_file
         )
-
-        self.debug(
-            lambda: f"Initialized TimesliceMetricsJsonExporter: file={self._file_path}"
+        self.trace_or_debug(
+            lambda: f"Initializing TimesliceMetricsJsonExporter with config: {exporter_config}",
+            lambda: f"Initializing TimesliceMetricsJsonExporter with file path: {self._file_path}",
         )
 
     def get_export_info(self) -> FileExportInfo:

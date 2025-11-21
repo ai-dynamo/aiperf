@@ -91,7 +91,7 @@ class BaseRankingsEndpoint(BaseEndpoint):
         if extra:
             payload.update(extra)
 
-        self.debug(lambda: f"Formatted rankings payload: {payload}")
+        self.trace(lambda: f"Formatted rankings payload: {payload}")
         return payload
 
     def parse_response(

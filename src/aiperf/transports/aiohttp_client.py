@@ -6,6 +6,7 @@ from typing import Any
 
 import aiohttp
 
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
@@ -116,6 +117,9 @@ class AioHttpClient(AIPerfLoggerMixin):
                             )
                         )
                     record.end_perf_ns = time.perf_counter_ns()
+                    self.debug(
+                        lambda: f"{method} request to {url} completed in {(record.end_perf_ns - record.start_perf_ns) / NANOS_PER_SECOND} seconds"
+                    )
         except SSEResponseError as e:
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Error in SSE response: {e!r}")

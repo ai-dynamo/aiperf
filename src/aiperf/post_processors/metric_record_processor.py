@@ -66,7 +66,9 @@ class MetricRecordProcessor(BaseMetricsProcessor):
             try:
                 record_metrics[tag] = parse_func(record, record_metrics)
             except NoMetricValue as e:
-                self.debug(f"No metric value for metric '{tag}': {e!r}")
+                self.trace(
+                    lambda tag=tag, e=e: f"No metric value for metric '{tag}': {e!r}"
+                )
             except Exception as e:
                 self.warning(f"Error parsing record for metric '{tag}': {e!r}")
         return record_metrics

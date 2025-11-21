@@ -33,10 +33,11 @@ class MetricsJsonExporter(MetricsBaseExporter):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)
-        self.debug(
-            lambda: f"Initializing MetricsJsonExporter with config: {exporter_config}"
-        )
         self._file_path = exporter_config.user_config.output.profile_export_json_file
+        self.trace_or_debug(
+            lambda: f"Initializing MetricsJsonExporter with config: {exporter_config}",
+            lambda: f"Initializing MetricsJsonExporter with file path: {self._file_path}",
+        )
 
     def get_export_info(self) -> FileExportInfo:
         return FileExportInfo(
@@ -96,7 +97,10 @@ class MetricsJsonExporter(MetricsBaseExporter):
         for metric_tag, json_result in prepared_json_metrics.items():
             setattr(export_data, metric_tag, json_result)
 
-        self.debug(lambda: f"Exporting data to JSON file: {export_data}")
+        self.trace_or_debug(
+            lambda: f"Exporting data to JSON file: {export_data}",
+            lambda: f"Exporting data to JSON file: {self._file_path}",
+        )
         return export_data.model_dump_json(
             indent=2, exclude_unset=True, exclude_none=True
         )
