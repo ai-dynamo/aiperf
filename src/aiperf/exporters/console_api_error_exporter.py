@@ -79,6 +79,7 @@ class MaxCompletionTokensDetector:
                     fixes=[
                         "Remove --output-tokens-mean.",
                         'Or use --extra-inputs "max_tokens:<value>".',
+                        "Or run AIPerf with '--use-legacy-max-tokens' to force use of the legacy 'max_tokens' field instead of 'max_completion_tokens'.",
                     ],
                 )
 
@@ -87,7 +88,7 @@ class MaxCompletionTokensDetector:
 
 @implements_protocol(ConsoleExporterProtocol)
 @ConsoleExporterFactory.register(ConsoleExporterType.API_ERRORS)
-class ConsoleApiErrorInsightExporter(AIPerfLoggerMixin):
+class ConsoleApiErrorExporter(AIPerfLoggerMixin):
     """Displays helpful diagnostic panels for known API error patterns."""
 
     DETECTORS = [
