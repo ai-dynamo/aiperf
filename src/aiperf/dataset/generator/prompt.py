@@ -59,7 +59,8 @@ class PromptGenerator(BaseGenerator):
             effective_pool_size = 1
             # Calculate prefix length as: ISL * prefix_reuse_rate
             effective_length = int(
-                self.config.input_tokens.mean * self.config.prefix_prompt.prefix_reuse_rate
+                self.config.input_tokens.mean
+                * self.config.prefix_prompt.prefix_reuse_rate
             )
             self._create_prefix_prompt_pool(effective_pool_size, effective_length)
         elif self.config.prefix_prompt.pool_size > 0:
@@ -292,6 +293,7 @@ class PromptGenerator(BaseGenerator):
         """
         if self.config.prefix_prompt.prefix_reuse_rate > 0:
             return int(
-                self.config.input_tokens.mean * self.config.prefix_prompt.prefix_reuse_rate
+                self.config.input_tokens.mean
+                * self.config.prefix_prompt.prefix_reuse_rate
             )
         return 0
