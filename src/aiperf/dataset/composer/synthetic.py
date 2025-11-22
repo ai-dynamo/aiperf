@@ -150,7 +150,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                     unique_content = ""
 
                 # Concatenate prefix + unique content (no space to avoid extra tokens)
-                content = f"{prefix} {unique_content}"
+                content = f"{prefix}{unique_content}"
             else:
                 # Generate prompt content using the sampled input sequence length
                 content = self.prompt_generator.generate(mean=isl, stddev=stddev)

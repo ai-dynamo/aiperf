@@ -417,7 +417,8 @@ class TestSyntheticDatasetComposer:
 
         text_payload = turn.texts[0]
         # Test prefix prompt format ("prefix prompt")
-        assert text_payload.contents == ["Prefix prompt: User message"]
+        # Removing extra space between prefix and user message to avoid the extra token
+        assert text_payload.contents == ["Prefix prompt:User message"]
 
     @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_subsequent_turn_no_prefix(

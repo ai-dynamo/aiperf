@@ -8,9 +8,7 @@ import pytest
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Turn
-from aiperf.common.models.sequence_distribution import (
-    SequenceLengthDistribution,
-)
+from aiperf.common.models.sequence_distribution import SequenceLengthDistribution
 from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
@@ -39,7 +37,8 @@ class TestBaseDatasetComposer:
                     "input_tokens": {"mean": 100, "stddev": 10},
                     "output_tokens": {"mean": 50, "stddev": 5},
                     "batch_size": 1,
-                    "prefix_prompt": {"length": 10},
+                    # Set pool_size=0 to avoid triggering prefix prompt pool creation
+                    "prefix_prompt": {"length": 10, "pool_size": 0},
                 },
             },
         }
@@ -235,12 +234,23 @@ class TestBaseDatasetComposer:
 
     def test_prefix_prompt_enabled_property(self, base_config, mock_tokenizer):
         """Test prefix_prompt_enabled property."""
+        # Test initial state: length > 0 but pool_size = 0
         composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        assert composer.prefix_prompt_enabled is False
 
-        # Should be enabled when length > 0
-        assert composer.prefix_prompt_enabled is True
+        # Should be enabled when both length > 0 and pool_size > 0
+        # Mock PromptGenerator to avoid corpus initialization
+        with patch(
+            "aiperf.dataset.composer.base.PromptGenerator"
+        ) as mock_prompt_gen_class:
+            mock_prompt_gen = MagicMock()
+            mock_prompt_gen_class.return_value = mock_prompt_gen
 
-        # Should be disabled when length = 0
-        base_config.input.prompt.prefix_prompt.length = 0
-        composer2 = ConcreteBaseComposer(base_config, mock_tokenizer)
-        assert composer2.prefix_prompt_enabled is False
+            base_config.input.prompt.prefix_prompt.pool_size = 2
+            composer2 = ConcreteBaseComposer(base_config, mock_tokenizer)
+            assert composer2.prefix_prompt_enabled is True
+
+            # Should be disabled when length = 0
+            base_config.input.prompt.prefix_prompt.length = 0
+            composer3 = ConcreteBaseComposer(base_config, mock_tokenizer)
+            assert composer3.prefix_prompt_enabled is False
