@@ -139,12 +139,15 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 # Calculate unique content length
                 # Total ISL = prefix length + unique content length
                 prefix_length = self.prompt_generator.get_prefix_length()
-                unique_content_length = max(1, isl - prefix_length)
+                unique_content_length = max(0, isl - prefix_length)
 
                 # Generate unique content with adjusted length
-                unique_content = self.prompt_generator.generate(
-                    mean=unique_content_length, stddev=stddev
-                )
+                if unique_content_length > 0:
+                    unique_content = self.prompt_generator.generate(
+                        mean=unique_content_length, stddev=stddev
+                    )
+                else:
+                    unique_content = ""
 
                 # Concatenate prefix + unique content (no space to avoid extra tokens)
                 content = f"{prefix} {unique_content}"

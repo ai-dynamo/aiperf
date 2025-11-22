@@ -111,7 +111,7 @@ class InputTokensDefaults:
 class PrefixPromptDefaults:
     POOL_SIZE = 0
     LENGTH = 0
-    CACHE_HIT_RATE = 0.0
+    PREFIX_REUSE_RATE = 0.0
 
 
 @dataclass(frozen=True)

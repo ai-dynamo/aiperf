@@ -124,19 +124,19 @@ class PrefixPromptConfig(BaseConfig):
     _CLI_GROUP = Groups.PREFIX_PROMPT
 
     @model_validator(mode="after")
-    def validate_cache_hit_rate_conflicts(self) -> Self:
-        """Validate that cache_hit_rate is not used with pool_size or length."""
-        if self.cache_hit_rate > 0 and self.pool_size > 0:
+    def validate_prefix_reuse_rate_conflicts(self) -> Self:
+        """Validate that prefix_reuse_rate is not used with pool_size or length."""
+        if self.prefix_reuse_rate > 0 and self.pool_size > 0:
             raise ValueError(
-                "Cannot use --cache-hit-rate with --prefix-prompt-pool-size. "
+                "Cannot use --prefix-reuse-rate with --prefix-prompt-pool-size. "
                 "These options are mutually exclusive."
             )
 
-        if self.cache_hit_rate > 0 and self.length > 0:
+        if self.prefix_reuse_rate > 0 and self.length > 0:
             raise ValueError(
-                "Cannot use --cache-hit-rate with --prefix-prompt-length. "
-                "When using --cache-hit-rate, the prefix length is automatically "
-                "calculated as: ISL * cache_hit_rate."
+                "Cannot use --prefix-reuse-rate with --prefix-prompt-length. "
+                "When using --prefix-reuse-rate, the prefix length is automatically "
+                "calculated as: ISL * prefix_reuse_rate."
             )
 
         return self
@@ -170,7 +170,7 @@ class PrefixPromptConfig(BaseConfig):
                 'This is only used if "num" is greater than zero.\n'
                 "Note that due to the prefix and user prompts being concatenated,\n"
                 "the number of tokens in the final prompt may be off by one.\n"
-                "This field is ignored when --cache-hit-rate is used."
+                "This field is ignored when --prefix-reuse-rate is used."
             ),
         ),
         CLIParameter(
@@ -182,26 +182,26 @@ class PrefixPromptConfig(BaseConfig):
         ),
     ] = PrefixPromptDefaults.LENGTH
 
-    cache_hit_rate: Annotated[
+    prefix_reuse_rate: Annotated[
         float,
         Field(
             ge=0.0,
             le=1.0,
             description=(
-                "The fraction of input sequence length (ISL) that should be from a cached prefix.\n"
+                "The portion of input sequence length (ISL) that should be from a reused prefix.\n"
                 "This option automatically sets the prefix prompt pool size to 1.\n"
-                "The prefix length will be calculated as: ISL * cache_hit_rate.\n"
-                "For example, with ISL=1000 and cache-hit-rate=0.5, the prefix will be 500 tokens.\n"
+                "The prefix length will be calculated as: ISL * prefix_reuse_rate.\n"
+                "For example, with ISL=1000 and prefix-reuse-rate=0.5, the prefix will be 500 tokens.\n"
                 "Value must be between 0.0 and 1.0.\n"
                 "Cannot be used with --prefix-prompt-pool-size.\n"
                 "Requires --isl (input sequence length mean) to be set."
             ),
         ),
         CLIParameter(
-            name="--cache-hit-rate",
+            name="--prefix-reuse-rate",
             group=_CLI_GROUP,
         ),
-    ] = PrefixPromptDefaults.CACHE_HIT_RATE
+    ] = PrefixPromptDefaults.PREFIX_REUSE_RATE
 
 
 class PromptConfig(BaseConfig):
@@ -228,11 +228,11 @@ class PromptConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
-    def validate_cache_hit_rate_requires_isl(self) -> Self:
-        """Validate that ISL is set when cache_hit_rate is used."""
-        if self.prefix_prompt.cache_hit_rate > 0 and self.input_tokens.mean == 0:
+    def validate_prefix_reuse_rate_requires_isl(self) -> Self:
+        """Validate that ISL is set when prefix_reuse_rate is used."""
+        if self.prefix_prompt.prefix_reuse_rate > 0 and self.input_tokens.mean == 0:
             raise ValueError(
-                "When using --cache-hit-rate, you must also specify "
+                "When using --prefix-reuse-rate, you must also specify "
                 "--isl (input sequence length mean) with a value greater than 0."
             )
         return self

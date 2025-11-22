@@ -53,13 +53,13 @@ class PromptGenerator(BaseGenerator):
             self._initialize_corpus()
 
         # Initialize prefix prompts pool
-        # If cache_hit_rate is set, use pool_size of 1 and calculate length from ISL
+        # If prefix_reuse_rate is set, use pool_size of 1 and calculate length from ISL
         # Otherwise use the configured pool_size
-        if self.config.prefix_prompt.cache_hit_rate > 0:
+        if self.config.prefix_prompt.prefix_reuse_rate > 0:
             effective_pool_size = 1
-            # Calculate prefix length as: ISL * cache_hit_rate
+            # Calculate prefix length as: ISL * prefix_reuse_rate
             effective_length = int(
-                self.config.input_tokens.mean * self.config.prefix_prompt.cache_hit_rate
+                self.config.input_tokens.mean * self.config.prefix_prompt.prefix_reuse_rate
             )
             self._create_prefix_prompt_pool(effective_pool_size, effective_length)
         elif self.config.prefix_prompt.pool_size > 0:
@@ -285,13 +285,13 @@ class PromptGenerator(BaseGenerator):
 
     def get_prefix_length(self) -> int:
         """
-        Get the calculated prefix length based on cache_hit_rate and ISL mean.
+        Get the calculated prefix length based on prefix_reuse_rate and ISL mean.
 
         Returns:
-            The prefix length in tokens. Returns 0 if cache_hit_rate is not set.
+            The prefix length in tokens. Returns 0 if prefix_reuse_rate is not set.
         """
-        if self.config.prefix_prompt.cache_hit_rate > 0:
+        if self.config.prefix_prompt.prefix_reuse_rate > 0:
             return int(
-                self.config.input_tokens.mean * self.config.prefix_prompt.cache_hit_rate
+                self.config.input_tokens.mean * self.config.prefix_prompt.prefix_reuse_rate
             )
         return 0
