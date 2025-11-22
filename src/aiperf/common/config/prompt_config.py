@@ -148,7 +148,8 @@ class PrefixPromptConfig(BaseConfig):
             description=(
                 "The total size of the prefix prompt pool to select prefixes from.\n"
                 "If this value is not zero, these are prompts that are prepended to input prompts.\n"
-                "This is useful for benchmarking models that use a K-V cache."
+                "This is useful for benchmarking models that use a K-V cache. "
+                "This field cannot be used with --prefix-reuse-rate."
             ),
         ),
         CLIParameter(
@@ -170,7 +171,7 @@ class PrefixPromptConfig(BaseConfig):
                 'This is only used if "num" is greater than zero.\n'
                 "Note that due to the prefix and user prompts being concatenated,\n"
                 "the number of tokens in the final prompt may be off by one.\n"
-                "This field is ignored when --prefix-reuse-rate is used."
+                "This field cannot be used with --prefix-reuse-rate."
             ),
         ),
         CLIParameter(

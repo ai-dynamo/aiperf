@@ -280,12 +280,12 @@ The standard deviation of the number of tokens in each output.
 
 #### `--prompt-prefix-pool-size`, `--prefix-prompt-pool-size`, `--num-prefix-prompts` `<int>`
 
-The total size of the prefix prompt pool to select prefixes from. If this value is not zero, these are prompts that are prepended to input prompts. This is useful for benchmarking models that use a K-V cache.
+The total size of the prefix prompt pool to select prefixes from. If this value is not zero, these are prompts that are prepended to input prompts. This is useful for benchmarking models that use a K-V cache. This field cannot be used with --prefix-reuse-rate.
 <br>_Default: `0`_
 
 #### `--prompt-prefix-length`, `--prefix-prompt-length` `<int>`
 
-The number of tokens in each prefix prompt. This is only used if "num" is greater than zero. Note that due to the prefix and user prompts being concatenated, the number of tokens in the final prompt may be off by one. This field is ignored when --prefix-reuse-rate is used.
+The number of tokens in each prefix prompt. This is only used if "num" is greater than zero. Note that due to the prefix and user prompts being concatenated, the number of tokens in the final prompt may be off by one. This field cannot be used with --prefix-reuse-rate.
 <br>_Default: `0`_
 
 #### `--prefix-reuse-rate` `<float>`
