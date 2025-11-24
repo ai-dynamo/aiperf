@@ -21,27 +21,19 @@ models using various inference solutions.
 ```bash
 # Set environment variables
 export AIPERF_REPO_TAG="main"
-export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.5.0"
+export DYNAMO_PREBUILT_IMAGE_TAG="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.6.1"
 export MODEL="Qwen/Qwen3-0.6B"
 
-# Download the Dyanmo container
+# Download the Dynamo container
 docker pull ${DYNAMO_PREBUILT_IMAGE_TAG}
 
-export DYNAMO_REPO_TAG=$(docker run --rm --entrypoint "" ${DYNAMO_PREBUILT_IMAGE_TAG} cat /workspace/version.txt | cut -d'+' -f2)
-
-
-# Start up required services
-curl -O https://raw.githubusercontent.com/ai-dynamo/dynamo/${DYNAMO_REPO_TAG}/deploy/docker-compose.yml
-docker compose -f docker-compose.yml down || true
-docker compose -f docker-compose.yml up -d
-
-# Launch Dynamo in the background
+# Launch Dynamo with nats-server and etcd in the same container
 docker run \
   --rm \
   --gpus all \
   --network host \
   ${DYNAMO_PREBUILT_IMAGE_TAG} \
-    /bin/bash -c "python3 -m dynamo.frontend & python3 -m dynamo.vllm --model ${MODEL} --enforce-eager --no-enable-prefix-caching" > server.log 2>&1 &
+    /bin/bash -c "nats-server -js & while ! timeout 1 bash -c 'cat < /dev/null > /dev/tcp/localhost/4222' 2>/dev/null; do sleep 0.1; done && etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://0.0.0.0:2379 --data-dir /tmp/etcd & while ! timeout 1 bash -c 'cat < /dev/null > /dev/tcp/localhost/2379' 2>/dev/null; do sleep 0.1; done && python3 -m dynamo.frontend & python3 -m dynamo.vllm --model ${MODEL} --enforce-eager --no-enable-prefix-caching" > server.log 2>&1 &
 ```
 <!-- /setup-dynamo-default-openai-endpoint-server -->
 
@@ -72,7 +64,7 @@ uv pip install ./aiperf
 ```
 <!-- health-check-dynamo-default-openai-endpoint-server -->
 ```bash
-timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"a\"}],\"max_completion_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "Dynamo not ready after 15min"; exit 1; }
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"a\"}],\"max_completion_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "Dynamo not ready after 15min"; exit 1; }
 ```
 <!-- /health-check-dynamo-default-openai-endpoint-server -->
 <!-- aiperf-run-dynamo-default-openai-endpoint-server -->
@@ -83,7 +75,7 @@ aiperf profile \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --streaming \
-    --url localhost:8080 \
+    --url localhost:8000 \
     --synthetic-input-tokens-mean 100 \
     --synthetic-input-tokens-stddev 0 \
     --output-tokens-mean 200 \
