@@ -16,6 +16,8 @@ class CommClientType(CaseInsensitiveStrEnum):
     PULL = "pull"
     REQUEST = "request"
     REPLY = "reply"
+    STREAMING_ROUTER = "streaming_router"
+    STREAMING_DEALER = "streaming_dealer"
 
 
 class CommAddress(CaseInsensitiveStrEnum):
