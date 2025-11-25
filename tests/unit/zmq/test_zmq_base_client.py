@@ -30,18 +30,19 @@ class TestBaseZMQClientInitialization:
             (zmq.SocketType.ROUTER, "tcp://127.0.0.1:5558", False),
         ],
     )  # fmt: skip
-    def test_init_creates_socket_with_correct_params(
+    def test_init_stores_correct_params(
         self, socket_type, address, bind, mock_zmq_context
     ):
-        """Test that __init__ creates socket with correct parameters."""
-        # No need to patch - autouse fixture handles this
+        """Test that __init__ stores correct parameters (socket created on initialize)."""
         client = BaseZMQClient(socket_type=socket_type, address=address, bind=bind)
 
         assert client.socket_type == socket_type
         assert client.address == address
         assert client.bind == bind
-        assert client.socket is not None
-        mock_zmq_context.socket.assert_called_once_with(socket_type)
+        # Socket is None until initialize() is called
+        assert client.socket is None
+        # Socket not created yet
+        mock_zmq_context.socket.assert_not_called()
 
     def test_init_with_custom_client_id(self, mock_zmq_context):
         """Test initialization with custom client ID."""
@@ -269,3 +270,123 @@ class TestBaseZMQClientOperations:
         await client.initialize()
         # Should not raise
         await client._check_initialized()
+
+
+class TestBaseZMQClientIdentity:
+    """Test BaseZMQClient IDENTITY socket option handling."""
+
+    @staticmethod
+    def get_identity_calls(mock_socket):
+        """Extract IDENTITY setsockopt calls from mock socket."""
+        return [
+            call[0][1]
+            for call in mock_socket.setsockopt.call_args_list
+            if call[0][0] == zmq.IDENTITY
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bind", [True, False], ids=["bind", "connect"])
+    async def test_identity_set_before_bind_or_connect(
+        self, bind, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that IDENTITY is set before bind/connect."""
+        identity = b"test-identity"
+        client = BaseZMQClient(
+            socket_type=zmq.SocketType.DEALER,
+            address="tcp://127.0.0.1:5555",
+            bind=bind,
+            socket_ops={zmq.IDENTITY: identity},
+        )
+
+        await client.initialize()
+
+        # Verify IDENTITY was set correctly
+        assert self.get_identity_calls(mock_zmq_socket) == [identity]
+
+        # Verify IDENTITY was set before bind/connect
+        all_calls = mock_zmq_socket.method_calls
+        identity_idx = next(
+            i
+            for i, call in enumerate(all_calls)
+            if call[0] == "setsockopt" and call[1][0] == zmq.IDENTITY
+        )
+        action = "bind" if bind else "connect"
+        action_idx = next(i for i, call in enumerate(all_calls) if call[0] == action)
+        assert identity_idx < action_idx, f"IDENTITY must be set before {action}"
+
+    @pytest.mark.asyncio
+    async def test_identity_removed_from_socket_ops_after_set(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that IDENTITY is removed from socket_ops after being set."""
+        client = BaseZMQClient(
+            socket_type=zmq.SocketType.DEALER,
+            address="tcp://127.0.0.1:5555",
+            bind=False,
+            socket_ops={zmq.IDENTITY: b"test", zmq.IMMEDIATE: 1},
+        )
+
+        assert zmq.IDENTITY in client.socket_ops
+        await client.initialize()
+        assert zmq.IDENTITY not in client.socket_ops
+        assert zmq.IMMEDIATE in client.socket_ops
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "socket_type,bind",
+        [
+            (zmq.SocketType.DEALER, False),
+            (zmq.SocketType.ROUTER, True),
+        ],
+        ids=["dealer", "router"],
+    )
+    async def test_identity_with_socket_type(
+        self, socket_type, bind, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test IDENTITY with DEALER and ROUTER socket types."""
+        identity = b"test-identity"
+        client = BaseZMQClient(
+            socket_type=socket_type,
+            address="tcp://127.0.0.1:5555",
+            bind=bind,
+            socket_ops={zmq.IDENTITY: identity},
+        )
+
+        await client.initialize()
+
+        mock_zmq_context.socket.assert_called_once_with(socket_type)
+        assert self.get_identity_calls(mock_zmq_socket) == [identity]
+
+    @pytest.mark.asyncio
+    async def test_no_identity_option(self, mock_zmq_socket, mock_zmq_context):
+        """Test that sockets without IDENTITY option work normally."""
+        client = BaseZMQClient(
+            socket_type=zmq.SocketType.PUB,
+            address="tcp://127.0.0.1:5555",
+            bind=True,
+        )
+
+        await client.initialize()
+
+        assert self.get_identity_calls(mock_zmq_socket) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "identity",
+        [b"simple", b"worker-123", b"192.168.1.1:5555", b"a" * 255],
+        ids=["simple", "with-special-chars", "ip-port", "max-length"],
+    )
+    async def test_various_identity_formats(
+        self, identity, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test various identity string formats."""
+        client = BaseZMQClient(
+            socket_type=zmq.SocketType.DEALER,
+            address="tcp://127.0.0.1:5555",
+            bind=False,
+            socket_ops={zmq.IDENTITY: identity},
+        )
+
+        await client.initialize()
+
+        assert self.get_identity_calls(mock_zmq_socket) == [identity]

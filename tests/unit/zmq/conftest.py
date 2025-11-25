@@ -437,6 +437,77 @@ def pull_test_helper(mock_zmq_context, wait_for_background_task):
     return PullHelper(helper)
 
 
+@pytest.fixture
+def streaming_router_test_helper(mock_zmq_context, wait_for_background_task):
+    """Provide a helper for ZMQStreamingRouterClient tests."""
+    from aiperf.zmq.streaming_router_client import ZMQStreamingRouterClient
+
+    helper = BaseClientTestHelper(mock_zmq_context, wait_for_background_task)
+
+    class StreamingRouterHelper:
+        def __init__(self, base_helper):
+            self._base = base_helper
+
+        def setup_mock_socket(self, **kwargs):
+            return self._base.setup_mock_socket(**kwargs)
+
+        @asynccontextmanager
+        async def create_client(
+            self,
+            address="tcp://*:5555",
+            bind=True,
+            auto_start=False,
+            **mock_kwargs,
+        ):
+            async with self._base.create_client(
+                ZMQStreamingRouterClient,
+                address=address,
+                bind=bind,
+                auto_start=auto_start,
+                **mock_kwargs,
+            ) as client:
+                yield client
+
+    return StreamingRouterHelper(helper)
+
+
+@pytest.fixture
+def streaming_dealer_test_helper(mock_zmq_context, wait_for_background_task):
+    """Provide a helper for ZMQStreamingDealerClient tests."""
+    from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
+
+    helper = BaseClientTestHelper(mock_zmq_context, wait_for_background_task)
+
+    class StreamingDealerHelper:
+        def __init__(self, base_helper):
+            self._base = base_helper
+
+        def setup_mock_socket(self, **kwargs):
+            return self._base.setup_mock_socket(**kwargs)
+
+        @asynccontextmanager
+        async def create_client(
+            self,
+            address="tcp://127.0.0.1:5555",
+            identity="worker-1",
+            bind=False,
+            auto_start=False,
+            **mock_kwargs,
+        ):
+            client_kwargs = {"identity": identity}
+            async with self._base.create_client(
+                ZMQStreamingDealerClient,
+                address=address,
+                bind=bind,
+                auto_start=auto_start,
+                client_kwargs=client_kwargs,
+                **mock_kwargs,
+            ) as client:
+                yield client
+
+    return StreamingDealerHelper(helper)
+
+
 # Shared test data and error scenarios
 @pytest.fixture(
     params=[
@@ -494,3 +565,24 @@ def create_callback_tracker():
         return callback, event, received_messages
 
     return _create
+
+
+@pytest.fixture
+def multiple_identities():
+    """Common worker identities for testing."""
+    return ["worker-1", "worker-2", "worker-3"]
+
+
+@pytest.fixture(
+    params=[
+        "worker-1",
+        "worker_2",
+        "worker.3",
+        "worker:4",
+        "worker@host",
+    ],
+    ids=["dash", "underscore", "dot", "colon", "at-sign"],
+)  # fmt: skip
+def special_identity(request):
+    """Various identity formats with special characters."""
+    return request.param

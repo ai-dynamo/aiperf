@@ -23,6 +23,12 @@ from aiperf.zmq.push_client import (
 from aiperf.zmq.router_reply_client import (
     ZMQRouterReplyClient,
 )
+from aiperf.zmq.streaming_dealer_client import (
+    ZMQStreamingDealerClient,
+)
+from aiperf.zmq.streaming_router_client import (
+    ZMQStreamingRouterClient,
+)
 from aiperf.zmq.sub_client import (
     ZMQSubClient,
 )
@@ -71,6 +77,8 @@ __all__ = [
     "ZMQPushPullProxy",
     "ZMQRouterReplyClient",
     "ZMQSocketDefaults",
+    "ZMQStreamingDealerClient",
+    "ZMQStreamingRouterClient",
     "ZMQSubClient",
     "ZMQTCPCommunication",
     "ZMQXPubXSubProxy",

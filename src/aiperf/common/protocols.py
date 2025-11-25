@@ -182,6 +182,59 @@ class RequestClientProtocol(CommunicationClientProtocol, Protocol):
 
 
 @runtime_checkable
+class StreamingRouterClientProtocol(CommunicationClientProtocol, Protocol):
+    """Protocol for ROUTER socket client with bidirectional streaming."""
+
+    def register_receiver(
+        self,
+        handler: Callable[[str, MessageT], Coroutine[Any, Any, None]],
+    ) -> None:
+        """
+        Register handler for incoming messages from DEALER clients.
+
+        Args:
+            handler: Async function that takes (identity: str, message: Message)
+        """
+        ...
+
+    async def send_to(self, identity: str, message: MessageT) -> None:
+        """
+        Send message to specific DEALER client by identity.
+
+        Args:
+            identity: The DEALER client's identity (routing key)
+            message: The message to send
+        """
+        ...
+
+
+@runtime_checkable
+class StreamingDealerClientProtocol(CommunicationClientProtocol, Protocol):
+    """Protocol for DEALER socket client with bidirectional streaming."""
+
+    def register_receiver(
+        self,
+        handler: Callable[[MessageT], Coroutine[Any, Any, None]],
+    ) -> None:
+        """
+        Register handler for incoming messages from ROUTER.
+
+        Args:
+            handler: Async function that takes (message: Message)
+        """
+        ...
+
+    async def send(self, message: MessageT) -> None:
+        """
+        Send message to ROUTER.
+
+        Args:
+            message: The message to send
+        """
+        ...
+
+
+@runtime_checkable
 class SubClientProtocol(CommunicationClientProtocol, Protocol):
     async def subscribe(
         self,
@@ -217,6 +270,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
+        **kwargs: Any,
     ) -> CommunicationClientProtocol:
         """Create a client for the given client type and address, which will be automatically
         started and stopped with the CommunicationProtocol instance."""
@@ -280,6 +334,27 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         socket_ops: dict | None = None,
     ) -> ReplyClientProtocol:
         """Create a REPLY client for the given address, which will be automatically
+        started and stopped with the CommunicationProtocol instance."""
+        ...
+
+    def create_streaming_router_client(
+        self,
+        address: CommAddressType,
+        bind: bool = True,
+        socket_ops: dict | None = None,
+    ) -> StreamingRouterClientProtocol:
+        """Create a STREAMING_ROUTER client for the given address, which will be automatically
+        started and stopped with the CommunicationProtocol instance."""
+        ...
+
+    def create_streaming_dealer_client(
+        self,
+        address: CommAddressType,
+        identity: str,
+        bind: bool = False,
+        socket_ops: dict | None = None,
+    ) -> StreamingDealerClientProtocol:
+        """Create a STREAMING_DEALER client for the given address and identity, which will be automatically
         started and stopped with the CommunicationProtocol instance."""
         ...
 

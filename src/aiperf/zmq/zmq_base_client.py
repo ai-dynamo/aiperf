@@ -43,7 +43,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         """
         self.context: zmq.asyncio.Context = zmq.asyncio.Context.instance()
         self.socket_type: zmq.SocketType = socket_type
-        self.socket: zmq.asyncio.Socket = self.context.socket(self.socket_type)
+        self.socket: zmq.asyncio.Socket = None
         self.address: str = address
         self.bind: bool = bind
         self.socket_ops: dict = socket_ops or {}
@@ -77,9 +77,19 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         - Run the AIPerfHook.ON_INIT hooks
         """
         try:
+            self.socket = self.context.socket(self.socket_type)
             self.debug(
                 lambda: f"ZMQ {self.socket_type_name} socket initialized, try {'BIND' if self.bind else 'CONNECT'} to {self.address} ({self.client_id})"
             )
+
+            if zmq.IDENTITY in self.socket_ops:
+                # IMPORTANT! Set IDENTITY socket option immediately after socket creation, BEFORE bind/connect
+                # otherwise it will not be properly set when the socket is bound/connected
+                self.socket.setsockopt(zmq.IDENTITY, self.socket_ops[zmq.IDENTITY])
+                self.debug(
+                    lambda: f"Set IDENTITY socket option: {self.socket_ops[zmq.IDENTITY]}"
+                )
+                del self.socket_ops[zmq.IDENTITY]
 
             if self.bind:
                 self.socket.bind(self.address)
