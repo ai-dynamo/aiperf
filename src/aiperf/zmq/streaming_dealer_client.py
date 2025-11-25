@@ -151,7 +151,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
     @background_task(immediate=True, interval=None)
     async def _streaming_dealer_receiver(self) -> None:
         """
-        Background task for receiving messages from ROUTER.xz
+        Background task for receiving messages from ROUTER.
 
         Runs continuously until stop is requested. Receives messages with DEALER
         envelope format: [empty_delimiter, message_bytes] or just [message_bytes]
