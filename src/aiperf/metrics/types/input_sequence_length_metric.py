@@ -36,10 +36,10 @@ class InputSequenceLengthMetric(BaseRecordMetric[int]):
         Raises:
             ValueError: If the record does not have an input token count.
         """
-        if record.input_token_count is None:
+        if record.token_counts is None or record.token_counts.input is None:
             raise NoMetricValue("Input Token Count is not available for the record.")
 
-        return record.input_token_count
+        return record.token_counts.input
 
 
 class TotalInputSequenceLengthMetric(DerivedSumMetric[int, InputSequenceLengthMetric]):

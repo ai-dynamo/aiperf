@@ -13,7 +13,7 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
 )
-from aiperf.common.models.record_models import TextResponseData
+from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
@@ -59,8 +59,11 @@ def create_record(
     return ParsedResponseRecord(
         request=request,
         responses=response_data,
-        input_token_count=input_tokens,
-        output_token_count=len(responses) * output_tokens_per_response,
+        token_counts=TokenCounts(
+            input=input_tokens,
+            output=len(responses) * output_tokens_per_response,
+            reasoning=None,
+        ),
     )
 
 

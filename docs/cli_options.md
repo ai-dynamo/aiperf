@@ -60,6 +60,10 @@ The transport to use for the endpoint. If not provided, it will be auto-detected
 
 Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads. The OpenAI API now prefers 'max_completion_tokens', but some older APIs or implementations may require 'max_tokens'.
 
+#### `--use-server-token-count`
+
+Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For chat streaming endpoints, you may need to add `--extra-inputs '{"stream_options": {"include_usage": true}}'` to the CLI command.
+
 ## Input Options
 
 #### `--extra-inputs` `<list>`

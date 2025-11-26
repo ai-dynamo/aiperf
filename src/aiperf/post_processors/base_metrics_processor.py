@@ -39,6 +39,10 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             disallowed_flags |= MetricFlags.SUPPORTS_IMAGE_ONLY
         if not self.user_config.endpoint.streaming:
             disallowed_flags |= MetricFlags.STREAMING_ONLY
+        if self.user_config.endpoint.use_server_token_count:
+            # Disable usage diff metrics if server token counts are used, because
+            # these metrics are only applicable when client side tokenization is enabled.
+            disallowed_flags |= MetricFlags.USAGE_DIFF_ONLY
         return required_flags, disallowed_flags
 
     def _configure_goodput(self, applicable_tags: set[str]) -> None:
