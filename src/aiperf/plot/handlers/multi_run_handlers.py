@@ -58,6 +58,58 @@ class BaseMultiRunHandler:
             return display_name
         return metric_name
 
+    def _extract_experiment_types(
+        self, data: pd.DataFrame, group_by: str | None
+    ) -> dict[str, str] | None:
+        """
+        Extract experiment types from DataFrame for experiment groups color assignment.
+
+        Args:
+            data: DataFrame with aggregated metrics
+            group_by: Column name to group by
+
+        Returns:
+            Dictionary mapping group values to experiment_type, or None
+        """
+        if not group_by or group_by not in data.columns:
+            return None
+
+        if "experiment_type" not in data.columns:
+            return None
+
+        experiment_types = {}
+        for group_val in data[group_by].unique():
+            group_df = data[data[group_by] == group_val]
+            experiment_types[group_val] = group_df["experiment_type"].iloc[0]
+
+        return experiment_types
+
+    def _extract_group_display_names(
+        self, data: pd.DataFrame, group_by: str | None
+    ) -> dict[str, str] | None:
+        """
+        Extract group display names from DataFrame for legend labels.
+
+        Args:
+            data: DataFrame with aggregated metrics
+            group_by: Column name to group by
+
+        Returns:
+            Dictionary mapping group values to display names, or None
+        """
+        if not group_by or group_by not in data.columns:
+            return None
+
+        if "group_display_name" not in data.columns:
+            return None
+
+        display_names = {}
+        for group_val in data[group_by].unique():
+            group_df = data[data[group_by] == group_val]
+            display_names[group_val] = group_df["group_display_name"].iloc[0]
+
+        return display_names
+
 
 @PlotTypeHandlerFactory.register(PlotType.PARETO)
 class ParetoHandler(BaseMultiRunHandler):
@@ -88,6 +140,9 @@ class ParetoHandler(BaseMultiRunHandler):
             y_metric.name, y_metric.stat or "avg", available_metrics
         )
 
+        experiment_types = self._extract_experiment_types(data, spec.group_by)
+        group_display_names = self._extract_group_display_names(data, spec.group_by)
+
         return self.plot_generator.create_pareto_plot(
             df=data,
             x_metric=x_metric.name,
@@ -97,6 +152,8 @@ class ParetoHandler(BaseMultiRunHandler):
             title=spec.title,
             x_label=x_label,
             y_label=y_label,
+            experiment_types=experiment_types,
+            group_display_names=group_display_names,
         )
 
 
@@ -129,6 +186,9 @@ class ScatterLineHandler(BaseMultiRunHandler):
             y_metric.name, y_metric.stat or "avg", available_metrics
         )
 
+        experiment_types = self._extract_experiment_types(data, spec.group_by)
+        group_display_names = self._extract_group_display_names(data, spec.group_by)
+
         return self.plot_generator.create_scatter_line_plot(
             df=data,
             x_metric=x_metric.name,
@@ -138,4 +198,6 @@ class ScatterLineHandler(BaseMultiRunHandler):
             title=spec.title,
             x_label=x_label,
             y_label=y_label,
+            experiment_types=experiment_types,
+            group_display_names=group_display_names,
         )

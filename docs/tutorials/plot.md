@@ -60,6 +60,9 @@ artifacts/sweep_qwen/          # Contains multiple runs
 └── Qwen3-0.6B-concurrency4/
 ```
 
+> [!TIP]
+> Use [Experiment Classification](#experiment-classification) to assign semantic colors (grey for baselines, green for treatments) and improve visual distinction in multi-run comparisons.
+
 **Generated plots (3 default):**
 2. **TTFT vs Throughput** - Time to first token vs request throughput across concurrency levels
 4. **Token Throughput per GPU vs Latency** - GPU efficiency vs latency (when GPU telemetry available)
@@ -174,6 +177,116 @@ aiperf plot <sweep_directory>
 aiperf plot <sweep_directory> --output <custom_output_path>
 ```
 
+## Customizing Plot Grouping
+
+Multi-run comparison plots can group runs in different ways to create different colored lines/series. You can customize this in `~/.aiperf/plot_config.yaml`.
+
+### Default Grouping Behavior
+
+**Without experiment classification:**
+- **Default**: Each run gets its own line (groups by `run_name`)
+- **Customize**: Edit `groups:` in plot presets to group by other fields like `[model]`, `[experiment_group]`, or `[concurrency]`
+
+**With experiment classification enabled:**
+- **Always**: Groups by `experiment_group` (directory name) with semantic baseline/treatment colors
+- This override ensures treatment variants are preserved as separate lines
+
+### Example Customizations
+
+**Group by model** (useful when comparing different models):
+```yaml
+multi_run_plots:
+  pareto_curve_throughput_per_gpu_vs_latency:
+    # ... other settings ...
+    groups: [model]
+```
+
+**Group by directory** (useful for hierarchical experiment structures):
+```yaml
+multi_run_plots:
+  pareto_curve_throughput_per_gpu_vs_latency:
+    # ... other settings ...
+    groups: [experiment_group]
+```
+
+**Group by run name** (default - each run is a separate line):
+```yaml
+multi_run_plots:
+  pareto_curve_throughput_per_gpu_vs_latency:
+    # ... other settings ...
+    groups: [run_name]
+```
+
+> [!TIP]
+> Edit `~/.aiperf/plot_config.yaml` to customize grouping. See the file's CONFIGURATION GUIDE section for detailed examples and options.
+
+## Experiment Classification
+
+Classify runs as "baseline" or "treatment" for semantic color assignment in multi-run comparisons:
+- **Baselines**: Grey shades, listed first in legend
+- **Treatments**: NVIDIA green shades, listed after baselines
+- **Use case**: Clear visual distinction for A/B testing and performance comparisons
+
+### Configuration
+
+Edit `~/.aiperf/plot_config.yaml` (auto-created on first run):
+
+```yaml
+experiment_classification:
+  baselines:
+    - "*baseline*"     # Glob patterns
+    - "*_agg_*"
+  treatments:
+    - "*treatment*"
+    - "*_disagg_*"
+  default: treatment   # Fallback when no match
+```
+
+> [!IMPORTANT]
+> When experiment classification is enabled, **all multi-run plots automatically group by experiment_group** (directory name). This preserves individual treatment variants while applying semantic baseline/treatment colors. This behavior overrides any explicit `groups:` settings in the config.
+
+**Pattern notes**: Uses glob syntax (`*` = wildcard), case-sensitive, first match wins.
+
+### Quick Example
+
+**Directory structure:**
+```
+artifacts/
+├── baseline_moderate_io_isl100_osl200_streaming/           # → Grey (baseline; ISL=100, OSL=200)
+│   ├── concurrency_1/
+│   ├── concurrency_2/
+│   ├── concurrency_4/
+│   └── ... (other concurrency runs)
+├── treatment_large_context_isl500_osl50_streaming/         # → Green (treatment; ISL=500, OSL=50)
+│   ├── concurrency_1/
+│   ├── concurrency_2/
+│   ├── concurrency_4/
+│   └── ... 
+├── treatment_long_generation_isl50_osl500_streaming/       # → Blue (treatment; ISL=50, OSL=500)
+│   ├── concurrency_1/
+│   ├── concurrency_2/
+│   ├── concurrency_4/
+│   └── ... 
+└── treatment_cancellation_10pct_isl100_osl200_streaming/   # → Orange (treatment; ISL=100, OSL=200, 10% cancels)
+    ├── concurrency_1/
+    ├── concurrency_2/
+    ├── concurrency_4/
+    └── ... 
+```
+
+**Result**: 4 lines in plots (1 baseline line + 3 treatment lines, each with semantic colors)
+
+**Advanced**: Use `group_extraction_pattern` to aggregate variants into named groups:
+- Pattern `"^(treatment_\d+)"` groups `treatment_1_variantA` + `treatment_1_variantB` → `"treatment_1"`
+- See config file for `group_display_names` and other options
+
+> [!TIP]
+> See `src/aiperf/plot/default_plot_config.yaml` for detailed options.
+
+![Pareto Curve: Throughput per GPU vs Interactivity (Experiment Classification)](../diagrams/plot_examples/multi_run/config_experiment_classification/pareto_curve_throughput_per_gpu_vs_interactivity.png)
+
+![TTFT vs Throughput (Experiment Classification)](../diagrams/plot_examples/multi_run/config_experiment_classification/ttft_vs_throughput.png)
+
 ## Theme Options
 
 Choose between light and dark themes for your plots:
@@ -269,6 +382,9 @@ plots/
 > [!TIP]
 > **Consistent Configurations**: When comparing runs, keep all parameters identical except the one you're testing (e.g., only vary concurrency). This ensures plots show the impact of that specific parameter.
 > Future features in interactive mode will allow pop-ups to show specific configurations of plotted runs.
+
+> [!TIP]
+> **Use Experiment Classification**: For multi-run comparisons, configure [experiment classification](#experiment-classification) to distinguish baselines from treatments with semantic colors. This makes it easier to identify reference points and experimental variations.
 
 > [!TIP]
 > **Include Warmup**: Use `--warmup-request-count` to ensure the server reaches steady state before measurement. This reduces noise in your visualizations.

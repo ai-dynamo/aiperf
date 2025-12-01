@@ -8,6 +8,8 @@ This module tests the plot generation functionality, ensuring that each plot
 type is created correctly with proper styling and data handling.
 """
 
+from unittest import mock
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -17,6 +19,7 @@ from aiperf.plot.constants import (
     DARK_THEME_COLORS,
     NVIDIA_CARD_BG,
     NVIDIA_DARK_BG,
+    NVIDIA_GRAY,
     NVIDIA_GREEN,
     NVIDIA_TEXT_LIGHT,
     NVIDIA_WHITE,
@@ -113,9 +116,13 @@ class TestPlotGenerator:
         )
 
         # Verify custom labels are used
-        assert fig.layout.title.text == title
-        assert fig.layout.xaxis.title.text == x_label
-        assert fig.layout.yaxis.title.text == y_label
+        # Custom titles now include optimal direction subtitle
+        assert fig.layout.title.text.startswith(title)
+        assert "<br><sub>" in fig.layout.title.text
+        assert "Optimal:" in fig.layout.title.text
+        # Axis labels now include directional arrows
+        assert fig.layout.xaxis.title.text.startswith(x_label)
+        assert fig.layout.yaxis.title.text.startswith(y_label)
 
     def test_create_pareto_plot_no_grouping(self, plot_generator):
         """Test Pareto plot without grouping."""
@@ -354,7 +361,7 @@ class TestPlotGenerator:
         assert len(fig.data) > 0
 
         # Test that groups are registered in the color registry
-        groups, color_map = plot_generator._prepare_groups(df, "model")
+        groups, color_map, display_names = plot_generator._prepare_groups(df, "model")
 
         # Verify all models get colors
         assert len(color_map) == 3
@@ -375,10 +382,10 @@ class TestPlotGenerator:
     def test_color_consistency_across_models(self, plot_generator):
         """Test that same model gets same color across different calls."""
         df1 = pd.DataFrame({"model": ["ModelX", "ModelY", "ModelZ"]})
-        groups1, colors1 = plot_generator._prepare_groups(df1, "model")
+        groups1, colors1, display_names1 = plot_generator._prepare_groups(df1, "model")
 
         df2 = pd.DataFrame({"model": ["ModelX", "ModelY", "ModelZ"]})
-        groups2, colors2 = plot_generator._prepare_groups(df2, "model")
+        groups2, colors2, display_names2 = plot_generator._prepare_groups(df2, "model")
 
         # Same models should get same colors across calls
         assert colors1 == colors2
@@ -392,7 +399,7 @@ class TestPlotGenerator:
         # Create more models than available colors in the pool (default 10)
         model_names = [f"Model{i}" for i in range(15)]
         df = pd.DataFrame({"model": model_names})
-        groups, color_map = plot_generator._prepare_groups(df, "model")
+        groups, color_map, display_names = plot_generator._prepare_groups(df, "model")
 
         # All models should get a color
         assert len(color_map) == 15
@@ -934,9 +941,12 @@ class TestOutlierDetection:
             latency_values, "time_to_first_token", run_avg, run_std
         )
         # Only 130.0 is outlier (above upper bound 110.0)
-        assert latency_outliers[2] == True
-        assert latency_outliers[0] == False
-        assert latency_outliers[1] == False
+        is_95_outlier = latency_outliers[0]
+        is_105_outlier = latency_outliers[1]
+        is_130_outlier = latency_outliers[2]
+        assert not is_95_outlier
+        assert not is_105_outlier
+        assert is_130_outlier
 
         # Throughput metrics: low values are bad
         throughput_values = np.array([105.0, 95.0, 70.0])
@@ -944,9 +954,12 @@ class TestOutlierDetection:
             throughput_values, "request_throughput", run_avg, run_std
         )
         # Only 70.0 is outlier (below lower bound 90.0)
-        assert throughput_outliers[2] == True
-        assert throughput_outliers[0] == False
-        assert throughput_outliers[1] == False
+        is_105_throughput_outlier = throughput_outliers[0]
+        is_95_throughput_outlier = throughput_outliers[1]
+        is_70_throughput_outlier = throughput_outliers[2]
+        assert not is_105_throughput_outlier
+        assert not is_95_throughput_outlier
+        assert is_70_throughput_outlier
 
     def test_detect_outliers_with_slice_stds(self):
         """Test outlier detection incorporates per-slice standard deviations."""
@@ -968,7 +981,7 @@ class TestOutlierDetection:
         outliers_no_slice = detect_directional_outliers(
             values, "time_to_first_token", run_avg, run_std, slice_stds=None
         )
-        assert outliers_no_slice[3] == True
+        assert outliers_no_slice[3]
 
     def test_detect_outliers_mismatched_slice_stds_length(self):
         """Test slice_stds length mismatch defaults to zeros."""
@@ -982,8 +995,8 @@ class TestOutlierDetection:
         )
 
         # Should use zeros for slice_stds (upper bound = 80)
-        assert outliers[3] == True
-        assert outliers[0] == False
+        assert outliers[3]
+        assert not outliers[0]
 
 
 class TestDarkTheme:
@@ -1076,7 +1089,7 @@ class TestColorEdgeCases:
         plot_gen = PlotGenerator()
         df = pd.DataFrame({"model": ["a", "b", "c"]})
 
-        groups, color_map = plot_gen._prepare_groups(df, group_by=None)
+        groups, color_map, display_names = plot_gen._prepare_groups(df, group_by=None)
 
         # Should return [None] groups and empty color_map
         assert groups == [None]
@@ -1089,7 +1102,7 @@ class TestColorEdgeCases:
         model_names = [f"model-{i:02d}" for i in range(12)]
         df = pd.DataFrame({"model": model_names})
 
-        groups, color_map = plot_gen._prepare_groups(df, "model")
+        groups, color_map, display_names = plot_gen._prepare_groups(df, "model")
 
         # All models should get a color
         assert len(color_map) == 12
@@ -1120,8 +1133,446 @@ class TestColorEdgeCases:
         df = pd.DataFrame({"model": ["a", "b", "c"]})
 
         # Try to group by non-existent column
-        groups, color_map = plot_gen._prepare_groups(df, "nonexistent_column")
+        groups, color_map, display_names = plot_gen._prepare_groups(
+            df, "nonexistent_column"
+        )
 
         # Should return [None] and empty color_map (no grouping)
         assert groups == [None]
         assert color_map == {}
+
+
+class TestGetNvidiaColorScheme:
+    """Tests for get_nvidia_color_scheme function."""
+
+    def test_brand_colors_less_than_requested(self):
+        """Returns only NVIDIA colors when n_colors <= 2."""
+        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
+
+        colors = get_nvidia_color_scheme(n_colors=1, use_brand_colors=True)
+        assert len(colors) == 1
+        assert colors[0] == NVIDIA_GREEN
+
+        colors = get_nvidia_color_scheme(n_colors=2, use_brand_colors=True)
+        assert len(colors) == 2
+        assert colors[0] == NVIDIA_GREEN
+
+    def test_brand_colors_with_palette_expansion(self):
+        """Adds seaborn colors when n_colors > 2."""
+        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
+
+        colors = get_nvidia_color_scheme(n_colors=5, use_brand_colors=True)
+        assert len(colors) == 5
+        assert colors[0] == NVIDIA_GREEN
+        # Remaining colors should be from seaborn palette
+        for color in colors[2:]:
+            assert color.startswith("#")
+
+    def test_without_brand_colors(self):
+        """Uses only seaborn palette when use_brand_colors=False."""
+        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
+
+        colors = get_nvidia_color_scheme(n_colors=5, use_brand_colors=False)
+        assert len(colors) == 5
+        # Should not start with NVIDIA brand colors
+        assert colors[0] != NVIDIA_GREEN
+        # All should be valid hex colors
+        for color in colors:
+            assert color.startswith("#")
+
+    def test_bright_palette_with_brand_colors(self):
+        """Verifies bright palette used with brand colors."""
+        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
+
+        colors = get_nvidia_color_scheme(
+            n_colors=5, palette_name="bright", use_brand_colors=True
+        )
+        assert len(colors) == 5
+        assert colors[0] == NVIDIA_GREEN
+
+    def test_deep_palette_without_brand_colors(self):
+        """Verifies deep palette used without brand colors."""
+        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
+
+        colors = get_nvidia_color_scheme(
+            n_colors=5, palette_name="deep", use_brand_colors=False
+        )
+        assert len(colors) == 5
+        for color in colors:
+            assert color.startswith("#")
+
+    def test_color_pool_cycling(self):
+        """Verifies colors are valid hex strings."""
+        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
+
+        colors = get_nvidia_color_scheme(n_colors=15, use_brand_colors=True)
+        assert len(colors) == 15
+        for color in colors:
+            assert color.startswith("#")
+            assert len(color) == 7  # #RRGGBB format
+
+
+class TestGetMetricDirection:
+    """Tests for _get_metric_direction method."""
+
+    def test_get_metric_direction_from_registry(self):
+        """Uses MetricRegistry when available."""
+        from unittest.mock import patch
+
+        from aiperf.common.enums import PlotMetricDirection
+        from aiperf.common.enums.metric_enums import MetricFlags
+
+        plot_gen = PlotGenerator()
+
+        # Mock a metric with LARGER_IS_BETTER flag
+        with patch(
+            "aiperf.plot.core.plot_generator.MetricRegistry.get_class"
+        ) as mock_get_class:
+            mock_metric = type(
+                "MockMetric",
+                (),
+                {
+                    "has_flags": lambda flags: flags == MetricFlags.LARGER_IS_BETTER,
+                },
+            )
+            mock_get_class.return_value = mock_metric
+
+            direction = plot_gen._get_metric_direction("test_throughput")
+            assert direction == PlotMetricDirection.HIGHER
+
+    def test_get_metric_direction_fallback_to_derived(self):
+        """Falls back to DERIVED_METRIC_DIRECTIONS."""
+        from unittest.mock import patch
+
+        from aiperf.common.enums import PlotMetricDirection
+
+        plot_gen = PlotGenerator()
+
+        # Mock MetricRegistry to raise exception
+        with (
+            patch(
+                "aiperf.plot.core.plot_generator.MetricRegistry.get_class",
+                side_effect=Exception,
+            ),
+            patch(
+                "aiperf.plot.core.plot_generator.DERIVED_METRIC_DIRECTIONS",
+                {"custom_throughput_metric": True},
+            ),
+        ):
+            direction = plot_gen._get_metric_direction("custom_throughput_metric")
+            assert direction == PlotMetricDirection.HIGHER
+
+    def test_get_metric_direction_default_to_empty_string(self):
+        """Returns empty string for unknown metrics."""
+        from unittest.mock import patch
+
+        plot_gen = PlotGenerator()
+
+        # Mock MetricRegistry to raise exception and empty derived directions
+        with patch(
+            "aiperf.plot.core.plot_generator.MetricRegistry.get_class",
+            side_effect=Exception,
+        ), patch("aiperf.plot.core.plot_generator.DERIVED_METRIC_DIRECTIONS", {}):
+            direction = plot_gen._get_metric_direction("unknown_metric")
+            assert direction == ""
+
+
+class TestAddOptimalQuadrantShading:
+    """Tests for _add_optimal_quadrant_shading method."""
+
+    def test_quadrant_shading_both_lower_is_better(self):
+        """Lower-left quadrant shaded when both metrics lower is better."""
+        from aiperf.common.enums import PlotMetricDirection
+
+        plot_gen = PlotGenerator()
+        fig = go.Figure()
+
+        x_data = [100.0, 150.0, 200.0]
+        y_data = [10.0, 15.0, 20.0]
+
+        # Mock metric directions - both lower is better
+        with mock.patch.object(
+            plot_gen,
+            "_get_metric_direction",
+            side_effect=lambda m: PlotMetricDirection.LOWER,
+        ):
+            plot_gen._add_optimal_quadrant_shading(
+                fig, "latency_metric", "another_latency", x_data, y_data
+            )
+
+        # Should have added shape and annotation
+        assert len(fig.layout.shapes) == 1
+        assert len(fig.layout.annotations) == 1
+
+        # Verify optimal corner is lower-left (min x, min y)
+        shape = fig.layout.shapes[0]
+        assert shape.x0 == min(x_data)
+        assert shape.y0 == min(y_data)
+
+    def test_quadrant_shading_both_higher_is_better(self):
+        """Upper-right quadrant shaded when both metrics higher is better."""
+        from aiperf.common.enums import PlotMetricDirection
+
+        plot_gen = PlotGenerator()
+        fig = go.Figure()
+
+        x_data = [100.0, 150.0, 200.0]
+        y_data = [10.0, 15.0, 20.0]
+
+        # Mock metric directions - both higher is better
+        with mock.patch.object(
+            plot_gen,
+            "_get_metric_direction",
+            side_effect=lambda m: PlotMetricDirection.HIGHER,
+        ):
+            plot_gen._add_optimal_quadrant_shading(
+                fig, "throughput_metric", "another_throughput", x_data, y_data
+            )
+
+        # Should have added shape and annotation
+        assert len(fig.layout.shapes) == 1
+        assert len(fig.layout.annotations) == 1
+
+        # Verify optimal corner is upper-right (max x, max y)
+        shape = fig.layout.shapes[0]
+        assert shape.x0 == max(x_data)
+        assert shape.y1 == max(y_data)
+
+    @pytest.mark.parametrize(  # fmt: skip
+        "x_dir,y_dir,expected_optimal_x,expected_optimal_y",
+        [
+            ("LOWER", "HIGHER", "min", "max"),  # Lower-right quadrant
+            ("HIGHER", "LOWER", "max", "min"),  # Upper-left quadrant
+            ("LOWER", "LOWER", "min", "min"),  # Lower-left quadrant
+            ("HIGHER", "HIGHER", "max", "max"),  # Upper-right quadrant
+        ],
+    )
+    def test_quadrant_shading_mixed_directions(
+        self, x_dir, y_dir, expected_optimal_x, expected_optimal_y
+    ):
+        """Test all 4 direction combinations."""
+        from aiperf.common.enums import PlotMetricDirection
+
+        plot_gen = PlotGenerator()
+        fig = go.Figure()
+
+        x_data = [100.0, 150.0, 200.0]
+        y_data = [10.0, 15.0, 20.0]
+
+        x_direction = (
+            PlotMetricDirection.LOWER
+            if x_dir == "LOWER"
+            else PlotMetricDirection.HIGHER
+        )
+        y_direction = (
+            PlotMetricDirection.LOWER
+            if y_dir == "LOWER"
+            else PlotMetricDirection.HIGHER
+        )
+
+        with mock.patch.object(
+            plot_gen,
+            "_get_metric_direction",
+            side_effect=lambda m: x_direction if "x" in m else y_direction,
+        ):
+            plot_gen._add_optimal_quadrant_shading(
+                fig, "x_metric", "y_metric", x_data, y_data
+            )
+
+        # Verify shape was added
+        assert len(fig.layout.shapes) == 1
+
+        # Verify optimal point is correct
+        expected_x = min(x_data) if expected_optimal_x == "min" else max(x_data)
+        expected_y = min(y_data) if expected_optimal_y == "min" else max(y_data)
+
+        annotation = fig.layout.annotations[0]
+        assert annotation.x == expected_x
+        assert annotation.y == expected_y
+
+    def test_quadrant_shading_math_calculation(self):
+        """Verifies rectangle bounds calculation."""
+        from aiperf.common.enums import PlotMetricDirection
+
+        plot_gen = PlotGenerator()
+        fig = go.Figure()
+
+        x_data = [50.0, 100.0, 150.0]
+        y_data = [5.0, 10.0, 15.0]
+
+        # Lower x, higher y (lower-right quadrant)
+        with mock.patch.object(
+            plot_gen,
+            "_get_metric_direction",
+            side_effect=lambda m: (
+                PlotMetricDirection.LOWER
+                if m == "latency"
+                else PlotMetricDirection.HIGHER
+            ),
+        ):
+            plot_gen._add_optimal_quadrant_shading(
+                fig, "latency", "throughput", x_data, y_data
+            )
+
+        shape = fig.layout.shapes[0]
+        # Optimal point: (min x=50, max y=15)
+        # Rectangle: x0=50, x1=50, y0=15, y1=15... wait that doesn't make sense
+
+        # Actually for lower x and higher y, optimal corner is lower-right
+        # So rectangle should shade from min_x to optimal_x (min), and optimal_y (max) to max_y
+        assert shape.x0 == min(x_data)  # 50
+        assert shape.x1 == min(x_data)  # 50 (optimal x)
+        assert shape.y0 == max(y_data)  # 15 (optimal y)
+        assert shape.y1 == max(y_data)  # 15
+
+    def test_quadrant_shading_annotation_text(self):
+        """Verifies 'Optimal' annotation."""
+        from aiperf.common.enums import PlotMetricDirection
+
+        plot_gen = PlotGenerator()
+        fig = go.Figure()
+
+        x_data = [100.0, 150.0, 200.0]
+        y_data = [10.0, 15.0, 20.0]
+
+        with mock.patch.object(
+            plot_gen,
+            "_get_metric_direction",
+            side_effect=lambda m: PlotMetricDirection.HIGHER,
+        ):
+            plot_gen._add_optimal_quadrant_shading(
+                fig, "metric1", "metric2", x_data, y_data
+            )
+
+        annotation = fig.layout.annotations[0]
+        assert "Optimal" in annotation.text
+        assert "\u2605" in annotation.text  # Star symbol
+
+    def test_quadrant_shading_skipped_when_no_direction(self):
+        """No shading when metric direction unknown."""
+        plot_gen = PlotGenerator()
+        fig = go.Figure()
+
+        x_data = [100.0, 150.0, 200.0]
+        y_data = [10.0, 15.0, 20.0]
+
+        # Mock to return empty string (unknown direction)
+        with mock.patch.object(plot_gen, "_get_metric_direction", return_value=""):
+            plot_gen._add_optimal_quadrant_shading(
+                fig, "unknown_metric", "another_unknown", x_data, y_data
+            )
+
+        # Should not add shapes or annotations
+        assert len(fig.layout.shapes) == 0
+        assert len(fig.layout.annotations) == 0
+
+
+class TestPrepareGroupsExperimentTypes:
+    """Tests for _prepare_groups with experiment_types logic."""
+
+    def test_prepare_groups_experiment_types_baseline_vs_treatment(self):
+        """Separates baselines from treatments."""
+        plot_gen = PlotGenerator()
+        df = pd.DataFrame(
+            {
+                "experiment_group": [
+                    "baseline_a",
+                    "treatment_a",
+                    "baseline_b",
+                    "treatment_b",
+                ],
+                "value": [1, 2, 3, 4],
+            }
+        )
+        experiment_types = {
+            "baseline_a": "baseline",
+            "treatment_a": "treatment",
+            "baseline_b": "baseline",
+            "treatment_b": "treatment",
+        }
+
+        groups, colors, display_names = plot_gen._prepare_groups(
+            df, "experiment_group", experiment_types
+        )
+
+        # Baselines should come first, then treatments
+        assert groups[:2] == ["baseline_a", "baseline_b"]
+        assert groups[2:] == ["treatment_a", "treatment_b"]
+
+        # Baselines should be gray
+        assert colors["baseline_a"] == NVIDIA_GRAY
+        assert colors["baseline_b"] == NVIDIA_GRAY
+
+        # First treatment should be green
+        assert colors["treatment_a"] == NVIDIA_GREEN
+
+    def test_prepare_groups_experiment_types_single_treatment(self):
+        """Single treatment gets green color."""
+        plot_gen = PlotGenerator()
+        df = pd.DataFrame(
+            {
+                "experiment_group": ["baseline", "treatment"],
+                "value": [1, 2],
+            }
+        )
+        experiment_types = {
+            "baseline": "baseline",
+            "treatment": "treatment",
+        }
+
+        groups, colors, display_names = plot_gen._prepare_groups(
+            df, "experiment_group", experiment_types
+        )
+
+        assert colors["baseline"] == NVIDIA_GRAY
+        assert colors["treatment"] == NVIDIA_GREEN
+
+    def test_prepare_groups_experiment_types_multiple_treatments(self):
+        """Multiple treatments: first=green, rest=seaborn colors."""
+        plot_gen = PlotGenerator()
+        df = pd.DataFrame(
+            {
+                "experiment_group": [
+                    "baseline",
+                    "treatment1",
+                    "treatment2",
+                    "treatment3",
+                ],
+                "value": [1, 2, 3, 4],
+            }
+        )
+        experiment_types = {
+            "baseline": "baseline",
+            "treatment1": "treatment",
+            "treatment2": "treatment",
+            "treatment3": "treatment",
+        }
+
+        groups, colors, display_names = plot_gen._prepare_groups(
+            df, "experiment_group", experiment_types
+        )
+
+        assert colors["baseline"] == NVIDIA_GRAY
+        assert colors["treatment1"] == NVIDIA_GREEN
+        # Other treatments should have different colors
+        assert colors["treatment2"] != NVIDIA_GREEN
+        assert colors["treatment2"] != NVIDIA_GRAY
+        assert colors["treatment3"] != NVIDIA_GREEN
+        assert colors["treatment3"] != NVIDIA_GRAY
+
+    def test_prepare_groups_with_string_input(self):
+        """Accepts string input directly (validator converts lists to strings)."""
+        plot_gen = PlotGenerator()
+        df = pd.DataFrame(
+            {
+                "model": ["model_a", "model_b"],
+                "value": [1, 2],
+            }
+        )
+
+        # Pass string directly (validator already converted list to string)
+        groups, colors, display_names = plot_gen._prepare_groups(df, group_by="model")
+
+        # Should successfully group by model
+        assert groups == ["model_a", "model_b"]
+        assert len(colors) == 2

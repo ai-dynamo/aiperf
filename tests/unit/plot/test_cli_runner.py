@@ -286,6 +286,7 @@ class TestRunPlotController:
             output=output,
             mode=PlotMode.PNG,
             theme=PlotTheme.DARK,
+            verbose=True,
         )
 
         mock_controller_class.assert_called_once_with(
@@ -293,6 +294,8 @@ class TestRunPlotController:
             output_dir=Path(output),
             mode=PlotMode.PNG,
             theme=PlotTheme.DARK,
+            config_path=None,
+            verbose=True,
         )
 
     def test_invalid_mode_string_raises_value_error(

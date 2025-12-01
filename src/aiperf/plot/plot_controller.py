@@ -2,12 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Plot controller for generating visualizations from profiling data."""
 
+import logging
 from pathlib import Path
 
+from aiperf.plot.config import PlotConfig
 from aiperf.plot.constants import PlotMode, PlotTheme
 from aiperf.plot.core.data_loader import DataLoader
 from aiperf.plot.core.mode_detector import ModeDetector, VisualizationMode
 from aiperf.plot.exporters import MultiRunPNGExporter, SingleRunPNGExporter
+from aiperf.plot.logging import setup_console_only_logging, setup_plot_logging
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["PlotController"]
 
 
 class PlotController:
@@ -22,6 +29,8 @@ class PlotController:
         output_dir: Directory to save generated plots
         mode: Output mode (currently only PNG supported)
         theme: Plot theme (LIGHT or DARK). Defaults to LIGHT.
+        config_path: Optional path to custom plot configuration YAML file
+        verbose: Show detailed error tracebacks in console
     """
 
     def __init__(
@@ -30,13 +39,33 @@ class PlotController:
         output_dir: Path,
         mode: PlotMode = PlotMode.PNG,
         theme: PlotTheme = PlotTheme.LIGHT,
+        config_path: Path | None = None,
+        verbose: bool = False,
     ):
         self.paths = paths
         self.output_dir = output_dir
         self.mode = mode
         self.theme = theme
-        self.loader = DataLoader()
+        self.verbose = verbose
+
+        log_level = "DEBUG" if verbose else "INFO"
+        try:
+            setup_plot_logging(output_dir, log_level=log_level)
+        except Exception as e:
+            setup_console_only_logging(log_level=log_level)
+            logger.warning(
+                f"Could not set up file logging to {output_dir}: {e}. Using console only."
+            )
+
         self.mode_detector = ModeDetector()
+        self.plot_config = PlotConfig(config_path, verbose=verbose)
+
+        classification_config = self.plot_config.get_experiment_classification_config()
+        if classification_config:
+            print("Experiment classification enabled: grouping runs by baseline/treatment patterns")
+        self.loader = DataLoader(
+            classification_config=classification_config,
+        )
 
     def run(self) -> list[Path]:
         """Execute plot generation pipeline.
@@ -109,14 +138,21 @@ class PlotController:
                 run_data = self.loader.load_run(run_dir, load_per_request_data=False)
                 runs.append(run_data)
             except Exception as e:
-                print(f"Warning: Failed to load run from {run_dir}: {e}")
+                logger.warning(f"Failed to load run from {run_dir}: {e}")
 
         if not runs:
             raise ValueError("Failed to load any valid profiling runs")
 
         available = self.loader.get_available_metrics(runs[0])
+        plot_specs = self.plot_config.get_multi_run_plot_specs()
+        classification_config = self.plot_config.get_experiment_classification_config()
         exporter = MultiRunPNGExporter(self.output_dir, theme=self.theme)
-        return exporter.export(runs, available)
+        return exporter.export(
+            runs,
+            available,
+            plot_specs=plot_specs,
+            classification_config=classification_config,
+        )
 
     def _export_single_run_plots(self, run_dir: Path) -> list[Path]:
         """Export single-run time series plots.
@@ -129,5 +165,6 @@ class PlotController:
         """
         run_data = self.loader.load_run(run_dir, load_per_request_data=True)
         available = self.loader.get_available_metrics(run_data)
+        plot_specs = self.plot_config.get_single_run_plot_specs()
         exporter = SingleRunPNGExporter(self.output_dir, theme=self.theme)
-        return exporter.export(run_data, available)
+        return exporter.export(run_data, available, plot_specs=plot_specs)

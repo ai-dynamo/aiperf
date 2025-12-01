@@ -6,8 +6,9 @@
 from enum import Enum
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
+from aiperf.common.config import BaseConfig
 from aiperf.common.models import AIPerfBaseModel
 
 
@@ -41,6 +42,34 @@ class Style(AIPerfBaseModel):
     fill_opacity: float = Field(
         default=0.3,
         description="Opacity of fill area (0.0 to 1.0)",
+    )
+
+
+class ExperimentClassificationConfig(BaseConfig):
+    """Configuration for classifying runs as baseline or treatment."""
+
+    baselines: list[str] = Field(
+        default_factory=list,
+        description="List of glob patterns to match baseline runs (e.g., '*_agg_*', '*baseline*')",
+    )
+    treatments: list[str] = Field(
+        default_factory=list,
+        description="List of glob patterns to match treatment runs (e.g., '*_disagg_*', '*kvrouter*')",
+    )
+    default: Literal["baseline", "treatment"] = Field(
+        default="treatment",
+        description="Default classification when no patterns match",
+    )
+    group_extraction_pattern: str | None = Field(
+        default=r"^(baseline|treatment_\d+)",
+        description="Regex pattern to extract experiment group from run name or parent directory names. "
+        "First capture group is used. Example: '^(baseline|treatment_\\d+)' extracts 'treatment_1' "
+        "from 'treatment_1_large_input_small_output'. Used for grouping treatment variants.",
+    )
+    group_display_names: dict[str, str] | None = Field(
+        default=None,
+        description="Optional mapping of experiment group IDs to human-readable display names for legends. "
+        "Example: {'baseline': 'Baseline', 'treatment_1': 'Large Input Small Output'}",
     )
 
 
@@ -94,12 +123,50 @@ class PlotSpec(AIPerfBaseModel):
     )
     label_by: str | None = Field(
         default=None,
-        description="Column to use for labeling points (for multi-series plots)",
+        description="Column to use for labeling points (single column only). "
+        "Must be provided as a single-element list in YAML (e.g., [concurrency]).",
     )
     group_by: str | None = Field(
         default=None,
-        description="Column to use for grouping data (for multi-series plots)",
+        description="Column to use for grouping data into separate series (single column only). "
+        "Must be provided as a single-element list in YAML (e.g., [model]). "
+        "Note: When experiment_classification is enabled, this is auto-overridden to 'experiment_group'.",
     )
+
+    @field_validator("label_by", "group_by", mode="before")
+    @classmethod
+    def _normalize_list_to_string(cls, v: str | list[str] | None) -> str | None:
+        """Convert single-element list to string.
+
+        Args:
+            v: Single-element list, string, or None
+
+        Returns:
+            String value or None
+
+        Raises:
+            ValueError: If v is not a single-element list, string, or None
+        """
+        if v is None:
+            return None
+
+        if isinstance(v, str):
+            return v
+
+        if isinstance(v, list):
+            if len(v) == 0:
+                return None
+            if len(v) == 1:
+                return v[0]
+            raise ValueError(
+                f"Multi-column grouping is not supported. "
+                f"Provide a single column as a string or single-element list, got: {v}"
+            )
+
+        raise ValueError(
+            f"label_by and group_by must be a string or list, got {type(v).__name__}"
+        )
+
     primary_style: Style | None = Field(
         default=None,
         description="Style configuration for primary (y) axis trace",
@@ -122,217 +189,3 @@ class TimeSlicePlotSpec(PlotSpec):
         description="Whether to pass slice_duration to the plot generator "
         "for proper time-based x-axis formatting",
     )
-
-
-# Single-run plot specifications
-SINGLE_RUN_PLOT_SPECS: list[PlotSpec] = [
-    PlotSpec(
-        name="ttft_over_time",
-        plot_type=PlotType.SCATTER,
-        metrics=[
-            MetricSpec(name="request_number", source=DataSource.REQUESTS, axis="x"),
-            MetricSpec(
-                name="time_to_first_token", source=DataSource.REQUESTS, axis="y"
-            ),
-        ],
-        title="TTFT Per Request Over Time",
-        filename="ttft_over_time.png",
-    ),
-    PlotSpec(
-        name="itl_over_time",
-        plot_type=PlotType.SCATTER,
-        metrics=[
-            MetricSpec(name="request_number", source=DataSource.REQUESTS, axis="x"),
-            MetricSpec(
-                name="inter_token_latency", source=DataSource.REQUESTS, axis="y"
-            ),
-        ],
-        title="Inter-Token Latency Per Request Over Time",
-        filename="itl_over_time.png",
-    ),
-    PlotSpec(
-        name="latency_over_time",
-        plot_type=PlotType.SCATTER_WITH_PERCENTILES,
-        metrics=[
-            MetricSpec(name="timestamp", source=DataSource.REQUESTS, axis="x"),
-            MetricSpec(name="request_latency", source=DataSource.REQUESTS, axis="y"),
-        ],
-        title="Request Latency Over Time with Percentiles",
-        filename="latency_over_time.png",
-    ),
-    PlotSpec(
-        name="dispersed_throughput_over_time",
-        plot_type=PlotType.AREA,
-        metrics=[
-            MetricSpec(name="timestamp_s", source=DataSource.REQUESTS, axis="x"),
-            MetricSpec(
-                name="throughput_tokens_per_sec", source=DataSource.REQUESTS, axis="y"
-            ),
-        ],
-        title="Dispersed Output Token Throughput Over Time",
-        filename="dispersed_throughput_over_time.png",
-    ),
-]
-
-
-# Timeslice plot specifications
-TIMESLICE_PLOT_SPECS: list[TimeSlicePlotSpec] = [
-    TimeSlicePlotSpec(
-        name="timeslices_ttft",
-        plot_type=PlotType.HISTOGRAM,
-        metrics=[
-            MetricSpec(name="Timeslice", source=DataSource.TIMESLICES, axis="x"),
-            MetricSpec(
-                name="Time to First Token",
-                source=DataSource.TIMESLICES,
-                axis="y",
-                stat="avg",
-            ),
-        ],
-        title="Average Time to First Token Across Time Slices",
-        filename="timeslices_ttft.png",
-        use_slice_duration=True,
-    ),
-    TimeSlicePlotSpec(
-        name="timeslices_itl",
-        plot_type=PlotType.HISTOGRAM,
-        metrics=[
-            MetricSpec(name="Timeslice", source=DataSource.TIMESLICES, axis="x"),
-            MetricSpec(
-                name="Inter Token Latency",
-                source=DataSource.TIMESLICES,
-                axis="y",
-                stat="avg",
-            ),
-        ],
-        title="Average Inter Token Latency Across Time Slices",
-        filename="timeslices_itl.png",
-        use_slice_duration=True,
-    ),
-    TimeSlicePlotSpec(
-        name="timeslices_throughput",
-        plot_type=PlotType.HISTOGRAM,
-        metrics=[
-            MetricSpec(name="Timeslice", source=DataSource.TIMESLICES, axis="x"),
-            MetricSpec(
-                name="Request Throughput",
-                source=DataSource.TIMESLICES,
-                axis="y",
-                stat="avg",
-            ),
-        ],
-        title="Average Request Throughput Across Time Slices",
-        filename="timeslices_throughput.png",
-        use_slice_duration=True,
-    ),
-    TimeSlicePlotSpec(
-        name="timeslices_latency",
-        plot_type=PlotType.HISTOGRAM,
-        metrics=[
-            MetricSpec(name="Timeslice", source=DataSource.TIMESLICES, axis="x"),
-            MetricSpec(
-                name="Request Latency",
-                source=DataSource.TIMESLICES,
-                axis="y",
-                stat="avg",
-            ),
-        ],
-        title="Average Request Latency Across Time Slices",
-        filename="timeslices_latency.png",
-        use_slice_duration=True,
-    ),
-]
-
-
-# GPU plot specifications
-GPU_PLOT_SPECS: list[PlotSpec] = [
-    PlotSpec(
-        name="gpu_utilization_and_throughput_over_time",
-        plot_type=PlotType.DUAL_AXIS,
-        metrics=[
-            MetricSpec(name="timestamp_s", source=DataSource.REQUESTS, axis="x"),
-            MetricSpec(
-                name="throughput_tokens_per_sec", source=DataSource.REQUESTS, axis="y"
-            ),
-            MetricSpec(
-                name="gpu_utilization", source=DataSource.GPU_TELEMETRY, axis="y2"
-            ),
-        ],
-        title="Output Token Throughput with GPU Utilization",
-        filename="gpu_utilization_and_throughput_over_time.png",
-        primary_style=Style(mode="lines", line_shape="hv", fill=None),
-        secondary_style=Style(mode="lines", line_shape=None, fill="tozeroy"),
-        supplementary_col="active_requests",
-    ),
-]
-
-
-# Multi-run comparison plot specifications
-MULTI_RUN_PLOT_SPECS: list[PlotSpec] = [
-    PlotSpec(
-        name="pareto_curve_throughput_per_gpu_vs_latency",
-        plot_type=PlotType.PARETO,
-        metrics=[
-            MetricSpec(
-                name="request_latency",
-                source=DataSource.AGGREGATED,
-                axis="x",
-                stat="avg",
-            ),
-            MetricSpec(
-                name="output_token_throughput_per_gpu",
-                source=DataSource.AGGREGATED,
-                axis="y",
-                stat="avg",
-            ),
-        ],
-        title="Pareto Curve: Token Throughput per GPU vs Latency",
-        filename="pareto_curve_throughput_per_gpu_vs_latency.png",
-        label_by="concurrency",
-        group_by="model",
-    ),
-    PlotSpec(
-        name="ttft_vs_throughput",
-        plot_type=PlotType.SCATTER_LINE,
-        metrics=[
-            MetricSpec(
-                name="time_to_first_token",
-                source=DataSource.AGGREGATED,
-                axis="x",
-                stat="p50",
-            ),
-            MetricSpec(
-                name="request_throughput",
-                source=DataSource.AGGREGATED,
-                axis="y",
-                stat="avg",
-            ),
-        ],
-        title="TTFT vs Throughput",
-        filename="ttft_vs_throughput.png",
-        label_by="concurrency",
-        group_by="model",
-    ),
-    PlotSpec(
-        name="pareto_curve_throughput_per_gpu_vs_interactivity",
-        plot_type=PlotType.SCATTER_LINE,
-        metrics=[
-            MetricSpec(
-                name="output_token_throughput_per_gpu",
-                source=DataSource.AGGREGATED,
-                axis="x",
-                stat="avg",
-            ),
-            MetricSpec(
-                name="output_token_throughput_per_user",
-                source=DataSource.AGGREGATED,
-                axis="y",
-                stat="avg",
-            ),
-        ],
-        title="Pareto Curve: Token Throughput per GPU vs Interactivity",
-        filename="pareto_curve_throughput_per_gpu_vs_interactivity.png",
-        label_by="concurrency",
-        group_by="model",
-    ),
-]

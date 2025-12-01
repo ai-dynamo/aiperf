@@ -21,24 +21,18 @@ from aiperf.plot.constants import PLOT_LOG_FILE
 _logger = AIPerfLogger(__name__)
 
 
-def setup_plot_logging(output_dir: Path, log_level: str = "INFO") -> None:
+def setup_console_only_logging(log_level: str = "INFO") -> None:
     """
-    Set up logging for the plot command.
+    Set up console-only logging for plot operations.
 
-    Configures logging to output to both console (via RichHandler) and a log
-    file in the output directory. This should be called at the start of the
-    plot command before any plot operations.
+    This is a fallback mode used when the output directory is not available
+    or cannot be created. Configures logging to output only to console via
+    RichHandler without a file handler.
 
     Args:
-        output_dir: Directory where plot outputs (and logs) will be saved.
         log_level: Logging level (e.g., "DEBUG", "INFO", "WARNING"). Defaults to "INFO".
-
-    Examples:
-        >>> from pathlib import Path
-        >>> setup_plot_logging(Path("./artifacts/plots"), log_level="INFO")
     """
     root_logger = logging.getLogger()
-
     level = log_level.upper()
     root_logger.setLevel(level)
 
@@ -56,6 +50,45 @@ def setup_plot_logging(output_dir: Path, log_level: str = "INFO") -> None:
         omit_repeated_times=False,
     )
     rich_handler.setLevel(level)
+    root_logger.addHandler(rich_handler)
+
+
+def setup_plot_logging(output_dir: Path, log_level: str = "INFO") -> None:
+    """
+    Set up logging for the plot command.
+
+    Configures logging to output to both console (via RichHandler) and a log
+    file in the output directory. This function can be called multiple times
+    safely as it clears existing handlers before adding new ones.
+
+    Console output shows WARNING+ by default, or all logs when verbose (DEBUG/INFO level).
+    File output always captures all logs at the specified level.
+
+    Args:
+        output_dir: Directory where plot outputs (and logs) will be saved.
+        log_level: Logging level (e.g., "DEBUG", "INFO", "WARNING"). Defaults to "INFO".
+    """
+    root_logger = logging.getLogger()
+
+    level = log_level.upper()
+    root_logger.setLevel(level)
+
+    for existing_handler in root_logger.handlers[:]:
+        root_logger.removeHandler(existing_handler)
+
+    # Console handler: show all logs if verbose (DEBUG level), otherwise only WARNING+
+    console_level = level if level == "DEBUG" else "WARNING"
+    rich_handler = RichHandler(
+        rich_tracebacks=True,
+        show_path=True,
+        console=Console(),
+        show_time=True,
+        show_level=True,
+        tracebacks_show_locals=False,
+        log_time_format="%H:%M:%S.%f",
+        omit_repeated_times=False,
+    )
+    rich_handler.setLevel(console_level)
     root_logger.addHandler(rich_handler)
 
     output_dir.mkdir(parents=True, exist_ok=True)
