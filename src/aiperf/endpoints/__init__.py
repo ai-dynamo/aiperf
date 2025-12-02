@@ -35,6 +35,7 @@ from aiperf.endpoints.solido_rag import (
     SolidoEndpoint,
 )
 from aiperf.endpoints.template_endpoint import (
+    NAMED_TEMPLATES,
     TemplateEndpoint,
 )
 
@@ -48,6 +49,7 @@ __all__ = [
     "HFTeiRankingsEndpoint",
     "HuggingFaceGenerateEndpoint",
     "ImageGenerationEndpoint",
+    "NAMED_TEMPLATES",
     "NIMRankingsEndpoint",
     "SolidoEndpoint",
     "TemplateEndpoint",

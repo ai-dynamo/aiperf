@@ -99,6 +99,39 @@ class InputConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_rankings_token_options(self) -> Self:
+        """Validate that prompt input tokens and rankings-specific token options are not both set."""
+        from aiperf.common.config.config_defaults import InputTokensDefaults
+
+        # Check if prompt input tokens have been changed from defaults
+        prompt_tokens_modified = (
+            self.prompt.input_tokens.mean != InputTokensDefaults.MEAN
+            or self.prompt.input_tokens.stddev != InputTokensDefaults.STDDEV
+        )
+
+        # Check if any rankings-specific token options have been changed from defaults
+        rankings_tokens_modified = (
+            self.rankings_passages_prompt_token_mean
+            != InputDefaults.RANKINGS_PASSAGES_PROMPT_TOKEN_MEAN
+            or self.rankings_passages_prompt_token_stddev
+            != InputDefaults.RANKINGS_PASSAGES_PROMPT_TOKEN_STDDEV
+            or self.rankings_query_prompt_token_mean
+            != InputDefaults.RANKINGS_QUERY_PROMPT_TOKEN_MEAN
+            or self.rankings_query_prompt_token_stddev
+            != InputDefaults.RANKINGS_QUERY_PROMPT_TOKEN_STDDEV
+        )
+
+        if prompt_tokens_modified and rankings_tokens_modified:
+            raise ValueError(
+                "The --prompt-input-tokens-mean/--prompt-input-tokens-stddev options "
+                "cannot be used together with rankings-specific token options "
+                "(--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
+                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev). "
+                "Please use only one set of options."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_goodput(self) -> Self:
         """
         Validate that all keys provided to --goodput are known metric tags.
@@ -330,6 +363,62 @@ class InputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.RANKINGS_PASSAGES_STDDEV
+
+    rankings_passages_prompt_token_mean: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Mean number of tokens in a passage entry for rankings (default 550)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-passages-prompt-token-mean",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.RANKINGS_PASSAGES_PROMPT_TOKEN_MEAN
+
+    rankings_passages_prompt_token_stddev: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Stddev for number of tokens in a passage entry for rankings (default 0)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-passages-prompt-token-stddev",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.RANKINGS_PASSAGES_PROMPT_TOKEN_STDDEV
+
+    rankings_query_prompt_token_mean: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Mean number of tokens in a query entry for rankings (default 550)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-query-prompt-token-mean",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.RANKINGS_QUERY_PROMPT_TOKEN_MEAN
+
+    rankings_query_prompt_token_stddev: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Stddev for number of tokens in a query entry for rankings (default 0)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-query-prompt-token-stddev",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.RANKINGS_QUERY_PROMPT_TOKEN_STDDEV
 
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()

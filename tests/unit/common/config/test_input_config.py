@@ -207,3 +207,94 @@ def test_rankings_passages_validation_errors():
 
     with pytest.raises(ValidationError):
         InputConfig(rankings_passages_stddev=-1)
+
+
+def test_rankings_passages_prompt_token_defaults_and_custom_values():
+    cfg_default = InputConfig()
+    assert cfg_default.rankings_passages_prompt_token_mean == 550
+    assert cfg_default.rankings_passages_prompt_token_stddev == 0
+
+    cfg_custom = InputConfig(
+        rankings_passages_prompt_token_mean=100,
+        rankings_passages_prompt_token_stddev=10,
+    )
+    assert cfg_custom.rankings_passages_prompt_token_mean == 100
+    assert cfg_custom.rankings_passages_prompt_token_stddev == 10
+
+
+def test_rankings_query_prompt_token_defaults_and_custom_values():
+    cfg_default = InputConfig()
+    assert cfg_default.rankings_query_prompt_token_mean == 550
+    assert cfg_default.rankings_query_prompt_token_stddev == 0
+
+    cfg_custom = InputConfig(
+        rankings_query_prompt_token_mean=50,
+        rankings_query_prompt_token_stddev=5,
+    )
+    assert cfg_custom.rankings_query_prompt_token_mean == 50
+    assert cfg_custom.rankings_query_prompt_token_stddev == 5
+
+
+def test_rankings_prompt_token_validation_errors():
+    with pytest.raises(ValidationError):
+        InputConfig(rankings_passages_prompt_token_mean=0)
+
+    with pytest.raises(ValidationError):
+        InputConfig(rankings_passages_prompt_token_stddev=-1)
+
+    with pytest.raises(ValidationError):
+        InputConfig(rankings_query_prompt_token_mean=0)
+
+    with pytest.raises(ValidationError):
+        InputConfig(rankings_query_prompt_token_stddev=-1)
+
+
+def test_rankings_and_prompt_tokens_cannot_be_set_together():
+    """Test that prompt input tokens and rankings-specific token options cannot both be set."""
+    from aiperf.common.config import PromptConfig
+
+    # Create a prompt config with non-default input tokens
+    prompt_config = PromptConfig()
+    prompt_config.input_tokens.mean = 100  # Non-default value
+
+    # Setting both prompt input tokens and rankings-specific tokens should raise error
+    with pytest.raises(ValidationError, match="cannot be used together"):
+        InputConfig(
+            prompt=prompt_config,
+            rankings_passages_prompt_token_mean=200,  # Non-default value
+        )
+
+    # Setting prompt stddev and rankings token options should also raise error
+    prompt_config_stddev = PromptConfig()
+    prompt_config_stddev.input_tokens.stddev = 10  # Non-default value
+
+    with pytest.raises(ValidationError, match="cannot be used together"):
+        InputConfig(
+            prompt=prompt_config_stddev,
+            rankings_query_prompt_token_mean=300,  # Non-default value
+        )
+
+
+def test_rankings_tokens_only_is_allowed():
+    """Test that setting only rankings-specific token options is allowed."""
+    cfg = InputConfig(
+        rankings_passages_prompt_token_mean=100,
+        rankings_passages_prompt_token_stddev=10,
+        rankings_query_prompt_token_mean=50,
+        rankings_query_prompt_token_stddev=5,
+    )
+    assert cfg.rankings_passages_prompt_token_mean == 100
+    assert cfg.rankings_passages_prompt_token_stddev == 10
+    assert cfg.rankings_query_prompt_token_mean == 50
+    assert cfg.rankings_query_prompt_token_stddev == 5
+
+
+def test_prompt_tokens_only_is_allowed():
+    """Test that setting only prompt input tokens is allowed (no rankings options changed)."""
+    from aiperf.common.config import PromptConfig
+
+    prompt_config = PromptConfig()
+    prompt_config.input_tokens.mean = 100
+
+    cfg = InputConfig(prompt=prompt_config)
+    assert cfg.prompt.input_tokens.mean == 100

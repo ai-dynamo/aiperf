@@ -104,6 +104,10 @@ class TestRankingsEndpoint:
                 --workers-max {defaults.workers_max} \
                 --rankings-passages-mean 6 \
                 --rankings-passages-stddev 2 \
+                --rankings-passages-prompt-token-mean 32 \
+                --rankings-passages-prompt-token-stddev 8 \
+                --rankings-query-prompt-token-mean 16 \
+                --rankings-query-prompt-token-stddev 4 \
                 --ui {defaults.ui}
             """
         )
