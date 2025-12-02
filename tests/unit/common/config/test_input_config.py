@@ -235,18 +235,18 @@ def test_rankings_query_prompt_token_defaults_and_custom_values():
     assert cfg_custom.rankings_query_prompt_token_stddev == 5
 
 
-def test_rankings_prompt_token_validation_errors():
+@pytest.mark.parametrize(
+    "param_name,invalid_value",
+    [
+        ("rankings_passages_prompt_token_mean", 0),
+        ("rankings_passages_prompt_token_stddev", -1),
+        ("rankings_query_prompt_token_mean", 0),
+        ("rankings_query_prompt_token_stddev", -1),
+    ],
+)
+def test_rankings_prompt_token_validation_errors(param_name, invalid_value):
     with pytest.raises(ValidationError):
-        InputConfig(rankings_passages_prompt_token_mean=0)
-
-    with pytest.raises(ValidationError):
-        InputConfig(rankings_passages_prompt_token_stddev=-1)
-
-    with pytest.raises(ValidationError):
-        InputConfig(rankings_query_prompt_token_mean=0)
-
-    with pytest.raises(ValidationError):
-        InputConfig(rankings_query_prompt_token_stddev=-1)
+        InputConfig(**{param_name: invalid_value})
 
 
 def test_rankings_and_prompt_tokens_cannot_be_set_together():
