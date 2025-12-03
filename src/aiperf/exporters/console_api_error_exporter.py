@@ -3,10 +3,9 @@
 
 
 import contextlib
-import json
+from dataclasses import dataclass
 from typing import ClassVar
 
-from pydantic import BaseModel
 from rich.console import Console
 from rich.panel import Panel
 
@@ -14,11 +13,14 @@ from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import ConsoleExporterType
 from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.models import ErrorDetailsCount
 from aiperf.common.protocols import ConsoleExporterProtocol
+from aiperf.common.utils import load_json_str
 from aiperf.exporters.exporter_config import ExporterConfig
 
 
-class ErrorInsight(BaseModel):
+@dataclass
+class ErrorInsight:
     """Model describing a detected API error insight."""
 
     title: str
@@ -30,7 +32,7 @@ class ErrorInsight(BaseModel):
 
 class MaxCompletionTokensDetector:
     @staticmethod
-    def detect(error_summary):
+    def detect(error_summary: list[ErrorDetailsCount]) -> ErrorInsight | None:
         if not error_summary or not isinstance(error_summary, list):
             return None
 
@@ -42,7 +44,7 @@ class MaxCompletionTokensDetector:
             raw_msg = err.message or ""
             parsed = None
             with contextlib.suppress(Exception):
-                parsed = json.loads(raw_msg)
+                parsed = load_json_str(raw_msg)
 
             backend_msg = None
             if isinstance(parsed, dict):
@@ -63,11 +65,11 @@ class MaxCompletionTokensDetector:
                     ),
                     causes=[
                         "AIPerf generated 'max_completion_tokens' due to --output-tokens-mean.",
-                        "TRT-LLM rejects this field.",
+                        "The backend rejects 'max_completion_tokens' because it only supports 'max_tokens'.",
                     ],
                     investigation=[
                         "Inspect request payloads in profile_export.jsonl.",
-                        "Check TRT-LLM supported parameters.",
+                        "Check the backend's supported parameters.",
                     ],
                     fixes=[
                         "Remove --output-tokens-mean.",
@@ -93,7 +95,7 @@ class ConsoleApiErrorExporter(AIPerfLoggerMixin):
         self._results = exporter_config.results
 
     async def export(self, console: Console) -> None:
-        error_summary = self._results.error_summary
+        error_summary: list[ErrorDetailsCount] | None = self._results.error_summary
 
         for detector in self.DETECTORS:
             insight = detector.detect(error_summary)
