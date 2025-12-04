@@ -60,27 +60,22 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         """Create a single ranking turn with one synthetic query and multiple synthetic passages."""
         turn = Turn()
 
-        # Generate query with rankings-specific token counts
-        query_tokens = self._query_token_rng.sample_positive_normal_integer(
-            self.config.input.rankings_query_prompt_token_mean,
-            self.config.input.rankings_query_prompt_token_stddev,
-        )
-        query_text = self.prompt_generator.generate(
-            mean=query_tokens,
-            stddev=0,  # Token count already sampled
+        query_text = self.prompt_generator.generate_prompt(
+            self.prompt_generator.calculate_num_tokens(
+                self.config.input.rankings_query_prompt_token_mean,
+                self.config.input.rankings_query_prompt_token_stddev,
+            )
         )
         query = Text(name="query", contents=[query_text])
 
         # Generate passages with rankings-specific token counts (per passage)
         passages = Text(name="passages")
         for _ in range(num_passages):
-            passage_tokens = self._passages_token_rng.sample_positive_normal_integer(
-                self.config.input.rankings_passages_prompt_token_mean,
-                self.config.input.rankings_passages_prompt_token_stddev,
-            )
-            passage_text = self.prompt_generator.generate(
-                mean=passage_tokens,
-                stddev=0,  # Token count already sampled
+            passage_text = self.prompt_generator.generate_prompt(
+                self.prompt_generator.calculate_num_tokens(
+                    self.config.input.rankings_passages_prompt_token_mean,
+                    self.config.input.rankings_passages_prompt_token_stddev,
+                )
             )
             passages.contents.append(passage_text)
 

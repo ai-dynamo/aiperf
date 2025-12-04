@@ -123,7 +123,7 @@ class PromptGenerator(BaseGenerator):
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
         self._prefix_prompts = [
-            self._generate_prompt(self.config.prefix_prompt.length)
+            self.generate_prompt(self.config.prefix_prompt.length)
             for _ in range(self.config.prefix_prompt.pool_size)
         ]
         self.debug(
@@ -137,6 +137,7 @@ class PromptGenerator(BaseGenerator):
         hash_ids: list[int] | None = None,
     ) -> str:
         """Generate a synthetic prompt with the configuration parameters.
+        Serves as a wrapper around other internal methods to provide a unified interface.
 
         Args:
             mean: The mean of the normal distribution.
@@ -151,10 +152,24 @@ class PromptGenerator(BaseGenerator):
                 mean, hash_ids, self.config.input_tokens.block_size
             )
 
-        num_tokens = self._length_rng.sample_positive_normal_integer(mean, stddev)
-        return self._generate_prompt(num_tokens)
+        num_tokens = self.calculate_num_tokens(mean, stddev)
+        return self.generate_prompt(num_tokens)
 
-    def _generate_prompt(self, num_tokens: int) -> str:
+    def calculate_num_tokens(
+        self,
+        mean: int | None = None,
+        stddev: int | None = None,
+    ) -> int:
+        """Calculate the number of tokens for a prompt based on a normal distribution.
+
+        Args:
+            mean: The mean of the normal distribution.
+            stddev: The standard deviation of the normal distribution.
+        """
+
+        return self._length_rng.sample_positive_normal_integer(mean, stddev)
+
+    def generate_prompt(self, num_tokens: int) -> str:
         """Generate a prompt containing exactly `num_tokens` number of tokens.
 
         Args:
@@ -175,7 +190,7 @@ class PromptGenerator(BaseGenerator):
         Generate a prompt containing exactly `num_tokens` by reusing previously generated prompts
         stored in `_cache`. Each hash index in `hash_ids` corresponds to a block of
         `block_size` tokens. If a hash index is found in `_cache`, its stored prompt is reused.
-        Otherwise, a new prompt is generated using `_generate_prompt()` and stored in `_cache`.
+        Otherwise, a new prompt is generated using `generate_prompt()` and stored in `_cache`.
 
         Args:
             num_tokens: The number of tokens required in the prompt.
