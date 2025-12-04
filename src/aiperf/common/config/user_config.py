@@ -20,6 +20,7 @@ from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import CustomDatasetType, GPUTelemetryMode
+from aiperf.common.enums.plugin_enums import EndpointType
 from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
 from aiperf.common.utils import load_json_str
 
@@ -433,20 +434,21 @@ class UserConfig(BaseConfig):
             rankings_tokens_modified or rankings_passages_modified
         )
 
-        endpoint_type_is_rankings = self.endpoint.type in {
-            "cohere_rankings",
-            "hf_tei_rankings",
-            "nim_rankings",
-        }
+        endpoint_type_is_rankings = "rankings" in self.endpoint.type.lower()
 
         # Validate that rankings options are only used with rankings endpoints
+        rankings_endpoints = [
+            endpoint_type
+            for endpoint_type in EndpointType
+            if "rankings" in endpoint_type.lower()
+        ]
         if rankings_options_modified and not endpoint_type_is_rankings:
             raise ValueError(
-                "Rankings-specific options (--rankings-passages-mean, --rankings-passages-stddev, "
+                f"Rankings-specific options (--rankings-passages-mean, --rankings-passages-stddev, "
                 "--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
                 "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev) "
                 "can only be used with rankings endpoint types "
-                "(cohere_rankings, hf_tei_rankings, nim_rankings)."
+                f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
             )
 
         # Validate that prompt tokens and rankings tokens are not both set
@@ -455,9 +457,10 @@ class UserConfig(BaseConfig):
         ):
             raise ValueError(
                 "The --prompt-input-tokens-mean/--prompt-input-tokens-stddev options "
-                "cannot be used together with rankings-specific token options "
-                "(--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
-                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev). "
+                "cannot be used together with rankings-specific token options or the rankings endpoints"
+                "Ranking options: (--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
+                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev, ). "
+                f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
                 "Please use only one set of options."
             )
         return self
