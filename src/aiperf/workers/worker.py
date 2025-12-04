@@ -36,6 +36,7 @@ from aiperf.common.mixins import ProcessHealthMixin, PullClientMixin
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
+    ReasoningResponseData,
     RequestRecord,
     Text,
     Turn,
@@ -316,14 +317,16 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
     async def _process_response(self, record: RequestRecord) -> Turn | None:
         """Process the response from the inference API call and convert it to a Turn object."""
         resp = self.inference_client.endpoint.extract_response_data(record)
-        # TODO how do we handle reasoning responses in multi turn?
+        # Skip reasoning responses in multi-turn conversations
+        has_reasoning = any(isinstance(r.data, ReasoningResponseData) for r in resp)
+        if has_reasoning:
+            return None
         resp_text = "".join([r.data.get_text() for r in resp if r.data])
-        if resp_text:
-            return Turn(
-                role="assistant",
-                texts=[Text(contents=[resp_text])],
-            )
-        return None
+        return (
+            Turn(role="assistant", texts=[Text(contents=[resp_text])])
+            if resp_text
+            else None
+        )
 
     async def _call_inference_api_internal(
         self,
