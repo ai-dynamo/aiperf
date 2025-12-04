@@ -23,6 +23,8 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
 
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
         self._passages_rng = rng.derive("dataset.rankings.passages")
+        self._passages_token_rng = rng.derive("dataset.rankings.passages.tokens")
+        self._query_token_rng = rng.derive("dataset.rankings.query.tokens")
 
         # Set default sampling strategy for synthetic rankings dataset if not explicitly set
         if self.config.input.dataset_sampling_strategy is None:
@@ -31,12 +33,6 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
             )
             self.info(
                 f"Using default sampling strategy for synthetic rankings dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
-            )
-
-        if self.config.input.prompt.input_tokens.mean <= 0:
-            raise ValueError(
-                "Synthetic rankings data generation requires text prompts to be enabled. "
-                "Please set --prompt-input-tokens-mean > 0."
             )
 
     def create_dataset(self) -> list[Conversation]:
@@ -64,17 +60,22 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         """Create a single ranking turn with one synthetic query and multiple synthetic passages."""
         turn = Turn()
 
-        query_text = self.prompt_generator.generate(
-            mean=self.config.input.prompt.input_tokens.mean,
-            stddev=self.config.input.prompt.input_tokens.stddev,
+        query_text = self.prompt_generator.generate_prompt(
+            self.prompt_generator.calculate_num_tokens(
+                self.config.input.rankings_query_prompt_token_mean,
+                self.config.input.rankings_query_prompt_token_stddev,
+            )
         )
         query = Text(name="query", contents=[query_text])
 
+        # Generate passages with rankings-specific token counts (per passage)
         passages = Text(name="passages")
         for _ in range(num_passages):
-            passage_text = self.prompt_generator.generate(
-                mean=self.config.input.prompt.input_tokens.mean,
-                stddev=self.config.input.prompt.input_tokens.stddev,
+            passage_text = self.prompt_generator.generate_prompt(
+                self.prompt_generator.calculate_num_tokens(
+                    self.config.input.rankings_passages_prompt_token_mean,
+                    self.config.input.rankings_passages_prompt_token_stddev,
+                )
             )
             passages.contents.append(passage_text)
 

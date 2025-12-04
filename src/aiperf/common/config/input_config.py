@@ -331,6 +331,62 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.RANKINGS_PASSAGES_STDDEV
 
+    rankings_passages_prompt_token_mean: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Mean number of tokens in a passage entry for rankings (default 550)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-passages-prompt-token-mean",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.RANKINGS_PASSAGES_PROMPT_TOKEN_MEAN
+
+    rankings_passages_prompt_token_stddev: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Stddev for number of tokens in a passage entry for rankings (default 0)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-passages-prompt-token-stddev",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.RANKINGS_PASSAGES_PROMPT_TOKEN_STDDEV
+
+    rankings_query_prompt_token_mean: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Mean number of tokens in a query entry for rankings (default 550)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-query-prompt-token-mean",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.RANKINGS_QUERY_PROMPT_TOKEN_MEAN
+
+    rankings_query_prompt_token_stddev: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Stddev for number of tokens in a query entry for rankings (default 0)."
+            ),
+        ),
+        CLIParameter(
+            name=("--rankings-query-prompt-token-stddev",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.RANKINGS_QUERY_PROMPT_TOKEN_STDDEV
+
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
     video: VideoConfig = VideoConfig()

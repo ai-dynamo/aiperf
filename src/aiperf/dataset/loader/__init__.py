@@ -33,6 +33,7 @@ from aiperf.dataset.loader.multi_turn import (
     MultiTurnDatasetLoader,
 )
 from aiperf.dataset.loader.random_pool import (
+    Filename,
     RandomPoolDatasetLoader,
 )
 from aiperf.dataset.loader.sharegpt import (
@@ -48,6 +49,7 @@ __all__ = [
     "BaseLoader",
     "BasePublicDatasetLoader",
     "CustomDatasetT",
+    "Filename",
     "MediaConversionMixin",
     "MooncakeTrace",
     "MooncakeTraceDatasetLoader",
