@@ -41,20 +41,17 @@ _AGGREGATED_METRICS: list[str] = MetricRegistry.tags_applicable_to(
     "output_token_throughput_per_gpu",
 ]
 
-_REQUEST_METRICS: list[str] = (
-    MetricRegistry.tags_applicable_to(
-        MetricFlags.NONE,
-        MetricFlags.NONE,
-        MetricType.RECORD,
-    )
-    + [
-        "request_number",
-        "timestamp",
-        "timestamp_s",
-        "throughput_tokens_per_sec",
-        "active_requests",
-    ]
-)
+_REQUEST_METRICS: list[str] = MetricRegistry.tags_applicable_to(
+    MetricFlags.NONE,
+    MetricFlags.NONE,
+    MetricType.RECORD,
+) + [
+    "request_number",
+    "timestamp",
+    "timestamp_s",
+    "throughput_tokens_per_sec",
+    "active_requests",
+]
 
 _TIMESLICE_METRICS: list[str] = [
     "Timeslice",

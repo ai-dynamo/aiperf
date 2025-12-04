@@ -106,7 +106,7 @@ visualization:
       title: "Dispersed Output Token Throughput Over Time"
 
     timeslices_ttft:
-      type: histogram
+      type: timeslice
       x: Timeslice
       y: Time to First Token
       stat: avg
@@ -115,7 +115,7 @@ visualization:
       use_slice_duration: true
 
     timeslices_itl:
-      type: histogram
+      type: timeslice
       x: Timeslice
       y: Inter Token Latency
       stat: avg
@@ -124,7 +124,7 @@ visualization:
       use_slice_duration: true
 
     timeslices_throughput:
-      type: histogram
+      type: timeslice
       x: Timeslice
       y: Request Throughput
       stat: avg
@@ -133,7 +133,7 @@ visualization:
       use_slice_duration: true
 
     timeslices_latency:
-      type: histogram
+      type: timeslice
       x: Timeslice
       y: Request Latency
       stat: avg

@@ -192,7 +192,7 @@ class AreaHandler(BaseSingleRunHandler):
         )
 
 
-@PlotTypeHandlerFactory.register(PlotType.HISTOGRAM)
+@PlotTypeHandlerFactory.register(PlotType.TIMESLICE)
 class TimeSliceHandler(BaseSingleRunHandler):
     """Handler for timeslice scatter plot type."""
 
@@ -283,12 +283,11 @@ class TimeSliceHandler(BaseSingleRunHandler):
         return avg, label, std
 
 
+@PlotTypeHandlerFactory.register(PlotType.HISTOGRAM)
 class HistogramHandler(BaseSingleRunHandler):
-    """Handler for histogram/bar chart plots (preserved for future use).
+    """Handler for histogram/bar chart plots.
 
-    This handler is not currently registered to any PlotType and won't generate
-    plots automatically. It's kept available for future use when bar chart
-    visualization is needed.
+    Generates histogram/bar chart visualizations for timeslice data.
     """
 
     def can_handle(self, spec: PlotSpec, data: RunData) -> bool:

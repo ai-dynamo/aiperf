@@ -13,7 +13,6 @@ import pandas as pd
 import pytest
 
 from aiperf.plot.core.swept_params import (
-    DEFAULT_IGNORE_PARAMS,
     auto_select_group_by,
     auto_select_label_by,
     detect_swept_parameters,

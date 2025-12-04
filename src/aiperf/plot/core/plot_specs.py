@@ -88,6 +88,7 @@ class PlotType(Enum):
     SCATTER = "scatter"
     AREA = "area"
     HISTOGRAM = "histogram"
+    TIMESLICE = "timeslice"
     PARETO = "pareto"
     SCATTER_LINE = "scatter_line"
     DUAL_AXIS = "dual_axis"

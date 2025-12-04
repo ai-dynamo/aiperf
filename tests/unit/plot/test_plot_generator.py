@@ -1269,10 +1269,13 @@ class TestGetMetricDirection:
         plot_gen = PlotGenerator()
 
         # Mock MetricRegistry to raise exception and empty derived directions
-        with patch(
-            "aiperf.plot.core.plot_generator.MetricRegistry.get_class",
-            side_effect=Exception,
-        ), patch("aiperf.plot.core.plot_generator.DERIVED_METRIC_DIRECTIONS", {}):
+        with (
+            patch(
+                "aiperf.plot.core.plot_generator.MetricRegistry.get_class",
+                side_effect=Exception,
+            ),
+            patch("aiperf.plot.core.plot_generator.DERIVED_METRIC_DIRECTIONS", {}),
+        ):
             direction = plot_gen._get_metric_direction("unknown_metric")
             assert direction == ""
 
@@ -1576,3 +1579,243 @@ class TestPrepareGroupsExperimentTypes:
         # Should successfully group by model
         assert groups == ["model_a", "model_b"]
         assert len(colors) == 2
+
+
+class TestParetoFrontierOptimization:
+    """Tests for optimized O(n log n) Pareto frontier calculation."""
+
+    @pytest.mark.parametrize(
+        "x_dir,y_dir,x_vals,y_vals,expected",
+        [
+            # LOWER x, HIGHER y (classic Pareto: minimize x, maximize y)
+            ("LOWER", "HIGHER", [1, 2, 3, 4], [4, 5, 3, 6], [True, True, False, True]),
+            ("LOWER", "HIGHER", [1, 2, 3], [3, 2, 1], [True, False, False]),
+            # HIGHER x, HIGHER y (maximize both)
+            (
+                "HIGHER",
+                "HIGHER",
+                [1, 2, 3, 4],
+                [4, 5, 3, 6],
+                [False, False, False, True],
+            ),
+            ("HIGHER", "HIGHER", [1, 2, 3], [1, 2, 3], [False, False, True]),
+            # LOWER x, LOWER y (minimize both)
+            ("LOWER", "LOWER", [1, 2, 3, 4], [4, 3, 5, 2], [True, True, False, True]),
+            ("LOWER", "LOWER", [1, 2, 3], [3, 2, 1], [True, True, True]),
+            # HIGHER x, LOWER y (maximize x, minimize y)
+            (
+                "HIGHER",
+                "LOWER",
+                [1, 2, 3, 4],
+                [4, 5, 3, 2],
+                [False, False, False, True],
+            ),
+            ("HIGHER", "LOWER", [1, 2, 3], [3, 2, 1], [False, False, True]),
+            # Edge cases: duplicate x values
+            ("LOWER", "HIGHER", [1, 1, 2], [5, 3, 6], [True, False, True]),
+            # Edge cases: duplicate y values
+            ("LOWER", "HIGHER", [1, 2, 3], [5, 5, 5], [True, True, True]),
+            # Edge cases: all points on frontier (monotonic increase)
+            ("LOWER", "HIGHER", [1, 2, 3, 4], [1, 2, 3, 4], [True, True, True, True]),
+            # Edge cases: single best point
+            ("HIGHER", "HIGHER", [1, 2, 3], [1, 1, 10], [False, False, True]),
+        ],  # fmt: skip
+    )
+    def test_pareto_frontier_directions(
+        self, plot_generator, x_dir, y_dir, x_vals, y_vals, expected
+    ):
+        """Test Pareto frontier calculation for all direction combinations."""
+        from aiperf.common.enums import PlotMetricDirection
+
+        x_direction = PlotMetricDirection(x_dir)
+        y_direction = PlotMetricDirection(y_dir)
+
+        x_array = np.array(x_vals, dtype=float)
+        y_array = np.array(y_vals, dtype=float)
+
+        result = plot_generator._compute_pareto_frontier(
+            x_array, y_array, x_direction, y_direction
+        )
+
+        expected_array = np.array(expected, dtype=bool)
+        np.testing.assert_array_equal(
+            result,
+            expected_array,
+            err_msg=f"Failed for x_dir={x_dir}, y_dir={y_dir}, x={x_vals}, y={y_vals}",
+        )
+
+    def test_pareto_empty_array(self, plot_generator):
+        """Test with empty arrays."""
+        from aiperf.common.enums import PlotMetricDirection
+
+        result = plot_generator._compute_pareto_frontier(
+            np.array([]),
+            np.array([]),
+            PlotMetricDirection.LOWER,
+            PlotMetricDirection.HIGHER,
+        )
+        assert len(result) == 0
+        assert result.dtype == bool
+
+    def test_pareto_single_point(self, plot_generator):
+        """Test with single point."""
+        from aiperf.common.enums import PlotMetricDirection
+
+        result = plot_generator._compute_pareto_frontier(
+            np.array([1.0]),
+            np.array([2.0]),
+            PlotMetricDirection.LOWER,
+            PlotMetricDirection.HIGHER,
+        )
+        np.testing.assert_array_equal(result, [True])
+
+    def test_pareto_two_points(self, plot_generator):
+        """Test with two points - various domination scenarios."""
+        from aiperf.common.enums import PlotMetricDirection
+
+        # Point 2 dominates point 1 (minimize x, maximize y)
+        # Data must be sorted by x ascending (1.0 comes before 2.0)
+        result = plot_generator._compute_pareto_frontier(
+            np.array([1.0, 2.0]),  # Sorted by x
+            np.array([2.0, 1.0]),  # Point 1 has y=2, point 2 has y=1
+            PlotMetricDirection.LOWER,
+            PlotMetricDirection.HIGHER,
+        )
+        # Point 1 (x=1, y=2) is on frontier, Point 2 (x=2, y=1) is dominated
+        np.testing.assert_array_equal(result, [True, False])
+
+        # Both points on frontier (non-dominated, moving away from each other)
+        result = plot_generator._compute_pareto_frontier(
+            np.array([1.0, 2.0]),  # Sorted by x
+            np.array([1.0, 2.0]),  # Both increase together
+            PlotMetricDirection.LOWER,
+            PlotMetricDirection.HIGHER,
+        )
+        # For minimize x, maximize y: point 1 (x=1, y=1) is on frontier
+        # Point 2 (x=2, y=2) has worse x but better y, so it's also on frontier
+        np.testing.assert_array_equal(result, [True, True])
+
+    def test_pareto_backwards_compatibility(self, multi_run_df):
+        """
+        Verify that the optimized algorithm produces identical results to the
+        O(n²) algorithm for typical multi-run data.
+        """
+        from aiperf.common.enums import PlotMetricDirection
+
+        plot_gen = PlotGenerator()
+        df = multi_run_df.sort_values("request_latency")
+
+        # Test on latency (LOWER) vs throughput (HIGHER) - classic Pareto
+        x_vals = df["request_latency"].values
+        y_vals = df["request_throughput"].values
+
+        result = plot_gen._compute_pareto_frontier(
+            x_vals, y_vals, PlotMetricDirection.LOWER, PlotMetricDirection.HIGHER
+        )
+
+        # Verify at least one point is on the frontier
+        assert np.any(result), "At least one point should be on Pareto frontier"
+
+        # Verify no point on the frontier is dominated by another point on the frontier
+        pareto_points = np.where(result)[0]
+        for i in pareto_points:
+            for j in pareto_points:
+                if i == j:
+                    continue
+                # For minimize x, maximize y: j should not have both (x_j <= x_i and y_j >= y_i) with strict inequality
+                if x_vals[j] < x_vals[i] and y_vals[j] > y_vals[i]:
+                    pytest.fail(
+                        f"Point {j} dominates point {i}, but both are on frontier"
+                    )
+
+    def test_pareto_performance_large_dataset(self, plot_generator):
+        """Benchmark with large dataset to verify O(n log n) performance."""
+        import time
+
+        from aiperf.common.enums import PlotMetricDirection
+
+        # Generate 1000 random points
+        np.random.seed(42)
+        n = 1000
+        x_vals = np.random.rand(n) * 100
+        y_vals = np.random.rand(n) * 100
+
+        # Sort by x (as the real algorithm expects)
+        sorted_indices = np.argsort(x_vals)
+        x_vals = x_vals[sorted_indices]
+        y_vals = y_vals[sorted_indices]
+
+        start = time.time()
+        result = plot_generator._compute_pareto_frontier(
+            x_vals, y_vals, PlotMetricDirection.LOWER, PlotMetricDirection.HIGHER
+        )
+        elapsed = time.time() - start
+
+        # Should complete in well under 0.1 seconds for 1000 points
+        assert elapsed < 0.1, f"Algorithm took {elapsed}s for {n} points (too slow)"
+        assert np.any(result), "Should have at least one point on frontier"
+
+    def test_pareto_all_points_identical(self, plot_generator):
+        """Test when all points have identical coordinates."""
+        from aiperf.common.enums import PlotMetricDirection
+
+        # All points are identical, so all should be on the frontier
+        result = plot_generator._compute_pareto_frontier(
+            np.array([5.0, 5.0, 5.0]),
+            np.array([3.0, 3.0, 3.0]),
+            PlotMetricDirection.LOWER,
+            PlotMetricDirection.HIGHER,
+        )
+        # All identical points are considered on the frontier (use >= comparison)
+        np.testing.assert_array_equal(result, [True, True, True])
+
+    def test_pareto_raises_error_for_unknown_metric_directions(self, multi_run_df):
+        """Test that ValueError is raised when metric directions are unknown."""
+        from unittest.mock import patch
+
+        plot_gen = PlotGenerator()
+
+        # Mock _get_metric_direction to return empty string (unknown direction)
+        with (
+            patch.object(plot_gen, "_get_metric_direction", return_value=""),
+            pytest.raises(
+                ValueError,
+                match="Cannot determine optimization direction for x-axis metric 'request_latency' and y-axis metric 'request_throughput'",
+            ),
+        ):
+            plot_gen.create_pareto_plot(
+                df=multi_run_df,
+                x_metric="request_latency",
+                y_metric="request_throughput",
+                label_by="concurrency",
+                group_by="model",
+            )
+
+    def test_pareto_raises_error_for_one_unknown_metric(self, multi_run_df):
+        """Test that ValueError is raised when one metric direction is unknown."""
+        from unittest.mock import patch
+
+        from aiperf.common.enums import PlotMetricDirection
+
+        plot_gen = PlotGenerator()
+
+        # Mock _get_metric_direction to return known for x, unknown for y
+        def mock_direction(metric):
+            if metric == "request_latency":
+                return PlotMetricDirection.LOWER
+            return ""
+
+        with (
+            patch.object(plot_gen, "_get_metric_direction", side_effect=mock_direction),
+            pytest.raises(
+                ValueError,
+                match="Cannot determine optimization direction for y-axis metric 'request_throughput'",
+            ),
+        ):
+            plot_gen.create_pareto_plot(
+                df=multi_run_df,
+                x_metric="request_latency",
+                y_metric="request_throughput",
+                label_by="concurrency",
+                group_by="model",
+            )

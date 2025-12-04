@@ -402,6 +402,67 @@ class PlotGenerator:
         logger.debug(f"Could not determine direction for metric: {metric_tag}")
         return ""
 
+    def _compute_pareto_frontier(
+        self,
+        x_values: np.ndarray,
+        y_values: np.ndarray,
+        x_direction: PlotMetricDirection,
+        y_direction: PlotMetricDirection,
+    ) -> np.ndarray:
+        """
+        Compute Pareto frontier using O(n log n) sweep algorithm.
+
+        The algorithm leverages the fact that after sorting by x-coordinate, we can
+        scan once (left-to-right or right-to-left depending on metric directions)
+        and track the best y-value seen so far to determine Pareto optimality.
+
+        Args:
+            x_values: X-axis metric values (must already be sorted ascending)
+            y_values: Y-axis metric values (corresponding to x_values)
+            x_direction: Whether higher or lower x is better
+            y_direction: Whether higher or lower y is better
+
+        Returns:
+            Boolean array where True indicates point is on Pareto frontier
+        """
+        n = len(x_values)
+
+        if n == 0:
+            return np.array([], dtype=bool)
+        if n == 1:
+            return np.array([True], dtype=bool)
+
+        is_pareto = np.zeros(n, dtype=bool)
+
+        if x_direction == PlotMetricDirection.LOWER:
+            if y_direction == PlotMetricDirection.HIGHER:
+                best_y = float("-inf")
+                for i in range(n):
+                    if y_values[i] >= best_y:
+                        is_pareto[i] = True
+                        best_y = y_values[i]
+            else:
+                best_y = float("inf")
+                for i in range(n):
+                    if y_values[i] <= best_y:
+                        is_pareto[i] = True
+                        best_y = y_values[i]
+        else:
+            if y_direction == PlotMetricDirection.HIGHER:
+                best_y = float("-inf")
+                for i in range(n - 1, -1, -1):
+                    if y_values[i] >= best_y:
+                        is_pareto[i] = True
+                        best_y = y_values[i]
+            else:
+                best_y = float("inf")
+                for i in range(n - 1, -1, -1):
+                    if y_values[i] <= best_y:
+                        is_pareto[i] = True
+                        best_y = y_values[i]
+
+        return is_pareto
+
     def _direction_to_arrow(self, direction: PlotMetricDirection | str) -> str:
         """
         Convert a PlotMetricDirection to its unicode arrow representation.
@@ -594,9 +655,8 @@ class PlotGenerator:
                 group_color = self._get_palette_colors(1)[0]
                 group_name = "Data"
             else:
-                group_data = df_sorted[df_sorted[group_by] == group].sort_values(
-                    x_metric
-                )
+                # df_sorted is already sorted by x_metric, filtering preserves order
+                group_data = df_sorted[df_sorted[group_by] == group]
                 group_color = group_colors[group]
                 # Use display name if available, otherwise use group ID
                 group_name = display_names.get(group, group)
@@ -605,9 +665,28 @@ class PlotGenerator:
             all_x_data.extend(group_data[x_metric].tolist())
             all_y_data.extend(group_data[y_metric].tolist())
 
-            # Calculate Pareto frontier for this group using vectorized operations
-            max_y_cumulative = group_data[y_metric].cummax()
-            is_pareto = group_data[y_metric] == max_y_cumulative
+            # Calculate Pareto frontier for this group based on metric directions
+            x_dir = self._get_metric_direction(x_metric)
+            y_dir = self._get_metric_direction(y_metric)
+
+            if not x_dir or not y_dir:
+                missing = []
+                if not x_dir:
+                    missing.append(f"x-axis metric '{x_metric}'")
+                if not y_dir:
+                    missing.append(f"y-axis metric '{y_metric}'")
+
+                raise ValueError(
+                    f"Cannot determine optimization direction for {' and '.join(missing)}. "
+                    f"Metrics must be registered in MetricRegistry with LARGER_IS_BETTER flag "
+                    f"or defined in DERIVED_METRIC_DIRECTIONS. Add the metric(s) to ensure "
+                    f"correct Pareto frontier calculation."
+                )
+
+            x_values = group_data[x_metric].values
+            y_values = group_data[y_metric].values
+            is_pareto = self._compute_pareto_frontier(x_values, y_values, x_dir, y_dir)
+
             df_pareto = group_data[is_pareto].copy()
 
             if not df_pareto.empty:
@@ -767,9 +846,8 @@ class PlotGenerator:
                 group_color = self._get_palette_colors(1)[0]
                 group_name = "Data"
             else:
-                group_data = df_sorted[df_sorted[group_by] == group].sort_values(
-                    x_metric
-                )
+                # df_sorted is already sorted by x_metric, filtering preserves order
+                group_data = df_sorted[df_sorted[group_by] == group]
                 group_color = group_colors[group]
                 # Use display name if available, otherwise use group ID
                 group_name = display_names.get(group, group)

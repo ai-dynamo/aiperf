@@ -62,7 +62,9 @@ class PlotController:
 
         classification_config = self.plot_config.get_experiment_classification_config()
         if classification_config:
-            print("Experiment classification enabled: grouping runs by baseline/treatment patterns")
+            print(
+                "Experiment classification enabled: grouping runs by baseline/treatment patterns"
+            )
         self.loader = DataLoader(
             classification_config=classification_config,
         )
