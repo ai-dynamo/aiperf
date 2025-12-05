@@ -33,6 +33,7 @@ from aiperf.common.config.config_defaults import (
     OutputTokensDefaults,
     PrefixPromptDefaults,
     PromptDefaults,
+    RankingsDefaults,
     ServiceDefaults,
     TokenizerDefaults,
     TurnDefaults,
@@ -85,6 +86,11 @@ from aiperf.common.config.prompt_config import (
     OutputTokensConfig,
     PrefixPromptConfig,
     PromptConfig,
+)
+from aiperf.common.config.rankings_config import (
+    RankingsConfig,
+    RankingsPassagesConfig,
+    RankingsQueryConfig,
 )
 from aiperf.common.config.service_config import (
     ServiceConfig,
@@ -144,6 +150,10 @@ __all__ = [
     "PrefixPromptDefaults",
     "PromptConfig",
     "PromptDefaults",
+    "RankingsConfig",
+    "RankingsDefaults",
+    "RankingsPassagesConfig",
+    "RankingsQueryConfig",
     "ServiceConfig",
     "ServiceDefaults",
     "TokenizerConfig",

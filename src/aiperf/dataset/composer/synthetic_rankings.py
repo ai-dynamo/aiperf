@@ -42,8 +42,8 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         """
         conversations: list[Conversation] = []
         num_entries = self.config.input.conversation.num_dataset_entries
-        num_passages_mean = self.config.input.rankings_passages_mean
-        num_passages_std = self.config.input.rankings_passages_stddev
+        num_passages_mean = self.config.input.rankings.passages.mean
+        num_passages_std = self.config.input.rankings.passages.stddev
 
         for _ in range(num_entries):
             num_passages = self._passages_rng.sample_positive_normal_integer(
@@ -62,8 +62,8 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
 
         query_text = self.prompt_generator.generate_prompt(
             self.prompt_generator.calculate_num_tokens(
-                self.config.input.rankings_query_prompt_token_mean,
-                self.config.input.rankings_query_prompt_token_stddev,
+                self.config.input.rankings.query.prompt_token_mean,
+                self.config.input.rankings.query.prompt_token_stddev,
             )
         )
         query = Text(name="query", contents=[query_text])
@@ -73,8 +73,8 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         for _ in range(num_passages):
             passage_text = self.prompt_generator.generate_prompt(
                 self.prompt_generator.calculate_num_tokens(
-                    self.config.input.rankings_passages_prompt_token_mean,
-                    self.config.input.rankings_passages_prompt_token_stddev,
+                    self.config.input.rankings.passages.prompt_token_mean,
+                    self.config.input.rankings.passages.prompt_token_stddev,
                 )
             )
             passages.contents.append(passage_text)
