@@ -401,6 +401,17 @@ class UserConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_user_context_requires_sessions(self) -> Self:
+        """Validate that user context prompt requires num-sessions to be specified."""
+        if self.input.prompt.prefix_prompt.user_context_prompt_length is not None:
+            if self.input.conversation.num is None:
+                raise ValueError(
+                    "--user-context-prompt-length requires --num-sessions to be specified. "
+                    "Each session needs a unique user context prompt, so the number of sessions must be defined."
+                )
+        return self
+
+    @model_validator(mode="after")
     def validate_rankings_token_options(self) -> Self:
         """Validate rankings token options usage."""
 

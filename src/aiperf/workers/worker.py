@@ -232,6 +232,8 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
                 conversation_id=message.conversation_id,
                 turn_index=turn_index,
                 turns=turn_list,
+                system_message=conversation.system_message,
+                user_context_message=conversation.user_context_message,
             )
 
             return_message.requests_sent += 1

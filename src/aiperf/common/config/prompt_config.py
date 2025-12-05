@@ -163,6 +163,58 @@ class PrefixPromptConfig(BaseConfig):
         ),
     ] = PrefixPromptDefaults.LENGTH
 
+    shared_system_prompt_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description=(
+                "Length of shared system prompt in tokens.\n"
+                "This prompt is identical across all sessions and appears as a system message.\n"
+                "Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size."
+            ),
+        ),
+        CLIParameter(
+            name=("--shared-system-prompt-length",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    user_context_prompt_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description=(
+                "Length of per-session user context prompt in tokens.\n"
+                "Each session gets a unique user context prompt.\n"
+                "Requires --num-sessions to be specified.\n"
+                "Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size."
+            ),
+        ),
+        CLIParameter(
+            name=("--user-context-prompt-length",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    @model_validator(mode="after")
+    def validate_mutually_exclusive_prompt_options(self) -> Self:
+        """Ensure shared system/user context options don't conflict with legacy prefix options."""
+        has_context_prompts = (
+            self.shared_system_prompt_length is not None
+            or self.user_context_prompt_length is not None
+        )
+        has_legacy_prefix = self.length > 0 or self.pool_size > 0
+
+        if has_context_prompts and has_legacy_prefix:
+            raise ValueError(
+                "Cannot use both --shared-system-prompt-length/--user-context-prompt-length "
+                "and --prefix-prompt-length/--prefix-prompt-pool-size. "
+                "These are mutually exclusive prompt configuration modes."
+            )
+        return self
+
 
 class PromptConfig(BaseConfig):
     """

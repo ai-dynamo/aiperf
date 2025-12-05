@@ -874,6 +874,16 @@ class RequestInfo(AIPerfBaseModel):
         default=None,
         description="The ID of the conversation (if applicable).",
     )
+    system_message: str | None = Field(
+        default=None,
+        description="Optional shared system message to prepend to the first turn. "
+        "Extracted from conversation.system_message at request time.",
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description="Optional per-conversation user context message to prepend to the first turn. "
+        "Extracted from conversation.user_context_message at request time.",
+    )
 
 
 class MetricRecordInfo(AIPerfBaseModel):
