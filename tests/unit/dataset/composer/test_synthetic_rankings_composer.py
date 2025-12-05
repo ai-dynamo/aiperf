@@ -2,9 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-import pytest
-
-from aiperf.common.config import UserConfig
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.composer.synthetic_rankings import SyntheticRankingsDatasetComposer
 
@@ -13,15 +10,6 @@ def test_initialization_basic(synthetic_config, mock_tokenizer):
     """Ensure SyntheticRankingsDatasetComposer initializes correctly."""
     composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
     assert composer.session_id_generator is not None
-
-
-def test_initialization_fails_without_prompt(mock_tokenizer):
-    """Verify initialization raises error when prompt mean = 0."""
-    config = UserConfig.model_construct()
-    config.input.prompt.input_tokens.mean = 0
-
-    with pytest.raises(ValueError, match="requires text prompts"):
-        SyntheticRankingsDatasetComposer(config, mock_tokenizer)
 
 
 def test_create_dataset_structure(synthetic_config, mock_tokenizer):
@@ -78,3 +66,31 @@ def test_reproducibility_fixed_seed(synthetic_config, mock_tokenizer):
         t1, t2 = c1.turns[0], c2.turns[0]
         assert t1.texts[0].contents == t2.texts[0].contents
         assert t1.texts[1].contents == t2.texts[1].contents
+
+
+def test_rankings_specific_token_options(synthetic_config, mock_tokenizer):
+    """Test that rankings-specific token options are used for query and passages."""
+    synthetic_config.input.rankings_passages_mean = 3
+    synthetic_config.input.rankings_passages_prompt_token_mean = 100
+    synthetic_config.input.rankings_passages_prompt_token_stddev = 10
+    synthetic_config.input.rankings_query_prompt_token_mean = 50
+    synthetic_config.input.rankings_query_prompt_token_stddev = 5
+    synthetic_config.input.random_seed = 42
+
+    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    dataset = composer.create_dataset()
+
+    # Verify that data was generated
+    assert len(dataset) > 0
+
+    # Check that each conversation has the expected structure
+    for conv in dataset:
+        assert len(conv.turns) == 1
+        turn = conv.turns[0]
+        assert len(turn.texts) == 2
+        query, passages = turn.texts
+        assert query.name == "query"
+        assert passages.name == "passages"
+        # Query and passages should have content
+        assert len(query.contents) == 1
+        assert len(passages.contents) >= 1

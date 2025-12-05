@@ -128,30 +128,30 @@ class TestPromptGeneratorComprehensive:
         assert len(result) > 0
 
     # ============================================================================
-    # _generate_prompt Method Tests
+    # generate_prompt Method Tests
     # ============================================================================
 
-    def test_generate_prompt_normal_case(self, basic_config):
-        """Test _generate_prompt method with normal parameters."""
+    def testgenerate_prompt_normal_case(self, basic_config):
+        """Test generate_prompt method with normal parameters."""
         tokenizer, config = basic_config
         generator = PromptGenerator(config, tokenizer)
 
-        result = generator._generate_prompt(3)
+        result = generator.generate_prompt(3)
         assert result.startswith("token_")
 
-    def test_generate_prompt_zero_tokens(self, basic_config):
-        """Test _generate_prompt with zero tokens."""
+    def testgenerate_prompt_zero_tokens(self, basic_config):
+        """Test generate_prompt with zero tokens."""
         tokenizer, config = basic_config
         generator = PromptGenerator(config, tokenizer)
 
-        generator._generate_prompt(0)
+        generator.generate_prompt(0)
 
-    def test_generate_prompt_large_number(self, basic_config):
-        """Test _generate_prompt with large number of tokens."""
+    def testgenerate_prompt_large_number(self, basic_config):
+        """Test generate_prompt with large number of tokens."""
         tokenizer, config = basic_config
         generator = PromptGenerator(config, tokenizer)
 
-        generator._generate_prompt(1000)
+        generator.generate_prompt(1000)
 
     # ============================================================================
     # _generate_cached_prompt Method Tests

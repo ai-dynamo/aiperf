@@ -757,3 +757,310 @@ def test_concurrency_validation_with_duration_benchmarking():
     )
     assert config.loadgen.concurrency == 100
     assert config.loadgen.benchmark_duration == 60
+
+
+# =============================================================================
+# Rankings Configuration Tests
+# =============================================================================
+
+
+def test_rankings_passages_defaults_and_custom_values():
+    """Test rankings passages mean and stddev defaults and custom values."""
+    # Test defaults
+    cfg_default = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.HF_TEI_RANKINGS,
+            custom_endpoint="test",
+        ),
+    )
+    assert cfg_default.input.rankings_passages_mean == 1
+    assert cfg_default.input.rankings_passages_stddev == 0
+
+    # Test custom values
+    cfg_custom = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.HF_TEI_RANKINGS,
+            custom_endpoint="test",
+        ),
+        input=InputConfig(rankings_passages_mean=5, rankings_passages_stddev=2),
+    )
+    assert cfg_custom.input.rankings_passages_mean == 5
+    assert cfg_custom.input.rankings_passages_stddev == 2
+
+
+def test_rankings_passages_validation_errors():
+    """Test that invalid rankings passages values raise validation errors."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.HF_TEI_RANKINGS,
+                custom_endpoint="test",
+            ),
+            input=InputConfig(rankings_passages_mean=0),
+        )
+
+    with pytest.raises(ValidationError):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.HF_TEI_RANKINGS,
+                custom_endpoint="test",
+            ),
+            input=InputConfig(rankings_passages_stddev=-1),
+        )
+
+
+def test_rankings_passages_prompt_token_defaults_and_custom_values():
+    """Test rankings passages prompt token defaults and custom values."""
+    # Test defaults
+    cfg_default = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.HF_TEI_RANKINGS,
+            custom_endpoint="test",
+        ),
+    )
+    assert cfg_default.input.rankings_passages_prompt_token_mean == 550
+    assert cfg_default.input.rankings_passages_prompt_token_stddev == 0
+
+    # Test custom values
+    cfg_custom = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.HF_TEI_RANKINGS,
+            custom_endpoint="test",
+        ),
+        input=InputConfig(
+            rankings_passages_prompt_token_mean=100,
+            rankings_passages_prompt_token_stddev=10,
+        ),
+    )
+    assert cfg_custom.input.rankings_passages_prompt_token_mean == 100
+    assert cfg_custom.input.rankings_passages_prompt_token_stddev == 10
+
+
+def test_rankings_query_prompt_token_defaults_and_custom_values():
+    """Test rankings query prompt token defaults and custom values."""
+    # Test defaults
+    cfg_default = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.HF_TEI_RANKINGS,
+            custom_endpoint="test",
+        ),
+    )
+    assert cfg_default.input.rankings_query_prompt_token_mean == 550
+    assert cfg_default.input.rankings_query_prompt_token_stddev == 0
+
+    # Test custom values
+    cfg_custom = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.HF_TEI_RANKINGS,
+            custom_endpoint="test",
+        ),
+        input=InputConfig(
+            rankings_query_prompt_token_mean=50,
+            rankings_query_prompt_token_stddev=5,
+        ),
+    )
+    assert cfg_custom.input.rankings_query_prompt_token_mean == 50
+    assert cfg_custom.input.rankings_query_prompt_token_stddev == 5
+
+
+@pytest.mark.parametrize(
+    "param_name,invalid_value",
+    [
+        ("rankings_passages_prompt_token_mean", 0),
+        ("rankings_passages_prompt_token_stddev", -1),
+        ("rankings_query_prompt_token_mean", 0),
+        ("rankings_query_prompt_token_stddev", -1),
+    ],
+)
+def test_rankings_prompt_token_validation_errors(param_name, invalid_value):
+    """Test that invalid rankings prompt token values raise validation errors."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.HF_TEI_RANKINGS,
+                custom_endpoint="test",
+            ),
+            input=InputConfig(**{param_name: invalid_value}),
+        )
+
+
+def test_rankings_and_prompt_tokens_cannot_be_set_together():
+    """Test that prompt input tokens and rankings-specific token options cannot both be set."""
+    from pydantic import ValidationError
+
+    from aiperf.common.config import PromptConfig
+    from aiperf.common.config.prompt_config import InputTokensConfig
+
+    # Create a prompt config with non-default input tokens
+    prompt_config = PromptConfig(input_tokens=InputTokensConfig(mean=100))
+
+    # Setting both prompt input tokens and rankings-specific tokens should raise error
+    with pytest.raises(ValidationError, match="cannot be used together"):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.HF_TEI_RANKINGS,
+                custom_endpoint="test",
+            ),
+            input=InputConfig(
+                prompt=prompt_config,
+                rankings_passages_prompt_token_mean=200,  # Non-default value
+            ),
+        )
+
+    # Setting prompt stddev and rankings token options should also raise error
+    prompt_config_stddev = PromptConfig(input_tokens=InputTokensConfig(stddev=10))
+
+    with pytest.raises(ValidationError, match="cannot be used together"):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.HF_TEI_RANKINGS,
+                custom_endpoint="test",
+            ),
+            input=InputConfig(
+                prompt=prompt_config_stddev,
+                rankings_query_prompt_token_mean=300,  # Non-default value
+            ),
+        )
+
+
+def test_rankings_tokens_only_is_allowed():
+    """Test that setting only rankings-specific token options is allowed with rankings endpoint."""
+    cfg = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.HF_TEI_RANKINGS,
+            custom_endpoint="test",
+        ),
+        input=InputConfig(
+            rankings_passages_prompt_token_mean=100,
+            rankings_passages_prompt_token_stddev=10,
+            rankings_query_prompt_token_mean=50,
+            rankings_query_prompt_token_stddev=5,
+        ),
+    )
+    assert cfg.input.rankings_passages_prompt_token_mean == 100
+    assert cfg.input.rankings_passages_prompt_token_stddev == 10
+    assert cfg.input.rankings_query_prompt_token_mean == 50
+    assert cfg.input.rankings_query_prompt_token_stddev == 5
+
+
+def test_prompt_tokens_only_is_allowed():
+    """Test that setting only prompt input tokens is allowed (no rankings options changed)."""
+    from aiperf.common.config import PromptConfig
+    from aiperf.common.config.prompt_config import InputTokensConfig
+
+    prompt_config = PromptConfig(input_tokens=InputTokensConfig(mean=100))
+
+    cfg = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.CHAT,
+            custom_endpoint="test",
+        ),
+        input=InputConfig(prompt=prompt_config),
+    )
+    assert cfg.input.prompt.input_tokens.mean == 100
+
+
+@pytest.mark.parametrize(
+    "rankings_option,value",
+    [
+        ("rankings_passages_mean", 5),
+        ("rankings_passages_stddev", 2),
+        ("rankings_passages_prompt_token_mean", 100),
+        ("rankings_passages_prompt_token_stddev", 10),
+        ("rankings_query_prompt_token_mean", 50),
+        ("rankings_query_prompt_token_stddev", 5),
+    ],
+)
+def test_rankings_options_require_rankings_endpoint(rankings_option, value):
+    """Test that rankings options cannot be used with non-rankings endpoints."""
+    from pydantic import ValidationError
+
+    with pytest.raises(
+        ValidationError, match="can only be used with rankings endpoint types"
+    ):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,  # Non-rankings endpoint
+                custom_endpoint="test",
+            ),
+            input=InputConfig(**{rankings_option: value}),
+        )
+
+
+@pytest.mark.parametrize(
+    "endpoint_type",
+    [
+        EndpointType.COMPLETIONS,
+        EndpointType.EMBEDDINGS,
+        EndpointType.CHAT,
+    ],
+)
+def test_rankings_options_rejected_for_non_rankings_endpoints(endpoint_type):
+    """Test that rankings options are rejected for various non-rankings endpoint types."""
+    from pydantic import ValidationError
+
+    with pytest.raises(
+        ValidationError, match="can only be used with rankings endpoint types"
+    ):
+        UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=endpoint_type,
+                custom_endpoint="test",
+            ),
+            input=InputConfig(
+                rankings_passages_mean=5,
+                rankings_passages_prompt_token_mean=100,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "endpoint_type",
+    [
+        EndpointType.COHERE_RANKINGS,
+        EndpointType.HF_TEI_RANKINGS,
+        EndpointType.NIM_RANKINGS,
+    ],
+)
+def test_rankings_options_allowed_for_rankings_endpoints(endpoint_type):
+    """Test that rankings options are allowed with rankings endpoint types."""
+    cfg = UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=endpoint_type,
+            custom_endpoint="test",
+        ),
+        input=InputConfig(
+            rankings_passages_mean=5,
+            rankings_passages_stddev=2,
+            rankings_passages_prompt_token_mean=100,
+            rankings_passages_prompt_token_stddev=10,
+            rankings_query_prompt_token_mean=50,
+            rankings_query_prompt_token_stddev=5,
+        ),
+    )
+    assert cfg.input.rankings_passages_mean == 5
+    assert cfg.input.rankings_passages_stddev == 2
+    assert cfg.input.rankings_passages_prompt_token_mean == 100
+    assert cfg.input.rankings_passages_prompt_token_stddev == 10
+    assert cfg.input.rankings_query_prompt_token_mean == 50
+    assert cfg.input.rankings_query_prompt_token_stddev == 5

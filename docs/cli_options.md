@@ -124,6 +124,26 @@ Mean number of passages per rankings entry (per query)(default 1).
 Stddev for passages per rankings entry (default 0).
 <br>_Default: `0`_
 
+#### `--rankings-passages-prompt-token-mean` `<int>`
+
+Mean number of tokens in a passage entry for rankings (default 550).
+<br>_Default: `550`_
+
+#### `--rankings-passages-prompt-token-stddev` `<int>`
+
+Stddev for number of tokens in a passage entry for rankings (default 0).
+<br>_Default: `0`_
+
+#### `--rankings-query-prompt-token-mean` `<int>`
+
+Mean number of tokens in a query entry for rankings (default 550).
+<br>_Default: `550`_
+
+#### `--rankings-query-prompt-token-stddev` `<int>`
+
+Stddev for number of tokens in a query entry for rankings (default 0).
+<br>_Default: `0`_
+
 ## Audio Input Options
 
 #### `--audio-batch-size`, `--batch-size-audio` `<int>`

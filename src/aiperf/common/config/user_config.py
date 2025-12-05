@@ -20,6 +20,7 @@ from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import CustomDatasetType, GPUTelemetryMode
+from aiperf.common.enums.plugin_enums import EndpointType
 from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
 from aiperf.common.utils import load_json_str
 
@@ -397,4 +398,69 @@ class UserConfig(BaseConfig):
                 "Either reduce --concurrency or increase --request-count."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_rankings_token_options(self) -> Self:
+        """Validate rankings token options usage."""
+
+        # Check if prompt input tokens have been changed from defaults
+        prompt_tokens_modified = any(
+            field in self.input.prompt.input_tokens.model_fields_set
+            for field in ["mean", "stddev"]
+        )
+
+        # Check if any rankings-specific token options have been changed from defaults
+        rankings_token_fields = [
+            "rankings_passages_prompt_token_mean",
+            "rankings_passages_prompt_token_stddev",
+            "rankings_query_prompt_token_mean",
+            "rankings_query_prompt_token_stddev",
+        ]
+        rankings_tokens_modified = any(
+            field in self.input.model_fields_set for field in rankings_token_fields
+        )
+
+        # Check if any rankings-specific passage options have been changed from defaults
+        rankings_passages_fields = [
+            "rankings_passages_mean",
+            "rankings_passages_stddev",
+        ]
+        rankings_passages_modified = any(
+            field in self.input.model_fields_set for field in rankings_passages_fields
+        )
+
+        rankings_options_modified = (
+            rankings_tokens_modified or rankings_passages_modified
+        )
+
+        endpoint_type_is_rankings = "rankings" in self.endpoint.type.lower()
+
+        # Validate that rankings options are only used with rankings endpoints
+        rankings_endpoints = [
+            endpoint_type
+            for endpoint_type in EndpointType
+            if "rankings" in endpoint_type.lower()
+        ]
+        if rankings_options_modified and not endpoint_type_is_rankings:
+            raise ValueError(
+                f"Rankings-specific options (--rankings-passages-mean, --rankings-passages-stddev, "
+                "--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
+                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev) "
+                "can only be used with rankings endpoint types "
+                f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
+            )
+
+        # Validate that prompt tokens and rankings tokens are not both set
+        if prompt_tokens_modified and (
+            rankings_tokens_modified or endpoint_type_is_rankings
+        ):
+            raise ValueError(
+                "The --prompt-input-tokens-mean/--prompt-input-tokens-stddev options "
+                "cannot be used together with rankings-specific token options or the rankings endpoints"
+                "Ranking options: (--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
+                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev, ). "
+                f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
+                "Please use only one set of options."
+            )
         return self
