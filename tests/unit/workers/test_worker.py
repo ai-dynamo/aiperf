@@ -195,8 +195,10 @@ class TestWorker:
         turn = await worker._process_response(RequestRecord())
         assert turn is None
 
-    async def test_process_response_reasoning_returns_none(self, monkeypatch, worker):
-        """Ensure process_response returns None for reasoning responses."""
+    async def test_process_response_reasoning_extracts_content(
+        self, monkeypatch, worker
+    ):
+        """Ensure process_response extracts content from reasoning responses."""
         mock_parsed_response = ParsedResponse(
             perf_ns=0,
             data=ReasoningResponseData(
@@ -208,7 +210,7 @@ class TestWorker:
         mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
         monkeypatch.setattr(worker.inference_client, "endpoint", mock_endpoint)
         turn = await worker._process_response(RequestRecord())
-        assert turn is None
+        assert turn.texts[0].contents == ["The answer is 42."]
 
     async def test_process_response_reasoning_only_returns_none(
         self, monkeypatch, worker
@@ -227,10 +229,10 @@ class TestWorker:
         turn = await worker._process_response(RequestRecord())
         assert turn is None
 
-    async def test_process_response_mixed_reasoning_and_text_returns_none(
+    async def test_process_response_mixed_reasoning_and_text_combines_content(
         self, monkeypatch, worker
     ):
-        """Ensure process_response returns None when any response contains reasoning."""
+        """Ensure process_response combines text and reasoning content."""
         mock_parsed_responses = [
             ParsedResponse(
                 perf_ns=0,
@@ -248,7 +250,7 @@ class TestWorker:
         mock_endpoint.extract_response_data = Mock(return_value=mock_parsed_responses)
         monkeypatch.setattr(worker.inference_client, "endpoint", mock_endpoint)
         turn = await worker._process_response(RequestRecord())
-        assert turn is None
+        assert turn.texts[0].contents == ["HelloWorld"]
 
     async def test_build_response_record(
         self, worker, monkeypatch, sample_conversations

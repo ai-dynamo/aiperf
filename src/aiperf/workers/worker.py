@@ -318,10 +318,17 @@ class Worker(PullClientMixin, BaseComponentService, ProcessHealthMixin):
         """Process the response from the inference API call and convert it to a Turn object."""
         resp = self.inference_client.endpoint.extract_response_data(record)
         # Skip reasoning responses in multi-turn conversations
-        has_reasoning = any(isinstance(r.data, ReasoningResponseData) for r in resp)
-        if has_reasoning:
-            return None
-        resp_text = "".join([r.data.get_text() for r in resp if r.data])
+        output_texts = []
+        for response in resp:
+            if not response.data:
+                continue
+            if isinstance(response.data, ReasoningResponseData):
+                if response.data.content:
+                    output_texts.append(response.data.content)
+            else:
+                output_texts.append(response.data.get_text())
+        resp_text = "".join(output_texts)
+
         return (
             Turn(role="assistant", texts=[Text(contents=[resp_text])])
             if resp_text
