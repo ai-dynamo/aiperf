@@ -1176,9 +1176,7 @@ class TestRunDataGetMetric:
         metric = run_data.get_metric("time_to_first_token")
         assert metric is None
 
-    def test_get_metric_prefers_nested_metrics_over_flat(
-        self, tmp_path: Path
-    ) -> None:
+    def test_get_metric_prefers_nested_metrics_over_flat(self, tmp_path: Path) -> None:
         """Test that nested 'metrics' structure is preferred over flat when both exist."""
         aggregated = {
             "time_to_first_token": {"avg": 100.0, "unit": "ms"},

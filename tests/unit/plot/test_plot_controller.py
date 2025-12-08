@@ -273,9 +273,9 @@ class TestPlotControllerExportMultiRun:
 
         result = controller._export_multi_run_plots(multiple_run_dirs)
 
-        # Verify warning was printed
+        # Verify warning was logged
         captured = capsys.readouterr()
-        assert "Warning: Failed to load run" in captured.out
+        assert "Failed to load run" in captured.out
 
         # Verify export was still called with successful runs
         assert result == [tmp_path / "plot1.png"]

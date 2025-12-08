@@ -12,6 +12,10 @@ __version__ = "0.1.0"
 from aiperf.plot.cli_runner import (
     run_plot_controller,
 )
+from aiperf.plot.config import (
+    PlotConfig,
+    logger,
+)
 from aiperf.plot.constants import (
     ALL_STAT_KEYS,
     AVAILABLE_STATS,
@@ -23,6 +27,7 @@ from aiperf.plot.constants import (
     DEFAULT_PLOT_HEIGHT,
     DEFAULT_PLOT_WIDTH,
     DEFAULT_PNG_OUTPUT_DIR,
+    DERIVED_METRIC_DIRECTIONS,
     LIGHT_THEME_COLORS,
     NON_METRIC_KEYS,
     NVIDIA_BORDER_DARK,
@@ -35,6 +40,7 @@ from aiperf.plot.constants import (
     NVIDIA_GREEN,
     NVIDIA_TEXT_LIGHT,
     NVIDIA_WHITE,
+    OUTLIER_RED,
     PLOT_FONT_FAMILY,
     PLOT_LOG_FILE,
     PROFILE_EXPORT_AIPERF_JSON,
@@ -49,6 +55,7 @@ from aiperf.plot.core import (
     DataLoader,
     DataSource,
     DerivedMetricCalculator,
+    ExperimentClassificationConfig,
     MetricSpec,
     ModeDetector,
     PlotGenerator,
@@ -66,6 +73,7 @@ from aiperf.plot.core import (
     auto_select_label_by,
     calculate_rolling_percentiles,
     calculate_throughput_events,
+    detect_directional_outliers,
     detect_swept_parameters,
     flatten_config,
     get_nvidia_color_scheme,
@@ -98,11 +106,16 @@ from aiperf.plot.handlers import (
     TimeSliceHandler,
 )
 from aiperf.plot.logging import (
+    setup_console_only_logging,
     setup_plot_logging,
 )
 from aiperf.plot.metric_names import (
+    get_aggregated_metrics,
     get_all_metric_display_names,
+    get_gpu_metrics,
     get_metric_display_name,
+    get_request_metrics,
+    get_timeslice_metrics,
 )
 from aiperf.plot.plot_controller import (
     PlotController,
@@ -125,11 +138,13 @@ __all__ = [
     "DEFAULT_PLOT_HEIGHT",
     "DEFAULT_PLOT_WIDTH",
     "DEFAULT_PNG_OUTPUT_DIR",
+    "DERIVED_METRIC_DIRECTIONS",
     "DataLoadError",
     "DataLoader",
     "DataSource",
     "DerivedMetricCalculator",
     "DualAxisHandler",
+    "ExperimentClassificationConfig",
     "HistogramHandler",
     "LIGHT_THEME_COLORS",
     "MetricSpec",
@@ -147,6 +162,7 @@ __all__ = [
     "NVIDIA_GREEN",
     "NVIDIA_TEXT_LIGHT",
     "NVIDIA_WHITE",
+    "OUTLIER_RED",
     "PLOT_FONT_FAMILY",
     "PLOT_LOG_FILE",
     "PROFILE_EXPORT_AIPERF_JSON",
@@ -154,6 +170,7 @@ __all__ = [
     "PROFILE_EXPORT_JSONL",
     "PROFILE_EXPORT_TIMESLICES_CSV",
     "ParetoHandler",
+    "PlotConfig",
     "PlotController",
     "PlotError",
     "PlotGenerationError",
@@ -179,14 +196,21 @@ __all__ = [
     "auto_select_label_by",
     "calculate_rolling_percentiles",
     "calculate_throughput_events",
+    "detect_directional_outliers",
     "detect_swept_parameters",
     "flatten_config",
+    "get_aggregated_metrics",
     "get_all_metric_display_names",
+    "get_gpu_metrics",
     "get_metric_display_name",
     "get_nvidia_color_scheme",
+    "get_request_metrics",
+    "get_timeslice_metrics",
+    "logger",
     "prepare_request_timeseries",
     "prepare_timeslice_metrics",
     "run_plot_controller",
+    "setup_console_only_logging",
     "setup_plot_logging",
     "validate_request_uniformity",
 ]

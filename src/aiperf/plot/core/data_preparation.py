@@ -290,9 +290,7 @@ def prepare_timeslice_metrics(
         plot_dfs.append(stat_df)
 
     if not plot_dfs:
-        raise DataLoadError(
-            f"No timeslice data for {metric_name} ({', '.join(stats)})"
-        )
+        raise DataLoadError(f"No timeslice data for {metric_name} ({', '.join(stats)})")
 
     plot_df = plot_dfs[0]
     for df in plot_dfs[1:]:

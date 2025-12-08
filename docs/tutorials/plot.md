@@ -5,229 +5,300 @@ SPDX-License-Identifier: Apache-2.0
 
 # Visualization and Plotting with AIPerf
 
-Generate PNG visualizations from AIPerf profiling data with automatic mode detection (single-run analysis or multi-run comparison), NVIDIA brand styling, and support for multi-run comparisons and single-run analysis.
+Generate PNG visualizations from AIPerf profiling data with automatic mode detection, NVIDIA brand styling, and support for multi-run comparisons and single-run analysis.
 
 ## Overview
 
-The `aiperf plot` command generates static PNG visualizations from your profiling results. It automatically detects whether to show multi-run comparison plots or single-run time series analysis based on your directory structure, making it easy to visualize performance trends without manual configuration.
+The `aiperf plot` command automatically detects whether to generate multi-run comparison plots or single-run time series analysis based on your directory structure. It integrates GPU telemetry and timeslice data when available.
 
 **Key Features:**
-- **Automatic mode detection**: Compares multiple runs or analyzes single runs based on directory structure
-- **GPU telemetry integration**: Visualize power, utilization, memory, and temperature metrics
-- **Timeslice support**: View performance evolution across time windows
+- Automatic mode detection (multi-run comparison vs single-run analysis)
+- GPU telemetry integration (power, utilization, memory, temperature)
+- Timeslice support (performance evolution across time windows)
+- Configurable plots via `~/.aiperf/plot_config.yaml`
 
 ## Quick Start
 
 ```bash
-# Analyze a single profiling run (outputs to <single_run_name>/plots/)
+# Analyze a single profiling run
 aiperf plot <single_run_name>
 
-# Compare multiple runs in a directory (outputs to <run_directory>/plots/)
+# Compare multiple runs in a directory
 aiperf plot <run_directory>
 
-# Compare all runs in multiple directories (outputs to <run_directory>/plots/)
-aiperf plot <run_directory1> <run_directory2> ... <run_directoryn>
+# Compare all runs across multiple directories
+aiperf plot <dir1> <dir2> <dir3>
 
-# Compare multiple specific runs (outputs to <single_run_name1>/plots/)
-aiperf plot <single_run_name1> <single_run_name2> ... <single_run_namen>
+# Compare specific runs
+aiperf plot <run1> <run2> <run3>
 
 # Specify custom output location
 aiperf plot <path> --output <output_directory>
 
-# Use dark theme for presentations
+# Use dark theme
 aiperf plot <path> --theme dark
 ```
 
-The command automatically detects visualization mode:
-- **Multi-run comparison**: When directory contains multiple run subdirectories
-- **Single-run analysis**: When directory contains `profile_export.jsonl` directly
+**Output directory logic:**
+- If `--output` specified: uses that path
+- Otherwise: `<first_input_path>/plots/`
+- Default (no paths): `./artifacts/plots/`
+
+**Customize plots**: Edit `~/.aiperf/plot_config.yaml` (auto-created on first run) to enable/disable plots or customize visualizations. See [Plot Configuration](#plot-configuration-yaml) for details.
 
 ## Visualization Modes
 
-The plot command automatically detects the visualization mode based on directory structure:
+The plot command automatically detects visualization mode based on directory structure:
 
 ### Multi-Run Comparison Mode
 
-**Detected when:**
-- Directory contains multiple run subdirectories
-- Multiple paths are specified as arguments
+Compares metrics across multiple profiling runs to identify optimal configurations.
 
-**Example directory structures:**
+**Auto-detected when:**
+- Directory contains multiple run subdirectories, OR
+- Multiple paths specified as arguments
+
+**Example:**
 ```
-artifacts/sweep_qwen/          # Contains multiple runs
+artifacts/sweep_qwen/
 ├── Qwen3-0.6B-concurrency1/
 ├── Qwen3-0.6B-concurrency2/
 └── Qwen3-0.6B-concurrency4/
 ```
 
-**Generated plots (3 default):**
-2. **TTFT vs Throughput** - Time to first token vs request throughput across concurrency levels
-4. **Token Throughput per GPU vs Latency** - GPU efficiency vs latency (when GPU telemetry available)
-5. **Token Throughput per GPU vs Interactivity** - GPU efficiency vs TTFT (when GPU telemetry available)
+**Default plots (3):**
+1. **TTFT vs Throughput** - Time to first token vs request throughput
+2. **Token Throughput per GPU vs Latency** - GPU efficiency vs latency (requires GPU telemetry)
+3. **Token Throughput per GPU vs Interactivity** - GPU efficiency vs TTFT (requires GPU telemetry)
 
-#### Example Multi-Run Visualizations
+> [!TIP]
+> Use [Experiment Classification](#experiment-classification) to assign semantic colors (grey for baselines, green for treatments) for clearer visual distinction.
+
+#### Example Visualizations
 
 ![TTFT vs Throughput](../diagrams/plot_examples/multi_run/ttft_vs_throughput.png)
 
-The TTFT vs Throughput plot shows how time to first token varies with request throughput across different concurrency levels, helping identify configurations that balance responsiveness with system load.
+Shows how time to first token varies with request throughput across concurrency levels, helping identify configurations that balance responsiveness with load.
 
 ![Pareto Curve: Throughput per GPU vs Latency](../diagrams/plot_examples/multi_run/pareto_curve_throughput_per_gpu_vs_latency.png)
 
-The Pareto curve highlights optimal configurations that maximize GPU efficiency while minimizing latency. Points on the Pareto frontier represent the best trade-offs between these metrics.
+Highlights optimal configurations on the Pareto frontier that maximize GPU efficiency while minimizing latency.
 
 ![Pareto Curve: Throughput per GPU vs Interactivity](../diagrams/plot_examples/multi_run/pareto_curve_throughput_per_gpu_vs_interactivity.png)
 
-This Pareto curve shows the trade-off between GPU efficiency (tokens/sec/GPU) and interactivity (TTFT), helping identify configurations that maximize GPU utilization while maintaining acceptable first-token latency.
+Shows the trade-off between GPU efficiency and interactivity (TTFT).
 
 ### Single-Run Analysis Mode
 
-**Detected when:**
-- Directory contains `profile_export.jsonl` directly
-- Path points to a single profiling run
+Analyzes performance over time for a single profiling run.
 
-**Example directory structure:**
+**Auto-detected when:**
+- Directory contains `profile_export.jsonl` directly
+
+**Example:**
 ```
-artifacts/single_run/          # Single run directory
+artifacts/single_run/
 └── profile_export.jsonl
 ```
 
-**Generated plots (4+ default):**
-1. **TTFT Over Time** - Scatter plot of time to first token for each request
-2. **Inter-Token Latency Over Time** - Scatter plot of ITL for each request
-3. **Request Latency Over Time** - Area chart showing end-to-end latency progression
-4. **Dispersed Throughput Over Time** - Event-based throughput showing continuous token generation rate
+**Default plots (4+):**
+1. **TTFT Over Time** - Time to first token per request
+2. **Inter-Token Latency Over Time** - ITL per request
+3. **Request Latency Over Time** - End-to-end latency progression
+4. **Dispersed Throughput Over Time** - Continuous token generation rate
 
 **Additional plots (when data available):**
-- **Timeslice plots**: TTFT, ITL, throughput, and latency metrics across time windows (when `--slice-duration` was used)
-- **GPU telemetry plots**: GPU utilization and memory usage over time (when `--gpu-telemetry` was used)
+- Timeslice plots (when `--slice-duration` used during profiling)
+- GPU telemetry plots (when `--gpu-telemetry` used during profiling)
 
-#### Example Single-Run Time Series Visualizations
+#### Example Visualizations
 
 ![TTFT Over Time](../diagrams/plot_examples/single_run/time_series/ttft_over_time.png)
 
-The TTFT Over Time scatter plot shows the time to first token for each request throughout the benchmark run, helping identify patterns in prefill latency and potential warm-up or degradation effects.
+Time to first token for each request, revealing prefill latency patterns and potential warm-up effects.
 
 ![Inter-Token Latency Over Time](../diagrams/plot_examples/single_run/time_series/itl_over_time.png)
 
-The ITL Over Time scatter plot displays inter-token latency for each request, revealing generation performance consistency and identifying outliers or performance variations over the run duration.
+Inter-token latency per request, showing generation performance consistency.
 
 ![Request Latency Over Time](../diagrams/plot_examples/single_run/time_series/latency_over_time.png)
 
-The Request Latency Over Time area chart shows end-to-end latency progression throughout the run, providing a holistic view of system performance including both prefill and generation phases.
+End-to-end latency progression throughout the run.
 
-### Dispersed Throughput Over Time
+### Dispersed Throughput
 
-The **Dispersed Throughput Over Time** plot uses an event-based approach to accurately represent token generation rates. Unlike traditional binning methods that create artificial spikes when requests complete, this visualization distributes tokens evenly across the time they were actually generated.
+The **Dispersed Throughput Over Time** plot uses an event-based approach for accurate token generation rate visualization. Unlike binning methods that create artificial spikes, this distributes tokens evenly across their actual generation time:
+- **Prefill phase** (request_start → TTFT): 0 tok/sec
+- **Generation phase** (TTFT → request_end): constant rate = output_tokens / (request_end - TTFT)
 
-**How it works:**
-- **Prefill phase** (`request_start` → `TTFT`): No output tokens (0 tok/sec)
-- **Generation phase** (`TTFT` → `request_end`): Constant token rate = `output_tokens / (request_end - TTFT)`
-- Plot shows sum of all concurrent token generation rates
-- Throughput changes only at discrete events (request starts generating or completes)
-
-**Why dispersed vs binning?**
-
-Traditional binning creates artificial spikes, requires arbitrary bin size selection, and misses patterns between bins. Dispersed throughput provides smooth, continuous representation that accurately correlates with server metrics like GPU utilization.
+This provides smooth, continuous representation that correlates better with server metrics like GPU utilization.
 
 ![Dispersed Throughput Over Time](../diagrams/plot_examples/single_run/dispersed_throughput_over_time.png)
 
-## Command Options
+## Customization Options
 
-### Basic Options
+### Plot Configuration YAML
 
-```bash
-# Analyze a single profiling run (outputs to <single_run_name>/plots/)
-aiperf plot <single_run_name>
+Customize which plots are generated and how they appear by editing `~/.aiperf/plot_config.yaml`.
 
-# Compare multiple runs in a directory (outputs to <run_directory>/plots/)
-aiperf plot <run_directory>
+#### Enable/Disable Plots
 
-# Compare all runs in multiple directories (outputs to <run_directory>/plots/)
-aiperf plot <run_directory1> <run_directory2> ... <run_directoryn>
-
-# Compare multiple specific runs (outputs to <single_run_name1>/plots/)
-aiperf plot <single_run_name1> <single_run_name2> ... <single_run_namen>
-
-# Specify custom output location
-aiperf plot <path> --output <output_directory>
-
-# Use dark theme for presentations
-aiperf plot <path> --theme dark
+**Multi-run plots:**
+```yaml
+visualization:
+  multi_run_defaults:
+    - pareto_curve_throughput_per_gpu_vs_latency
+    - pareto_curve_throughput_per_gpu_vs_interactivity
+    - ttft_vs_throughput
 ```
 
-### Output Directory Logic
-
-The output directory follows this logic:
-1. If `--output` is specified, use that path
-2. Otherwise, use `<first_input_path>/plots/`
-3. Default first input path is `./artifacts` if no paths specified
-
-**Examples:**
-```bash
-# Outputs to: ./artifacts/plots/
-aiperf plot
-
-# Outputs to: <sweep_directory>/plots/
-aiperf plot <sweep_directory>
-
-# Outputs to: <custom_output_path>
-aiperf plot <sweep_directory> --output <custom_output_path>
+**Single-run plots:**
+```yaml
+visualization:
+  single_run_defaults:
+    - ttft_over_time
+    - itl_over_time
+    - dispersed_throughput_over_time
+    # ... add or remove plots
 ```
 
-## Theme Options
+#### Customize Plot Grouping
 
-Choose between light and dark themes for your plots:
+Multi-run comparison plots group runs to create colored lines/series. Customize the `groups:` field in plot presets:
+
+**Group by model** (useful for comparing different models):
+```yaml
+multi_run_plots:
+  ttft_vs_throughput:
+    groups: [model]
+```
+
+**Group by directory** (useful for hierarchical experiments):
+```yaml
+multi_run_plots:
+  ttft_vs_throughput:
+    groups: [experiment_group]
+```
+
+**Group by run name** (default - each run is separate):
+```yaml
+multi_run_plots:
+  ttft_vs_throughput:
+    groups: [run_name]
+```
+
+> [!NOTE]
+> When experiment classification is enabled, all multi-run plots automatically group by `experiment_group` to preserve treatment variants with semantic colors.
+
+> [!TIP]
+> See the CONFIGURATION GUIDE section in `~/.aiperf/plot_config.yaml` for detailed customization options.
+
+### Experiment Classification
+
+Classify runs as "baseline" or "treatment" for semantic color assignment in multi-run comparisons.
+
+**Configuration** (`~/.aiperf/plot_config.yaml`):
+```yaml
+experiment_classification:
+  baselines:
+    - "*baseline*"     # Glob patterns
+    - "*_agg_*"
+  treatments:
+    - "*treatment*"
+    - "*_disagg_*"
+  default: treatment   # Fallback when no match
+```
+
+**Result:**
+- **Baselines**: Grey shades, listed first in legend
+- **Treatments**: NVIDIA green shades, listed after baselines
+- **Use case**: Clear visual distinction for A/B testing
+
+> [!IMPORTANT]
+> When enabled, **all multi-run plots automatically group by experiment_group** (directory name) to preserve individual treatment variants with semantic baseline/treatment colors.
+
+**Pattern notes**: Uses glob syntax (`*` = wildcard), case-sensitive, first match wins.
+
+#### Example
+
+**Directory structure:**
+```
+artifacts/
+├── baseline_moderate_io_isl100_osl200_streaming/           # Grey
+│   ├── concurrency_1/
+│   └── concurrency_2/
+├── treatment_large_context_isl500_osl50_streaming/         # Green
+│   ├── concurrency_1/
+│   └── concurrency_2/
+└── treatment_long_generation_isl50_osl500_streaming/       # Blue
+    ├── concurrency_1/
+    └── concurrency_2/
+```
+
+**Result**: 3 lines in plots (1 baseline + 2 treatments, each with semantic colors)
+
+**Advanced**: Use `group_extraction_pattern` to aggregate variants:
+```yaml
+group_extraction_pattern: "^(treatment_\d+)"  # Groups treatment_1_varA + treatment_1_varB → "treatment_1"
+```
+
+> [!TIP]
+> See `src/aiperf/plot/default_plot_config.yaml` for all configuration options.
+
+![Pareto Curve with Experiment Classification](../diagrams/plot_examples/multi_run/config_experiment_classification/pareto_curve_throughput_per_gpu_vs_interactivity.png)
+
+![TTFT vs Throughput with Experiment Classification](../diagrams/plot_examples/multi_run/config_experiment_classification/ttft_vs_throughput.png)
+
+### Theme Options
 
 ```bash
 # Light theme (default)
 aiperf plot <path>
 
-aiperf plot <path> --theme light
-
-# Dark theme
+# Dark theme (for presentations)
 aiperf plot <path> --theme dark
 ```
 
-### Dark Theme Examples
-
-The dark theme uses a dark background optimized for presentations and low-light environments while maintaining NVIDIA brand colors and readability.
+The dark theme uses a dark background optimized for presentations while maintaining NVIDIA brand colors.
 
 #### Multi-Run Dark Theme
 
 ![TTFT vs Throughput (Dark)](../diagrams/plot_examples/multi_run/theme_dark_mode/ttft_vs_throughput.png)
 
-![Pareto Curve: Throughput per GPU vs Latency (Dark)](../diagrams/plot_examples/multi_run/theme_dark_mode/pareto_curve_throughput_per_gpu_vs_latency.png)
+![Pareto Curve: Latency (Dark)](../diagrams/plot_examples/multi_run/theme_dark_mode/pareto_curve_throughput_per_gpu_vs_latency.png)
 
-![Pareto Curve: Throughput per GPU vs Interactivity (Dark)](../diagrams/plot_examples/multi_run/theme_dark_mode/pareto_curve_throughput_per_gpu_vs_interactivity.png)
+![Pareto Curve: Interactivity (Dark)](../diagrams/plot_examples/multi_run/theme_dark_mode/pareto_curve_throughput_per_gpu_vs_interactivity.png)
 
 #### Single-Run Dark Theme
 
-![GPU Utilization and Throughput Over Time (Dark)](../diagrams/plot_examples/single_run/time_series/theme_dark_mode/gpu_utilization_and_throughput_over_time.png)
+![GPU Utilization (Dark)](../diagrams/plot_examples/single_run/time_series/theme_dark_mode/gpu_utilization_and_throughput_over_time.png)
 
-![Inter-Token Latency Over Time (Dark)](../diagrams/plot_examples/single_run/time_series/theme_dark_mode/itl_over_time.png)
+![ITL Over Time (Dark)](../diagrams/plot_examples/single_run/time_series/theme_dark_mode/itl_over_time.png)
 
 ![ITL Across Timeslices (Dark)](../diagrams/plot_examples/single_run/time_series/theme_dark_mode/timeslices_itl.png)
 
-## GPU Telemetry Integration
+## Advanced Features
 
-When GPU telemetry is collected during profiling (via `--gpu-telemetry` flag), the plot command automatically includes GPU metrics in visualizations.
+### GPU Telemetry Integration
 
-**Multi-run plots** (when telemetry available across runs):
+When GPU telemetry is collected (via `--gpu-telemetry` flag during profiling), plots automatically include GPU metrics.
+
+**Multi-run plots** (when telemetry available):
 - Token Throughput per GPU vs Latency
-- Token Throughput per GPU vs Interactivity (TTFT)
+- Token Throughput per GPU vs Interactivity
 
-**Single-run plots** (time series with telemetry):
+**Single-run plots** (time series):
 - GPU Utilization Over Time
 - GPU Memory Usage Over Time
 
 ![GPU Utilization and Throughput Over Time](../diagrams/plot_examples/single_run/time_series/gpu_utilization_and_throughput_over_time.png)
 
 > [!TIP]
-> For GPU telemetry setup and detailed analysis, see the [GPU Telemetry Tutorial](gpu-telemetry.md).
+> See the [GPU Telemetry Tutorial](gpu-telemetry.md) for setup and detailed analysis.
 
-## Timeslice Integration
+### Timeslice Integration
 
-When timeslice data is available (via `--slice-duration` during profiling), the plot command automatically generates timeslice visualizations showing performance evolution across time windows.
+When timeslice data is available (via `--slice-duration` during profiling), plots show performance evolution across time windows.
 
 **Generated timeslice plots:**
 - TTFT Across Timeslices
@@ -244,67 +315,60 @@ These help identify warm-up effects, performance degradation, and steady-state b
 ![Latency Across Timeslices](../diagrams/plot_examples/single_run/timeslices/timeslices_latency.png)
 
 > [!TIP]
-> For detailed timeslice configuration and analysis, see the [Timeslices Tutorial](timeslices.md).
-
+> See the [Timeslices Tutorial](timeslices.md) for configuration and analysis.
 
 ## Output Files
 
-The plot command generates the following files in the output directory:
+Plots are saved as PNG files in the output directory:
 
 ```
 plots/
-├── pareto_curve_latency_vs_throughput.png
 ├── ttft_vs_throughput.png
-├── output_token_throughput_per_user_vs_concurrency.png
-├── dispersed_throughput_over_time.png (for single-run analysis)
-├── token_throughput_per_gpu_vs_latency.png (if GPU telemetry available)
-├── token_throughput_per_gpu_vs_ttft.png (if GPU telemetry available)
-└── ... (additional plots based on mode and available data)
+├── pareto_curve_throughput_per_gpu_vs_latency.png
+├── pareto_curve_throughput_per_gpu_vs_interactivity.png
+├── ttft_over_time.png (single-run)
+├── dispersed_throughput_over_time.png (single-run)
+├── gpu_utilization_and_throughput_over_time.png (if GPU telemetry)
+└── timeslices_*.png (if timeslice data available)
 ```
-
-
 
 ## Best Practices
 
 > [!TIP]
-> **Consistent Configurations**: When comparing runs, keep all parameters identical except the one you're testing (e.g., only vary concurrency). This ensures plots show the impact of that specific parameter.
-> Future features in interactive mode will allow pop-ups to show specific configurations of plotted runs.
+> **Consistent Configurations**: When comparing runs, vary only one parameter (e.g., concurrency) while keeping others constant. This isolates the impact of that specific parameter.
 
 > [!TIP]
-> **Include Warmup**: Use `--warmup-request-count` to ensure the server reaches steady state before measurement. This reduces noise in your visualizations.
+> **Use Experiment Classification**: Configure [experiment classification](#experiment-classification) to distinguish baselines from treatments with semantic colors.
+
+> [!TIP]
+> **Include Warmup**: Use `--warmup-request-count` to ensure steady state before measurement, reducing noise in visualizations.
 
 > [!WARNING]
-> **Directory Structure**: The plot command relies on consistent directory naming. Ensure all runs you want to compare are in subdirectories of a common parent directory.
+> **Directory Structure**: Ensure consistent naming - runs to compare must be in subdirectories of a common parent.
 
 > [!NOTE]
-> **GPU Metrics**: GPU telemetry plots only appear when telemetry data is available. Make sure DCGM is running and accessible during profiling. See [GPU Telemetry Tutorial](gpu-telemetry.md).
+> **GPU Metrics**: GPU telemetry plots only appear when telemetry data is available. Ensure DCGM is running during profiling. See [GPU Telemetry Tutorial](gpu-telemetry.md).
 
 ## Troubleshooting
 
 ### No Plots Generated
 
-**Problem**: Running `aiperf plot` but no PNG files appear.
-
 **Solutions**:
-- Verify the input directory contains valid profiling data (`profile_export.jsonl` files)
-- Check that the output directory is writable
-- Look for error messages in the console output
+- Verify input directory contains valid `profile_export.jsonl` files
+- Check output directory is writable
+- Review console output for error messages
 
 ### Missing GPU Plots
 
-**Problem**: Expected GPU telemetry plots but they don't appear.
-
 **Solutions**:
-- Verify GPU telemetry was collected during profiling (check `gpu_telemetry_export.jsonl` for telemetry data)
-- Ensure DCGM exporter was running and accessible during profiling
-- Confirm telemetry data is present in the profile exports
+- Verify `gpu_telemetry_export.jsonl` exists and contains data
+- Ensure DCGM exporter was running during profiling
+- Check telemetry data is present in profile exports
 
 ### Incorrect Mode Detection
 
-**Problem**: Multi-run data showing single-run plots or vice versa.
-
 **Solutions**:
-- Check directory structure matches expected format:
+- Check directory structure:
   - Multi-run: parent directory with multiple run subdirectories
   - Single-run: directory with `profile_export.jsonl` directly inside
 - Ensure all run directories contain valid `profile_export.jsonl` files
@@ -312,6 +376,6 @@ plots/
 ## Related Documentation
 
 - [Working with Profile Exports](working-with-profile-exports.md) - Understanding profiling data format
-- [GPU Telemetry](gpu-telemetry.md) - Collecting GPU metrics during profiling
+- [GPU Telemetry](gpu-telemetry.md) - Collecting GPU metrics
 - [Timeslices](timeslices.md) - Time-windowed performance analysis
-- [Request Rate and Concurrency](request-rate-concurrency.md) - Load generation strategies for sweeps
+- [Request Rate and Concurrency](request-rate-concurrency.md) - Load generation strategies

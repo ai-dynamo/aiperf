@@ -26,10 +26,12 @@ from aiperf.plot.core.mode_detector import (
 )
 from aiperf.plot.core.plot_generator import (
     PlotGenerator,
+    detect_directional_outliers,
     get_nvidia_color_scheme,
 )
 from aiperf.plot.core.plot_specs import (
     DataSource,
+    ExperimentClassificationConfig,
     MetricSpec,
     PlotSpec,
     PlotType,
@@ -52,6 +54,7 @@ __all__ = [
     "DataLoader",
     "DataSource",
     "DerivedMetricCalculator",
+    "ExperimentClassificationConfig",
     "MetricSpec",
     "ModeDetector",
     "PlotGenerator",
@@ -69,6 +72,7 @@ __all__ = [
     "auto_select_label_by",
     "calculate_rolling_percentiles",
     "calculate_throughput_events",
+    "detect_directional_outliers",
     "detect_swept_parameters",
     "flatten_config",
     "get_nvidia_color_scheme",

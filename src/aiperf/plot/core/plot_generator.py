@@ -9,16 +9,23 @@ with NVIDIA brand styling for various plot types including pareto curves, scatte
 plots, line charts, and time series.
 """
 
+import logging
+
 import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import seaborn as sns
 
+from aiperf.common.enums import PlotMetricDirection
+from aiperf.common.enums.metric_enums import MetricFlags
+from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.plot.constants import (
     DARK_THEME_COLORS,
+    DERIVED_METRIC_DIRECTIONS,
     LIGHT_THEME_COLORS,
     NVIDIA_GOLD,
+    NVIDIA_GRAY,
     NVIDIA_GREEN,
     OUTLIER_RED,
     PLOT_FONT_FAMILY,
@@ -134,6 +141,7 @@ class PlotGenerator:
         self._group_color_registry: dict[str, str] = {}
         self._color_pool: list[str] = self._generate_color_pool(color_pool_size)
         self._next_color_index: int = 0
+        self._shown_warnings: set[str] = set()
 
     def _generate_color_pool(self, pool_size: int) -> list[str]:
         """Generate master color pool for consistent group coloring.
@@ -261,40 +269,322 @@ class PlotGenerator:
         return layout
 
     def _prepare_groups(
-        self, df: pd.DataFrame, group_by: str | None
-    ) -> tuple[list[str | None], dict[str, str]]:
+        self,
+        df: pd.DataFrame,
+        group_by: str | None,
+        experiment_types: dict[str, str] | None = None,
+        group_display_names: dict[str, str] | None = None,
+    ) -> tuple[list[str | None], dict[str, str], dict[str, str]]:
         """
         Prepare group list and color mapping for multi-series plots.
 
-        Uses a persistent color registry to ensure the same group always gets
-        the same color across all plots in a session. New groups are assigned
-        colors sequentially from a pre-generated color pool.
+        Supports two modes:
+        1. Experiment groups coloring: When experiment_types provided, uses NVIDIA brand colors
+           (baselines=grey, treatments=green) with custom legend ordering.
+        2. Other coloring: Uses distinct seaborn colors for each group.
 
         Args:
             df: DataFrame containing the data
-            group_by: Column name to group by (e.g., "model", "concurrency"), or
-                None for no grouping
+            group_by: Column name to group by (e.g., "model", "concurrency"), list of column names,
+                or None for no grouping
+            experiment_types: Optional mapping of group_name -> "baseline"|"treatment"
+                If provided, uses default NVIDIA colors. If None, use seaborn colors.
+            group_display_names: Optional mapping of group_name -> display_name for legends
 
         Returns:
-            Tuple of (groups, group_colors) where:
-            - groups: Sorted list of group values, or [None] if no grouping
+            Tuple of (groups, group_colors, group_display_names) where:
+            - groups: Sorted list of group values (baselines first, then treatments),
+                or [None] if no grouping
             - group_colors: Dict mapping group values to color hex codes
+            - group_display_names: Dict mapping group values to display names (or empty dict)
         """
-        if group_by and group_by in df.columns:
-            groups = sorted(df[group_by].unique())
+        logger = logging.getLogger(__name__)
 
-            for group in groups:
-                if group not in self._group_color_registry:
-                    color_index = self._next_color_index % len(self._color_pool)
-                    self._group_color_registry[group] = self._color_pool[color_index]
-                    self._next_color_index += 1
+        if not group_by or group_by not in df.columns:
+            logger.info(f"No grouping applied (group_by={group_by})")
+            return [None], {}, {}
 
-            group_colors = {group: self._group_color_registry[group] for group in groups}
-        else:
-            groups = [None]
+        groups = sorted(df[group_by].unique())
+        logger.info(
+            f"Preparing groups with group_by='{group_by}': found {len(groups)} unique values: {groups}"
+        )
+
+        # Experiment groups coloring: Use grey for baselines, green for first treatment, and distinct seaborn colors for remaining treatments
+        if experiment_types:
+            baselines = [g for g in groups if experiment_types.get(g) == "baseline"]
+            treatments = [g for g in groups if experiment_types.get(g) == "treatment"]
+
+            baselines = sorted(baselines)
+            treatments = sorted(treatments)
+
+            ordered_groups = baselines + treatments
+
             group_colors = {}
 
-        return groups, group_colors
+            for group in baselines:
+                group_colors[group] = NVIDIA_GRAY
+
+            if len(treatments) > 0:
+                group_colors[treatments[0]] = NVIDIA_GREEN
+
+            if len(treatments) > 1:
+                seaborn_colors = sns.color_palette(
+                    "bright", n_colors=len(treatments) - 1
+                ).as_hex()
+                for i, group in enumerate(treatments[1:]):
+                    group_colors[group] = seaborn_colors[i]
+
+            logger.info(
+                f"Applied semantic coloring: {len(baselines)} baselines, {len(treatments)} treatments"
+            )
+            logger.info(f"  Baselines: {baselines}")
+            logger.info(f"  Treatments: {treatments}")
+            logger.info(f"  Color assignments: {group_colors}")
+
+            self._validate_line_count(len(ordered_groups))
+
+            display_names = group_display_names or {}
+
+            return ordered_groups, group_colors, display_names
+
+        # Other coloring: Use distinct seaborn colors for each group
+        for group in groups:
+            if group not in self._group_color_registry:
+                color_index = self._next_color_index % len(self._color_pool)
+                self._group_color_registry[group] = self._color_pool[color_index]
+                self._next_color_index += 1
+
+        group_colors = {group: self._group_color_registry[group] for group in groups}
+        return groups, group_colors, {}
+
+    def _validate_line_count(self, n_traces: int) -> None:
+        """Warn if more than 4 lines/traces in a single plot (once per session)."""
+        if n_traces > 4:
+            warning_key = f"too_many_traces_{n_traces}"
+            if warning_key not in self._shown_warnings:
+                self._shown_warnings.add(warning_key)
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Plot contains {n_traces} traces, which exceeds the recommended "
+                    f"maximum of 4 for clarity."
+                )
+
+    def _get_metric_direction(self, metric_tag: str) -> PlotMetricDirection | str:
+        """
+        Get direction indicator for metric.
+
+        Checks MetricRegistry first, then falls back to derived metrics registry.
+
+        Args:
+            metric_tag: Metric tag name (e.g., "request_latency", "output_token_throughput_per_gpu")
+
+        Returns:
+            PlotMetricDirection.HIGHER if higher is better (LARGER_IS_BETTER or derived metric marked as True)
+            PlotMetricDirection.LOWER if lower is better (not LARGER_IS_BETTER or derived metric marked as False)
+            "" if metric not found in either registry
+        """
+        try:
+            metric_class = MetricRegistry.get_class(metric_tag)
+            if metric_class.has_flags(MetricFlags.LARGER_IS_BETTER):
+                return PlotMetricDirection.HIGHER
+            return PlotMetricDirection.LOWER
+        except Exception:
+            pass
+
+        if metric_tag in DERIVED_METRIC_DIRECTIONS:
+            return (
+                PlotMetricDirection.HIGHER
+                if DERIVED_METRIC_DIRECTIONS[metric_tag]
+                else PlotMetricDirection.LOWER
+            )
+
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Could not determine direction for metric: {metric_tag}")
+        return ""
+
+    def _compute_pareto_frontier(
+        self,
+        x_values: np.ndarray,
+        y_values: np.ndarray,
+        x_direction: PlotMetricDirection,
+        y_direction: PlotMetricDirection,
+    ) -> np.ndarray:
+        """
+        Compute Pareto frontier using O(n log n) sweep algorithm.
+
+        The algorithm leverages the fact that after sorting by x-coordinate, we can
+        scan once (left-to-right or right-to-left depending on metric directions)
+        and track the best y-value seen so far to determine Pareto optimality.
+
+        Args:
+            x_values: X-axis metric values (must already be sorted ascending)
+            y_values: Y-axis metric values (corresponding to x_values)
+            x_direction: Whether higher or lower x is better
+            y_direction: Whether higher or lower y is better
+
+        Returns:
+            Boolean array where True indicates point is on Pareto frontier
+        """
+        n = len(x_values)
+
+        if n == 0:
+            return np.array([], dtype=bool)
+        if n == 1:
+            return np.array([True], dtype=bool)
+
+        is_pareto = np.zeros(n, dtype=bool)
+
+        if x_direction == PlotMetricDirection.LOWER:
+            if y_direction == PlotMetricDirection.HIGHER:
+                best_y = float("-inf")
+                for i in range(n):
+                    if y_values[i] >= best_y:
+                        is_pareto[i] = True
+                        best_y = y_values[i]
+            else:
+                best_y = float("inf")
+                for i in range(n):
+                    if y_values[i] <= best_y:
+                        is_pareto[i] = True
+                        best_y = y_values[i]
+        else:
+            if y_direction == PlotMetricDirection.HIGHER:
+                best_y = float("-inf")
+                for i in range(n - 1, -1, -1):
+                    if y_values[i] >= best_y:
+                        is_pareto[i] = True
+                        best_y = y_values[i]
+            else:
+                best_y = float("inf")
+                for i in range(n - 1, -1, -1):
+                    if y_values[i] <= best_y:
+                        is_pareto[i] = True
+                        best_y = y_values[i]
+
+        return is_pareto
+
+    def _direction_to_arrow(self, direction: PlotMetricDirection | str) -> str:
+        """
+        Convert a PlotMetricDirection to its unicode arrow representation.
+
+        Args:
+            direction: PlotMetricDirection enum value or empty string
+
+        Returns:
+            "↑" (U+2191) if direction is HIGHER
+            "↓" (U+2193) if direction is LOWER
+            "" if direction is empty string
+        """
+        if direction == PlotMetricDirection.HIGHER:
+            return "\u2191"
+        elif direction == PlotMetricDirection.LOWER:
+            return "\u2193"
+        return ""
+
+    def _generate_optimal_direction_subtitle(self, x_metric: str, y_metric: str) -> str:
+        """
+        Generate subtitle describing optimal direction for 2D plot.
+
+        Args:
+            x_metric: X-axis metric tag
+            y_metric: Y-axis metric tag
+
+        Returns:
+            Explanatory subtitle or empty string if directions unknown
+        """
+        x_dir = self._get_metric_direction(x_metric)
+        y_dir = self._get_metric_direction(y_metric)
+
+        if not x_dir or not y_dir:
+            return ""
+
+        # Determine quadrant name
+        if x_dir == PlotMetricDirection.LOWER and y_dir == PlotMetricDirection.HIGHER:
+            quadrant = "upper-left"
+        elif (
+            x_dir == PlotMetricDirection.HIGHER and y_dir == PlotMetricDirection.HIGHER
+        ):
+            quadrant = "upper-right"
+        elif x_dir == PlotMetricDirection.LOWER and y_dir == PlotMetricDirection.LOWER:
+            quadrant = "lower-left"
+        else:  # x_dir == PlotMetricDirection.HIGHER and y_dir == PlotMetricDirection.LOWER
+            quadrant = "lower-right"
+
+        x_name = get_metric_display_name(x_metric)
+        y_name = get_metric_display_name(y_metric)
+        x_word = "low" if x_dir == PlotMetricDirection.LOWER else "high"
+        y_word = "high" if y_dir == PlotMetricDirection.HIGHER else "low"
+
+        # Convert directions to arrows for display
+        x_arrow = self._direction_to_arrow(x_dir)
+        y_arrow = self._direction_to_arrow(y_dir)
+
+        return f"Optimal: {quadrant} quadrant ({y_word} {y_name} {y_arrow}, {x_word} {x_name} {x_arrow})"
+
+    def _add_optimal_quadrant_shading(
+        self,
+        fig: go.Figure,
+        x_metric: str,
+        y_metric: str,
+        x_data: list[float],
+        y_data: list[float],
+    ) -> None:
+        """
+        Add semi-transparent shading to optimal quadrant of 2D plot.
+
+        Args:
+            fig: Plotly figure to modify
+            x_metric: X-axis metric tag
+            y_metric: Y-axis metric tag
+            x_data: List of x-axis values
+            y_data: List of y-axis values
+        """
+        x_dir = self._get_metric_direction(x_metric)
+        y_dir = self._get_metric_direction(y_metric)
+
+        if not x_dir or not y_dir or not x_data or not y_data:
+            return
+
+        x_lower_is_better = x_dir == PlotMetricDirection.LOWER
+        y_higher_is_better = y_dir == PlotMetricDirection.HIGHER
+
+        # Find optimal corner point
+        optimal_x = min(x_data) if x_lower_is_better else max(x_data)
+        optimal_y = max(y_data) if y_higher_is_better else min(y_data)
+
+        # Calculate rectangle bounds
+        x_min, x_max = min(x_data), max(x_data)
+        y_min, y_max = min(y_data), max(y_data)
+
+        rect_x0 = x_min if x_lower_is_better else optimal_x
+        rect_x1 = optimal_x if x_lower_is_better else x_max
+        rect_y0 = optimal_y if y_higher_is_better else y_min
+        rect_y1 = y_max if y_higher_is_better else optimal_y
+
+        # Add semi-transparent green overlay
+        fig.add_shape(
+            type="rect",
+            x0=rect_x0,
+            x1=rect_x1,
+            y0=rect_y0,
+            y1=rect_y1,
+            fillcolor="rgba(118, 185, 0, 0.08)",  # Very light NVIDIA green
+            line_width=0,
+            layer="below",
+        )
+
+        # Add star annotation at optimal corner
+        fig.add_annotation(
+            x=optimal_x,
+            y=optimal_y,
+            text="\u2605 Optimal",  # ★
+            showarrow=False,
+            font=dict(size=14, color=NVIDIA_GREEN),
+            xanchor="right" if x_lower_is_better else "left",
+            yanchor="bottom" if y_higher_is_better else "top",
+            xshift=-10 if x_lower_is_better else 10,
+            yshift=10 if y_higher_is_better else -10,
+        )
 
     def create_pareto_plot(
         self,
@@ -306,6 +596,8 @@ class PlotGenerator:
         title: str | None = None,
         x_label: str | None = None,
         y_label: str | None = None,
+        experiment_types: dict[str, str] | None = None,
+        group_display_names: dict[str, str] | None = None,
     ) -> go.Figure:
         """Create a Pareto curve plot showing trade-offs between two metrics.
 
@@ -336,7 +628,26 @@ class PlotGenerator:
         x_label = x_label or get_metric_display_name(x_metric)
         y_label = y_label or get_metric_display_name(y_metric)
 
-        groups, group_colors = self._prepare_groups(df_sorted, group_by)
+        # Add direction indicators to axis labels
+        x_direction = self._get_metric_direction(x_metric)
+        y_direction = self._get_metric_direction(y_metric)
+        if x_direction:
+            x_label = f"{x_label} {self._direction_to_arrow(x_direction)}"
+        if y_direction:
+            y_label = f"{y_label} {self._direction_to_arrow(y_direction)}"
+
+        # Generate subtitle with optimal direction hint
+        subtitle = self._generate_optimal_direction_subtitle(x_metric, y_metric)
+        if subtitle:
+            title = f"{title}<br><sub>{subtitle}</sub>"
+
+        groups, group_colors, display_names = self._prepare_groups(
+            df_sorted, group_by, experiment_types, group_display_names
+        )
+
+        # Collect all data points for optimal quadrant shading
+        all_x_data = []
+        all_y_data = []
 
         for group in groups:
             if group is None:
@@ -344,15 +655,38 @@ class PlotGenerator:
                 group_color = self._get_palette_colors(1)[0]
                 group_name = "Data"
             else:
-                group_data = df_sorted[df_sorted[group_by] == group].sort_values(
-                    x_metric
-                )
+                # df_sorted is already sorted by x_metric, filtering preserves order
+                group_data = df_sorted[df_sorted[group_by] == group]
                 group_color = group_colors[group]
-                group_name = group
+                # Use display name if available, otherwise use group ID
+                group_name = display_names.get(group, group)
 
-            # Calculate Pareto frontier for this group using vectorized operations
-            max_y_cumulative = group_data[y_metric].cummax()
-            is_pareto = group_data[y_metric] == max_y_cumulative
+            # Collect data for optimal quadrant shading
+            all_x_data.extend(group_data[x_metric].tolist())
+            all_y_data.extend(group_data[y_metric].tolist())
+
+            # Calculate Pareto frontier for this group based on metric directions
+            x_dir = self._get_metric_direction(x_metric)
+            y_dir = self._get_metric_direction(y_metric)
+
+            if not x_dir or not y_dir:
+                missing = []
+                if not x_dir:
+                    missing.append(f"x-axis metric '{x_metric}'")
+                if not y_dir:
+                    missing.append(f"y-axis metric '{y_metric}'")
+
+                raise ValueError(
+                    f"Cannot determine optimization direction for {' and '.join(missing)}. "
+                    f"Metrics must be registered in MetricRegistry with LARGER_IS_BETTER flag "
+                    f"or defined in DERIVED_METRIC_DIRECTIONS. Add the metric(s) to ensure "
+                    f"correct Pareto frontier calculation."
+                )
+
+            x_values = group_data[x_metric].values
+            y_values = group_data[y_metric].values
+            is_pareto = self._compute_pareto_frontier(x_values, y_values, x_dir, y_dir)
+
             df_pareto = group_data[is_pareto].copy()
 
             if not df_pareto.empty:
@@ -438,6 +772,11 @@ class PlotGenerator:
         layout = self._get_base_layout(title, x_label, y_label)
         fig.update_layout(layout)
 
+        # Add optimal quadrant shading
+        self._add_optimal_quadrant_shading(
+            fig, x_metric, y_metric, all_x_data, all_y_data
+        )
+
         return fig
 
     def create_scatter_line_plot(
@@ -450,6 +789,8 @@ class PlotGenerator:
         title: str | None = None,
         x_label: str | None = None,
         y_label: str | None = None,
+        experiment_types: dict[str, str] | None = None,
+        group_display_names: dict[str, str] | None = None,
     ) -> go.Figure:
         """Create a scatter plot with connecting lines.
 
@@ -477,8 +818,27 @@ class PlotGenerator:
         x_label = x_label or get_metric_display_name(x_metric)
         y_label = y_label or get_metric_display_name(y_metric)
 
+        # Add direction indicators to axis labels
+        x_direction = self._get_metric_direction(x_metric)
+        y_direction = self._get_metric_direction(y_metric)
+        if x_direction:
+            x_label = f"{x_label} {self._direction_to_arrow(x_direction)}"
+        if y_direction:
+            y_label = f"{y_label} {self._direction_to_arrow(y_direction)}"
+
+        # Generate subtitle with optimal direction hint
+        subtitle = self._generate_optimal_direction_subtitle(x_metric, y_metric)
+        if subtitle:
+            title = f"{title}<br><sub>{subtitle}</sub>"
+
         # Prepare groups and colors
-        groups, group_colors = self._prepare_groups(df_sorted, group_by)
+        groups, group_colors, display_names = self._prepare_groups(
+            df_sorted, group_by, experiment_types, group_display_names
+        )
+
+        # Collect all data points for optimal quadrant shading
+        all_x_data = []
+        all_y_data = []
 
         for group in groups:
             if group is None:
@@ -486,11 +846,15 @@ class PlotGenerator:
                 group_color = self._get_palette_colors(1)[0]
                 group_name = "Data"
             else:
-                group_data = df_sorted[df_sorted[group_by] == group].sort_values(
-                    x_metric
-                )
+                # df_sorted is already sorted by x_metric, filtering preserves order
+                group_data = df_sorted[df_sorted[group_by] == group]
                 group_color = group_colors[group]
-                group_name = group
+                # Use display name if available, otherwise use group ID
+                group_name = display_names.get(group, group)
+
+            # Collect data for optimal quadrant shading
+            all_x_data.extend(group_data[x_metric].tolist())
+            all_y_data.extend(group_data[y_metric].tolist())
 
             # Shadow layer
             fig.add_trace(
@@ -539,6 +903,11 @@ class PlotGenerator:
         # Apply NVIDIA branding layout
         layout = self._get_base_layout(title, x_label, y_label)
         fig.update_layout(layout)
+
+        # Add optimal quadrant shading
+        self._add_optimal_quadrant_shading(
+            fig, x_metric, y_metric, all_x_data, all_y_data
+        )
 
         return fig
 
@@ -1105,8 +1474,14 @@ class PlotGenerator:
 
             # Configure custom ticks with range labels at center positions
             layout["xaxis"]["tickmode"] = "array"
-            tick_positions = [i * slice_duration + slice_duration / 2 for i in range(int(max_slice) + 1)]
-            tick_labels = [f"{int(i * slice_duration)}-{int((i + 1) * slice_duration)}" for i in range(int(max_slice) + 1)]
+            tick_positions = [
+                i * slice_duration + slice_duration / 2
+                for i in range(int(max_slice) + 1)
+            ]
+            tick_labels = [
+                f"{int(i * slice_duration)}-{int((i + 1) * slice_duration)}"
+                for i in range(int(max_slice) + 1)
+            ]
             layout["xaxis"]["tickvals"] = tick_positions
             layout["xaxis"]["ticktext"] = tick_labels
             layout["xaxis"]["tickangle"] = -45

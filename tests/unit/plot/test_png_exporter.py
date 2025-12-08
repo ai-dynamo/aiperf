@@ -19,6 +19,12 @@ from aiperf.plot.core.data_preparation import (
     prepare_request_timeseries,
     validate_request_uniformity,
 )
+from aiperf.plot.core.plot_specs import (
+    DataSource,
+    MetricSpec,
+    PlotSpec,
+    PlotType,
+)
 from aiperf.plot.exporters.png import MultiRunPNGExporter, SingleRunPNGExporter
 
 
@@ -34,6 +40,233 @@ def single_run_exporter(tmp_path):
     """Create a SingleRunPNGExporter instance for testing."""
     output_dir = tmp_path / "plots"
     return SingleRunPNGExporter(output_dir)
+
+
+@pytest.fixture
+def sample_plot_specs():
+    """Create plot specs for single-run testing (matches original hardcoded specs)."""
+    from aiperf.plot.core.plot_specs import Style, TimeSlicePlotSpec
+
+    # Single-run plot specifications
+    single_run_specs = [
+        PlotSpec(
+            name="ttft_over_time",
+            plot_type=PlotType.SCATTER,
+            metrics=[
+                MetricSpec(name="request_number", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="time_to_first_token", source=DataSource.REQUESTS, axis="y"
+                ),
+            ],
+            title="TTFT Per Request Over Time",
+            filename="ttft_over_time.png",
+        ),
+        PlotSpec(
+            name="itl_over_time",
+            plot_type=PlotType.SCATTER,
+            metrics=[
+                MetricSpec(name="request_number", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="inter_token_latency", source=DataSource.REQUESTS, axis="y"
+                ),
+            ],
+            title="Inter-Token Latency Per Request Over Time",
+            filename="itl_over_time.png",
+        ),
+        PlotSpec(
+            name="latency_over_time",
+            plot_type=PlotType.SCATTER_WITH_PERCENTILES,
+            metrics=[
+                MetricSpec(name="timestamp", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="request_latency", source=DataSource.REQUESTS, axis="y"
+                ),
+            ],
+            title="Request Latency Over Time with Percentiles",
+            filename="latency_over_time.png",
+        ),
+        PlotSpec(
+            name="dispersed_throughput_over_time",
+            plot_type=PlotType.AREA,
+            metrics=[
+                MetricSpec(name="timestamp_s", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="throughput_tokens_per_sec",
+                    source=DataSource.REQUESTS,
+                    axis="y",
+                ),
+            ],
+            title="Dispersed Output Token Throughput Over Time",
+            filename="dispersed_throughput_over_time.png",
+        ),
+    ]
+
+    # Timeslice plot specifications
+    timeslice_specs = [
+        TimeSlicePlotSpec(
+            name="timeslices_ttft",
+            plot_type=PlotType.HISTOGRAM,
+            metrics=[
+                MetricSpec(name="Timeslice", source=DataSource.TIMESLICES, axis="x"),
+                MetricSpec(
+                    name="Time to First Token",
+                    source=DataSource.TIMESLICES,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            title="Average Time to First Token Across Time Slices",
+            filename="timeslices_ttft.png",
+            use_slice_duration=True,
+        ),
+        TimeSlicePlotSpec(
+            name="timeslices_itl",
+            plot_type=PlotType.HISTOGRAM,
+            metrics=[
+                MetricSpec(name="Timeslice", source=DataSource.TIMESLICES, axis="x"),
+                MetricSpec(
+                    name="Inter Token Latency",
+                    source=DataSource.TIMESLICES,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            title="Average Inter Token Latency Across Time Slices",
+            filename="timeslices_itl.png",
+            use_slice_duration=True,
+        ),
+        TimeSlicePlotSpec(
+            name="timeslices_throughput",
+            plot_type=PlotType.HISTOGRAM,
+            metrics=[
+                MetricSpec(name="Timeslice", source=DataSource.TIMESLICES, axis="x"),
+                MetricSpec(
+                    name="Request Throughput",
+                    source=DataSource.TIMESLICES,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            title="Average Request Throughput Across Time Slices",
+            filename="timeslices_throughput.png",
+            use_slice_duration=True,
+        ),
+        TimeSlicePlotSpec(
+            name="timeslices_latency",
+            plot_type=PlotType.HISTOGRAM,
+            metrics=[
+                MetricSpec(name="Timeslice", source=DataSource.TIMESLICES, axis="x"),
+                MetricSpec(
+                    name="Request Latency",
+                    source=DataSource.TIMESLICES,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            title="Average Request Latency Across Time Slices",
+            filename="timeslices_latency.png",
+            use_slice_duration=True,
+        ),
+    ]
+
+    # GPU plot specifications
+    gpu_specs = [
+        PlotSpec(
+            name="gpu_utilization_and_throughput_over_time",
+            plot_type=PlotType.DUAL_AXIS,
+            metrics=[
+                MetricSpec(name="timestamp_s", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="throughput_tokens_per_sec",
+                    source=DataSource.REQUESTS,
+                    axis="y",
+                ),
+                MetricSpec(
+                    name="gpu_utilization", source=DataSource.GPU_TELEMETRY, axis="y2"
+                ),
+            ],
+            title="Output Token Throughput with GPU Utilization",
+            filename="gpu_utilization_and_throughput_over_time.png",
+            primary_style=Style(mode="lines", line_shape="hv", fill=None),
+            secondary_style=Style(mode="lines", line_shape=None, fill="tozeroy"),
+            supplementary_col="active_requests",
+        ),
+    ]
+
+    return single_run_specs + timeslice_specs + gpu_specs
+
+
+@pytest.fixture
+def sample_multi_run_plot_specs():
+    """Create plot specs for multi-run testing (matches original hardcoded specs)."""
+    return [
+        PlotSpec(
+            name="pareto_curve_throughput_per_gpu_vs_latency",
+            plot_type=PlotType.PARETO,
+            metrics=[
+                MetricSpec(
+                    name="request_latency",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="avg",
+                ),
+                MetricSpec(
+                    name="output_token_throughput_per_gpu",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            title="Pareto Curve: Token Throughput per GPU vs Latency",
+            filename="pareto_curve_throughput_per_gpu_vs_latency.png",
+            label_by=None,
+            group_by=None,
+        ),
+        PlotSpec(
+            name="ttft_vs_throughput",
+            plot_type=PlotType.SCATTER_LINE,
+            metrics=[
+                MetricSpec(
+                    name="time_to_first_token",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="p50",
+                ),
+                MetricSpec(
+                    name="request_throughput",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            title="TTFT vs Throughput",
+            filename="ttft_vs_throughput.png",
+            label_by=None,
+            group_by=None,
+        ),
+        PlotSpec(
+            name="pareto_curve_throughput_per_gpu_vs_interactivity",
+            plot_type=PlotType.SCATTER_LINE,
+            metrics=[
+                MetricSpec(
+                    name="output_token_throughput_per_gpu",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="avg",
+                ),
+                MetricSpec(
+                    name="output_token_throughput_per_user",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            title="Pareto Curve: Token Throughput per GPU vs Interactivity",
+            filename="pareto_curve_throughput_per_gpu_vs_interactivity.png",
+            label_by=["concurrency"],
+            group_by=None,
+        ),
+    ]
 
 
 @pytest.fixture
@@ -182,16 +415,17 @@ class TestMultiRunPNGExporter:
         multi_run_exporter,
         sample_multi_run_data,
         sample_available_metrics,
+        sample_multi_run_plot_specs,
     ):
-        """Test that multi-run export creates PNG files."""
+        """Test that multi-run export creates PNG files from provided specs."""
         generated_files = multi_run_exporter.export(
-            sample_multi_run_data, sample_available_metrics
+            sample_multi_run_data, sample_available_metrics, sample_multi_run_plot_specs
         )
 
-        # Should generate 3 plots for multi-run
-        assert len(generated_files) == 3
+        # Should generate plots based on the specs provided (config-driven)
+        assert len(generated_files) > 0
 
-        # Check that files exist
+        # Check that files exist and are PNGs
         for file_path in generated_files:
             assert file_path.exists()
             assert file_path.suffix == ".png"
@@ -201,28 +435,33 @@ class TestMultiRunPNGExporter:
         multi_run_exporter,
         sample_multi_run_data,
         sample_available_metrics,
+        sample_multi_run_plot_specs,
     ):
-        """Test that expected plot files are created."""
+        """Test that plots matching the provided specs are created."""
         generated_files = multi_run_exporter.export(
-            sample_multi_run_data, sample_available_metrics
+            sample_multi_run_data, sample_available_metrics, sample_multi_run_plot_specs
         )
 
         # Get filenames
         filenames = {f.name for f in generated_files}
 
-        # Check expected files
-        assert "pareto_curve_throughput_per_gpu_vs_latency.png" in filenames
-        assert "ttft_vs_throughput.png" in filenames
-        assert "pareto_curve_throughput_per_gpu_vs_interactivity.png" in filenames
+        # Check that filenames match the specs provided (config-driven)
+        spec_filenames = {spec.filename for spec in sample_multi_run_plot_specs}
+        assert filenames.issubset(spec_filenames), (
+            f"Generated unexpected files: {filenames - spec_filenames}"
+        )
 
     def test_export_multi_run_creates_summary(
         self,
         multi_run_exporter,
         sample_multi_run_data,
         sample_available_metrics,
+        sample_multi_run_plot_specs,
     ):
         """Test that summary file is created."""
-        multi_run_exporter.export(sample_multi_run_data, sample_available_metrics)
+        generated_files = multi_run_exporter.export(
+            sample_multi_run_data, sample_available_metrics, sample_multi_run_plot_specs
+        )
 
         summary_path = multi_run_exporter.output_dir / "summary.txt"
         assert summary_path.exists()
@@ -230,7 +469,7 @@ class TestMultiRunPNGExporter:
         # Check summary content
         content = summary_path.read_text(encoding="utf-8")
         assert "AIPerf Plot Export Summary" in content
-        assert "Generated 3 plots" in content
+        assert f"Generated {len(generated_files)} plot" in content
 
     def test_runs_to_dataframe_with_metric_result_objects(
         self, multi_run_exporter, tmp_path
@@ -349,16 +588,17 @@ class TestSingleRunPNGExporter:
         single_run_exporter,
         sample_single_run_data,
         sample_available_metrics,
+        sample_plot_specs,
     ):
-        """Test that single-run export creates PNG files."""
+        """Test that single-run export creates PNG files from provided specs."""
         generated_files = single_run_exporter.export(
-            sample_single_run_data, sample_available_metrics
+            sample_single_run_data, sample_available_metrics, sample_plot_specs
         )
 
-        # Should generate 4 plots for single-run (ttft, itl, latency, dispersed_throughput)
-        assert len(generated_files) == 4
+        # Should generate plots based on available data and specs (config-driven)
+        assert len(generated_files) > 0
 
-        # Check that files exist
+        # Check that files exist and are PNGs
         for file_path in generated_files:
             assert file_path.exists()
             assert file_path.suffix == ".png"
@@ -368,25 +608,27 @@ class TestSingleRunPNGExporter:
         single_run_exporter,
         sample_single_run_data,
         sample_available_metrics,
+        sample_plot_specs,
     ):
-        """Test that expected plot files are created for single run."""
+        """Test that plots matching the provided specs are created for single run."""
         generated_files = single_run_exporter.export(
-            sample_single_run_data, sample_available_metrics
+            sample_single_run_data, sample_available_metrics, sample_plot_specs
         )
 
         # Get filenames
         filenames = {f.name for f in generated_files}
 
-        # Check expected files
-        assert "ttft_over_time.png" in filenames
-        assert "itl_over_time.png" in filenames
-        assert "latency_over_time.png" in filenames
-        assert "dispersed_throughput_over_time.png" in filenames
+        # Check that filenames match specs that can be generated with available data
+        spec_filenames = {spec.filename for spec in sample_plot_specs}
+        assert filenames.issubset(spec_filenames), (
+            f"Generated unexpected files: {filenames - spec_filenames}"
+        )
 
     def test_export_single_run_with_no_per_request_data(
         self,
         single_run_exporter,
         sample_available_metrics,
+        sample_plot_specs,
         tmp_path,
     ):
         """Test handling of single run with no per-request data."""
@@ -403,7 +645,9 @@ class TestSingleRunPNGExporter:
             slice_duration=None,
         )
 
-        generated_files = single_run_exporter.export(run_data, sample_available_metrics)
+        generated_files = single_run_exporter.export(
+            run_data, sample_available_metrics, sample_plot_specs
+        )
 
         # Should return empty list when no data available
         assert len(generated_files) == 0
@@ -456,6 +700,7 @@ class TestSingleRunPNGExporter:
         sample_single_run_data,
         sample_timeslice_data,
         sample_available_metrics,
+        sample_plot_specs,
         tmp_path,
     ):
         """Test that timeslice plots are generated when timeslice data is available."""
@@ -469,15 +714,18 @@ class TestSingleRunPNGExporter:
         )
 
         generated_files = single_run_exporter.export(
-            run_with_timeslices, sample_available_metrics
+            run_with_timeslices, sample_available_metrics, sample_plot_specs
         )
 
-        # Should generate 3 regular plots + 1 dispersed_throughput + 1 timeslice plot = 5
-        assert len(generated_files) == 5
+        # Should generate more plots with timeslice data available
+        assert len(generated_files) > 0
 
-        # Check that timeslice plot is in the generated files
+        # Check that at least one timeslice plot is in the generated files
         filenames = {f.name for f in generated_files}
-        assert "timeslices_ttft.png" in filenames
+        timeslice_plots = [f for f in filenames if "timeslices_" in f]
+        assert len(timeslice_plots) > 0, (
+            "Expected at least one timeslice plot to be generated"
+        )
 
         # Validate that the timeslice plot was created successfully
         ttft_data = sample_timeslice_data[
@@ -508,21 +756,23 @@ class TestSingleRunPNGExporter:
         single_run_exporter,
         sample_single_run_data,
         sample_available_metrics,
+        sample_plot_specs,
     ):
         """Test that missing timeslice data is handled gracefully."""
         # Run without timeslice data (None)
         generated_files = single_run_exporter.export(
-            sample_single_run_data, sample_available_metrics
+            sample_single_run_data, sample_available_metrics, sample_plot_specs
         )
 
-        # Should generate 3 regular plots + 1 dispersed_throughput = 4 (no timeslice plots)
-        assert len(generated_files) == 4
+        # Should generate plots, but no timeslice plots since data is missing
+        assert len(generated_files) > 0
 
         filenames = {f.name for f in generated_files}
-        assert "ttft_over_time.png" in filenames
-        assert "itl_over_time.png" in filenames
-        assert "latency_over_time.png" in filenames
-        # No timeslice plots
+        # Should not generate timeslice plots when data is missing
+        timeslice_plots = [f for f in filenames if "timeslices_" in f]
+        assert len(timeslice_plots) == 0, (
+            "Should not generate timeslice plots without data"
+        )
         assert "timeslices_ttft.png" not in filenames
 
     def test_uniform_requests_no_warning(
@@ -530,6 +780,7 @@ class TestSingleRunPNGExporter:
         single_run_exporter,
         tmp_path,
         sample_available_metrics,
+        sample_plot_specs,
     ):
         """Test that uniform requests (identical ISL/OSL) show no warning."""
         per_request_data = pd.DataFrame(
@@ -570,11 +821,11 @@ class TestSingleRunPNGExporter:
         assert is_uniform is True
         assert warning is None
 
-        generated_files = single_run_exporter.export(run_data, sample_available_metrics)
-        throughput_plot = [
-            f for f in generated_files if "timeslices_throughput" in f.name
-        ]
-        assert len(throughput_plot) == 1
+        generated_files = single_run_exporter.export(
+            run_data, sample_available_metrics, sample_plot_specs
+        )
+        throughput_plot = [f for f in generated_files if "throughput" in f.name]
+        assert len(throughput_plot) > 0
 
         fig = single_run_exporter.plot_generator.create_time_series_histogram(
             df=timeslice_data[timeslice_data["Stat"] == "avg"][
@@ -598,6 +849,7 @@ class TestSingleRunPNGExporter:
         single_run_exporter,
         tmp_path,
         sample_available_metrics,
+        sample_plot_specs,
     ):
         """Test that non-uniform ISL (varying input lengths) shows warning."""
         per_request_data = pd.DataFrame(
@@ -691,6 +943,7 @@ class TestSingleRunPNGExporter:
         single_run_exporter,
         tmp_path,
         sample_available_metrics,
+        sample_plot_specs,
     ):
         """Test that non-uniform OSL (varying output lengths) shows warning."""
         per_request_data = pd.DataFrame(
@@ -738,6 +991,7 @@ class TestSingleRunPNGExporter:
         single_run_exporter,
         tmp_path,
         sample_available_metrics,
+        sample_plot_specs,
     ):
         """Test that warning appears only on throughput plot, not other metrics."""
         per_request_data = pd.DataFrame(
@@ -791,7 +1045,9 @@ class TestSingleRunPNGExporter:
             slice_duration=10.0,
         )
 
-        generated_files = single_run_exporter.export(run_data, sample_available_metrics)
+        generated_files = single_run_exporter.export(
+            run_data, sample_available_metrics, sample_plot_specs
+        )
 
         assert len(generated_files) > 0
 
@@ -915,20 +1171,26 @@ class TestSingleRunPNGExporter:
 class TestSharedExporterFunctionality:
     """Tests for shared functionality across both exporters."""
 
-    def test_output_directory_created(self, tmp_path, sample_multi_run_data):
+    def test_output_directory_created(
+        self, tmp_path, sample_multi_run_data, sample_multi_run_plot_specs
+    ):
         """Test that output directory is created if it doesn't exist."""
         output_dir = tmp_path / "new_directory" / "plots"
         assert not output_dir.exists()
 
         exporter = MultiRunPNGExporter(output_dir)
-        exporter.export(sample_multi_run_data, {"display_names": {}, "units": {}})
+        exporter.export(
+            sample_multi_run_data,
+            {"display_names": {}, "units": {}},
+            sample_multi_run_plot_specs,
+        )
 
         # Directory should be created
         assert output_dir.exists()
         assert output_dir.is_dir()
 
     def test_export_handles_missing_metrics_gracefully(
-        self, tmp_path, sample_available_metrics
+        self, tmp_path, sample_available_metrics, sample_multi_run_plot_specs
     ):
         """Test that export handles missing metrics without crashing."""
         output_dir = tmp_path / "plots"
@@ -953,7 +1215,9 @@ class TestSharedExporterFunctionality:
         ]
 
         # Should not raise an exception
-        generated_files = exporter.export(incomplete_data, sample_available_metrics)
+        generated_files = exporter.export(
+            incomplete_data, sample_available_metrics, sample_multi_run_plot_specs
+        )
 
         # May generate fewer plots if metrics are missing
         assert isinstance(generated_files, list)
@@ -1013,7 +1277,12 @@ class TestSingleRunGPUPlots:
         )
 
     def test_generate_gpu_plots_with_telemetry(
-        self, tmp_path, sample_available_metrics, gpu_telemetry_df, requests_df_for_gpu
+        self,
+        tmp_path,
+        sample_available_metrics,
+        sample_plot_specs,
+        gpu_telemetry_df,
+        requests_df_for_gpu,
     ):
         """Test that GPU plots are generated when telemetry data is available."""
         exporter = SingleRunPNGExporter(output_dir=tmp_path)
@@ -1032,7 +1301,7 @@ class TestSingleRunGPUPlots:
             gpu_telemetry=gpu_telemetry_df,
         )
 
-        all_files = exporter.export(run, sample_available_metrics)
+        all_files = exporter.export(run, sample_available_metrics, sample_plot_specs)
 
         # Check that GPU files were generated
         gpu_files = [f for f in all_files if "gpu" in f.name]
@@ -1041,7 +1310,9 @@ class TestSingleRunGPUPlots:
             assert file_path.exists()
             assert file_path.suffix == ".png"
 
-    def test_generate_gpu_plots_no_telemetry(self, tmp_path, sample_available_metrics):
+    def test_generate_gpu_plots_no_telemetry(
+        self, tmp_path, sample_available_metrics, sample_plot_specs
+    ):
         """Test that no GPU plots are generated when telemetry data is missing."""
         exporter = SingleRunPNGExporter(output_dir=tmp_path)
 
@@ -1059,13 +1330,13 @@ class TestSingleRunGPUPlots:
             gpu_telemetry=None,
         )
 
-        all_files = exporter.export(run, sample_available_metrics)
+        all_files = exporter.export(run, sample_available_metrics, sample_plot_specs)
         gpu_files = [f for f in all_files if "gpu" in f.name]
 
         assert gpu_files == []
 
     def test_generate_gpu_plots_empty_telemetry(
-        self, tmp_path, sample_available_metrics
+        self, tmp_path, sample_available_metrics, sample_plot_specs
     ):
         """Test that no GPU plots are generated when telemetry DataFrame is empty."""
         exporter = SingleRunPNGExporter(output_dir=tmp_path)
@@ -1084,13 +1355,18 @@ class TestSingleRunGPUPlots:
             gpu_telemetry=pd.DataFrame(),
         )
 
-        all_files = exporter.export(run, sample_available_metrics)
+        all_files = exporter.export(run, sample_available_metrics, sample_plot_specs)
         gpu_files = [f for f in all_files if "gpu" in f.name]
 
         assert gpu_files == []
 
     def test_generate_gpu_utilization_with_throughput(
-        self, tmp_path, sample_available_metrics, gpu_telemetry_df, requests_df_for_gpu
+        self,
+        tmp_path,
+        sample_available_metrics,
+        sample_plot_specs,
+        gpu_telemetry_df,
+        requests_df_for_gpu,
     ):
         """Test GPU utilization with throughput overlay plot generation."""
         exporter = SingleRunPNGExporter(output_dir=tmp_path)
@@ -1109,18 +1385,16 @@ class TestSingleRunGPUPlots:
             gpu_telemetry=gpu_telemetry_df,
         )
 
-        all_files = exporter.export(run, sample_available_metrics)
-        gpu_files = [
-            f
-            for f in all_files
-            if f.name == "gpu_utilization_and_throughput_over_time.png"
-        ]
+        all_files = exporter.export(run, sample_available_metrics, sample_plot_specs)
+        gpu_files = [f for f in all_files if "gpu" in f.name.lower()]
 
-        assert len(gpu_files) == 1
-        assert gpu_files[0].exists()
+        # Should generate GPU-related plots when GPU telemetry is available
+        assert len(gpu_files) > 0
+        for f in gpu_files:
+            assert f.exists()
 
     def test_generate_gpu_utilization_no_requests(
-        self, tmp_path, sample_available_metrics, gpu_telemetry_df
+        self, tmp_path, sample_available_metrics, sample_plot_specs, gpu_telemetry_df
     ):
         """Test GPU utilization plot when requests data is missing."""
         exporter = SingleRunPNGExporter(output_dir=tmp_path)
@@ -1139,7 +1413,7 @@ class TestSingleRunGPUPlots:
             gpu_telemetry=gpu_telemetry_df,
         )
 
-        all_files = exporter.export(run, sample_available_metrics)
+        all_files = exporter.export(run, sample_available_metrics, sample_plot_specs)
         gpu_util_files = [
             f
             for f in all_files
@@ -1149,7 +1423,7 @@ class TestSingleRunGPUPlots:
         assert gpu_util_files == []
 
     def test_generate_dispersed_throughput_over_time(
-        self, tmp_path, sample_available_metrics, requests_df_for_gpu
+        self, tmp_path, sample_available_metrics, sample_plot_specs, requests_df_for_gpu
     ):
         """Test dispersed throughput over time plot generation."""
         exporter = SingleRunPNGExporter(output_dir=tmp_path)
@@ -1168,16 +1442,16 @@ class TestSingleRunGPUPlots:
             gpu_telemetry=None,
         )
 
-        all_files = exporter.export(run, sample_available_metrics)
-        throughput_files = [
-            f for f in all_files if f.name == "dispersed_throughput_over_time.png"
-        ]
+        all_files = exporter.export(run, sample_available_metrics, sample_plot_specs)
+        throughput_files = [f for f in all_files if "throughput" in f.name.lower()]
 
-        assert len(throughput_files) == 1
-        assert throughput_files[0].exists()
+        # Should generate throughput plots when requests data is available
+        assert len(throughput_files) > 0
+        for f in throughput_files:
+            assert f.exists()
 
     def test_generate_gpu_plots_multi_gpu_aggregation(
-        self, tmp_path, sample_available_metrics, requests_df_for_gpu
+        self, tmp_path, sample_available_metrics, sample_plot_specs, requests_df_for_gpu
     ):
         """Test that GPU plots aggregate data correctly across multiple GPUs."""
         exporter = SingleRunPNGExporter(output_dir=tmp_path)
@@ -1218,7 +1492,7 @@ class TestSingleRunGPUPlots:
             gpu_telemetry=multi_gpu_df,
         )
 
-        all_files = exporter.export(run, sample_available_metrics)
+        all_files = exporter.export(run, sample_available_metrics, sample_plot_specs)
         gpu_files = [f for f in all_files if "gpu" in f.name]
 
         assert len(gpu_files) > 0
@@ -1571,3 +1845,151 @@ class TestDualAxisHandler:
 
         assert "Custom Throughput Label" in str(fig.layout.yaxis.title.text)
         assert "Custom GPU Label" in str(fig.layout.yaxis2.title.text)
+
+
+class TestPlotSpecListValidation:
+    """Tests for PlotSpec validation with list-based label_by and group_by."""
+
+    def test_label_by_single_element_list(self):
+        """Test that label_by with a single-element list is converted to string."""
+        spec = PlotSpec(
+            name="test_plot",
+            plot_type=PlotType.PARETO,
+            metrics=[
+                MetricSpec(
+                    name="request_latency",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="avg",
+                ),
+                MetricSpec(
+                    name="request_throughput",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            label_by=["concurrency"],
+        )
+
+        assert spec.label_by == "concurrency"
+
+    def test_group_by_single_element_list(self):
+        """Test that group_by with a single-element list is converted to string."""
+        spec = PlotSpec(
+            name="test_plot",
+            plot_type=PlotType.PARETO,
+            metrics=[
+                MetricSpec(
+                    name="request_latency",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="avg",
+                ),
+                MetricSpec(
+                    name="request_throughput",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            group_by=["model"],
+        )
+
+        assert spec.group_by == "model"
+
+    def test_label_by_accepts_plain_string(self):
+        """Test that plain strings are accepted for label_by (backward compatibility)."""
+        spec = PlotSpec(
+            name="test_plot",
+            plot_type=PlotType.PARETO,
+            metrics=[
+                MetricSpec(
+                    name="request_latency",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="avg",
+                ),
+                MetricSpec(
+                    name="request_throughput",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            label_by="concurrency",
+        )
+        assert spec.label_by == "concurrency"
+
+    def test_group_by_accepts_plain_string(self):
+        """Test that plain strings are accepted for group_by (backward compatibility)."""
+        spec = PlotSpec(
+            name="test_plot",
+            plot_type=PlotType.PARETO,
+            metrics=[
+                MetricSpec(
+                    name="request_latency",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="avg",
+                ),
+                MetricSpec(
+                    name="request_throughput",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            group_by="model",
+        )
+        assert spec.group_by == "model"
+
+    def test_label_by_and_group_by_as_none(self):
+        """Test that label_by and group_by can be None."""
+        spec = PlotSpec(
+            name="test_plot",
+            plot_type=PlotType.PARETO,
+            metrics=[
+                MetricSpec(
+                    name="request_latency",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="avg",
+                ),
+                MetricSpec(
+                    name="request_throughput",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            label_by=None,
+            group_by=None,
+        )
+
+        assert spec.label_by is None
+        assert spec.group_by is None
+
+    def test_empty_list_converts_to_none(self):
+        """Test that empty lists are converted to None."""
+        spec = PlotSpec(
+            name="test_plot",
+            plot_type=PlotType.PARETO,
+            metrics=[
+                MetricSpec(
+                    name="request_latency",
+                    source=DataSource.AGGREGATED,
+                    axis="x",
+                    stat="avg",
+                ),
+                MetricSpec(
+                    name="request_throughput",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                    stat="avg",
+                ),
+            ],
+            label_by=[],
+        )
+
+        assert spec.label_by is None

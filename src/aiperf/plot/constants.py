@@ -60,6 +60,14 @@ NVIDIA_TEXT_LIGHT = "#E0E0E0"
 NVIDIA_CARD_BG = "#252525"
 OUTLIER_RED = "#E74C3C"
 
+# Direction indicators for derived metrics (not in MetricRegistry)
+# Maps metric name to direction: True = ↑ (higher is better), False = ↓ (lower is better)
+DERIVED_METRIC_DIRECTIONS = {
+    "output_token_throughput_per_gpu": True,
+    "output_token_throughput_per_user": True,
+}
+
+
 DARK_THEME_COLORS = {
     "primary": NVIDIA_GREEN,
     "secondary": NVIDIA_GOLD,

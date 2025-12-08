@@ -44,7 +44,9 @@ class BaseExporter(AIPerfLoggerMixin, ABC):
         super().__init__()
         self.output_dir = Path(output_dir)
         self.theme = theme
-        self.plot_generator = PlotGenerator(theme=theme, color_pool_size=color_pool_size)
+        self.plot_generator = PlotGenerator(
+            theme=theme, color_pool_size=color_pool_size
+        )
 
     @abstractmethod
     def export(self, *args, **kwargs):
