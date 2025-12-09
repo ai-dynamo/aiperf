@@ -19,6 +19,7 @@ class Groups:
     OUTPUT_SEQUENCE_LENGTH = Group.create_ordered("Output Sequence Length (OSL)")
     PROMPT = Group.create_ordered("Prompt")
     PREFIX_PROMPT = Group.create_ordered("Prefix Prompt")
+    RANKINGS = Group.create_ordered("Rankings")
     AUDIO_INPUT = Group.create_ordered("Audio Input")
     IMAGE_INPUT = Group.create_ordered("Image Input")
     VIDEO_INPUT = Group.create_ordered("Video Input")

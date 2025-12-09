@@ -411,23 +411,18 @@ class UserConfig(BaseConfig):
         )
 
         # Check if any rankings-specific token options have been changed from defaults
-        rankings_token_fields = [
-            "rankings_passages_prompt_token_mean",
-            "rankings_passages_prompt_token_stddev",
-            "rankings_query_prompt_token_mean",
-            "rankings_query_prompt_token_stddev",
-        ]
         rankings_tokens_modified = any(
-            field in self.input.model_fields_set for field in rankings_token_fields
+            field in self.input.rankings.passages.model_fields_set
+            for field in ["prompt_token_mean", "prompt_token_stddev"]
+        ) or any(
+            field in self.input.rankings.query.model_fields_set
+            for field in ["prompt_token_mean", "prompt_token_stddev"]
         )
 
         # Check if any rankings-specific passage options have been changed from defaults
-        rankings_passages_fields = [
-            "rankings_passages_mean",
-            "rankings_passages_stddev",
-        ]
         rankings_passages_modified = any(
-            field in self.input.model_fields_set for field in rankings_passages_fields
+            field in self.input.rankings.passages.model_fields_set
+            for field in ["mean", "stddev"]
         )
 
         rankings_options_modified = (

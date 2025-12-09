@@ -112,37 +112,7 @@ The seed used to generate random values. Set to some value to make the synthetic
 
 #### `--goodput` `<str>`
 
-Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric’s display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
-
-#### `--rankings-passages-mean` `<int>`
-
-Mean number of passages per rankings entry (per query)(default 1).
-<br>_Default: `1`_
-
-#### `--rankings-passages-stddev` `<int>`
-
-Stddev for passages per rankings entry (default 0).
-<br>_Default: `0`_
-
-#### `--rankings-passages-prompt-token-mean` `<int>`
-
-Mean number of tokens in a passage entry for rankings (default 550).
-<br>_Default: `550`_
-
-#### `--rankings-passages-prompt-token-stddev` `<int>`
-
-Stddev for number of tokens in a passage entry for rankings (default 0).
-<br>_Default: `0`_
-
-#### `--rankings-query-prompt-token-mean` `<int>`
-
-Mean number of tokens in a query entry for rankings (default 550).
-<br>_Default: `550`_
-
-#### `--rankings-query-prompt-token-stddev` `<int>`
-
-Stddev for number of tokens in a query entry for rankings (default 0).
-<br>_Default: `0`_
+Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric's display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
 
 ## Audio Input Options
 
@@ -306,6 +276,38 @@ The total size of the prefix prompt pool to select prefixes from. If this value 
 #### `--prompt-prefix-length`, `--prefix-prompt-length` `<int>`
 
 The number of tokens in each prefix prompt. This is only used if "num" is greater than zero. Note that due to the prefix and user prompts being concatenated, the number of tokens in the final prompt may be off by one.
+<br>_Default: `0`_
+
+## Rankings Options
+
+#### `--rankings-passages-mean` `<int>`
+
+Mean number of passages per rankings entry (per query)(default 1).
+<br>_Default: `1`_
+
+#### `--rankings-passages-stddev` `<int>`
+
+Stddev for passages per rankings entry (default 0).
+<br>_Default: `0`_
+
+#### `--rankings-passages-prompt-token-mean` `<int>`
+
+Mean number of tokens in a passage entry for rankings (default 550).
+<br>_Default: `550`_
+
+#### `--rankings-passages-prompt-token-stddev` `<int>`
+
+Stddev for number of tokens in a passage entry for rankings (default 0).
+<br>_Default: `0`_
+
+#### `--rankings-query-prompt-token-mean` `<int>`
+
+Mean number of tokens in a query entry for rankings (default 550).
+<br>_Default: `550`_
+
+#### `--rankings-query-prompt-token-stddev` `<int>`
+
+Stddev for number of tokens in a query entry for rankings (default 0).
 <br>_Default: `0`_
 
 ## Conversation Input Options

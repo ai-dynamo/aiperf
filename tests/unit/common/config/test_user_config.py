@@ -12,6 +12,9 @@ from aiperf.common.config import (
     InputConfig,
     LoadGeneratorConfig,
     OutputConfig,
+    RankingsConfig,
+    RankingsPassagesConfig,
+    RankingsQueryConfig,
     TokenizerConfig,
     TurnConfig,
     TurnDelayConfig,
@@ -774,8 +777,8 @@ def test_rankings_passages_defaults_and_custom_values():
             custom_endpoint="test",
         ),
     )
-    assert cfg_default.input.rankings_passages_mean == 1
-    assert cfg_default.input.rankings_passages_stddev == 0
+    assert cfg_default.input.rankings.passages.mean == 1
+    assert cfg_default.input.rankings.passages.stddev == 0
 
     # Test custom values
     cfg_custom = UserConfig(
@@ -784,10 +787,12 @@ def test_rankings_passages_defaults_and_custom_values():
             type=EndpointType.HF_TEI_RANKINGS,
             custom_endpoint="test",
         ),
-        input=InputConfig(rankings_passages_mean=5, rankings_passages_stddev=2),
+        input=InputConfig(
+            rankings=RankingsConfig(passages=RankingsPassagesConfig(mean=5, stddev=2))
+        ),
     )
-    assert cfg_custom.input.rankings_passages_mean == 5
-    assert cfg_custom.input.rankings_passages_stddev == 2
+    assert cfg_custom.input.rankings.passages.mean == 5
+    assert cfg_custom.input.rankings.passages.stddev == 2
 
 
 def test_rankings_passages_validation_errors():
@@ -801,7 +806,9 @@ def test_rankings_passages_validation_errors():
                 type=EndpointType.HF_TEI_RANKINGS,
                 custom_endpoint="test",
             ),
-            input=InputConfig(rankings_passages_mean=0),
+            input=InputConfig(
+                rankings=RankingsConfig(passages=RankingsPassagesConfig(mean=0))
+            ),
         )
 
     with pytest.raises(ValidationError):
@@ -811,7 +818,9 @@ def test_rankings_passages_validation_errors():
                 type=EndpointType.HF_TEI_RANKINGS,
                 custom_endpoint="test",
             ),
-            input=InputConfig(rankings_passages_stddev=-1),
+            input=InputConfig(
+                rankings=RankingsConfig(passages=RankingsPassagesConfig(stddev=-1))
+            ),
         )
 
 
@@ -825,8 +834,8 @@ def test_rankings_passages_prompt_token_defaults_and_custom_values():
             custom_endpoint="test",
         ),
     )
-    assert cfg_default.input.rankings_passages_prompt_token_mean == 550
-    assert cfg_default.input.rankings_passages_prompt_token_stddev == 0
+    assert cfg_default.input.rankings.passages.prompt_token_mean == 550
+    assert cfg_default.input.rankings.passages.prompt_token_stddev == 0
 
     # Test custom values
     cfg_custom = UserConfig(
@@ -836,12 +845,15 @@ def test_rankings_passages_prompt_token_defaults_and_custom_values():
             custom_endpoint="test",
         ),
         input=InputConfig(
-            rankings_passages_prompt_token_mean=100,
-            rankings_passages_prompt_token_stddev=10,
+            rankings=RankingsConfig(
+                passages=RankingsPassagesConfig(
+                    prompt_token_mean=100, prompt_token_stddev=10
+                )
+            )
         ),
     )
-    assert cfg_custom.input.rankings_passages_prompt_token_mean == 100
-    assert cfg_custom.input.rankings_passages_prompt_token_stddev == 10
+    assert cfg_custom.input.rankings.passages.prompt_token_mean == 100
+    assert cfg_custom.input.rankings.passages.prompt_token_stddev == 10
 
 
 def test_rankings_query_prompt_token_defaults_and_custom_values():
@@ -854,8 +866,8 @@ def test_rankings_query_prompt_token_defaults_and_custom_values():
             custom_endpoint="test",
         ),
     )
-    assert cfg_default.input.rankings_query_prompt_token_mean == 550
-    assert cfg_default.input.rankings_query_prompt_token_stddev == 0
+    assert cfg_default.input.rankings.query.prompt_token_mean == 550
+    assert cfg_default.input.rankings.query.prompt_token_stddev == 0
 
     # Test custom values
     cfg_custom = UserConfig(
@@ -865,35 +877,46 @@ def test_rankings_query_prompt_token_defaults_and_custom_values():
             custom_endpoint="test",
         ),
         input=InputConfig(
-            rankings_query_prompt_token_mean=50,
-            rankings_query_prompt_token_stddev=5,
+            rankings=RankingsConfig(
+                query=RankingsQueryConfig(prompt_token_mean=50, prompt_token_stddev=5)
+            )
         ),
     )
-    assert cfg_custom.input.rankings_query_prompt_token_mean == 50
-    assert cfg_custom.input.rankings_query_prompt_token_stddev == 5
+    assert cfg_custom.input.rankings.query.prompt_token_mean == 50
+    assert cfg_custom.input.rankings.query.prompt_token_stddev == 5
 
 
 @pytest.mark.parametrize(
-    "param_name,invalid_value",
+    "config_class,param_name,invalid_value",
     [
-        ("rankings_passages_prompt_token_mean", 0),
-        ("rankings_passages_prompt_token_stddev", -1),
-        ("rankings_query_prompt_token_mean", 0),
-        ("rankings_query_prompt_token_stddev", -1),
+        (RankingsPassagesConfig, "prompt_token_mean", 0),
+        (RankingsPassagesConfig, "prompt_token_stddev", -1),
+        (RankingsQueryConfig, "prompt_token_mean", 0),
+        (RankingsQueryConfig, "prompt_token_stddev", -1),
     ],
 )
-def test_rankings_prompt_token_validation_errors(param_name, invalid_value):
+def test_rankings_prompt_token_validation_errors(
+    config_class, param_name, invalid_value
+):
     """Test that invalid rankings prompt token values raise validation errors."""
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
+        if config_class == RankingsPassagesConfig:
+            rankings_config = RankingsConfig(
+                passages=RankingsPassagesConfig(**{param_name: invalid_value})
+            )
+        else:
+            rankings_config = RankingsConfig(
+                query=RankingsQueryConfig(**{param_name: invalid_value})
+            )
         UserConfig(
             endpoint=EndpointConfig(
                 model_names=["test-model"],
                 type=EndpointType.HF_TEI_RANKINGS,
                 custom_endpoint="test",
             ),
-            input=InputConfig(**{param_name: invalid_value}),
+            input=InputConfig(rankings=rankings_config),
         )
 
 
@@ -917,7 +940,9 @@ def test_rankings_and_prompt_tokens_cannot_be_set_together():
             ),
             input=InputConfig(
                 prompt=prompt_config,
-                rankings_passages_prompt_token_mean=200,  # Non-default value
+                rankings=RankingsConfig(
+                    passages=RankingsPassagesConfig(prompt_token_mean=200)
+                ),
             ),
         )
 
@@ -933,7 +958,9 @@ def test_rankings_and_prompt_tokens_cannot_be_set_together():
             ),
             input=InputConfig(
                 prompt=prompt_config_stddev,
-                rankings_query_prompt_token_mean=300,  # Non-default value
+                rankings=RankingsConfig(
+                    query=RankingsQueryConfig(prompt_token_mean=300)
+                ),
             ),
         )
 
@@ -947,16 +974,18 @@ def test_rankings_tokens_only_is_allowed():
             custom_endpoint="test",
         ),
         input=InputConfig(
-            rankings_passages_prompt_token_mean=100,
-            rankings_passages_prompt_token_stddev=10,
-            rankings_query_prompt_token_mean=50,
-            rankings_query_prompt_token_stddev=5,
+            rankings=RankingsConfig(
+                passages=RankingsPassagesConfig(
+                    prompt_token_mean=100, prompt_token_stddev=10
+                ),
+                query=RankingsQueryConfig(prompt_token_mean=50, prompt_token_stddev=5),
+            )
         ),
     )
-    assert cfg.input.rankings_passages_prompt_token_mean == 100
-    assert cfg.input.rankings_passages_prompt_token_stddev == 10
-    assert cfg.input.rankings_query_prompt_token_mean == 50
-    assert cfg.input.rankings_query_prompt_token_stddev == 5
+    assert cfg.input.rankings.passages.prompt_token_mean == 100
+    assert cfg.input.rankings.passages.prompt_token_stddev == 10
+    assert cfg.input.rankings.query.prompt_token_mean == 50
+    assert cfg.input.rankings.query.prompt_token_stddev == 5
 
 
 def test_prompt_tokens_only_is_allowed():
@@ -978,17 +1007,17 @@ def test_prompt_tokens_only_is_allowed():
 
 
 @pytest.mark.parametrize(
-    "rankings_option,value",
+    "rankings_config",
     [
-        ("rankings_passages_mean", 5),
-        ("rankings_passages_stddev", 2),
-        ("rankings_passages_prompt_token_mean", 100),
-        ("rankings_passages_prompt_token_stddev", 10),
-        ("rankings_query_prompt_token_mean", 50),
-        ("rankings_query_prompt_token_stddev", 5),
+        RankingsConfig(passages=RankingsPassagesConfig(mean=5)),
+        RankingsConfig(passages=RankingsPassagesConfig(stddev=2)),
+        RankingsConfig(passages=RankingsPassagesConfig(prompt_token_mean=100)),
+        RankingsConfig(passages=RankingsPassagesConfig(prompt_token_stddev=10)),
+        RankingsConfig(query=RankingsQueryConfig(prompt_token_mean=50)),
+        RankingsConfig(query=RankingsQueryConfig(prompt_token_stddev=5)),
     ],
 )
-def test_rankings_options_require_rankings_endpoint(rankings_option, value):
+def test_rankings_options_require_rankings_endpoint(rankings_config):
     """Test that rankings options cannot be used with non-rankings endpoints."""
     from pydantic import ValidationError
 
@@ -1001,7 +1030,7 @@ def test_rankings_options_require_rankings_endpoint(rankings_option, value):
                 type=EndpointType.CHAT,  # Non-rankings endpoint
                 custom_endpoint="test",
             ),
-            input=InputConfig(**{rankings_option: value}),
+            input=InputConfig(rankings=rankings_config),
         )
 
 
@@ -1027,8 +1056,9 @@ def test_rankings_options_rejected_for_non_rankings_endpoints(endpoint_type):
                 custom_endpoint="test",
             ),
             input=InputConfig(
-                rankings_passages_mean=5,
-                rankings_passages_prompt_token_mean=100,
+                rankings=RankingsConfig(
+                    passages=RankingsPassagesConfig(mean=5, prompt_token_mean=100)
+                )
             ),
         )
 
@@ -1050,17 +1080,17 @@ def test_rankings_options_allowed_for_rankings_endpoints(endpoint_type):
             custom_endpoint="test",
         ),
         input=InputConfig(
-            rankings_passages_mean=5,
-            rankings_passages_stddev=2,
-            rankings_passages_prompt_token_mean=100,
-            rankings_passages_prompt_token_stddev=10,
-            rankings_query_prompt_token_mean=50,
-            rankings_query_prompt_token_stddev=5,
+            rankings=RankingsConfig(
+                passages=RankingsPassagesConfig(
+                    mean=5, stddev=2, prompt_token_mean=100, prompt_token_stddev=10
+                ),
+                query=RankingsQueryConfig(prompt_token_mean=50, prompt_token_stddev=5),
+            )
         ),
     )
-    assert cfg.input.rankings_passages_mean == 5
-    assert cfg.input.rankings_passages_stddev == 2
-    assert cfg.input.rankings_passages_prompt_token_mean == 100
-    assert cfg.input.rankings_passages_prompt_token_stddev == 10
-    assert cfg.input.rankings_query_prompt_token_mean == 50
-    assert cfg.input.rankings_query_prompt_token_stddev == 5
+    assert cfg.input.rankings.passages.mean == 5
+    assert cfg.input.rankings.passages.stddev == 2
+    assert cfg.input.rankings.passages.prompt_token_mean == 100
+    assert cfg.input.rankings.passages.prompt_token_stddev == 10
+    assert cfg.input.rankings.query.prompt_token_mean == 50
+    assert cfg.input.rankings.query.prompt_token_stddev == 5

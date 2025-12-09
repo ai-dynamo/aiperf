@@ -21,6 +21,7 @@ from aiperf.common.config.conversation_config import ConversationConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
+from aiperf.common.config.rankings_config import RankingsConfig
 from aiperf.common.config.video_config import VideoConfig
 from aiperf.common.enums import CustomDatasetType, PublicDatasetType
 from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
@@ -290,7 +291,7 @@ class InputConfig(BaseConfig):
             default=None,
             description="Specify service level objectives (SLOs) for goodput as space-separated "
             "'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the "
-            "metric’s display unit (falls back to its base unit if no display unit is defined). "
+            "metric's display unit (falls back to its base unit if no display unit is defined). "
             "Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), "
             "`output_token_throughput_per_user:600` (tokens/s).\n"
             "Only metrics applicable to the current endpoint/config are considered. "
@@ -305,90 +306,9 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.GOODPUT
 
-    rankings_passages_mean: Annotated[
-        int,
-        Field(
-            ge=1,
-            description=(
-                "Mean number of passages per rankings entry (per query)(default 1)."
-            ),
-        ),
-        CLIParameter(
-            name=("--rankings-passages-mean",),
-            group=_CLI_GROUP,
-        ),
-    ] = InputDefaults.RANKINGS_PASSAGES_MEAN
-
-    rankings_passages_stddev: Annotated[
-        int,
-        Field(
-            ge=0,
-            description=("Stddev for passages per rankings entry (default 0)."),
-        ),
-        CLIParameter(
-            name=("--rankings-passages-stddev",),
-            group=_CLI_GROUP,
-        ),
-    ] = InputDefaults.RANKINGS_PASSAGES_STDDEV
-
-    rankings_passages_prompt_token_mean: Annotated[
-        int,
-        Field(
-            ge=1,
-            description=(
-                "Mean number of tokens in a passage entry for rankings (default 550)."
-            ),
-        ),
-        CLIParameter(
-            name=("--rankings-passages-prompt-token-mean",),
-            group=_CLI_GROUP,
-        ),
-    ] = InputDefaults.RANKINGS_PASSAGES_PROMPT_TOKEN_MEAN
-
-    rankings_passages_prompt_token_stddev: Annotated[
-        int,
-        Field(
-            ge=0,
-            description=(
-                "Stddev for number of tokens in a passage entry for rankings (default 0)."
-            ),
-        ),
-        CLIParameter(
-            name=("--rankings-passages-prompt-token-stddev",),
-            group=_CLI_GROUP,
-        ),
-    ] = InputDefaults.RANKINGS_PASSAGES_PROMPT_TOKEN_STDDEV
-
-    rankings_query_prompt_token_mean: Annotated[
-        int,
-        Field(
-            ge=1,
-            description=(
-                "Mean number of tokens in a query entry for rankings (default 550)."
-            ),
-        ),
-        CLIParameter(
-            name=("--rankings-query-prompt-token-mean",),
-            group=_CLI_GROUP,
-        ),
-    ] = InputDefaults.RANKINGS_QUERY_PROMPT_TOKEN_MEAN
-
-    rankings_query_prompt_token_stddev: Annotated[
-        int,
-        Field(
-            ge=0,
-            description=(
-                "Stddev for number of tokens in a query entry for rankings (default 0)."
-            ),
-        ),
-        CLIParameter(
-            name=("--rankings-query-prompt-token-stddev",),
-            group=_CLI_GROUP,
-        ),
-    ] = InputDefaults.RANKINGS_QUERY_PROMPT_TOKEN_STDDEV
-
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
     video: VideoConfig = VideoConfig()
     prompt: PromptConfig = PromptConfig()
+    rankings: RankingsConfig = RankingsConfig()
     conversation: ConversationConfig = ConversationConfig()
