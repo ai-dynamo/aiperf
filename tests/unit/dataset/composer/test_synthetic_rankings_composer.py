@@ -14,8 +14,8 @@ def test_initialization_basic(synthetic_config, mock_tokenizer):
 
 def test_create_dataset_structure(synthetic_config, mock_tokenizer):
     """Test structure and content of generated synthetic ranking dataset."""
-    synthetic_config.input.rankings_passages_mean = 5
-    synthetic_config.input.rankings_passages_stddev = 1
+    synthetic_config.input.rankings.passages.mean = 5
+    synthetic_config.input.rankings.passages.stddev = 1
     composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
 
     dataset = composer.create_dataset()
@@ -38,8 +38,8 @@ def test_create_dataset_structure(synthetic_config, mock_tokenizer):
 
 def test_passage_count_distribution(synthetic_config, mock_tokenizer):
     """Test passages are generated following mean/stddev distribution."""
-    synthetic_config.input.rankings_passages_mean = 5
-    synthetic_config.input.rankings_passages_stddev = 2
+    synthetic_config.input.rankings.passages.mean = 5
+    synthetic_config.input.rankings.passages.stddev = 2
     composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
 
     dataset = composer.create_dataset()
@@ -51,8 +51,8 @@ def test_passage_count_distribution(synthetic_config, mock_tokenizer):
 
 def test_reproducibility_fixed_seed(synthetic_config, mock_tokenizer):
     """Dataset generation should be deterministic given a fixed random seed."""
-    synthetic_config.input.rankings_passages_mean = 4
-    synthetic_config.input.rankings_passages_stddev = 1
+    synthetic_config.input.rankings.passages.mean = 4
+    synthetic_config.input.rankings.passages.stddev = 1
     synthetic_config.input.random_seed = 42
 
     composer1 = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
@@ -70,11 +70,11 @@ def test_reproducibility_fixed_seed(synthetic_config, mock_tokenizer):
 
 def test_rankings_specific_token_options(synthetic_config, mock_tokenizer):
     """Test that rankings-specific token options are used for query and passages."""
-    synthetic_config.input.rankings_passages_mean = 3
-    synthetic_config.input.rankings_passages_prompt_token_mean = 100
-    synthetic_config.input.rankings_passages_prompt_token_stddev = 10
-    synthetic_config.input.rankings_query_prompt_token_mean = 50
-    synthetic_config.input.rankings_query_prompt_token_stddev = 5
+    synthetic_config.input.rankings.passages.mean = 3
+    synthetic_config.input.rankings.passages.prompt_token_mean = 100
+    synthetic_config.input.rankings.passages.prompt_token_stddev = 10
+    synthetic_config.input.rankings.query.prompt_token_mean = 50
+    synthetic_config.input.rankings.query.prompt_token_stddev = 5
     synthetic_config.input.random_seed = 42
 
     composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
