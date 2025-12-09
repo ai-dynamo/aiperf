@@ -10,21 +10,21 @@ from aiperf.metrics.types.input_sequence_length_metric import InputSequenceLengt
 from aiperf.metrics.types.ttft_metric import TTFTMetric
 
 
-class PrefillThroughputMetric(BaseRecordMetric[float]):
+class PrefillThroughputPerUserMetric(BaseRecordMetric[float]):
     """
-    Post-processor for calculating Prefill Throughput metrics from records. This is only applicable to streaming responses.
+    Post-processor for calculating Prefill Throughput Per User metrics from records. This is only applicable to streaming responses.
 
     Formula:
-        Prefill Throughput = Prefill Sequence Length / Time to First Token (seconds)
+        Prefill Throughput Per User = Prefill Sequence Length / Time to First Token (seconds)
     """
 
-    tag = "prefill_throughput"
-    header = "Prefill Throughput"
-    short_header = "Prefill TPS"
+    tag = "prefill_throughput_per_user"
+    header = "Prefill Throughput Per User"
+    short_header = "Prefill TPS/User"
     short_header_hide_unit = True
-    unit = MetricOverTimeUnit.TOKENS_PER_SECOND
+    unit = MetricOverTimeUnit.TOKENS_PER_SECOND_PER_USER
     flags = (
-        MetricFlags.STREAMING_ONLY
+        MetricFlags.STREAMING_TOKENS_ONLY
         | MetricFlags.TOKENIZES_INPUT_ONLY
         | MetricFlags.LARGER_IS_BETTER
         | MetricFlags.NO_CONSOLE
@@ -39,7 +39,7 @@ class PrefillThroughputMetric(BaseRecordMetric[float]):
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
-        """This method calculates the prefill throughput by dividing the input sequence length by the TTFT."""
+        """This method calculates the prefill throughput per user by dividing the input sequence length by the TTFT."""
 
         isl = record_metrics.get_or_raise(InputSequenceLengthMetric)
         converted_ttft = record_metrics.get_converted_or_raise(
@@ -48,6 +48,6 @@ class PrefillThroughputMetric(BaseRecordMetric[float]):
         )
         if converted_ttft == 0:
             raise NoMetricValue(
-                "TTFT is zero, cannot calculate prefill throughput metric"
+                "TTFT is zero, cannot calculate prefill throughput per user metric"
             )
         return isl / converted_ttft  # type: ignore
