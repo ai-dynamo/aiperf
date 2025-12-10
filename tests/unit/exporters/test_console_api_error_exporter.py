@@ -49,7 +49,6 @@ def basic_error_payload():
     )
 
 
-@pytest.mark.asyncio
 class TestConsoleApiErrorExporter:
     """Unit tests for the API error insight detector and console exporter."""
 
