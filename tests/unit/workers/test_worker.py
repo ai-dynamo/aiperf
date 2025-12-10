@@ -14,7 +14,7 @@ from aiperf.common.config.user_config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import CreditDropMessage
-from aiperf.common.models import ParsedResponse, TextResponseData
+from aiperf.common.models import ParsedResponse, ReasoningResponseData, TextResponseData
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.workers.worker import Worker
 
@@ -194,6 +194,63 @@ class TestWorker:
         monkeypatch.setattr(worker.inference_client, "endpoint", mock_endpoint)
         turn = await worker._process_response(RequestRecord())
         assert turn is None
+
+    async def test_process_response_reasoning_extracts_content(
+        self, monkeypatch, worker
+    ):
+        """Ensure process_response extracts content from reasoning responses."""
+        mock_parsed_response = ParsedResponse(
+            perf_ns=0,
+            data=ReasoningResponseData(
+                reasoning="Let me think...",
+                content="The answer is 42.",
+            ),
+        )
+        mock_endpoint = Mock()
+        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
+        monkeypatch.setattr(worker.inference_client, "endpoint", mock_endpoint)
+        turn = await worker._process_response(RequestRecord())
+        assert turn.texts[0].contents == ["The answer is 42."]
+
+    async def test_process_response_reasoning_only_returns_none(
+        self, monkeypatch, worker
+    ):
+        """Ensure process_response returns None for reasoning-only responses (no content)."""
+        mock_parsed_response = ParsedResponse(
+            perf_ns=0,
+            data=ReasoningResponseData(
+                reasoning="Let me think about this...",
+                content=None,
+            ),
+        )
+        mock_endpoint = Mock()
+        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
+        monkeypatch.setattr(worker.inference_client, "endpoint", mock_endpoint)
+        turn = await worker._process_response(RequestRecord())
+        assert turn is None
+
+    async def test_process_response_mixed_reasoning_and_text_combines_content(
+        self, monkeypatch, worker
+    ):
+        """Ensure process_response combines text and reasoning content."""
+        mock_parsed_responses = [
+            ParsedResponse(
+                perf_ns=0,
+                data=TextResponseData(text="Hello"),
+            ),
+            ParsedResponse(
+                perf_ns=1,
+                data=ReasoningResponseData(
+                    reasoning="Thinking...",
+                    content="World",
+                ),
+            ),
+        ]
+        mock_endpoint = Mock()
+        mock_endpoint.extract_response_data = Mock(return_value=mock_parsed_responses)
+        monkeypatch.setattr(worker.inference_client, "endpoint", mock_endpoint)
+        turn = await worker._process_response(RequestRecord())
+        assert turn.texts[0].contents == ["HelloWorld"]
 
     async def test_build_response_record(
         self, worker, monkeypatch, sample_conversations
