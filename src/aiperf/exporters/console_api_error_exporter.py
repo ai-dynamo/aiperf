@@ -6,6 +6,7 @@ import contextlib
 from dataclasses import dataclass
 from typing import ClassVar
 
+import orjson
 from rich.console import Console
 from rich.panel import Panel
 
@@ -15,7 +16,6 @@ from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ErrorDetailsCount
 from aiperf.common.protocols import ConsoleExporterProtocol
-from aiperf.common.utils import load_json_str
 from aiperf.exporters.exporter_config import ExporterConfig
 
 
@@ -44,7 +44,7 @@ class MaxCompletionTokensDetector:
             raw_msg = err.message or ""
             parsed = None
             with contextlib.suppress(Exception):
-                parsed = load_json_str(raw_msg)
+                parsed = orjson.loads(raw_msg)
 
             backend_msg = None
             if isinstance(parsed, dict):
