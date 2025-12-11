@@ -198,7 +198,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
             # Set user context prompt (unique per session)
             if has_user_context:
-                user_context = self.prompt_generator.get_user_context_prompt(
+                user_context = self.prompt_generator.generate_user_context_prompt(
                     session_index
                 )
                 conversation.user_context_message = user_context

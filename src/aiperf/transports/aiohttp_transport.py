@@ -150,21 +150,6 @@ class AioHttpTransport(BaseTransport):
 
             # Serialize with orjson for performance
             json_str = orjson.dumps(payload).decode("utf-8")
-
-            # Print request body, turn number, and X-Correlation-ID header
-            self.trace(f"\n{'=' * 80}")
-            if "X-Correlation-ID" in headers and request_info.turn_index is not None:
-                self.trace(
-                    f"Session ID: {headers['X-Correlation-ID']}, TURN: {request_info.turn_index}"
-                )
-            self.trace(f"REQUEST BODY:")
-            # Format JSON with indentation for readability
-            formatted_json = orjson.dumps(
-                orjson.loads(json_str), option=orjson.OPT_INDENT_2
-            ).decode("utf-8")
-            self.trace(formatted_json)
-            self.trace(f"{'=' * 80}\n")
-
             record = await self.aiohttp_client.post_request(url, json_str, headers)
             record.request_headers = headers
         except Exception as e:

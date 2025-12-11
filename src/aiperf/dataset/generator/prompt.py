@@ -63,7 +63,7 @@ class PromptGenerator(BaseGenerator):
         # Initialize shared context prompts if configured
         if self.config.prefix_prompt.shared_system_prompt_length is not None:
             self._generate_shared_system_prompt()
-        # Note: User context prompts are generated on-demand in get_user_context_prompt()
+        # Note: User context prompts are generated on-demand in generate_user_context_prompt()
 
     def _initialize_corpus(self) -> None:
         """Load and tokenize the corpus once, storing it for reuse.
@@ -304,7 +304,7 @@ class PromptGenerator(BaseGenerator):
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
         length = self.config.prefix_prompt.shared_system_prompt_length
-        if length is None or length == 0:
+        if length is None:
             return
 
         self._shared_system_prompt = self.generate_prompt(length)
@@ -326,8 +326,8 @@ class PromptGenerator(BaseGenerator):
             )
         return self._shared_system_prompt
 
-    def get_user_context_prompt(self, session_index: int) -> str:
-        """Get unique user context for given session index.
+    def generate_user_context_prompt(self, session_index: int) -> str:
+        """Generate unique user context for given session index.
 
         Generates prompts on-demand as needed. Each session_index gets a unique prompt.
         This allows benchmarks to run with any number of sessions without pre-allocating.
@@ -346,7 +346,7 @@ class PromptGenerator(BaseGenerator):
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
         length = self.config.prefix_prompt.user_context_prompt_length
-        if length is None or length == 0:
+        if length is None:
             raise InvalidStateError(
                 "User context prompt length is not configured. "
                 "Ensure --user-context-prompt-length is specified."
