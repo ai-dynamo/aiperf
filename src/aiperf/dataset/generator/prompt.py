@@ -37,6 +37,10 @@ class PromptGenerator(BaseGenerator):
         self._corpus_size = 0
         self._prefix_prompts: list[str] = []
 
+        # Conversation context prompts
+        self._shared_system_prompt: str | None = None
+        self._user_context_prompts: list[str] = []
+
         # Separate RNGs for independent concerns
         self._length_rng = rng.derive("dataset.prompt.length")
         self._corpus_rng = rng.derive("dataset.prompt.corpus")
@@ -55,6 +59,11 @@ class PromptGenerator(BaseGenerator):
         # Initialize prefix prompts pool if the pool size > 0
         if self.config.prefix_prompt.pool_size > 0:
             self._create_prefix_prompt_pool()
+
+        # Initialize shared context prompts if configured
+        if self.config.prefix_prompt.shared_system_prompt_length is not None:
+            self._generate_shared_system_prompt()
+        # Note: User context prompts are generated on-demand in generate_user_context_prompt()
 
     def _initialize_corpus(self) -> None:
         """Load and tokenize the corpus once, storing it for reuse.
@@ -284,3 +293,72 @@ class PromptGenerator(BaseGenerator):
                 "Please ensure that the prefix prompts pool is initialized."
             )
         return self._prefix_rng.choice(self._prefix_prompts)
+
+    def _generate_shared_system_prompt(self) -> None:
+        """Generate the shared system prompt.
+
+        This prompt is generated once and is identical across all sessions.
+        It appears as a system message in turn 0 of every conversation.
+        """
+        if self._tokenized_corpus is None:
+            raise NotInitializedError("Tokenized corpus is not initialized.")
+
+        length = self.config.prefix_prompt.shared_system_prompt_length
+        if length is None:
+            return
+
+        self._shared_system_prompt = self.generate_prompt(length)
+        self.debug(lambda: f"Generated shared system prompt with {length} tokens")
+
+    def get_shared_system_prompt(self) -> str:
+        """Get the shared system prompt.
+
+        Returns:
+            The shared system prompt string.
+
+        Raises:
+            InvalidStateError: If shared system prompt is not initialized.
+        """
+        if self._shared_system_prompt is None:
+            raise InvalidStateError(
+                "Shared system prompt is not initialized. "
+                "Ensure --shared-system-prompt-length is specified."
+            )
+        return self._shared_system_prompt
+
+    def generate_user_context_prompt(self, session_index: int) -> str:
+        """Generate unique user context for given session index.
+
+        Generates prompts on-demand as needed. Each session_index gets a unique prompt.
+        This allows benchmarks to run with any number of sessions without pre-allocating.
+
+        Args:
+            session_index: Sequential index of the session (0, 1, 2, ...).
+
+        Returns:
+            Unique user context prompt for this session.
+
+        Raises:
+            NotInitializedError: If tokenized corpus is not initialized.
+            InvalidStateError: If user context prompt length is not configured.
+        """
+        if self._tokenized_corpus is None:
+            raise NotInitializedError("Tokenized corpus is not initialized.")
+
+        length = self.config.prefix_prompt.user_context_prompt_length
+        if length is None:
+            raise InvalidStateError(
+                "User context prompt length is not configured. "
+                "Ensure --user-context-prompt-length is specified."
+            )
+
+        # Generate new prompts on-demand as needed
+        while session_index >= len(self._user_context_prompts):
+            new_prompt = self.generate_prompt(length)
+            self._user_context_prompts.append(new_prompt)
+            self.debug(
+                lambda: f"Generated user context prompt #{len(self._user_context_prompts) - 1} "
+                f"for session {len(self._user_context_prompts) - 1}"
+            )
+
+        return self._user_context_prompts[session_index]

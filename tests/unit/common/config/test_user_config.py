@@ -1094,3 +1094,208 @@ def test_rankings_options_allowed_for_rankings_endpoints(endpoint_type):
     assert cfg.input.rankings.passages.prompt_token_stddev == 10
     assert cfg.input.rankings.query.prompt_token_mean == 50
     assert cfg.input.rankings.query.prompt_token_stddev == 5
+
+
+# ==============================================================================
+# Context Prompt Validation Tests
+# ==============================================================================
+
+
+def test_user_context_prompt_requires_num_sessions():
+    """Test that user_context_prompt_length requires num_sessions to be specified."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as exc_info:
+        UserConfig(
+            endpoint=EndpointConfig(
+                url="http://localhost:8000/v1/chat/completions",
+                model_names=["gpt-4"],
+            ),
+            input=InputConfig(
+                prompt={
+                    "prefix_prompt": {
+                        "user_context_prompt_length": 100,
+                    }
+                },
+                # conversation.num is not specified - should fail
+            ),
+        )
+
+    error = exc_info.value.errors()[0]
+    assert "user-context-prompt-length" in error["msg"]
+    assert "num-sessions" in error["msg"]
+
+
+def test_user_context_prompt_with_num_sessions_succeeds():
+    """Test that user_context_prompt_length works when num_sessions is specified."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            url="http://localhost:8000/v1/chat/completions",
+            model_names=["gpt-4"],
+        ),
+        input=InputConfig(
+            prompt={
+                "prefix_prompt": {
+                    "user_context_prompt_length": 100,
+                }
+            },
+            conversation=ConversationConfig(
+                num=5,
+            ),
+        ),
+    )
+
+    assert config.input.prompt.prefix_prompt.user_context_prompt_length == 100
+    assert config.input.conversation.num == 5
+
+
+def test_shared_system_prompt_without_num_sessions_succeeds():
+    """Test that shared_system_prompt_length works without num_sessions."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            url="http://localhost:8000/v1/chat/completions",
+            model_names=["gpt-4"],
+        ),
+        input=InputConfig(
+            prompt={
+                "prefix_prompt": {
+                    "shared_system_prompt_length": 100,
+                }
+            },
+            # No conversation.num specified - should still work for shared prompt
+        ),
+    )
+
+    assert config.input.prompt.prefix_prompt.shared_system_prompt_length == 100
+
+
+def test_mutually_exclusive_prompt_options_shared_and_legacy():
+    """Test that shared_system_prompt_length and prefix_prompt_length are mutually exclusive."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as exc_info:
+        UserConfig(
+            endpoint=EndpointConfig(
+                url="http://localhost:8000/v1/chat/completions",
+                model_names=["gpt-4"],
+            ),
+            input=InputConfig(
+                prompt={
+                    "prefix_prompt": {
+                        "shared_system_prompt_length": 100,
+                        "length": 50,  # Legacy prefix prompt length
+                    }
+                }
+            ),
+        )
+
+    error = exc_info.value.errors()[0]
+    assert "mutually exclusive" in error["msg"]
+    assert "shared-system-prompt-length" in error["msg"]
+    assert "prefix-prompt-length" in error["msg"]
+
+
+def test_mutually_exclusive_prompt_options_user_context_and_legacy():
+    """Test that user_context_prompt_length and prefix_prompt_length are mutually exclusive."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as exc_info:
+        UserConfig(
+            endpoint=EndpointConfig(
+                url="http://localhost:8000/v1/chat/completions",
+                model_names=["gpt-4"],
+            ),
+            input=InputConfig(
+                prompt={
+                    "prefix_prompt": {
+                        "user_context_prompt_length": 100,
+                        "length": 50,  # Legacy prefix prompt length
+                    }
+                },
+                conversation=ConversationConfig(
+                    num=5,
+                ),
+            ),
+        )
+
+    error = exc_info.value.errors()[0]
+    assert "mutually exclusive" in error["msg"]
+    assert "user-context-prompt-length" in error["msg"]
+    assert "prefix-prompt-length" in error["msg"]
+
+
+def test_mutually_exclusive_prompt_options_both_context_and_legacy():
+    """Test that both context prompts and legacy options are mutually exclusive."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as exc_info:
+        UserConfig(
+            endpoint=EndpointConfig(
+                url="http://localhost:8000/v1/chat/completions",
+                model_names=["gpt-4"],
+            ),
+            input=InputConfig(
+                prompt={
+                    "prefix_prompt": {
+                        "shared_system_prompt_length": 100,
+                        "user_context_prompt_length": 50,
+                        "pool_size": 10,  # Legacy option
+                    }
+                },
+                conversation=ConversationConfig(
+                    num=5,
+                ),
+            ),
+        )
+
+    error = exc_info.value.errors()[0]
+    assert "mutually exclusive" in error["msg"]
+
+
+def test_context_prompts_only_succeed():
+    """Test that using only context prompts (no legacy options) works."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            url="http://localhost:8000/v1/chat/completions",
+            model_names=["gpt-4"],
+        ),
+        input=InputConfig(
+            prompt={
+                "prefix_prompt": {
+                    "shared_system_prompt_length": 100,
+                    "user_context_prompt_length": 50,
+                }
+            },
+            conversation=ConversationConfig(
+                num=5,
+            ),
+        ),
+    )
+
+    assert config.input.prompt.prefix_prompt.shared_system_prompt_length == 100
+    assert config.input.prompt.prefix_prompt.user_context_prompt_length == 50
+    assert config.input.prompt.prefix_prompt.length == 0
+    assert config.input.prompt.prefix_prompt.pool_size == 0
+
+
+def test_legacy_prompts_only_succeed():
+    """Test that using only legacy options (no context prompts) works."""
+    config = UserConfig(
+        endpoint=EndpointConfig(
+            url="http://localhost:8000/v1/chat/completions",
+            model_names=["gpt-4"],
+        ),
+        input=InputConfig(
+            prompt={
+                "prefix_prompt": {
+                    "length": 50,
+                    "pool_size": 10,
+                }
+            }
+        ),
+    )
+
+    assert config.input.prompt.prefix_prompt.length == 50
+    assert config.input.prompt.prefix_prompt.pool_size == 10
+    assert config.input.prompt.prefix_prompt.shared_system_prompt_length is None
+    assert config.input.prompt.prefix_prompt.user_context_prompt_length is None

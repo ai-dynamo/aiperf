@@ -401,6 +401,39 @@ class UserConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_user_context_requires_sessions(self) -> Self:
+        """Validate that user context prompt requires num-sessions to be specified."""
+        if (
+            self.input.prompt.prefix_prompt.user_context_prompt_length is not None
+            and self.input.conversation.num is None
+        ):
+            raise ValueError(
+                "--user-context-prompt-length requires --num-sessions to be specified. "
+                "Each session needs a unique user context prompt, so the number of sessions must be defined."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_mutually_exclusive_prompt_options(self) -> Self:
+        """Ensure shared system/user context options don't conflict with legacy prefix options."""
+        has_context_prompts = (
+            self.input.prompt.prefix_prompt.shared_system_prompt_length is not None
+            or self.input.prompt.prefix_prompt.user_context_prompt_length is not None
+        )
+        has_legacy_prefix = (
+            self.input.prompt.prefix_prompt.length > 0
+            or self.input.prompt.prefix_prompt.pool_size > 0
+        )
+
+        if has_context_prompts and has_legacy_prefix:
+            raise ValueError(
+                "Cannot use both --shared-system-prompt-length/--user-context-prompt-length "
+                "and --prefix-prompt-length/--prefix-prompt-pool-size. "
+                "These are mutually exclusive prompt configuration modes."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_rankings_token_options(self) -> Self:
         """Validate rankings token options usage."""
 

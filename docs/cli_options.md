@@ -278,6 +278,14 @@ The total size of the prefix prompt pool to select prefixes from. If this value 
 The number of tokens in each prefix prompt. This is only used if "num" is greater than zero. Note that due to the prefix and user prompts being concatenated, the number of tokens in the final prompt may be off by one.
 <br>_Default: `0`_
 
+#### `--shared-system-prompt-length` `<int>`
+
+Length of shared system prompt in tokens. This prompt is identical across all sessions and appears as a system message. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+
+#### `--user-context-prompt-length` `<int>`
+
+Length of per-session user context prompt in tokens. Each session gets a unique user context prompt. Requires --num-sessions to be specified. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+
 ## Rankings Options
 
 #### `--rankings-passages-mean` `<int>`

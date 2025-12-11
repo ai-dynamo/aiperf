@@ -471,3 +471,191 @@ class TestPromptGeneratorComprehensive:
 
         assert len(generator._prefix_prompts) == 5
         assert all(prompt == "" for prompt in generator._prefix_prompts)
+
+    # ============================================================================
+    # Shared System Prompt Tests
+    # ============================================================================
+
+    def test_generate_shared_system_prompt_success(self, mock_tokenizer):
+        """Test _generate_shared_system_prompt generates prompt successfully."""
+        config = PromptConfig(
+            mean=100,
+            stddev=20,
+            block_size=512,
+            prefix_prompt=PrefixPromptConfig(
+                pool_size=0, length=0, shared_system_prompt_length=50
+            ),
+        )
+        generator = PromptGenerator(config, mock_tokenizer)
+
+        assert generator._shared_system_prompt is not None
+        assert isinstance(generator._shared_system_prompt, str)
+        assert len(generator._shared_system_prompt) > 0
+
+    def test_generate_shared_system_prompt_none_when_not_configured(
+        self, mock_tokenizer
+    ):
+        """Test _generate_shared_system_prompt does nothing when not configured."""
+        config = PromptConfig(
+            mean=100,
+            stddev=20,
+            block_size=512,
+            prefix_prompt=PrefixPromptConfig(
+                pool_size=0, length=0, shared_system_prompt_length=None
+            ),
+        )
+        generator = PromptGenerator(config, mock_tokenizer)
+
+        assert generator._shared_system_prompt is None
+
+    def test_get_shared_system_prompt_success(self, mock_tokenizer):
+        """Test get_shared_system_prompt returns the prompt."""
+        config = PromptConfig(
+            mean=100,
+            stddev=20,
+            block_size=512,
+            prefix_prompt=PrefixPromptConfig(
+                pool_size=0, length=0, shared_system_prompt_length=50
+            ),
+        )
+        generator = PromptGenerator(config, mock_tokenizer)
+
+        result = generator.get_shared_system_prompt()
+        assert isinstance(result, str)
+        assert len(result) > 0
+        assert result == generator._shared_system_prompt
+
+    def test_get_shared_system_prompt_not_initialized(self, mock_tokenizer):
+        """Test get_shared_system_prompt raises error when not initialized."""
+        config = PromptConfig(
+            mean=100,
+            stddev=20,
+            block_size=512,
+            prefix_prompt=PrefixPromptConfig(
+                pool_size=0, length=0, shared_system_prompt_length=None
+            ),
+        )
+        generator = PromptGenerator(config, mock_tokenizer)
+
+        with pytest.raises(InvalidStateError) as exc_info:
+            generator.get_shared_system_prompt()
+
+        assert "not initialized" in str(exc_info.value)
+        assert "shared-system-prompt-length" in str(exc_info.value)
+
+    # ============================================================================
+    # User Context Prompt Tests
+    # ============================================================================
+
+    def test_generate_user_context_prompt_first_session(self, mock_tokenizer):
+        """Test generate_user_context_prompt for first session."""
+        config = PromptConfig(
+            mean=100,
+            stddev=20,
+            block_size=512,
+            prefix_prompt=PrefixPromptConfig(
+                pool_size=0, length=0, user_context_prompt_length=30
+            ),
+        )
+        generator = PromptGenerator(config, mock_tokenizer)
+
+        result = generator.generate_user_context_prompt(0)
+        assert isinstance(result, str)
+        assert len(result) > 0
+        assert len(generator._user_context_prompts) == 1
+
+    def test_generate_user_context_prompt_multiple_sessions(self, mock_tokenizer):
+        """Test generate_user_context_prompt generates unique prompts."""
+        config = PromptConfig(
+            mean=100,
+            stddev=20,
+            block_size=512,
+            prefix_prompt=PrefixPromptConfig(
+                pool_size=0, length=0, user_context_prompt_length=30
+            ),
+        )
+        generator = PromptGenerator(config, mock_tokenizer)
+
+        prompt0 = generator.generate_user_context_prompt(0)
+        prompt1 = generator.generate_user_context_prompt(1)
+        prompt2 = generator.generate_user_context_prompt(2)
+
+        assert len(generator._user_context_prompts) == 3
+        assert prompt0 == generator._user_context_prompts[0]
+        assert prompt1 == generator._user_context_prompts[1]
+        assert prompt2 == generator._user_context_prompts[2]
+
+    def test_generate_user_context_prompt_caching(self, mock_tokenizer):
+        """Test generate_user_context_prompt returns cached prompt."""
+        config = PromptConfig(
+            mean=100,
+            stddev=20,
+            block_size=512,
+            prefix_prompt=PrefixPromptConfig(
+                pool_size=0, length=0, user_context_prompt_length=30
+            ),
+        )
+        generator = PromptGenerator(config, mock_tokenizer)
+
+        # Generate prompt for session 0
+        prompt0_first = generator.generate_user_context_prompt(0)
+
+        # Request same session again - should return cached
+        prompt0_second = generator.generate_user_context_prompt(0)
+
+        assert prompt0_first == prompt0_second
+        assert len(generator._user_context_prompts) == 1
+
+    def test_generate_user_context_prompt_non_sequential_access(self, mock_tokenizer):
+        """Test generate_user_context_prompt with non-sequential session indices."""
+        config = PromptConfig(
+            mean=100,
+            stddev=20,
+            block_size=512,
+            prefix_prompt=PrefixPromptConfig(
+                pool_size=0, length=0, user_context_prompt_length=30
+            ),
+        )
+        generator = PromptGenerator(config, mock_tokenizer)
+
+        # Request session 5 directly (should generate 0-5)
+        prompt5 = generator.generate_user_context_prompt(5)
+
+        assert len(generator._user_context_prompts) == 6
+        assert prompt5 == generator._user_context_prompts[5]
+
+    def test_generate_user_context_prompt_not_configured(self, mock_tokenizer):
+        """Test generate_user_context_prompt raises error when not configured."""
+        config = PromptConfig(
+            mean=100,
+            stddev=20,
+            block_size=512,
+            prefix_prompt=PrefixPromptConfig(
+                pool_size=0, length=0, user_context_prompt_length=None
+            ),
+        )
+        generator = PromptGenerator(config, mock_tokenizer)
+
+        with pytest.raises(InvalidStateError) as exc_info:
+            generator.generate_user_context_prompt(0)
+
+        assert "not configured" in str(exc_info.value)
+        assert "user-context-prompt-length" in str(exc_info.value)
+
+    def test_generate_user_context_prompt_corpus_not_initialized(self, mock_tokenizer):
+        """Test generate_user_context_prompt when corpus not initialized."""
+        config = PromptConfig(
+            mean=100,
+            stddev=20,
+            block_size=512,
+            prefix_prompt=PrefixPromptConfig(
+                pool_size=0, length=0, user_context_prompt_length=30
+            ),
+        )
+        generator = PromptGenerator(config, mock_tokenizer)
+        generator._tokenized_corpus = None
+
+        with pytest.raises(NotInitializedError) as exc_info:
+            generator.generate_user_context_prompt(0)
+
+        assert "corpus" in str(exc_info.value).lower()

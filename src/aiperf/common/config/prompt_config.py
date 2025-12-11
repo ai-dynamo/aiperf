@@ -163,6 +163,41 @@ class PrefixPromptConfig(BaseConfig):
         ),
     ] = PrefixPromptDefaults.LENGTH
 
+    shared_system_prompt_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description=(
+                "Length of shared system prompt in tokens.\n"
+                "This prompt is identical across all sessions and appears as a system message.\n"
+                "Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size."
+            ),
+        ),
+        CLIParameter(
+            name=("--shared-system-prompt-length",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    user_context_prompt_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description=(
+                "Length of per-session user context prompt in tokens.\n"
+                "Each session gets a unique user context prompt.\n"
+                "Requires --num-sessions to be specified.\n"
+                "Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size."
+            ),
+        ),
+        CLIParameter(
+            name=("--user-context-prompt-length",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
 
 class PromptConfig(BaseConfig):
     """
