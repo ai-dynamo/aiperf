@@ -28,6 +28,12 @@ class VideoGenerator(BaseGenerator):
         super().__init__(**kwargs)
         self.config = config
 
+    def _raise_runtime_error(self, msg: str, original_error: Exception) -> None:
+        """Raise a RuntimeError with optional verbose error details."""
+        if self.is_debug_enabled:
+            msg += f"\n\nOriginal error: {original_error}"
+        raise RuntimeError(msg) from original_error
+
     def _check_ffmpeg_availability(self) -> bool:
         """Check if FFmpeg binary is available in the system."""
         return shutil.which("ffmpeg") is not None
@@ -289,9 +295,7 @@ class VideoGenerator(BaseGenerator):
                     f"FFmpeg failed to create video: {e}\n"
                     f"Codec: {self.config.codec}, Size: {self.config.width}x{self.config.height}, FPS: {self.config.fps}"
                 )
-            if self.is_debug_enabled:
-                msg += f"\n\nOriginal error: {e}"
-            raise RuntimeError(msg) from e
+            self._raise_runtime_error(msg, e)
 
     def _create_video_with_ffmpeg(self, frames: list[Image.Image]) -> str:
         """Create video data using ffmpeg-python with improved error handling."""
@@ -355,10 +359,7 @@ class VideoGenerator(BaseGenerator):
         except ffmpeg.Error as e:
             error_msg = e.stderr.decode() if e.stderr else "Unknown ffmpeg error"
             self.logger.error(f"FFmpeg error: {error_msg}")
-            msg = f"FFmpeg process failed: {error_msg}"
-            if self.is_debug_enabled:
-                msg += f"\n\nOriginal error: {e}"
-            raise RuntimeError(msg) from e
+            self._raise_runtime_error(f"FFmpeg process failed: {error_msg}", e)
 
     def _create_video_with_temp_files(self, frames: list[Image.Image]) -> str:
         """Create video using temporary files (fallback method)."""
@@ -416,10 +417,7 @@ class VideoGenerator(BaseGenerator):
         except ffmpeg.Error as e:
             error_msg = e.stderr.decode("utf-8") if e.stderr else "Unknown ffmpeg error"
             self.logger.error(f"FFmpeg error: {error_msg}")
-            msg = f"FFmpeg process failed: {error_msg}"
-            if self.is_debug_enabled:
-                msg += f"\n\nOriginal error: {e}"
-            raise RuntimeError(msg) from e
+            self._raise_runtime_error(f"FFmpeg process failed: {error_msg}", e)
         finally:
             # Clean up temporary files
             if os.path.exists(temp_dir):
