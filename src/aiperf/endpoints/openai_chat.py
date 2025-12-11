@@ -103,16 +103,20 @@ class ChatEndpoint(BaseEndpoint):
 
         # Prepend system_message and user_context_message if present
         if system_message:
-            messages.append({
-                "role": "system",
-                "content": system_message,
-            })
+            messages.append(
+                {
+                    "role": "system",
+                    "content": system_message,
+                }
+            )
 
         if user_context_message:
-            messages.append({
-                "role": "user",
-                "content": user_context_message,
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": user_context_message,
+                }
+            )
 
         for turn in turns:
             message = {
