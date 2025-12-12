@@ -17,7 +17,7 @@ from aiperf.common.models.record_models import MetricResult
 from aiperf.plot.constants import DEFAULT_PERCENTILE, NON_METRIC_KEYS
 from aiperf.plot.core.data_loader import RunData
 from aiperf.plot.core.data_preparation import flatten_config
-from aiperf.plot.core.plot_specs import PlotSpec
+from aiperf.plot.core.plot_specs import ExperimentClassificationConfig, PlotSpec
 from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerFactory
 from aiperf.plot.exporters.png.base import BasePNGExporter
 
@@ -39,7 +39,7 @@ class MultiRunPNGExporter(BasePNGExporter):
         runs: list[RunData],
         available_metrics: dict,
         plot_specs: list[PlotSpec],
-        classification_config=None,
+        classification_config: ExperimentClassificationConfig | None = None,
     ) -> list[Path]:
         """
         Export multi-run comparison plots as PNG files.
@@ -52,8 +52,6 @@ class MultiRunPNGExporter(BasePNGExporter):
         Returns:
             List of Path objects for generated PNG files
         """
-        self.info(f"Generating multi-run comparison plots for {len(runs)} runs")
-
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         df = self._runs_to_dataframe(runs, available_metrics, classification_config)
@@ -70,7 +68,7 @@ class MultiRunPNGExporter(BasePNGExporter):
 
                 path = self.output_dir / spec.filename
                 self._export_figure(fig, path)
-                self.info(f"✓ Generated {spec.filename}")
+                self.debug(f"Generated {spec.filename}")
                 generated_files.append(path)
 
             except Exception as e:
@@ -118,7 +116,10 @@ class MultiRunPNGExporter(BasePNGExporter):
         return handler.create_plot(spec, df, available_metrics)
 
     def _runs_to_dataframe(
-        self, runs: list[RunData], available_metrics: dict, classification_config=None
+        self,
+        runs: list[RunData],
+        available_metrics: dict,
+        classification_config: ExperimentClassificationConfig | None = None,
     ) -> pd.DataFrame:
         """
         Convert list of run data into a DataFrame for plotting.
@@ -198,36 +199,3 @@ class MultiRunPNGExporter(BasePNGExporter):
             )
 
         return df
-
-    def _extract_experiment_types(
-        self, df: pd.DataFrame, group_by: str | None
-    ) -> dict[str, str] | None:
-        """
-        Extract experiment types mapping from DataFrame.
-
-        Args:
-            df: DataFrame with aggregated metrics
-            group_by: Column name to group by (determines keys for experiment_types dict)
-
-        Returns:
-            Dictionary mapping group values to experiment_type ("baseline" or "treatment"),
-            or None if group_by is not specified or experiment_type column is missing
-        """
-        if not group_by or group_by not in df.columns:
-            return None
-
-        if "experiment_type" not in df.columns:
-            return None
-
-        # Create mapping from group values to experiment_type
-        experiment_types = {}
-        for group_val in df[group_by].unique():
-            group_df = df[df[group_by] == group_val]
-            experiment_types[group_val] = group_df["experiment_type"].iloc[0]
-
-        if experiment_types:
-            self.info(
-                f"Extracted experiment_types mapping for group_by='{group_by}': {experiment_types}"
-            )
-
-        return experiment_types

@@ -50,8 +50,6 @@ class SingleRunPNGExporter(BasePNGExporter):
         Returns:
             List of Path objects for generated PNG files
         """
-        self.info("Generating single-run analysis plots")
-
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         generated_files = []
@@ -66,7 +64,7 @@ class SingleRunPNGExporter(BasePNGExporter):
 
                 path = self.output_dir / spec.filename
                 self._export_figure(fig, path)
-                self.info(f"✓ Generated {spec.filename}")
+                self.debug(f"Generated {spec.filename}")
                 generated_files.append(path)
 
             except Exception as e:

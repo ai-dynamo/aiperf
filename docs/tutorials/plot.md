@@ -35,6 +35,9 @@ aiperf plot <run1> <run2> <run3>
 # Specify custom output location
 aiperf plot <path> --output <output_directory>
 
+# Launch interactive dashboard for exploration
+aiperf plot <path> --dashboard
+
 # Use dark theme
 aiperf plot <path> --theme dark
 ```
@@ -78,15 +81,15 @@ artifacts/sweep_qwen/
 
 ![TTFT vs Throughput](../diagrams/plot_examples/multi_run/ttft_vs_throughput.png)
 
-Shows how time to first token varies with request throughput across concurrency levels, helping identify configurations that balance responsiveness with load.
+Shows how time to first token varies with request throughput across concurrency levels. **Potentially useful for finding the sweet spot between responsiveness and capacity**: ideal configurations maintain low TTFT even at high throughput. If TTFT increases sharply at certain throughput levels, this may indicate a prefill bottleneck (batch scheduler contention or compute limitations).
 
 ![Pareto Curve: Throughput per GPU vs Latency](../diagrams/plot_examples/multi_run/pareto_curve_throughput_per_gpu_vs_latency.png)
 
-Highlights optimal configurations on the Pareto frontier that maximize GPU efficiency while minimizing latency.
+Highlights optimal configurations on the Pareto frontier that maximize GPU efficiency while minimizing latency. **Points on the frontier are optimal; points below are suboptimal** configurations. Potentially useful for choosing GPU count and batch sizes to maximize hardware ROI. A steep curve may indicate opportunities to improve latency with minimal throughput loss, while a flat curve can suggest you're near the efficiency limit.
 
 ![Pareto Curve: Throughput per GPU vs Interactivity](../diagrams/plot_examples/multi_run/pareto_curve_throughput_per_gpu_vs_interactivity.png)
 
-Shows the trade-off between GPU efficiency and interactivity (TTFT).
+Shows the trade-off between GPU efficiency and interactivity (TTFT). **Potentially useful for determining max concurrency before user experience degrades**: flat regions show where adding concurrency maintains interactivity, while steep sections may indicate diminishing returns. The "knee" of the curve can help identify where throughput gains start to significantly hurt responsiveness.
 
 ### Single-Run Analysis Mode
 
@@ -115,15 +118,19 @@ artifacts/single_run/
 
 ![TTFT Over Time](../diagrams/plot_examples/single_run/time_series/ttft_over_time.png)
 
-Time to first token for each request, revealing prefill latency patterns and potential warm-up effects.
+Time to first token for each request, revealing prefill latency patterns and potential warm-up effects. **Initial spikes may indicate cold start; stable later values show steady-state performance**. Potentially useful for determining necessary warmup period or identifying warmup configuration issues. Unexpected spikes during steady-state can suggest resource contention, garbage collection pauses, or batch scheduler interference.
 
 ![Inter-Token Latency Over Time](../diagrams/plot_examples/single_run/time_series/itl_over_time.png)
 
-Inter-token latency per request, showing generation performance consistency.
+Inter-token latency per request, showing generation performance consistency. **Consistent ITL may indicate stable generation; variance can suggest batch scheduling issues**. Potentially useful for identifying decode-phase bottlenecks separate from prefill issues. If ITL increases over time, this may indicate KV cache memory pressure or growing batch sizes causing decode slowdown.
 
 ![Request Latency Over Time](../diagrams/plot_examples/single_run/time_series/latency_over_time.png)
 
-End-to-end latency progression throughout the run.
+End-to-end latency progression throughout the run. **Overall system health check**: ramp-up at the start is normal, but sustained increases may indicate performance degradation. Potentially useful for identifying if your system maintains performance or degrades over time. Sudden jumps may correlate with other requests completing or starting, potentially revealing batch scheduling patterns.
+
+![Request Timeline: TTFT](../diagrams/plot_examples/single_run/time_series/ttft_timeline.png)
+
+Individual requests plotted as lines spanning their duration from start to end. **Visualizes request scheduling and concurrency patterns**: overlapping lines show concurrent execution, while gaps may indicate scheduling delays. Dense packing can suggest efficient utilization; sparse patterns may suggest underutilized capacity or rate limiting effects.
 
 ### Dispersed Throughput
 
@@ -133,7 +140,9 @@ The **Dispersed Throughput Over Time** plot uses an event-based approach for acc
 
 This provides smooth, continuous representation that correlates better with server metrics like GPU utilization.
 
-![Dispersed Throughput Over Time](../diagrams/plot_examples/single_run/dispersed_throughput_over_time.png)
+![Dispersed Throughput Over Time](../diagrams/plot_examples/single_run/time_series/dispersed_throughput_over_time.png)
+
+**Smooth ramps may show healthy scaling; drops can indicate bottlenecks**. Potentially useful for correlating with GPU metrics to identify whether bottlenecks are GPU-bound, memory-bound, or CPU-bound. A plateau may indicate you've reached max sustainable throughput for your configuration. Sudden drops can potentially correlate with resource exhaustion or scheduler saturation.
 
 ## Customization Options
 
@@ -277,11 +286,44 @@ The dark theme uses a dark background optimized for presentations while maintain
 
 ![ITL Across Timeslices (Dark)](../diagrams/plot_examples/single_run/time_series/theme_dark_mode/timeslices_itl.png)
 
+## Interactive Dashboard Mode
+
+Launch an interactive localhost-hosted dashboard for real-time exploration of profiling data with dynamic metric selection, filtering, and visualization customization.
+
+```bash
+# Launch dashboard with default settings (localhost:8050)
+aiperf plot --dashboard
+
+# Specify custom port
+aiperf plot --dashboard --port 9000
+
+# Launch with dark theme
+aiperf plot --dashboard --theme dark
+
+# Specify data paths
+aiperf plot path/to/runs --dashboard
+```
+
+**Key Features:**
+- **Dynamic metric switching**: Toggle between avg, p50, p90, p95, p99 statistics in real-time
+- **Run filtering**: Select which runs to display via checkboxes
+- **Log scale toggles**: Per-plot X/Y axis log scale controls
+- **Config viewer**: Click on data points to view full run configuration
+- **Custom plots**: Add new plots with custom axis selections
+- **Plot management**: Hide/show plots dynamically
+- **Export**: Download visible plots as PNG bundle
+
+The dashboard automatically detects visualization mode (multi-run comparison or single-run analysis) and displays appropriate tabs and controls. Press Ctrl+C in the terminal to stop the server.
+
+> [!TIP]
+> The dashboard runs on localhost only and requires no authentication. For remote access via SSH, use port forwarding: `ssh -L 8080:localhost:8080 user@remote-host`
+
+> [!NOTE]
+> Dashboard mode and PNG mode are separate. To generate both static PNGs and launch the dashboard, run the commands separately.
+
 ## Advanced Features
 
 ### GPU Telemetry Integration
-
-When GPU telemetry is collected (via `--gpu-telemetry` flag during profiling), plots automatically include GPU metrics.
 
 **Multi-run plots** (when telemetry available):
 - Token Throughput per GPU vs Latency
@@ -292,6 +334,8 @@ When GPU telemetry is collected (via `--gpu-telemetry` flag during profiling), p
 - GPU Memory Usage Over Time
 
 ![GPU Utilization and Throughput Over Time](../diagrams/plot_examples/single_run/time_series/gpu_utilization_and_throughput_over_time.png)
+
+**Correlates compute resources with token generation performance**. High GPU utilization with low throughput may suggest compute-bound workloads (consider optimizing model/batch size). Low utilization with low throughput can indicate bottlenecks elsewhere (KV cache, memory bandwidth, CPU scheduling). Potentially useful for targeting >80% GPU utilization for efficient hardware usage.
 
 > [!TIP]
 > See the [GPU Telemetry Tutorial](gpu-telemetry.md) for setup and detailed analysis.
@@ -306,7 +350,7 @@ When timeslice data is available (via `--slice-duration` during profiling), plot
 - Throughput Across Timeslices
 - Latency Across Timeslices
 
-These help identify warm-up effects, performance degradation, and steady-state behavior.
+**Timeslices enable easy outlier identification and bucketing analysis**. Each time window (bucket) shows avg/p50/p95 statistics, making it simple to spot which periods have outlier performance. Slice 0 often shows cold-start overhead, while later slices may reveal degradation. Flat bars across slices may indicate stable performance; increasing trends can suggest resource exhaustion. Potentially useful for quickly isolating performance issues to specific phases (warmup, steady-state, or degradation).
 
 ![TTFT Across Timeslices](../diagrams/plot_examples/single_run/timeslices/timeslices_ttft.png)
 

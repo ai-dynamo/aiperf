@@ -3,6 +3,7 @@
 
 """Plot specifications for configurable plot generation."""
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
@@ -93,6 +94,81 @@ class PlotType(Enum):
     SCATTER_LINE = "scatter_line"
     DUAL_AXIS = "dual_axis"
     SCATTER_WITH_PERCENTILES = "scatter_with_percentiles"
+    REQUEST_TIMELINE = "request_timeline"
+
+
+@dataclass
+class PlotTypeInfo:
+    """Metadata for a plot type including display name and description."""
+
+    display_name: str
+    description: str
+    category: str
+
+
+PLOT_TYPE_METADATA: dict[PlotType, PlotTypeInfo] = {
+    PlotType.SCATTER: PlotTypeInfo(
+        display_name="Per-Request Scatter",
+        description="Individual data points for each request",
+        category="per_request",
+    ),
+    PlotType.SCATTER_WITH_PERCENTILES: PlotTypeInfo(
+        display_name="Scatter with Trends",
+        description="Per-request points with rolling p50/p95/p99 trend lines",
+        category="per_request",
+    ),
+    PlotType.REQUEST_TIMELINE: PlotTypeInfo(
+        display_name="Request Phase Breakdown",
+        description="Gantt-style view showing TTFT vs generation time per request",
+        category="per_request",
+    ),
+    PlotType.TIMESLICE: PlotTypeInfo(
+        display_name="Time Window Summary",
+        description="Aggregated averages per time window (e.g., every 10s)",
+        category="aggregated",
+    ),
+    PlotType.HISTOGRAM: PlotTypeInfo(
+        display_name="Time Window Bars",
+        description="Bar chart of aggregated values per time window",
+        category="aggregated",
+    ),
+    PlotType.AREA: PlotTypeInfo(
+        display_name="Throughput Over Time",
+        description="Filled area showing token throughput distribution",
+        category="combined",
+    ),
+    PlotType.DUAL_AXIS: PlotTypeInfo(
+        display_name="Dual Metric Overlay",
+        description="Two metrics on separate Y-axes (e.g., throughput + GPU util)",
+        category="combined",
+    ),
+    PlotType.PARETO: PlotTypeInfo(
+        display_name="Pareto Curve",
+        description="Trade-off frontier showing optimal configurations",
+        category="comparison",
+    ),
+    PlotType.SCATTER_LINE: PlotTypeInfo(
+        display_name="Scatter + Trend Line",
+        description="Points connected by lines, grouped by configuration",
+        category="comparison",
+    ),
+}
+
+
+def get_plot_type_info(plot_type: PlotType) -> PlotTypeInfo:
+    """
+    Get metadata for a plot type.
+
+    Args:
+        plot_type: The PlotType enum value
+
+    Returns:
+        PlotTypeInfo with display name, description, and category
+    """
+    return PLOT_TYPE_METADATA.get(
+        plot_type,
+        PlotTypeInfo(plot_type.value, "", "other"),
+    )
 
 
 class MetricSpec(AIPerfBaseModel):
@@ -121,6 +197,10 @@ class PlotSpec(AIPerfBaseModel):
     )
     filename: str | None = Field(
         default=None, description="Output filename (auto-generated from name if None)"
+    )
+    description: str | None = Field(
+        default=None,
+        description="Human-readable description of what this plot shows",
     )
     label_by: str | None = Field(
         default=None,
@@ -168,6 +248,14 @@ class PlotSpec(AIPerfBaseModel):
             f"label_by and group_by must be a string or list, got {type(v).__name__}"
         )
 
+    x_label: str | None = Field(
+        default=None,
+        description="Custom x-axis label (auto-generated from metric name if None)",
+    )
+    y_label: str | None = Field(
+        default=None,
+        description="Custom y-axis label (auto-generated from metric name if None)",
+    )
     primary_style: Style | None = Field(
         default=None,
         description="Style configuration for primary (y) axis trace",
@@ -179,6 +267,10 @@ class PlotSpec(AIPerfBaseModel):
     supplementary_col: str | None = Field(
         default=None,
         description="Optional supplementary column name (e.g., 'active_requests')",
+    )
+    autoscale: Literal["none", "x", "y", "both"] = Field(
+        default="none",
+        description="Which axes to autoscale ('none', 'x', 'y', 'both')",
     )
 
 

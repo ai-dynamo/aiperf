@@ -21,6 +21,7 @@ from aiperf.common.enums import PlotMetricDirection
 from aiperf.common.enums.metric_enums import MetricFlags
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.plot.constants import (
+    ALL_STAT_KEYS,
     DARK_THEME_COLORS,
     DERIVED_METRIC_DIRECTIONS,
     LIGHT_THEME_COLORS,
@@ -32,7 +33,7 @@ from aiperf.plot.constants import (
     PlotTheme,
 )
 from aiperf.plot.core.plot_specs import Style
-from aiperf.plot.metric_names import get_metric_display_name
+from aiperf.plot.metric_names import get_gpu_metric_unit, get_metric_display_name
 
 
 def get_nvidia_color_scheme(
@@ -143,6 +144,11 @@ class PlotGenerator:
         self._next_color_index: int = 0
         self._shown_warnings: set[str] = set()
 
+    def reset_color_registry(self) -> None:
+        """Reset color registry to ensure consistent colors across export sessions."""
+        self._group_color_registry = {}
+        self._next_color_index = 0
+
     def _generate_color_pool(self, pool_size: int) -> list[str]:
         """Generate master color pool for consistent group coloring.
 
@@ -194,6 +200,7 @@ class PlotGenerator:
         x_label: str,
         y_label: str,
         hovermode: str | None = None,
+        autoscale: str = "none",
     ) -> dict:
         """
         Get base layout configuration with NVIDIA branding.
@@ -207,6 +214,7 @@ class PlotGenerator:
             x_label: X-axis label text
             y_label: Y-axis label text
             hovermode: Optional hover mode (e.g., "x unified")
+            autoscale: Which axes to autoscale ("none", "x", "y", "both")
 
         Returns:
             Dictionary of layout configuration ready for fig.update_layout()
@@ -231,8 +239,9 @@ class PlotGenerator:
                 "family": PLOT_FONT_FAMILY,
                 "color": self.colors["text"],
             },
-            "height": 600,
-            "margin": {"l": 50, "r": 10, "t": 60, "b": 40},
+            "height": 400,
+            "autosize": True,
+            "margin": {"l": 60, "r": 150, "t": 70, "b": 80},
             "plot_bgcolor": self.colors["background"],
             "paper_bgcolor": self.colors["paper"],
             "xaxis": {
@@ -240,12 +249,14 @@ class PlotGenerator:
                 "showline": True,
                 "linecolor": self.colors["border"],
                 "color": self.colors["text"],
+                "rangemode": "normal" if autoscale in ("x", "both") else "tozero",
             },
             "yaxis": {
                 "gridcolor": self.colors["grid"],
                 "showline": True,
                 "linecolor": self.colors["border"],
                 "color": self.colors["text"],
+                "rangemode": "normal" if autoscale in ("y", "both") else "tozero",
             },
             "legend": {
                 "font": {
@@ -256,10 +267,10 @@ class PlotGenerator:
                 "bgcolor": f"rgba({int(self.colors['paper'][1:3], 16)}, {int(self.colors['paper'][3:5], 16)}, {int(self.colors['paper'][5:7], 16)}, 0.8)",
                 "bordercolor": self.colors["border"],
                 "borderwidth": 1,
-                "x": 0.98,
-                "y": 0.02,
-                "xanchor": "right",
-                "yanchor": "bottom",
+                "x": 1.02,
+                "y": 1.0,
+                "xanchor": "left",
+                "yanchor": "top",
             },
         }
 
@@ -285,10 +296,11 @@ class PlotGenerator:
 
         Args:
             df: DataFrame containing the data
-            group_by: Column name to group by (e.g., "model", "concurrency"), list of column names,
-                or None for no grouping
-            experiment_types: Optional mapping of group_name -> "baseline"|"treatment"
-                If provided, uses default NVIDIA colors. If None, use seaborn colors.
+            group_by: Column name to group by (e.g., "model", "concurrency"), or None for no grouping
+            experiment_types: Optional mapping of group_name -> "baseline"|"treatment".
+                If provided, uses NVIDIA brand colors (grey for baselines, green for treatments).
+                If None, uses distinct seaborn colors. Raises ValueError if any group has an
+                experiment_type other than "baseline" or "treatment".
             group_display_names: Optional mapping of group_name -> display_name for legends
 
         Returns:
@@ -313,6 +325,19 @@ class PlotGenerator:
         if experiment_types:
             baselines = [g for g in groups if experiment_types.get(g) == "baseline"]
             treatments = [g for g in groups if experiment_types.get(g) == "treatment"]
+
+            # Validate that all groups have valid experiment_types
+            unknown_groups = [
+                g
+                for g in groups
+                if experiment_types.get(g) not in ("baseline", "treatment")
+            ]
+            if unknown_groups:
+                invalid_mappings = {g: experiment_types.get(g) for g in unknown_groups}
+                raise ValueError(
+                    f"Invalid experiment_type for groups: {invalid_mappings}. "
+                    f"Expected 'baseline' or 'treatment'."
+                )
 
             baselines = sorted(baselines)
             treatments = sorted(treatments)
@@ -374,6 +399,7 @@ class PlotGenerator:
         Get direction indicator for metric.
 
         Checks MetricRegistry first, then falls back to derived metrics registry.
+        Handles stat suffixes like _avg, _p50, _p99, etc.
 
         Args:
             metric_tag: Metric tag name (e.g., "request_latency", "output_token_throughput_per_gpu")
@@ -383,20 +409,30 @@ class PlotGenerator:
             PlotMetricDirection.LOWER if lower is better (not LARGER_IS_BETTER or derived metric marked as False)
             "" if metric not found in either registry
         """
-        try:
-            metric_class = MetricRegistry.get_class(metric_tag)
-            if metric_class.has_flags(MetricFlags.LARGER_IS_BETTER):
-                return PlotMetricDirection.HIGHER
-            return PlotMetricDirection.LOWER
-        except Exception:
-            pass
+        # Strip stat suffixes to get base metric name
+        stat_suffixes = tuple(f"_{key}" for key in ALL_STAT_KEYS)
+        base_metric = metric_tag
+        for suffix in stat_suffixes:
+            if metric_tag.endswith(suffix):
+                base_metric = metric_tag[: -len(suffix)]
+                break
 
-        if metric_tag in DERIVED_METRIC_DIRECTIONS:
-            return (
-                PlotMetricDirection.HIGHER
-                if DERIVED_METRIC_DIRECTIONS[metric_tag]
-                else PlotMetricDirection.LOWER
-            )
+        # Try both the original metric_tag and the base_metric
+        for tag in [metric_tag, base_metric]:
+            try:
+                metric_class = MetricRegistry.get_class(tag)
+                if metric_class.has_flags(MetricFlags.LARGER_IS_BETTER):
+                    return PlotMetricDirection.HIGHER
+                return PlotMetricDirection.LOWER
+            except Exception:
+                pass
+
+            if tag in DERIVED_METRIC_DIRECTIONS:
+                return (
+                    PlotMetricDirection.HIGHER
+                    if DERIVED_METRIC_DIRECTIONS[tag]
+                    else PlotMetricDirection.LOWER
+                )
 
         logger = logging.getLogger(__name__)
         logger.debug(f"Could not determine direction for metric: {metric_tag}")
@@ -434,6 +470,8 @@ class PlotGenerator:
 
         is_pareto = np.zeros(n, dtype=bool)
 
+        # Use non-strict comparisons (>= and <=) so identical points are all on the frontier.
+        # When points have the same coordinates, none dominates any other.
         if x_direction == PlotMetricDirection.LOWER:
             if y_direction == PlotMetricDirection.HIGHER:
                 best_y = float("-inf")
@@ -463,128 +501,31 @@ class PlotGenerator:
 
         return is_pareto
 
-    def _direction_to_arrow(self, direction: PlotMetricDirection | str) -> str:
-        """
-        Convert a PlotMetricDirection to its unicode arrow representation.
+    def _is_pareto_efficient(self, costs: np.ndarray) -> np.ndarray:
+        """Find Pareto-efficient points where we want to maximize both dimensions.
+
+        A point is Pareto-efficient if no other point dominates it.
+        A point dominates another if it is >= in all dimensions and > in at least one.
 
         Args:
-            direction: PlotMetricDirection enum value or empty string
+            costs: Array of shape (n_points, 2) with [x, y] values to maximize
 
         Returns:
-            "↑" (U+2191) if direction is HIGHER
-            "↓" (U+2193) if direction is LOWER
-            "" if direction is empty string
+            Boolean array marking Pareto-efficient (non-dominated) points
         """
-        if direction == PlotMetricDirection.HIGHER:
-            return "\u2191"
-        elif direction == PlotMetricDirection.LOWER:
-            return "\u2193"
-        return ""
+        n_points = costs.shape[0]
+        is_efficient = np.ones(n_points, dtype=bool)
 
-    def _generate_optimal_direction_subtitle(self, x_metric: str, y_metric: str) -> str:
-        """
-        Generate subtitle describing optimal direction for 2D plot.
+        for i in range(n_points):
+            if is_efficient[i]:
+                other_points = np.arange(n_points) != i
+                dominated = np.all(costs[other_points] >= costs[i], axis=1) & np.any(
+                    costs[other_points] > costs[i], axis=1
+                )
+                if np.any(dominated):
+                    is_efficient[i] = False
 
-        Args:
-            x_metric: X-axis metric tag
-            y_metric: Y-axis metric tag
-
-        Returns:
-            Explanatory subtitle or empty string if directions unknown
-        """
-        x_dir = self._get_metric_direction(x_metric)
-        y_dir = self._get_metric_direction(y_metric)
-
-        if not x_dir or not y_dir:
-            return ""
-
-        # Determine quadrant name
-        if x_dir == PlotMetricDirection.LOWER and y_dir == PlotMetricDirection.HIGHER:
-            quadrant = "upper-left"
-        elif (
-            x_dir == PlotMetricDirection.HIGHER and y_dir == PlotMetricDirection.HIGHER
-        ):
-            quadrant = "upper-right"
-        elif x_dir == PlotMetricDirection.LOWER and y_dir == PlotMetricDirection.LOWER:
-            quadrant = "lower-left"
-        else:  # x_dir == PlotMetricDirection.HIGHER and y_dir == PlotMetricDirection.LOWER
-            quadrant = "lower-right"
-
-        x_name = get_metric_display_name(x_metric)
-        y_name = get_metric_display_name(y_metric)
-        x_word = "low" if x_dir == PlotMetricDirection.LOWER else "high"
-        y_word = "high" if y_dir == PlotMetricDirection.HIGHER else "low"
-
-        # Convert directions to arrows for display
-        x_arrow = self._direction_to_arrow(x_dir)
-        y_arrow = self._direction_to_arrow(y_dir)
-
-        return f"Optimal: {quadrant} quadrant ({y_word} {y_name} {y_arrow}, {x_word} {x_name} {x_arrow})"
-
-    def _add_optimal_quadrant_shading(
-        self,
-        fig: go.Figure,
-        x_metric: str,
-        y_metric: str,
-        x_data: list[float],
-        y_data: list[float],
-    ) -> None:
-        """
-        Add semi-transparent shading to optimal quadrant of 2D plot.
-
-        Args:
-            fig: Plotly figure to modify
-            x_metric: X-axis metric tag
-            y_metric: Y-axis metric tag
-            x_data: List of x-axis values
-            y_data: List of y-axis values
-        """
-        x_dir = self._get_metric_direction(x_metric)
-        y_dir = self._get_metric_direction(y_metric)
-
-        if not x_dir or not y_dir or not x_data or not y_data:
-            return
-
-        x_lower_is_better = x_dir == PlotMetricDirection.LOWER
-        y_higher_is_better = y_dir == PlotMetricDirection.HIGHER
-
-        # Find optimal corner point
-        optimal_x = min(x_data) if x_lower_is_better else max(x_data)
-        optimal_y = max(y_data) if y_higher_is_better else min(y_data)
-
-        # Calculate rectangle bounds
-        x_min, x_max = min(x_data), max(x_data)
-        y_min, y_max = min(y_data), max(y_data)
-
-        rect_x0 = x_min if x_lower_is_better else optimal_x
-        rect_x1 = optimal_x if x_lower_is_better else x_max
-        rect_y0 = optimal_y if y_higher_is_better else y_min
-        rect_y1 = y_max if y_higher_is_better else optimal_y
-
-        # Add semi-transparent green overlay
-        fig.add_shape(
-            type="rect",
-            x0=rect_x0,
-            x1=rect_x1,
-            y0=rect_y0,
-            y1=rect_y1,
-            fillcolor="rgba(118, 185, 0, 0.08)",  # Very light NVIDIA green
-            line_width=0,
-            layer="below",
-        )
-
-        # Add star annotation at optimal corner
-        fig.add_annotation(
-            x=optimal_x,
-            y=optimal_y,
-            text="\u2605 Optimal",  # ★
-            showarrow=False,
-            font=dict(size=14, color=NVIDIA_GREEN),
-            xanchor="right" if x_lower_is_better else "left",
-            yanchor="bottom" if y_higher_is_better else "top",
-            xshift=-10 if x_lower_is_better else 10,
-            yshift=10 if y_higher_is_better else -10,
-        )
+        return is_efficient
 
     def create_pareto_plot(
         self,
@@ -628,26 +569,13 @@ class PlotGenerator:
         x_label = x_label or get_metric_display_name(x_metric)
         y_label = y_label or get_metric_display_name(y_metric)
 
-        # Add direction indicators to axis labels
-        x_direction = self._get_metric_direction(x_metric)
-        y_direction = self._get_metric_direction(y_metric)
-        if x_direction:
-            x_label = f"{x_label} {self._direction_to_arrow(x_direction)}"
-        if y_direction:
-            y_label = f"{y_label} {self._direction_to_arrow(y_direction)}"
-
-        # Generate subtitle with optimal direction hint
-        subtitle = self._generate_optimal_direction_subtitle(x_metric, y_metric)
-        if subtitle:
-            title = f"{title}<br><sub>{subtitle}</sub>"
+        # Use default label_by if None provided
+        if label_by is None:
+            label_by = "concurrency"
 
         groups, group_colors, display_names = self._prepare_groups(
             df_sorted, group_by, experiment_types, group_display_names
         )
-
-        # Collect all data points for optimal quadrant shading
-        all_x_data = []
-        all_y_data = []
 
         for group in groups:
             if group is None:
@@ -660,10 +588,6 @@ class PlotGenerator:
                 group_color = group_colors[group]
                 # Use display name if available, otherwise use group ID
                 group_name = display_names.get(group, group)
-
-            # Collect data for optimal quadrant shading
-            all_x_data.extend(group_data[x_metric].tolist())
-            all_y_data.extend(group_data[y_metric].tolist())
 
             # Calculate Pareto frontier for this group based on metric directions
             x_dir = self._get_metric_direction(x_metric)
@@ -683,14 +607,20 @@ class PlotGenerator:
                     f"correct Pareto frontier calculation."
                 )
 
+            # Sort by x, then by y (best y first) to handle ties in x correctly.
+            # For ties in x, only the point with best y can be on the frontier.
+            y_ascending = y_dir == PlotMetricDirection.LOWER
+            group_data = group_data.sort_values(
+                [x_metric, y_metric], ascending=[True, y_ascending]
+            )
             x_values = group_data[x_metric].values
             y_values = group_data[y_metric].values
             is_pareto = self._compute_pareto_frontier(x_values, y_values, x_dir, y_dir)
 
-            df_pareto = group_data[is_pareto].copy()
+            df_pareto = group_data[is_pareto].sort_values(x_metric)
 
             if not df_pareto.empty:
-                # Shadow for Pareto line
+                # Shadow for Pareto frontier line (only connects optimal points)
                 fig.add_trace(
                     go.Scatter(
                         x=df_pareto[x_metric],
@@ -699,10 +629,11 @@ class PlotGenerator:
                         line=dict(width=8, color="rgba(255, 255, 255, 0.1)"),
                         showlegend=False,
                         hoverinfo="skip",
+                        legendgroup=group_name,
                     )
                 )
 
-                # Main Pareto line
+                # Main Pareto frontier line (only connects optimal points)
                 fig.add_trace(
                     go.Scatter(
                         x=df_pareto[x_metric],
@@ -711,13 +642,14 @@ class PlotGenerator:
                         line=dict(width=3, color=group_color),
                         showlegend=False,
                         hoverinfo="skip",
+                        legendgroup=group_name,
                     )
                 )
 
             # Prepare labels and hover text
             labels = [str(val) for val in group_data[label_by]]
             hovertexts = [
-                f"<b>{group_name} - {label}</b><br>{x_label}: {x:.1f}<br>{y_label}: {y:.1f}"
+                f"<b>{group_name} - {label}</b><br>{x_label}: {x:.1f}<br>{y_label}: {y:.1f}<br><i>💡 Click for full config</i>"
                 for label, x, y in zip(
                     labels, group_data[x_metric], group_data[y_metric], strict=False
                 )
@@ -737,6 +669,7 @@ class PlotGenerator:
                     ),
                     showlegend=False,
                     hoverinfo="skip",
+                    legendgroup=group_name,
                 )
             )
 
@@ -760,7 +693,7 @@ class PlotGenerator:
                         family=PLOT_FONT_FAMILY,
                         weight="bold",
                     ),
-                    hovertemplate="%{customdata}<extra></extra>",
+                    hovertemplate="%{customdata.text}<extra></extra>",
                     customdata=hovertexts,
                     name=group_name,
                     showlegend=(group is not None),
@@ -771,11 +704,6 @@ class PlotGenerator:
         # Apply NVIDIA branding layout
         layout = self._get_base_layout(title, x_label, y_label)
         fig.update_layout(layout)
-
-        # Add optimal quadrant shading
-        self._add_optimal_quadrant_shading(
-            fig, x_metric, y_metric, all_x_data, all_y_data
-        )
 
         return fig
 
@@ -791,8 +719,9 @@ class PlotGenerator:
         y_label: str | None = None,
         experiment_types: dict[str, str] | None = None,
         group_display_names: dict[str, str] | None = None,
+        mode: str = "lines+markers",
     ) -> go.Figure:
-        """Create a scatter plot with connecting lines.
+        """Create a scatter plot with or without connecting lines.
 
         Args:
             df: DataFrame containing the metrics
@@ -802,10 +731,11 @@ class PlotGenerator:
             group_by: Column to group data by for multi-series (default: "model")
             title: Plot title (auto-generated if None)
             x_label: X-axis label (auto-generated if None)
-            y_label: Y-axis label (auto-generated if None)
+            y_label: Y-label label (auto-generated if None)
+            mode: Plot mode - "lines+markers" or "markers" (default: "lines+markers")
 
         Returns:
-            Plotly Figure object with scatter plot and lines
+            Plotly Figure object with scatter plot
         """
         df_sorted = df.sort_values(x_metric)
         fig = go.Figure()
@@ -818,27 +748,10 @@ class PlotGenerator:
         x_label = x_label or get_metric_display_name(x_metric)
         y_label = y_label or get_metric_display_name(y_metric)
 
-        # Add direction indicators to axis labels
-        x_direction = self._get_metric_direction(x_metric)
-        y_direction = self._get_metric_direction(y_metric)
-        if x_direction:
-            x_label = f"{x_label} {self._direction_to_arrow(x_direction)}"
-        if y_direction:
-            y_label = f"{y_label} {self._direction_to_arrow(y_direction)}"
-
-        # Generate subtitle with optimal direction hint
-        subtitle = self._generate_optimal_direction_subtitle(x_metric, y_metric)
-        if subtitle:
-            title = f"{title}<br><sub>{subtitle}</sub>"
-
         # Prepare groups and colors
         groups, group_colors, display_names = self._prepare_groups(
             df_sorted, group_by, experiment_types, group_display_names
         )
-
-        # Collect all data points for optimal quadrant shading
-        all_x_data = []
-        all_y_data = []
 
         for group in groups:
             if group is None:
@@ -852,16 +765,16 @@ class PlotGenerator:
                 # Use display name if available, otherwise use group ID
                 group_name = display_names.get(group, group)
 
-            # Collect data for optimal quadrant shading
-            all_x_data.extend(group_data[x_metric].tolist())
-            all_y_data.extend(group_data[y_metric].tolist())
+            # Determine shadow and main modes based on mode parameter
+            shadow_mode = mode
+            main_mode = f"{mode}+text" if "text" not in mode else mode
 
             # Shadow layer
             fig.add_trace(
                 go.Scatter(
                     x=group_data[x_metric],
                     y=group_data[y_metric],
-                    mode="lines+markers",
+                    mode=shadow_mode,
                     marker=dict(
                         size=14,
                         color="rgba(255, 255, 255, 0.12)",
@@ -880,7 +793,7 @@ class PlotGenerator:
                 go.Scatter(
                     x=group_data[x_metric],
                     y=group_data[y_metric],
-                    mode="lines+markers+text",
+                    mode=main_mode,
                     marker=dict(
                         size=9,
                         color=group_color,
@@ -893,7 +806,7 @@ class PlotGenerator:
                     textfont=dict(
                         size=9, color=self.colors["text"], family=PLOT_FONT_FAMILY
                     ),
-                    hovertemplate=f"<b>{group_name} - %{{text}}</b><br>{x_label}: %{{x:.1f}}<br>{y_label}: %{{y:.1f}}<extra></extra>",
+                    hovertemplate=f"<b>{group_name} - %{{text}}</b><br>{x_label}: %{{x:.1f}}<br>{y_label}: %{{y:.1f}}<br><i>💡 Click for full config</i><extra></extra>",
                     name=group_name,
                     showlegend=(group is not None),
                     legendgroup=group_name,
@@ -904,10 +817,85 @@ class PlotGenerator:
         layout = self._get_base_layout(title, x_label, y_label)
         fig.update_layout(layout)
 
-        # Add optimal quadrant shading
-        self._add_optimal_quadrant_shading(
-            fig, x_metric, y_metric, all_x_data, all_y_data
+        return fig
+
+    def create_multi_run_bar_chart(
+        self,
+        df: pd.DataFrame,
+        x_metric: str,
+        y_metric: str,
+        group_by: str | None = None,
+        title: str | None = None,
+        x_label: str | None = None,
+        y_label: str | None = None,
+    ) -> go.Figure:
+        """Create a multi-run bar chart with NVIDIA styling.
+
+        Args:
+            df: DataFrame containing the metrics
+            x_metric: Column name for x-axis metric
+            y_metric: Column name for y-axis metric
+            group_by: Column to group data by (default: None)
+            title: Plot title (auto-generated if None)
+            x_label: X-axis label (auto-generated if None)
+            y_label: Y-axis label (auto-generated if None)
+
+        Returns:
+            Plotly Figure object with bar chart
+        """
+        fig = go.Figure()
+
+        # Auto-generate labels if not provided
+        title = (
+            title
+            or f"{get_metric_display_name(y_metric)} vs {get_metric_display_name(x_metric)}"
         )
+        x_label = x_label or get_metric_display_name(x_metric)
+        y_label = y_label or get_metric_display_name(y_metric)
+
+        # Prepare groups and colors
+        groups, group_colors, display_names = self._prepare_groups(df, group_by)
+
+        for group in groups:
+            if group is None:
+                group_data = df
+                group_color = self._get_palette_colors(1)[0]
+                group_name = "Data"
+            else:
+                group_data = df[df[group_by] == group]
+                group_color = group_colors[group]
+                group_name = display_names.get(group, group)
+
+            r, g, b = mcolors.to_rgb(group_color)
+            fillcolor = f"rgba({int(r * 255)}, {int(g * 255)}, {int(b * 255)}, 0.7)"
+
+            # Create bar trace with transparent fill and colored border
+            marker_config = dict(
+                color=fillcolor,
+                line=dict(color=group_color, width=2),
+            )
+
+            hover_template = (
+                f"{x_label}: %{{x}}<br>"
+                f"{y_label}: %{{y:.2f}}<br>"
+                f"Group: {group_name}<extra></extra>"
+            )
+
+            fig.add_trace(
+                go.Bar(
+                    x=group_data[x_metric],
+                    y=group_data[y_metric],
+                    name=group_name,
+                    marker=marker_config,
+                    hovertemplate=hover_template,
+                )
+            )
+
+        # Apply NVIDIA branding layout
+        layout = self._get_base_layout(title, x_label, y_label)
+        layout["bargap"] = 0.15
+        layout["bargroupgap"] = 0.1
+        fig.update_layout(layout)
 
         return fig
 
@@ -947,8 +935,9 @@ class PlotGenerator:
                 x=df[x_col],
                 y=df[y_metric],
                 mode="markers",
-                marker=dict(size=8, opacity=0.95, color=primary_color),
-                showlegend=False,
+                marker=dict(size=4, opacity=0.95, color=primary_color),
+                name=y_label,
+                showlegend=True,
                 hovertemplate=f"{x_label} %{{x}}<br>{y_label}: %{{y:.1f}}<extra></extra>",
             )
         )
@@ -956,6 +945,10 @@ class PlotGenerator:
         # Apply NVIDIA branding layout with unified hover
         layout = self._get_base_layout(title, x_label, y_label, hovermode="x unified")
         fig.update_layout(layout)
+        fig.update_layout(
+            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
+            margin=dict(r=20),
+        )
 
         return fig
 
@@ -1002,7 +995,8 @@ class PlotGenerator:
                 line=dict(width=2, color=primary_color, shape="hv"),
                 fill="tozeroy",
                 fillcolor=fillcolor,
-                showlegend=False,
+                name=y_label,
+                showlegend=True,
                 hovertemplate=f"{x_label}: %{{x:.0f}}<br>{y_label}: %{{y:.1f}}<extra></extra>",
             )
         )
@@ -1010,6 +1004,10 @@ class PlotGenerator:
         # Apply NVIDIA branding layout
         layout = self._get_base_layout(title, x_label, y_label)
         fig.update_layout(layout)
+        fig.update_layout(
+            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
+            margin=dict(r=20),
+        )
 
         return fig
 
@@ -1210,6 +1208,10 @@ class PlotGenerator:
             ]
 
         fig.update_layout(layout)
+        fig.update_layout(
+            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
+            margin=dict(r=20),
+        )
 
         return fig
 
@@ -1391,7 +1393,7 @@ class PlotGenerator:
                     mode="markers",
                     marker=dict(
                         color=primary_color,
-                        size=8,
+                        size=6,
                         line=dict(width=0),
                     ),
                     error_y=error_y_normal,
@@ -1416,7 +1418,7 @@ class PlotGenerator:
                     mode="markers",
                     marker=dict(
                         color=OUTLIER_RED,
-                        size=10,
+                        size=6,
                         symbol="diamond",
                         line=dict(width=0),
                     ),
@@ -1498,13 +1500,18 @@ class PlotGenerator:
             if "annotations" not in layout:
                 layout["annotations"] = []
 
-            layout["margin"]["b"] = 140
+            # Use pixel-based yshift for precise positioning below x-axis
+            has_diagonal_labels = slice_duration is not None
+            # Shift below x-axis: account for tick labels + axis title
+            yshift_pixels = -85 if has_diagonal_labels else -50
+            layout["margin"]["b"] = 140 if has_diagonal_labels else 100
 
             warning_annotation = dict(
                 x=0.5,
-                y=-0.10,
+                y=0,
                 xref="paper",
                 yref="paper",
+                yshift=yshift_pixels,
                 text=warning_text,
                 showarrow=False,
                 font=dict(
@@ -1522,6 +1529,10 @@ class PlotGenerator:
             ]
 
         fig.update_layout(layout)
+        fig.update_layout(
+            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
+            margin=dict(r=20),
+        )
 
         return fig
 
@@ -1657,6 +1668,22 @@ class PlotGenerator:
 
         layout = self._get_base_layout(title, x_label, y1_label, hovermode="x unified")
 
+        # Check if both metrics are percentage-based for aligned Y-axes
+        # Uses unit lookup or heuristic detection for custom metrics
+        def is_percentage_metric(metric_name: str) -> bool:
+            unit = get_gpu_metric_unit(metric_name)
+            if unit == "%":
+                return True
+            # Heuristic: metrics with "utilization" in the name are percentages
+            return "utilization" in metric_name.lower()
+
+        y1_is_pct = is_percentage_metric(y1_metric)
+        y2_is_pct = is_percentage_metric(y2_metric)
+        both_percentage = y1_is_pct and y2_is_pct
+
+        if both_percentage:
+            layout["yaxis"]["range"] = [0, 100]
+
         layout["yaxis2"] = {
             "title": y2_label,
             "overlaying": "y",
@@ -1665,9 +1692,17 @@ class PlotGenerator:
             "showline": True,
             "linecolor": self.colors["border"],
             "color": self.colors["text"],
+            "rangemode": "tozero",
         }
 
+        if both_percentage:
+            layout["yaxis2"]["range"] = [0, 100]
+
         fig.update_layout(layout)
+        fig.update_layout(
+            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
+            margin=dict(r=20),
+        )
 
         return fig
 
@@ -1753,5 +1788,112 @@ class PlotGenerator:
         # Apply NVIDIA branding layout with unified hover
         layout = self._get_base_layout(title, x_label, y_label, hovermode="x unified")
         fig.update_layout(layout)
+        fig.update_layout(
+            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
+            margin=dict(r=20),
+        )
+
+        return fig
+
+    def create_request_timeline(
+        self,
+        df: pd.DataFrame,
+        y_metric: str,
+        title: str | None = None,
+        x_label: str | None = None,
+        y_label: str | None = None,
+    ) -> go.Figure:
+        """
+        Create request timeline with prefill and decode phases.
+
+        Each request is shown as a horizontal line at its Y-metric value,
+        split into two colored phases: prefill (green) and decode (blue).
+
+        Args:
+            df: DataFrame with [request_id, y_value, start_s, ttft_end_s, end_s]
+            y_metric: Metric name for labels
+            title: Plot title
+            x_label: X-axis label
+            y_label: Y-axis label
+
+        Returns:
+            Plotly Figure object
+        """
+        fig = go.Figure()
+
+        title = title or f"Request Timeline: {get_metric_display_name(y_metric)}"
+        x_label = x_label or "Time (seconds)"
+        y_label = y_label or get_metric_display_name(y_metric)
+
+        ttft_color = NVIDIA_GREEN
+        palette = self._get_palette_colors(2)
+        generation_color = (
+            palette[1] if len(palette) > 1 else palette[0] if palette else NVIDIA_GOLD
+        )
+
+        ttft_legend_added = False
+        generation_legend_added = False
+
+        df_sorted = df.sort_values("y_value", ascending=True)
+
+        for _, row in df_sorted.iterrows():
+            request_id = row["request_id"]
+            y_val = row["y_value"]
+            start_s = row["start_s"]
+            ttft_end_s = row["ttft_end_s"]
+            end_s = row["end_s"]
+
+            ttft_duration = ttft_end_s - start_s
+            fig.add_trace(
+                go.Scatter(
+                    x=[start_s, ttft_end_s],
+                    y=[y_val, y_val],
+                    mode="lines",
+                    line=dict(width=2, color=ttft_color),
+                    name="Prefill Phase",
+                    legendgroup="ttft",
+                    showlegend=not ttft_legend_added,
+                    hovertemplate=(
+                        f"Request {request_id}<br>"
+                        f"Prefill Phase<br>"
+                        f"Start: {start_s:.2f}s<br>"
+                        f"End: {ttft_end_s:.2f}s<br>"
+                        f"Duration: {ttft_duration:.2f}s<br>"
+                        f"{y_label}: {y_val:.2f}<extra></extra>"
+                    ),
+                )
+            )
+            ttft_legend_added = True
+
+            generation_duration = end_s - ttft_end_s
+            if generation_duration > 0.001:
+                fig.add_trace(
+                    go.Scatter(
+                        x=[ttft_end_s, end_s],
+                        y=[y_val, y_val],
+                        mode="lines",
+                        line=dict(width=2, color=generation_color),
+                        name="Decode Phase",
+                        legendgroup="generation",
+                        showlegend=not generation_legend_added,
+                        hovertemplate=(
+                            f"Request {request_id}<br>"
+                            f"Decode Phase<br>"
+                            f"Start: {ttft_end_s:.2f}s<br>"
+                            f"End: {end_s:.2f}s<br>"
+                            f"Duration: {generation_duration:.2f}s<br>"
+                            f"{y_label}: {y_val:.2f}<extra></extra>"
+                        ),
+                    )
+                )
+                generation_legend_added = True
+
+        layout = self._get_base_layout(title, x_label, y_label, hovermode="closest")
+        layout["yaxis"]["rangemode"] = "normal"
+        fig.update_layout(layout)
+        fig.update_layout(
+            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
+            margin=dict(r=20),
+        )
 
         return fig

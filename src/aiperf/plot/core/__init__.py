@@ -6,6 +6,7 @@ Core plot functionality including data loading and mode detection.
 """
 
 from aiperf.plot.core.data_loader import (
+    DERIVED_METRICS_REGISTRY,
     DataLoader,
     DerivedMetricCalculator,
     RunData,
@@ -30,13 +31,16 @@ from aiperf.plot.core.plot_generator import (
     get_nvidia_color_scheme,
 )
 from aiperf.plot.core.plot_specs import (
+    PLOT_TYPE_METADATA,
     DataSource,
     ExperimentClassificationConfig,
     MetricSpec,
     PlotSpec,
     PlotType,
+    PlotTypeInfo,
     Style,
     TimeSlicePlotSpec,
+    get_plot_type_info,
 )
 from aiperf.plot.core.plot_type_handlers import (
     PlotTypeHandlerFactory,
@@ -51,17 +55,20 @@ from aiperf.plot.core.swept_params import (
 
 __all__ = [
     "DEFAULT_IGNORE_PARAMS",
+    "DERIVED_METRICS_REGISTRY",
     "DataLoader",
     "DataSource",
     "DerivedMetricCalculator",
     "ExperimentClassificationConfig",
     "MetricSpec",
     "ModeDetector",
+    "PLOT_TYPE_METADATA",
     "PlotGenerator",
     "PlotSpec",
     "PlotType",
     "PlotTypeHandlerFactory",
     "PlotTypeHandlerProtocol",
+    "PlotTypeInfo",
     "RunData",
     "RunMetadata",
     "Style",
@@ -76,6 +83,7 @@ __all__ = [
     "detect_swept_parameters",
     "flatten_config",
     "get_nvidia_color_scheme",
+    "get_plot_type_info",
     "prepare_request_timeseries",
     "prepare_timeslice_metrics",
     "validate_request_uniformity",

@@ -49,6 +49,8 @@ _REQUEST_METRICS: list[str] = MetricRegistry.tags_applicable_to(
     "request_number",
     "timestamp",
     "timestamp_s",
+    "request_start_ns",
+    "request_end_ns",
     "throughput_tokens_per_sec",
     "active_requests",
 ]
@@ -64,6 +66,11 @@ _TIMESLICE_METRICS: list[str] = [
 _GPU_METRICS: list[str] = [
     field_name for _, field_name, _ in GPU_TELEMETRY_METRICS_CONFIG
 ]
+
+_GPU_METRIC_UNITS: dict[str, str] = {
+    field_name: unit_enum.info.tag if hasattr(unit_enum, "info") else str(unit_enum)
+    for _, field_name, unit_enum in GPU_TELEMETRY_METRICS_CONFIG
+}
 
 
 def get_all_metric_display_names() -> dict[str, str]:
@@ -182,3 +189,52 @@ def get_gpu_metrics() -> list[str]:
         True
     """
     return _GPU_METRICS
+
+
+def get_gpu_metric_unit(metric_name: str) -> str | None:
+    """
+    Get the unit string for a GPU telemetry metric.
+
+    Args:
+        metric_name: The GPU metric field name (e.g., "gpu_utilization")
+
+    Returns:
+        Unit string (e.g., "%", "W", "°C") or None if not a GPU metric
+
+    Examples:
+        >>> get_gpu_metric_unit("gpu_utilization")
+        '%'
+        >>> get_gpu_metric_unit("gpu_power_usage")
+        'W'
+        >>> get_gpu_metric_unit("unknown_metric")
+        None
+    """
+    return _GPU_METRIC_UNITS.get(metric_name)
+
+
+def get_metric_display_name_with_unit(metric_name: str) -> str:
+    """
+    Get display name for a metric with unit suffix if available.
+
+    Args:
+        metric_name: The metric identifier (e.g., "gpu_utilization")
+
+    Returns:
+        Human-readable display name with unit (e.g., "GPU Utilization (%)")
+
+    Examples:
+        >>> get_metric_display_name_with_unit("gpu_utilization")
+        'GPU Utilization (%)'
+        >>> get_metric_display_name_with_unit("memory_copy_utilization")
+        'Memory Copy Utilization (%)'
+        >>> get_metric_display_name_with_unit("request_latency")
+        'Request Latency'
+    """
+    display_name = get_metric_display_name(metric_name)
+    unit = get_gpu_metric_unit(metric_name)
+    # Heuristic: metrics with "utilization" in the name are percentages
+    if not unit and "utilization" in metric_name.lower():
+        unit = "%"
+    if unit:
+        return f"{display_name} ({unit})"
+    return display_name

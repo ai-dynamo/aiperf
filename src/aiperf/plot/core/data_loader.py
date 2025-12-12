@@ -18,10 +18,12 @@ import numpy as np
 import pandas as pd
 from pydantic import Field
 
+from aiperf.common.constants import STAT_KEYS
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.record_models import MetricRecordInfo, MetricResult
 from aiperf.plot.constants import (
+    NON_METRIC_KEYS,
     PROFILE_EXPORT_AIPERF_JSON,
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL,
     PROFILE_EXPORT_JSONL,
@@ -29,6 +31,7 @@ from aiperf.plot.constants import (
 )
 from aiperf.plot.core.plot_specs import ExperimentClassificationConfig
 from aiperf.plot.exceptions import DataLoadError
+from aiperf.plot.metric_names import get_metric_display_name
 
 
 class RunMetadata(AIPerfBaseModel):
@@ -127,20 +130,32 @@ class DerivedMetricCalculator:
         Returns:
             Dictionary with per-GPU throughput stats and unit, or None if base metric not found
         """
-        if "output_token_throughput" not in aggregated:
-            return None
+        throughput_data = None
 
-        throughput_data = aggregated["output_token_throughput"]
-        if not isinstance(throughput_data, dict):
+        if (
+            "metrics" in aggregated
+            and "output_token_throughput" in aggregated["metrics"]
+        ):
+            throughput_data = aggregated["metrics"]["output_token_throughput"]
+        elif "output_token_throughput" in aggregated:
+            throughput_data = aggregated["output_token_throughput"]
+
+        if throughput_data is None:
             return None
 
         per_gpu_data = {"unit": "tokens/sec/gpu"}
 
-        for key, value in throughput_data.items():
-            if key == "unit":
-                continue
-            if isinstance(value, int | float):
-                per_gpu_data[key] = value / gpu_count
+        if isinstance(throughput_data, dict):
+            for key, value in throughput_data.items():
+                if key == "unit":
+                    continue
+                if isinstance(value, int | float):
+                    per_gpu_data[key] = value / gpu_count
+        else:
+            for stat_name in STAT_KEYS:
+                stat_value = getattr(throughput_data, stat_name, None)
+                if stat_value is not None and isinstance(stat_value, int | float):
+                    per_gpu_data[stat_name] = stat_value / gpu_count
 
         return per_gpu_data
 
@@ -447,9 +462,6 @@ class DataLoader(AIPerfLoggerMixin):
                 - "display_names": dict mapping metric tag to display name
                 - "units": dict mapping metric tag to unit string
         """
-        from aiperf.plot.constants import NON_METRIC_KEYS
-        from aiperf.plot.metric_names import get_metric_display_name
-
         if not run_data.aggregated:
             self.warning("No aggregated data available")
             return {"display_names": {}, "units": {}}

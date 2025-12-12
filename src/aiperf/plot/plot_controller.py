@@ -9,6 +9,7 @@ from aiperf.plot.config import PlotConfig
 from aiperf.plot.constants import PlotMode, PlotTheme
 from aiperf.plot.core.data_loader import DataLoader
 from aiperf.plot.core.mode_detector import ModeDetector, VisualizationMode
+from aiperf.plot.dashboard.server import DashboardServer
 from aiperf.plot.exporters import MultiRunPNGExporter, SingleRunPNGExporter
 from aiperf.plot.logging import setup_console_only_logging, setup_plot_logging
 
@@ -41,12 +42,14 @@ class PlotController:
         theme: PlotTheme = PlotTheme.LIGHT,
         config_path: Path | None = None,
         verbose: bool = False,
+        port: int = 8050,
     ):
         self.paths = paths
         self.output_dir = output_dir
         self.mode = mode
         self.theme = theme
         self.verbose = verbose
+        self.port = port
 
         log_level = "DEBUG" if verbose else "INFO"
         try:
@@ -62,24 +65,27 @@ class PlotController:
 
         classification_config = self.plot_config.get_experiment_classification_config()
         if classification_config:
-            print(
+            logger.info(
                 "Experiment classification enabled: grouping runs by baseline/treatment patterns"
             )
         self.loader = DataLoader(
             classification_config=classification_config,
         )
 
-    def run(self) -> list[Path]:
+    def run(self) -> list[Path] | None:
         """Execute plot generation pipeline.
 
         Returns:
-            List of paths to generated plot files
+            List of paths to generated plot files (PNG mode) or None (dashboard mode)
         """
         if self.mode == PlotMode.PNG:
             return self._generate_png_plots()
+        elif self.mode == PlotMode.DASHBOARD:
+            self._launch_dashboard_server()
+            return None
         else:
             raise ValueError(
-                f"Unsupported mode: {self.mode}. Currently only '{PlotMode.PNG}' is supported."
+                f"Unsupported mode: {self.mode}. Currently only '{PlotMode.PNG}' and '{PlotMode.DASHBOARD}' are supported."
             )
 
     def _validate_paths(self) -> None:
@@ -115,10 +121,10 @@ class PlotController:
         self._validate_paths()
         viz_mode, run_dirs = self._detect_visualization_mode()
 
-        print(
-            f"Detecting mode: {viz_mode.value.replace('_', '-')} "
-            f"({len(run_dirs)} run{'s' if len(run_dirs) > 1 else ''} found)"
-        )
+        mode_name = viz_mode.value.replace("_", "-")
+        run_count = len(run_dirs)
+        run_word = "run" if run_count == 1 else "runs"
+        logger.info(f"Generating {mode_name} plots ({run_count} {run_word})")
 
         if viz_mode == VisualizationMode.MULTI_RUN:
             return self._export_multi_run_plots(run_dirs)
@@ -170,3 +176,46 @@ class PlotController:
         plot_specs = self.plot_config.get_single_run_plot_specs()
         exporter = SingleRunPNGExporter(self.output_dir, theme=self.theme)
         return exporter.export(run_data, available, plot_specs=plot_specs)
+
+    def _launch_dashboard_server(self) -> None:
+        """Launch interactive Dash dashboard server.
+
+        This method will not return until the server is stopped (Ctrl+C).
+        """
+        self._validate_paths()
+        viz_mode, run_dirs = self._detect_visualization_mode()
+
+        run_count = len(run_dirs)
+        run_word = "run" if run_count == 1 else "runs"
+        logger.info(f"Loading {run_count} {run_word}...")
+
+        # Load run data based on visualization mode
+        if viz_mode == VisualizationMode.MULTI_RUN:
+            runs = []
+            for run_dir in run_dirs:
+                try:
+                    run_data = self.loader.load_run(
+                        run_dir, load_per_request_data=False
+                    )
+                    runs.append(run_data)
+                except Exception as e:
+                    logger.warning(f"Failed to load run from {run_dir}: {e}")
+
+            if not runs:
+                raise ValueError("Failed to load any valid profiling runs")
+        else:
+            # Single-run mode: load with per-request data
+            run_data = self.loader.load_run(run_dirs[0], load_per_request_data=True)
+            runs = [run_data]
+
+        server = DashboardServer(
+            runs=runs,
+            run_dirs=run_dirs,
+            mode=viz_mode,
+            theme=self.theme,
+            plot_config=self.plot_config,
+            loader=self.loader,
+            port=self.port,
+        )
+
+        server.run()

@@ -75,3 +75,28 @@ class ModeDetectionError(PlotError):
     """
 
     pass
+
+
+class DataUnavailableError(PlotError):
+    """
+    Exception raised when required data is not available for a plot.
+
+    This exception provides helpful messages explaining why a plot cannot be
+    generated and what data would be needed.
+
+    Args:
+        message: A user-friendly description of what data is missing
+        data_type: The type of data that is unavailable (e.g., "timeslice", "gpu_telemetry")
+        hint: Optional hint about how to generate the missing data
+    """
+
+    def __init__(
+        self, message: str, data_type: str | None = None, hint: str | None = None
+    ) -> None:
+        """Initialize DataUnavailableError with message, data type, and hint."""
+        full_message = message
+        if hint:
+            full_message = f"{message}\n{hint}"
+        super().__init__(full_message)
+        self.data_type = data_type
+        self.hint = hint

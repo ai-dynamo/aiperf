@@ -371,71 +371,79 @@ class TestPlotControllerExportSingleRun:
 class TestPlotControllerGeneratePNGPlots:
     """Tests for PlotController._generate_png_plots integration."""
 
+    @patch("aiperf.plot.plot_controller.setup_plot_logging")
     @patch("aiperf.plot.plot_controller.SingleRunPNGExporter")
     def test_generate_png_plots_single_run_integration(
         self,
         mock_exporter_class: MagicMock,
+        mock_setup_logging: MagicMock,
         single_run_dir: Path,
         tmp_path: Path,
-        capsys,
+        caplog,
     ) -> None:
         """Test full PNG generation flow for single run."""
+        import logging
+
         # Setup mock
         mock_exporter = MagicMock()
         mock_exporter.export.return_value = [tmp_path / "plot1.png"]
         mock_exporter_class.return_value = mock_exporter
 
-        controller = PlotController(
-            paths=[single_run_dir],
-            output_dir=tmp_path / "output",
-        )
+        with caplog.at_level(logging.INFO, logger="aiperf.plot.plot_controller"):
+            controller = PlotController(
+                paths=[single_run_dir],
+                output_dir=tmp_path / "output",
+            )
 
-        # Mock loader
-        controller.loader.load_run = MagicMock(return_value={"test": "data"})
-        controller.loader.get_available_metrics = MagicMock(
-            return_value={"metric1": {"unit": "ms"}}
-        )
+            # Mock loader
+            controller.loader.load_run = MagicMock(return_value={"test": "data"})
+            controller.loader.get_available_metrics = MagicMock(
+                return_value={"metric1": {"unit": "ms"}}
+            )
 
-        result = controller._generate_png_plots()
+            result = controller._generate_png_plots()
 
-        # Verify output message
-        captured = capsys.readouterr()
-        assert "single-run" in captured.out
-        assert "(1 run found)" in captured.out
+        # Verify log message
+        assert "single-run" in caplog.text
+        assert "(1 run)" in caplog.text
 
         assert result == [tmp_path / "plot1.png"]
 
+    @patch("aiperf.plot.plot_controller.setup_plot_logging")
     @patch("aiperf.plot.plot_controller.MultiRunPNGExporter")
     def test_generate_png_plots_multi_run_integration(
         self,
         mock_exporter_class: MagicMock,
+        mock_setup_logging: MagicMock,
         multiple_run_dirs: list[Path],
         tmp_path: Path,
-        capsys,
+        caplog,
     ) -> None:
         """Test full PNG generation flow for multi-run."""
+        import logging
+
         # Setup mock
         mock_exporter = MagicMock()
         mock_exporter.export.return_value = [tmp_path / "plot1.png"]
         mock_exporter_class.return_value = mock_exporter
 
-        controller = PlotController(
-            paths=multiple_run_dirs,
-            output_dir=tmp_path / "output",
-        )
+        with caplog.at_level(logging.INFO, logger="aiperf.plot.plot_controller"):
+            controller = PlotController(
+                paths=multiple_run_dirs,
+                output_dir=tmp_path / "output",
+            )
 
-        # Mock loader
-        controller.loader.load_run = MagicMock(return_value={"test": "data"})
-        controller.loader.get_available_metrics = MagicMock(
-            return_value={"metric1": {"unit": "ms"}}
-        )
+            # Mock loader
+            controller.loader.load_run = MagicMock(return_value={"test": "data"})
+            controller.loader.get_available_metrics = MagicMock(
+                return_value={"metric1": {"unit": "ms"}}
+            )
 
-        result = controller._generate_png_plots()
+            result = controller._generate_png_plots()
 
-        # Verify output message
-        captured = capsys.readouterr()
-        assert "multi-run" in captured.out
-        assert "(3 runs found)" in captured.out
+        # Verify log message
+        assert "multi-run" in caplog.text
+        assert "(3 runs)" in caplog.text
 
         assert result == [tmp_path / "plot1.png"]
 

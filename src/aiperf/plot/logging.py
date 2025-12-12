@@ -61,8 +61,8 @@ def setup_plot_logging(output_dir: Path, log_level: str = "INFO") -> None:
     file in the output directory. This function can be called multiple times
     safely as it clears existing handlers before adding new ones.
 
-    Console output shows WARNING+ by default, or all logs when verbose (DEBUG/INFO level).
-    File output always captures all logs at the specified level.
+    Console output shows WARNING and above by default, or DEBUG and above when
+    log_level is DEBUG. File output always captures all logs at the specified level.
 
     Args:
         output_dir: Directory where plot outputs (and logs) will be saved.
@@ -76,7 +76,7 @@ def setup_plot_logging(output_dir: Path, log_level: str = "INFO") -> None:
     for existing_handler in root_logger.handlers[:]:
         root_logger.removeHandler(existing_handler)
 
-    # Console handler: show all logs if verbose (DEBUG level), otherwise only WARNING+
+    # Console handler: WARNING+ by default, DEBUG+ when log_level is DEBUG
     console_level = level if level == "DEBUG" else "WARNING"
     rich_handler = RichHandler(
         rich_tracebacks=True,

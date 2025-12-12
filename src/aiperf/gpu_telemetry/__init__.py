@@ -8,6 +8,7 @@ This module provides GPU telemetry collection capabilities through DCGM endpoint
 
 from aiperf.gpu_telemetry.constants import (
     DCGM_TO_FIELD_MAPPING,
+    GPU_TELEMETRY_METRICS_CONFIG,
     SCALING_FACTORS,
     get_gpu_telemetry_metrics_config,
 )
@@ -23,6 +24,7 @@ from aiperf.gpu_telemetry.telemetry_manager import (
 
 __all__ = [
     "DCGM_TO_FIELD_MAPPING",
+    "GPU_TELEMETRY_METRICS_CONFIG",
     "MetricsConfigLoader",
     "SCALING_FACTORS",
     "TelemetryDataCollector",

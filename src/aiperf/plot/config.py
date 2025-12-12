@@ -10,6 +10,7 @@ Loads plot specifications from YAML files with the following priority:
 3. Default shipped config (src/aiperf/plot/default_plot_config.yaml)
 """
 
+import difflib
 import logging
 import shutil
 from pathlib import Path
@@ -91,8 +92,6 @@ def _parse_and_validate_metric_name(metric_name: str) -> tuple[str, str | None]:
 
     invalid_stat = _detect_invalid_stat_pattern(metric_name)
     if invalid_stat:
-        import difflib
-
         close_matches = difflib.get_close_matches(
             invalid_stat, ALL_STAT_KEYS, n=3, cutoff=0.6
         )
@@ -436,6 +435,7 @@ class PlotConfig:
             "metrics": metrics,
             "title": preset.get("title"),
             "filename": f"{name}.png",
+            "description": preset.get("description"),
             "label_by": preset.get("labels"),
             "group_by": groups,
         }
@@ -446,6 +446,8 @@ class PlotConfig:
             spec_kwargs["secondary_style"] = Style(**preset["secondary_style"])
         if "supplementary_col" in preset:
             spec_kwargs["supplementary_col"] = preset["supplementary_col"]
+        if "autoscale" in preset:
+            spec_kwargs["autoscale"] = preset["autoscale"]
 
         if "use_slice_duration" in preset:
             spec_kwargs["use_slice_duration"] = preset["use_slice_duration"]
@@ -455,7 +457,7 @@ class PlotConfig:
 
     def _expand_metric_shortcut(
         self,
-        metric_name: str,
+        metric_value: str | dict,
         axis: str,
         source_override: str | None = None,
         stat_override: str | None = None,
@@ -464,11 +466,11 @@ class PlotConfig:
         Expand metric shortcut to full MetricSpec using dynamic pattern matching.
 
         Supports two formats:
-        1. {metric_name}_{stat} - e.g., "time_to_first_token_avg", "request_latency_p90"
-        2. {metric_name} - e.g., "request_number", "timestamp"
+        1. Dict format: {"metric": "request_latency", "stat": "avg"}
+        2. String format (legacy): "request_latency_avg" or "request_number"
 
         Args:
-            metric_name: Metric shortcut name
+            metric_value: Metric as dict with 'metric' and 'stat' keys, or string shortcut
             axis: Axis assignment ("x", "y", "y2")
             source_override: Override data source (for timeslice plots)
             stat_override: Override stat (for timeslice plots)
@@ -479,7 +481,11 @@ class PlotConfig:
         Raises:
             ValueError: If metric name or stat is not recognized
         """
-        base_name, stat = _parse_and_validate_metric_name(metric_name)
+        if isinstance(metric_value, dict):
+            base_name = metric_value["metric"]
+            stat = metric_value.get("stat")
+        else:
+            base_name, stat = _parse_and_validate_metric_name(metric_value)
         source: DataSource
 
         if base_name in get_aggregated_metrics():
@@ -498,7 +504,7 @@ class PlotConfig:
                 + get_gpu_metrics()
             )
             raise ValueError(
-                f"Unknown metric: '{base_name}' (from shortcut '{metric_name}'). "
+                f"Unknown metric: '{base_name}' (from shortcut '{metric_value}'). "
                 f"Known metrics: {all_known}"
             )
 

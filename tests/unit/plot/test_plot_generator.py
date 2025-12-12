@@ -8,8 +8,6 @@ This module tests the plot generation functionality, ensuring that each plot
 type is created correctly with proper styling and data handling.
 """
 
-from unittest import mock
-
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -116,13 +114,9 @@ class TestPlotGenerator:
         )
 
         # Verify custom labels are used
-        # Custom titles now include optimal direction subtitle
-        assert fig.layout.title.text.startswith(title)
-        assert "<br><sub>" in fig.layout.title.text
-        assert "Optimal:" in fig.layout.title.text
-        # Axis labels now include directional arrows
-        assert fig.layout.xaxis.title.text.startswith(x_label)
-        assert fig.layout.yaxis.title.text.startswith(y_label)
+        assert fig.layout.title.text == title
+        assert fig.layout.xaxis.title.text == x_label
+        assert fig.layout.yaxis.title.text == y_label
 
     def test_create_pareto_plot_no_grouping(self, plot_generator):
         """Test Pareto plot without grouping."""
@@ -263,7 +257,7 @@ class TestPlotGenerator:
         ]
 
         for fig in plots:
-            assert fig.layout.height == 600
+            assert fig.layout.height == 400
 
     def test_plots_have_nvidia_branding(self, plot_generator, multi_run_df):
         """Test that plots use NVIDIA brand colors."""
@@ -1280,196 +1274,6 @@ class TestGetMetricDirection:
             assert direction == ""
 
 
-class TestAddOptimalQuadrantShading:
-    """Tests for _add_optimal_quadrant_shading method."""
-
-    def test_quadrant_shading_both_lower_is_better(self):
-        """Lower-left quadrant shaded when both metrics lower is better."""
-        from aiperf.common.enums import PlotMetricDirection
-
-        plot_gen = PlotGenerator()
-        fig = go.Figure()
-
-        x_data = [100.0, 150.0, 200.0]
-        y_data = [10.0, 15.0, 20.0]
-
-        # Mock metric directions - both lower is better
-        with mock.patch.object(
-            plot_gen,
-            "_get_metric_direction",
-            side_effect=lambda m: PlotMetricDirection.LOWER,
-        ):
-            plot_gen._add_optimal_quadrant_shading(
-                fig, "latency_metric", "another_latency", x_data, y_data
-            )
-
-        # Should have added shape and annotation
-        assert len(fig.layout.shapes) == 1
-        assert len(fig.layout.annotations) == 1
-
-        # Verify optimal corner is lower-left (min x, min y)
-        shape = fig.layout.shapes[0]
-        assert shape.x0 == min(x_data)
-        assert shape.y0 == min(y_data)
-
-    def test_quadrant_shading_both_higher_is_better(self):
-        """Upper-right quadrant shaded when both metrics higher is better."""
-        from aiperf.common.enums import PlotMetricDirection
-
-        plot_gen = PlotGenerator()
-        fig = go.Figure()
-
-        x_data = [100.0, 150.0, 200.0]
-        y_data = [10.0, 15.0, 20.0]
-
-        # Mock metric directions - both higher is better
-        with mock.patch.object(
-            plot_gen,
-            "_get_metric_direction",
-            side_effect=lambda m: PlotMetricDirection.HIGHER,
-        ):
-            plot_gen._add_optimal_quadrant_shading(
-                fig, "throughput_metric", "another_throughput", x_data, y_data
-            )
-
-        # Should have added shape and annotation
-        assert len(fig.layout.shapes) == 1
-        assert len(fig.layout.annotations) == 1
-
-        # Verify optimal corner is upper-right (max x, max y)
-        shape = fig.layout.shapes[0]
-        assert shape.x0 == max(x_data)
-        assert shape.y1 == max(y_data)
-
-    @pytest.mark.parametrize(  # fmt: skip
-        "x_dir,y_dir,expected_optimal_x,expected_optimal_y",
-        [
-            ("LOWER", "HIGHER", "min", "max"),  # Lower-right quadrant
-            ("HIGHER", "LOWER", "max", "min"),  # Upper-left quadrant
-            ("LOWER", "LOWER", "min", "min"),  # Lower-left quadrant
-            ("HIGHER", "HIGHER", "max", "max"),  # Upper-right quadrant
-        ],
-    )
-    def test_quadrant_shading_mixed_directions(
-        self, x_dir, y_dir, expected_optimal_x, expected_optimal_y
-    ):
-        """Test all 4 direction combinations."""
-        from aiperf.common.enums import PlotMetricDirection
-
-        plot_gen = PlotGenerator()
-        fig = go.Figure()
-
-        x_data = [100.0, 150.0, 200.0]
-        y_data = [10.0, 15.0, 20.0]
-
-        x_direction = (
-            PlotMetricDirection.LOWER
-            if x_dir == "LOWER"
-            else PlotMetricDirection.HIGHER
-        )
-        y_direction = (
-            PlotMetricDirection.LOWER
-            if y_dir == "LOWER"
-            else PlotMetricDirection.HIGHER
-        )
-
-        with mock.patch.object(
-            plot_gen,
-            "_get_metric_direction",
-            side_effect=lambda m: x_direction if "x" in m else y_direction,
-        ):
-            plot_gen._add_optimal_quadrant_shading(
-                fig, "x_metric", "y_metric", x_data, y_data
-            )
-
-        # Verify shape was added
-        assert len(fig.layout.shapes) == 1
-
-        # Verify optimal point is correct
-        expected_x = min(x_data) if expected_optimal_x == "min" else max(x_data)
-        expected_y = min(y_data) if expected_optimal_y == "min" else max(y_data)
-
-        annotation = fig.layout.annotations[0]
-        assert annotation.x == expected_x
-        assert annotation.y == expected_y
-
-    def test_quadrant_shading_math_calculation(self):
-        """Verifies rectangle bounds calculation."""
-        from aiperf.common.enums import PlotMetricDirection
-
-        plot_gen = PlotGenerator()
-        fig = go.Figure()
-
-        x_data = [50.0, 100.0, 150.0]
-        y_data = [5.0, 10.0, 15.0]
-
-        # Lower x, higher y (lower-right quadrant)
-        with mock.patch.object(
-            plot_gen,
-            "_get_metric_direction",
-            side_effect=lambda m: (
-                PlotMetricDirection.LOWER
-                if m == "latency"
-                else PlotMetricDirection.HIGHER
-            ),
-        ):
-            plot_gen._add_optimal_quadrant_shading(
-                fig, "latency", "throughput", x_data, y_data
-            )
-
-        shape = fig.layout.shapes[0]
-        # Optimal point: (min x=50, max y=15)
-        # Rectangle: x0=50, x1=50, y0=15, y1=15... wait that doesn't make sense
-
-        # Actually for lower x and higher y, optimal corner is lower-right
-        # So rectangle should shade from min_x to optimal_x (min), and optimal_y (max) to max_y
-        assert shape.x0 == min(x_data)  # 50
-        assert shape.x1 == min(x_data)  # 50 (optimal x)
-        assert shape.y0 == max(y_data)  # 15 (optimal y)
-        assert shape.y1 == max(y_data)  # 15
-
-    def test_quadrant_shading_annotation_text(self):
-        """Verifies 'Optimal' annotation."""
-        from aiperf.common.enums import PlotMetricDirection
-
-        plot_gen = PlotGenerator()
-        fig = go.Figure()
-
-        x_data = [100.0, 150.0, 200.0]
-        y_data = [10.0, 15.0, 20.0]
-
-        with mock.patch.object(
-            plot_gen,
-            "_get_metric_direction",
-            side_effect=lambda m: PlotMetricDirection.HIGHER,
-        ):
-            plot_gen._add_optimal_quadrant_shading(
-                fig, "metric1", "metric2", x_data, y_data
-            )
-
-        annotation = fig.layout.annotations[0]
-        assert "Optimal" in annotation.text
-        assert "\u2605" in annotation.text  # Star symbol
-
-    def test_quadrant_shading_skipped_when_no_direction(self):
-        """No shading when metric direction unknown."""
-        plot_gen = PlotGenerator()
-        fig = go.Figure()
-
-        x_data = [100.0, 150.0, 200.0]
-        y_data = [10.0, 15.0, 20.0]
-
-        # Mock to return empty string (unknown direction)
-        with mock.patch.object(plot_gen, "_get_metric_direction", return_value=""):
-            plot_gen._add_optimal_quadrant_shading(
-                fig, "unknown_metric", "another_unknown", x_data, y_data
-            )
-
-        # Should not add shapes or annotations
-        assert len(fig.layout.shapes) == 0
-        assert len(fig.layout.annotations) == 0
-
-
 class TestPrepareGroupsExperimentTypes:
     """Tests for _prepare_groups with experiment_types logic."""
 
@@ -1579,6 +1383,49 @@ class TestPrepareGroupsExperimentTypes:
         # Should successfully group by model
         assert groups == ["model_a", "model_b"]
         assert len(colors) == 2
+
+    def test_prepare_groups_raises_error_for_unknown_experiment_type(self):
+        """Raises ValueError when experiment_type is not 'baseline' or 'treatment'."""
+        plot_gen = PlotGenerator()
+        df = pd.DataFrame(
+            {
+                "experiment_group": ["group_a", "group_b", "group_c"],
+                "value": [1, 2, 3],
+            }
+        )
+        experiment_types = {
+            "group_a": "baseline",
+            "group_b": "treatment",
+            "group_c": "control",  # Invalid type
+        }
+
+        with pytest.raises(ValueError) as exc_info:
+            plot_gen._prepare_groups(df, "experiment_group", experiment_types)
+
+        assert "group_c" in str(exc_info.value)
+        assert "control" in str(exc_info.value)
+        assert "baseline" in str(exc_info.value) or "treatment" in str(exc_info.value)
+
+    def test_prepare_groups_raises_error_for_missing_experiment_type(self):
+        """Raises ValueError when group is missing from experiment_types mapping."""
+        plot_gen = PlotGenerator()
+        df = pd.DataFrame(
+            {
+                "experiment_group": ["group_a", "group_b", "group_c"],
+                "value": [1, 2, 3],
+            }
+        )
+        experiment_types = {
+            "group_a": "baseline",
+            "group_b": "treatment",
+            # group_c is missing from the mapping
+        }
+
+        with pytest.raises(ValueError) as exc_info:
+            plot_gen._prepare_groups(df, "experiment_group", experiment_types)
+
+        assert "group_c" in str(exc_info.value)
+        assert "None" in str(exc_info.value)
 
 
 class TestParetoFrontierOptimization:

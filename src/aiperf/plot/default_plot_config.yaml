@@ -33,46 +33,65 @@ visualization:
   # =============================================================================
   single_run_defaults:
     - ttft_over_time
-    - itl_over_time
-    - latency_over_time
-    - dispersed_throughput_over_time
+    # - itl_over_time
+    # - latency_over_time
+    # - dispersed_throughput_over_time
+    - ttft_timeline
     - timeslices_ttft
     - timeslices_itl
-    - timeslices_throughput
-    - timeslices_latency
+    # - timeslices_throughput
+    # - timeslices_latency
     - gpu_utilization_and_throughput_over_time
 
   # =============================================================================
   # MULTI-RUN COMPARISON PRESETS
   # =============================================================================
   multi_run_plots:
-    # CONFIGURATION GUIDE:
-    #   groups: Controls how runs are grouped into lines/series (determines colors)
-    #     - Accepts a single column name as a list: [model] or [concurrency]
-    #     - When experiment_classification is enabled: Auto-overridden to [experiment_group]
-    #
-    #   labels: Controls what text appears at each data point
-    #     - Accepts a single column name as a list: [model] or [concurrency]
+  # CONFIGURATION GUIDE:
+  #   labels: Controls what text appears at each data point
+  #     - Accepts a single column name as a list: [model] or [concurrency]
+  #   groups: Controls how runs are grouped into lines/series (determines colors)
+  #     - Accepts a single column name as a list: [model] or [concurrency]
+  #   autoscale: Controls which axes to autoscale (reduces whitespace)
+  #     - Values: "none" (default), "x", "y", "both"
+  #   x_label: Custom x-axis label (optional, auto-generated from metric name if omitted)
+  #   y_label: Custom y-axis label (optional, auto-generated from metric name if omitted)
+  #   description: Human-readable description of what this plot shows
     pareto_curve_throughput_per_gpu_vs_latency:
       type: pareto
-      x: request_latency_avg
-      y: output_token_throughput_per_gpu_avg
+      description: "Trade-off frontier showing optimal throughput vs latency configurations"
+      x:
+        metric: request_latency
+        stat: avg
+      y:
+        metric: output_token_throughput_per_gpu
+        stat: avg
       labels: [concurrency]
       groups: [model]
       title: "Pareto Curve: Token Throughput per GPU vs Latency"
 
     pareto_curve_throughput_per_gpu_vs_interactivity:
-      type: scatter_line
-      x: output_token_throughput_per_gpu_avg
-      y: output_token_throughput_per_user_avg
+      type: pareto
+      description: "Trade-off frontier balancing system efficiency vs user experience"
+      x:
+        metric: output_token_throughput_per_user
+        stat: avg
+      y:
+        metric: output_token_throughput_per_gpu
+        stat: avg
       labels: [concurrency]
       groups: [model]
       title: "Pareto Curve: Token Throughput per GPU vs Interactivity"
-    
+
     ttft_vs_throughput:
       type: scatter_line
-      x: time_to_first_token_avg
-      y: request_throughput_avg
+      description: "How time-to-first-token changes as throughput increases across configs"
+      x:
+        metric: time_to_first_token
+        stat: avg
+      y:
+        metric: request_throughput
+        stat: avg
       labels: [concurrency]
       groups: [model]
       title: "TTFT vs Throughput"
@@ -80,33 +99,46 @@ visualization:
   # =============================================================================
   # SINGLE-RUN PRESETS (time-series over duration of profiling run)
   # =============================================================================
+  # x_label and y_label are also supported here for custom axis labels
   single_run_plots:
     ttft_over_time:
       type: scatter
+      description: "Individual TTFT values for each request over the run duration"
       x: request_number
       y: time_to_first_token
       title: "TTFT Per Request Over Time"
 
     itl_over_time:
       type: scatter
+      description: "Individual inter-token latency for each request over the run"
       x: request_number
       y: inter_token_latency
       title: "Inter-Token Latency Per Request Over Time"
 
     latency_over_time:
       type: scatter_with_percentiles
+      description: "Request latency with rolling p50/p95/p99 trend lines to spot degradation"
       x: timestamp
       y: request_latency
       title: "Request Latency Over Time with Percentiles"
 
     dispersed_throughput_over_time:
       type: area
+      description: "Filled area showing token throughput distribution over time"
       x: timestamp_s
       y: throughput_tokens_per_sec
       title: "Dispersed Output Token Throughput Over Time"
 
+    ttft_timeline:
+      type: request_timeline
+      description: "Gantt-style view showing TTFT vs generation time per request"
+      x: request_start_ns
+      y: time_to_first_token
+      title: "Request Timeline: TTFT Phases Over Time"
+
     timeslices_ttft:
       type: timeslice
+      description: "Average TTFT per time window to assess stability over time"
       x: Timeslice
       y: Time to First Token
       stat: avg
@@ -116,6 +148,7 @@ visualization:
 
     timeslices_itl:
       type: timeslice
+      description: "Average inter-token latency per time window"
       x: Timeslice
       y: Inter Token Latency
       stat: avg
@@ -125,6 +158,7 @@ visualization:
 
     timeslices_throughput:
       type: timeslice
+      description: "Request throughput per time window to track capacity changes"
       x: Timeslice
       y: Request Throughput
       stat: avg
@@ -134,6 +168,7 @@ visualization:
 
     timeslices_latency:
       type: timeslice
+      description: "Average request latency per time window"
       x: Timeslice
       y: Request Latency
       stat: avg
@@ -143,6 +178,7 @@ visualization:
 
     gpu_utilization_and_throughput_over_time:
       type: dual_axis
+      description: "Token throughput overlaid with GPU utilization to correlate performance"
       x: timestamp_s
       y: throughput_tokens_per_sec
       y2: gpu_utilization
@@ -154,7 +190,6 @@ visualization:
         mode: lines
         fill: tozeroy
       supplementary_col: active_requests
-
 
 # ==============================================================================
 # EXPERIMENT CLASSIFICATION (Optional)

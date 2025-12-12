@@ -28,11 +28,15 @@ DEFAULT_OUTPUT_DIR = Path("plots")
 DEFAULT_PNG_OUTPUT_DIR = DEFAULT_OUTPUT_DIR / "png"
 PLOT_LOG_FILE = "aiperf_plot.log"
 
+# Dashboard defaults
+DEFAULT_DASHBOARD_PORT = 8050
+
 
 class PlotMode(CaseInsensitiveStrEnum):
     """Available output modes for plot generation."""
 
     PNG = "png"
+    DASHBOARD = "dashboard"
 
 
 class PlotTheme(CaseInsensitiveStrEnum):
@@ -93,9 +97,43 @@ DEFAULT_PERCENTILES = [1, 5, 10, 25, 50, 75, 90, 95, 99]
 DEFAULT_PERCENTILE = "p50"
 AVAILABLE_STATS = ["avg", "min", "max", "std"]
 
-# All available statistic keys as they appear in metric data
-# Useful for iteration, validation, and dynamic plot axis selection
-ALL_STAT_KEYS = AVAILABLE_STATS + [f"p{p}" for p in DEFAULT_PERCENTILES]
+# All available statistic keys - ordered for UI display (most common first)
+ALL_STAT_KEYS = [
+    "p50",
+    "avg",
+    "p90",
+    "p95",
+    "p99",
+    "min",
+    "max",
+    "std",
+    "p1",
+    "p5",
+    "p10",
+    "p25",
+    "p75",
+]
+
+# Human-readable labels for statistics (used in dropdowns)
+STAT_LABELS = {
+    "avg": "Average",
+    "min": "Minimum",
+    "max": "Maximum",
+    "std": "Std Dev",
+    "p1": "p1",
+    "p5": "p5",
+    "p10": "p10",
+    "p25": "p25",
+    "p50": "p50 (Median)",
+    "p75": "p75",
+    "p90": "p90",
+    "p95": "p95",
+    "p99": "p99",
+}
+
+# Patterns indicating cumulative metrics where run-level reference lines don't make sense
+# (the aggregated value is a sum/total, not comparable to per-timeslice values)
+CUMULATIVE_METRIC_PATTERNS = ["total"]
 
 # Non-metric keys in the aggregated JSON (used for filtering)
 NON_METRIC_KEYS = {
@@ -105,4 +143,15 @@ NON_METRIC_KEYS = {
     "end_time",
     "was_cancelled",
     "error_summary",
+}
+
+# Metric category rules for grouping in UI dropdowns.
+# Dict order defines display order. Keywords are matched against lowercase metric names.
+METRIC_CATEGORY_RULES: dict[str, list[str]] = {
+    "Latency Metrics": ["latency", "ttft", "itl", "ttst", "ttfo"],
+    "Throughput Metrics": ["throughput", "goodput"],
+    "Counts & Lengths": ["count", "sequence_length", "isl", "osl"],
+    "Configuration": ["concurrency", "duration"],
+    "GPU Telemetry": ["gpu", "memory", "power", "temperature"],
+    "Other Metrics": [],  # Fallback category (no keywords)
 }

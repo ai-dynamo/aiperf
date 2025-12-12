@@ -245,8 +245,8 @@ class TestRunPlotController:
         run_plot_controller(paths=[str(tmp_path)], output=str(output_dir))
 
         captured = capsys.readouterr()
-        assert "Generated 3 plots" in captured.out
-        assert f"Saved to: {output_dir}" in captured.out
+        assert "Saved 3 plots" in captured.out
+        assert f"to: {output_dir}" in captured.out
 
     @patch("aiperf.plot.cli_runner.PlotController")
     def test_output_message_with_no_plots(
@@ -264,8 +264,8 @@ class TestRunPlotController:
         run_plot_controller(paths=[str(tmp_path)], output=str(output_dir))
 
         captured = capsys.readouterr()
-        assert "Generated 0 plots" in captured.out
-        assert f"Saved to: {output_dir}" in captured.out
+        assert "Saved 0 plots" in captured.out
+        assert f"to: {output_dir}" in captured.out
 
     @patch("aiperf.plot.cli_runner.PlotController")
     def test_all_parameters_passed_to_controller(
@@ -296,6 +296,7 @@ class TestRunPlotController:
             theme=PlotTheme.DARK,
             config_path=None,
             verbose=True,
+            port=8050,
         )
 
     def test_invalid_mode_string_raises_value_error(

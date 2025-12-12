@@ -57,4 +57,4 @@ class BasePNGExporter(BaseExporter):
             for path in generated_files:
                 f.write(f"  - {path.name}\n")
             f.write(f"\nOutput directory: {self.output_dir}\n")
-        self.info(f"Summary saved to {summary_path}")
+        self.debug(f"Summary saved to {summary_path}")
