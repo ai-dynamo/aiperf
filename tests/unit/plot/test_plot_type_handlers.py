@@ -100,8 +100,13 @@ class TestPlotTypeHandlerProtocol:
     """Test suite for PlotTypeHandlerProtocol."""
 
     def test_protocol_is_runtime_checkable(self):
-        """Test that PlotTypeHandlerProtocol is runtime checkable."""
-        assert hasattr(PlotTypeHandlerProtocol, "__protocol_attrs__")
+        """
+        Test that PlotTypeHandlerProtocol is runtime checkable.
+
+        Verifies that the protocol is decorated with @runtime_checkable.
+        """
+        assert hasattr(PlotTypeHandlerProtocol, "_is_runtime_protocol")
+        assert PlotTypeHandlerProtocol._is_runtime_protocol is True
 
     def test_protocol_defines_init_method(self):
         """Test that protocol defines __init__ method signature."""
