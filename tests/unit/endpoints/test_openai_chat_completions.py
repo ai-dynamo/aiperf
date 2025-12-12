@@ -165,7 +165,7 @@ class TestChatEndpoint:
         endpoint = ChatEndpoint(model_endpoint)
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
-        messages = endpoint._create_messages(turns)
+        messages = endpoint._create_messages(turns, None, None)
         assert messages[0]["role"] == (turn.role or "user")
         assert messages[0]["name"] == turn.texts[0].name
         assert messages[0]["content"] == turn.texts[0].contents[0]
@@ -177,7 +177,7 @@ class TestChatEndpoint:
         turn = sample_conversations["session_1"].turns[0]
         turn.texts[0].contents = [""]
         turns = [turn]
-        messages = endpoint._create_messages(turns)
+        messages = endpoint._create_messages(turns, None, None)
         assert messages[0]["role"] == (turn.role or "user")
         assert messages[0]["name"] == turn.texts[0].name
         assert messages[0]["content"] == ""
@@ -190,4 +190,106 @@ class TestChatEndpoint:
         turn.audios = [type("Audio", (), {"contents": ["not_base64_audio"]})()]
         turns = [turn]
         with pytest.raises(ValueError):
-            endpoint._create_messages(turns)
+            endpoint._create_messages(turns, None, None)
+
+    def test_create_messages_with_system_message(
+        self, model_endpoint, sample_conversations
+    ):
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turns = [turn]
+        system_message = "You are a helpful AI assistant."
+        messages = endpoint._create_messages(turns, system_message, None)
+
+        # First message should be the system message
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"] == system_message
+        # Second message should be the turn
+        assert messages[1]["role"] == (turn.role or "user")
+        assert messages[1]["content"] == turn.texts[0].contents[0]
+
+    def test_create_messages_with_user_context_message(
+        self, model_endpoint, sample_conversations
+    ):
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turns = [turn]
+        user_context = "The user is working on a Python project."
+        messages = endpoint._create_messages(turns, None, user_context)
+
+        # First message should be the user context
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"] == user_context
+        # Second message should be the turn
+        assert messages[1]["role"] == (turn.role or "user")
+        assert messages[1]["content"] == turn.texts[0].contents[0]
+
+    def test_create_messages_with_both_context_messages(
+        self, model_endpoint, sample_conversations
+    ):
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turns = [turn]
+        system_message = "You are a helpful AI assistant."
+        user_context = "The user is working on a Python project."
+        messages = endpoint._create_messages(turns, system_message, user_context)
+
+        # First message should be system
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"] == system_message
+        # Second message should be user context
+        assert messages[1]["role"] == "user"
+        assert messages[1]["content"] == user_context
+        # Third message should be the turn
+        assert messages[2]["role"] == (turn.role or "user")
+        assert messages[2]["content"] == turn.texts[0].contents[0]
+
+    def test_create_messages_with_context_and_multiple_turns(
+        self, model_endpoint, sample_conversations
+    ):
+        endpoint = ChatEndpoint(model_endpoint)
+        turns = sample_conversations["session_1"].turns
+        system_message = "You are a helpful AI assistant."
+        user_context = "The user is working on a Python project."
+        messages = endpoint._create_messages(turns, system_message, user_context)
+
+        # Should have system + user context + 2 turns = 4 messages
+        assert len(messages) == 4
+        # First message should be system
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"] == system_message
+        # Second message should be user context
+        assert messages[1]["role"] == "user"
+        assert messages[1]["content"] == user_context
+        # Third and fourth messages should be the turns
+        assert messages[2]["role"] == (turns[0].role or "user")
+        assert messages[3]["role"] == turns[1].role
+
+    def test_format_payload_with_context_messages(
+        self, model_endpoint, sample_conversations
+    ):
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turns = [turn]
+        system_message = "You are a helpful AI assistant."
+        user_context = "The user is working on a Python project."
+
+        request_info = RequestInfo(
+            model_endpoint=model_endpoint,
+            turns=turns,
+            system_message=system_message,
+            user_context_message=user_context,
+        )
+        payload = endpoint.format_payload(request_info)
+
+        # Verify payload structure
+        assert "messages" in payload
+        assert len(payload["messages"]) == 3
+        # First message should be system
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][0]["content"] == system_message
+        # Second message should be user context
+        assert payload["messages"][1]["role"] == "user"
+        assert payload["messages"][1]["content"] == user_context
+        # Third message should be the turn
+        assert payload["messages"][2]["role"] == (turn.role or "user")

@@ -20,6 +20,7 @@ from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import CustomDatasetType, GPUTelemetryMode
+from aiperf.common.enums.plugin_enums import EndpointType
 from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
 from aiperf.common.utils import load_json_str
 
@@ -397,4 +398,97 @@ class UserConfig(BaseConfig):
                 "Either reduce --concurrency or increase --request-count."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_user_context_requires_sessions(self) -> Self:
+        """Validate that user context prompt requires num-sessions to be specified."""
+        if (
+            self.input.prompt.prefix_prompt.user_context_prompt_length is not None
+            and self.input.conversation.num is None
+        ):
+            raise ValueError(
+                "--user-context-prompt-length requires --num-sessions to be specified. "
+                "Each session needs a unique user context prompt, so the number of sessions must be defined."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_mutually_exclusive_prompt_options(self) -> Self:
+        """Ensure shared system/user context options don't conflict with legacy prefix options."""
+        has_context_prompts = (
+            self.input.prompt.prefix_prompt.shared_system_prompt_length is not None
+            or self.input.prompt.prefix_prompt.user_context_prompt_length is not None
+        )
+        has_legacy_prefix = (
+            self.input.prompt.prefix_prompt.length > 0
+            or self.input.prompt.prefix_prompt.pool_size > 0
+        )
+
+        if has_context_prompts and has_legacy_prefix:
+            raise ValueError(
+                "Cannot use both --shared-system-prompt-length/--user-context-prompt-length "
+                "and --prefix-prompt-length/--prefix-prompt-pool-size. "
+                "These are mutually exclusive prompt configuration modes."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_rankings_token_options(self) -> Self:
+        """Validate rankings token options usage."""
+
+        # Check if prompt input tokens have been changed from defaults
+        prompt_tokens_modified = any(
+            field in self.input.prompt.input_tokens.model_fields_set
+            for field in ["mean", "stddev"]
+        )
+
+        # Check if any rankings-specific token options have been changed from defaults
+        rankings_tokens_modified = any(
+            field in self.input.rankings.passages.model_fields_set
+            for field in ["prompt_token_mean", "prompt_token_stddev"]
+        ) or any(
+            field in self.input.rankings.query.model_fields_set
+            for field in ["prompt_token_mean", "prompt_token_stddev"]
+        )
+
+        # Check if any rankings-specific passage options have been changed from defaults
+        rankings_passages_modified = any(
+            field in self.input.rankings.passages.model_fields_set
+            for field in ["mean", "stddev"]
+        )
+
+        rankings_options_modified = (
+            rankings_tokens_modified or rankings_passages_modified
+        )
+
+        endpoint_type_is_rankings = "rankings" in self.endpoint.type.lower()
+
+        # Validate that rankings options are only used with rankings endpoints
+        rankings_endpoints = [
+            endpoint_type
+            for endpoint_type in EndpointType
+            if "rankings" in endpoint_type.lower()
+        ]
+        if rankings_options_modified and not endpoint_type_is_rankings:
+            raise ValueError(
+                f"Rankings-specific options (--rankings-passages-mean, --rankings-passages-stddev, "
+                "--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
+                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev) "
+                "can only be used with rankings endpoint types "
+                f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
+            )
+
+        # Validate that prompt tokens and rankings tokens are not both set
+        if prompt_tokens_modified and (
+            rankings_tokens_modified or endpoint_type_is_rankings
+        ):
+            raise ValueError(
+                "The --prompt-input-tokens-mean/--prompt-input-tokens-stddev options "
+                "cannot be used together with rankings-specific token options or the rankings endpoints"
+                "Ranking options: (--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
+                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev, ). "
+                f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
+                "Please use only one set of options."
+            )
         return self

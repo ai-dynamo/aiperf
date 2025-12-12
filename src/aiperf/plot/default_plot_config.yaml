@@ -208,12 +208,12 @@ visualization:
 #   Default: Fallback when no patterns match
 #
 ### UNCOMMENT BELOW TO ENABLE EXPERIMENT CLASSIFICATION ###
-experiment_classification:
-  baselines:
-    - "*_agg_*"
-    - "*baseline*"
-  treatments:
-    - "*_disagg_*"
-    - "*kvrouter*"
-    - "*treatment*"
-  default: treatment
+# experiment_classification:
+#   baselines:
+#     - "*_agg_*"
+#     - "*baseline*"
+#   treatments:
+#     - "*_disagg_*"
+#     - "*kvrouter*"
+#     - "*treatment*"
+#   default: treatment

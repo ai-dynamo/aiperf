@@ -89,6 +89,16 @@ class Conversation(AIPerfBaseModel):
         default=[], description="List of turns in the conversation."
     )
     session_id: str = Field(default="", description="Session ID of the conversation.")
+    system_message: str | None = Field(
+        default=None,
+        description="Optional shared system message prepended to the first turn. "
+        "Identical across all conversations when using --shared-system-prompt-length.",
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description="Optional per-conversation user context prepended to the first turn. "
+        "Unique for each conversation when using --user-context-prompt-length.",
+    )
 
 
 class SessionPayloads(AIPerfBaseModel):

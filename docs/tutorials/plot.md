@@ -321,9 +321,9 @@ The dashboard automatically detects visualization mode (multi-run comparison or 
 > [!NOTE]
 > Dashboard mode and PNG mode are separate. To generate both static PNGs and launch the dashboard, run the commands separately.
 
-## GPU Telemetry Integration
+## Advanced Features
 
-When GPU telemetry is collected during profiling (via `--gpu-telemetry` flag), the plot command automatically includes GPU metrics in visualizations.
+### GPU Telemetry Integration
 
 **Multi-run plots** (when telemetry available):
 - Token Throughput per GPU vs Latency
