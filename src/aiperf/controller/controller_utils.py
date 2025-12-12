@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 import textwrap
 from collections import defaultdict
 
@@ -75,14 +76,35 @@ def print_exit_errors(
         # Account for panel borders and indentation, and ensure a minimum width for narrow consoles
         wrap_width = max(console.size.width - 15, 20)
 
-        wrapped_text = textwrap.fill(
+        wrapped_reason = textwrap.fill(
             error_details.message,
             width=wrap_width,
             subsequent_indent=" " * 11,  # aligns with "   Reason: "
         )
+        summary.append(_create_field("Reason", wrapped_reason))
+
+        # Show cause and details only in verbose/debug mode
+        is_debug = logging.getLogger().isEnabledFor(logging.DEBUG)
+        if is_debug and error_details.cause:
+            wrapped_cause = textwrap.fill(
+                str(error_details.cause),
+                width=wrap_width,
+                subsequent_indent=" " * 11,
+            )
+            summary.append(_create_field("Cause", wrapped_cause))
+
+        if is_debug and error_details.details:
+            wrapped_details = textwrap.fill(
+                str(error_details.details),
+                width=wrap_width,
+                subsequent_indent=" " * 11,
+            )
+            summary.append(_create_field("Details", wrapped_details))
 
         end = "\n\n" if i < len(grouped_errors) - 1 else ""
-        summary.append(_create_field("Reason", wrapped_text, end=end))
+
+        if end:
+            summary.append(end)
 
     console.print()
     console.print(
