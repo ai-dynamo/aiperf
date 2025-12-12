@@ -67,6 +67,13 @@ def calculate_throughput_events(requests_df: pd.DataFrame) -> pd.DataFrame:
     - Comparing performance across different time periods
     - Validating steady-state behavior
 
+    Possible example: During a benchmark run, throughput typically ramps up smoothly as
+    concurrent requests increase, then plateaus at steady state. If a bottleneck occurs
+    (e.g., KV cache memory pressure, GPU memory exhaustion, scheduler contention), the
+    graph will show a clear, sustained drop in throughput at a specific time. This visible
+    degradation makes it easy to correlate with system metrics (GPU utilization, memory
+    usage) or logs to diagnose the root cause of the performance regression.
+
     Tokens are evenly distributed across the generation phase (from TTFT to request_end)
     rather than being counted at a single event. This creates smooth throughput curves
     that accurately represent the token generation rate over time.
