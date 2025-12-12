@@ -43,6 +43,13 @@ class CustomDatasetComposer(BaseDatasetComposer):
         self._create_loader_instance(dataset_type)
         dataset = self.loader.load_dataset()
         conversations = self.loader.convert_to_conversations(dataset)
+
+        # Finalize all turns with metadata (custom datasets need this)
+        for conversation in conversations:
+            for turn in conversation.turns:
+                self._finalize_turn(turn)
+
+        # Finalize conversation-level context prompts
         self._finalize_conversations(conversations)
         return conversations
 
@@ -176,9 +183,3 @@ class CustomDatasetComposer(BaseDatasetComposer):
             user_config=self.config,
             **kwargs,
         )
-
-    def _finalize_conversations(self, conversations: list[Conversation]) -> None:
-        """Finalize all turns in conversations by adding metadata."""
-        for conversation in conversations:
-            for turn in conversation.turns:
-                self._finalize_turn(turn)

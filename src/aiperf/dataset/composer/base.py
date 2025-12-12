@@ -149,3 +149,61 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
     @property
     def prefix_prompt_enabled(self) -> bool:
         return self.config.input.prompt.prefix_prompt.length > 0
+
+    def _finalize_conversations(self, conversations: list[Conversation]) -> None:
+        """Finalize conversations by adding conversation-level context prompts.
+
+        Injects shared system prompts and per-conversation user context prompts.
+        Note: Turn-level finalization (_finalize_turn) is handled by each composer
+        according to its needs (eager in synthetic, lazy in custom).
+
+        Args:
+            conversations: List of conversations to finalize
+        """
+        self._inject_context_prompts(conversations)
+
+    def _inject_context_prompts(self, conversations: list[Conversation]) -> None:
+        """Inject shared system and user context prompts into conversations.
+
+        Sets the system_message and context_message fields on Conversation objects,
+        which endpoint formatters will prepend to the first turn when creating payloads.
+
+        Args:
+            conversations: List of conversations to inject prompts into
+        """
+        config = self.config.input.prompt.prefix_prompt
+        has_shared_system = config.shared_system_prompt_length is not None
+        has_user_context = config.user_context_prompt_length is not None
+
+        if not (has_shared_system or has_user_context):
+            return
+
+        self.debug(
+            lambda: f"Injecting context prompts into {len(conversations)} conversations"
+        )
+
+        # Get shared system prompt once (same for all sessions)
+        shared_system_prompt = None
+        if has_shared_system:
+            shared_system_prompt = self.prompt_generator.get_shared_system_prompt()
+
+        # Iterate through conversations and set conversation-level fields
+        for session_index, conversation in enumerate(conversations):
+            # Set shared system prompt
+            if shared_system_prompt:
+                conversation.system_message = shared_system_prompt
+                self.trace(
+                    lambda conv=conversation: f"Set system_message on conversation {conv.session_id}"
+                )
+
+            # Set user context prompt (unique per session)
+            if has_user_context:
+                user_context = self.prompt_generator.generate_user_context_prompt(
+                    session_index
+                )
+                conversation.user_context_message = user_context
+                self.trace(
+                    lambda idx=session_index,
+                    conv=conversation: f"Set user_context_message for session {idx} "
+                    f"(conversation {conv.session_id})"
+                )

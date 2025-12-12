@@ -59,7 +59,9 @@ class ChatEndpoint(BaseEndpoint):
 
         turns = request_info.turns
         model_endpoint = request_info.model_endpoint
-        messages = self._create_messages(turns)
+        messages = self._create_messages(
+            turns, request_info.system_message, request_info.user_context_message
+        )
 
         payload = {
             "messages": messages,
@@ -81,9 +83,41 @@ class ChatEndpoint(BaseEndpoint):
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
-    def _create_messages(self, turns: list[Turn]) -> list[dict[str, Any]]:
-        """Create messages from turns for OpenAI Chat Completions."""
+    def _create_messages(
+        self,
+        turns: list[Turn],
+        system_message: str | None,
+        user_context_message: str | None,
+    ) -> list[dict[str, Any]]:
+        """Create messages from turns for OpenAI Chat Completions.
+
+        Args:
+            turns: List of turns in the request
+            system_message: Optional shared system message to prepend
+            user_context_message: Optional per-conversation user context to prepend
+
+        Returns:
+            List of formatted message dicts for OpenAI Chat Completions API
+        """
         messages = []
+
+        # Prepend system_message and user_context_message if present
+        if system_message:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": system_message,
+                }
+            )
+
+        if user_context_message:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": user_context_message,
+                }
+            )
+
         for turn in turns:
             message = {
                 "role": turn.role or _DEFAULT_ROLE,
