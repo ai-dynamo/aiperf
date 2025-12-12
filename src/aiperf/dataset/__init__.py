@@ -14,10 +14,7 @@ from aiperf.dataset.composer import (
     SyntheticDatasetComposer,
     SyntheticRankingsDatasetComposer,
 )
-from aiperf.dataset.dataset_manager import (
-    DatasetManager,
-    main,
-)
+from aiperf.dataset.dataset_manager import DatasetManager, main
 from aiperf.dataset.dataset_samplers import (
     BaseDatasetSampler,
     RandomSampler,
@@ -53,14 +50,26 @@ from aiperf.dataset.loader import (
     SingleTurn,
     SingleTurnDatasetLoader,
 )
-from aiperf.dataset.utils import (
-    check_file_exists,
-    encode_image,
-    open_image,
+from aiperf.dataset.synthesis import (
+    AnalysisStats,
+    EmpiricalSampler,
+    PrefixAnalyzer,
+    RadixNode,
+    RadixTree,
+    RollingHasher,
+    SynthesisParams,
+    Synthesizer,
+    compute_transition_cdfs,
+    get_tree_stats,
+    merge_unary_chains,
+    remove_leaves,
+    validate_tree,
 )
+from aiperf.dataset.utils import check_file_exists, encode_image, open_image
 
 __all__ = [
     "AIPERF_DATASET_CACHE_DIR",
+    "AnalysisStats",
     "AudioGenerator",
     "BaseDatasetComposer",
     "BaseDatasetSampler",
@@ -72,6 +81,7 @@ __all__ = [
     "CustomDatasetT",
     "DEFAULT_CORPUS_FILE",
     "DatasetManager",
+    "EmpiricalSampler",
     "Filename",
     "ImageGenerator",
     "MP3_SUPPORTED_SAMPLE_RATES",
@@ -80,22 +90,33 @@ __all__ = [
     "MooncakeTraceDatasetLoader",
     "MultiTurn",
     "MultiTurnDatasetLoader",
+    "PrefixAnalyzer",
     "PromptGenerator",
+    "RadixNode",
+    "RadixTree",
     "RandomPool",
     "RandomPoolDatasetLoader",
     "RandomSampler",
+    "RollingHasher",
     "SUPPORTED_BIT_DEPTHS",
     "SequentialSampler",
     "ShareGPTLoader",
     "ShuffleSampler",
     "SingleTurn",
     "SingleTurnDatasetLoader",
+    "SynthesisParams",
+    "Synthesizer",
     "SyntheticDatasetComposer",
     "SyntheticRankingsDatasetComposer",
     "VideoGenerator",
     "check_file_exists",
+    "compute_transition_cdfs",
     "encode_image",
+    "get_tree_stats",
     "main",
+    "merge_unary_chains",
     "open_image",
     "parallel_decode",
+    "remove_leaves",
+    "validate_tree",
 ]

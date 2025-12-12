@@ -16,6 +16,19 @@ from aiperf.common.config import ServiceConfig, UserConfig
 app = App(name="aiperf", help="NVIDIA AIPerf")
 
 
+def _register_trace_commands() -> None:
+    """Register trace analysis and synthesis commands."""
+    from aiperf.cli_commands.analyze_trace import analyze_app
+    from aiperf.cli_commands.synthesize_trace import synthesize_app
+
+    app.command(analyze_app)
+    app.command(synthesize_app)
+
+
+# Register trace commands
+_register_trace_commands()
+
+
 @app.command(name="profile")
 def profile(
     user_config: UserConfig,
