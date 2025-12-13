@@ -414,6 +414,16 @@ class MetricType(CaseInsensitiveStrEnum):
     Examples: request throughput, output token throughput, etc."""
 
 
+class PlotMetricDirection(CaseInsensitiveStrEnum):
+    """Direction indicating whether higher or lower metric values are better for plotting purposes."""
+
+    HIGHER = "higher"
+    """Higher values are better (e.g., throughput, accuracy)."""
+
+    LOWER = "lower"
+    """Lower values are better (e.g., latency, error rate)."""
+
+
 class MetricValueTypeInfo(BasePydanticEnumInfo):
     """Information about a metric value type."""
 

@@ -8,6 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 ## `aiperf` Commands
 
 - [`profile`](#aiperf-profile) - Run the Profile subcommand.
+- [`plot`](#aiperf-plot) - Generate visualizations from AIPerf profiling data.
 
 ## `aiperf profile`
 
@@ -482,3 +483,37 @@ Number of services to spawn for processing records. The higher the request rate,
 Type of UI to use.
 <br>_Choices: [`none`, `simple`, `dashboard`]_
 <br>_Default: `dashboard`_
+
+## `aiperf plot`
+
+## Parameters Options
+
+#### `--paths`, `--empty-paths` `<list>`
+
+Paths to profiling run directories. Defaults to ./artifacts if not specified.
+
+#### `--output` `<str>`
+
+Directory to save generated plots. Defaults to <first_path>/plots if not specified.
+
+#### `--theme` `<str>`
+
+Plot theme to use: 'light' (white background) or 'dark' (dark background). Defaults to 'light'.
+<br>_Default: `light`_
+
+#### `--config` `<str>`
+
+Path to custom plot configuration YAML file. If not specified, auto-creates and uses ~/.aiperf/plot_config.yaml.
+
+#### `--verbose`, `--no-verbose`
+
+Show detailed error tracebacks in console (errors are always logged to ~/.aiperf/plot.log).
+
+#### `--dashboard`, `--no-dashboard`
+
+Launch interactive dashboard server instead of generating static PNGs.
+
+#### `--port` `<int>`
+
+Port for dashboard server (only used with --dashboard). Defaults to 8050.
+<br>_Default: `8050`_

@@ -14,7 +14,7 @@ from tests.integration.models import AIPerfMockServer
 
 @pytest.mark.skipif(
     platform.system() == "Darwin",
-    reason="This test is flaky on macOS in Github Actions.",
+    reason="Requires NVIDIA GPUs for DCGM telemetry (only available on Linux CI).",
 )
 @pytest.mark.integration
 @pytest.mark.asyncio
