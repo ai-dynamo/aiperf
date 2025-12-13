@@ -587,7 +587,8 @@ class PlotGenerator:
                 group_data = df_sorted[df_sorted[group_by] == group]
                 group_color = group_colors[group]
                 # Use display name if available, otherwise use group ID
-                group_name = display_names.get(group, group)
+                # Convert to string to ensure compatibility with Plotly (handles numpy types)
+                group_name = str(display_names.get(group, group))
 
             # Calculate Pareto frontier for this group based on metric directions
             x_dir = self._get_metric_direction(x_metric)
@@ -763,7 +764,8 @@ class PlotGenerator:
                 group_data = df_sorted[df_sorted[group_by] == group]
                 group_color = group_colors[group]
                 # Use display name if available, otherwise use group ID
-                group_name = display_names.get(group, group)
+                # Convert to string to ensure compatibility with Plotly (handles numpy types)
+                group_name = str(display_names.get(group, group))
 
             # Determine shadow and main modes based on mode parameter
             shadow_mode = mode
@@ -864,7 +866,8 @@ class PlotGenerator:
             else:
                 group_data = df[df[group_by] == group]
                 group_color = group_colors[group]
-                group_name = display_names.get(group, group)
+                # Convert to string to ensure compatibility with Plotly (handles numpy types)
+                group_name = str(display_names.get(group, group))
 
             r, g, b = mcolors.to_rgb(group_color)
             fillcolor = f"rgba({int(r * 255)}, {int(g * 255)}, {int(b * 255)}, 0.7)"

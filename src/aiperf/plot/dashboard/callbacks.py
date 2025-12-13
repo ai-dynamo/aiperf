@@ -433,7 +433,7 @@ def _register_multi_run_only_callbacks(
     plot_config: PlotConfig,
 ) -> None:
     """Register callbacks exclusive to multi-run mode."""
-    register_custom_plot_callbacks(app, runs)
+    register_custom_plot_callbacks(app, runs, plot_config)
     register_multi_run_plot_edit_callbacks(app, runs)
     register_run_count_badge_callback(app)
     register_drill_down_callbacks(app, runs, run_dirs, loader, plot_config)
@@ -1710,7 +1710,7 @@ HTML files can be opened in any web browser and are fully interactive.
 
         # Phase 1: Generate all figures (with cache lookup)
         figure_tasks = []  # List of (fig, filename) tuples
-        print(f"📊 Generating {len(visible_plots)} plots (with cache)...")
+        _logger.info("Generating {len(visible_plots)} plots (with cache)...")
 
         if mode == VisualizationMode.SINGLE_RUN:
             # Single-run export - use drill-down cache if available
@@ -1738,10 +1738,10 @@ HTML files can be opened in any web browser and are fully interactive.
 
                     if fig is not None:
                         cache_hits += 1
-                        print(f"  🎯 CACHE HIT (export): {plot_id}")
+                        _logger.debug("CACHE HIT (export): {plot_id}")
                     else:
                         cache_misses += 1
-                        print(f"  💨 CACHE MISS (export): {plot_id}")
+                        _logger.debug("CACHE MISS (export): {plot_id}")
                         fig = _generate_singlerun_figure(
                             plot_id, config, run, plot_specs, current_theme
                         )
@@ -1779,10 +1779,10 @@ HTML files can be opened in any web browser and are fully interactive.
 
                     if fig is not None:
                         cache_hits += 1
-                        print(f"  🎯 CACHE HIT (export): {plot_id}")
+                        _logger.debug("CACHE HIT (export): {plot_id}")
                     else:
                         cache_misses += 1
-                        print(f"  💨 CACHE MISS (export): {plot_id}")
+                        _logger.debug("CACHE MISS (export): {plot_id}")
                         fig, _ = _generate_multirun_figure(
                             filtered_runs, config, current_theme
                         )
@@ -1799,13 +1799,13 @@ HTML files can be opened in any web browser and are fully interactive.
                     _logger.warning(f"Failed to generate plot {plot_id}: {e}")
                     continue
 
-        print(f"📊 Export cache stats: hits={cache_hits}, misses={cache_misses}")
+        _logger.info("Export cache stats: hits={cache_hits}, misses={cache_misses}")
 
         # Phase 2: Convert to PNG in parallel (NEW!)
         conversion_results = []  # List of (filename, content, format) tuples
 
         if export_format == "png" and figure_tasks:
-            print(f"🔄 Converting {len(figure_tasks)} plots to PNG in parallel...")
+            _logger.info("Converting {len(figure_tasks)} plots to PNG in parallel...")
 
             max_workers = min(4, len(figure_tasks))
 
@@ -1843,7 +1843,7 @@ HTML files can be opened in any web browser and are fully interactive.
 
         else:
             # HTML export - no parallel conversion needed
-            print(f"📄 Exporting {len(figure_tasks)} plots as HTML...")
+            _logger.info("Exporting {len(figure_tasks)} plots as HTML...")
             for fig, filename in figure_tasks:
                 html_str = fig.to_html(
                     include_plotlyjs="cdn", config={"responsive": True}
@@ -1851,7 +1851,7 @@ HTML files can be opened in any web browser and are fully interactive.
                 conversion_results.append((filename, html_str.encode(), "html"))
 
         # Phase 3: Write to ZIP sequentially (thread-safe)
-        print(f"📦 Writing {len(conversion_results)} files to ZIP...")
+        _logger.info("Writing {len(conversion_results)} files to ZIP...")
         zip_buffer = io.BytesIO()
 
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -1882,7 +1882,7 @@ HTML files can be opened in any web browser and are fully interactive.
         else:
             filename = f"aiperf_dashboard_html_{timestamp}.zip"
 
-        print(f"✅ Export complete: {filename}")
+        _logger.info("Export complete: {filename}")
         return dcc.send_bytes(zip_buffer.getvalue(), filename)
 
     @app.callback(
@@ -1927,7 +1927,7 @@ def register_layout_control_callbacks(
         """Reset plot layout to defaults from config (preserve custom plots)."""
         if not n_clicks:
             raise PreventUpdate
-        print("🔄 RESET LAYOUT CALLBACK FIRED")
+        _logger.debug("RESET LAYOUT CALLBACK FIRED")
         # Get defaults from config (NOT hardcoded!)
         if mode == VisualizationMode.MULTI_RUN:
             specs = plot_config.get_multi_run_plot_specs()
@@ -1935,7 +1935,7 @@ def register_layout_control_callbacks(
             specs = plot_config.get_single_run_plot_specs()
 
         default_visible = [spec.name for spec in specs]
-        print(f"  Defaults from config: {default_visible}")
+        _logger.debug("Defaults from config: {default_visible}")
 
         # Rebuild plot_configs from YAML (reset all settings to YAML values)
         new_configs = {}
@@ -1994,7 +1994,7 @@ def register_layout_control_callbacks(
                     "title": spec.title or spec.name.replace("-", " ").title(),
                 }
 
-        print(f"  Final plot_configs: {list(new_configs.keys())}")
+        _logger.debug("Final plot_configs: {list(new_configs.keys())}")
 
         # Get slice_duration for single-run mode
         slice_duration = plot_state.get("slice_duration")
@@ -2006,8 +2006,7 @@ def register_layout_control_callbacks(
             "config_version": plot_state.get("config_version"),
             "slice_duration": slice_duration,
         }
-        print("  ✅ Resetting to YAML defaults (all settings reset)")
-        print(f"{'=' * 80}\n")
+        _logger.debug("Resetting to YAML defaults")
         return new_state
 
 
@@ -2412,7 +2411,7 @@ def register_modal_theme_callbacks(app: dash.Dash, mode: VisualizationMode):
             )
 
 
-def register_custom_plot_callbacks(app: dash.Dash, runs: list):
+def register_custom_plot_callbacks(app: dash.Dash, runs: list, plot_config: PlotConfig):
     """
     Register callbacks for custom plot creation.
 
@@ -2424,6 +2423,7 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list):
     Args:
         app: Dash application instance
         runs: List of run data
+        plot_config: Plot configuration for accessing experiment classification settings
     """
 
     @app.callback(
@@ -2447,6 +2447,12 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list):
     def open_custom_plot_modal(n_clicks):
         """Open custom plot creation modal and reset all form fields."""
         if n_clicks and n_clicks > 0:
+            # Check if experimental classification is enabled
+            exp_class_config = plot_config.get_experiment_classification_config()
+            default_group_by = (
+                "experiment_group" if exp_class_config is not None else None
+            )
+
             return (
                 True,
                 None,
@@ -2459,7 +2465,7 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list):
                 False,
                 None,
                 None,
-                None,
+                default_group_by,
             )
         raise PreventUpdate
 
@@ -2593,10 +2599,6 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list):
         plot_state,
     ):
         """Create custom plot and add to state."""
-        print(
-            f"DEBUG: create_custom_plot called - x_metric={x_metric}, y_metric={y_metric}, plot_type={plot_type}"
-        )
-
         if not n_clicks or not x_metric or not y_metric:
             raise PreventUpdate
 
@@ -2671,10 +2673,6 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list):
             "plot_configs": dict(plot_configs),
             "config_version": plot_state.get("config_version"),
         }
-
-        print(
-            f"DEBUG: Returning new state - visible_plots={new_state['visible_plots']}, plot_configs keys={list(new_state['plot_configs'].keys())}"
-        )
 
         return new_state, False
 
@@ -2992,7 +2990,7 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         plot_config = plot_configs.get(plot_id, {})
 
         if not plot_config:
-            print(f"WARNING: No config found for plot_id: {plot_id}")
+            _logger.warning("No config found for plot_id: {plot_id}")
             raise PreventUpdate
 
         # Detect if this is a single-run or multi-run plot
@@ -3274,7 +3272,7 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         # Invalidate cache for this plot (config changed)
         cache = get_plot_cache()
         cache.invalidate_plot(plot_id)
-        print(f"🗑️ Cache invalidated for plot: {plot_id}")
+        _logger.debug("Cache invalidated for plot: {plot_id}")
 
         return new_state, False
 
@@ -3540,7 +3538,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         plot_config = plot_configs.get(plot_id, {})
 
         if not plot_config:
-            print(f"WARNING: No config found for plot_id: {plot_id}")
+            _logger.warning("No config found for plot_id: {plot_id}")
             raise PreventUpdate
 
         # Detect if this is a single-run or multi-run plot
@@ -3720,17 +3718,17 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         plot_state,
     ):
         """Update existing multi-run plot configuration."""
-        print("🔧 UPDATE_PLOT_CONFIG CALLBACK FIRED")
-        print(f"   plot_id: {plot_id}")
-        print(f"   n_clicks: {n_clicks}")
+        _logger.debug("UPDATE_PLOT_CONFIG CALLBACK FIRED")
+        _logger.debug("plot_id: {plot_id}")
+        _logger.debug("n_clicks: {n_clicks}")
 
         if not n_clicks or not plot_id:
-            print("   ❌ PreventUpdate - Missing required params")
+            _logger.debug("PreventUpdate - Missing required params")
             raise PreventUpdate
 
         # Validate multi-run fields
         if not x_metric or not y_metric:
-            print("   ❌ PreventUpdate - Missing x_metric or y_metric")
+            _logger.debug("PreventUpdate - Missing x_metric or y_metric")
             raise PreventUpdate
 
         # Get existing state
@@ -3782,7 +3780,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
             "is_default": existing_config.get("is_default", False),
         }
 
-        print(f"   Multi-run config: {new_config}")
+        _logger.debug("Multi-run config: {new_config}")
 
         # Create completely NEW plot_configs dict
         new_plot_configs = {k: v for k, v in old_configs.items()}
@@ -3796,16 +3794,13 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
             "config_version": plot_state.get("config_version"),
         }
 
-        print(f"   Updated config for {plot_id}: {new_config}")
+        _logger.debug("Updated config for {plot_id}: {new_config}")
 
         # Invalidate cache for this plot (config changed)
         cache = get_plot_cache()
         cache.invalidate_plot(plot_id)
-        print(f"   🗑️ Cache invalidated for plot: {plot_id}")
-
-        print("   ✅ Returning new state and closing modal")
-        print(f"{'=' * 80}\n")
-
+        _logger.debug("Cache invalidated for plot: {plot_id}")
+        _logger.debug("Returning new state and closing modal")
         return new_state, False
 
     @app.callback(
@@ -3852,16 +3847,16 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         original_y_metric,
     ):
         """Create new multi-run custom plot from edited configuration."""
-        print("➕ SAVE_AS_NEW_PLOT CALLBACK FIRED")
-        print(f"   n_clicks: {n_clicks}")
+        _logger.debug("SAVE_AS_NEW_PLOT CALLBACK FIRED")
+        _logger.debug("n_clicks: {n_clicks}")
 
         if not n_clicks:
-            print("   ❌ PreventUpdate - No click")
+            _logger.debug("PreventUpdate - No click")
             raise PreventUpdate
 
         # Validate multi-run fields
         if not x_metric or not y_metric:
-            print("   ❌ PreventUpdate - Missing x_metric or y_metric")
+            _logger.debug("PreventUpdate - Missing x_metric or y_metric")
             raise PreventUpdate
 
         # Get existing state
@@ -3872,7 +3867,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         # Generate UNIQUE ID with timestamp
         timestamp = int(time.time() * 1000)
         custom_id = f"custom-{timestamp}-{x_metric}-{x_stat}-vs-{y_metric}-{y_stat}"
-        print(f"   Generated UNIQUE custom_id: {custom_id}")
+        _logger.debug("Generated UNIQUE custom_id: {custom_id}")
 
         # Regenerate title if metrics changed (user edited the metrics)
         metrics_changed = (original_x_metric and x_metric != original_x_metric) or (
@@ -3921,7 +3916,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
             "y_label": custom_y_label.strip() if custom_y_label else "",
         }
 
-        print(f"   Multi-run config: {new_config}")
+        _logger.debug("Multi-run config: {new_config}")
 
         # Create completely NEW plot_configs dict
         new_plot_configs = {k: v for k, v in old_configs.items()}
@@ -3939,7 +3934,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
             "config_version": plot_state.get("config_version"),
         }
 
-        print("   New state object IDs:")
+        _logger.debug("New state object IDs:")
         print(
             f"     visible_plots: {id(new_state['visible_plots'])} {'✅ NEW' if id(new_state['visible_plots']) != id(old_visible) else '❌ SAME'} - count: {len(new_state['visible_plots'])}"
         )
@@ -3949,11 +3944,9 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         print(
             f"     plot_configs: {id(new_state['plot_configs'])} {'✅ NEW' if id(new_state['plot_configs']) != id(old_configs) else '❌ SAME'} - count: {len(new_state['plot_configs'])}"
         )
-        print(f"   Added plot to visible_plots: {custom_id}")
-        print(f"   visible_plots content: {new_state['visible_plots']}")
-        print("   ✅ Returning new state and closing modal")
-        print(f"{'=' * 80}\n")
-
+        _logger.debug("Added plot to visible_plots: {custom_id}")
+        _logger.debug("visible_plots content: {new_state['visible_plots']}")
+        _logger.debug("Returning new state and closing modal")
         return new_state, False
 
     # Callback 1: Update state only
@@ -3965,29 +3958,28 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
     )
     def hide_plot_update_state(n_clicks, plot_id, plot_state):
         """Hide plot - update state only."""
-        print("🚫 HIDE_PLOT_UPDATE_STATE CALLBACK FIRED")
-        print(f"plot_id: {plot_id}")
+        _logger.debug("HIDE_PLOT_UPDATE_STATE CALLBACK FIRED")
+        _logger.debug("plot_id: {plot_id}")
         print(f"n_clicks: {n_clicks}")
 
         if not n_clicks or not plot_id:
-            print("❌ Missing n_clicks or plot_id - PreventUpdate")
-            print(f"{'=' * 80}\n")
-            raise PreventUpdate
+            _logger.debug("Missing n_clicks or plot_id - PreventUpdate")
+        raise PreventUpdate
 
         # Move plot from visible to hidden
         visible = list(plot_state.get("visible_plots", []))
         hidden = list(plot_state.get("hidden_plots", []))
-        print(f"📊 Before: visible={visible}, hidden={hidden}")
+        _logger.debug("Before: visible={visible}, hidden={hidden}")
 
         if plot_id in visible:
             visible.remove(plot_id)
             if plot_id not in hidden:
                 hidden.append(plot_id)
-            print(f"✅ Removed {plot_id} from visible, added to hidden")
+            _logger.debug("Removed {plot_id} from visible, added to hidden")
         else:
-            print(f"⚠️  WARNING: plot_id '{plot_id}' not found in visible list!")
+            _logger.warning("plot_id '{plot_id}' not found in visible list!")
 
-        print(f"📊 After: visible={visible}, hidden={hidden}")
+        _logger.debug("After: visible={visible}, hidden={hidden}")
 
         # Create completely NEW objects
         new_state = {
@@ -3999,10 +3991,9 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
             "config_version": plot_state.get("config_version"),
         }
 
-        print(
-            f"✅ Returning updated state: {len(visible)} visible, {len(hidden)} hidden"
+        _logger.debug(
+            f"Returning updated state: {len(visible)} visible, {len(hidden)} hidden"
         )
-        print(f"{'=' * 80}\n")
         return new_state
 
     # Callback 2: Close modal only
@@ -4037,7 +4028,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         ctx = dash.callback_context
         if ctx.triggered:
             button_id = ctx.triggered[0]["prop_id"].split(".")[0]
-            print(f"\n🔍 BUTTON CLICK DETECTED: {button_id}")
+            _logger.debug(f"BUTTON CLICK DETECTED: {button_id}")
             print(
                 f"   hide={hide_clicks}, update={update_clicks}, save={save_clicks}, cancel={cancel_clicks}\n"
             )
@@ -5373,7 +5364,7 @@ def register_collapsible_sections_callback(app: dash.Dash):
                 is_visible = style.get("display", "block") == "block"
                 new_arrows.append("▼" if is_visible else "▶")
 
-        print(f"   ✅ Toggled section at index {clicked_index}")
+        _logger.debug("Toggled section at index {clicked_index}")
         return new_styles, new_arrows
 
 
@@ -5495,7 +5486,7 @@ def register_drill_down_callbacks(
         else:
             # Load with per-request data
             run_dir = run_dirs[run_idx]
-            print(f"Loading per-request data for run {run_idx} from {run_dir}")
+            _logger.debug("Loading per-request data for run {run_idx} from {run_dir}")
             run = loader.load_run(run_dir, load_per_request_data=True)
             single_run_cache[run_idx] = run
 
@@ -5634,7 +5625,7 @@ def register_toast_notifications_callbacks(app: dash.Dash):
             },
         )
 
-        print(f"   ✅ Showing toast with {len(unique_warnings)} warnings")
+        _logger.debug("Showing toast with {len(unique_warnings)} warnings")
         return toast_element, time.time(), False
 
     @app.callback(
@@ -5653,7 +5644,7 @@ def register_toast_notifications_callbacks(app: dash.Dash):
 
         elapsed = time.time() - timestamp
         if elapsed >= 5:
-            print("   ✅ Auto-dismissing toast after 5 seconds")
+            _logger.debug("Auto-dismissing toast after 5 seconds")
             return [], True
 
         raise PreventUpdate

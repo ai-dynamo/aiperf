@@ -1291,6 +1291,14 @@ class DashboardBuilder:
             {"label": "Model", "value": "model"},
             {"label": "Concurrency", "value": "concurrency"},
         ]
+
+        # Add experiment group if experimental classification is enabled
+        exp_class_config = self.plot_config.get_experiment_classification_config()
+        if exp_class_config is not None:
+            group_by_options.append(
+                {"label": "Experiment Group", "value": "experiment_group"}
+            )
+
         group_by_options.extend(metadata_options)
 
         # Add swept parameters (exclude already listed options)
@@ -1299,6 +1307,7 @@ class DashboardBuilder:
                 "endpoint_type",
                 "request_count",
                 "duration_seconds",
+                "experiment_group",
             ]:
                 display_name = param.replace("_", " ").replace(".", " ").title()
                 group_by_options.append({"label": display_name, "value": param})
@@ -1339,6 +1348,13 @@ class DashboardBuilder:
                 ),
                 dbc.ModalBody(
                     [
+                        create_label("Plot Type", self.theme),
+                        dcc.Dropdown(
+                            id="custom-plot-type",
+                            options=MULTI_RUN_PLOT_TYPES,
+                            placeholder="Select plot type",
+                            style={"font-size": "12px", "margin-bottom": "12px"},
+                        ),
                         create_label("X-Axis Metric", self.theme),
                         dcc.Dropdown(
                             id="custom-x-metric",
@@ -1384,13 +1400,6 @@ class DashboardBuilder:
                                 "min-height": "14px",
                                 "margin-bottom": "16px",
                             },
-                        ),
-                        create_label("Plot Type", self.theme),
-                        dcc.Dropdown(
-                            id="custom-plot-type",
-                            options=MULTI_RUN_PLOT_TYPES,
-                            placeholder="Select plot type",
-                            style={"font-size": "12px", "margin-bottom": "12px"},
                         ),
                         create_label("Label Points By", self.theme),
                         dcc.Dropdown(
