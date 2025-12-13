@@ -261,7 +261,7 @@ class TestPlotControllerExportMultiRun:
         )
 
         # Mock loader to fail on first run, succeed on others
-        def mock_load_run(run_dir, **kwargs):
+        def mock_load_run(run_dir, **_kwargs):
             if run_dir == multiple_run_dirs[0]:
                 raise ValueError("Failed to load run")
             return {"test": "data"}
@@ -283,7 +283,7 @@ class TestPlotControllerExportMultiRun:
     @patch("aiperf.plot.plot_controller.MultiRunPNGExporter")
     def test_export_multi_run_all_failures_raises_error(
         self,
-        mock_exporter_class: MagicMock,
+        _mock_exporter_class: MagicMock,
         multiple_run_dirs: list[Path],
         tmp_path: Path,
     ) -> None:
@@ -349,7 +349,7 @@ class TestPlotControllerExportSingleRun:
     @patch("aiperf.plot.plot_controller.SingleRunPNGExporter")
     def test_export_single_run_load_failure_propagates(
         self,
-        mock_exporter_class: MagicMock,
+        _mock_exporter_class: MagicMock,
         single_run_dir: Path,
         tmp_path: Path,
     ) -> None:

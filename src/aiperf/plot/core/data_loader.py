@@ -9,12 +9,12 @@ from various output files (JSONL, JSON) and parse them into structured
 formats suitable for visualization and analysis.
 """
 
-import json
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import orjson
 import pandas as pd
 from pydantic import Field
 
@@ -521,7 +521,7 @@ class DataLoader(AIPerfLoggerMixin):
                     try:
                         record = parse_func(line)
                         records.append(record)
-                    except (json.JSONDecodeError, Exception) as e:
+                    except (orjson.JSONDecodeError, Exception) as e:
                         corrupted_lines += 1
                         self.warning(
                             f"Skipping invalid line {line_num} in {jsonl_path}: {e}"
@@ -676,8 +676,8 @@ class DataLoader(AIPerfLoggerMixin):
             raise DataLoadError("Required JSON file not found", path=str(json_path))
 
         try:
-            with open(json_path, encoding="utf-8") as f:
-                data = json.load(f)
+            with open(json_path, "rb") as f:
+                data = orjson.loads(f.read())
 
             if "metrics" in data and isinstance(data["metrics"], dict):
                 parsed_metrics = {}
@@ -691,7 +691,7 @@ class DataLoader(AIPerfLoggerMixin):
 
             self.info(f"Loaded aggregated data from {json_path}")
             return data
-        except json.JSONDecodeError as e:
+        except orjson.JSONDecodeError as e:
             raise DataLoadError(
                 f"Failed to parse JSON file: {e}", path=str(json_path)
             ) from e
@@ -765,7 +765,7 @@ class DataLoader(AIPerfLoggerMixin):
             return None
 
         def parse_line(line: str) -> dict:
-            data = json.loads(line)
+            data = orjson.loads(line.encode("utf-8"))
 
             telemetry_data = data.pop("telemetry_data", {})
             flat_record = {**data, **telemetry_data}

@@ -7,7 +7,9 @@ Plot type handlers using factory pattern for extensible plot creation.
 This module provides a factory-based approach to handling different plot types.
 """
 
-from typing import TYPE_CHECKING, Protocol, Union, runtime_checkable
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -31,7 +33,7 @@ class PlotTypeHandlerProtocol(Protocol):
 
     def __init__(
         self,
-        plot_generator: "PlotGenerator",
+        plot_generator: PlotGenerator,
         **kwargs,
     ) -> None:
         """
@@ -43,7 +45,7 @@ class PlotTypeHandlerProtocol(Protocol):
         """
         ...
 
-    def can_handle(self, spec: PlotSpec, data: Union[pd.DataFrame, "RunData"]) -> bool:
+    def can_handle(self, spec: PlotSpec, data: pd.DataFrame | RunData) -> bool:
         """
         Check if this handler can generate the plot based on data availability.
 
@@ -59,7 +61,7 @@ class PlotTypeHandlerProtocol(Protocol):
     def create_plot(
         self,
         spec: PlotSpec,
-        data: Union[pd.DataFrame, "RunData"],
+        data: pd.DataFrame | RunData,
         available_metrics: dict,
     ) -> go.Figure:
         """

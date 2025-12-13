@@ -205,8 +205,8 @@
           "gpu_0": {
             "gpu_index": 0,
             "gpu_name": "NVIDIA RTX 6000 Ada Generation",
-            "gpu_uuid": "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
-            "hostname": "7a22ed6f1fd7",
+            "gpu_uuid": "GPU-00000000-0000-0000-0000-000000000000",
+            "hostname": "test-host-1",
             "metrics": {
               "gpu_power_usage": {
                 "unit": "W",
@@ -457,8 +457,8 @@
           "gpu_0": {
             "gpu_index": 0,
             "gpu_name": "NVIDIA RTX 6000 Ada Generation",
-            "gpu_uuid": "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
-            "hostname": "2e2a9f1c15f9",
+            "gpu_uuid": "GPU-00000000-0000-0000-0000-000000000000",
+            "hostname": "test-host-2",
             "metrics": {
               "gpu_power_usage": {
                 "unit": "W",

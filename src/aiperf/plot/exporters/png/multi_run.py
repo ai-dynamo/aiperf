@@ -12,7 +12,6 @@ from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
 
-import aiperf.plot.handlers.multi_run_handlers  # noqa: F401
 from aiperf.common.models.record_models import MetricResult
 from aiperf.plot.constants import DEFAULT_PERCENTILE, NON_METRIC_KEYS
 from aiperf.plot.core.data_loader import RunData

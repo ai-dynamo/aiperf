@@ -9,6 +9,8 @@ including standard metrics from MetricRegistry, GPU telemetry metrics, and
 derived metrics.
 """
 
+from collections.abc import Mapping
+
 from aiperf.common.enums.metric_enums import MetricFlags, MetricType
 from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 from aiperf.metrics.metric_registry import MetricRegistry
@@ -73,7 +75,7 @@ _GPU_METRIC_UNITS: dict[str, str] = {
 }
 
 
-def get_all_metric_display_names() -> dict[str, str]:
+def get_all_metric_display_names() -> Mapping[str, str]:
     """
     Get display names for all metrics (standard + GPU telemetry + derived).
 
@@ -89,7 +91,7 @@ def get_all_metric_display_names() -> dict[str, str]:
         >>> names["output_token_throughput_per_gpu"]
         'Output Token Throughput Per GPU'
     """
-    return _ALL_METRIC_NAMES
+    return dict(_ALL_METRIC_NAMES)
 
 
 def get_metric_display_name(metric_tag: str) -> str:

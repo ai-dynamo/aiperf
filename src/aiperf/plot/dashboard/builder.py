@@ -1247,6 +1247,7 @@ class DashboardBuilder:
             id="config-modal",
             size="lg",
             is_open=False,
+            backdrop=False,
             className=f"config-modal-{self.theme.value}",
             style={"color": self.colors["text"]},
         )

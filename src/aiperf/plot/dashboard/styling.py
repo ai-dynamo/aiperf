@@ -95,6 +95,8 @@ def get_dropdown_css(theme: PlotTheme) -> str:
         .modal-content {{
             background-color: var(--bg-color) !important;
             color: var(--text-color) !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+            border: 1px solid var(--border-color) !important;
         }}
 
         .modal-header {{
@@ -121,6 +123,31 @@ def get_dropdown_css(theme: PlotTheme) -> str:
 
         .modal-title {{
             color: var(--text-color) !important;
+        }}
+
+        /* Modal backdrop - hide it completely when backdrop=False */
+        .modal-backdrop {{
+            display: none !important;
+        }}
+
+        /* Modal container - transparent background, no blocking */
+        .modal {{
+            background-color: transparent !important;
+            pointer-events: none !important;
+        }}
+
+        /* Modal dialog - allow interactions */
+        .modal-dialog {{
+            z-index: 1050 !important;
+            pointer-events: auto !important;
+        }}
+
+        /* Ensure modal shows above all content */
+        .modal.show {{
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            background-color: transparent !important;
         }}
 
         /* Modal dropdown styling */

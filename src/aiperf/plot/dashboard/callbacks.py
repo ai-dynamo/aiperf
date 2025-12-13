@@ -1927,11 +1927,7 @@ def register_layout_control_callbacks(
         """Reset plot layout to defaults from config (preserve custom plots)."""
         if not n_clicks:
             raise PreventUpdate
-
-        print(f"\n{'=' * 80}")
         print("🔄 RESET LAYOUT CALLBACK FIRED")
-        print(f"{'=' * 80}")
-
         # Get defaults from config (NOT hardcoded!)
         if mode == VisualizationMode.MULTI_RUN:
             specs = plot_config.get_multi_run_plot_specs()
@@ -2430,10 +2426,6 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list):
         runs: List of run data
     """
 
-    print(
-        "🔧 Registering open_custom_plot_modal callback for add-multirun-plot-slot..."
-    )
-
     @app.callback(
         [
             Output("custom-plot-modal", "is_open", allow_duplicate=True),
@@ -2454,9 +2446,7 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list):
     )
     def open_custom_plot_modal(n_clicks):
         """Open custom plot creation modal and reset all form fields."""
-        print(f"🎯 open_custom_plot_modal FIRED! n_clicks={n_clicks}")
         if n_clicks and n_clicks > 0:
-            print("   ✅ Opening modal...")
             return (
                 True,
                 None,
@@ -2471,10 +2461,7 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list):
                 None,
                 None,
             )
-        print("   ❌ PreventUpdate - n_clicks not valid")
         raise PreventUpdate
-
-    print("   ✅ open_custom_plot_modal callback registered")
 
     @app.callback(
         Output("custom-plot-modal", "is_open", allow_duplicate=True),
@@ -2644,7 +2631,6 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list):
         custom_id = (
             f"custom-{timestamp}-{plot_type}-{x_metric}-{x_stat}-vs-{y_metric}-{y_stat}"
         )
-        print(f"DEBUG: Generated custom_id: {custom_id}")
 
         # Use custom title if provided, otherwise auto-generate
         title = (
@@ -2991,9 +2977,6 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         # Skip if no actual button click (value is None or 0)
         # This happens when buttons are added/removed from the page
         if not triggered_value or triggered_value == 0:
-            print(
-                f"DEBUG: Skipping open_plot_edit_modal - no actual click (value={triggered_value})"
-            )
             raise PreventUpdate
 
         if not triggered_id or "settings-plot-btn" not in triggered_id:
@@ -3003,8 +2986,6 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         button_id_str = triggered_id.split(".")[0]
         button_id = json.loads(button_id_str)
         plot_id = button_id["index"]
-
-        print(f"DEBUG: Opening edit modal for plot_id: {plot_id}")
 
         # Get plot configuration from state
         plot_configs = plot_state.get("plot_configs", {})
@@ -3018,8 +2999,6 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         # Check mode field first (for default plots), fallback to x_axis check (for custom plots)
         mode = plot_config.get("mode")
         is_single_run = mode == "single_run" if mode else "x_axis" in plot_config
-
-        print(f"DEBUG: Plot type detected - single_run={is_single_run}")
 
         if is_single_run:
             # Extract single-run config values
@@ -3546,9 +3525,6 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
 
         # Skip if no actual button click (value is None or 0)
         if not triggered_value or triggered_value == 0:
-            print(
-                f"DEBUG: Skipping open_plot_edit_modal - no actual click (value={triggered_value})"
-            )
             raise PreventUpdate
 
         if not triggered_id or "settings-plot-btn" not in triggered_id:
@@ -3558,8 +3534,6 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         button_id_str = triggered_id.split(".")[0]
         button_id = json.loads(button_id_str)
         plot_id = button_id["index"]
-
-        print(f"DEBUG: Opening edit modal for plot_id: {plot_id}")
 
         # Get plot configuration from state
         plot_configs = plot_state.get("plot_configs", {})
@@ -3573,8 +3547,6 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         # Check mode field first (for default plots), fallback to x_metric check (for custom plots)
         mode = plot_config.get("mode")
         is_multi_run = mode != "single_run" if mode else "x_metric" in plot_config
-
-        print(f"DEBUG: Plot type detected - multi_run={is_multi_run}")
 
         if not is_multi_run:
             # Defensive: if this is a single-run plot, let single-run callback handle it
@@ -3748,9 +3720,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         plot_state,
     ):
         """Update existing multi-run plot configuration."""
-        print(f"\n{'=' * 80}")
         print("🔧 UPDATE_PLOT_CONFIG CALLBACK FIRED")
-        print(f"{'=' * 80}")
         print(f"   plot_id: {plot_id}")
         print(f"   n_clicks: {n_clicks}")
 
@@ -3882,9 +3852,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         original_y_metric,
     ):
         """Create new multi-run custom plot from edited configuration."""
-        print(f"\n{'=' * 80}")
         print("➕ SAVE_AS_NEW_PLOT CALLBACK FIRED")
-        print(f"{'=' * 80}")
         print(f"   n_clicks: {n_clicks}")
 
         if not n_clicks:
@@ -3988,10 +3956,6 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
 
         return new_state, False
 
-    print(
-        "🔧 Registering hide_plot_update_state callback (split from hide_plot_from_modal)..."
-    )
-
     # Callback 1: Update state only
     @app.callback(
         Output("plot-state-store", "data", allow_duplicate=True),
@@ -4001,9 +3965,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
     )
     def hide_plot_update_state(n_clicks, plot_id, plot_state):
         """Hide plot - update state only."""
-        print(f"\n{'=' * 80}")
         print("🚫 HIDE_PLOT_UPDATE_STATE CALLBACK FIRED")
-        print(f"{'=' * 80}")
         print(f"plot_id: {plot_id}")
         print(f"n_clicks: {n_clicks}")
 
@@ -4042,8 +4004,6 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
         )
         print(f"{'=' * 80}\n")
         return new_state
-
-    print("🔧 Registering hide_plot_close_modal callback...")
 
     # Callback 2: Close modal only
     @app.callback(
@@ -4097,7 +4057,6 @@ def register_nested_run_selector_callbacks(app: dash.Dash, runs: list):
         app: Dash application instance
         runs: List of RunData objects
     """
-    print("🔧 Registering nested run selector callbacks...")
 
     # Callback: Aggregate nested selections into single run-selector value
     @app.callback(
@@ -4204,7 +4163,6 @@ def register_resize_toggle_callbacks(app: dash.Dash):
     Args:
         app: Dash application instance
     """
-    print("🔧 Registering resize toggle callbacks...")
 
     @app.callback(
         Output("plot-state-store", "data", allow_duplicate=True),
@@ -4230,12 +4188,7 @@ def register_resize_toggle_callbacks(app: dash.Dash):
         # This prevents firing on initial render or component recreation
         trigger_value = ctx.triggered[0].get("value")
         if not trigger_value or trigger_value == 0:
-            print(
-                f"📏 Resize toggle: Skipping - no actual click (n_clicks={trigger_value})"
-            )
             raise PreventUpdate
-
-        print(f"\n📏 Resize toggle: plot_id={plot_id}")
 
         # Get current plot configs
         plot_configs = {**plot_state.get("plot_configs", {})}
@@ -4249,8 +4202,6 @@ def register_resize_toggle_callbacks(app: dash.Dash):
                 **plot_configs[plot_id],
                 "size": new_size,
             }
-
-            print(f"   Toggling {plot_id}: {current_size} → {new_size}\n")
 
         # Return updated state
         new_state = {
@@ -4432,12 +4383,7 @@ def register_layout_theme_callbacks(app: dash.Dash):
     )
     def update_layout_theme(theme_data):
         """Update header, sidebar, and main area styles when theme changes."""
-        print("\n🎨 LAYOUT THEME CALLBACK FIRED!")
-        print(f"   theme_data: {theme_data}")
-
         current_theme = _get_current_theme(theme_data, PlotTheme.LIGHT)
-        print(f"   Updating layouts to theme: {current_theme.value}\n")
-
         colors = get_theme_colors(current_theme)
 
         # Get theme-appropriate styles
@@ -4482,7 +4428,6 @@ def register_layout_theme_callbacks(app: dash.Dash):
         """Update root container theme class when theme changes."""
         current_theme = _get_current_theme(theme_data, PlotTheme.LIGHT)
         class_name = f"theme-{current_theme.value}"
-        print(f"🎯 ROOT CLASS UPDATE: {class_name}")
         return class_name
 
 
@@ -4958,9 +4903,6 @@ def _render_single_run_plots(
 
     # Get all plot IDs (render ALL plots, use CSS to hide/show)
     all_plot_ids = list(plot_configs.keys())
-    print(f"\n📊 Rendering {len(all_plot_ids)} single-run plots (with caching)")
-    print(f"   all_plot_ids: {all_plot_ids}")
-    print(f"   visible_plots: {visible_plots}")
 
     for plot_id in all_plot_ids:
         config = plot_configs.get(plot_id)
@@ -4981,11 +4923,7 @@ def _render_single_run_plots(
 
         fig = cache.get(cache_key)
 
-        if fig is not None:
-            print(f"🎯 CACHE HIT: {plot_id} (theme={current_theme.value})")
-        else:
-            print(f"💨 CACHE MISS: {plot_id} - generating for both themes")
-
+        if fig is None:
             fig = _generate_singlerun_figure(
                 plot_id, config, run, plot_specs, current_theme
             )
@@ -5015,19 +4953,8 @@ def _render_single_run_plots(
                 visible=is_visible,
             )
             children.append(container)
-            visibility_status = "visible" if is_visible else "hidden"
-            print(f"   ✅ Added {plot_id} to children ({visibility_status})")
         else:
             _logger.warning(f"Plot '{plot_id}' generation returned None. Skipping.")
-
-    # Log cache statistics
-    cache_stats = cache.get_stats()
-    print(
-        f"📊 Cache stats: hits={cache_stats['hits']}, "
-        f"misses={cache_stats['misses']}, "
-        f"hit_rate={cache_stats['hit_rate']:.1%}, "
-        f"size={cache_stats['size']}"
-    )
 
     # Add "+ Create Custom Plot" button at end
     children.append(
@@ -5041,9 +4968,6 @@ def _render_single_run_plots(
             className="plot-add-slot",
         )
     )
-    print("✅ Added 'Add Custom Plot' button to grid")
-
-    print(f"✅ Rendered {len(children)} single-run plots")
     return children, all_warnings
 
 
@@ -5054,9 +4978,6 @@ def register_dynamic_grid_callback(
     theme: PlotTheme,
     plot_config,
 ):
-    print(
-        f"\n🚀 ENTER register_dynamic_grid_callback - mode={mode}, plot_config={plot_config is not None}"
-    )
     """
     Register callback to dynamically rebuild plot grid based on visible plots.
 
@@ -5069,8 +4990,6 @@ def register_dynamic_grid_callback(
         theme: Plot theme
         plot_config: PlotConfig instance
     """
-    print(f"\n📝 Registering dynamic grid callback for {mode.value} mode...")
-
     # Capture theme in closure explicitly
     default_theme = theme
 
@@ -5084,9 +5003,6 @@ def register_dynamic_grid_callback(
         # Create default plot order
         default_plot_order = [spec.name for spec in plot_specs]
 
-        print(f"   Plot specs: {default_plot_order}")
-        print(f"   ✅ Registering grid callback for {mode.value} mode")
-
         # Define inputs based on mode - single-run doesn't need run-selector
         # NOTE: theme-store is now an Input to ensure callback fires on initial load
         # NOTE: mode-store is added to support dynamic mode switching (drill-down)
@@ -5097,11 +5013,6 @@ def register_dynamic_grid_callback(
                 Input("mode-store", "data"),
             ]
             grid_states = []
-            print("   Registering callback with inputs:")
-            print("     - plot-state-store.data (includes plot_configs)")
-            print("     - theme-store.data (INPUT - triggers on theme change)")
-            print("     - mode-store.data (INPUT - for drill-down mode switching)")
-            print("   Note: run-selector NOT included (single-run always uses run 0)")
         else:
             grid_inputs = [
                 Input("plot-state-store", "data"),
@@ -5110,17 +5021,7 @@ def register_dynamic_grid_callback(
                 Input("mode-store", "data"),
             ]
             grid_states = []
-            print("   Registering callback with inputs:")
-            print("     - plot-state-store.data (includes plot_configs)")
-            print("     - run-selector.value")
-            print("     - theme-store.data (INPUT - triggers on theme change)")
-            print("     - mode-store.data (INPUT - for drill-down mode switching)")
-    except Exception as e:
-        print(f"\n{'=' * 80}")
-        print("❌ CRITICAL ERROR in grid callback setup!")
-        print(f"❌ Exception: {e!r}")
-        print("❌ This would normally prevent grid callback from being registered!")
-        print(f"{'=' * 80}\n")
+    except Exception:
         traceback.print_exc()
 
         # Don't return - register callback anyway with empty specs
@@ -5133,16 +5034,6 @@ def register_dynamic_grid_callback(
             Input("mode-store", "data"),
         ]
         grid_states = []
-        print(
-            "⚠️  WARNING: Proceeding with empty plot_specs to at least register callback\n"
-        )
-
-    print("\n✅ Setup complete - about to register grid callback")
-    print(f"   plot_specs count: {len(plot_specs)}")
-    print(f"   default_plot_order: {default_plot_order}")
-    print(f"   grid_inputs: {grid_inputs}")
-    print(f"   grid_states: {grid_states}")
-    print("   prevent_initial_call: False\n")
 
     @app.callback(
         [
@@ -5155,15 +5046,7 @@ def register_dynamic_grid_callback(
     )
     def update_grid_children(plot_state, *args):
         """Rebuild grid children based on visible plots including custom plots."""
-        # CRITICAL DEBUG - Print IMMEDIATELY with flush to verify callback is called
         sys.stdout.flush()
-        print("\n" + "=" * 80, flush=True)
-        print("🔥 GRID CALLBACK FIRED! 🔥", flush=True)
-        print(f"   Registered Mode: {mode.value}")
-        print(f"   plot_state type: {type(plot_state)}, is None: {plot_state is None}")
-        print(f"   args length: {len(args)}")
-        print(f"   args: {args}")
-        print("=" * 80)
 
         # Extract arguments based on registered mode
         # Args order:
@@ -5173,7 +5056,6 @@ def register_dynamic_grid_callback(
             if mode == VisualizationMode.SINGLE_RUN:
                 # Single-run: (plot_state, theme_data, mode_data)
                 if len(args) < 2:
-                    print("❌ ERROR: Not enough args for single-run callback!")
                     theme_data = args[0] if args else None
                     mode_data = None
                 else:
@@ -5185,12 +5067,7 @@ def register_dynamic_grid_callback(
                 selected_runs = args[0]
                 theme_data = args[1]
                 mode_data = args[2] if len(args) > 2 else None
-
-            print(
-                f"   Args extracted: selected_runs={selected_runs}, theme_data={theme_data is not None}, mode_data={mode_data}"
-            )
-        except Exception as e:
-            print(f"❌ EXCEPTION during arg extraction: {e}")
+        except Exception:
             traceback.print_exc()
             raise
 
@@ -5201,8 +5078,6 @@ def register_dynamic_grid_callback(
         else:
             actual_mode = VisualizationMode.MULTI_RUN
 
-        print(f"   Actual Mode (from mode_data): {actual_mode.value}")
-
         # Check if we need to use drill-down caches
         # Use drill-down cache whenever we're in single-run mode and cache exists
         use_drill_down_cache = (
@@ -5211,7 +5086,6 @@ def register_dynamic_grid_callback(
         )
 
         if use_drill_down_cache:
-            print("🔄 Using drill-down cache for single-run mode")
             runs_to_use = [_drill_down_run_cache["current"]]
             specs_to_use = _drill_down_specs_cache.get("current", [])
             order_to_use = [spec.name for spec in specs_to_use]
@@ -5220,40 +5094,11 @@ def register_dynamic_grid_callback(
             specs_to_use = plot_specs
             order_to_use = default_plot_order
 
-        ctx = dash.callback_context
-        print(f"Triggered by: {ctx.triggered}")
-        print(
-            f"Triggered ID: {ctx.triggered[0]['prop_id'] if ctx.triggered else 'NONE'}"
-        )
-
-        # Debug logging
-        print("\n=== GRID CALLBACK DEBUG ===")
-        print(f"plot_state object ID: {id(plot_state)}")
-        print(f"visible_plots: {plot_state.get('visible_plots', [])}")
-        print(f"visible_plots object ID: {id(plot_state.get('visible_plots', []))}")
-        print(f"hidden_plots: {plot_state.get('hidden_plots', [])}")
-        print(f"hidden_plots object ID: {id(plot_state.get('hidden_plots', []))}")
-        plot_configs_dict = plot_state.get("plot_configs", {})
-        print(f"plot_configs keys: {list(plot_configs_dict.keys())}")
-        # Identify custom plots
-        custom_plots = [
-            k for k, v in plot_configs_dict.items() if not v.get("is_default", False)
-        ]
-        print(f"custom_plots: {custom_plots}")
-        print(f"default_plot_order: {order_to_use}")
-        print(f"theme_data: {theme_data}")
-        print(f"selected_runs: {selected_runs}")
-        print(f"use_drill_down_cache: {use_drill_down_cache}")
-        print("===========================\n")
-
         # Handle single-run mode (either registered or from drill-down)
         if actual_mode == VisualizationMode.SINGLE_RUN:
             # For single-run mode, default to run 0 if no selection
             if not selected_runs:
-                print("⚠️  Single-run mode: No runs selected, defaulting to [0]")
                 selected_runs = [0]
-
-            print("🔵 Single-run mode detected - using specialized renderer")
             children, all_warnings = _render_single_run_plots(
                 plot_state=plot_state,
                 theme_data=theme_data,
@@ -5263,17 +5108,10 @@ def register_dynamic_grid_callback(
                 default_plot_order=order_to_use,
             )
 
-            print(
-                f"\n✅ Grid callback complete (single-run) - Returning {len(children)} children"
-            )
-            print(f"   Plots rendered: {len(children)}")
-            print("=" * 80 + "\n")
-
             return children, all_warnings
 
         # Multi-run mode logic below
         if not selected_runs:
-            print("⚠️  Multi-run mode: No runs selected, raising PreventUpdate")
             raise PreventUpdate
 
         filtered_runs = [runs[i] for i in selected_runs]
@@ -5281,13 +5119,10 @@ def register_dynamic_grid_callback(
         other_theme = (
             PlotTheme.DARK if current_theme == PlotTheme.LIGHT else PlotTheme.LIGHT
         )
-        print(f"DEBUG: Regenerating plots with theme={current_theme.value}")
 
         # Extract visible plots and configs from state
         visible_plots = plot_state.get("visible_plots", [])
         plot_configs = plot_state.get("plot_configs", {})
-        print(f"DEBUG: Multi-run mode - visible_plots: {visible_plots}")
-        print(f"DEBUG: Multi-run mode - plot_configs keys: {list(plot_configs.keys())}")
 
         # Initialize cache and compute runs hash
         cache = get_plot_cache()
@@ -5302,9 +5137,6 @@ def register_dynamic_grid_callback(
 
         # Render ALL plots with caching (use CSS to hide/show)
         all_plot_ids = list(plot_configs.keys())
-        print(
-            f"DEBUG: Rendering ALL {len(all_plot_ids)} plots (visible: {len(visible_plots)})"
-        )
 
         for plot_id in all_plot_ids:
             plot_config_dict = plot_configs.get(plot_id)
@@ -5327,18 +5159,13 @@ def register_dynamic_grid_callback(
             # Try cache lookup
             fig = cache.get(cache_key)
 
-            if fig is not None:
-                print(f"🎯 CACHE HIT: {plot_id} (theme={current_theme.value})")
-            else:
-                print(f"💨 CACHE MISS: {plot_id} - generating for both themes")
-
+            if fig is None:
                 # Generate figure for current theme
                 fig, plot_warnings = _generate_multirun_figure(
                     filtered_runs, plot_config_dict, current_theme
                 )
 
                 if plot_warnings:
-                    print(f"ℹ️  Plot '{plot_id}' warnings: {', '.join(plot_warnings)}")
                     all_warnings.extend(plot_warnings)
 
                 if fig is not None:
@@ -5359,7 +5186,6 @@ def register_dynamic_grid_callback(
                         cache.set(other_key, other_fig)
 
             if fig is not None:
-                visibility_status = "visible" if is_visible else "hidden"
                 children.append(
                     create_plot_container_component(
                         plot_id,
@@ -5370,18 +5196,8 @@ def register_dynamic_grid_callback(
                         visible=is_visible,
                     )
                 )
-                print(f"   ✅ Added {plot_id} to children ({visibility_status})")
             else:
                 _logger.warning(f"Plot '{plot_id}' generation returned None. Skipping.")
-
-        # Log cache statistics
-        cache_stats_after = cache.get_stats()
-        print(
-            f"📊 Cache stats: hits={cache_stats_after['hits']}, "
-            f"misses={cache_stats_after['misses']}, "
-            f"hit_rate={cache_stats_after['hit_rate']:.1%}, "
-            f"size={cache_stats_after['size']}"
-        )
 
         # Add "+ Create Custom Plot (Multi-Run)" button at end
         children.append(
@@ -5398,22 +5214,12 @@ def register_dynamic_grid_callback(
             )
         )
 
-        print(
-            f"\n✅ Grid callback complete - Returning {len(children)} children (including Add Plot button)"
-        )
-        print(f"   Plots rendered: {len(children) - 1}")
-        print(f"   Warnings collected: {len(all_warnings)}")
-        print("=" * 80 + "\n")
-
         return children, all_warnings
-
-    print("✅ Grid callback registered successfully!")
 
     # NOTE: Server-side theme callback removed - replaced by clientside callback
     # in register_theme_callback(). The clientside callback uses Plotly.relayout()
     # to update themes instantly without server roundtrip, avoiding JSON
     # serialization, network transfer, and full re-render of all figures.
-    print("✅ Theme switching handled by clientside callback (no server roundtrip)\n")
 
 
 def register_sidebar_sync_callback(app: dash.Dash, theme: PlotTheme):
@@ -5428,7 +5234,6 @@ def register_sidebar_sync_callback(app: dash.Dash, theme: PlotTheme):
         app: Dash application instance
         theme: Default plot theme
     """
-    print("🔧 Registering sidebar sync callback...")
 
     # Capture theme in closure explicitly
     default_theme = theme
@@ -5481,8 +5286,6 @@ def register_sidebar_sync_callback(app: dash.Dash, theme: PlotTheme):
 
         return sidebar_style, button_style
 
-    print("✅ Sidebar sync callback registered successfully!\n")
-
 
 def register_sidebar_toggle_callback(app: dash.Dash, theme: PlotTheme):
     """
@@ -5496,9 +5299,6 @@ def register_sidebar_toggle_callback(app: dash.Dash, theme: PlotTheme):
         app: Dash application instance
         theme: Default plot theme
     """
-    print(f"\n{'=' * 60}")
-    print("📋 REGISTERING: register_sidebar_toggle_callback")
-    print(f"{'=' * 60}")
 
     @app.callback(
         Output("sidebar-collapsed", "data"),
@@ -5507,23 +5307,12 @@ def register_sidebar_toggle_callback(app: dash.Dash, theme: PlotTheme):
     )
     def toggle_sidebar(n_clicks, is_collapsed):
         """Toggle sidebar collapsed state in Store."""
-        print(f"\n{'=' * 80}")
-        print("🔄 SIDEBAR TOGGLE CALLBACK TRIGGERED")
-        print(f"   n_clicks: {n_clicks}")
-        print(f"   is_collapsed: {is_collapsed}")
-        print(f"{'=' * 80}\n")
-
         if not n_clicks or n_clicks == 0:
-            print("   ⚠️  n_clicks is 0 or None - PreventUpdate")
             raise PreventUpdate
 
         # Toggle the collapsed state
         new_state = not is_collapsed
-
-        print(f"   ✅ Toggling sidebar Store: new_state={new_state}")
         return new_state
-
-    print("✅ register_sidebar_toggle_callback registered successfully!\n")
 
 
 def register_collapsible_sections_callback(app: dash.Dash):
@@ -5536,9 +5325,6 @@ def register_collapsible_sections_callback(app: dash.Dash):
     Args:
         app: Dash application instance
     """
-    print(f"\n{'=' * 60}")
-    print("📋 REGISTERING: register_collapsible_sections_callback")
-    print(f"{'=' * 60}")
 
     @app.callback(
         Output({"type": "section-content", "id": dash.dependencies.ALL}, "style"),
@@ -5590,8 +5376,6 @@ def register_collapsible_sections_callback(app: dash.Dash):
         print(f"   ✅ Toggled section at index {clicked_index}")
         return new_styles, new_arrows
 
-    print("✅ register_collapsible_sections_callback registered successfully!\n")
-
 
 def register_run_count_badge_callback(app: dash.Dash):
     """
@@ -5603,9 +5387,6 @@ def register_run_count_badge_callback(app: dash.Dash):
     Args:
         app: Dash application instance
     """
-    print(f"\n{'=' * 60}")
-    print("📋 REGISTERING: register_run_count_badge_callback")
-    print(f"{'=' * 60}")
 
     @app.callback(
         Output("run-count-badge", "children"),
@@ -5629,10 +5410,7 @@ def register_run_count_badge_callback(app: dash.Dash):
             "font-family": PLOT_FONT_FAMILY,
         }
 
-        print(f"   ✅ Updated run count badge: {count} runs selected")
         return badge_text, badge_style
-
-    print("✅ register_run_count_badge_callback registered successfully!\n")
 
 
 def register_drill_down_callbacks(
@@ -5655,10 +5433,6 @@ def register_drill_down_callbacks(
         loader: DataLoader instance for loading per-request data
         plot_config: PlotConfig instance for getting single-run plot specs
     """
-    print(f"\n{'=' * 60}")
-    print("📋 REGISTERING: register_drill_down_callbacks")
-    print(f"{'=' * 60}")
-
     app.clientside_callback(
         """
         function(n_clicks, run_idx) {
@@ -5738,7 +5512,6 @@ def register_drill_down_callbacks(
         _drill_down_run_cache["current"] = run
         _drill_down_specs_cache["current"] = plot_config.get_single_run_plot_specs()
         _drill_down_plot_config_cache["current"] = plot_config
-        print(f"📦 Populated drill-down caches for run {run_idx}")
 
         # Get sidebar children (strip the outer div wrapper)
         sidebar_div = builder._build_sidebar()
@@ -5791,8 +5564,6 @@ def register_drill_down_callbacks(
             {"mode": "single_run"},
         )
 
-    print("✅ register_drill_down_callbacks registered successfully!\n")
-
 
 def register_toast_notifications_callbacks(app: dash.Dash):
     """
@@ -5805,9 +5576,6 @@ def register_toast_notifications_callbacks(app: dash.Dash):
     Args:
         app: Dash application instance
     """
-    print(f"\n{'=' * 60}")
-    print("📋 REGISTERING: register_toast_notifications_callbacks")
-    print(f"{'=' * 60}")
 
     @app.callback(
         [
@@ -5889,8 +5657,6 @@ def register_toast_notifications_callbacks(app: dash.Dash):
             return [], True
 
         raise PreventUpdate
-
-    print("✅ register_toast_notifications_callbacks registered successfully!\n")
 
 
 def register_drag_drop_callbacks(app: dash.Dash):

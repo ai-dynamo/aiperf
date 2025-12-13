@@ -5,9 +5,9 @@
 Tests for mode detection functionality.
 """
 
-import json
 from pathlib import Path
 
+import orjson
 import pytest
 
 from aiperf.plot.core.mode_detector import (
@@ -51,9 +51,11 @@ class TestModeDetection:
         with pytest.raises(ModeDetectionError, match="No paths provided"):
             mode_detector.detect_mode([])
 
-    def test_nonexistent_path_raises_error(self, mode_detector: ModeDetector) -> None:
+    def test_nonexistent_path_raises_error(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
         """Test that nonexistent path raises error."""
-        fake_path = Path("/nonexistent/path")
+        fake_path = tmp_path / "does_not_exist"
         with pytest.raises(ModeDetectionError, match="Path does not exist"):
             mode_detector.detect_mode([fake_path])
 
@@ -132,9 +134,11 @@ class TestFindRunDirectories:
         run_names = [r.name for r in runs]
         assert run_names == sorted(run_names)
 
-    def test_nonexistent_path_raises_error(self, mode_detector: ModeDetector) -> None:
+    def test_nonexistent_path_raises_error(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
         """Test that nonexistent path raises error."""
-        fake_path = Path("/nonexistent/path")
+        fake_path = tmp_path / "does_not_exist"
         with pytest.raises(ModeDetectionError, match="Path does not exist"):
             mode_detector.find_run_directories([fake_path])
 
@@ -288,10 +292,9 @@ class TestNestedRunDirectories:
         jsonl_file = standalone / "profile_export.jsonl"
         with open(jsonl_file, "w") as f:
             for record in sample_jsonl_data:
-                f.write(f"{json.dumps(record)}\n")
+                f.write(f"{orjson.dumps(record).decode('utf-8')}\n")
         json_file = standalone / "profile_export_aiperf.json"
-        with open(json_file, "w") as f:
-            json.dump(sample_aggregated_data, f)
+        json_file.write_bytes(orjson.dumps(sample_aggregated_data))
 
         # Should find 3 runs total: outer, inner, standalone
         runs = mode_detector.find_run_directories([outer])
@@ -467,10 +470,9 @@ class TestSymlinkEdgeCases:
         jsonl_file = actual_run / "profile_export.jsonl"
         with open(jsonl_file, "w") as f:
             for record in sample_jsonl_data:
-                f.write(f"{json.dumps(record)}\n")
+                f.write(f"{orjson.dumps(record).decode('utf-8')}\n")
         json_file = actual_run / "profile_export_aiperf.json"
-        with open(json_file, "w") as f:
-            json.dump(sample_aggregated_data, f)
+        json_file.write_bytes(orjson.dumps(sample_aggregated_data))
 
         # Create chain of symlinks: symlink1 -> symlink2 -> actual_run
         symlink2 = tmp_path / "symlink2"
@@ -503,10 +505,9 @@ class TestSymlinkEdgeCases:
             jsonl_file = run_dir / "profile_export.jsonl"
             with open(jsonl_file, "w") as f:
                 for record in sample_jsonl_data:
-                    f.write(f"{json.dumps(record)}\n")
+                    f.write(f"{orjson.dumps(record).decode('utf-8')}\n")
             json_file = run_dir / "profile_export_aiperf.json"
-            with open(json_file, "w") as f:
-                json.dump(sample_aggregated_data, f)
+            json_file.write_bytes(orjson.dumps(sample_aggregated_data))
 
         # Create symlink to parent
         parent_symlink = tmp_path / "parent_link"

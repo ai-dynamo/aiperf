@@ -661,7 +661,6 @@ class TestMultiRunPNGExporter:
         multi_run_exporter,
         sample_multi_run_data,
         sample_available_metrics,
-        sample_multi_run_plot_specs,
     ):
         """Test that plots matching the provided specs are created."""
         generated_files = multi_run_exporter.export(
@@ -672,7 +671,7 @@ class TestMultiRunPNGExporter:
         filenames = {f.name for f in generated_files}
 
         # Check that filenames match the specs provided (config-driven)
-        spec_filenames = {spec.filename for spec in sample_multi_run_plot_specs}
+        spec_filenames = {spec.filename for spec in MULTI_RUN_PLOT_SPECS}
         assert filenames.issubset(spec_filenames), (
             f"Generated unexpected files: {filenames - spec_filenames}"
         )
@@ -683,7 +682,6 @@ class TestMultiRunPNGExporter:
         multi_run_exporter,
         sample_multi_run_data,
         sample_available_metrics,
-        sample_multi_run_plot_specs,
     ):
         """Test that summary file is created."""
         generated_files = multi_run_exporter.export(
@@ -884,9 +882,7 @@ class TestSingleRunPNGExporter:
         # Should return empty list when no data available
         assert len(generated_files) == 0
 
-    def test_per_request_to_dataframe(
-        self, single_run_exporter, sample_single_run_data
-    ):
+    def test_per_request_to_dataframe(self, sample_single_run_data):
         """Test conversion of per-request data to DataFrame."""
         df = prepare_request_timeseries(sample_single_run_data)
 

@@ -5,10 +5,10 @@
 Tests for data loading functionality.
 """
 
-import json
 from pathlib import Path
 from typing import Any
 
+import orjson
 import pandas as pd
 import pytest
 
@@ -144,7 +144,7 @@ class TestDataLoaderLoadJsonl:
         # Write JSONL with two good lines and one bad line
         with open(jsonl_path, "w") as f:
             f.write(
-                json.dumps(
+                orjson.dumps(
                     {
                         "metadata": {
                             "session_num": 0,
@@ -158,12 +158,12 @@ class TestDataLoaderLoadJsonl:
                             "time_to_first_token": {"value": 45.0, "unit": "ms"}
                         },
                     }
-                )
+                ).decode("utf-8")
                 + "\n"
             )
             f.write("{ invalid json }\n")
             f.write(
-                json.dumps(
+                orjson.dumps(
                     {
                         "metadata": {
                             "session_num": 1,
@@ -177,7 +177,7 @@ class TestDataLoaderLoadJsonl:
                             "time_to_first_token": {"value": 50.0, "unit": "ms"}
                         },
                     }
-                )
+                ).decode("utf-8")
                 + "\n"
             )
 
@@ -388,7 +388,7 @@ class TestDataLoaderLoadPerRequestData:
         run_dir.mkdir()
 
         json_path = run_dir / "profile_export_aiperf.json"
-        json_path.write_text(json.dumps(sample_aggregated_data))
+        json_path.write_bytes(orjson.dumps(sample_aggregated_data))
 
         loader = DataLoader()
         with pytest.raises(DataLoadError, match="Required JSONL file not found"):
@@ -1007,24 +1007,24 @@ class TestDataLoaderLoadGPUTelemetryJSONL:
 
         with open(jsonl_path, "w") as f:
             f.write(
-                json.dumps(
+                orjson.dumps(
                     {
                         "timestamp_ns": 1000000000000,
                         "gpu_index": 0,
                         "telemetry_data": {"gpu_utilization": 80.5},
                     }
-                )
+                ).decode("utf-8")
                 + "\n"
             )
             f.write("{ invalid json }\n")
             f.write(
-                json.dumps(
+                orjson.dumps(
                     {
                         "timestamp_ns": 1000000100000,
                         "gpu_index": 1,
                         "telemetry_data": {"gpu_utilization": 75.0},
                     }
-                )
+                ).decode("utf-8")
                 + "\n"
             )
 
@@ -1059,7 +1059,7 @@ class TestDataLoaderLoadGPUTelemetryJSONL:
 
         with open(jsonl_path, "w") as f:
             for record in telemetry_data:
-                f.write(json.dumps(record) + "\n")
+                f.write(orjson.dumps(record).decode("utf-8") + "\n")
 
         df = loader._load_gpu_telemetry_jsonl(jsonl_path)
 
@@ -1198,7 +1198,7 @@ class TestRunDataGetMetric:
         assert metric["avg"] == 45.0
 
     def test_get_metric_handles_metric_result_objects(
-        self, tmp_path: Path, single_run_dir: Path
+        self, single_run_dir: Path
     ) -> None:
         """Test get_metric with MetricResult objects from real data."""
         loader = DataLoader()

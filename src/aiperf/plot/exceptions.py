@@ -33,11 +33,11 @@ class DataLoadError(PlotError):
 
     def __init__(self, message: str, path: str | None = None) -> None:
         """Initialize DataLoadError with message and optional path."""
-        if path:
+        if path is not None:
             super().__init__(f"{message}: {path}")
         else:
             super().__init__(message)
-        self.path = path
+        self.path: str | None = path
 
 
 class PlotGenerationError(PlotError):
@@ -55,11 +55,11 @@ class PlotGenerationError(PlotError):
 
     def __init__(self, message: str, plot_type: str | None = None) -> None:
         """Initialize PlotGenerationError with message and optional plot type."""
-        if plot_type:
+        if plot_type is not None:
             super().__init__(f"{message} (plot type: {plot_type})")
         else:
             super().__init__(message)
-        self.plot_type = plot_type
+        self.plot_type: str | None = plot_type
 
 
 class ModeDetectionError(PlotError):
@@ -95,8 +95,8 @@ class DataUnavailableError(PlotError):
     ) -> None:
         """Initialize DataUnavailableError with message, data type, and hint."""
         full_message = message
-        if hint:
+        if hint is not None:
             full_message = f"{message}\n{hint}"
         super().__init__(full_message)
-        self.data_type = data_type
-        self.hint = hint
+        self.data_type: str | None = data_type
+        self.hint: str | None = hint

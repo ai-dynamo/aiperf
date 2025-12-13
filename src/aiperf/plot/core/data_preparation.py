@@ -8,9 +8,9 @@ This module contains reusable functions for transforming raw benchmark data
 into formats suitable for plotting.
 """
 
-import json
 from typing import Any
 
+import orjson
 import pandas as pd
 
 from aiperf.plot.core.data_loader import RunData
@@ -191,7 +191,7 @@ def validate_request_uniformity(
             with open(profile_path) as f:
                 for line in f:
                     try:
-                        record = json.loads(line)
+                        record = orjson.loads(line.encode("utf-8"))
                         metrics = record.get("metrics", {})
 
                         isl = metrics.get("input_sequence_length", {})
@@ -201,7 +201,7 @@ def validate_request_uniformity(
                         osl = metrics.get("output_sequence_length", {})
                         if isinstance(osl, dict) and "value" in osl:
                             osl_values.append(osl["value"])
-                    except json.JSONDecodeError:
+                    except (orjson.JSONDecodeError, ValueError):
                         continue
 
             if not isl_values and not osl_values:
@@ -210,7 +210,7 @@ def validate_request_uniformity(
             isl_values = pd.Series(isl_values) if isl_values else pd.Series()
             osl_values = pd.Series(osl_values) if osl_values else pd.Series()
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             if logger:
                 logger.warning(f"Could not load ISL/OSL data for uniformity check: {e}")
             return True, None

@@ -62,7 +62,7 @@ Compares metrics across multiple profiling runs to identify optimal configuratio
 - Multiple paths specified as arguments
 
 **Example:**
-```
+```text
 artifacts/sweep_qwen/
 ├── Qwen3-0.6B-concurrency1/
 ├── Qwen3-0.6B-concurrency2/
@@ -99,7 +99,7 @@ Analyzes performance over time for a single profiling run.
 - Directory contains `profile_export.jsonl` directly
 
 **Example:**
-```
+```text
 artifacts/single_run/
 └── profile_export.jsonl
 ```
@@ -231,7 +231,7 @@ experiment_classification:
 #### Example
 
 **Directory structure:**
-```
+```text
 artifacts/
 ├── baseline_moderate_io_isl100_osl200_streaming/           # Grey
 │   ├── concurrency_1/
@@ -330,8 +330,10 @@ The dashboard automatically detects visualization mode (multi-run comparison or 
 - Token Throughput per GPU vs Interactivity
 
 **Single-run plots** (time series):
+```text
 - GPU Utilization Over Time
 - GPU Memory Usage Over Time
+```
 
 ![GPU Utilization and Throughput Over Time](../diagrams/plot_examples/single_run/time_series/gpu_utilization_and_throughput_over_time.png)
 
@@ -345,10 +347,12 @@ The dashboard automatically detects visualization mode (multi-run comparison or 
 When timeslice data is available (via `--slice-duration` during profiling), plots show performance evolution across time windows.
 
 **Generated timeslice plots:**
+```text
 - TTFT Across Timeslices
 - ITL Across Timeslices
 - Throughput Across Timeslices
 - Latency Across Timeslices
+```
 
 **Timeslices enable easy outlier identification and bucketing analysis**. Each time window (bucket) shows avg/p50/p95 statistics, making it simple to spot which periods have outlier performance. Slice 0 often shows cold-start overhead, while later slices may reveal degradation. Flat bars across slices may indicate stable performance; increasing trends can suggest resource exhaustion. Potentially useful for quickly isolating performance issues to specific phases (warmup, steady-state, or degradation).
 

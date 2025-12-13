@@ -10,6 +10,7 @@ across PNG, HTML, and Dash exporters.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
 from aiperf.plot.constants import PlotTheme
@@ -30,7 +31,7 @@ class BaseExporter(AIPerfLoggerMixin, ABC):
         output_dir: Path,
         theme: PlotTheme = PlotTheme.LIGHT,
         color_pool_size: int = 10,
-    ):
+    ) -> None:
         """
         Initialize the base exporter.
 
@@ -49,14 +50,14 @@ class BaseExporter(AIPerfLoggerMixin, ABC):
         )
 
     @abstractmethod
-    def export(self, *args, **kwargs):
+    def export(self, *args: Any, **kwargs: Any) -> list[Path]:
         """
         Export plots. Must be implemented by subclasses.
 
         Returns:
             List of generated file paths
         """
-        pass
+        raise NotImplementedError
 
     def _get_metric_label(
         self, metric_tag: str, stat: str | None, available_metrics: dict

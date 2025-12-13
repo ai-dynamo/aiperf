@@ -54,10 +54,11 @@ class PlotController:
         log_level = "DEBUG" if verbose else "INFO"
         try:
             setup_plot_logging(output_dir, log_level=log_level)
-        except Exception as e:
+        except (OSError, PermissionError) as e:
             setup_console_only_logging(log_level=log_level)
             logger.warning(
-                f"Could not set up file logging to {output_dir}: {e}. Using console only."
+                f"Could not set up file logging to {output_dir}: {e}. Using console only.",
+                exc_info=self.verbose,
             )
 
         self.mode_detector = ModeDetector()
@@ -89,11 +90,15 @@ class PlotController:
             )
 
     def _validate_paths(self) -> None:
-        """Validate that all input paths exist."""
+        """Validate that all input paths exist and are directories."""
         for path in self.paths:
             if not path.exists():
                 raise FileNotFoundError(
                     f"Path does not exist: {path}. Please check the path and try again."
+                )
+            if not path.is_dir():
+                raise NotADirectoryError(
+                    f"Path is not a directory: {path}. Please provide a directory containing profiling runs."
                 )
 
     def _detect_visualization_mode(self) -> tuple[VisualizationMode, list[Path]]:

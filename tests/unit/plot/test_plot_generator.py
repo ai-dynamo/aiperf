@@ -355,7 +355,7 @@ class TestPlotGenerator:
         assert len(fig.data) > 0
 
         # Test that groups are registered in the color registry
-        groups, color_map, display_names = plot_generator._prepare_groups(df, "model")
+        _groups, color_map, _display_names = plot_generator._prepare_groups(df, "model")
 
         # Verify all models get colors
         assert len(color_map) == 3
@@ -376,10 +376,14 @@ class TestPlotGenerator:
     def test_color_consistency_across_models(self, plot_generator):
         """Test that same model gets same color across different calls."""
         df1 = pd.DataFrame({"model": ["ModelX", "ModelY", "ModelZ"]})
-        groups1, colors1, display_names1 = plot_generator._prepare_groups(df1, "model")
+        _groups1, colors1, _display_names1 = plot_generator._prepare_groups(
+            df1, "model"
+        )
 
         df2 = pd.DataFrame({"model": ["ModelX", "ModelY", "ModelZ"]})
-        groups2, colors2, display_names2 = plot_generator._prepare_groups(df2, "model")
+        _groups2, colors2, _display_names2 = plot_generator._prepare_groups(
+            df2, "model"
+        )
 
         # Same models should get same colors across calls
         assert colors1 == colors2
@@ -393,7 +397,7 @@ class TestPlotGenerator:
         # Create more models than available colors in the pool (default 10)
         model_names = [f"Model{i}" for i in range(15)]
         df = pd.DataFrame({"model": model_names})
-        groups, color_map, display_names = plot_generator._prepare_groups(df, "model")
+        _groups, color_map, _display_names = plot_generator._prepare_groups(df, "model")
 
         # All models should get a color
         assert len(color_map) == 15
@@ -1083,7 +1087,7 @@ class TestColorEdgeCases:
         plot_gen = PlotGenerator()
         df = pd.DataFrame({"model": ["a", "b", "c"]})
 
-        groups, color_map, display_names = plot_gen._prepare_groups(df, group_by=None)
+        groups, color_map, _display_names = plot_gen._prepare_groups(df, group_by=None)
 
         # Should return [None] groups and empty color_map
         assert groups == [None]
@@ -1096,7 +1100,7 @@ class TestColorEdgeCases:
         model_names = [f"model-{i:02d}" for i in range(12)]
         df = pd.DataFrame({"model": model_names})
 
-        groups, color_map, display_names = plot_gen._prepare_groups(df, "model")
+        _groups, color_map, _display_names = plot_gen._prepare_groups(df, "model")
 
         # All models should get a color
         assert len(color_map) == 12
@@ -1127,7 +1131,7 @@ class TestColorEdgeCases:
         df = pd.DataFrame({"model": ["a", "b", "c"]})
 
         # Try to group by non-existent column
-        groups, color_map, display_names = plot_gen._prepare_groups(
+        groups, color_map, _display_names = plot_gen._prepare_groups(
             df, "nonexistent_column"
         )
 
@@ -1298,7 +1302,7 @@ class TestPrepareGroupsExperimentTypes:
             "treatment_b": "treatment",
         }
 
-        groups, colors, display_names = plot_gen._prepare_groups(
+        groups, colors, _display_names = plot_gen._prepare_groups(
             df, "experiment_group", experiment_types
         )
 
@@ -1327,7 +1331,7 @@ class TestPrepareGroupsExperimentTypes:
             "treatment": "treatment",
         }
 
-        groups, colors, display_names = plot_gen._prepare_groups(
+        _groups, colors, _display_names = plot_gen._prepare_groups(
             df, "experiment_group", experiment_types
         )
 
@@ -1355,7 +1359,7 @@ class TestPrepareGroupsExperimentTypes:
             "treatment3": "treatment",
         }
 
-        groups, colors, display_names = plot_gen._prepare_groups(
+        _groups, colors, _display_names = plot_gen._prepare_groups(
             df, "experiment_group", experiment_types
         )
 
@@ -1378,7 +1382,7 @@ class TestPrepareGroupsExperimentTypes:
         )
 
         # Pass string directly (validator already converted list to string)
-        groups, colors, display_names = plot_gen._prepare_groups(df, group_by="model")
+        groups, colors, _display_names = plot_gen._prepare_groups(df, group_by="model")
 
         # Should successfully group by model
         assert groups == ["model_a", "model_b"]

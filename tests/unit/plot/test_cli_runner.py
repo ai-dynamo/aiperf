@@ -19,7 +19,6 @@ class TestRunPlotController:
         self,
         mock_controller_class: MagicMock,
         tmp_path: Path,
-        capsys: pytest.CaptureFixture,
     ) -> None:
         """Test that paths defaults to ['./artifacts'] when None."""
         mock_controller = MagicMock()
