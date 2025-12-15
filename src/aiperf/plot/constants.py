@@ -22,6 +22,10 @@ PROFILE_EXPORT_TIMESLICES_CSV = (
 PROFILE_EXPORT_GPU_TELEMETRY_JSONL = (
     OutputDefaults.PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE.name
 )
+SERVER_METRICS_EXPORT_JSON = OutputDefaults.SERVER_METRICS_EXPORT_JSON_FILE.name
+SERVER_METRICS_EXPORT_CSV = OutputDefaults.SERVER_METRICS_EXPORT_CSV_FILE.name
+SERVER_METRICS_EXPORT_JSONL = OutputDefaults.SERVER_METRICS_EXPORT_JSONL_FILE.name
+SERVER_METRICS_EXPORT_PARQUET = "server_metrics_export.parquet"
 
 # Default output directory and filenames
 DEFAULT_OUTPUT_DIR = Path("plots")
@@ -137,6 +141,9 @@ CUMULATIVE_METRIC_PATTERNS = ["total"]
 
 # Non-metric keys in the aggregated JSON (used for filtering)
 NON_METRIC_KEYS = {
+    "schema_version",
+    "aiperf_version",
+    "benchmark_id",
     "input_config",
     "telemetry_data",
     "start_time",
@@ -153,5 +160,6 @@ METRIC_CATEGORY_RULES: dict[str, list[str]] = {
     "Counts & Lengths": ["count", "sequence_length", "isl", "osl"],
     "Configuration": ["concurrency", "duration"],
     "GPU Telemetry": ["gpu", "memory", "power", "temperature"],
+    "Server Metrics": ["vllm:", "triton:", "http_", "dynamo_", "nvidia_"],
     "Other Metrics": [],  # Fallback category (no keywords)
 }

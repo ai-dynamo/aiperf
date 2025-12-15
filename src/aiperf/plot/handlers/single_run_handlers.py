@@ -7,6 +7,8 @@ Single-run plot type handlers.
 Handlers for creating plots from single profiling run data.
 """
 
+import logging
+
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -33,6 +35,8 @@ from aiperf.plot.exceptions import (
     PlotGenerationError,
 )
 from aiperf.plot.metric_names import get_all_metric_display_names, get_gpu_metric_unit
+
+_logger = logging.getLogger(__name__)
 
 
 def _is_single_stat_metric(metric) -> bool:
@@ -202,7 +206,7 @@ class BaseSingleRunHandler:
 
 @PlotTypeHandlerFactory.register(PlotType.SCATTER)
 class ScatterHandler(BaseSingleRunHandler):
-    """Handler for scatter plot type."""
+    """Handler for scatter plot type (supports REQUESTS and SERVER_METRICS sources)."""
 
     def can_handle(self, spec: PlotSpec, data: RunData) -> bool:
         """Check if scatter plot can be generated."""
@@ -211,21 +215,64 @@ class ScatterHandler(BaseSingleRunHandler):
                 data.requests is None or data.requests.empty
             ):
                 return False
+            if metric.source == DataSource.SERVER_METRICS and (
+                data.server_metrics is None or data.server_metrics.empty
+            ):
+                return False
         return True
 
     def create_plot(
         self, spec: PlotSpec, data: RunData, available_metrics: dict
     ) -> go.Figure:
-        """Create a scatter plot."""
+        """Create a scatter plot (supports REQUESTS and SERVER_METRICS sources)."""
+        x_metric = next(m for m in spec.metrics if m.axis == "x")
+        y_metric = next(m for m in spec.metrics if m.axis == "y")
+
+        # Handle SERVER_METRICS source
+        if y_metric.source == DataSource.SERVER_METRICS:
+            if data.server_metrics is None or data.server_metrics.empty:
+                raise DataUnavailableError(
+                    "Scatter plot cannot be generated: no server metrics data available.",
+                    data_type="server_metrics",
+                    hint="Server metrics data requires server_metrics collection to be enabled.",
+                )
+
+            # Parse metric name and apply filters
+            from aiperf.plot.utils import (
+                filter_server_metrics_dataframe,
+                parse_server_metric_spec,
+            )
+
+            metric_name, endpoint_filter, labels_filter = parse_server_metric_spec(
+                y_metric.name
+            )
+
+            df, unit, metric_type = filter_server_metrics_dataframe(
+                data.server_metrics, metric_name, endpoint_filter, labels_filter
+            )
+
+            y_label = self._get_custom_or_default_label(
+                spec.y_label, y_metric, available_metrics
+            )
+            if not spec.y_label and unit:
+                y_label = f"{metric_name} ({unit})"
+
+            return self.plot_generator.create_time_series_scatter(
+                df=df,
+                x_col="timestamp_s",
+                y_metric="value",
+                title=spec.title or f"{metric_name} Raw Data Points Over Time",
+                x_label=spec.x_label or "Time (s)",
+                y_label=y_label,
+            )
+
+        # Handle REQUESTS source (existing logic)
         if data.requests is None or data.requests.empty:
             raise DataUnavailableError(
                 "Scatter plot cannot be generated: no per-request data available.",
                 data_type="requests",
                 hint="Per-request data is generated during benchmark runs.",
             )
-
-        x_metric = next(m for m in spec.metrics if m.axis == "x")
-        y_metric = next(m for m in spec.metrics if m.axis == "y")
 
         df = self._prepare_data_for_source(x_metric.source, data)
 
@@ -245,7 +292,7 @@ class ScatterHandler(BaseSingleRunHandler):
 
 @PlotTypeHandlerFactory.register(PlotType.AREA)
 class AreaHandler(BaseSingleRunHandler):
-    """Handler for area plot type."""
+    """Handler for area plot type (supports REQUESTS and SERVER_METRICS sources)."""
 
     def can_handle(self, spec: PlotSpec, data: RunData) -> bool:
         """Check if area plot can be generated."""
@@ -254,28 +301,44 @@ class AreaHandler(BaseSingleRunHandler):
                 data.requests is None or data.requests.empty
             ):
                 return False
+            if metric.source == DataSource.SERVER_METRICS and (
+                data.server_metrics is None or data.server_metrics.empty
+            ):
+                return False
         return True
 
     def create_plot(
         self, spec: PlotSpec, data: RunData, available_metrics: dict
     ) -> go.Figure:
-        """Create an area plot."""
-        if data.requests is None or data.requests.empty:
-            raise DataUnavailableError(
-                "Area plot cannot be generated: no per-request data available.",
-                data_type="requests",
-                hint="Per-request data is generated during benchmark runs.",
-            )
-
+        """Create an area plot (supports REQUESTS and SERVER_METRICS sources)."""
         x_metric = next(m for m in spec.metrics if m.axis == "x")
         y_metric = next(m for m in spec.metrics if m.axis == "y")
 
-        # Special handling for dispersed throughput due to nature of request throughput data
-        if y_metric.name == "throughput_tokens_per_sec":
-            df = prepare_request_timeseries(data)
-            throughput_df = calculate_throughput_events(df)
+        # Handle SERVER_METRICS source
+        if y_metric.source == DataSource.SERVER_METRICS:
+            if data.server_metrics is None or data.server_metrics.empty:
+                raise DataUnavailableError(
+                    "Area plot cannot be generated: no server metrics data available.",
+                    data_type="server_metrics",
+                    hint="Server metrics data requires server_metrics collection to be enabled.",
+                )
+            # Prepare server metrics data
+            throughput_df = self._prepare_server_metrics_for_area(y_metric.name, data)
         else:
-            throughput_df = self._prepare_data_for_source(x_metric.source, data)
+            # Handle REQUESTS source (existing logic)
+            if data.requests is None or data.requests.empty:
+                raise DataUnavailableError(
+                    "Area plot cannot be generated: no per-request data available.",
+                    data_type="requests",
+                    hint="Per-request data is generated during benchmark runs.",
+                )
+
+            # Special handling for dispersed throughput due to nature of request throughput data
+            if y_metric.name == "throughput_tokens_per_sec":
+                df = prepare_request_timeseries(data)
+                throughput_df = calculate_throughput_events(df)
+            else:
+                throughput_df = self._prepare_data_for_source(x_metric.source, data)
 
         return self.plot_generator.create_time_series_area(
             df=throughput_df,
@@ -290,10 +353,69 @@ class AreaHandler(BaseSingleRunHandler):
             ),
         )
 
+    def _prepare_server_metrics_for_area(
+        self, metric_name: str, data: RunData
+    ) -> pd.DataFrame:
+        """
+        Prepare server metrics data for area plotting.
+
+        Handles both single-series and multi-series scenarios. For multi-series
+        (multiple endpoint/label combinations), aggregates values by timestamp
+        to create a single merged time series for area fill.
+
+        Args:
+            metric_name: Server metric name (may include filters)
+            data: RunData object
+
+        Returns:
+            DataFrame with timestamp_s and metric value column
+        """
+        from aiperf.plot.utils import (
+            detect_server_metric_series,
+            filter_server_metrics_dataframe,
+            parse_server_metric_spec,
+        )
+
+        # Parse and filter using shared utility
+        base_metric, endpoint_filter, labels_filter = parse_server_metric_spec(
+            metric_name
+        )
+
+        try:
+            df, unit, metric_type = filter_server_metrics_dataframe(
+                data.server_metrics, base_metric, endpoint_filter, labels_filter
+            )
+        except ValueError:
+            # Return empty DataFrame if filtering fails
+            return pd.DataFrame()
+
+        if df.empty:
+            return pd.DataFrame()
+
+        # Detect series count
+        series_list = detect_server_metric_series(df)
+
+        # If multiple series, aggregate by timestamp
+        if len(series_list) > 1:
+            # Group by timestamp and sum/average values
+            if metric_type == "COUNTER":
+                # Sum rates for counters
+                df_agg = df.groupby("timestamp_s")["value"].sum().reset_index()
+            else:
+                # Average for gauges/histograms
+                df_agg = df.groupby("timestamp_s")["value"].mean().reset_index()
+
+            df_agg[base_metric] = df_agg["value"]
+            return df_agg[["timestamp_s", base_metric]].copy()
+
+        # Single series - rename value column
+        df[base_metric] = df["value"]
+        return df[["timestamp_s", base_metric]].copy()
+
 
 @PlotTypeHandlerFactory.register(PlotType.TIMESLICE)
 class TimeSliceHandler(BaseSingleRunHandler):
-    """Handler for timeslice scatter plot type."""
+    """Handler for timeslice scatter plot type (supports TIMESLICES and SERVER_METRICS sources)."""
 
     def can_handle(self, spec: PlotSpec, data: RunData) -> bool:
         """Check if timeslice plot can be generated."""
@@ -302,21 +424,32 @@ class TimeSliceHandler(BaseSingleRunHandler):
                 data.timeslices is None or data.timeslices.empty
             ):
                 return False
+            if metric.source == DataSource.SERVER_METRICS and (
+                data.server_metrics is None or data.server_metrics.empty
+            ):
+                return False
         return True
 
     def create_plot(
         self, spec: PlotSpec, data: RunData, available_metrics: dict
     ) -> go.Figure:
-        """Create a timeslice scatter plot."""
+        """Create a timeslice scatter plot (supports TIMESLICES and SERVER_METRICS sources)."""
+        x_metric = next(m for m in spec.metrics if m.axis == "x")
+        y_metric = next(m for m in spec.metrics if m.axis == "y")
+
+        # Handle SERVER_METRICS source
+        if y_metric.source == DataSource.SERVER_METRICS:
+            return self._create_server_metrics_plot(
+                spec, data, available_metrics, x_metric, y_metric
+            )
+
+        # Handle TIMESLICES source (existing logic)
         if data.timeslices is None or data.timeslices.empty:
             raise DataUnavailableError(
                 "Timeslice plot cannot be generated: no timeslice data available.",
                 data_type="timeslice",
                 hint="Timeslice data requires running benchmarks with slice_duration configured.",
             )
-
-        x_metric = next(m for m in spec.metrics if m.axis == "x")
-        y_metric = next(m for m in spec.metrics if m.axis == "y")
 
         stats_to_extract = ["avg", "std"]
         plot_df, unit = prepare_timeslice_metrics(data, y_metric.name, stats_to_extract)
@@ -395,12 +528,290 @@ class TimeSliceHandler(BaseSingleRunHandler):
 
         return avg, label, std
 
+    def _create_server_metrics_plot(
+        self,
+        spec: PlotSpec,
+        data: RunData,
+        available_metrics: dict,
+        x_metric: MetricSpec,
+        y_metric: MetricSpec,
+    ) -> go.Figure:
+        """
+        Create a server metrics time series plot.
+
+        Args:
+            spec: Plot specification
+            data: RunData with server_metrics DataFrame
+            available_metrics: Available metrics metadata
+            x_metric: X-axis metric specification
+            y_metric: Y-axis metric specification (server metrics)
+
+        Returns:
+            Plotly Figure object
+
+        Raises:
+            DataUnavailableError: If server metrics data is not available
+        """
+        if data.server_metrics is None or data.server_metrics.empty:
+            raise DataUnavailableError(
+                "Server metrics plot cannot be generated: no server metrics data available.",
+                data_type="server_metrics",
+                hint="Server metrics data requires server_metrics collection to be enabled.",
+            )
+
+        # Parse metric name for optional endpoint/label filters (using shared utility)
+        from aiperf.plot.utils import (
+            filter_server_metrics_dataframe,
+            parse_server_metric_spec,
+        )
+
+        metric_name, endpoint_filter, labels_filter = parse_server_metric_spec(
+            y_metric.name
+        )
+
+        # Filter DataFrame using shared utility
+        try:
+            df, unit, metric_type = filter_server_metrics_dataframe(
+                data.server_metrics, metric_name, endpoint_filter, labels_filter
+            )
+        except ValueError as e:
+            raise DataUnavailableError(
+                str(e),
+                data_type="server_metrics",
+            ) from e
+
+        # Detect if multiple series exist (different endpoint/label combinations)
+        from aiperf.plot.utils import (
+            detect_server_metric_series,
+        )
+
+        series_list = detect_server_metric_series(df)
+
+        # If multiple series and no explicit filter, create multi-series plot
+        if len(series_list) > 1 and endpoint_filter is None and labels_filter is None:
+            return self._create_multi_series_server_metrics_plot(
+                df, spec, metric_name, series_list, unit, available_metrics, x_metric
+            )
+
+        # Single series - use existing plot logic
+        # Get aggregated stats for run average overlay
+        avg_value, avg_label, avg_std = self._get_server_metric_average(
+            data, metric_name, endpoint_filter, labels_filter
+        )
+
+        # Determine y column based on stat (default to "value")
+        y_col = "value"
+
+        default_y_label = f"{metric_name} ({unit})" if unit else metric_name
+        y_label = spec.y_label or default_y_label
+
+        return self.plot_generator.create_timeslice_scatter(
+            df=df,
+            x_col="timestamp_s",
+            y_col=y_col,
+            metric_name=metric_name,
+            title=spec.title or f"{metric_name} Over Time",
+            x_label=spec.x_label or "Time (s)",
+            y_label=y_label,
+            slice_duration=None,  # No windowing for server metrics
+            average_value=avg_value,
+            average_label=avg_label,
+            average_std=avg_std,
+            unit=unit,
+        )
+
+    def _create_multi_series_server_metrics_plot(
+        self,
+        df,
+        spec: PlotSpec,
+        metric_name: str,
+        series_list: list[tuple[str, str]],
+        unit: str,
+        available_metrics: dict,
+        x_metric: MetricSpec,
+    ) -> go.Figure:
+        """
+        Create server metrics plot with multiple series (one trace per endpoint/label combo).
+
+        Generates a plot with separate traces for each unique endpoint + label
+        combination, with automatic legend entries showing what differentiates
+        each series.
+
+        Args:
+            df: Filtered server metrics DataFrame (all series)
+            spec: Plot specification
+            metric_name: Base metric name
+            series_list: List of (endpoint_url, labels_json) tuples
+            unit: Metric unit for axis label
+            available_metrics: Available metrics metadata
+            x_metric: X-axis metric specification
+
+        Returns:
+            Plotly Figure with multiple traces
+        """
+        from aiperf.plot.utils import create_series_legend_label
+
+        # Create figure manually with multiple traces
+        fig = go.Figure()
+
+        total_series = len(series_list)
+
+        # Extract all labels for smart filtering
+        import orjson
+
+        all_series_labels = [
+            orjson.loads(labels_json.encode()) if labels_json != "{}" else {}
+            for _, labels_json in series_list
+        ]
+
+        # Add trace for each series
+        for endpoint_url, labels_json in series_list:
+            # Filter to this specific series
+            series_df = df[
+                (df["endpoint_url"] == endpoint_url)
+                & (df["labels_json"] == labels_json)
+            ].copy()
+
+            if series_df.empty:
+                continue
+
+            # Sort by timestamp
+            series_df = series_df.sort_values("timestamp_ns")
+
+            # Create legend label (with smart filtering)
+            trace_name = create_series_legend_label(
+                metric_name, endpoint_url, labels_json, total_series, all_series_labels
+            )
+
+            # Add scatter trace
+            fig.add_trace(
+                go.Scatter(
+                    x=series_df["timestamp_s"],
+                    y=series_df["value"],
+                    mode="lines+markers",
+                    name=trace_name,
+                    marker={"size": 6},
+                    line={"width": 2},
+                )
+            )
+
+        # Apply NVIDIA styling
+        default_y_label = f"{metric_name} ({unit})" if unit else metric_name
+        y_label = spec.y_label or default_y_label
+
+        fig.update_layout(
+            title=spec.title or f"{metric_name} Over Time (Multi-Series)",
+            xaxis_title=spec.x_label or "Time (s)",
+            yaxis_title=y_label,
+            template="plotly_white",
+            showlegend=True,
+            legend={
+                "orientation": "v",
+                "yanchor": "top",
+                "y": 1,
+                "xanchor": "left",
+                "x": 1.02,
+            },
+        )
+
+        return fig
+
+    def _get_server_metric_average(
+        self,
+        data: RunData,
+        metric_name: str,
+        endpoint: str | None,
+        labels: dict | None,
+    ) -> tuple[float | None, str | None, float | None]:
+        """
+        Get average value and std for a server metric from aggregated stats.
+
+        Args:
+            data: RunData object
+            metric_name: Server metric name
+            endpoint: Optional endpoint filter
+            labels: Optional labels filter
+
+        Returns:
+            Tuple of (average_value, formatted_label, std_value)
+        """
+        if not data.server_metrics_aggregated:
+            self.debug(
+                lambda: "Server metrics aggregated stats not available. "
+                "Average line will not be displayed. "
+                "Ensure server_metrics_export.json exists alongside Parquet file."
+            )
+            return None, None, None
+
+        if metric_name not in data.server_metrics_aggregated:
+            available = list(data.server_metrics_aggregated.keys())[:5]
+            self.debug(
+                lambda: f"Metric '{metric_name}' not found in aggregated stats. "
+                f"Available metrics: {available}..."
+            )
+            return None, None, None
+
+        metric_data = data.server_metrics_aggregated[metric_name]
+
+        # If no endpoint specified, use first available endpoint
+        if endpoint is None:
+            if not metric_data:
+                return None, None, None
+            endpoint = next(iter(metric_data.keys()))
+
+        if endpoint not in metric_data:
+            return None, None, None
+
+        import orjson
+
+        labels_key = (
+            orjson.dumps(labels, option=orjson.OPT_SORT_KEYS).decode()
+            if labels
+            else "{}"
+        )
+
+        if labels_key not in metric_data[endpoint]:
+            return None, None, None
+
+        series_data = metric_data[endpoint][labels_key]
+        stats = series_data.get("stats")
+        unit = series_data.get("unit", "")
+
+        if stats is None:
+            # Static value (no variation)
+            return None, None, None
+
+        # Extract avg and std based on metric type
+        avg = None
+        std = None
+
+        if hasattr(stats, "avg"):
+            avg = stats.avg
+        elif isinstance(stats, dict):
+            avg = stats.get("avg")
+
+        if hasattr(stats, "std"):
+            std = stats.std
+        elif isinstance(stats, dict):
+            std = stats.get("std")
+
+        if avg is None:
+            return None, None, None
+
+        label = f"Run Average: {avg:.2f}"
+        if unit:
+            label += f" {unit}"
+
+        return avg, label, std
+
 
 @PlotTypeHandlerFactory.register(PlotType.HISTOGRAM)
 class HistogramHandler(BaseSingleRunHandler):
     """Handler for histogram/bar chart plots.
 
-    Generates histogram/bar chart visualizations for timeslice data.
+    Supports two modes:
+    - TIMESLICES: Time-windowed bar charts of client metrics
+    - SERVER_METRICS: Prometheus histogram bucket distribution visualization
     """
 
     def can_handle(self, spec: PlotSpec, data: RunData) -> bool:
@@ -410,12 +821,32 @@ class HistogramHandler(BaseSingleRunHandler):
                 data.timeslices is None or data.timeslices.empty
             ):
                 return False
+            if metric.source == DataSource.SERVER_METRICS and (
+                data.server_metrics_aggregated is None
+                or not data.server_metrics_aggregated
+            ):
+                return False
         return True
 
     def create_plot(
         self, spec: PlotSpec, data: RunData, available_metrics: dict
     ) -> go.Figure:
-        """Create a histogram/bar chart plot."""
+        """Create a histogram/bar chart plot.
+
+        For TIMESLICES: Bar chart of metrics over time windows
+        For SERVER_METRICS: Prometheus histogram bucket distribution
+        """
+        y_metric = next((m for m in spec.metrics if m.axis == "y"), None)
+        if not y_metric:
+            raise ValueError("Histogram plot requires a y-axis metric")
+
+        # Handle SERVER_METRICS source (Prometheus histogram bucket visualization)
+        if y_metric.source == DataSource.SERVER_METRICS:
+            return self._create_server_metrics_bucket_histogram(
+                y_metric, spec, data, available_metrics
+            )
+
+        # Handle TIMESLICES source (existing logic)
         if data.timeslices is None or data.timeslices.empty:
             raise DataUnavailableError(
                 "Histogram plot cannot be generated: no timeslice data available.",
@@ -499,6 +930,120 @@ class HistogramHandler(BaseSingleRunHandler):
 
         return avg, label, std
 
+    def _create_server_metrics_bucket_histogram(
+        self,
+        y_metric,
+        spec: PlotSpec,
+        data: RunData,
+        available_metrics: dict,
+    ) -> go.Figure:
+        """Create Prometheus histogram bucket distribution visualization.
+
+        Visualizes the bucket distribution from a Prometheus histogram metric,
+        showing the actual bucket boundaries and observation counts.
+
+        Args:
+            y_metric: Y-axis metric spec
+            spec: PlotSpec for the histogram
+            data: RunData with server metrics
+            available_metrics: Available metrics dict
+
+        Returns:
+            Plotly Figure with bucket distribution bar chart
+        """
+        from aiperf.plot.utils import parse_server_metric_spec
+
+        metric_name, endpoint_filter, labels_filter = parse_server_metric_spec(
+            y_metric.name
+        )
+
+        # Get metric data from aggregated stats
+        if metric_name not in data.server_metrics_aggregated:
+            available = list(data.server_metrics_aggregated.keys())[:10]
+            raise DataUnavailableError(
+                f"Metric '{metric_name}' not found in server metrics. "
+                f"Available: {available}",
+                data_type="server_metrics",
+            )
+
+        metric_data = data.server_metrics_aggregated[metric_name]
+
+        # Get first endpoint if not specified
+        if endpoint_filter is None:
+            endpoint_filter = next(iter(metric_data.keys()))
+
+        if endpoint_filter not in metric_data:
+            raise DataUnavailableError(
+                f"Endpoint '{endpoint_filter}' not found for metric '{metric_name}'",
+                data_type="server_metrics",
+            )
+
+        import orjson
+
+        labels_key = (
+            orjson.dumps(labels_filter, option=orjson.OPT_SORT_KEYS).decode()
+            if labels_filter
+            else "{}"
+        )
+
+        if labels_key not in metric_data[endpoint_filter]:
+            raise DataUnavailableError(
+                f"Labels {labels_filter} not found for metric '{metric_name}'",
+                data_type="server_metrics",
+            )
+
+        series_data = metric_data[endpoint_filter][labels_key]
+        metric_type = series_data.get("type", "").upper()
+        unit = series_data.get("unit", "")
+
+        # Verify this is a histogram metric
+        if metric_type != "HISTOGRAM":
+            raise DataUnavailableError(
+                f"Metric '{metric_name}' is type {metric_type}, not HISTOGRAM. "
+                "Bucket distribution visualization requires HISTOGRAM metrics.",
+                data_type="server_metrics",
+            )
+
+        # Get bucket data from series stats
+        stats = series_data.get("stats")
+        if not stats:
+            raise DataUnavailableError(
+                f"No statistics available for metric '{metric_name}'",
+                data_type="server_metrics",
+            )
+
+        # Try to get buckets from stats (should be dict)
+        buckets = None
+        if isinstance(stats, dict):
+            buckets = stats.get("buckets")
+        elif hasattr(stats, "buckets"):
+            buckets = stats.buckets
+
+        if not buckets:
+            raise DataUnavailableError(
+                f"No bucket data available for histogram metric '{metric_name}'. "
+                "Bucket distribution requires histogram metrics with bucket data.",
+                data_type="server_metrics",
+            )
+
+        # Create bucket histogram
+        y_label = self._get_custom_or_default_label(
+            spec.y_label, y_metric, available_metrics
+        )
+        if not spec.y_label:
+            y_label = "Observation Count"
+
+        return self.plot_generator.create_bucket_histogram(
+            buckets=buckets,
+            metric_name=metric_name,
+            title=spec.title or f"{metric_name} Distribution (Histogram Buckets)",
+            x_label=spec.x_label or f"Bucket Upper Bound ({unit})"
+            if unit
+            else "Bucket Upper Bound",
+            y_label=y_label,
+            unit=unit,
+        )
+
 
 @PlotTypeHandlerFactory.register(PlotType.DUAL_AXIS)
 class DualAxisHandler(BaseSingleRunHandler):
@@ -519,6 +1064,10 @@ class DualAxisHandler(BaseSingleRunHandler):
                 data.gpu_telemetry is None or data.gpu_telemetry.empty
             ):
                 return False
+            if metric.source == DataSource.SERVER_METRICS and (
+                data.server_metrics is None or data.server_metrics.empty
+            ):
+                return False
         return True
 
     def _prepare_metric_data(
@@ -537,8 +1086,44 @@ class DualAxisHandler(BaseSingleRunHandler):
         """
         if metric_name in self.METRIC_PREP_FUNCTIONS:
             return self.METRIC_PREP_FUNCTIONS[metric_name](self, data)
+        elif source == DataSource.SERVER_METRICS:
+            return self._prepare_server_metrics_data(metric_name, data)
         else:
             return self._prepare_data_for_source(source, data)
+
+    def _prepare_server_metrics_data(
+        self, metric_name: str, data: RunData
+    ) -> pd.DataFrame:
+        """
+        Prepare server metrics data for dual-axis plotting.
+
+        Args:
+            metric_name: Server metric name (may include filters)
+            data: RunData object
+
+        Returns:
+            DataFrame with timestamp_s and value columns
+        """
+        from aiperf.plot.utils import (
+            filter_server_metrics_dataframe,
+            parse_server_metric_spec,
+        )
+
+        # Parse and filter using shared utility
+        base_metric, endpoint_filter, labels_filter = parse_server_metric_spec(
+            metric_name
+        )
+
+        try:
+            df, unit, metric_type = filter_server_metrics_dataframe(
+                data.server_metrics, base_metric, endpoint_filter, labels_filter
+            )
+        except ValueError:
+            # Return empty DataFrame if filtering fails
+            return pd.DataFrame()
+
+        # Return DataFrame with required columns for dual-axis plot
+        return df[["timestamp_s", "value"]].copy() if not df.empty else pd.DataFrame()
 
     def create_plot(
         self, spec: PlotSpec, data: RunData, available_metrics: dict
@@ -646,6 +1231,184 @@ class ScatterWithPercentilesHandler(BaseSingleRunHandler):
             y_label=self._get_custom_or_default_label(
                 spec.y_label, y_metric, available_metrics
             ),
+        )
+
+
+@PlotTypeHandlerFactory.register(PlotType.PERCENTILE_BANDS)
+class PercentileBandsHandler(BaseSingleRunHandler):
+    """Handler for percentile bands visualization over time.
+
+    Renders time-series with p50 median line and p95/p99 shaded uncertainty bands.
+    Perfect for SLA monitoring and latency stability analysis with server metrics.
+
+    Supports:
+    - HISTOGRAM metrics: Uses bucket data from timeslices to compute percentiles per window
+    - GAUGE metrics: Shows min/avg/max bands (no percentiles available)
+    """
+
+    def can_handle(self, spec: PlotSpec, data: RunData) -> bool:
+        """Check if percentile bands plot can be generated."""
+        for metric in spec.metrics:
+            if metric.source == DataSource.SERVER_METRICS and (
+                data.server_metrics_aggregated is None
+                or not data.server_metrics_aggregated
+            ):
+                return False
+        return True
+
+    def create_plot(
+        self, spec: PlotSpec, data: RunData, available_metrics: dict
+    ) -> go.Figure:
+        """Create percentile bands plot for server metrics.
+
+        For HISTOGRAM metrics, computes p50/p95/p99 from timeslice bucket data.
+        For GAUGE metrics, shows min/avg/max bands.
+        """
+        y_metric = next((m for m in spec.metrics if m.axis == "y"), None)
+        if not y_metric:
+            raise ValueError("Percentile bands plot requires a y-axis metric")
+
+        metric_name = y_metric.name
+
+        # Parse metric specification (handle endpoint/label filters)
+        from aiperf.plot.utils import parse_server_metric_spec
+
+        metric_name, endpoint_filter, labels_filter = parse_server_metric_spec(
+            metric_name
+        )
+
+        # Get metric data from aggregated stats
+        if metric_name not in data.server_metrics_aggregated:
+            available = list(data.server_metrics_aggregated.keys())[:10]
+            raise DataUnavailableError(
+                f"Metric '{metric_name}' not found in server metrics. "
+                f"Available: {available}",
+                data_type="server_metrics",
+            )
+
+        metric_data = data.server_metrics_aggregated[metric_name]
+
+        # Get first endpoint if not specified
+        if endpoint_filter is None:
+            endpoint_filter = next(iter(metric_data.keys()))
+
+        if endpoint_filter not in metric_data:
+            raise DataUnavailableError(
+                f"Endpoint '{endpoint_filter}' not found for metric '{metric_name}'",
+                data_type="server_metrics",
+            )
+
+        import orjson
+
+        labels_key = (
+            orjson.dumps(labels_filter, option=orjson.OPT_SORT_KEYS).decode()
+            if labels_filter
+            else "{}"
+        )
+
+        if labels_key not in metric_data[endpoint_filter]:
+            raise DataUnavailableError(
+                f"Labels {labels_filter} not found for metric '{metric_name}'",
+                data_type="server_metrics",
+            )
+
+        series_data = metric_data[endpoint_filter][labels_key]
+        metric_type = series_data.get("type", "").upper()
+        unit = series_data.get("unit", "")
+        timeslices = series_data.get("timeslices")
+
+        if not timeslices:
+            raise DataUnavailableError(
+                f"No timeslice data available for metric '{metric_name}'. "
+                "Percentile bands require timeslice data.",
+                data_type="server_metrics",
+            )
+
+        # Build DataFrame from timeslices
+        from aiperf.server_metrics.histogram_percentiles import (
+            compute_prometheus_percentiles,
+        )
+
+        rows = []
+        for ts in timeslices:
+            timestamp_s = (ts.start_ns + ts.end_ns) / 2 / 1e9  # Midpoint
+            row = {"timestamp_s": timestamp_s}
+
+            if metric_type == "HISTOGRAM":
+                # For histograms: compute percentiles from buckets if available
+                if ts.buckets and ts.count > 0:
+                    # Use standard Prometheus linear interpolation algorithm
+                    try:
+                        estimated = compute_prometheus_percentiles(
+                            ts.buckets, total_count=ts.count
+                        )
+                        if estimated.p50_estimate is not None:
+                            row["p50"] = estimated.p50_estimate
+                            row["p95"] = estimated.p95_estimate
+                            row["p99"] = estimated.p99_estimate
+                        else:
+                            _logger.warning(
+                                "Percentile estimation returned None for metric '%s' "
+                                "at timestamp %s, falling back to avg",
+                                metric_name,
+                                timestamp_s,
+                            )
+                            row["p50"] = ts.avg
+                            row["p95"] = ts.avg
+                            row["p99"] = ts.avg
+                    except Exception as e:
+                        _logger.warning(
+                            "Failed to compute percentiles for metric '%s' "
+                            "at timestamp %s: %r, falling back to avg",
+                            metric_name,
+                            timestamp_s,
+                            e,
+                        )
+                        row["p50"] = ts.avg
+                        row["p95"] = ts.avg
+                        row["p99"] = ts.avg
+                else:
+                    # No buckets - use avg as approximation
+                    row["p50"] = ts.avg
+                    row["p95"] = ts.avg
+                    row["p99"] = ts.avg
+            elif metric_type == "GAUGE":
+                # For gauges: use min/avg/max as bands
+                row["p50"] = ts.avg
+                row["p95"] = ts.max
+                row["p99"] = ts.max  # Same as p95 for gauges
+                row["p05"] = ts.min  # Add lower band
+            elif metric_type == "COUNTER":
+                # For counters: use rate as single line (no bands)
+                row["p50"] = ts.rate
+                row["p95"] = ts.rate
+                row["p99"] = ts.rate
+            else:
+                continue
+
+            rows.append(row)
+
+        if not rows:
+            raise DataUnavailableError(
+                f"No percentile data could be computed for '{metric_name}'",
+                data_type="server_metrics",
+            )
+
+        df = pd.DataFrame(rows)
+
+        # Create plot using plot generator
+        return self.plot_generator.create_percentile_bands(
+            df=df,
+            x_col="timestamp_s",
+            percentile_cols=["p50", "p95", "p99"],
+            lower_col="p05" if metric_type == "GAUGE" else None,
+            metric_name=metric_name,
+            metric_type=metric_type,
+            title=spec.title or f"{metric_name} Percentile Bands Over Time",
+            x_label=spec.x_label or "Time (s)",
+            y_label=spec.y_label
+            or (f"{metric_name} ({unit})" if unit else metric_name),
+            unit=unit,
         )
 
 

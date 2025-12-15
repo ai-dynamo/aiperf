@@ -23,19 +23,19 @@ from aiperf.records.record_processor_service import (
     RecordProcessor,
 )
 from aiperf.records.records_manager import (
+    ErrorTrackingState,
     RecordsManager,
-    TelemetryTrackingState,
 )
 
 __all__ = [
     "AllRequestsProcessedCondition",
     "CompletionReason",
     "DurationTimeoutCondition",
+    "ErrorTrackingState",
     "InferenceResultParser",
     "PhaseCompletionChecker",
     "PhaseCompletionCondition",
     "PhaseCompletionContext",
     "RecordProcessor",
     "RecordsManager",
-    "TelemetryTrackingState",
 ]

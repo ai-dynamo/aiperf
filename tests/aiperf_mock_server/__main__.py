@@ -37,7 +37,7 @@ def serve(config: MockServerConfig | None = None) -> None:
     logger.info("Config: %s", config.model_dump())
 
     uvicorn.run(
-        "aiperf_mock_server.app:app",
+        "aiperf_mock_server.app:asgi_app",
         host=config.host,
         port=config.port,
         log_level=config.log_level.lower(),

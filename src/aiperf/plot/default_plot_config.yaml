@@ -32,6 +32,7 @@ visualization:
   # SINGLE-RUN ANALYSIS: Default plots for analyzing one run over time
   # =============================================================================
   single_run_defaults:
+    # AIPerf client-side metrics
     - ttft_over_time
     # - itl_over_time
     # - latency_over_time
@@ -190,6 +191,30 @@ visualization:
         mode: lines
         fill: tozeroy
       supplementary_col: active_requests
+
+
+# =============================================================================
+# SETTINGS: General plot configuration and data processing
+# =============================================================================
+settings:
+  # Server metrics downsampling configuration
+  server_metrics_downsampling:
+    # Enable/disable downsampling (default: true)
+    # Downsampling reduces high-frequency Parquet data for efficient rendering
+    enabled: true
+
+    # Window size in seconds for aggregating data points (default: 5.0)
+    # Larger values = fewer points, faster rendering, less detail
+    # Smaller values = more points, slower rendering, more detail
+    window_size_seconds: 5.0
+
+    # Aggregation method for combining points within each window (default: "mean")
+    # Options: "mean" (average), "max" (maximum), "min" (minimum), "median" (50th percentile)
+    # - "mean": Best for smooth trends (recommended for most metrics)
+    # - "max": Preserves peak values (useful for utilization spikes)
+    # - "min": Preserves minimum values (useful for latency floors)
+    # - "median": Robust to outliers
+    aggregation_method: "mean"
 
 # ==============================================================================
 # EXPERIMENT CLASSIFICATION (Optional)

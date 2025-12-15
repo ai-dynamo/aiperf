@@ -56,7 +56,7 @@ class TestMockServerConfig:
             ("itl", [-1.0]),
             ("error_rate", [-1.0, 101.0]),
             ("dcgm_num_gpus", [0, 10]),
-            ("dcgm_initial_load", [-0.1, 1.5]),
+            ("dcgm_min_throughput", [0, 100001]),
         ],
     )
     def test_field_validation(self, field, invalid_values):
@@ -75,9 +75,14 @@ class TestMockServerConfig:
         config = MockServerConfig()
         assert config.dcgm_gpu_name == "h200"
         assert config.dcgm_num_gpus == 2
-        assert config.dcgm_initial_load == 0.7
+        assert config.dcgm_min_throughput == 100
         assert config.dcgm_hostname == "localhost"
         assert config.dcgm_seed is None
+        assert config.dcgm_auto_load is True
+
+    def test_dcgm_auto_load_disabled(self):
+        config = MockServerConfig(dcgm_auto_load=False)
+        assert config.dcgm_auto_load is False
 
 
 class TestConfigHelpers:

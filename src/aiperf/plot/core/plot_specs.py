@@ -81,6 +81,8 @@ class DataSource(Enum):
     TIMESLICES = "timeslices"
     GPU_TELEMETRY = "gpu_telemetry"
     AGGREGATED = "aggregated"
+    SERVER_METRICS = "server_metrics"
+    SERVER_METRICS_AGGREGATED = "server_metrics_aggregated"
 
 
 class PlotType(Enum):
@@ -95,6 +97,7 @@ class PlotType(Enum):
     DUAL_AXIS = "dual_axis"
     SCATTER_WITH_PERCENTILES = "scatter_with_percentiles"
     REQUEST_TIMELINE = "request_timeline"
+    PERCENTILE_BANDS = "percentile_bands"
 
 
 @dataclass
@@ -151,6 +154,11 @@ PLOT_TYPE_METADATA: dict[PlotType, PlotTypeInfo] = {
         display_name="Scatter + Trend Line",
         description="Points connected by lines, grouped by configuration",
         category="comparison",
+    ),
+    PlotType.PERCENTILE_BANDS: PlotTypeInfo(
+        display_name="Percentile Bands Over Time",
+        description="p50 line with p95/p99 shaded uncertainty bands for SLA monitoring",
+        category="aggregated",
     ),
 }
 

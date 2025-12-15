@@ -1900,3 +1900,213 @@ class PlotGenerator:
         )
 
         return fig
+
+    def create_percentile_bands(
+        self,
+        df: pd.DataFrame,
+        x_col: str,
+        percentile_cols: list[str],
+        lower_col: str | None,
+        metric_name: str,
+        metric_type: str,
+        title: str,
+        x_label: str,
+        y_label: str,
+        unit: str,
+    ) -> go.Figure:
+        """Create percentile bands plot with p50 line and p95/p99 shaded bands.
+
+        Visualizes uncertainty and variance over time with median line and
+        percentile confidence bands. Perfect for SLA monitoring and stability analysis.
+
+        Args:
+            df: DataFrame with timestamp and percentile columns
+            x_col: Column name for x-axis (usually timestamp_s)
+            percentile_cols: List of percentile column names (e.g., ["p50", "p95", "p99"])
+            lower_col: Optional lower percentile column (e.g., "p05" for gauges)
+            metric_name: Metric name for legend
+            metric_type: Metric type (HISTOGRAM, GAUGE, COUNTER)
+            title: Plot title
+            x_label: X-axis label
+            y_label: Y-axis label
+            unit: Metric unit
+
+        Returns:
+            Plotly Figure with percentile bands
+        """
+        fig = go.Figure()
+
+        x = df[x_col]
+
+        # Add bands from highest to lowest (for proper stacking)
+        # p99 band (outermost - lightest)
+        if "p99" in percentile_cols and "p99" in df.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=df["p99"],
+                    fill=None,
+                    mode="lines",
+                    line=dict(width=0),
+                    showlegend=False,
+                    hovertemplate=f"Time: %{{x:.2f}}s<br>p99: %{{y:.3f}} {unit}<extra></extra>",
+                )
+            )
+
+        # p95 band (middle - medium shade)
+        if "p95" in percentile_cols and "p95" in df.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=df["p95"],
+                    fill="tonexty" if "p99" in df.columns else None,
+                    mode="lines",
+                    line=dict(width=0),
+                    fillcolor="rgba(68, 138, 255, 0.2)",  # Light blue
+                    name="p95-p99 band" if "p99" in df.columns else "p95",
+                    hovertemplate=f"Time: %{{x:.2f}}s<br>p95: %{{y:.3f}} {unit}<extra></extra>",
+                )
+            )
+
+        # p50 median line (darkest - solid line)
+        if "p50" in percentile_cols and "p50" in df.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=df["p50"],
+                    fill="tonexty" if "p95" in df.columns else None,
+                    mode="lines",
+                    line=dict(color="rgb(31, 119, 180)", width=2.5),
+                    fillcolor="rgba(68, 138, 255, 0.3)"
+                    if "p95" in df.columns
+                    else None,
+                    name="p50 (median)" if "p95" in df.columns else "p50-p95 band",
+                    hovertemplate=f"Time: %{{x:.2f}}s<br>p50: %{{y:.3f}} {unit}<extra></extra>",
+                )
+            )
+
+        # Lower band (for gauges with min values)
+        if lower_col and lower_col in df.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=df[lower_col],
+                    fill="tonexty",
+                    mode="lines",
+                    line=dict(width=0),
+                    fillcolor="rgba(68, 138, 255, 0.2)",
+                    name="p05-p50 band",
+                    hovertemplate=f"Time: %{{x:.2f}}s<br>min: %{{y:.3f}} {unit}<extra></extra>",
+                )
+            )
+
+        # Layout
+        fig.update_layout(
+            title=title,
+            xaxis_title=x_label,
+            yaxis_title=y_label,
+            hovermode="x unified",
+            template="plotly_white",
+            showlegend=True,
+            height=600,
+        )
+
+        # Add annotation explaining the bands
+        band_type = "percentiles" if metric_type == "HISTOGRAM" else "min/avg/max"
+        fig.add_annotation(
+            text=f"Shaded bands show {band_type} range over time",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=1.05,
+            showarrow=False,
+            font=dict(size=10, color="gray"),
+        )
+
+        return fig
+
+    def create_bucket_histogram(
+        self,
+        buckets: dict[str, int],
+        metric_name: str,
+        title: str,
+        x_label: str,
+        y_label: str,
+        unit: str,
+    ) -> go.Figure:
+        """Create Prometheus histogram bucket distribution bar chart.
+
+        Visualizes the actual bucket boundaries (le values) and observation counts
+        from a Prometheus histogram metric. Perfect for understanding distribution
+        shape and validating percentile estimates.
+
+        Args:
+            buckets: Dict mapping bucket upper bounds (le) to counts
+            metric_name: Metric name for annotations
+            title: Plot title
+            x_label: X-axis label
+            y_label: Y-axis label
+            unit: Metric unit
+
+        Returns:
+            Plotly Figure with bucket distribution bar chart
+        """
+        # Sort buckets by upper bound (handle +Inf specially)
+        sorted_buckets = []
+        for le, count in buckets.items():
+            if le == "+Inf":
+                sort_key = float("inf")
+            else:
+                try:
+                    sort_key = float(le)
+                except ValueError:
+                    sort_key = float("inf")  # Fallback
+            sorted_buckets.append((le, sort_key, count))
+
+        sorted_buckets.sort(key=lambda x: x[1])
+
+        # Extract labels and counts
+        bucket_labels = [b[0] for b in sorted_buckets]
+        bucket_counts = [b[2] for b in sorted_buckets]
+
+        # Create bar chart
+        fig = go.Figure()
+
+        fig.add_trace(
+            go.Bar(
+                x=bucket_labels,
+                y=bucket_counts,
+                name="Observations",
+                marker=dict(color="rgb(68, 138, 255)"),
+                hovertemplate="Bucket ≤ %{x}<br>Count: %{y:,}<extra></extra>",
+            )
+        )
+
+        # Layout
+        fig.update_layout(
+            title=title,
+            xaxis_title=x_label,
+            yaxis_title=y_label,
+            template="plotly_white",
+            showlegend=False,
+            height=600,
+            xaxis=dict(
+                type="category",  # Treat bucket boundaries as categories
+                categoryorder="array",
+                categoryarray=bucket_labels,  # Already sorted
+            ),
+        )
+
+        # Add annotation explaining bucket format
+        total_count = sum(bucket_counts)
+        fig.add_annotation(
+            text=f"Total observations: {total_count:,} | Each bar shows count in bucket ≤ upper bound",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=1.05,
+            showarrow=False,
+            font=dict(size=10, color="gray"),
+        )
+
+        return fig

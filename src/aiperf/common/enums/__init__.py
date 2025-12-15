@@ -27,6 +27,7 @@ from aiperf.common.enums.data_exporter_enums import (
     ConsoleExporterType,
     DataExporterType,
     ExportLevel,
+    ServerMetricsFormat,
 )
 from aiperf.common.enums.dataset_enums import (
     AudioFormat,
@@ -84,6 +85,9 @@ from aiperf.common.enums.plugin_enums import (
 from aiperf.common.enums.post_processor_enums import (
     RecordProcessorType,
     ResultsProcessorType,
+)
+from aiperf.common.enums.prometheus_enums import (
+    PrometheusMetricType,
 )
 from aiperf.common.enums.service_enums import (
     LifecycleState,
@@ -157,6 +161,7 @@ __all__ = [
     "PlotMetricDirection",
     "PowerMetricUnit",
     "PowerMetricUnitInfo",
+    "PrometheusMetricType",
     "PromptSource",
     "PublicDatasetType",
     "RecordProcessorType",
@@ -164,6 +169,7 @@ __all__ = [
     "ResultsProcessorType",
     "SSEEventType",
     "SSEFieldType",
+    "ServerMetricsFormat",
     "ServiceRegistrationStatus",
     "ServiceRunType",
     "ServiceType",

@@ -8,13 +8,11 @@ This package provides tools for plotting and analyzing AIPerf profiling data,
 including data loading, plot generation, and various output modes (PNG, HTML, dashboard).
 """
 
-__version__ = "0.1.0"
 from aiperf.plot.cli_runner import (
     run_plot_controller,
 )
 from aiperf.plot.config import (
     PlotConfig,
-    logger,
 )
 from aiperf.plot.constants import (
     ALL_STAT_KEYS,
@@ -49,6 +47,10 @@ from aiperf.plot.constants import (
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL,
     PROFILE_EXPORT_JSONL,
     PROFILE_EXPORT_TIMESLICES_CSV,
+    SERVER_METRICS_EXPORT_CSV,
+    SERVER_METRICS_EXPORT_JSON,
+    SERVER_METRICS_EXPORT_JSONL,
+    SERVER_METRICS_EXPORT_PARQUET,
     STAT_LABELS,
     PlotMode,
     PlotTheme,
@@ -194,6 +196,7 @@ from aiperf.plot.handlers import (
     DualAxisHandler,
     HistogramHandler,
     ParetoHandler,
+    PercentileBandsHandler,
     RequestTimelineHandler,
     ScatterHandler,
     ScatterLineHandler,
@@ -212,10 +215,19 @@ from aiperf.plot.metric_names import (
     get_metric_display_name,
     get_metric_display_name_with_unit,
     get_request_metrics,
+    get_server_metrics,
     get_timeslice_metrics,
 )
 from aiperf.plot.plot_controller import (
     PlotController,
+)
+from aiperf.plot.utils import (
+    create_series_legend_label,
+    detect_server_metric_series,
+    filter_server_metrics_dataframe,
+    get_available_labels_for_metric,
+    get_server_metrics_summary,
+    parse_server_metric_spec,
 )
 
 __all__ = [
@@ -278,6 +290,7 @@ __all__ = [
     "PROFILE_EXPORT_JSONL",
     "PROFILE_EXPORT_TIMESLICES_CSV",
     "ParetoHandler",
+    "PercentileBandsHandler",
     "PlotCache",
     "PlotConfig",
     "PlotController",
@@ -294,6 +307,10 @@ __all__ = [
     "RequestTimelineHandler",
     "RunData",
     "RunMetadata",
+    "SERVER_METRICS_EXPORT_CSV",
+    "SERVER_METRICS_EXPORT_JSON",
+    "SERVER_METRICS_EXPORT_JSONL",
+    "SERVER_METRICS_EXPORT_PARQUET",
     "SINGLE_RUN_STAT_SUFFIXES",
     "SINGLE_RUN_TITLE_SUFFIXES",
     "STAT_LABELS",
@@ -326,21 +343,25 @@ __all__ = [
     "create_plot_container_component",
     "create_run_selector_checklist",
     "create_section_header",
+    "create_series_legend_label",
     "create_sidebar_toggle_button",
     "create_stat_selector_dropdown",
     "create_switch_toggle",
     "create_two_column_row",
     "detect_directional_outliers",
+    "detect_server_metric_series",
     "detect_swept_parameters",
     "extract_metric_value",
     "field_config_to_edit_outputs",
     "field_config_to_outputs",
+    "filter_server_metrics_dataframe",
     "filter_stat_options_by_available",
     "flatten_config",
     "generate_plot_from_spec",
     "get_aggregated_metrics",
     "get_all_metric_display_names",
     "get_all_themes_css",
+    "get_available_labels_for_metric",
     "get_available_stats_for_metric",
     "get_button_style",
     "get_dropdown_css",
@@ -358,6 +379,8 @@ __all__ = [
     "get_request_metrics",
     "get_scoped_theme_css",
     "get_section_header_style",
+    "get_server_metrics",
+    "get_server_metrics_summary",
     "get_sidebar_style",
     "get_single_run_field_config",
     "get_single_run_metrics_with_stats",
@@ -365,7 +388,7 @@ __all__ = [
     "get_stat_options_for_single_run_metric",
     "get_theme_colors",
     "get_timeslice_metrics",
-    "logger",
+    "parse_server_metric_spec",
     "prepare_request_timeseries",
     "prepare_timeseries_dataframe",
     "prepare_timeslice_metrics",

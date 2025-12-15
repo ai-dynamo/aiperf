@@ -39,6 +39,7 @@ from aiperf.plot.dashboard.components import (
     create_global_stat_selector,
     create_label,
     create_run_selector_checklist,
+    create_section_header,
     create_sidebar_toggle_button,
 )
 from aiperf.plot.dashboard.styling import (
@@ -244,6 +245,55 @@ class DashboardBuilder:
                 "unit": unit,
             }
 
+        # Add server metrics aggregated (for multi-run comparison)
+        if (
+            hasattr(first_run, "server_metrics_aggregated")
+            and first_run.server_metrics_aggregated
+        ):
+            from aiperf.plot.metric_names import _format_server_metric_name
+
+            for (
+                metric_name,
+                endpoint_data,
+            ) in first_run.server_metrics_aggregated.items():
+                # For multi-run, we use merged endpoint data (first endpoint)
+                first_endpoint = next(iter(endpoint_data.values()))
+                first_series = next(iter(first_endpoint.values()))
+
+                metric_type = first_series.get("type", "")
+                unit = first_series.get("unit", "")
+                stats_obj = first_series.get("stats")
+
+                # Determine available stats based on metric type
+                available_stats = []
+                if stats_obj:
+                    if hasattr(stats_obj, "__dict__"):
+                        # Pydantic model - get all non-None attributes
+                        available_stats = [
+                            k for k, v in stats_obj.__dict__.items() if v is not None
+                        ]
+                    elif isinstance(stats_obj, dict):
+                        # Dict - get all keys
+                        available_stats = list(stats_obj.keys())
+
+                # Default stats based on metric type
+                if metric_type == "COUNTER" and not available_stats:
+                    available_stats = ["rate", "total"]
+                elif metric_type in ["GAUGE", "HISTOGRAM"] and not available_stats:
+                    available_stats = ["avg", "p50", "p90", "p95", "p99"]
+
+                # Format display name
+                display_name = _format_server_metric_name(metric_name)
+                if unit:
+                    display_name = f"{display_name} ({unit})"
+
+                metrics_info[metric_name] = {
+                    "display": display_name,
+                    "category": "Server Metrics",
+                    "stats": available_stats,
+                    "unit": unit,
+                }
+
         # Add metadata metrics
         metrics_info["concurrency"] = {
             "display": "Concurrency",
@@ -261,6 +311,40 @@ class DashboardBuilder:
             List of option dicts for dropdown
         """
         return [{"label": STAT_LABELS[stat], "value": stat} for stat in ALL_STAT_KEYS]
+
+    def _get_server_metrics_options(self, run: "RunData") -> list[dict]:
+        """
+        Get server metrics options for dropdown menus.
+
+        Builds dropdown options from server metrics with display names and
+        series count information.
+
+        Args:
+            run: RunData object containing server_metrics DataFrame
+
+        Returns:
+            List of option dicts with label/value pairs for dropdown.
+            Empty list if no server metrics available.
+        """
+        if run.server_metrics is None or run.server_metrics.empty:
+            return []
+
+        from aiperf.plot.utils import get_server_metrics_summary
+
+        server_summary = get_server_metrics_summary(run)
+
+        options = []
+        for metric_name, info in sorted(server_summary.items()):
+            # Build label with additional context
+            label = f"{metric_name} ({info['display_name']})"
+
+            # Add label combination count if > 1
+            if info["label_combinations"] > 1:
+                label += f" [{info['label_combinations']} series]"
+
+            options.append({"label": label, "value": metric_name})
+
+        return options
 
     def _flatten_config(self, config: dict, row: dict, prefix: str = "") -> None:
         """
@@ -662,6 +746,105 @@ class DashboardBuilder:
             style=get_header_style(self.theme),
         )
 
+    def _build_server_metrics_info_card(self) -> html.Div | None:
+        """
+        Build server metrics information card showing endpoint and metric counts.
+
+        Returns:
+            HTML Div with server metrics info, or None if no server metrics available
+        """
+        # Check if any run has server metrics
+        has_server_metrics = False
+        total_metrics = set()
+        total_endpoints = set()
+
+        for run in self.runs:
+            if (
+                hasattr(run, "server_metrics_aggregated")
+                and run.server_metrics_aggregated
+            ):
+                has_server_metrics = True
+                total_metrics.update(run.server_metrics_aggregated.keys())
+                for endpoint_data in run.server_metrics_aggregated.values():
+                    total_endpoints.update(endpoint_data.keys())
+
+        if not has_server_metrics:
+            return None
+
+        # Build info card content
+        info_items = [
+            create_section_header("Server Metrics", self.theme, size="sm"),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Span(
+                                "Metrics: ",
+                                style={
+                                    "font-weight": "500",
+                                    "color": self.colors["text"],
+                                    "font-size": "12px",
+                                },
+                            ),
+                            html.Span(
+                                f"{len(total_metrics)}",
+                                style={
+                                    "color": NVIDIA_GREEN,
+                                    "font-weight": "600",
+                                    "font-size": "12px",
+                                },
+                            ),
+                        ],
+                        style={"margin-bottom": "6px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Span(
+                                "Endpoints: ",
+                                style={
+                                    "font-weight": "500",
+                                    "color": self.colors["text"],
+                                    "font-size": "12px",
+                                },
+                            ),
+                            html.Span(
+                                f"{len(total_endpoints)}",
+                                style={
+                                    "color": NVIDIA_GREEN,
+                                    "font-weight": "600",
+                                    "font-size": "12px",
+                                },
+                            ),
+                        ],
+                        style={"margin-bottom": "6px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Span(
+                                "Source: ",
+                                style={
+                                    "font-weight": "500",
+                                    "color": self.colors["text"],
+                                    "font-size": "12px",
+                                },
+                            ),
+                            html.Span(
+                                "Prometheus",
+                                style={
+                                    "color": self.colors["text"],
+                                    "font-size": "12px",
+                                    "opacity": "0.8",
+                                },
+                            ),
+                        ],
+                    ),
+                ],
+                style={"padding": "8px 0"},
+            ),
+        ]
+
+        return html.Div(info_items)
+
     def _build_sidebar(self) -> html.Div:
         """Build reorganized sidebar with collapsible controls and visual cards."""
         sections = []
@@ -689,7 +872,18 @@ class DashboardBuilder:
             )
         )
 
-        # 2. Layout & Plots - wrapped in card
+        # 2. Server Metrics Info Card (if available)
+        server_metrics_card = self._build_server_metrics_info_card()
+        if server_metrics_card:
+            sections.append(
+                html.Div(
+                    [server_metrics_card],
+                    id="sidebar-server-metrics-card",
+                    style=card_style,
+                )
+            )
+
+        # 3. Layout & Plots - wrapped in card
         sections.append(
             html.Div(
                 [self._build_layout_and_plots_section()],
@@ -1631,6 +1825,18 @@ class DashboardBuilder:
             )
             y_metric_options.extend(gpu_metrics)
 
+        # Server metrics (for timeslice, area, and dual-axis plots)
+        server_metrics = self._get_server_metrics_options(run)
+        if server_metrics:
+            y_metric_options.append(
+                {
+                    "label": "── Server Metrics ──",
+                    "value": "_server_divider",
+                    "disabled": True,
+                }
+            )
+            y_metric_options.extend(server_metrics)
+
         # Stat options for histogram (kept for backward compatibility)
         stat_options = self._get_stat_options_ordered()
 
@@ -1937,6 +2143,18 @@ class DashboardBuilder:
                 }
             )
             y_metric_options.extend(gpu_metrics)
+
+        # Server metrics (for timeslice, area, and dual-axis plots)
+        server_metrics = self._get_server_metrics_options(run)
+        if server_metrics:
+            y_metric_options.append(
+                {
+                    "label": "── Server Metrics ──",
+                    "value": "_server_divider",
+                    "disabled": True,
+                }
+            )
+            y_metric_options.extend(server_metrics)
 
         # Stat options for histogram (kept for backward compatibility)
         stat_options = self._get_stat_options_ordered()

@@ -15,7 +15,7 @@ from aiperf.exporters.console_usage_discrepancy_exporter import (
 )
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.usage_diff_metrics import UsageDiscrepancyCountMetric
-from tests.unit.exporters.conftest import create_exporter_config
+from tests.unit.conftest import create_exporter_config
 
 
 class TestConsoleUsageDiscrepancyExporter:

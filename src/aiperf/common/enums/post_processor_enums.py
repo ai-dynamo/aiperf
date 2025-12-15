@@ -31,17 +31,24 @@ class ResultsProcessorType(CaseInsensitiveStrEnum):
     """Processor that processes the metric results from METRIC_RECORD and computes metrics from MetricType.DERIVED. as well as aggregates the results.
     This is the last stage of the metrics processing pipeline, and is done by the RecordsManager after all the service instances have completed their processing."""
 
-    TELEMETRY_RESULTS = "telemetry_results"
-    """Processor that processes telemetry records from GPU monitoring and computes metrics from MetricType.TELEMETRY.
-    This processes per-GPU telemetry data and aggregates it using the MetricTelemetryDict and PerGpuMetricArray classes."""
-
     RECORD_EXPORT = "record_export"
     """Processor that exports per-record metrics to JSONL files with display unit conversion and filtering.
     Only enabled when export_level is set to RECORDS."""
 
-    TELEMETRY_EXPORT = "telemetry_export"
+    GPU_TELEMETRY_ACCUMULATOR = "gpu_telemetry_accumulator"
+    """Processor that accumulates GPU telemetry records from GPU monitoring and computes metrics in a hierarchical structure."""
+
+    GPU_TELEMETRY_JSONL_WRITER = "gpu_telemetry_jsonl_writer"
     """Processor that exports per-record GPU telemetry data to JSONL files.
-    Writes each TelemetryRecord as it arrives from the TelemetryManager."""
+    Writes each TelemetryRecord as it arrives from the GPUTelemetryManager."""
+
+    SERVER_METRICS_JSONL_WRITER = "server_metrics_jsonl_writer"
+    """Processor that exports per-record server metrics data to JSONL files in slim format.
+    Converts full ServerMetricsRecord objects to slim format before writing, excluding static metadata."""
+
+    SERVER_METRICS_ACCUMULATOR = "server_metrics_accumulator"
+    """Processor that accumulates Prometheus server metrics records and computes summary statistics.
+    Supports Gauge (point-in-time), Counter (deltas), and Histogram (bucket distributions) metrics with time filtering."""
 
     TIMESLICE = "timeslice"
     """Processor that processes metric results for each user-configurable time-slice."""

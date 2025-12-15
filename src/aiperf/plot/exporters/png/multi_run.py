@@ -171,6 +171,65 @@ class MultiRunPNGExporter(BasePNGExporter):
                     elif "value" in value:
                         row[key] = value["value"]
 
+            # Extract server metrics from server_metrics_aggregated
+            if run.server_metrics_aggregated:
+                for metric_name, endpoint_data in run.server_metrics_aggregated.items():
+                    # Aggregate across ALL endpoints and label combinations
+                    # This ensures consistent behavior regardless of label cardinality
+                    values = []
+                    metric_type = None
+                    total_combinations = 0
+
+                    for _endpoint_url, labels_dict in endpoint_data.items():
+                        for _labels_key, series_data in labels_dict.items():
+                            total_combinations += 1
+                            stats = series_data.get("stats")
+
+                            if stats is None:
+                                # Static value (no variation) - use the value directly
+                                static_value = series_data.get("value")
+                                if static_value is not None:
+                                    values.append(static_value)
+                                continue
+
+                            # Extract metric type (same for all series)
+                            if metric_type is None:
+                                metric_type = series_data.get("type", "")
+
+                            # Extract appropriate stat based on metric type
+                            if metric_type == "COUNTER":
+                                # Use rate for counters
+                                if hasattr(stats, "rate"):
+                                    values.append(stats.rate)
+                                elif isinstance(stats, dict) and "rate" in stats:
+                                    values.append(stats["rate"])
+                            else:
+                                # Use avg for gauge/histogram
+                                if hasattr(stats, "avg"):
+                                    values.append(stats.avg)
+                                elif isinstance(stats, dict) and "avg" in stats:
+                                    values.append(stats["avg"])
+
+                    # Aggregate all values
+                    if values:
+                        # Use sum for counters (total rate), average for others
+                        if metric_type == "COUNTER":
+                            row[metric_name] = sum(
+                                values
+                            )  # Sum rates across all labels/endpoints
+                        else:
+                            row[metric_name] = sum(values) / len(
+                                values
+                            )  # Average across labels/endpoints
+
+                        # Warn if multiple combinations exist (potential semantic issue)
+                        if total_combinations > 1:
+                            self.debug(
+                                f"Server metric '{metric_name}' has {total_combinations} "
+                                f"endpoint+label combinations - aggregated to single value "
+                                f"({'sum' if metric_type == 'COUNTER' else 'average'})"
+                            )
+
             rows.append(row)
 
         df = pd.DataFrame(rows)

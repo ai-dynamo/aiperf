@@ -147,3 +147,35 @@ def sample_aggregated_data() -> dict[str, Any]:
         "was_cancelled": False,
         "error_summary": [],
     }
+
+
+@pytest.fixture(autouse=True)
+def mock_kaleido_write_image(request, monkeypatch):
+    """Mock Plotly's write_image to avoid slow Kaleido rendering in unit tests only.
+
+    This fixture automatically patches fig.write_image() and fig.to_image()
+    to avoid the expensive Kaleido/Chrome rendering process during unit tests.
+    Integration tests are skipped to allow real PNG generation.
+    """
+
+    def mock_write_image(self, *args, **kwargs):
+        """Mock write_image that creates an empty file."""
+        # Extract the file path from args or kwargs
+        if args:
+            path = Path(args[0])
+        else:
+            path = Path(kwargs.get("file", kwargs.get("path", "/tmp/mock.png")))
+
+        # Create parent directory if needed
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write a minimal PNG header to make it a valid file
+        path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+
+    def mock_to_image(self, *args, **kwargs):
+        """Mock to_image that returns minimal PNG bytes."""
+        return b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+
+    # Patch the methods on the Figure class
+    monkeypatch.setattr("plotly.graph_objects.Figure.write_image", mock_write_image)
+    monkeypatch.setattr("plotly.graph_objects.Figure.to_image", mock_to_image)

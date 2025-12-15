@@ -21,6 +21,7 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
         super().__init__(**kwargs)
         self._results = exporter_config.results
         self._telemetry_results = exporter_config.telemetry_results
+        self._server_metrics_results = exporter_config.server_metrics_results
         self._user_config = exporter_config.user_config
         self._metric_registry = MetricRegistry
         self._output_directory = exporter_config.user_config.output.artifact_directory

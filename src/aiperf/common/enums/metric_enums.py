@@ -47,6 +47,10 @@ class BaseMetricUnitInfo(BasePydanticEnumInfo):
 class BaseMetricUnit(BasePydanticBackedStrEnum):
     """Base class for all metric units."""
 
+    def display_name(self) -> str:
+        """Get the display name of the metric unit."""
+        return self.name.lower().replace("_per_second", "/s")
+
     @cached_property
     def info(self) -> BaseMetricUnitInfo:
         """Get the info for the metric unit."""
@@ -182,14 +186,17 @@ def _unit(tag: str) -> BaseMetricUnitInfo:
 class GenericMetricUnit(BaseMetricUnit):
     """Defines generic units for metrics. These dont have any extra information other than the tag, which is used for display purposes."""
 
+    BLOCKS = _unit("blocks")
     COUNT = _unit("count")
-    REQUESTS = _unit("requests")
-    TOKENS = _unit("tokens")
-    RATIO = _unit("ratio")
-    USER = _unit("user")
-    PERCENT = _unit("%")
+    ERRORS = _unit("errors")
     IMAGE = _unit("image")
     IMAGES = _unit("images")
+    PERCENT = _unit("%")
+    RATIO = _unit("ratio")
+    REQUESTS = _unit("requests")
+    TOKENS = _unit("tokens")
+    USER = _unit("user")
+    USERS = _unit("users")
     VIDEO = _unit("video")
     VIDEOS = _unit("videos")
 
@@ -368,6 +375,14 @@ class MetricOverTimeUnit(BaseMetricUnit):
         time_unit=MetricTimeUnit.MILLISECONDS,
         primary_unit=GenericMetricUnit.VIDEO,
         inverted=True,
+    )
+    MB_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=MetricSizeUnit.MEGABYTES,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
+    GB_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=MetricSizeUnit.GIGABYTES,
+        time_unit=MetricTimeUnit.SECONDS,
     )
 
     @cached_property

@@ -34,7 +34,7 @@ from aiperf.plot.metric_names import (
     get_timeslice_metrics,
 )
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
 
 def _detect_invalid_stat_pattern(metric_name: str) -> str | None:
@@ -271,7 +271,7 @@ class PlotConfig:
                     f"Preset: {preset if plot_name in presets else '<not found>'}\n"
                     f"Error: {e}"
                 )
-                logger.error(error_context, exc_info=True)
+                _logger.error(error_context, exc_info=True)
 
                 raise ValueError(
                     f"Config validation failed for multi_run plot '{plot_name}'. "
@@ -324,7 +324,7 @@ class PlotConfig:
                     f"Preset: {preset if plot_name in presets else '<not found>'}\n"
                     f"Error: {e}"
                 )
-                logger.error(error_context, exc_info=True)
+                _logger.error(error_context, exc_info=True)
 
                 raise ValueError(
                     f"Config validation failed for single_run plot '{plot_name}'. "
@@ -362,6 +362,29 @@ class PlotConfig:
             raise ValueError(
                 f"Failed to parse experiment_classification config: {e}"
             ) from e
+
+    def get_downsampling_config(self) -> dict:
+        """
+        Get server metrics downsampling configuration.
+
+        Returns:
+            Dictionary with downsampling configuration:
+            {
+                "enabled": bool,
+                "window_size_seconds": float,
+                "aggregation_method": str
+            }
+            Returns defaults if settings section is missing.
+        """
+        settings = self.config.get("settings", {})
+        downsampling = settings.get("server_metrics_downsampling", {})
+
+        # Provide sensible defaults
+        return {
+            "enabled": downsampling.get("enabled", True),
+            "window_size_seconds": downsampling.get("window_size_seconds", 5.0),
+            "aggregation_method": downsampling.get("aggregation_method", "mean"),
+        }
 
     def _preset_to_plot_spec(
         self, name: str, preset: dict
@@ -417,7 +440,7 @@ class PlotConfig:
         if exp_class_config is not None:
             # When experiment classification is enabled, ALWAYS use experiment_group
             groups = "experiment_group"
-            logger.info(
+            _logger.info(
                 f"Classification enabled for plot '{name}': forcing groups={groups}"
             )
         else:
@@ -425,7 +448,7 @@ class PlotConfig:
             groups = preset.get("groups")
             if groups is None or groups == []:
                 groups = ["run_name"]
-            logger.info(
+            _logger.info(
                 f"Classification disabled for plot '{name}': using groups={groups}"
             )
 
@@ -454,6 +477,76 @@ class PlotConfig:
             return TimeSlicePlotSpec(**spec_kwargs)
 
         return PlotSpec(**spec_kwargs)
+
+    def _is_server_metric(self, metric_name: str) -> bool:
+        """
+        Check if a metric name appears to be a server metric.
+
+        This is a heuristic-based detection used during config parsing to determine
+        the data source for metrics. The actual metric data comes from export files,
+        so this is only used for automatic source inference in plot specifications.
+
+        Server metrics typically follow Prometheus naming conventions:
+        - Contains colon separator (e.g., "vllm:metric_name", "triton:metric")
+        - Common prefixes: vllm, triton, http, dynamo, nvidia, nv
+        - May include endpoint/label filters: metric[endpoint], metric{labels}
+
+        Note: If you have custom Prometheus metrics that don't match these patterns,
+        explicitly set `source: server_metrics` in your plot specification.
+
+        Args:
+            metric_name: Metric name to check
+
+        Returns:
+            True if likely a server metric, False otherwise
+        """
+        # Strip endpoint/label filters first
+        import re
+
+        base_name = re.sub(r"\[.*?\]|\{.*?\}", "", metric_name).strip()
+
+        # Check for Prometheus namespace convention (most reliable indicator)
+        # Format: namespace:metric_name (e.g., "vllm:kv_cache_usage")
+        if ":" in base_name:
+            return True
+
+        # Check for common Prometheus/server metric prefixes
+        # Includes standard patterns from vLLM, Triton, HTTP, DCGM, NVIDIA
+        prometheus_prefixes = [
+            "vllm_",
+            "sglang_",
+            "trtllm_",
+            "nv_inference_",  # Triton Inference Server (most specific)
+            "nv_gpu_",  # Triton GPU metrics
+            "nv_",  # Generic Triton/NVIDIA
+            "http_",
+            "https_",
+            "dynamo_",
+            "nvidia_",
+            "dcgm_",
+            "gpu_",
+            "process_",
+            "node_",
+            "container_",
+        ]
+        if any(base_name.startswith(prefix) for prefix in prometheus_prefixes):
+            return True
+
+        # Check for common Prometheus suffixes (counter/gauge indicators)
+        prometheus_suffixes = [
+            "_total",
+            "_count",
+            "_sum",
+            "_bucket",
+            "_seconds",
+            "_milliseconds",
+            "_microseconds",
+            "_us",  # Triton microseconds
+            "_ms",  # Triton milliseconds
+            "_ns",
+            "_bytes",
+        ]
+        return any(base_name.endswith(suffix) for suffix in prometheus_suffixes)
 
     def _expand_metric_shortcut(
         self,
@@ -484,32 +577,40 @@ class PlotConfig:
         if isinstance(metric_value, dict):
             base_name = metric_value["metric"]
             stat = metric_value.get("stat")
+            # Extract source from dict if present (overrides source_override)
+            if "source" in metric_value and not source_override:
+                source_override = metric_value["source"]
         else:
             base_name, stat = _parse_and_validate_metric_name(metric_value)
-        source: DataSource
 
-        if base_name in get_aggregated_metrics():
-            source = DataSource.AGGREGATED
-        elif base_name in get_request_metrics():
-            source = DataSource.REQUESTS
-        elif base_name in get_timeslice_metrics():
-            source = DataSource.TIMESLICES
-        elif base_name in get_gpu_metrics():
-            source = DataSource.GPU_TELEMETRY
-        else:
-            all_known = (
-                get_aggregated_metrics()
-                + get_request_metrics()
-                + get_timeslice_metrics()
-                + get_gpu_metrics()
-            )
-            raise ValueError(
-                f"Unknown metric: '{base_name}' (from shortcut '{metric_value}'). "
-                f"Known metrics: {all_known}"
-            )
-
+        # If source is explicitly specified, use it and skip validation
+        # This allows users to specify server metrics that don't match heuristic patterns
         if source_override:
             source = DataSource(source_override)
+        else:
+            # Auto-detect source from metric name
+            if base_name in get_aggregated_metrics():
+                source = DataSource.AGGREGATED
+            elif base_name in get_request_metrics():
+                source = DataSource.REQUESTS
+            elif base_name in get_timeslice_metrics():
+                source = DataSource.TIMESLICES
+            elif base_name in get_gpu_metrics():
+                source = DataSource.GPU_TELEMETRY
+            elif self._is_server_metric(base_name):
+                # Server metrics (Prometheus-style names like "vllm:kv_cache_usage_perc")
+                source = DataSource.SERVER_METRICS
+            else:
+                all_known = (
+                    get_aggregated_metrics()
+                    + get_request_metrics()
+                    + get_timeslice_metrics()
+                    + get_gpu_metrics()
+                )
+                raise ValueError(
+                    f"Unknown metric: '{base_name}' (from shortcut '{metric_value}'). "
+                    f"Known metrics: {all_known}. For server metrics, use Prometheus-style names like 'vllm:metric_name'."
+                )
         if stat_override:
             stat = stat_override
 

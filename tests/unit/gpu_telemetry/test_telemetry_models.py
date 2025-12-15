@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.telemetry_models import (
+    GpuMetadata,
     GpuMetricTimeSeries,
     GpuTelemetryData,
     GpuTelemetrySnapshot,
@@ -188,35 +189,32 @@ class TestGpuMetricTimeSeries:
         """Test adding snapshots to time series."""
         time_series = GpuMetricTimeSeries()
 
-        metrics1 = {"power": 100.0, "util": 80.0}
-        metrics2 = {"power": 110.0, "util": 85.0}
+        time_series.append_snapshot({"power": 100.0, "util": 80.0}, 1000000000)
+        time_series.append_snapshot({"power": 110.0, "util": 85.0}, 2000000000)
 
-        time_series.append_snapshot(metrics1, 1000000000)
-        time_series.append_snapshot(metrics2, 2000000000)
+        assert len(time_series) == 2
+        assert list(time_series.timestamps) == [1000000000, 2000000000]
+        assert list(time_series.get_metric_array("power")) == [100.0, 110.0]
+        assert list(time_series.get_metric_array("util")) == [80.0, 85.0]
 
-        assert len(time_series.snapshots) == 2
-        assert time_series.snapshots[0].timestamp_ns == 1000000000
-        assert time_series.snapshots[0].metrics == metrics1
-        assert time_series.snapshots[1].timestamp_ns == 2000000000
-        assert time_series.snapshots[1].metrics == metrics2
+    def test_consistent_metric_schema(self):
+        """Test that metric schema is consistent across all snapshots.
 
-    def test_get_metric_values(self):
-        """Test extracting values for a specific metric."""
+        DCGM metrics are static per run - schema is determined on first snapshot
+        and all subsequent snapshots must provide the same metrics.
+        """
         time_series = GpuMetricTimeSeries()
 
         time_series.append_snapshot({"power": 100.0, "util": 80.0}, 1000000000)
         time_series.append_snapshot({"power": 110.0, "util": 85.0}, 2000000000)
-        time_series.append_snapshot({"util": 90.0}, 3000000000)  # Missing power
+        time_series.append_snapshot({"power": 120.0, "util": 90.0}, 3000000000)
 
-        power_values = time_series.get_metric_values("power")
-        util_values = time_series.get_metric_values("util")
+        power = time_series.get_metric_array("power")
+        util = time_series.get_metric_array("util")
 
-        assert power_values == [(100.0, 1000000000), (110.0, 2000000000)]
-        assert util_values == [
-            (80.0, 1000000000),
-            (85.0, 2000000000),
-            (90.0, 3000000000),
-        ]
+        # All values present
+        assert list(power) == [100.0, 110.0, 120.0]
+        assert list(util) == [80.0, 85.0, 90.0]
 
     def test_to_metric_result_success(self):
         """Test converting time series to MetricResult."""
@@ -247,16 +245,180 @@ class TestGpuMetricTimeSeries:
             exc_info.value
         )
 
+    # Columnar storage tests
+
+    def test_len(self):
+        """Test __len__ returns correct size."""
+        time_series = GpuMetricTimeSeries()
+        assert len(time_series) == 0
+
+        time_series.append_snapshot({"power": 100.0}, 1_000_000_000)
+        assert len(time_series) == 1
+
+        time_series.append_snapshot({"power": 110.0}, 2_000_000_000)
+        assert len(time_series) == 2
+
+    def test_timestamps_property(self):
+        """Test timestamps property returns correct array view."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 100.0}, 1_000_000_000)
+        time_series.append_snapshot({"power": 110.0}, 2_000_000_000)
+
+        timestamps = time_series.timestamps
+        assert list(timestamps) == [1_000_000_000, 2_000_000_000]
+
+    def test_get_metric_array(self):
+        """Test get_metric_array returns correct array view."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 100.0, "util": 80.0}, 1_000_000_000)
+        time_series.append_snapshot({"power": 110.0, "util": 85.0}, 2_000_000_000)
+
+        power = time_series.get_metric_array("power")
+        util = time_series.get_metric_array("util")
+        unknown = time_series.get_metric_array("unknown")
+
+        assert list(power) == [100.0, 110.0]
+        assert list(util) == [80.0, 85.0]
+        assert unknown is None
+
+    def test_schema_determined_on_first_snapshot(self):
+        """Test that metric schema is determined on the first snapshot.
+
+        DCGM metrics are static per run. The first snapshot determines which
+        metrics are tracked, and all subsequent snapshots should provide the same set.
+        """
+        time_series = GpuMetricTimeSeries()
+
+        # First snapshot determines schema
+        time_series.append_snapshot({"power": 100.0, "util": 80.0}, 1_000_000_000)
+
+        # Subsequent snapshots provide same metrics
+        time_series.append_snapshot({"power": 110.0, "util": 85.0}, 2_000_000_000)
+        time_series.append_snapshot({"power": 120.0, "util": 90.0}, 3_000_000_000)
+
+        power = time_series.get_metric_array("power")
+        util = time_series.get_metric_array("util")
+
+        assert list(power) == [100.0, 110.0, 120.0]
+        assert list(util) == [80.0, 85.0, 90.0]
+
+    def test_stats_computation(self):
+        """Test stats computation on consistent metric data."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 100.0}, 1_000_000_000)
+        time_series.append_snapshot({"power": 150.0}, 2_000_000_000)
+        time_series.append_snapshot({"power": 200.0}, 3_000_000_000)
+
+        result = time_series.to_metric_result("power", "tag", "header", "W")
+
+        assert result.count == 3
+        assert result.avg == 150.0  # (100 + 150 + 200) / 3
+        assert result.min == 100.0
+        assert result.max == 200.0
+        assert result.current == 200.0  # Last value
+
+    def test_grow_preserves_data(self):
+        """Test array growth preserves existing data."""
+        time_series = GpuMetricTimeSeries()
+        # Add more than initial capacity (128)
+        for i in range(200):
+            time_series.append_snapshot({"power": float(i)}, i * 1_000_000_000)
+
+        assert len(time_series) == 200
+        assert time_series.get_metric_array("power")[0] == 0.0
+        assert time_series.get_metric_array("power")[199] == 199.0
+
+    def test_insert_sorted_out_of_order(self):
+        """Test insert-sorted handles out-of-order timestamps."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 100.0}, 1_000_000_000)
+        time_series.append_snapshot({"power": 300.0}, 3_000_000_000)
+        time_series.append_snapshot({"power": 200.0}, 2_000_000_000)  # Out of order!
+
+        # Data should be sorted by timestamp
+        assert list(time_series.timestamps) == [
+            1_000_000_000,
+            2_000_000_000,
+            3_000_000_000,
+        ]
+        assert list(time_series.get_metric_array("power")) == [100.0, 200.0, 300.0]
+
+    def test_insert_sorted_preserves_all_metrics(self):
+        """Test insert-sorted correctly preserves all metric values during shift."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 100.0, "util": 80.0}, 1_000_000_000)
+        time_series.append_snapshot({"power": 120.0, "util": 90.0}, 3_000_000_000)
+        time_series.append_snapshot(
+            {"power": 150.0, "util": 85.0}, 2_000_000_000
+        )  # Out of order!
+
+        # After sorting: ts1, ts2(inserted), ts3
+        assert list(time_series.timestamps) == [
+            1_000_000_000,
+            2_000_000_000,
+            3_000_000_000,
+        ]
+
+        power = time_series.get_metric_array("power")
+        assert list(power) == [100.0, 150.0, 120.0]
+
+        util = time_series.get_metric_array("util")
+        assert list(util) == [80.0, 85.0, 90.0]
+
+    def test_multiple_metrics_columnar_access(self):
+        """Test columnar access for multiple metrics."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 100.0, "util": 80.0}, 1_000_000_000)
+        time_series.append_snapshot({"power": 110.0, "util": 85.0}, 2_000_000_000)
+
+        assert len(time_series) == 2
+
+        power = time_series.get_metric_array("power")
+        util = time_series.get_metric_array("util")
+        unknown = time_series.get_metric_array("unknown")
+
+        assert list(power) == [100.0, 110.0]
+        assert list(util) == [80.0, 85.0]
+        assert unknown is None
+
+    def test_timestamps_and_metrics_aligned(self):
+        """Test timestamps and metric values remain aligned."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 100.0}, 1_000_000_000)
+        time_series.append_snapshot({"power": 150.0}, 2_000_000_000)
+        time_series.append_snapshot({"power": 200.0}, 3_000_000_000)
+
+        power = time_series.get_metric_array("power")
+        timestamps = time_series.timestamps
+
+        # Verify alignment
+        assert len(power) == len(timestamps) == 3
+        assert list(zip(timestamps, power, strict=False)) == [
+            (1_000_000_000, 100.0),
+            (2_000_000_000, 150.0),
+            (3_000_000_000, 200.0),
+        ]
+
+    def test_unknown_metric_raises_no_metric_value(self):
+        """Test NoMetricValue raised for unknown metric."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 100.0}, 1_000_000_000)
+
+        # Unknown metric returns None from get_metric_array
+        assert time_series.get_metric_array("unknown") is None
+
+        # to_metric_result raises NoMetricValue for unknown metric
+        with pytest.raises(NoMetricValue):
+            time_series.to_metric_result("unknown", "tag", "header", "unit")
+
 
 class TestGpuTelemetryData:
     """Test GpuTelemetryData model with grouped approach."""
 
     def test_add_record_grouped(self):
         """Test adding TelemetryRecord creates grouped snapshots."""
-        from aiperf.common.models.telemetry_models import GpuMetadata
-
         metadata = GpuMetadata(
-            gpu_index=0, gpu_uuid="GPU-test-uuid", model_name="Test GPU"
+            gpu_index=0, gpu_uuid="GPU-test-uuid", gpu_model_name="Test GPU"
         )
 
         telemetry_data = GpuTelemetryData(metadata=metadata)
@@ -276,20 +438,17 @@ class TestGpuTelemetryData:
 
         telemetry_data.add_record(record)
 
-        assert len(telemetry_data.time_series.snapshots) == 1
-        snapshot = telemetry_data.time_series.snapshots[0]
-        assert snapshot.timestamp_ns == 1000000000
-        assert len(snapshot.metrics) == 3
-        assert snapshot.metrics["gpu_power_usage"] == 100.0
-        assert snapshot.metrics["gpu_utilization"] == 80.0
-        assert snapshot.metrics["gpu_memory_used"] == 15.0
+        ts = telemetry_data.time_series
+        assert len(ts) == 1
+        assert ts.timestamps[0] == 1000000000
+        assert ts.get_metric_array("gpu_power_usage")[0] == 100.0
+        assert ts.get_metric_array("gpu_utilization")[0] == 80.0
+        assert ts.get_metric_array("gpu_memory_used")[0] == 15.0
 
     def test_add_record_filters_none_values(self):
         """Test that None metric values are filtered out."""
-        from aiperf.common.models.telemetry_models import GpuMetadata
-
         metadata = GpuMetadata(
-            gpu_index=0, gpu_uuid="GPU-test-uuid", model_name="Test GPU"
+            gpu_index=0, gpu_uuid="GPU-test-uuid", gpu_model_name="Test GPU"
         )
 
         telemetry_data = GpuTelemetryData(metadata=metadata)
@@ -309,18 +468,16 @@ class TestGpuTelemetryData:
 
         telemetry_data.add_record(record)
 
-        snapshot = telemetry_data.time_series.snapshots[0]
-        assert len(snapshot.metrics) == 2
-        assert "gpu_power_usage" in snapshot.metrics
-        assert "gpu_memory_used" in snapshot.metrics
-        assert "gpu_utilization" not in snapshot.metrics
+        ts = telemetry_data.time_series
+        assert len(ts) == 1
+        assert ts.get_metric_array("gpu_power_usage") is not None
+        assert ts.get_metric_array("gpu_memory_used") is not None
+        assert ts.get_metric_array("gpu_utilization") is None
 
     def test_get_metric_result(self):
         """Test getting MetricResult for a specific metric."""
-        from aiperf.common.models.telemetry_models import GpuMetadata
-
         metadata = GpuMetadata(
-            gpu_index=0, gpu_uuid="GPU-test-uuid", model_name="Test GPU"
+            gpu_index=0, gpu_uuid="GPU-test-uuid", gpu_model_name="Test GPU"
         )
 
         telemetry_data = GpuTelemetryData(metadata=metadata)

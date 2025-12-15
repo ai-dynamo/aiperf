@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import EndpointType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
@@ -13,12 +13,12 @@ from aiperf.common.models.telemetry_models import (
     GpuMetadata,
     GpuTelemetryData,
     TelemetryHierarchy,
-    TelemetryMetrics,
     TelemetryRecord,
 )
-from aiperf.post_processors.telemetry_results_processor import (
-    TelemetryResultsProcessor,
+from aiperf.gpu_telemetry.accumulator import (
+    GPUTelemetryAccumulator,
 )
+from tests.unit.post_processors.conftest import make_telemetry_record
 
 
 @pytest.fixture
@@ -34,9 +34,23 @@ def mock_user_config() -> UserConfig:
 
 
 @pytest.fixture
+def mock_service_config() -> ServiceConfig:
+    """Provide minimal ServiceConfig for testing."""
+    return ServiceConfig()
+
+
+@pytest.fixture
+def mock_pub_client():
+    """Provide mock pub client for testing."""
+    mock = Mock()
+    mock.publish = AsyncMock()
+    return mock
+
+
+@pytest.fixture
 def sample_telemetry_record() -> TelemetryRecord:
     """Create a sample TelemetryRecord with typical values."""
-    return TelemetryRecord(
+    return make_telemetry_record(
         timestamp_ns=1000000000,
         dcgm_url="http://node1:9401/metrics",
         gpu_index=0,
@@ -45,54 +59,77 @@ def sample_telemetry_record() -> TelemetryRecord:
         pci_bus_id="00000000:02:00.0",
         device="nvidia0",
         hostname="node1",
-        telemetry_data=TelemetryMetrics(
-            gpu_power_usage=75.5,
-            energy_consumption=1000.0,
-            gpu_utilization=85.0,
-            gpu_memory_used=15.26,
-            gpu_temperature=70.0,
-            xid_errors=0.0,
-            power_violation=120.0,
-        ),
+        gpu_power_usage=75.5,
+        energy_consumption=1000.0,
+        gpu_utilization=85.0,
+        gpu_memory_used=15.26,
+        gpu_temperature=70.0,
+        xid_errors=0.0,
+        power_violation=120.0,
     )
 
 
-class TestTelemetryResultsProcessor:
-    """Test cases for TelemetryResultsProcessor."""
+class TestGPUTelemetryAccumulator:
+    """Test cases for GPUTelemetryAccumulator."""
 
-    def test_initialization(self, mock_user_config: UserConfig) -> None:
+    def test_initialization(
+        self,
+        mock_user_config: UserConfig,
+        mock_service_config: ServiceConfig,
+        mock_pub_client,
+    ) -> None:
         """Test processor initialization sets up hierarchy and metric units."""
-        processor = TelemetryResultsProcessor(mock_user_config)
+        processor = GPUTelemetryAccumulator(
+            user_config=mock_user_config,
+            service_config=mock_service_config,
+            pub_client=mock_pub_client,
+        )
 
-        assert isinstance(processor._telemetry_hierarchy, TelemetryHierarchy)
+        assert isinstance(processor._hierarchy, TelemetryHierarchy)
 
     @pytest.mark.asyncio
     async def test_process_telemetry_record(
-        self, mock_user_config: UserConfig, sample_telemetry_record: TelemetryRecord
+        self,
+        mock_user_config: UserConfig,
+        mock_service_config: ServiceConfig,
+        mock_pub_client,
+        sample_telemetry_record: TelemetryRecord,
     ) -> None:
         """Test processing a telemetry record adds it to the hierarchy."""
-        processor = TelemetryResultsProcessor(mock_user_config)
+        processor = GPUTelemetryAccumulator(
+            user_config=mock_user_config,
+            service_config=mock_service_config,
+            pub_client=mock_pub_client,
+        )
 
         await processor.process_telemetry_record(sample_telemetry_record)
 
         dcgm_url = sample_telemetry_record.dcgm_url
         gpu_uuid = sample_telemetry_record.gpu_uuid
 
-        assert dcgm_url in processor._telemetry_hierarchy.dcgm_endpoints
-        assert gpu_uuid in processor._telemetry_hierarchy.dcgm_endpoints[dcgm_url]
+        assert dcgm_url in processor._hierarchy.dcgm_endpoints
+        assert gpu_uuid in processor._hierarchy.dcgm_endpoints[dcgm_url]
 
     @pytest.mark.asyncio
-    async def test_get_telemetry_hierarchy(
-        self, mock_user_config: UserConfig, sample_telemetry_record: TelemetryRecord
+    async def test_get_hierarchy(
+        self,
+        mock_user_config: UserConfig,
+        mock_service_config: ServiceConfig,
+        mock_pub_client,
+        sample_telemetry_record: TelemetryRecord,
     ) -> None:
-        """Test get_telemetry_hierarchy returns accumulated data."""
-        processor = TelemetryResultsProcessor(mock_user_config)
+        """Test get_hierarchy returns accumulated data."""
+        processor = GPUTelemetryAccumulator(
+            user_config=mock_user_config,
+            service_config=mock_service_config,
+            pub_client=mock_pub_client,
+        )
 
         # Add some records
         await processor.process_telemetry_record(sample_telemetry_record)
 
         # Get hierarchy
-        hierarchy = processor.get_telemetry_hierarchy()
+        hierarchy = processor._hierarchy
 
         assert isinstance(hierarchy, TelemetryHierarchy)
         assert sample_telemetry_record.dcgm_url in hierarchy.dcgm_endpoints
@@ -103,25 +140,30 @@ class TestTelemetryResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_summarize_with_valid_data(
-        self, mock_user_config: UserConfig, sample_telemetry_record: TelemetryRecord
+        self,
+        mock_user_config: UserConfig,
+        mock_service_config: ServiceConfig,
+        mock_pub_client,
+        sample_telemetry_record: TelemetryRecord,
     ) -> None:
         """Test summarize generates MetricResults for all metrics with data."""
-        processor = TelemetryResultsProcessor(mock_user_config)
+        processor = GPUTelemetryAccumulator(
+            user_config=mock_user_config,
+            service_config=mock_service_config,
+            pub_client=mock_pub_client,
+        )
 
-        # Add multiple records to have enough data for statistics
         for i in range(5):
-            record = TelemetryRecord(
+            record = make_telemetry_record(
                 timestamp_ns=1000000000 + i * 1000000,
                 dcgm_url=sample_telemetry_record.dcgm_url,
                 gpu_index=sample_telemetry_record.gpu_index,
                 gpu_uuid=sample_telemetry_record.gpu_uuid,
                 gpu_model_name=sample_telemetry_record.gpu_model_name,
-                telemetry_data=TelemetryMetrics(
-                    gpu_power_usage=75.0 + i,
-                    energy_consumption=1000.0 + i * 10,
-                    gpu_utilization=80.0 + i,
-                    gpu_memory_used=15.0 + i * 0.1,
-                ),
+                gpu_power_usage=75.0 + i,
+                energy_consumption=1000.0 + i * 10,
+                gpu_utilization=80.0 + i,
+                gpu_memory_used=15.0 + i * 0.1,
             )
             await processor.process_telemetry_record(record)
 
@@ -138,19 +180,25 @@ class TestTelemetryResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_summarize_handles_no_metric_value(
-        self, mock_user_config: UserConfig
+        self,
+        mock_user_config: UserConfig,
+        mock_service_config: ServiceConfig,
+        mock_pub_client,
     ) -> None:
         """Test summarize logs debug message when metric has no data and continues."""
-        processor = TelemetryResultsProcessor(mock_user_config)
+        processor = GPUTelemetryAccumulator(
+            user_config=mock_user_config,
+            service_config=mock_service_config,
+            pub_client=mock_pub_client,
+        )
 
-        # Create a telemetry hierarchy with a GPU but no metric data
         mock_metadata = GpuMetadata(
             gpu_index=0,
             gpu_uuid="GPU-12345678",
-            model_name="Test GPU",
+            gpu_model_name="Test GPU",
         )
         mock_telemetry_data = GpuTelemetryData(metadata=mock_metadata)
-        processor._telemetry_hierarchy.dcgm_endpoints = {
+        processor._hierarchy.dcgm_endpoints = {
             "http://test:9401/metrics": {
                 "GPU-12345678": mock_telemetry_data,
             }
@@ -169,16 +217,22 @@ class TestTelemetryResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_summarize_handles_unexpected_exception(
-        self, mock_user_config: UserConfig
+        self,
+        mock_user_config: UserConfig,
+        mock_service_config: ServiceConfig,
+        mock_pub_client,
     ) -> None:
         """Test summarize logs exception with stack trace on unexpected errors."""
-        processor = TelemetryResultsProcessor(mock_user_config)
+        processor = GPUTelemetryAccumulator(
+            user_config=mock_user_config,
+            service_config=mock_service_config,
+            pub_client=mock_pub_client,
+        )
 
-        # Create a mock telemetry data that raises unexpected exception
         mock_metadata = GpuMetadata(
             gpu_index=0,
             gpu_uuid="GPU-87654321",
-            model_name="Test GPU",
+            gpu_model_name="Test GPU",
         )
         mock_telemetry_data = Mock(spec=GpuTelemetryData)
         mock_telemetry_data.metadata = mock_metadata
@@ -186,7 +240,7 @@ class TestTelemetryResultsProcessor:
             "Unexpected error"
         )
 
-        processor._telemetry_hierarchy.dcgm_endpoints = {
+        processor._hierarchy.dcgm_endpoints = {
             "http://test:9401/metrics": {
                 "GPU-87654321": mock_telemetry_data,
             }
@@ -211,16 +265,22 @@ class TestTelemetryResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_summarize_continues_after_errors(
-        self, mock_user_config: UserConfig
+        self,
+        mock_user_config: UserConfig,
+        mock_service_config: ServiceConfig,
+        mock_pub_client,
     ) -> None:
         """Test summarize continues processing other metrics after encountering errors."""
-        processor = TelemetryResultsProcessor(mock_user_config)
+        processor = GPUTelemetryAccumulator(
+            user_config=mock_user_config,
+            service_config=mock_service_config,
+            pub_client=mock_pub_client,
+        )
 
-        # Create mock telemetry data where some metrics fail
         mock_metadata = GpuMetadata(
             gpu_index=0,
             gpu_uuid="GPU-mixed-results",
-            model_name="Test GPU",
+            gpu_model_name="Test GPU",
         )
 
         mock_telemetry_data = Mock(spec=GpuTelemetryData)
@@ -243,7 +303,7 @@ class TestTelemetryResultsProcessor:
 
         mock_telemetry_data.get_metric_result.side_effect = side_effect_func
 
-        processor._telemetry_hierarchy.dcgm_endpoints = {
+        processor._hierarchy.dcgm_endpoints = {
             "http://test:9401/metrics": {
                 "GPU-mixed-results": mock_telemetry_data,
             }
@@ -265,22 +325,25 @@ class TestTelemetryResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_summarize_generates_correct_tags(
-        self, mock_user_config: UserConfig, sample_telemetry_record: TelemetryRecord
+        self,
+        mock_user_config: UserConfig,
+        mock_service_config: ServiceConfig,
+        mock_pub_client,
+        sample_telemetry_record: TelemetryRecord,
     ) -> None:
         """Test summarize generates properly formatted tags with DCGM URL and GPU info."""
-        processor = TelemetryResultsProcessor(mock_user_config)
+        processor = GPUTelemetryAccumulator(
+            user_config=mock_user_config,
+            service_config=mock_service_config,
+            pub_client=mock_pub_client,
+        )
 
-        # Add records
         for i in range(3):
-            record = TelemetryRecord(
+            record = make_telemetry_record(
                 timestamp_ns=1000000000 + i * 1000000,
-                dcgm_url="http://node1:9401/metrics",
-                gpu_index=0,
                 gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
                 gpu_model_name="NVIDIA RTX 6000",
-                telemetry_data=TelemetryMetrics(
-                    gpu_power_usage=75.0 + i,
-                ),
+                gpu_power_usage=75.0 + i,
             )
             await processor.process_telemetry_record(record)
 
@@ -298,22 +361,27 @@ class TestTelemetryResultsProcessor:
         assert "GPU-ef6ef310" in tag  # First 12 chars of UUID
 
     @pytest.mark.asyncio
-    async def test_summarize_multiple_gpus(self, mock_user_config: UserConfig) -> None:
+    async def test_summarize_multiple_gpus(
+        self,
+        mock_user_config: UserConfig,
+        mock_service_config: ServiceConfig,
+        mock_pub_client,
+    ) -> None:
         """Test summarize handles multiple GPUs correctly."""
-        processor = TelemetryResultsProcessor(mock_user_config)
+        processor = GPUTelemetryAccumulator(
+            user_config=mock_user_config,
+            service_config=mock_service_config,
+            pub_client=mock_pub_client,
+        )
 
-        # Add records for two different GPUs
         for gpu_index in range(2):
             for i in range(3):
-                record = TelemetryRecord(
+                record = make_telemetry_record(
                     timestamp_ns=1000000000 + i * 1000000,
-                    dcgm_url="http://node1:9401/metrics",
                     gpu_index=gpu_index,
                     gpu_uuid=f"GPU-0000000{gpu_index}-0000-0000-0000-000000000000",
                     gpu_model_name="NVIDIA RTX 6000",
-                    telemetry_data=TelemetryMetrics(
-                        gpu_power_usage=75.0 + gpu_index * 10 + i,
-                    ),
+                    gpu_power_usage=75.0 + gpu_index * 10 + i,
                 )
                 await processor.process_telemetry_record(record)
 

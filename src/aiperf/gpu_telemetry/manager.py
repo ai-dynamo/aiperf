@@ -25,17 +25,17 @@ from aiperf.common.protocols import (
     PushClientProtocol,
     ServiceProtocol,
 )
-from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
+from aiperf.gpu_telemetry.data_collector import GPUTelemetryDataCollector
 
-__all__ = ["TelemetryManager"]
+__all__ = ["GPUTelemetryManager"]
 
 
 @implements_protocol(ServiceProtocol)
-@ServiceFactory.register(ServiceType.TELEMETRY_MANAGER)
-class TelemetryManager(BaseComponentService):
+@ServiceFactory.register(ServiceType.GPU_TELEMETRY_MANAGER)
+class GPUTelemetryManager(BaseComponentService):
     """Coordinates multiple TelemetryDataCollector instances for GPU telemetry collection.
 
-    The TelemetryManager coordinates multiple TelemetryDataCollector instances
+    The GPUTelemetryManager coordinates multiple TelemetryDataCollector instances
     to collect GPU telemetry from multiple DCGM endpoints and send unified
     TelemetryRecordsMessage to RecordsManager.
 
@@ -68,11 +68,12 @@ class TelemetryManager(BaseComponentService):
             CommAddress.RECORDS,
         )
 
-        self._collectors: dict[str, TelemetryDataCollector] = {}
+        self._collectors: dict[str, GPUTelemetryDataCollector] = {}
         self._collector_id_to_url: dict[str, str] = {}
 
+        self._telemetry_disabled = user_config.gpu_telemetry_disabled
         self._user_explicitly_configured_telemetry = (
-            user_config.gpu_telemetry is not None
+            user_config.gpu_telemetry is not None and not self._telemetry_disabled
         )
 
         user_endpoints = user_config.gpu_telemetry_urls or []
@@ -163,6 +164,14 @@ class TelemetryManager(BaseComponentService):
         Args:
             message: Profile configuration command from SystemController
         """
+        if self._telemetry_disabled:
+            await self._send_telemetry_status(
+                enabled=False,
+                reason="disabled via --no-gpu-telemetry",
+                endpoints_configured=[],
+                endpoints_reachable=[],
+            )
+            return
 
         self._collectors.clear()
         self._collector_id_to_url.clear()
@@ -170,7 +179,7 @@ class TelemetryManager(BaseComponentService):
             self.debug(f"GPU Telemetry: Testing reachability of {dcgm_url}")
             collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
             self._collector_id_to_url[collector_id] = dcgm_url
-            collector = TelemetryDataCollector(
+            collector = GPUTelemetryDataCollector(
                 dcgm_url=dcgm_url,
                 collection_interval=self._collection_interval,
                 record_callback=self._on_telemetry_records,

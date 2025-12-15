@@ -240,3 +240,157 @@ def get_metric_display_name_with_unit(metric_name: str) -> str:
     if unit:
         return f"{display_name} ({unit})"
     return display_name
+
+
+def get_server_metrics(run_data) -> dict[str, dict[str, str]]:
+    """
+    Get available server metrics from RunData with metadata.
+
+    Args:
+        run_data: RunData object with server_metrics_aggregated
+
+    Returns:
+        Dictionary with structure:
+        {
+            "vllm:kv_cache_usage_perc": {
+                "display_name": "KV Cache Usage",
+                "unit": "percent",
+                "type": "GAUGE",
+                "description": "...",
+                "endpoints": ["http://localhost:8081/metrics"],
+                "has_labels": False
+            },
+            ...
+        }
+
+    Examples:
+        >>> run_data = load_run(Path("artifacts/run1"))
+        >>> metrics = get_server_metrics(run_data)
+        >>> "vllm:kv_cache_usage_perc" in metrics
+        True
+        >>> metrics["vllm:kv_cache_usage_perc"]["unit"]
+        'percent'
+    """
+    if (
+        not hasattr(run_data, "server_metrics_aggregated")
+        or not run_data.server_metrics_aggregated
+    ):
+        return {}
+
+    metrics = {}
+    for metric_name, endpoint_data in run_data.server_metrics_aggregated.items():
+        # Get first endpoint to extract metadata
+        if not endpoint_data:
+            continue
+
+        first_endpoint = next(iter(endpoint_data.values()))
+        if not first_endpoint:
+            continue
+
+        first_series = next(iter(first_endpoint.values()))
+
+        # Determine if metric has multiple endpoints or labels
+        endpoints = list(endpoint_data.keys())
+        has_labels = any(
+            labels_key != "{}"
+            for endpoint in endpoint_data.values()
+            for labels_key in endpoint
+        )
+
+        metrics[metric_name] = {
+            "display_name": _format_server_metric_name(metric_name),
+            "unit": first_series.get("unit") or "",
+            "type": first_series.get("type", ""),
+            "description": first_series.get("description", ""),
+            "endpoints": endpoints,
+            "has_labels": has_labels,
+        }
+
+    return metrics
+
+
+def _format_server_metric_name(metric_name: str) -> str:
+    """
+    Format server metric name for display with pretty prefix.
+
+    Preserves and prettifies the server/namespace prefix (vLLM, SGLang, Dynamo, etc.)
+    to help identify metric source when plotting multiple servers together.
+    Strips unit suffixes and converts to title case.
+
+    Args:
+        metric_name: Raw metric name (e.g., "vllm:kv_cache_usage_perc")
+
+    Returns:
+        Formatted display name (e.g., "vLLM: KV Cache Usage")
+
+    Examples:
+        >>> _format_server_metric_name("vllm:kv_cache_usage_perc")
+        'vLLM: KV Cache Usage'
+        >>> _format_server_metric_name("sglang:time_to_first_token_seconds")
+        'SGLang: Time to First Token'
+        >>> _format_server_metric_name("nv_inference_request_duration_us")
+        'Triton: Inference Request Duration'
+        >>> _format_server_metric_name("nv_gpu_utilization")
+        'Triton GPU: Utilization'
+        >>> _format_server_metric_name("dynamo_frontend_requests_total")
+        'Dynamo: Frontend Requests'
+        >>> _format_server_metric_name("dynamo_component_requests{component='prefill'}")
+        'Dynamo: Component Requests'
+        >>> _format_server_metric_name("http_requests_total")
+        'HTTP: Requests'
+    """
+    # Map of prefixes to pretty names (order matters - most specific first!)
+    prefix_map = {
+        # Inference servers (namespace convention)
+        "vllm:": "vLLM: ",
+        "sglang:": "SGLang: ",
+        "trtllm:": "TensorRT-LLM: ",
+        # Dynamo (all components use same prefix, labels differentiate)
+        "dynamo_": "Dynamo: ",
+        # Triton Inference Server (uses nv_ prefix)
+        "nv_inference_": "Triton: ",
+        "nv_gpu_": "Triton GPU: ",
+        "nv_": "Triton: ",  # Fallback for other nv_ metrics
+        # Generic HTTP/HTTPS
+        "http_": "HTTP: ",
+        "https_": "HTTPS: ",
+        # NVIDIA/DCGM (more general)
+        "nvidia_": "NVIDIA: ",
+        "dcgm_": "DCGM: ",
+        "gpu_": "GPU: ",
+    }
+
+    # Find and replace prefix
+    pretty_prefix = ""
+    name = metric_name
+    for prefix, pretty in prefix_map.items():
+        if name.startswith(prefix):
+            pretty_prefix = pretty
+            name = name[len(prefix) :]
+            break
+
+    # Remove common suffixes (unit-related)
+    for suffix in [
+        "_seconds",
+        "_milliseconds",
+        "_microseconds",
+        "_nanoseconds",
+        "_us",  # Triton uses _us for microseconds
+        "_ms",  # Triton uses _ms for milliseconds
+        "_ns",
+        "_bytes",
+        "_total",
+        "_count",
+        "_perc",
+        "_percent",
+        "_percentage",
+    ]:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+
+    # Convert to title case
+    formatted_name = name.replace("_", " ").title()
+
+    # Combine prefix and name
+    return f"{pretty_prefix}{formatted_name}" if pretty_prefix else formatted_name

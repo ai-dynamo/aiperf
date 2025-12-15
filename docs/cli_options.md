@@ -441,6 +441,25 @@ The delay in seconds before cancelling requests. This is used when --request-can
 
 Enable GPU telemetry console display and optionally specify: (1) 'dashboard' for realtime dashboard mode, (2) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (3) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default endpoints localhost:9400 and localhost:9401 are always attempted. Example: --gpu-telemetry dashboard node1:9400 custom.csv.
 
+#### `--no-gpu-telemetry`
+
+Disable GPU telemetry collection entirely.
+
+## Server Metrics Options
+
+#### `--server-metrics` `<list>`
+
+Server metrics collection (ENABLED BY DEFAULT). Automatically collects from inference endpoint base_url + `/metrics`. Optionally specify additional custom Prometheus-compatible endpoint URLs (e.g., http://node1:8081/metrics, http://node2:9090/metrics). Use `--no-server-metrics` to disable collection. Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints.
+
+#### `--no-server-metrics`
+
+Disable server metrics collection entirely.
+
+#### `--server-metrics-formats` `<list>`
+
+Specify which output formats to generate for server metrics. Options: json, csv, jsonl, and parquet. Default is json and csv (jsonl excluded due to large file size, parquet is opt-in only). Example: --server-metrics-formats json csv parquet.
+<br>_Default: `[ServerMetricsFormat.JSON, ServerMetricsFormat.CSV]`_
+
 ## ZMQ Communication Options
 
 #### `--zmq-host` `<str>`
