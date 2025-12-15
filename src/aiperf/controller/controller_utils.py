@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
 import textwrap
 from collections import defaultdict
 
@@ -83,9 +82,7 @@ def print_exit_errors(
         )
         summary.append(_create_field("Reason", wrapped_reason))
 
-        # Show cause and details only in verbose/debug mode
-        is_debug = logging.getLogger().isEnabledFor(logging.DEBUG)
-        if is_debug and error_details.cause:
+        if error_details.cause:
             wrapped_cause = textwrap.fill(
                 str(error_details.cause),
                 width=wrap_width,
@@ -93,7 +90,7 @@ def print_exit_errors(
             )
             summary.append(_create_field("Cause", wrapped_cause))
 
-        if is_debug and error_details.details:
+        if error_details.details:
             wrapped_details = textwrap.fill(
                 str(error_details.details),
                 width=wrap_width,
