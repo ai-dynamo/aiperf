@@ -98,7 +98,7 @@ class TestDCGMFaker:
 
     def test_initialization(self, dcgm_faker):
         assert dcgm_faker.cfg == GPU_CONFIGS["h200"]
-        assert dcgm_faker.load == 0.7
+        assert dcgm_faker.load == 0.0  # Starts idle, load driven by requests
         assert len(dcgm_faker.gpus) == 2
 
     def test_invalid_gpu_name(self):

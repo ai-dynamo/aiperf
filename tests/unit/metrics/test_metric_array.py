@@ -15,8 +15,8 @@ def test_array():
 
 def assert_array_equal(array: MetricArray, expected_values: list) -> None:
     """Assert that an array contains expected values."""
-    assert array._size == len(expected_values)
-    assert array._sum == sum(expected_values)
+    assert len(array) == len(expected_values)
+    assert array.sum == sum(expected_values)
     np.testing.assert_array_equal(array.data, expected_values)
 
 
@@ -26,15 +26,15 @@ class TestMetricArray:
     def test_initialization_default_capacity(self):
         """Test array initialization with default capacity."""
         array = MetricArray()
-        assert array._capacity == 10000
-        assert array._size == 0
-        assert array._sum == 0
+        assert array.capacity == 10000
+        assert len(array) == 0
+        assert array.sum == 0
 
     def test_initialization_custom_capacity(self):
         """Test array initialization with custom capacity."""
         array = MetricArray(initial_capacity=100)
-        assert array._capacity == 100
-        assert array._size == 0
+        assert array.capacity == 100
+        assert len(array) == 0
 
     def test_append(self, test_array: MetricArray):
         """Test appending single values."""
@@ -64,11 +64,11 @@ class TestMetricArray:
         """Test that array resizes when capacity is exceeded."""
         array = MetricArray(initial_capacity=2)
         array.extend([1.0, 2.0])
-        assert array._capacity == 2
+        assert array.capacity == 2
 
         # This should trigger resize
         array.append(3.0)
-        assert array._capacity == 4
+        assert array.capacity == 4
         assert_array_equal(array, [1.0, 2.0, 3.0])
 
     def test_properties(self, test_array: MetricArray):
@@ -132,5 +132,6 @@ class TestMetricArrayEdgeCases:
 
         array.extend(large_batch)
 
-        assert array._capacity == 10
+        # GrowableArray uses doubling strategy, so capacity may be >= 10
+        assert array.capacity >= len(large_batch)
         assert_array_equal(array, large_batch)

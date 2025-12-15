@@ -11,9 +11,8 @@ from aiperf.common.constants import STAT_KEYS
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums.data_exporter_enums import DataExporterType
 from aiperf.common.factories import DataExporterFactory
-from aiperf.common.models import MetricResult
+from aiperf.common.models import GpuSummary, MetricResult
 from aiperf.common.protocols import DataExporterProtocol
-from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 from aiperf.gpu_telemetry.constants import get_gpu_telemetry_metrics_config
@@ -146,10 +145,55 @@ class MetricsCsvExporter(MetricsBaseExporter):
 
         return str(value)
 
+    def _get_optional_headers_and_fields(
+        self, *header_names: str
+    ) -> tuple[list[str], list[str]]:
+        """Get optional headers and fields from GPU summaries. Returns a tuple of (optional_headers, optional_fields).
+
+        Args:
+            header_names: List of header names to get optional headers and fields for.
+        Returns:
+            A tuple of (optional_headers, optional_fields).
+
+        Example:
+            For a GPU summary with hostname "gpu-0", namespace "default", and pod name "pod-0":
+            ```python
+            >>> optional_headers, optional_fields = self._get_optional_headers_and_fields("Hostname", "Namespace", "Pod Name")
+            >>> print(optional_headers)
+            ["Hostname", "Namespace", "Pod Name"]
+            >>> print(optional_fields)
+            ["hostname", "namespace", "pod_name"]
+            ```
+
+            For a GPU summary with only hostname "gpu-0":
+            ```python
+            >>> optional_headers, optional_fields = self._get_optional_headers_and_fields("Hostname", "Namespace", "Pod Name")
+            >>> print(optional_headers)
+            ["Hostname"]
+            >>> print(optional_fields)
+            ["hostname"]
+            ```
+        """
+        headers_found: dict[str, bool] = {header: False for header in header_names}
+        field_names: dict[str, str] = {
+            header: header.lower().replace(" ", "_") for header in header_names
+        }
+        for endpoint_data in self._telemetry_results.endpoints.values():
+            for gpu_summary in endpoint_data.gpus.values():
+                for header, field in field_names.items():
+                    if getattr(gpu_summary, field, None) is not None:
+                        headers_found[header] = True
+
+        optional_headers = [header for header, found in headers_found.items() if found]
+        optional_fields = [
+            field_names[header] for header, found in headers_found.items() if found
+        ]
+        return optional_headers, optional_fields
+
     def _write_telemetry_section(self, writer: csv.writer) -> None:
         """Write GPU telemetry data section to CSV in structured table format.
 
-        Uses self._telemetry_results instance data member.
+        Uses self._telemetry_results (TelemetryExportData) instance data member.
 
         Creates a single flat table with all GPU telemetry metrics that's easy to
         parse programmatically for visualization platforms (pandas, Tableau, Excel, etc.).
@@ -169,76 +213,77 @@ class MetricsCsvExporter(MetricsBaseExporter):
             "GPU_Index",
             "GPU_Name",
             "GPU_UUID",
-            "Metric",
         ]
-        header_row.extend(STAT_KEYS)
+        optional_headers, optional_fields = self._get_optional_headers_and_fields(
+            "Hostname", "Namespace", "Pod Name"
+        )
+        header_row.extend(["Metric", *STAT_KEYS])
+        header_row.extend(optional_headers)
         writer.writerow(header_row)
 
+        # TelemetryExportData uses: endpoints[endpoint_display] -> EndpointData.gpus[gpu_key] -> GpuSummary
         for (
-            dcgm_url,
-            gpus_data,
-        ) in self._telemetry_results.telemetry_data.dcgm_endpoints.items():
-            if not gpus_data:
+            endpoint_display,
+            endpoint_data,
+        ) in self._telemetry_results.endpoints.items():
+            if not endpoint_data.gpus:
                 continue
 
-            endpoint_display = normalize_endpoint_display(dcgm_url)
-
-            for gpu_uuid, gpu_data in gpus_data.items():
+            for _, gpu_summary in endpoint_data.gpus.items():
                 for (
                     metric_display,
                     metric_key,
                     unit_enum,
                 ) in get_gpu_telemetry_metrics_config():
-                    if not self._gpu_has_metric(gpu_data, metric_key):
+                    # Check if metric exists in pre-computed metrics
+                    if metric_key not in gpu_summary.metrics:
                         continue
 
-                    self._write_gpu_metric_row_structured(
+                    self._write_gpu_metric_row_from_summary(
                         writer,
                         endpoint_display,
-                        gpu_data,
-                        gpu_uuid,
+                        gpu_summary,
+                        optional_fields,
                         metric_key,
                         metric_display,
                         unit_enum.value,
                     )
 
-    def _write_gpu_metric_row_structured(
+    def _write_gpu_metric_row_from_summary(
         self,
-        writer,
-        endpoint_display,
-        gpu_data,
-        gpu_uuid,
-        metric_key,
-        metric_display,
-        unit,
-    ):
-        """Write a single GPU metric row in structured table format.
+        writer: csv.writer,
+        endpoint_display: str,
+        gpu_summary: GpuSummary,
+        optional_fields: list[str],
+        metric_key: str,
+        metric_display: str,
+        unit: str,
+    ) -> None:
+        """Write a single GPU metric row from pre-computed GpuSummary.
 
         Each row contains: endpoint, GPU info, metric name with unit, and all stats.
         This format is optimized for programmatic extraction and visualization.
 
         Args:
             writer: CSV writer object
-            endpoint_display: Display name of the DCGM endpoint
-            gpu_data: GpuTelemetryData containing metric time series
-            gpu_uuid: UUID identifier for the GPU
+            endpoint_display: Display name of the endpoint
+            gpu_summary: GpuSummary with pre-computed metrics (from TelemetryExportData)
+            optional_fields: List of optional fields to write to the row
             metric_key: Internal metric name (e.g., "gpu_power_usage")
             metric_display: Display name for the metric (e.g., "GPU Power Usage")
             unit: Unit of measurement (e.g., "W", "GB", "%")
         """
         try:
-            metric_result = gpu_data.get_metric_result(
-                metric_key, metric_key, metric_display, unit
-            )
+            metric_result = gpu_summary.metrics[metric_key]
 
             # Format metric name with unit like inference metrics
             metric_with_unit = f"{metric_display} ({unit})"
 
             row = [
                 endpoint_display,
-                str(gpu_data.metadata.gpu_index),
-                gpu_data.metadata.model_name,
-                gpu_uuid,
+                str(gpu_summary.gpu_index),
+                gpu_summary.gpu_name,
+                gpu_summary.gpu_uuid,
                 metric_with_unit,
             ]
 
@@ -246,28 +291,12 @@ class MetricsCsvExporter(MetricsBaseExporter):
                 value = getattr(metric_result, stat, None)
                 row.append(self._format_number(value))
 
+            for field in optional_fields:
+                value = getattr(gpu_summary, field, None)
+                row.append(str(value))
+
             writer.writerow(row)
         except Exception as e:
             self.warning(
-                f"Failed to write metric row for GPU {gpu_uuid}, metric {metric_key}: {e}"
+                f"Failed to write metric row for GPU {gpu_summary.gpu_uuid}, metric {metric_key}: {e}"
             )
-
-    def _gpu_has_metric(self, gpu_data, metric_key: str) -> bool:
-        """Check if GPU has data for the specified metric.
-
-        Attempts to retrieve metric result to determine if the metric has any data.
-        Used to filter out metrics with no collected data.
-
-        Args:
-            gpu_data: GpuTelemetryData containing metric time series
-            metric_key: Internal metric name to check (e.g., "gpu_power_usage")
-
-        Returns:
-            bool: True if metric has data, False if metric is unavailable or has no data
-        """
-        try:
-            gpu_data.get_metric_result(metric_key, metric_key, "test", "test")
-            return True
-        except Exception as e:
-            self.debug(f"GPU metric {metric_key} not available: {e}")
-            return False

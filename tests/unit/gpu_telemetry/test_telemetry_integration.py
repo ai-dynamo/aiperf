@@ -4,26 +4,27 @@
 """
 Integration tests for GPU telemetry collection pipeline.
 
-Tests the end-to-end flow from TelemetryDataCollector through TelemetryResultsProcessor
+Tests the end-to-end flow from GPUTelemetryDataCollector through GPUTelemetryAccumulator
 with realistic mock data and callback mechanisms.
 """
 
-from unittest.mock import Mock, create_autospec, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import pytest
 
-from aiperf.common.config import UserConfig
-from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
-from aiperf.post_processors.telemetry_results_processor import TelemetryResultsProcessor
+from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config.endpoint_config import EndpointConfig
+from aiperf.gpu_telemetry.accumulator import GPUTelemetryAccumulator
+from aiperf.gpu_telemetry.data_collector import GPUTelemetryDataCollector
 
 
-class TestTelemetryIntegration:
+class TestGPUTelemetryIntegration:
     """Integration tests for complete telemetry collection and processing pipeline.
 
     This test class verifies the end-to-end integration between:
-    - TelemetryDataCollector (DCGM data collection)
-    - TelemetryResultsProcessor (hierarchical data organization)
+    - GPUTelemetryDataCollector (DCGM data collection)
+    - GPUTelemetryAccumulator (hierarchical data organization)
     - Multi-node telemetry aggregation
     - Error handling across the pipeline
 
@@ -80,12 +81,24 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
     @pytest.fixture
     def user_config(self):
-        """Mock user configuration for telemetry processing."""
+        """User configuration for telemetry processing."""
+        return UserConfig(
+            endpoint=EndpointConfig(
+                url="http://localhost:8000", model_names=["test-model"]
+            )
+        )
 
-        config = create_autospec(UserConfig, instance=True)
-        config.log_level = "INFO"
-        config.enable_trace = False
-        return config
+    @pytest.fixture
+    def service_config(self):
+        """Service configuration for telemetry processing."""
+        return ServiceConfig()
+
+    @pytest.fixture
+    def mock_pub_client(self):
+        """Mock pub client for telemetry processing."""
+        mock = Mock()
+        mock.publish = AsyncMock()
+        return mock
 
     def setup_method(self):
         """Set up test fixtures for each test."""
@@ -106,22 +119,25 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
     @pytest.mark.asyncio
     async def test_multi_node_telemetry_collection_and_processing(
-        self, mock_dcgm_response_node1, mock_dcgm_response_node2, user_config
+        self,
+        mock_dcgm_response_node1,
+        mock_dcgm_response_node2,
+        user_config,
+        service_config,
+        mock_pub_client,
     ):
         """
         Integration test for multi-node telemetry collection through processing pipeline.
 
         Tests the complete flow:
-        1. TelemetryDataCollector fetches from multiple DCGM endpoints
+        1. GPUTelemetryDataCollector fetches from multiple DCGM endpoints
         2. Records are processed through callbacks
-        3. TelemetryResultsProcessor stores in hierarchical structure
+        3. GPUTelemetryAccumulator stores in hierarchical structure
         4. Statistical aggregation produces MetricResult objects
         """
 
         # Mock aiohttp responses for different DCGM endpoints
         def mock_aiohttp_get(url, **kwargs):
-            from unittest.mock import AsyncMock
-
             mock_context_manager = AsyncMock()
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -141,7 +157,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             return mock_context_manager
 
         with patch("aiohttp.ClientSession.get", side_effect=mock_aiohttp_get):
-            collector1 = TelemetryDataCollector(
+            collector1 = GPUTelemetryDataCollector(
                 dcgm_url="http://node1:9401/metrics",
                 collection_interval=0.05,
                 record_callback=self.record_callback,
@@ -149,7 +165,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
                 collector_id="node1_collector",
             )
 
-            collector2 = TelemetryDataCollector(
+            collector2 = GPUTelemetryDataCollector(
                 dcgm_url="http://node2:9401/metrics",
                 collection_interval=0.05,
                 record_callback=self.record_callback,
@@ -157,7 +173,11 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
                 collector_id="node2_collector",
             )
 
-            processor = TelemetryResultsProcessor(user_config=user_config)
+            processor = GPUTelemetryAccumulator(
+                user_config=user_config,
+                service_config=service_config,
+                pub_client=mock_pub_client,
+            )
 
             await collector1.initialize()
             await collector2.initialize()
@@ -175,12 +195,12 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
                 await processor.process_telemetry_record(record)
             metric_results = await processor.summarize()
 
-            assert len(processor._telemetry_hierarchy.dcgm_endpoints) == 2
+            assert len(processor._hierarchy.dcgm_endpoints) == 2
 
-            node1_data = processor._telemetry_hierarchy.dcgm_endpoints.get(
+            node1_data = processor._hierarchy.dcgm_endpoints.get(
                 "http://node1:9401/metrics", {}
             )
-            node2_data = processor._telemetry_hierarchy.dcgm_endpoints.get(
+            node2_data = processor._hierarchy.dcgm_endpoints.get(
                 "http://node2:9401/metrics", {}
             )
 
@@ -190,13 +210,15 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             node1_gpu0 = node1_data.get("GPU-ef6ef310-1234-5678-9abc-def012345678")
             assert node1_gpu0 is not None
             assert node1_gpu0.metadata.gpu_index == 0
-            assert node1_gpu0.metadata.model_name == "NVIDIA RTX 6000 Ada Generation"
+            assert (
+                node1_gpu0.metadata.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
+            )
             assert node1_gpu0.metadata.hostname == "node1"
 
             node2_gpu0 = node2_data.get("GPU-f5e6d7c8-9abc-def0-1234-56789abcdef0")
             assert node2_gpu0 is not None
             assert node2_gpu0.metadata.gpu_index == 0
-            assert node2_gpu0.metadata.model_name == "NVIDIA H100 PCIe"
+            assert node2_gpu0.metadata.gpu_model_name == "NVIDIA H100 PCIe"
             assert node2_gpu0.metadata.hostname == "node2"
 
             assert len(metric_results) > 0
@@ -234,7 +256,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
     @pytest.mark.asyncio
     async def test_callback_pipeline_error_handling(
-        self, mock_dcgm_response_node1, user_config
+        self, mock_dcgm_response_node1, user_config, service_config, mock_pub_client
     ):
         """Test error handling in the callback pipeline during processing.
 
@@ -243,7 +265,11 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
         """
 
         # Create a processor that will fail during processing
-        faulty_processor = TelemetryResultsProcessor(user_config=user_config)
+        faulty_processor = GPUTelemetryAccumulator(
+            user_config=user_config,
+            service_config=service_config,
+            pub_client=mock_pub_client,
+        )
 
         # Mock the process_telemetry_record method to raise an exception
         original_process = faulty_processor.process_telemetry_record
@@ -269,8 +295,6 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
                 self.collection_errors.append(f"Callback error: {e}")
 
         def mock_aiohttp_get_error(url, **kwargs):
-            from unittest.mock import AsyncMock
-
             mock_context_manager = AsyncMock()
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -281,7 +305,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             return mock_context_manager
 
         with patch("aiohttp.ClientSession.get", side_effect=mock_aiohttp_get_error):
-            collector = TelemetryDataCollector(
+            collector = GPUTelemetryDataCollector(
                 dcgm_url="http://node1:9401/metrics",
                 collection_interval=0.05,
                 record_callback=failing_record_callback,
@@ -300,7 +324,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
             # Verify records and errors were collected
             assert len(self.collected_records) > 0, "Expected records to be collected"
-            assert all(hasattr(r, "gpu_uuid") for r in self.collected_records), (
+            assert all(hasattr(r, "gpu_index") for r in self.collected_records), (
                 "All records should be TelemetryRecord objects"
             )
 
@@ -323,10 +347,10 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             )
 
     @pytest.mark.asyncio
-    async def test_empty_dcgm_response_handling(self, user_config):
+    async def test_empty_dcgm_response_handling(
+        self, user_config, service_config, mock_pub_client
+    ):
         def mock_aiohttp_get_empty(url, **kwargs):
-            from unittest.mock import AsyncMock
-
             mock_context_manager = AsyncMock()
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -337,7 +361,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             return mock_context_manager
 
         with patch("aiohttp.ClientSession.get", side_effect=mock_aiohttp_get_empty):
-            collector = TelemetryDataCollector(
+            collector = GPUTelemetryDataCollector(
                 dcgm_url="http://empty-node:9401/metrics",
                 collection_interval=0.1,
                 record_callback=self.record_callback,
@@ -345,7 +369,11 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
                 collector_id="empty_collector",
             )
 
-            processor = TelemetryResultsProcessor(user_config=user_config)
+            processor = GPUTelemetryAccumulator(
+                user_config=user_config,
+                service_config=service_config,
+                pub_client=mock_pub_client,
+            )
 
             await collector.initialize()
             await collector._collect_and_process_metrics()
@@ -360,7 +388,9 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             assert len(self.collection_errors) == 0
 
     @pytest.mark.asyncio
-    async def test_metric_unit_scaling_in_pipeline(self, user_config):
+    async def test_metric_unit_scaling_in_pipeline(
+        self, user_config, service_config, mock_pub_client
+    ):
         mock_response = """# HELP DCGM_FI_DEV_FB_USED Framebuffer memory used (in MiB).
 # TYPE DCGM_FI_DEV_FB_USED gauge
 DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-test-1234",device="nvidia0",modelName="Test GPU",Hostname="testnode"} 1024.0
@@ -370,8 +400,6 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
 """
 
         def mock_aiohttp_get_scaling(url, **kwargs):
-            from unittest.mock import AsyncMock
-
             mock_context_manager = AsyncMock()
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200
@@ -382,7 +410,7 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
             return mock_context_manager
 
         with patch("aiohttp.ClientSession.get", side_effect=mock_aiohttp_get_scaling):
-            collector = TelemetryDataCollector(
+            collector = GPUTelemetryDataCollector(
                 dcgm_url="http://testnode:9401/metrics",
                 collection_interval=0.1,
                 record_callback=self.record_callback,
@@ -390,7 +418,11 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
                 collector_id="scaling_test",
             )
 
-            processor = TelemetryResultsProcessor(user_config=user_config)
+            processor = GPUTelemetryAccumulator(
+                user_config=user_config,
+                service_config=service_config,
+                pub_client=mock_pub_client,
+            )
 
             await collector.initialize()
             await collector._collect_and_process_metrics()

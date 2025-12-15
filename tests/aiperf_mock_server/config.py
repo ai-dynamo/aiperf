@@ -24,9 +24,16 @@ class MockServerConfig(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def validate_verbose_flag(self) -> Self:
+    def apply_flags(self) -> Self:
         if self.verbose:
             self.log_level = "DEBUG"
+        if self.fast:
+            self.ttft = 0.0
+            self.itl = 0.0
+            self.embedding_base_latency = 0.0
+            self.embedding_per_input_latency = 0.0
+            self.ranking_base_latency = 0.0
+            self.ranking_per_passage_latency = 0.0
         return self
 
     port: Annotated[
@@ -59,6 +66,32 @@ class MockServerConfig(BaseSettings):
         Parameter(name="--itl"),
     ] = 5.0
 
+    # Embedding latency: base + per_input * num_inputs
+    embedding_base_latency: Annotated[
+        float,
+        Field(description="Embedding base latency (ms)", ge=0.0),
+        Parameter(name="--embedding-base-latency"),
+    ] = 10.0
+
+    embedding_per_input_latency: Annotated[
+        float,
+        Field(description="Embedding latency per input (ms)", ge=0.0),
+        Parameter(name="--embedding-per-input-latency"),
+    ] = 2.0
+
+    # Ranking latency: base + per_passage * num_passages
+    ranking_base_latency: Annotated[
+        float,
+        Field(description="Ranking base latency (ms)", ge=0.0),
+        Parameter(name="--ranking-base-latency"),
+    ] = 10.0
+
+    ranking_per_passage_latency: Annotated[
+        float,
+        Field(description="Ranking latency per passage (ms)", ge=0.0),
+        Parameter(name="--ranking-per-passage-latency"),
+    ] = 1.0
+
     log_level: Annotated[
         Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         Field(description="Logging level"),
@@ -69,6 +102,12 @@ class MockServerConfig(BaseSettings):
         bool,
         Field(description="Verbose mode (sets log level to DEBUG)"),
         Parameter(name=("--verbose", "-v")),
+    ] = False
+
+    fast: Annotated[
+        bool,
+        Field(description="Fast mode (zero latency for integration testing)"),
+        Parameter(name=("--fast", "-f")),
     ] = False
 
     access_logs: Annotated[
@@ -104,11 +143,21 @@ class MockServerConfig(BaseSettings):
         Parameter(name="--dcgm-num-gpus"),
     ] = 2
 
-    dcgm_initial_load: Annotated[
+    dcgm_min_throughput: Annotated[
+        int,
+        Field(
+            description="Minimum tokens/sec baseline (auto-scales above this)",
+            ge=1,
+            le=100000,
+        ),
+        Parameter(name="--dcgm-min-throughput"),
+    ] = 100
+
+    dcgm_window_sec: Annotated[
         float,
-        Field(description="Initial GPU load level (0.0=idle, 1.0=max)", ge=0.0, le=1.0),
-        Parameter(name="--dcgm-initial-load"),
-    ] = 0.7
+        Field(description="Throughput sliding window in seconds", ge=0.1, le=60.0),
+        Parameter(name="--dcgm-window-sec"),
+    ] = 1.0
 
     dcgm_hostname: Annotated[
         str,
@@ -121,6 +170,39 @@ class MockServerConfig(BaseSettings):
         Field(description="Random seed for DCGM metrics"),
         Parameter(name="--dcgm-seed"),
     ] = None
+
+    dcgm_auto_load: Annotated[
+        bool,
+        Field(description="Auto-scale DCGM load based on token throughput"),
+        Parameter(name="--dcgm-auto-load", negative="--no-dcgm-auto-load"),
+    ] = True
+
+    # Tokenizer Options (for corpus tokenization)
+    tokenizer: Annotated[
+        str,
+        Field(description="HuggingFace tokenizer for corpus (name or path)"),
+        Parameter(name="--tokenizer"),
+    ] = "Qwen/Qwen3-0.6B"
+
+    tokenizer_revision: Annotated[
+        str,
+        Field(description="Tokenizer revision (branch, tag, or commit ID)"),
+        Parameter(name="--tokenizer-revision"),
+    ] = "main"
+
+    tokenizer_trust_remote_code: Annotated[
+        bool,
+        Field(description="Trust remote code for custom tokenizers"),
+        Parameter(name="--tokenizer-trust-remote-code"),
+    ] = False
+
+    no_tokenizer: Annotated[
+        bool,
+        Field(
+            description="Skip tokenizer loading, use character-based chunking (faster startup)"
+        ),
+        Parameter(name="--no-tokenizer"),
+    ] = False
 
 
 server_config: MockServerConfig = MockServerConfig()

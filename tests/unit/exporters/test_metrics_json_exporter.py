@@ -413,42 +413,41 @@ class TestMetricsJsonExporterTelemetry:
     async def test_json_export_telemetry_exception_handling(
         self, mock_results, mock_user_config
     ):
-        """Test that telemetry export handles metric retrieval exceptions."""
-        from unittest.mock import Mock
+        """Test that telemetry export handles missing metrics gracefully."""
+        from datetime import datetime
 
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            TelemetryHierarchy,
-            TelemetryResults,
+        from aiperf.common.models.export_models import (
+            EndpointData,
+            GpuSummary,
+            TelemetryExportData,
+            TelemetrySummary,
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
             mock_user_config.output.artifact_directory = output_dir
 
-            # Create GPU data that will fail on metric retrieval
-            gpu_data = Mock(spec=GpuTelemetryData)
-            gpu_data.metadata = GpuMetadata(
-                gpu_index=0,
-                model_name="Test GPU",
-                gpu_uuid="GPU-123",
-            )
-            gpu_data.get_metric_result = Mock(
-                side_effect=Exception("Metric not available")
-            )
-
-            hierarchy = TelemetryHierarchy()
-            hierarchy.dcgm_endpoints = {
-                "http://localhost:9400/metrics": {"GPU-123": gpu_data}
-            }
-
-            telemetry_results = TelemetryResults(
-                telemetry_data=hierarchy,
-                start_ns=0,
-                end_ns=0,
-                endpoints_configured=["http://localhost:9400/metrics"],
-                endpoints_successful=["http://localhost:9400/metrics"],
+            # Create TelemetryExportData with GPU that has no metrics (empty dict)
+            telemetry_results = TelemetryExportData(
+                summary=TelemetrySummary(
+                    endpoints_configured=["http://localhost:9400/metrics"],
+                    endpoints_successful=["http://localhost:9400/metrics"],
+                    start_time=datetime.fromtimestamp(0),
+                    end_time=datetime.fromtimestamp(0),
+                ),
+                endpoints={
+                    "localhost:9400": EndpointData(
+                        gpus={
+                            "gpu_0": GpuSummary(
+                                gpu_index=0,
+                                gpu_name="Test GPU",
+                                gpu_uuid="GPU-123",
+                                hostname="test-node",
+                                metrics={},  # No metrics
+                            ),
+                        }
+                    ),
+                },
             )
 
             exporter_config = ExporterConfig(
@@ -459,7 +458,7 @@ class TestMetricsJsonExporterTelemetry:
             )
 
             exporter = MetricsJsonExporter(exporter_config)
-            # Should not raise exception despite metric retrieval failures
+            # Should not raise exception despite missing metrics
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -468,7 +467,7 @@ class TestMetricsJsonExporterTelemetry:
             with open(expected_file) as f:
                 data = json.load(f)
 
-            # Should still have telemetry structure even if metrics fail
+            # Should still have telemetry structure even if metrics are empty
             assert "telemetry_data" in data
 
     @pytest.mark.asyncio
@@ -476,38 +475,53 @@ class TestMetricsJsonExporterTelemetry:
         self, mock_results, mock_user_config
     ):
         """Test JSON export when metric values are None."""
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            TelemetryHierarchy,
-            TelemetryResults,
+        from datetime import datetime
+
+        from aiperf.common.models.export_models import (
+            EndpointData,
+            GpuSummary,
+            JsonMetricResult,
+            TelemetryExportData,
+            TelemetrySummary,
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
             mock_user_config.output.artifact_directory = output_dir
 
-            # Create GPU data with None values (no snapshots = no data)
-            gpu_data = GpuTelemetryData(
-                metadata=GpuMetadata(
-                    gpu_index=0,
-                    model_name="Test GPU",
-                    gpu_uuid="GPU-123",
-                )
-            )
-            # No snapshots added = empty metrics
-
-            hierarchy = TelemetryHierarchy()
-            hierarchy.dcgm_endpoints = {
-                "http://localhost:9400/metrics": {"GPU-123": gpu_data}
-            }
-
-            telemetry_results = TelemetryResults(
-                telemetry_data=hierarchy,
-                start_ns=0,
-                end_ns=0,
-                endpoints_configured=["http://localhost:9400/metrics"],
-                endpoints_successful=["http://localhost:9400/metrics"],
+            # Create TelemetryExportData with metrics that have None values
+            telemetry_results = TelemetryExportData(
+                summary=TelemetrySummary(
+                    endpoints_configured=["http://localhost:9400/metrics"],
+                    endpoints_successful=["http://localhost:9400/metrics"],
+                    start_time=datetime.fromtimestamp(0),
+                    end_time=datetime.fromtimestamp(1),
+                ),
+                endpoints={
+                    "localhost:9400": EndpointData(
+                        gpus={
+                            "gpu_0": GpuSummary(
+                                gpu_index=0,
+                                gpu_name="Test GPU",
+                                gpu_uuid="GPU-123",
+                                hostname="test-host",
+                                metrics={
+                                    # Metric with None values for percentiles
+                                    "gpu_power_usage": JsonMetricResult(
+                                        unit="W",
+                                        avg=100.0,
+                                        min=None,
+                                        max=None,
+                                        p50=None,
+                                        p90=None,
+                                        p99=None,
+                                        std=None,
+                                    ),
+                                },
+                            ),
+                        }
+                    ),
+                },
             )
 
             exporter_config = ExporterConfig(
@@ -532,19 +546,26 @@ class TestMetricsJsonExporterTelemetry:
         self, mock_results, mock_user_config
     ):
         """Test JSON export with empty telemetry hierarchy."""
-        from aiperf.common.models import TelemetryHierarchy, TelemetryResults
+        from datetime import datetime
+
+        from aiperf.common.models.export_models import (
+            TelemetryExportData,
+            TelemetrySummary,
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
             mock_user_config.output.artifact_directory = output_dir
 
-            # Empty hierarchy
-            telemetry_results = TelemetryResults(
-                telemetry_data=TelemetryHierarchy(),
-                start_ns=0,
-                end_ns=0,
-                endpoints_configured=[],
-                endpoints_successful=[],
+            # Empty TelemetryExportData - no endpoints
+            telemetry_results = TelemetryExportData(
+                summary=TelemetrySummary(
+                    endpoints_configured=[],
+                    endpoints_successful=[],
+                    start_time=datetime.fromtimestamp(0),
+                    end_time=datetime.fromtimestamp(1),
+                ),
+                endpoints={},
             )
 
             exporter_config = ExporterConfig(
@@ -571,39 +592,50 @@ class TestMetricsJsonExporterTelemetry:
         self, mock_results, mock_user_config
     ):
         """Test that endpoint URLs are normalized in JSON output."""
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            TelemetryHierarchy,
-            TelemetryResults,
+        from datetime import datetime
+
+        from aiperf.common.models.export_models import (
+            EndpointData,
+            GpuSummary,
+            JsonMetricResult,
+            TelemetryExportData,
+            TelemetrySummary,
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
             mock_user_config.output.artifact_directory = output_dir
 
-            gpu_data = GpuTelemetryData(
-                metadata=GpuMetadata(
-                    gpu_index=0,
-                    model_name="Test GPU",
-                    gpu_uuid="GPU-123",
-                )
-            )
-            gpu_data.time_series.append_snapshot(
-                {"gpu_power_usage": 100.0}, timestamp_ns=1000000000
-            )
-
-            hierarchy = TelemetryHierarchy()
-            hierarchy.dcgm_endpoints = {
-                "http://node1.example.com:9400/metrics": {"GPU-123": gpu_data}
-            }
-
-            telemetry_results = TelemetryResults(
-                telemetry_data=hierarchy,
-                start_ns=0,
-                end_ns=0,
-                endpoints_configured=["http://node1.example.com:9400/metrics"],
-                endpoints_successful=["http://node1.example.com:9400/metrics"],
+            # TelemetryExportData already has normalized endpoint keys
+            # (normalization happens during conversion from TelemetryResults)
+            telemetry_results = TelemetryExportData(
+                summary=TelemetrySummary(
+                    endpoints_configured=["http://node1.example.com:9400/metrics"],
+                    endpoints_successful=["http://node1.example.com:9400/metrics"],
+                    start_time=datetime.fromtimestamp(0),
+                    end_time=datetime.fromtimestamp(1),
+                ),
+                endpoints={
+                    "node1.example.com:9400": EndpointData(
+                        gpus={
+                            "gpu_0": GpuSummary(
+                                gpu_index=0,
+                                gpu_name="Test GPU",
+                                gpu_uuid="GPU-123",
+                                hostname="node1",
+                                metrics={
+                                    "gpu_power_usage": JsonMetricResult(
+                                        unit="W",
+                                        avg=100.0,
+                                        min=100.0,
+                                        max=100.0,
+                                        std=0.0,
+                                    ),
+                                },
+                            ),
+                        }
+                    ),
+                },
             )
 
             exporter_config = ExporterConfig(
@@ -629,64 +661,74 @@ class TestMetricsJsonExporterTelemetry:
         self, mock_results, mock_user_config
     ):
         """Test JSON export with multiple DCGM endpoints."""
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            TelemetryHierarchy,
-            TelemetryResults,
+        from datetime import datetime
+
+        from aiperf.common.models.export_models import (
+            EndpointData,
+            GpuSummary,
+            JsonMetricResult,
+            TelemetryExportData,
+            TelemetrySummary,
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
             mock_user_config.output.artifact_directory = output_dir
 
-            # Create two endpoints with GPU data
-            gpu1_data = GpuTelemetryData(
-                metadata=GpuMetadata(
-                    gpu_index=0,
-                    model_name="GPU Model 1",
-                    gpu_uuid="GPU-111",
-                )
-            )
-            gpu1_data.time_series.append_snapshot(
-                {"gpu_power_usage": 100.0}, timestamp_ns=1000000000
-            )
-            gpu1_data.time_series.append_snapshot(
-                {"gpu_power_usage": 110.0}, timestamp_ns=2000000000
-            )
-
-            gpu2_data = GpuTelemetryData(
-                metadata=GpuMetadata(
-                    gpu_index=0,
-                    model_name="GPU Model 2",
-                    gpu_uuid="GPU-222",
-                )
-            )
-            gpu2_data.time_series.append_snapshot(
-                {"gpu_power_usage": 200.0}, timestamp_ns=1000000000
-            )
-            gpu2_data.time_series.append_snapshot(
-                {"gpu_power_usage": 210.0}, timestamp_ns=2000000000
-            )
-
-            hierarchy = TelemetryHierarchy()
-            hierarchy.dcgm_endpoints = {
-                "http://node1:9400/metrics": {"GPU-111": gpu1_data},
-                "http://node2:9400/metrics": {"GPU-222": gpu2_data},
-            }
-
-            telemetry_results = TelemetryResults(
-                telemetry_data=hierarchy,
-                start_ns=0,
-                end_ns=0,
-                endpoints_configured=[
-                    "http://node1:9400/metrics",
-                    "http://node2:9400/metrics",
-                ],
-                endpoints_successful=[
-                    "http://node1:9400/metrics",
-                    "http://node2:9400/metrics",
-                ],
+            # Create TelemetryExportData with two endpoints
+            telemetry_results = TelemetryExportData(
+                summary=TelemetrySummary(
+                    endpoints_configured=[
+                        "http://node1:9400/metrics",
+                        "http://node2:9400/metrics",
+                    ],
+                    endpoints_successful=[
+                        "http://node1:9400/metrics",
+                        "http://node2:9400/metrics",
+                    ],
+                    start_time=datetime.fromtimestamp(0),
+                    end_time=datetime.fromtimestamp(2),
+                ),
+                endpoints={
+                    "node1:9400": EndpointData(
+                        gpus={
+                            "gpu_0": GpuSummary(
+                                gpu_index=0,
+                                gpu_name="GPU Model 1",
+                                gpu_uuid="GPU-111",
+                                hostname="node1",
+                                metrics={
+                                    "gpu_power_usage": JsonMetricResult(
+                                        unit="W",
+                                        avg=105.0,
+                                        min=100.0,
+                                        max=110.0,
+                                        std=5.0,
+                                    ),
+                                },
+                            ),
+                        }
+                    ),
+                    "node2:9400": EndpointData(
+                        gpus={
+                            "gpu_0": GpuSummary(
+                                gpu_index=0,
+                                gpu_name="GPU Model 2",
+                                gpu_uuid="GPU-222",
+                                hostname="node2",
+                                metrics={
+                                    "gpu_power_usage": JsonMetricResult(
+                                        unit="W",
+                                        avg=205.0,
+                                        min=200.0,
+                                        max=210.0,
+                                        std=5.0,
+                                    ),
+                                },
+                            ),
+                        }
+                    ),
+                },
             )
 
             exporter_config = ExporterConfig(
@@ -717,40 +759,48 @@ class TestMetricsJsonExporterTelemetry:
         self, mock_results, mock_user_config
     ):
         """Test JSON export includes hostname metadata."""
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            TelemetryHierarchy,
-            TelemetryResults,
+        from datetime import datetime
+
+        from aiperf.common.models.export_models import (
+            EndpointData,
+            GpuSummary,
+            JsonMetricResult,
+            TelemetryExportData,
+            TelemetrySummary,
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
             mock_user_config.output.artifact_directory = output_dir
 
-            gpu_data = GpuTelemetryData(
-                metadata=GpuMetadata(
-                    gpu_index=0,
-                    model_name="Test GPU",
-                    gpu_uuid="GPU-123",
-                    hostname="test-hostname",
-                )
-            )
-            gpu_data.time_series.append_snapshot(
-                {"gpu_power_usage": 100.0}, timestamp_ns=1000000000
-            )
-
-            hierarchy = TelemetryHierarchy()
-            hierarchy.dcgm_endpoints = {
-                "http://localhost:9400/metrics": {"GPU-123": gpu_data}
-            }
-
-            telemetry_results = TelemetryResults(
-                telemetry_data=hierarchy,
-                start_ns=0,
-                end_ns=0,
-                endpoints_configured=["http://localhost:9400/metrics"],
-                endpoints_successful=["http://localhost:9400/metrics"],
+            telemetry_results = TelemetryExportData(
+                summary=TelemetrySummary(
+                    endpoints_configured=["http://localhost:9400/metrics"],
+                    endpoints_successful=["http://localhost:9400/metrics"],
+                    start_time=datetime.fromtimestamp(0),
+                    end_time=datetime.fromtimestamp(1),
+                ),
+                endpoints={
+                    "localhost:9400": EndpointData(
+                        gpus={
+                            "gpu_0": GpuSummary(
+                                gpu_index=0,
+                                gpu_name="Test GPU",
+                                gpu_uuid="GPU-123",
+                                hostname="test-hostname",
+                                metrics={
+                                    "gpu_power_usage": JsonMetricResult(
+                                        unit="W",
+                                        avg=100.0,
+                                        min=100.0,
+                                        max=100.0,
+                                        std=0.0,
+                                    ),
+                                },
+                            ),
+                        }
+                    ),
+                },
             )
 
             exporter_config = ExporterConfig(

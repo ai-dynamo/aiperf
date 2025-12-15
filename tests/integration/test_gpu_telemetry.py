@@ -116,8 +116,8 @@ class TestGpuTelemetry:
         # Verify we captured data from GPUs
         assert len(gpu_uuids) >= 2, "Should have records from at least two GPUs"
 
-        # Verify records are chronologically ordered by timestamp
-        assert timestamps == sorted(timestamps), "Records should be in timestamp order"
+        # NOTE: Records are not necessarily in timestamp order because of the asynchronous
+        # nature of the telemetry collection.
 
     async def test_gpu_telemetry_export_with_custom_prefix(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
@@ -151,3 +151,35 @@ class TestGpuTelemetry:
             first_record = TelemetryRecord.model_validate_json(lines[0])
             assert first_record.timestamp_ns > 0
             assert first_record.dcgm_url is not None
+
+    async def test_gpu_telemetry_disabled(
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+    ):
+        """GPU telemetry collection is disabled with --no-gpu-telemetry flag.
+
+        When --no-gpu-telemetry is provided, no GPU telemetry files should be
+        created and no telemetry should be collected, even if DCGM endpoints
+        would otherwise be reachable.
+        """
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model nvidia/llama-3.1-nemotron-70b-instruct \
+                --url {aiperf_mock_server.url} \
+                --tokenizer gpt2 \
+                --endpoint-type chat \
+                --streaming \
+                --request-count 25 \
+                --concurrency 1 \
+                --workers-max 1 \
+                --no-gpu-telemetry
+            """
+        )
+        assert result.request_count == 25
+
+        # GPU telemetry should NOT be collected when disabled
+        assert not result.has_gpu_telemetry, "GPU telemetry should not be collected"
+
+        # Verify no GPU telemetry files were created
+        jsonl_files = list(result.artifacts_dir.glob("*gpu_telemetry*.jsonl"))
+        assert len(jsonl_files) == 0, f"Unexpected GPU telemetry files: {jsonl_files}"

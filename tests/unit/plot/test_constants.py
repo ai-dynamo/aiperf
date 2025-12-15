@@ -451,6 +451,9 @@ class TestNonMetricKeys:
     def test_non_metric_keys_contains_expected_values(self) -> None:
         """Test NON_METRIC_KEYS contains expected metadata keys."""
         expected_keys = {
+            "schema_version",
+            "aiperf_version",
+            "benchmark_id",
             "input_config",
             "telemetry_data",
             "start_time",

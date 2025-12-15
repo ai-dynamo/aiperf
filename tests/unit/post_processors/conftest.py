@@ -19,6 +19,8 @@ from aiperf.common.models import (
     ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
+    TelemetryMetrics,
+    TelemetryRecord,
     TextResponse,
 )
 from aiperf.common.models.record_models import (
@@ -77,14 +79,6 @@ async def raw_record_processor(service_id: str, user_config: UserConfig):
     )
     async with aiperf_lifecycle(processor) as proc:
         yield proc
-
-
-@pytest.fixture
-def tmp_artifact_dir(tmp_path: Path) -> Path:
-    """Create a temporary artifact directory for testing."""
-    artifact_dir = tmp_path / "artifacts"
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    return artifact_dir
 
 
 @pytest.fixture
@@ -402,4 +396,44 @@ def create_metric_records_message(
         metadata=metadata,
         results=results,
         error=error,
+    )
+
+
+def make_telemetry_record(
+    *,
+    timestamp_ns: int = 1_000_000_000,
+    dcgm_url: str = "http://node1:9401/metrics",
+    gpu_index: int = 0,
+    gpu_uuid: str = "GPU-test",
+    gpu_model_name: str = "Test GPU",
+    hostname: str = "node1",
+    pci_bus_id: str | None = None,
+    device: str | None = None,
+    gpu_power_usage: float | None = 100.0,
+    gpu_utilization: float | None = None,
+    energy_consumption: float | None = None,
+    gpu_memory_used: float | None = None,
+    gpu_temperature: float | None = None,
+    xid_errors: float | None = None,
+    power_violation: float | None = None,
+) -> TelemetryRecord:
+    """Factory for creating TelemetryRecord instances with sensible defaults."""
+    return TelemetryRecord(
+        timestamp_ns=timestamp_ns,
+        dcgm_url=dcgm_url,
+        gpu_index=gpu_index,
+        gpu_uuid=gpu_uuid,
+        gpu_model_name=gpu_model_name,
+        hostname=hostname,
+        pci_bus_id=pci_bus_id,
+        device=device,
+        telemetry_data=TelemetryMetrics(
+            gpu_power_usage=gpu_power_usage,
+            gpu_utilization=gpu_utilization,
+            energy_consumption=energy_consumption,
+            gpu_memory_used=gpu_memory_used,
+            gpu_temperature=gpu_temperature,
+            xid_errors=xid_errors,
+            power_violation=power_violation,
+        ),
     )

@@ -41,6 +41,7 @@ dependencies = [
   "dash-bootstrap-components~=1.6.0",
   "prometheus_client~=0.23.1",
   "psutil~=7.0.0",
+  "pyarrow>=18.0.0",
   "pydantic>=2.10.0,<3.0.0",
   "pydantic-settings>=2.10.0,<3.0.0",
   "pyzmq~=26.4.0",
@@ -108,6 +109,7 @@ markers = [
     "performance: marks tests as performance tests (deselected by default)",
     "ffmpeg: marks tests that require ffmpeg to be installed (deselected by default)",
     "stress: marks tests as stress tests that generate high load (deselected by default)",
+    "slow: marks tests as slow tests that take >1s (run by default but can be skipped with -m 'not slow')",
 ]
 # Better console output
 console_output_style = "progress"
@@ -119,4 +121,5 @@ verbosity_assertions = 2
 addopts = "--strict-markers -m 'not integration and not performance and not ffmpeg and not stress'"
 
 [tool.codespell]
-skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json"
+skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py"
+ignore-words-list = "timeslice,timeslices"

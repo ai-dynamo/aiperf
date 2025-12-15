@@ -133,6 +133,8 @@ class MetricRecordMetadata(AIPerfBaseModel):
 
 
 class ProfileResults(AIPerfBaseModel):
+    """The results of a profile run."""
+
     records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
     )

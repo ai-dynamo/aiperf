@@ -95,6 +95,17 @@ class RunData(AIPerfBaseModel):
         default=None,
         description="DataFrame containing GPU telemetry time series data, or None if not loaded",
     )
+    server_metrics: pd.DataFrame | None = Field(
+        default=None,
+        description="DataFrame containing server metrics time series data in tidy format with columns: "
+        "[timestamp_ns, endpoint_url, metric_name, metric_type, value, histogram_count, histogram_sum, "
+        "labels_json, unit], or None if not loaded",
+    )
+    server_metrics_aggregated: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Dictionary containing aggregated server metrics statistics by metric name. "
+        "Structure: {metric_name: {endpoint_url: {labels_key: {type, stats, unit, description, timeslices}}}}",
+    )
 
     def get_metric(self, metric_name: str) -> MetricResult | dict[str, Any] | None:
         """Get a metric from aggregated data."""
@@ -176,15 +187,24 @@ class DataLoader(AIPerfLoggerMixin):
     def __init__(
         self,
         classification_config: ExperimentClassificationConfig | None = None,
+        downsampling_config: dict | None = None,
     ):
         """
         Initialize DataLoader.
 
         Args:
             classification_config: Configuration for baseline/treatment classification
+            downsampling_config: Configuration for server metrics downsampling
+                Dictionary with keys: enabled (bool), window_size_seconds (float),
+                aggregation_method (str). If None, uses defaults.
         """
         super().__init__()
         self.classification_config = classification_config
+        self.downsampling_config = downsampling_config or {
+            "enabled": True,
+            "window_size_seconds": 5.0,
+            "aggregation_method": "mean",
+        }
 
     def load_run(self, run_path: Path, load_per_request_data: bool = True) -> RunData:
         """
@@ -264,6 +284,59 @@ class DataLoader(AIPerfLoggerMixin):
             except DataLoadError as e:
                 self.warning(f"Failed to load GPU telemetry data: {e}")
 
+        # Load server metrics - load BOTH Parquet (time-series) AND JSON (aggregated stats)
+        from aiperf.plot.constants import (
+            SERVER_METRICS_EXPORT_JSON,
+            SERVER_METRICS_EXPORT_PARQUET,
+        )
+
+        server_metrics_df = None
+        server_metrics_aggregated = {}
+
+        server_metrics_parquet_path = run_path / SERVER_METRICS_EXPORT_PARQUET
+        server_metrics_json_path = run_path / SERVER_METRICS_EXPORT_JSON
+
+        # Try Parquet first (for time-series data)
+        if server_metrics_parquet_path.exists():
+            try:
+                df_parquet, agg_parquet = self._load_server_metrics_parquet(
+                    server_metrics_parquet_path
+                )
+                server_metrics_df = df_parquet
+                server_metrics_aggregated = agg_parquet
+            except DataLoadError as e:
+                self.warning(f"Failed to load server metrics from Parquet: {e}")
+
+        # Load JSON (for aggregated stats and metadata)
+        if server_metrics_json_path.exists():
+            try:
+                df_json, agg_json = self._load_server_metrics_json(
+                    server_metrics_json_path
+                )
+
+                # If Parquet provided time-series, use JSON only for aggregated stats
+                if server_metrics_df is not None:
+                    if agg_json:
+                        server_metrics_aggregated = agg_json
+                        self.info(
+                            "Loaded server metrics: time-series from Parquet, "
+                            "aggregated stats from JSON"
+                        )
+                else:
+                    # No Parquet - use JSON for both
+                    server_metrics_df = df_json
+                    server_metrics_aggregated = agg_json
+                    self.info("Loaded server metrics from JSON (Parquet not available)")
+            except DataLoadError as e:
+                self.warning(f"Failed to load server metrics from JSON: {e}")
+
+        # If we have time-series but no aggregated stats, compute them
+        if server_metrics_df is not None and not server_metrics_aggregated:
+            self.info("Computing aggregated stats from time-series data...")
+            server_metrics_aggregated = self._compute_aggregated_from_timeseries(
+                server_metrics_df
+            )
+
         return RunData(
             metadata=metadata,
             requests=requests_df,
@@ -271,6 +344,8 @@ class DataLoader(AIPerfLoggerMixin):
             timeslices=timeslices_df,
             slice_duration=slice_duration,
             gpu_telemetry=gpu_telemetry_df,
+            server_metrics=server_metrics_df,
+            server_metrics_aggregated=server_metrics_aggregated,
         )
 
     def load_multiple_runs(self, run_paths: list[Path]) -> list[RunData]:
@@ -793,6 +868,439 @@ class DataLoader(AIPerfLoggerMixin):
             f"({df['gpu_index'].nunique() if 'gpu_index' in df.columns else 0} GPUs)"
         )
         return df
+
+    def _load_server_metrics_json(
+        self, json_path: Path
+    ) -> tuple[pd.DataFrame | None, dict[str, Any]]:
+        """
+        Load server metrics from JSON export file (preferred format).
+
+        Parses ServerMetricsExportData structure and extracts both time series
+        data (from timeslices) and aggregated statistics. Handles all metric types
+        (GAUGE, COUNTER, HISTOGRAM) and multi-endpoint configurations.
+
+        Args:
+            json_path: Path to the server_metrics_export.json file
+
+        Returns:
+            Tuple of (timeseries_df, aggregated_dict):
+            - timeseries_df: Tidy DataFrame for time series plots, or None if no timeslices
+            - aggregated_dict: Nested dict for multi-run comparison
+
+        Raises:
+            DataLoadError: If file exists but cannot be read or parsed
+        """
+        if not json_path.exists():
+            self.debug(f"Server metrics JSON file not found: {json_path}")
+            return None, {}
+
+        try:
+            with open(json_path, "rb") as f:
+                data = orjson.loads(f.read())
+
+            # Import models locally to avoid circular dependencies
+            from aiperf.common.models.server_metrics_models import (
+                CounterTimeslice,
+                GaugeTimeslice,
+                HistogramTimeslice,
+                ServerMetricsExportData,
+            )
+
+            export_data = ServerMetricsExportData.model_validate(data)
+
+            # Build aggregated dict
+            aggregated: dict[str, Any] = {}
+            rows: list[dict[str, Any]] = []
+
+            for metric_name, metric_data in export_data.metrics.items():
+                aggregated[metric_name] = {}
+
+                for series in metric_data.series:
+                    endpoint_url = series.endpoint_url or "unknown"
+                    labels_key = (
+                        orjson.dumps(
+                            series.labels, option=orjson.OPT_SORT_KEYS
+                        ).decode()
+                        if series.labels
+                        else "{}"
+                    )
+
+                    if endpoint_url not in aggregated[metric_name]:
+                        aggregated[metric_name][endpoint_url] = {}
+
+                    # Store aggregated stats
+                    stats_value = (
+                        series.stats if series.stats is not None else series.value
+                    )
+                    aggregated[metric_name][endpoint_url][labels_key] = {
+                        "type": metric_data.type.value,
+                        "stats": stats_value,
+                        "unit": metric_data.unit,
+                        "description": metric_data.description,
+                        "timeslices": series.timeslices,
+                    }
+
+                    # Build time series rows from timeslices (if present)
+                    if series.timeslices:
+                        for ts in series.timeslices:
+                            # Use midpoint of timeslice as timestamp
+                            timestamp_ns = (ts.start_ns + ts.end_ns) // 2
+
+                            row = {
+                                "timestamp_ns": timestamp_ns,
+                                "endpoint_url": endpoint_url,
+                                "metric_name": metric_name,
+                                "metric_type": metric_data.type.value,
+                                "labels_json": labels_key,
+                                "unit": metric_data.unit or "",
+                            }
+
+                            # Add type-specific fields
+                            if isinstance(ts, GaugeTimeslice):
+                                row["value"] = ts.avg
+                                row["histogram_count"] = None
+                                row["histogram_sum"] = None
+                            elif isinstance(ts, CounterTimeslice):
+                                row["value"] = ts.rate
+                                row["histogram_count"] = None
+                                row["histogram_sum"] = None
+                            elif isinstance(ts, HistogramTimeslice):
+                                row["value"] = ts.avg
+                                row["histogram_count"] = ts.count
+                                row["histogram_sum"] = ts.sum
+
+                            rows.append(row)
+
+            # Create DataFrame from rows
+            df = pd.DataFrame(rows) if rows else None
+
+            self.info(
+                f"Loaded {len(export_data.metrics)} server metrics from {json_path} "
+                f"({len(rows)} timeslice data points)"
+            )
+            return df, aggregated
+
+        except orjson.JSONDecodeError as e:
+            raise DataLoadError(
+                f"Failed to parse server metrics JSON: {e}", path=str(json_path)
+            ) from e
+        except Exception as e:
+            raise DataLoadError(
+                f"Failed to load server metrics from JSON: {e}", path=str(json_path)
+            ) from e
+
+    def _load_server_metrics_parquet(
+        self, parquet_path: Path
+    ) -> tuple[pd.DataFrame | None, dict[str, Any]]:
+        """
+        Load server metrics from Parquet export file (fast binary format).
+
+        Parquet format stores server metrics in wide format with all labels
+        as separate columns. This is the most efficient format for large
+        datasets with high query performance.
+
+        Args:
+            parquet_path: Path to the server_metrics_export.parquet file
+
+        Returns:
+            Tuple of (timeseries_df, aggregated_dict):
+            - timeseries_df: Tidy DataFrame for time series plots
+            - aggregated_dict: Nested dict for multi-run comparison
+
+        Raises:
+            DataLoadError: If file exists but cannot be read or parsed
+        """
+        if not parquet_path.exists():
+            self.debug(f"Server metrics Parquet file not found: {parquet_path}")
+            return None, {}
+
+        try:
+            import pyarrow.parquet as pq
+
+            # Read Parquet file
+            table = pq.read_table(parquet_path)
+            df_wide = table.to_pandas()
+
+            # Identify label columns (columns that aren't core metrics)
+            core_columns = {
+                "endpoint_url",
+                "metric_name",
+                "metric_type",
+                "description",
+                "timestamp_ns",
+                "value",
+                "sum",
+                "count",
+                "bucket_le",
+                "bucket_count",
+            }
+            label_columns = [c for c in df_wide.columns if c not in core_columns]
+
+            # Parquet contains CUMULATIVE data - need to compute deltas
+            # For histograms: buckets are in separate rows, use +Inf bucket for totals
+            # Filter histogram data to only aggregate rows (bucket_le == '+Inf')
+            is_histogram = df_wide["metric_type"] == "histogram"
+            is_aggregate_bucket = df_wide["bucket_le"] == "+Inf"
+
+            # For histograms, keep only +Inf bucket rows (total aggregates)
+            # For other types, keep all rows
+            df_filtered = df_wide[~is_histogram | is_aggregate_bucket].copy()
+
+            self.debug(
+                f"Filtered Parquet: {len(df_wide)} rows → {len(df_filtered)} rows "
+                f"(removed per-bucket histogram rows)"
+            )
+
+            # Build series key for grouping
+            df_filtered["labels_json"] = df_filtered.apply(
+                lambda row: orjson.dumps(
+                    {
+                        k: row[k]
+                        for k in label_columns
+                        if pd.notna(row[k]) and row[k] != ""
+                    },
+                    option=orjson.OPT_SORT_KEYS,
+                ).decode()
+                if any(pd.notna(row[k]) and row[k] != "" for k in label_columns)
+                else "{}",
+                axis=1,
+            )
+
+            # Group by metric + endpoint + labels to compute deltas
+            rows = []
+            grouped = df_filtered.groupby(
+                ["metric_name", "endpoint_url", "labels_json", "metric_type"]
+            )
+
+            for (metric_name, endpoint_url, labels_json, metric_type), group in grouped:
+                # Sort by timestamp
+                group = group.sort_values("timestamp_ns")
+
+                # Compute deltas for cumulative metrics (COUNTER and HISTOGRAM)
+                if metric_type in ["counter", "histogram"]:
+                    # For each timestamp, compute delta from previous
+                    group["delta_count"] = group["count"].diff()
+                    group["delta_sum"] = group["sum"].diff()
+
+                    # First row has no previous - skip or use cumulative
+                    # Skip first row to avoid large initial values
+                    group = group[1:]
+
+                    # Compute rate or average from deltas
+                    if metric_type == "counter":
+                        # For counters: use delta as the value (rate will be computed later)
+                        computed_values = group["delta_count"]
+                    else:
+                        # For histograms: avg = delta_sum / delta_count
+                        computed_values = (
+                            group["delta_sum"] / group["delta_count"]
+                        ).where(group["delta_count"] > 0, 0)
+
+                else:
+                    # GAUGE - use value directly (not cumulative)
+                    computed_values = group["value"]
+
+                # Create tidy rows
+                for idx, computed_value in zip(
+                    group.index, computed_values, strict=False
+                ):
+                    row_wide = group.loc[idx]
+                    tidy_row = {
+                        "timestamp_ns": row_wide["timestamp_ns"],
+                        "endpoint_url": endpoint_url,
+                        "metric_name": metric_name,
+                        "metric_type": metric_type,
+                        "labels_json": labels_json,
+                        "unit": row_wide.get("unit", "")
+                        if pd.notna(row_wide.get("unit"))
+                        else "",
+                        "value": computed_value if pd.notna(computed_value) else None,
+                        "histogram_count": row_wide.get("delta_count")
+                        if metric_type == "histogram"
+                        else None,
+                        "histogram_sum": row_wide.get("delta_sum")
+                        if metric_type == "histogram"
+                        else None,
+                    }
+                    rows.append(tidy_row)
+
+            # Create tidy DataFrame
+            df_tidy = pd.DataFrame(rows) if rows else None
+
+            # Apply time-window aggregation to reduce data density
+            # Parquet has 100-200x more points than JSON - downsample based on config
+            if df_tidy is not None and not df_tidy.empty:
+                if self.downsampling_config["enabled"]:
+                    window_size_seconds = self.downsampling_config[
+                        "window_size_seconds"
+                    ]
+                    aggregation_method = self.downsampling_config["aggregation_method"]
+                    df_tidy = self._downsample_server_metrics_to_windows(
+                        df_tidy,
+                        window_size_ns=int(window_size_seconds * 1e9),
+                        aggregation_method=aggregation_method,
+                    )
+                else:
+                    self.info("Server metrics downsampling disabled by configuration")
+
+            # Build aggregated dict (empty for Parquet - compute on demand)
+            aggregated = {}
+
+            unique_metrics = len(df_wide["metric_name"].unique())
+            self.info(
+                f"Loaded server metrics from Parquet: {unique_metrics} metrics, "
+                f"{len(rows)} raw points → {len(df_tidy) if df_tidy is not None else 0} "
+                f"windowed points (5s aggregation)"
+            )
+
+            return df_tidy, aggregated
+
+        except ImportError as e:
+            raise DataLoadError(
+                "pyarrow is required to load Parquet files. Install with: pip install pyarrow",
+                path=str(parquet_path),
+            ) from e
+        except Exception as e:
+            raise DataLoadError(
+                f"Failed to load server metrics from Parquet: {e}",
+                path=str(parquet_path),
+            ) from e
+
+    def _downsample_server_metrics_to_windows(
+        self,
+        df: pd.DataFrame,
+        window_size_ns: int = 5_000_000_000,
+        aggregation_method: str = "mean",
+    ) -> pd.DataFrame:
+        """
+        Downsample server metrics to time windows for efficient plotting.
+
+        Aggregates high-frequency Parquet data into time windows (default 5s)
+        to match JSON timeslice granularity and improve rendering performance.
+        Reduces data points by ~100x while preserving visual fidelity.
+
+        Args:
+            df: Tidy server metrics DataFrame
+            window_size_ns: Window size in nanoseconds (default: 5 seconds)
+            aggregation_method: Method for aggregating values ("mean", "max", "min", "median")
+
+        Returns:
+            Downsampled DataFrame with same schema
+        """
+        if df.empty:
+            return df
+
+        # Validate aggregation method
+        valid_methods = ["mean", "max", "min", "median"]
+        if aggregation_method not in valid_methods:
+            self.warning(
+                f"Invalid aggregation method '{aggregation_method}', using 'mean'. "
+                f"Valid options: {valid_methods}"
+            )
+            aggregation_method = "mean"
+
+        # Create window bins
+        min_ts = df["timestamp_ns"].min()
+        df["window"] = ((df["timestamp_ns"] - min_ts) // window_size_ns).astype(int)
+
+        # Group by (metric, endpoint, labels, window) and aggregate
+        agg_funcs = {
+            "timestamp_ns": "mean",  # Use window midpoint
+            "value": aggregation_method,  # User-configurable aggregation
+            "histogram_count": "sum",  # Sum counts (for histograms)
+            "histogram_sum": "sum",  # Sum sums (for histograms)
+            "metric_type": "first",  # Metadata (same for all in group)
+            "unit": "first",
+        }
+
+        grouped = df.groupby(
+            ["metric_name", "endpoint_url", "labels_json", "window"],
+            dropna=False,
+        ).agg(agg_funcs)
+
+        # Reset index to get back to flat DataFrame
+        df_downsampled = grouped.reset_index(drop=False)
+        df_downsampled = df_downsampled.drop(columns=["window"])
+
+        # Convert timestamp back to int
+        df_downsampled["timestamp_ns"] = df_downsampled["timestamp_ns"].astype("int64")
+
+        self.debug(
+            f"Downsampled server metrics: {len(df)} → {len(df_downsampled)} rows "
+            f"({len(df) / len(df_downsampled):.1f}x reduction, {window_size_ns / 1e9:.1f}s windows, "
+            f"{aggregation_method} aggregation)"
+        )
+
+        return df_downsampled
+
+    def _compute_aggregated_from_timeseries(self, df: pd.DataFrame) -> dict[str, Any]:
+        """
+        Compute aggregated statistics from time-series DataFrame.
+
+        Used when Parquet is loaded but JSON is not available. Computes
+        basic statistics (avg, min, max, p50, p95, p99) from time-series data.
+
+        Args:
+            df: Time-series DataFrame with columns: timestamp_ns, endpoint_url,
+                metric_name, metric_type, value, labels_json, etc.
+
+        Returns:
+            Aggregated dict matching JSON format:
+            {metric_name: {endpoint_url: {labels_key: {type, stats, unit, description}}}}
+        """
+        if df is None or df.empty:
+            return {}
+
+        aggregated: dict[str, Any] = {}
+
+        # Group by metric, endpoint, labels
+        grouped = df.groupby(["metric_name", "endpoint_url", "labels_json"])
+
+        for (metric_name, endpoint_url, labels_json), group in grouped:
+            # Initialize nested structure
+            if metric_name not in aggregated:
+                aggregated[metric_name] = {}
+            if endpoint_url not in aggregated[metric_name]:
+                aggregated[metric_name][endpoint_url] = {}
+
+            # Compute statistics from values
+            values = group["value"].dropna()
+
+            if len(values) == 0:
+                continue
+
+            stats = {
+                "avg": float(values.mean()),
+                "min": float(values.min()),
+                "max": float(values.max()),
+                "p50": float(values.quantile(0.5)),
+                "p95": float(values.quantile(0.95)),
+                "p99": float(values.quantile(0.99)),
+            }
+
+            # Get metric type, unit, and description from first row
+            metric_type = (
+                group["metric_type"].iloc[0] if "metric_type" in group else None
+            )
+            unit = group["unit"].iloc[0] if "unit" in group else ""
+            description = (
+                group["description"].iloc[0]
+                if "description" in group and pd.notna(group["description"].iloc[0])
+                else ""
+            )
+
+            aggregated[metric_name][endpoint_url][labels_json] = {
+                "type": metric_type,
+                "stats": stats,
+                "unit": unit,
+                "description": description,
+                "timeslices": None,  # Not computed here
+            }
+
+        self.info(
+            f"Computed aggregated stats for {len(aggregated)} metrics from time-series data"
+        )
+        return aggregated
 
     def _classify_experiment_type(self, run_path: Path, run_name: str) -> str:
         """

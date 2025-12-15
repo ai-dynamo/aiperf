@@ -4,10 +4,39 @@
 Shared fixtures for testing GPU telemetry components.
 """
 
+from unittest.mock import Mock
+
 import pytest
 
-from aiperf.common.models.telemetry_models import TelemetryMetrics, TelemetryRecord
+from aiperf.common.config import UserConfig
+from aiperf.common.config.endpoint_config import EndpointConfig
+from aiperf.common.models.telemetry_models import (
+    TelemetryMetrics,
+    TelemetryRecord,
+)
 from tests.aiperf_mock_server.dcgm_faker import DCGMFaker
+
+
+@pytest.fixture
+def base_user_config():
+    """Create a minimal UserConfig for testing."""
+    return UserConfig(
+        endpoint=EndpointConfig(url="http://localhost:8000", model_names=["test-model"])
+    )
+
+
+def create_user_config(
+    gpu_telemetry: list[str] | None = None,
+    no_gpu_telemetry: bool = False,
+) -> UserConfig:
+    """Helper to create UserConfig with GPU telemetry settings."""
+    return UserConfig(
+        endpoint=EndpointConfig(
+            url="http://localhost:8000", model_names=["test-model"]
+        ),
+        gpu_telemetry=gpu_telemetry,
+        no_gpu_telemetry=no_gpu_telemetry,
+    )
 
 
 @pytest.fixture
@@ -22,6 +51,12 @@ def sample_dcgm_data():
         initial_load=0.1,
     )
     return faker.generate()
+
+
+@pytest.fixture
+def faker():
+    """Create a DCGMFaker instance with default settings."""
+    return DCGMFaker(gpu_name="h200", num_gpus=2, seed=42)
 
 
 @pytest.fixture
@@ -135,3 +170,26 @@ def multi_gpu_telemetry_records():
         )
 
     return records
+
+
+@pytest.fixture
+def mock_metric_registry(monkeypatch):
+    """Provide a unified mocked MetricRegistry that represents the singleton properly.
+
+    Uses monkeypatch to inject the same mock instance at all import locations,
+    ensuring consistent singleton behavior across the entire test.
+    """
+    mock_registry = Mock()
+    mock_registry.tags_applicable_to.return_value = []
+    mock_registry.create_dependency_order_for.return_value = []
+    mock_registry.get_instance.return_value = Mock()
+    mock_registry.all_classes.return_value = []
+    mock_registry.all_tags.return_value = []
+
+    # Patch all known import locations
+    monkeypatch.setattr(
+        "aiperf.metrics.metric_registry.MetricRegistry",
+        mock_registry,
+    )
+
+    return mock_registry

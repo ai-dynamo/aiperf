@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pytest configuration and shared fixtures for mock server tests."""
 
+import os
 from unittest.mock import patch
 
 import pytest
-from aiperf_mock_server.app import app
-from aiperf_mock_server.config import MockServerConfig, set_server_config
+from aiperf_mock_server.app import asgi_app
+from aiperf_mock_server.config import MockServerConfig
 from aiperf_mock_server.dcgm_faker import GPU_CONFIGS, DCGMFaker
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
@@ -15,7 +16,7 @@ from aiperf_mock_server.models import (
     Message,
     RankingRequest,
 )
-from aiperf_mock_server.tokens import TokenizedText, Tokenizer
+from aiperf_mock_server.tokens import TokenizedText
 from fastapi.testclient import TestClient
 
 # ============================================================================
@@ -24,14 +25,25 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
-def reset_config():
-    """Reset server config before each test to ensure isolation."""
-    config = MockServerConfig(error_rate=0.0, random_seed=42)
-    set_server_config(config)
+def reset_config(monkeypatch):
+    """Reset server config before each test to ensure isolation.
+
+    Uses fast=True for zero latency in tests.
+    Sets config directly without env propagation to avoid polluting config tests.
+    """
+    from aiperf_mock_server import config as config_module
+
+    # Clear all MOCK_SERVER_* env vars before test
+    for key in list(os.environ.keys()):
+        if key.startswith("MOCK_SERVER_"):
+            monkeypatch.delenv(key, raising=False)
+
+    # Set config directly without propagating to env
+    config = MockServerConfig(error_rate=0.0, random_seed=42, fast=True)
+    config_module.server_config = config
     yield
-    # Cleanup after test
-    config = MockServerConfig()
-    set_server_config(config)
+    # Reset to default after test
+    config_module.server_config = MockServerConfig()
 
 
 # ============================================================================
@@ -40,15 +52,9 @@ def reset_config():
 
 
 @pytest.fixture
-def tokenizer():
-    """Create a Tokenizer instance."""
-    return Tokenizer()
-
-
-@pytest.fixture
 def dcgm_faker():
     """Create a DCGMFaker instance with default settings."""
-    return DCGMFaker(gpu_name="h200", num_gpus=2, seed=42, initial_load=0.7)
+    return DCGMFaker(gpu_name="h200", num_gpus=2, seed=42)
 
 
 @pytest.fixture
@@ -59,8 +65,8 @@ def gpu_config():
 
 @pytest.fixture
 def test_client():
-    """Create FastAPI TestClient."""
-    return TestClient(app)
+    """Create FastAPI TestClient with timing middleware."""
+    return TestClient(asgi_app)
 
 
 # ============================================================================
@@ -157,7 +163,7 @@ def sample_tokenized_text():
 def sample_tokenized_text_with_reasoning():
     """Create tokenized text with reasoning tokens."""
     return TokenizedText(
-        text="Answer to problem",
+        text="Solve this problem",
         tokens=["Answer", " to", " problem"],
         prompt_token_count=10,
         reasoning_tokens=50,

@@ -69,8 +69,19 @@ class PlotController:
             logger.info(
                 "Experiment classification enabled: grouping runs by baseline/treatment patterns"
             )
+
+        downsampling_config = self.plot_config.get_downsampling_config()
+        if not downsampling_config["enabled"]:
+            logger.info("Server metrics downsampling disabled by configuration")
+        else:
+            logger.info(
+                f"Server metrics downsampling: {downsampling_config['window_size_seconds']}s windows, "
+                f"{downsampling_config['aggregation_method']} aggregation"
+            )
+
         self.loader = DataLoader(
             classification_config=classification_config,
+            downsampling_config=downsampling_config,
         )
 
     def run(self) -> list[Path] | None:

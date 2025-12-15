@@ -14,6 +14,14 @@ from aiperf.common.mixins.aiperf_lifecycle_mixin import (
 from aiperf.common.mixins.aiperf_logger_mixin import (
     AIPerfLoggerMixin,
 )
+from aiperf.common.mixins.base_metrics_collector_mixin import (
+    BaseMetricsCollectorMixin,
+    FetchResult,
+    HttpTraceTiming,
+    TErrorCallback,
+    TRecord,
+    TRecordCallback,
+)
 from aiperf.common.mixins.base_mixin import (
     BaseMixin,
 )
@@ -60,11 +68,14 @@ from aiperf.common.mixins.worker_tracker_mixin import (
 __all__ = [
     "AIPerfLifecycleMixin",
     "AIPerfLoggerMixin",
+    "BaseMetricsCollectorMixin",
     "BaseMixin",
     "BufferedJSONLWriterMixin",
     "CommandHandlerMixin",
     "CommunicationMixin",
+    "FetchResult",
     "HooksMixin",
+    "HttpTraceTiming",
     "MessageBusClientMixin",
     "ProcessHealthMixin",
     "ProgressTrackerMixin",
@@ -72,6 +83,9 @@ __all__ = [
     "RealtimeMetricsMixin",
     "RealtimeTelemetryMetricsMixin",
     "ReplyClientMixin",
+    "TErrorCallback",
+    "TRecord",
+    "TRecordCallback",
     "TaskManagerMixin",
     "WorkerTrackerMixin",
 ]

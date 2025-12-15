@@ -44,7 +44,10 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
             console: Rich Console instance for formatted output
         """
 
-        if self._user_config.gpu_telemetry is None:
+        if (
+            self._user_config.gpu_telemetry is None
+            or self._user_config.gpu_telemetry_disabled
+        ):
             return
 
         if not self._telemetry_results:
@@ -78,18 +81,19 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
             RenderableType: Rich Group containing multiple Tables, or Text message if no data
         """
         renderables = []
-        telemetry_data = self._telemetry_results.telemetry_data
         first_table = True
 
-        for dcgm_url, gpus_data in telemetry_data.dcgm_endpoints.items():
-            if not gpus_data:
+        # TelemetryExportData uses: endpoints[endpoint_display] -> EndpointData.gpus[gpu_key] -> GpuSummary
+        for (
+            endpoint_display,
+            endpoint_data,
+        ) in self._telemetry_results.endpoints.items():
+            if not endpoint_data.gpus:
                 continue
 
-            endpoint_display = normalize_endpoint_display(dcgm_url)
-
-            for _gpu_uuid, gpu_data in gpus_data.items():
-                gpu_index = gpu_data.metadata.gpu_index
-                gpu_name = gpu_data.metadata.model_name
+            for _gpu_key, gpu_summary in endpoint_data.gpus.items():
+                gpu_index = gpu_summary.gpu_index
+                gpu_name = gpu_summary.gpu_name
                 table_title_base = f"{endpoint_display} | GPU {gpu_index} | {gpu_name}"
 
                 if first_table:
@@ -100,7 +104,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                     table_title = table_title_base
 
                 metrics_table = self._create_gpu_metrics_table(
-                    table_title, gpu_data, gpu_index
+                    table_title, gpu_summary, gpu_index
                 )
                 renderables.append(metrics_table)
 
@@ -120,8 +124,8 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         """
         title_lines = ["NVIDIA AIPerf | GPU Telemetry Summary"]
 
-        endpoints_configured = self._telemetry_results.endpoints_configured
-        endpoints_successful = self._telemetry_results.endpoints_successful
+        endpoints_configured = self._telemetry_results.summary.endpoints_configured
+        endpoints_successful = self._telemetry_results.summary.endpoints_successful
         total_count = len(endpoints_configured)
         successful_count = len(endpoints_successful)
         failed_count = total_count - successful_count
@@ -172,13 +176,13 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         return f"{value:,.2f}"
 
     def _create_gpu_metrics_table(
-        self, table_title: str, gpu_data, gpu_index: int
+        self, table_title: str, gpu_summary, gpu_index: int
     ) -> Table:
         """Create a metrics table for a single GPU.
 
         Args:
             table_title: Title for the table
-            gpu_data: GPU data containing metrics
+            gpu_summary: GpuSummary containing pre-computed metrics
             gpu_index: Index of the GPU
 
         Returns:
@@ -192,11 +196,13 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         metrics_config = get_gpu_telemetry_metrics_config()
 
         for metric_display, metric_key, unit_enum in metrics_config:
+            # Check if metric exists in pre-computed metrics
+            if metric_key not in gpu_summary.metrics:
+                continue
+
             try:
                 unit = unit_enum.value
-                metric_result = gpu_data.get_metric_result(
-                    metric_key, metric_key, metric_display, unit
-                )
+                metric_result = gpu_summary.metrics[metric_key]
 
                 row = [f"{metric_display} ({unit})"]
                 for stat in self.STAT_COLUMN_KEYS:
@@ -220,8 +226,8 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         """
         message_parts = ["No GPU telemetry data collected during the benchmarking run."]
 
-        endpoints_configured = self._telemetry_results.endpoints_configured
-        endpoints_successful = self._telemetry_results.endpoints_successful
+        endpoints_configured = self._telemetry_results.summary.endpoints_configured
+        endpoints_successful = self._telemetry_results.summary.endpoints_successful
         failed_endpoints = [
             ep for ep in endpoints_configured if ep not in endpoints_successful
         ]
@@ -231,15 +237,5 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
             for endpoint in failed_endpoints:
                 clean_endpoint = normalize_endpoint_display(endpoint)
                 message_parts.append(f"  • {clean_endpoint}")
-
-        if self._telemetry_results.error_summary:
-            message_parts.append("\n\nErrors encountered:")
-            for error_count in self._telemetry_results.error_summary:
-                error = error_count.error_details
-                count = error_count.count
-                if count > 1:
-                    message_parts.append(f"  • {error.message} ({count} occurrences)")
-                else:
-                    message_parts.append(f"  • {error.message}")
 
         return Text("".join(message_parts), style="dim italic")
