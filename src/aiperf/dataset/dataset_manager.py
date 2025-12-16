@@ -8,7 +8,7 @@ import aiofiles
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.config_defaults import OutputDefaults
+from aiperf.common.config.config_defaults import InputDefaults, OutputDefaults
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
@@ -229,6 +229,12 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._session_ids_cache = list(self.dataset.keys())
+
+        # Set default sampling strategy if not already set by composer/loader
+        if self.user_config.input.dataset_sampling_strategy is None:
+            self.user_config.input.dataset_sampling_strategy = (
+                InputDefaults.DATASET_SAMPLING_STRATEGY
+            )
 
         self._dataset_sampler = DatasetSamplingStrategyFactory.create_instance(
             self.user_config.input.dataset_sampling_strategy,
