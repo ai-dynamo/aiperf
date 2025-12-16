@@ -40,12 +40,14 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
         Raises:
             ValueError: If the record does not have a output or reasoning token count.
         """
-        if record.output_token_count is None and record.reasoning_token_count is None:
+        if record.token_counts is None or (
+            record.token_counts.output is None and record.token_counts.reasoning is None
+        ):
             raise NoMetricValue(
                 "Output and reasoning token counts are missing in the record."
             )
 
-        return (record.output_token_count or 0) + (record.reasoning_token_count or 0)
+        return (record.token_counts.output or 0) + (record.token_counts.reasoning or 0)
 
 
 class TotalOutputSequenceLengthMetric(

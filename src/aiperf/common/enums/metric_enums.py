@@ -703,6 +703,9 @@ class MetricFlags(Flag):
     SUPPORTS_VIDEO_ONLY = 1 << 13
     """Metrics that are only applicable to video-based endpoints."""
 
+    USAGE_DIFF_ONLY = 1 << 14
+    """Metrics that are only applicable when client side tokenization is enabled and the usage field is used."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.

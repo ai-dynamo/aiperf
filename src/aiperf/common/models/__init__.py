@@ -93,6 +93,7 @@ from aiperf.common.models.record_models import (
     SSEMessage,
     TextResponse,
     TextResponseData,
+    TokenCounts,
 )
 from aiperf.common.models.sequence_distribution import (
     DistributionParser,
@@ -248,6 +249,7 @@ __all__ = [
     "TimeRangeFilter",
     "TimesliceCollectionExportData",
     "TimesliceData",
+    "TokenCounts",
     "TransportMetadata",
     "Turn",
     "Usage",

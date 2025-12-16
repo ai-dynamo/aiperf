@@ -38,7 +38,7 @@ class TestOutputSequenceLengthMetric:
     def test_output_sequence_length_none(self):
         """Test handling of None output tokens raises error"""
         record = create_record()
-        record.output_token_count = None
+        record.token_counts.output = None
 
         metric = OutputSequenceLengthMetric()
         with pytest.raises(NoMetricValue):
@@ -61,7 +61,7 @@ class TestOutputSequenceLengthMetric:
     def test_output_sequence_length_with_reasoning_tokens(self):
         """Test output sequence length includes reasoning tokens"""
         record = create_record(output_tokens_per_response=10)
-        record.reasoning_token_count = 5
+        record.token_counts.reasoning = 5
 
         metric = OutputSequenceLengthMetric()
         result = metric.parse_record(record, MetricRecordDict())
