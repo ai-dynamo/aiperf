@@ -11,6 +11,7 @@ from aiperf.gpu_telemetry.accumulator import (
 )
 from aiperf.gpu_telemetry.constants import (
     DCGM_TO_FIELD_MAPPING,
+    GPU_TELEMETRY_METRICS_CONFIG,
     SCALING_FACTORS,
     get_gpu_telemetry_metrics_config,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "GPUTelemetryDataCollector",
     "GPUTelemetryJSONLWriter",
     "GPUTelemetryManager",
+    "GPU_TELEMETRY_METRICS_CONFIG",
     "MetricsConfigLoader",
     "SCALING_FACTORS",
     "get_gpu_telemetry_metrics_config",
