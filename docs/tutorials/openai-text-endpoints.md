@@ -9,7 +9,6 @@ This guide demonstrates how to profile OpenAI-compatible text generation endpoin
 
 ## Start a vLLM server
 
-<!-- setup-vllm-openai-text-endpoint-server -->
 ```bash
 # Pull and run vLLM Docker container:
 docker pull vllm/vllm-openai:latest
@@ -18,20 +17,17 @@ docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --reasoning-parser qwen3 \
   --host 0.0.0.0 --port 8000
 ```
-<!-- /setup-vllm-openai-text-endpoint-server -->
 
-<!-- health-check-vllm-openai-text-endpoint-server -->
 ```bash
 timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
 ```
-<!-- /health-check-vllm-openai-text-endpoint-server -->
 
 ## Profile Chat Completions API
 The Chat Completions API uses the `/v1/chat/completions` endpoint.
 
 ### Profile with synthetic inputs
 
-<!-- aiperf-run-vllm-openai-text-endpoint-server -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -45,10 +41,12 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 20
 ```
-<!-- /aiperf-run-vllm-openai-text-endpoint-server -->
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ### Profile with custom input file
 Create a JSONL input file:
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 
 ```bash
 cat <<EOF > inputs.jsonl
@@ -68,13 +66,14 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 10
 ```
-
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ## Profile Completions API
 The Completions API uses the `/v1/completions` endpoint.
 
 ### Profile with synthetic inputs
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -87,10 +86,12 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 32
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ### Profile with custom input file
 Create a JSONL input file:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
 {"texts": ["Hello!", "What’s up?"]}
@@ -109,3 +110,4 @@ aiperf profile \
     --request-count 10
 
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
