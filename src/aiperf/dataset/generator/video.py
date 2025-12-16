@@ -295,8 +295,13 @@ class VideoGenerator(BaseGenerator):
     def _create_video_with_ffmpeg(self, frames: list[Image.Image]) -> str:
         """Create video data using ffmpeg-python with improved error handling."""
 
+        # MP4 format requires seekable output for proper muxing (faststart)
+        # which makes it incompatible with pipes. Use temp files for MP4.
+        if self.config.format == VideoFormat.MP4:
+            return self._create_video_with_temp_files(frames)
+        
         try:
-            # First try the in-memory approach
+            # For WebM, try the in-memory pipe approach first
             return self._create_video_with_pipes(frames)
         except (BrokenPipeError, OSError, RuntimeError) as e:
             self.logger.warning(
@@ -330,6 +335,7 @@ class VideoGenerator(BaseGenerator):
             # Add format-specific options for streaming/pipe output
             if self.config.format == VideoFormat.MP4:
                 # For pipes, we need frag_keyframe and empty_moov for non-seekable output
+                # Note: This path is now skipped for MP4 (see _create_video_with_ffmpeg)
                 output_options["movflags"] = (
                     "frag_keyframe+empty_moov+default_base_moof"
                 )

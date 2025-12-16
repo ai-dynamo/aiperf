@@ -161,7 +161,19 @@ class InferenceResultParser(CommunicationMixin):
             )
 
         resp = self.endpoint.extract_response_data(request_record)
-        input_token_count = await self.compute_input_token_count(request_record)
+        
+        # Try to get server-reported token counts first (important for multimodal)
+        server_input_tokens = None
+        for response in resp:
+            if response.usage and response.usage.prompt_tokens is not None:
+                server_input_tokens = response.usage.prompt_tokens
+                break
+        
+        # Use server tokens if available, otherwise compute client-side
+        if server_input_tokens is not None:
+            input_token_count = server_input_tokens
+        else:
+            input_token_count = await self.compute_input_token_count(request_record)
 
         output_texts: list[str] = []
         reasoning_texts: list[str] = []
