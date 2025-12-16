@@ -31,6 +31,7 @@ from aiperf.common.models import (
     TextResponseData,
     Turn,
 )
+from aiperf.common.models.record_models import TokenCounts
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -388,8 +389,11 @@ def sample_parsed_record(sample_request_record: RequestRecord) -> ParsedResponse
     return ParsedResponseRecord(
         request=sample_request_record,
         responses=responses,
-        input_token_count=DEFAULT_INPUT_TOKENS,
-        output_token_count=DEFAULT_OUTPUT_TOKENS,
+        token_counts=TokenCounts(
+            input=DEFAULT_INPUT_TOKENS,
+            output=DEFAULT_OUTPUT_TOKENS,
+            reasoning=None,
+        ),
     )
 
 

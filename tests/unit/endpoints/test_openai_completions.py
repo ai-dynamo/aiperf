@@ -69,3 +69,46 @@ class TestCompletionsEndpoint:
             "ignore_eos": True,
         }
         assert payload == expected_payload
+
+    @pytest.mark.parametrize(
+        "streaming,use_server_token_count,user_extra,expected_stream_options",
+        [
+            # Auto-add when both flags enabled
+            (True, True, None, {"include_usage": True}),
+            # Don't add when not streaming
+            (False, True, None, None),
+            # Don't add when flag disabled
+            (True, False, None, None),
+            # Don't add when neither enabled
+            (False, False, None, None),
+            # Preserve user's include_usage=False
+            (True, True, [("stream_options", {"include_usage": False})], {"include_usage": False}),
+            # Merge with user's other options
+            (True, True, [("stream_options", {"continuous_updates": True})], {"continuous_updates": True, "include_usage": True}),
+        ],
+    )  # fmt: skip
+    def test_stream_options_auto_configuration(
+        self,
+        model_endpoint,
+        sample_conversations,
+        streaming,
+        use_server_token_count,
+        user_extra,
+        expected_stream_options,
+    ):
+        """Verify stream_options.include_usage is automatically configured based on flags and user settings."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turns = [turn]
+        model_endpoint.endpoint.streaming = streaming
+        model_endpoint.endpoint.use_server_token_count = use_server_token_count
+        if user_extra:
+            model_endpoint.endpoint.extra = user_extra
+        request_info = RequestInfo(model_endpoint=model_endpoint, turns=turns)
+        payload = endpoint.format_payload(request_info)
+
+        if expected_stream_options is None:
+            assert "stream_options" not in payload
+        else:
+            assert "stream_options" in payload
+            assert payload["stream_options"] == expected_stream_options

@@ -37,7 +37,7 @@ class TestOutputTokenCountMetric:
     def test_output_token_count_none(self):
         """Test handling of None output tokens raises error"""
         record = create_record()
-        record.output_token_count = None
+        record.token_counts.output = None
 
         metric = OutputTokenCountMetric()
         with pytest.raises(NoMetricValue):

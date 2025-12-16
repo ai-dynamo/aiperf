@@ -16,7 +16,7 @@ from pydantic import (
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.constants import NANOS_PER_SECOND, STAT_KEYS
+from aiperf.common.constants import STAT_KEYS
 from aiperf.common.enums import CreditPhase, SSEFieldType
 from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.exceptions import InvalidInferenceResultError
@@ -709,22 +709,31 @@ class ParsedResponse(AIPerfBaseModel):
     )
 
 
+class TokenCounts(AIPerfBaseModel):
+    """Token counts for a record."""
+
+    input: int | None = Field(
+        default=None,
+        description="The number of tokens in the input. If None, the number of tokens could not be calculated.",
+    )
+    output: int | None = Field(
+        default=None,
+        description="The number of output tokens across all responses. If None, the number of tokens could not be calculated.",
+    )
+    reasoning: int | None = Field(
+        default=None,
+        description="The number of reasoning tokens across all responses. If None, the number of tokens could not be calculated, or the model does not support reasoning.",
+    )
+
+
 class ParsedResponseRecord(AIPerfBaseModel):
     """Record of a request and its associated responses, already parsed and ready for metrics."""
 
-    request: RequestRecord = Field(description="The original request record")
-    responses: list[ParsedResponse] = Field(description="The parsed responses.")
-    input_token_count: int | None = Field(
+    request: RequestRecord = Field(..., description="The original request record")
+    responses: list[ParsedResponse] = Field(..., description="The parsed responses.")
+    token_counts: TokenCounts | None = Field(
         default=None,
-        description="The number of tokens in the input (client-side tokenization). If None, the number of tokens could not be calculated.",
-    )
-    output_token_count: int | None = Field(
-        default=None,
-        description="The number of output tokens across all responses (client-side tokenization). If None, the number of tokens could not be calculated.",
-    )
-    reasoning_token_count: int | None = Field(
-        default=None,
-        description="The number of reasoning tokens across all responses (client-side tokenization). If None, the number of tokens could not be calculated, or the model does not support reasoning.",
+        description="The token counts for the response. If None, the token counts could not be calculated.",
     )
 
     @cached_property
@@ -761,18 +770,6 @@ class ParsedResponseRecord(AIPerfBaseModel):
         Useful for timing metrics that should measure content delivery.
         """
         return [response for response in self.responses if response.data]
-
-    @cached_property
-    def request_duration_ns(self) -> int:
-        """Get the duration of the request in nanoseconds."""
-        return self.end_perf_ns - self.start_perf_ns
-
-    @cached_property
-    def tokens_per_second(self) -> float | None:
-        """Get the number of tokens per second of the request."""
-        if self.output_token_count is None or self.request_duration_ns == 0:
-            return None
-        return self.output_token_count / (self.request_duration_ns / NANOS_PER_SECOND)
 
     @property
     def has_error(self) -> bool:

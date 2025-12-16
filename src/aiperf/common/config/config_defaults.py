@@ -41,6 +41,7 @@ class EndpointDefaults:
     TIMEOUT = 6 * 60 * 60  # 6 hours, match vLLM benchmark default
     API_KEY = None
     USE_LEGACY_MAX_TOKENS = False
+    USE_SERVER_TOKEN_COUNT = False
 
 
 @dataclass(frozen=True)

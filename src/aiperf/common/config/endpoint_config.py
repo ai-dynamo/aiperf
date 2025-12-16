@@ -178,3 +178,22 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.USE_LEGACY_MAX_TOKENS
+
+    use_server_token_count: Annotated[
+        bool,
+        Field(
+            description=(
+                "Use server-reported token counts from API usage fields instead of "
+                "client-side tokenization. When enabled, tokenizers are still loaded "
+                "(needed for dataset generation) but tokenizer.encode() is not called "
+                "for computing metrics. Token count fields will be None if the server "
+                "does not provide usage information. For OpenAI-compatible streaming "
+                "endpoints (chat/completions), stream_options.include_usage is automatically "
+                "configured when this flag is enabled."
+            ),
+        ),
+        CLIParameter(
+            name=("--use-server-token-count",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT

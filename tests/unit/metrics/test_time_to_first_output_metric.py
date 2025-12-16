@@ -5,7 +5,11 @@ import pytest
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponse, ParsedResponseRecord, RequestRecord
-from aiperf.common.models.record_models import ReasoningResponseData, TextResponseData
+from aiperf.common.models.record_models import (
+    ReasoningResponseData,
+    TextResponseData,
+    TokenCounts,
+)
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.time_to_first_output_token_metric import (
     TimeToFirstOutputTokenMetric,
@@ -49,8 +53,11 @@ def create_response_record(
             )
             for perf_ns, reasoning, content in responses
         ],
-        input_token_count=None,
-        output_token_count=len(responses),
+        token_counts=TokenCounts(
+            input=None,
+            output=len(responses),
+            reasoning=None,
+        ),
     )
 
 
