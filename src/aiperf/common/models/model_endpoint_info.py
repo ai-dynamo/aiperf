@@ -102,6 +102,10 @@ class EndpointInfo(AIPerfBaseModel):
         default=False,
         description="Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads.",
     )
+    use_server_token_count: bool = Field(
+        default=False,
+        description="Use server-reported token counts from API usage fields instead of client-side tokenization.",
+    )
 
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> "EndpointInfo":
@@ -116,6 +120,7 @@ class EndpointInfo(AIPerfBaseModel):
             timeout=user_config.endpoint.timeout_seconds,
             api_key=user_config.endpoint.api_key,
             use_legacy_max_tokens=user_config.endpoint.use_legacy_max_tokens,
+            use_server_token_count=user_config.endpoint.use_server_token_count,
         )
 
 

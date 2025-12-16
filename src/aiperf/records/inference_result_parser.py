@@ -116,6 +116,8 @@ class InferenceResultParser(CommunicationMixin):
             # Even for error records, compute input token count if possible
             input_token_count = None
             if not self.disable_tokenization:
+                # Suppress exceptions during token counting for error records to avoid masking the original error.
+                # If token counting fails, we still return the error record with token_counts.input=None.
                 with suppress(Exception):
                     input_token_count = await self.compute_input_token_count(
                         request_record
@@ -141,13 +143,19 @@ class InferenceResultParser(CommunicationMixin):
                     return ParsedResponseRecord(
                         request=record.request,
                         responses=[],
-                        token_counts=TokenCounts(input=record.token_counts.input),
+                        token_counts=TokenCounts(
+                            input=record.token_counts.input
+                            if record.token_counts
+                            else None
+                        ),
                     )
+                else:
+                    # Success path: valid record with no errors
+                    self.debug(
+                        lambda: f"Received {len(record.request.responses)} response packet(s), token counts: {record.token_counts}"
+                    )
+                    return record
 
-                self.debug(
-                    lambda: f"Received {len(record.request.responses)} response packet(s), token counts: {record.token_counts}"
-                )
-                return record
             except Exception as e:
                 # TODO: We should add an ErrorDetails to the response record and not the request record.
                 self.exception(f"Error processing valid record: {e}")
@@ -155,6 +163,8 @@ class InferenceResultParser(CommunicationMixin):
                 input_token_count = None
 
                 if not self.disable_tokenization:
+                    # Suppress exceptions during token counting for error records to avoid masking the original error.
+                    # If token counting fails, we still return the error record with token_counts.input=None.
                     with suppress(Exception):
                         input_token_count = await self.compute_input_token_count(
                             request_record
@@ -183,42 +193,15 @@ class InferenceResultParser(CommunicationMixin):
 
         resp = self.endpoint.extract_response_data(request_record)
 
-        token_counts = TokenCounts()
-
-        # Branch based on configuration
+        # Compute token counts based on configuration
         if self.user_config.endpoint.use_server_token_count:
-            # Use server-provided token counts
-            token_counts.input = self._extract_server_input_token_count(resp)
-            token_counts.reasoning = self._extract_server_reasoning_token_count(resp)
-            token_counts.output = self._extract_server_output_token_count(
-                resp, token_counts.reasoning
-            )
+            token_counts = await self._compute_server_token_counts(resp)
         elif not self.disable_tokenization:
-            # Use client-side tokenization (existing behavior)
-            token_counts.input = await self.compute_input_token_count(request_record)
-
-            output_texts: list[str] = []
-            reasoning_texts: list[str] = []
-            for response in resp:
-                if not response.data:
-                    continue
-                if isinstance(response.data, ReasoningResponseData):
-                    if response.data.reasoning:
-                        reasoning_texts.append(response.data.reasoning)
-                    if response.data.content:
-                        output_texts.append(response.data.content)
-                else:
-                    output_texts.append(response.data.get_text())
-
-            tokenizer = await self.get_tokenizer(request_record.model_name)
-            token_counts.output = (
-                len(tokenizer.encode("".join(output_texts))) if output_texts else None
+            token_counts = await self._compute_client_side_token_counts(
+                request_record, resp
             )
-            token_counts.reasoning = (
-                len(tokenizer.encode("".join(reasoning_texts)))
-                if reasoning_texts
-                else None
-            )
+        else:
+            token_counts = TokenCounts()
 
         return ParsedResponseRecord(
             request=request_record,
@@ -244,6 +227,111 @@ class InferenceResultParser(CommunicationMixin):
             for text in turn.texts:
                 input_token_count += len(tokenizer.encode("".join(text.contents)))
         return input_token_count
+
+    async def _compute_server_token_counts(
+        self, responses: list[ParsedResponse]
+    ) -> TokenCounts:
+        """Compute token counts using server-provided usage fields.
+
+        Args:
+            responses: List of parsed responses from the server
+
+        Returns:
+            TokenCounts populated with server-reported values
+        """
+        input_token_count = self._extract_server_input_token_count(responses)
+        reasoning_token_count = self._extract_server_reasoning_token_count(responses)
+        output_token_count = self._extract_server_output_token_count(
+            responses, reasoning_token_count
+        )
+
+        token_counts = TokenCounts(
+            input=input_token_count,
+            reasoning=reasoning_token_count,
+            output=output_token_count,
+        )
+
+        # Warn if server provided no usage information
+        if (
+            token_counts.input is None
+            and token_counts.output is None
+            and token_counts.reasoning is None
+        ):
+            self.warning(
+                "Server did not provide token usage information. Token count metrics will be unavailable. "
+                "Verify that your API endpoint supports usage reporting (stream_options are automatically configured for OpenAI-compatible endpoints)."
+            )
+
+        return token_counts
+
+    def _parse_output_and_reasoning_texts(
+        self, responses: list[ParsedResponse]
+    ) -> tuple[list[str], list[str]]:
+        """Parse all the output and reasoning texts from the responses.
+
+        Args:
+            responses: List of parsed responses from the server
+
+        Returns:
+            Tuple of lists of output and reasoning texts
+        """
+        output_texts: list[str] = []
+        reasoning_texts: list[str] = []
+        for response in responses:
+            if not response.data:
+                continue
+            if isinstance(response.data, ReasoningResponseData):
+                if response.data.reasoning:
+                    reasoning_texts.append(response.data.reasoning)
+                if response.data.content:
+                    output_texts.append(response.data.content)
+            else:
+                output_texts.append(response.data.get_text())
+
+        return output_texts, reasoning_texts
+
+    def _compute_token_count(
+        self, tokenizer: Tokenizer, texts: list[str]
+    ) -> int | None:
+        """Compute the number of tokens in the texts by joining them without any separators and encoding with the tokenizer.
+
+        Args:
+            tokenizer: The tokenizer to use
+            texts: List of texts to compute the token count for
+
+        Returns:
+            The number of tokens in the texts, or None if the texts are empty
+        """
+        if not texts:
+            return None
+        return len(tokenizer.encode("".join(texts)))
+
+    async def _compute_client_side_token_counts(
+        self, request_record: RequestRecord, responses: list[ParsedResponse]
+    ) -> TokenCounts:
+        """Compute token counts using client-side tokenization.
+
+        Args:
+            request_record: The request record containing input data
+            responses: List of parsed responses from the server
+
+        Returns:
+            TokenCounts populated with client-side tokenized values
+        """
+        input_token_count = await self.compute_input_token_count(request_record)
+
+        tokenizer = await self.get_tokenizer(request_record.model_name)
+        output_texts, reasoning_texts = self._parse_output_and_reasoning_texts(
+            responses
+        )
+        output_token_count = self._compute_token_count(tokenizer, output_texts)
+        reasoning_token_count = self._compute_token_count(tokenizer, reasoning_texts)
+
+        return TokenCounts(
+            input=input_token_count,
+            reasoning=reasoning_token_count,
+            output=output_token_count,
+        )
 
     def _extract_server_input_token_count(
         self, responses: list[ParsedResponse]
@@ -304,5 +392,12 @@ class InferenceResultParser(CommunicationMixin):
                 completion_tokens = response.usage.completion_tokens
                 if completion_tokens is not None:
                     reasoning_tokens = reasoning_token_count or 0
-                    return completion_tokens - reasoning_tokens
+                    result = completion_tokens - reasoning_tokens
+                    if result < 0:
+                        self.warning(
+                            f"Server reported inconsistent token counts: completion_tokens={completion_tokens}, "
+                            f"reasoning_tokens={reasoning_tokens}. Clamping output tokens to 0."
+                        )
+                        return 0
+                    return result
         return None

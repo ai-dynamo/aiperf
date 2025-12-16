@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -311,9 +311,10 @@ class TestServerTokenCount:
             (50, 10, 40),
             (50, None, 50),
             (50, 0, 50),
+            (10, 20, 0),  # Negative case: reasoning > completion, should clamp to 0
         ],
-        ids=["with_reasoning", "no_reasoning", "zero_reasoning"],
-    )
+        ids=["with_reasoning", "no_reasoning", "zero_reasoning", "negative_clamped"],
+    )  # fmt: skip
     async def test_output_excludes_reasoning_tokens(
         self,
         setup_inference_parser,
@@ -336,3 +337,20 @@ class TestServerTokenCount:
         )
 
         assert result == expected_output
+
+    async def test_warning_when_no_usage_provided(
+        self, server_token_parser, sample_turn, request_record
+    ):
+        """Warning is logged when server provides no usage information."""
+        request_record.turns = [sample_turn]
+        setup_parser_responses(
+            server_token_parser,
+            [make_parsed_response(include_usage=False)],
+        )
+
+        with patch.object(server_token_parser, "warning") as mock_warning:
+            await server_token_parser.process_valid_record(request_record)
+
+            mock_warning.assert_called_once()
+            call_args = mock_warning.call_args[0][0]
+            assert "Server did not provide token usage information" in call_args

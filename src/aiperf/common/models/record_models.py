@@ -712,15 +712,15 @@ class TokenCounts(AIPerfBaseModel):
 
     input: int | None = Field(
         default=None,
-        description="The number of tokens in the input (client-side tokenization). If None, the number of tokens could not be calculated.",
+        description="The number of tokens in the input. If None, the number of tokens could not be calculated.",
     )
     output: int | None = Field(
         default=None,
-        description="The number of output tokens across all responses (client-side tokenization). If None, the number of tokens could not be calculated.",
+        description="The number of output tokens across all responses. If None, the number of tokens could not be calculated.",
     )
     reasoning: int | None = Field(
         default=None,
-        description="The number of reasoning tokens across all responses (client-side tokenization). If None, the number of tokens could not be calculated, or the model does not support reasoning.",
+        description="The number of reasoning tokens across all responses. If None, the number of tokens could not be calculated, or the model does not support reasoning.",
     )
 
 

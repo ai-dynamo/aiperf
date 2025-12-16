@@ -187,9 +187,9 @@ class EndpointConfig(BaseConfig):
                 "client-side tokenization. When enabled, tokenizers are still loaded "
                 "(needed for dataset generation) but tokenizer.encode() is not called "
                 "for computing metrics. Token count fields will be None if the server "
-                "does not provide usage information. For chat streaming endpoints, you may "
-                'need to add `--extra-inputs \'{"stream_options": {"include_usage": true}}\'` '
-                "to the CLI command."
+                "does not provide usage information. For OpenAI-compatible streaming "
+                "endpoints (chat/completions), stream_options.include_usage is automatically "
+                "configured when this flag is enabled."
             ),
         ),
         CLIParameter(
