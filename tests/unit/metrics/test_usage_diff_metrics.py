@@ -5,7 +5,7 @@ import pytest
 
 from aiperf.common.enums import MetricFlags
 from aiperf.common.models import ParsedResponse, ParsedResponseRecord, RequestRecord
-from aiperf.common.models.record_models import TextResponseData
+from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.models.usage_models import Usage
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.input_sequence_length_metric import InputSequenceLengthMetric
@@ -84,9 +84,11 @@ def create_record_with_usage(
     return ParsedResponseRecord(
         request=request,
         responses=[response],
-        input_token_count=input_tokens,
-        output_token_count=output_tokens,
-        reasoning_token_count=reasoning_tokens,
+        token_counts=TokenCounts(
+            input=input_tokens,
+            output=output_tokens,
+            reasoning=reasoning_tokens,
+        ),
     )
 
 

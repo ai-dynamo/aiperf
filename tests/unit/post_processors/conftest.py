@@ -26,6 +26,7 @@ from aiperf.common.models import (
 from aiperf.common.models.record_models import (
     MetricRecordMetadata,
     ProfileResults,
+    TokenCounts,
 )
 from aiperf.common.types import MetricTagT
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -160,8 +161,11 @@ def sample_parsed_record_with_raw_responses() -> ParsedResponseRecord:
     return ParsedResponseRecord(
         request=request,
         responses=parsed_responses,
-        input_token_count=DEFAULT_INPUT_TOKENS,
-        output_token_count=DEFAULT_OUTPUT_TOKENS,
+        token_counts=TokenCounts(
+            input=DEFAULT_INPUT_TOKENS,
+            output=DEFAULT_OUTPUT_TOKENS,
+            reasoning=None,
+        ),
     )
 
 
@@ -195,8 +199,11 @@ def error_parsed_record() -> ParsedResponseRecord:
     return ParsedResponseRecord(
         request=request,
         responses=[],
-        input_token_count=None,
-        output_token_count=None,
+        token_counts=TokenCounts(
+            input=None,
+            output=None,
+            reasoning=None,
+        ),
     )
 
 

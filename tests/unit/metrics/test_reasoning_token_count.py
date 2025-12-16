@@ -21,7 +21,7 @@ class TestReasoningTokenCountMetric:
     def test_reasoning_token_count_basic(self):
         """Test basic reasoning token count extraction"""
         record = create_record(output_tokens_per_response=10)
-        record.reasoning_token_count = 5
+        record.token_counts.reasoning = 5
 
         metric = ReasoningTokenCountMetric()
         result = metric.parse_record(record, MetricRecordDict())
@@ -30,7 +30,7 @@ class TestReasoningTokenCountMetric:
     def test_reasoning_token_count_zero(self):
         """Test handling of zero reasoning tokens"""
         record = create_record(output_tokens_per_response=10)
-        record.reasoning_token_count = 0
+        record.token_counts.reasoning = 0
 
         metric = ReasoningTokenCountMetric()
         result = metric.parse_record(record, MetricRecordDict())
@@ -39,7 +39,7 @@ class TestReasoningTokenCountMetric:
     def test_reasoning_token_count_none(self):
         """Test handling of None reasoning tokens raises error"""
         record = create_record(output_tokens_per_response=10)
-        record.reasoning_token_count = None
+        record.token_counts.reasoning = None
 
         metric = ReasoningTokenCountMetric()
         with pytest.raises(NoMetricValue):
@@ -51,7 +51,7 @@ class TestReasoningTokenCountMetric:
         reasoning_counts = [5, 10, 15]
         for count in reasoning_counts:
             record = create_record(output_tokens_per_response=20)
-            record.reasoning_token_count = count
+            record.token_counts.reasoning = count
             records.append(record)
 
         metric_results = run_simple_metrics_pipeline(
