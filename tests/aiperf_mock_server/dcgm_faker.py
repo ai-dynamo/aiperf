@@ -117,7 +117,7 @@ class FakeGPU:
 class DCGMFaker:
     """Simulated DCGM Prometheus metrics generator."""
 
-    def __init__(self, gpu_name: str = "rtx6000", num_gpus: int = 2, seed: int | None = None, hostname: str = "localhost", initial_load: float = 0.7):  # fmt: skip
+    def __init__(self, gpu_name: str = "rtx6000", num_gpus: int = 2, seed: int | None = None, hostname: str = "localhost", initial_load: float = 0.0):  # fmt: skip
         """Initialize faker with load level (0.0=idle, 1.0=max)."""
         if gpu_name not in GPU_CONFIGS:
             raise ValueError(f"Invalid GPU name: {gpu_name}")

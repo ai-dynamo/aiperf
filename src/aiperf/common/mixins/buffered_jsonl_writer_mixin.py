@@ -51,11 +51,21 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self._file_lock = asyncio.Lock()
         self._buffer: list[bytes] = []  # Store bytes for binary mode
         self._batch_size = batch_size
-        self._buffer_lock = asyncio.Lock()
 
     @on_init
     async def _open_file(self) -> None:
         """Open the file handle for writing in binary mode (called automatically on initialization)."""
+
+        try:
+            # Create the output file directory if it doesn't exist and clear the file
+            self.output_file.parent.mkdir(parents=True, exist_ok=True)
+            self.output_file.unlink(missing_ok=True)
+        except Exception as e:
+            self.exception(
+                f"Failed to create output file directory or clear file: {self.output_file}: {e!r}"
+            )
+            raise
+
         async with self._file_lock:
             # Binary mode for optimal performance with orjson
             self._file_handle = await aiofiles.open(self.output_file, mode="wb")
@@ -81,16 +91,14 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             json_bytes = orjson.dumps(record.model_dump(exclude_none=True, mode="json"))
 
             buffer_to_flush = None
-            async with self._buffer_lock:
-                self._buffer.append(json_bytes)
-                self.lines_written += 1
+            self._buffer.append(json_bytes)
+            self.lines_written += 1
 
-                # Check if we need to flush
-                if len(self._buffer) >= self._batch_size:
-                    buffer_to_flush = self._buffer
-                    self._buffer = []
+            # Check if we need to flush
+            if len(self._buffer) >= self._batch_size:
+                buffer_to_flush = self._buffer
+                self._buffer = []
 
-            # Flush outside the lock to avoid blocking other writes
             if buffer_to_flush:
                 self.execute_async(self._flush_buffer(buffer_to_flush))
 
@@ -144,9 +152,8 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 await self.cancel_all_tasks()
                 yield_to_event_loop()
 
-        async with self._buffer_lock:
-            buffer_to_flush = self._buffer
-            self._buffer = []
+        buffer_to_flush = self._buffer
+        self._buffer = []
 
         try:
             await self._flush_buffer(buffer_to_flush)
@@ -166,3 +173,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self.debug(
             f"{self.__class__.__name__}: {self.lines_written} JSONL lines written to {self.output_file}"
         )
+
+        if self.lines_written == 0:
+            self.debug(f"No lines written, deleting output file: {self.output_file}")
+            self.output_file.unlink(missing_ok=True)

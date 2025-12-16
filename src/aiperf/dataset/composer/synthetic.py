@@ -64,6 +64,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 turn = self._create_turn(is_first=(turn_idx == 0))
                 conversation.turns.append(turn)
             conversations.append(conversation)
+
+        # Finalize all conversations (turn metadata + context prompts)
+        self._finalize_conversations(conversations)
         return conversations
 
     def _create_turn(self, is_first: bool) -> Turn:

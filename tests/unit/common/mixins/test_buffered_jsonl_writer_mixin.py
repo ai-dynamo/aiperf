@@ -74,7 +74,6 @@ class TestBufferedJSONLWriterMixin:
         [
             (100, 25),  # Buffer not full at stop
             (5, 50),  # Multiple flushes then remainder
-            (10, 0),  # No writes
         ],
     )
     async def test_buffer_flush_and_cleanup_edge_cases(
@@ -99,3 +98,36 @@ class TestBufferedJSONLWriterMixin:
         with open(temp_output_file) as f:
             lines = f.readlines()
             assert len(lines) == num_records
+
+    @pytest.mark.asyncio
+    async def test_empty_file_deleted_on_stop(self, temp_output_file):
+        """Test that output file is deleted when no records are written."""
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=10,
+        )
+        await writer.initialize()
+        await writer.start()
+
+        # Don't write anything
+        await writer.stop()
+
+        assert writer.lines_written == 0
+        assert writer._file_handle is None
+        assert not temp_output_file.exists(), "Empty file should be deleted"
+
+    @pytest.mark.asyncio
+    async def test_file_preserved_when_records_written(self, temp_output_file):
+        """Test that output file is preserved when records are written."""
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=10,
+        )
+        await writer.initialize()
+        await writer.start()
+
+        await writer.buffered_write(SampleRecord(id=1, value="test"))
+        await writer.stop()
+
+        assert writer.lines_written == 1
+        assert temp_output_file.exists(), "File with content should be preserved"

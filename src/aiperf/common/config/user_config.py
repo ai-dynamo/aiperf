@@ -12,6 +12,7 @@ from typing_extensions import Self
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
+from aiperf.common.config.config_defaults import ServerMetricsDefaults
 from aiperf.common.config.config_validators import coerce_value, parse_str_or_list
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.groups import Groups
@@ -19,7 +20,8 @@ from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
-from aiperf.common.enums import CustomDatasetType, GPUTelemetryMode
+from aiperf.common.enums import CustomDatasetType, GPUTelemetryMode, ServerMetricsFormat
+from aiperf.common.enums.plugin_enums import EndpointType
 from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
 from aiperf.common.utils import load_json_str
 
@@ -43,8 +45,22 @@ class UserConfig(BaseConfig):
         """Set the CLI command based on the command line arguments, if it has not already been set."""
         if not self.cli_command:
             args = [coerce_value(x) for x in sys.argv[1:]]
-            args = [f'"{x}"' if _should_quote_arg(x) else str(x) for x in args]
+            # Note: Use single quotes to avoid conflicts with double quotes in arguments.
+            args = [f"'{x}'" if _should_quote_arg(x) else str(x) for x in args]
             self.cli_command = " ".join(["aiperf", *args])
+        return self
+
+    @model_validator(mode="after")
+    def generate_benchmark_id(self) -> Self:
+        """Generate a unique benchmark ID if not already set.
+
+        This ID is shared across all export formats (JSON, CSV, Parquet, etc.)
+        to enable correlation of data from the same benchmark run.
+        """
+        if not self.benchmark_id:
+            import uuid
+
+            self.benchmark_id = str(uuid.uuid4())
         return self
 
     @model_validator(mode="after")
@@ -210,10 +226,18 @@ class UserConfig(BaseConfig):
         DisableCLI(reason="This is automatically set by the CLI"),
     ] = None
 
+    benchmark_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Unique identifier for this benchmark run (UUID). Generated automatically and shared across all export formats for correlation.",
+        ),
+        DisableCLI(reason="This is automatically generated at runtime"),
+    ] = None
+
     gpu_telemetry: Annotated[
         list[str] | None,
         Field(
-            default=None,
             description=(
                 "Enable GPU telemetry console display and optionally specify: "
                 "(1) 'dashboard' for realtime dashboard mode, "
@@ -229,7 +253,18 @@ class UserConfig(BaseConfig):
             consume_multiple=True,
             group=Groups.TELEMETRY,
         ),
-    ]
+    ] = None
+
+    no_gpu_telemetry: Annotated[
+        bool,
+        Field(
+            description="Disable GPU telemetry collection entirely.",
+        ),
+        CLIParameter(
+            name=("--no-gpu-telemetry",),
+            group=Groups.TELEMETRY,
+        ),
+    ] = False
 
     _gpu_telemetry_mode: GPUTelemetryMode = GPUTelemetryMode.SUMMARY
     _gpu_telemetry_urls: list[str] = []
@@ -238,6 +273,15 @@ class UserConfig(BaseConfig):
     @model_validator(mode="after")
     def _parse_gpu_telemetry_config(self) -> Self:
         """Parse gpu_telemetry list into mode, URLs, and metrics file."""
+        if (
+            "no_gpu_telemetry" in self.model_fields_set
+            and "gpu_telemetry" in self.model_fields_set
+        ):
+            raise ValueError(
+                "Cannot use both --no-gpu-telemetry and --gpu-telemetry together. "
+                "Use only one or the other."
+            )
+
         if not self.gpu_telemetry:
             return self
 
@@ -285,6 +329,102 @@ class UserConfig(BaseConfig):
     def gpu_telemetry_metrics_file(self) -> Path | None:
         """Get the path to custom GPU metrics CSV file."""
         return self._gpu_telemetry_metrics_file
+
+    @property
+    def gpu_telemetry_disabled(self) -> bool:
+        """Check if GPU telemetry collection is disabled."""
+        return self.no_gpu_telemetry
+
+    server_metrics: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Server metrics collection (ENABLED BY DEFAULT). "
+                "Automatically collects from inference endpoint base_url + `/metrics`. "
+                "Optionally specify additional custom Prometheus-compatible endpoint URLs "
+                "(e.g., http://node1:8081/metrics, http://node2:9090/metrics). "
+                "Use `--no-server-metrics` to disable collection. "
+                "Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints"
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--server-metrics",),
+            consume_multiple=True,
+            group=Groups.SERVER_METRICS,
+        ),
+    ] = None
+
+    no_server_metrics: Annotated[
+        bool,
+        Field(
+            description="Disable server metrics collection entirely.",
+        ),
+        CLIParameter(
+            name=("--no-server-metrics",),
+            group=Groups.SERVER_METRICS,
+        ),
+    ] = False
+
+    server_metrics_formats: Annotated[
+        list[ServerMetricsFormat],
+        Field(
+            description=(
+                "Specify which output formats to generate for server metrics. "
+                "Options: json, csv, jsonl, and parquet. Default is json and csv (jsonl excluded due to large file size, parquet is opt-in only). "
+                "Example: --server-metrics-formats json csv parquet"
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--server-metrics-formats",),
+            consume_multiple=True,
+            group=Groups.SERVER_METRICS,
+        ),
+    ] = ServerMetricsDefaults.DEFAULT_FORMATS
+
+    _server_metrics_urls: list[str] = []
+
+    @model_validator(mode="after")
+    def _parse_server_metrics_config(self) -> Self:
+        """Parse server_metrics list into URLs.
+
+        Empty list [] means enabled with automatic discovery only.
+        Non-empty list means enabled with custom URLs.
+        Use --no-server-metrics to disable collection.
+        """
+        from aiperf.common.metric_utils import normalize_metrics_endpoint_url
+
+        if (
+            "no_server_metrics" in self.model_fields_set
+            and "server_metrics" in self.model_fields_set
+        ):
+            raise ValueError(
+                "Cannot use both --no-server-metrics and --server-metrics together. "
+                "Use only one or the other."
+            )
+
+        urls: list[str] = []
+
+        for item in self.server_metrics or []:
+            # Check for URLs (anything with : or starting with http)
+            if item.startswith("http") or ":" in item:
+                normalized_url = item if item.startswith("http") else f"http://{item}"
+                normalized_url = normalize_metrics_endpoint_url(normalized_url)
+                urls.append(normalized_url)
+
+        self._server_metrics_urls = urls
+        return self
+
+    @property
+    def server_metrics_disabled(self) -> bool:
+        """Check if server metrics collection is disabled."""
+        return self.no_server_metrics
+
+    @property
+    def server_metrics_urls(self) -> list[str]:
+        """Get the parsed server metrics Prometheus endpoint URLs."""
+        return self._server_metrics_urls
 
     @model_validator(mode="after")
     def _compute_config(self) -> Self:
@@ -397,4 +537,97 @@ class UserConfig(BaseConfig):
                 "Either reduce --concurrency or increase --request-count."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_user_context_requires_sessions(self) -> Self:
+        """Validate that user context prompt requires num-sessions to be specified."""
+        if (
+            self.input.prompt.prefix_prompt.user_context_prompt_length is not None
+            and self.input.conversation.num is None
+        ):
+            raise ValueError(
+                "--user-context-prompt-length requires --num-sessions to be specified. "
+                "Each session needs a unique user context prompt, so the number of sessions must be defined."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_mutually_exclusive_prompt_options(self) -> Self:
+        """Ensure shared system/user context options don't conflict with legacy prefix options."""
+        has_context_prompts = (
+            self.input.prompt.prefix_prompt.shared_system_prompt_length is not None
+            or self.input.prompt.prefix_prompt.user_context_prompt_length is not None
+        )
+        has_legacy_prefix = (
+            self.input.prompt.prefix_prompt.length > 0
+            or self.input.prompt.prefix_prompt.pool_size > 0
+        )
+
+        if has_context_prompts and has_legacy_prefix:
+            raise ValueError(
+                "Cannot use both --shared-system-prompt-length/--user-context-prompt-length "
+                "and --prefix-prompt-length/--prefix-prompt-pool-size. "
+                "These are mutually exclusive prompt configuration modes."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_rankings_token_options(self) -> Self:
+        """Validate rankings token options usage."""
+
+        # Check if prompt input tokens have been changed from defaults
+        prompt_tokens_modified = any(
+            field in self.input.prompt.input_tokens.model_fields_set
+            for field in ["mean", "stddev"]
+        )
+
+        # Check if any rankings-specific token options have been changed from defaults
+        rankings_tokens_modified = any(
+            field in self.input.rankings.passages.model_fields_set
+            for field in ["prompt_token_mean", "prompt_token_stddev"]
+        ) or any(
+            field in self.input.rankings.query.model_fields_set
+            for field in ["prompt_token_mean", "prompt_token_stddev"]
+        )
+
+        # Check if any rankings-specific passage options have been changed from defaults
+        rankings_passages_modified = any(
+            field in self.input.rankings.passages.model_fields_set
+            for field in ["mean", "stddev"]
+        )
+
+        rankings_options_modified = (
+            rankings_tokens_modified or rankings_passages_modified
+        )
+
+        endpoint_type_is_rankings = "rankings" in self.endpoint.type.lower()
+
+        # Validate that rankings options are only used with rankings endpoints
+        rankings_endpoints = [
+            endpoint_type
+            for endpoint_type in EndpointType
+            if "rankings" in endpoint_type.lower()
+        ]
+        if rankings_options_modified and not endpoint_type_is_rankings:
+            raise ValueError(
+                f"Rankings-specific options (--rankings-passages-mean, --rankings-passages-stddev, "
+                "--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
+                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev) "
+                "can only be used with rankings endpoint types "
+                f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
+            )
+
+        # Validate that prompt tokens and rankings tokens are not both set
+        if prompt_tokens_modified and (
+            rankings_tokens_modified or endpoint_type_is_rankings
+        ):
+            raise ValueError(
+                "The --prompt-input-tokens-mean/--prompt-input-tokens-stddev options "
+                "cannot be used together with rankings-specific token options or the rankings endpoints"
+                "Ranking options: (--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
+                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev, ). "
+                f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
+                "Please use only one set of options."
+            )
         return self

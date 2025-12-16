@@ -133,6 +133,8 @@ class MetricRecordMetadata(AIPerfBaseModel):
 
 
 class ProfileResults(AIPerfBaseModel):
+    """The results of a profile run."""
+
     records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
     )
@@ -870,6 +872,16 @@ class RequestInfo(AIPerfBaseModel):
     conversation_id: str | None = Field(
         default=None,
         description="The ID of the conversation (if applicable).",
+    )
+    system_message: str | None = Field(
+        default=None,
+        description="Optional shared system message to prepend to the first turn. "
+        "Extracted from conversation.system_message at request time.",
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description="Optional per-conversation user context message to prepend to the first turn. "
+        "Extracted from conversation.user_context_message at request time.",
     )
 
 

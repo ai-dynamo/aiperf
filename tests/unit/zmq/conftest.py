@@ -19,6 +19,37 @@ from aiperf.common.messages import HeartbeatMessage
 from aiperf.common.utils import yield_to_event_loop
 
 
+async def _block_forever():
+    """Block forever by awaiting a Future that never completes."""
+    await asyncio.Future()  # Never resolves
+
+
+def _create_recv_function_with_blocking(side_effect_items):
+    """Create an async recv function that processes items then blocks forever.
+
+    Args:
+        side_effect_items: Iterator of items (bytes, exceptions, etc.)
+
+    Returns:
+        Async function that returns/raises items, then blocks forever
+    """
+    side_effect_iter = iter(side_effect_items)
+
+    async def recv_with_blocking():
+        """Return items from list, then block forever to prevent busy loop."""
+        try:
+            item = next(side_effect_iter)
+            # If item is an exception, raise it
+            if isinstance(item, Exception):
+                raise item
+            return item
+        except StopIteration:
+            # List exhausted, block forever to prevent busy loop
+            await _block_forever()
+
+    return recv_with_blocking
+
+
 @pytest.fixture
 def mock_zmq_socket():
     """Create a mock ZMQ socket with common methods.
@@ -31,11 +62,6 @@ def mock_zmq_socket():
     to avoid busy loops with mocked sleep. Tests should override these when
     they need specific return values.
     """
-
-    async def _block_forever():
-        """Block forever by awaiting a Future that never completes."""
-        await asyncio.Future()  # Never resolves
-
     socket = AsyncMock(spec=zmq.asyncio.Socket)
     socket.bind = Mock()
     socket.connect = Mock()
@@ -168,7 +194,12 @@ class BaseClientTestHelper:
 
         # Setup recv
         if recv_side_effect is not None:
-            mock_socket.recv = AsyncMock(side_effect=recv_side_effect)
+            # Chain side_effect with block_forever to prevent busy loop after exhaustion
+            if isinstance(recv_side_effect, list):
+                mock_socket.recv = _create_recv_function_with_blocking(recv_side_effect)
+            else:
+                # If it's a callable or single value, use as-is
+                mock_socket.recv = AsyncMock(side_effect=recv_side_effect)
         elif recv_return_value is not None:
             # Return value once, then block forever instead of busy loop
             # Use generator expression to create fresh coroutines on each call
@@ -183,9 +214,16 @@ class BaseClientTestHelper:
 
         # Setup recv_multipart
         if recv_multipart_side_effect is not None:
-            mock_socket.recv_multipart = AsyncMock(
-                side_effect=recv_multipart_side_effect
-            )
+            # Chain side_effect with block_forever to prevent busy loop after exhaustion
+            if isinstance(recv_multipart_side_effect, list):
+                mock_socket.recv_multipart = _create_recv_function_with_blocking(
+                    recv_multipart_side_effect
+                )
+            else:
+                # If it's a callable or single value, use as-is
+                mock_socket.recv_multipart = AsyncMock(
+                    side_effect=recv_multipart_side_effect
+                )
         else:
             # Default to blocking forever to prevent busy loop
             mock_socket.recv_multipart = AsyncMock(side_effect=_block_forever)

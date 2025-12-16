@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from aiperf.common.enums import (
     ImageFormat,
     ModelSelectionStrategy,
     RequestRateMode,
+    ServerMetricsFormat,
     ServiceRunType,
     TimingMode,
     VideoFormat,
@@ -58,8 +60,16 @@ class InputDefaults:
     DATASET_SAMPLING_STRATEGY = DatasetSamplingStrategy.SHUFFLE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
-    RANKINGS_PASSAGES_MEAN = 1
-    RANKINGS_PASSAGES_STDDEV = 0
+
+
+@dataclass(frozen=True)
+class RankingsDefaults:
+    PASSAGES_MEAN = 1
+    PASSAGES_STDDEV = 0
+    PASSAGES_PROMPT_TOKEN_MEAN = 550
+    PASSAGES_PROMPT_TOKEN_STDDEV = 0
+    QUERY_PROMPT_TOKEN_MEAN = 550
+    QUERY_PROMPT_TOKEN_STDDEV = 0
 
 
 @dataclass(frozen=True)
@@ -137,7 +147,7 @@ class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
     RAW_RECORDS_FOLDER = Path("raw_records")
     LOG_FOLDER = Path("logs")
-    LOG_FILE = Path("aiperf.log")
+    LOG_FILE = Path(f"aiperf_{int(time.time())}.log")
     INPUTS_JSON_FILE = Path("inputs.json")
     PROFILE_EXPORT_AIPERF_CSV_FILE = Path("profile_export_aiperf.csv")
     PROFILE_EXPORT_AIPERF_JSON_FILE = Path("profile_export_aiperf.json")
@@ -150,6 +160,10 @@ class OutputDefaults:
     PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
     PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")
+    SERVER_METRICS_EXPORT_JSONL_FILE = Path("server_metrics_export.jsonl")
+    SERVER_METRICS_EXPORT_JSON_FILE = Path("server_metrics_export.json")
+    SERVER_METRICS_EXPORT_CSV_FILE = Path("server_metrics_export.csv")
+    SERVER_METRICS_EXPORT_PARQUET_FILE = Path("server_metrics_export.parquet")
     EXPORT_LEVEL = ExportLevel.RECORDS
     SLICE_DURATION = None
 
@@ -197,3 +211,8 @@ class LoadGeneratorDefaults:
 class WorkersDefaults:
     MIN = None
     MAX = None
+
+
+@dataclass(frozen=True)
+class ServerMetricsDefaults:
+    DEFAULT_FORMATS = [ServerMetricsFormat.JSON, ServerMetricsFormat.CSV]

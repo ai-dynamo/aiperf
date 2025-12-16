@@ -54,7 +54,7 @@ class DerivedSumMetric(
 
     def _derive_value(self, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
         metric_values = metric_results.get(self.record_metric_type.tag)
-        if not metric_values:
+        if metric_values is None:
             raise ValueError(
                 f"{self.record_metric_type.tag} is missing in the metrics."
             )

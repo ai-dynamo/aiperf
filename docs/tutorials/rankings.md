@@ -43,9 +43,13 @@ aiperf profile \
     --request-count 10 \
     --rankings-passages-mean 5 \
     --rankings-passages-stddev 1 \
-    --prompt-input-tokens-mean 32 \
-    --prompt-input-tokens-stddev 8
+    --rankings-passages-prompt-token-mean 32 \
+    --rankings-passages-prompt-token-stddev 8 \
+    --rankings-query-prompt-token-mean 16 \
+    --rankings-query-prompt-token-stddev 4
 ```
+
+> **Note:** The rankings-specific token options cannot be used together with `--prompt-input-tokens-mean` or `--prompt-input-tokens-stddev`. Use the rankings-specific options for controlling token counts in rankings queries and passages.
 
 ### Profile using Custom Inputs
 

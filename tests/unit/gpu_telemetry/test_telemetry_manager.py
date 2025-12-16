@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.config import UserConfig
+from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     ProfileConfigureCommand,
@@ -14,14 +15,31 @@ from aiperf.common.messages import (
     TelemetryStatusMessage,
 )
 from aiperf.common.models import ErrorDetails
-from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
-from aiperf.gpu_telemetry.telemetry_manager import TelemetryManager
+from aiperf.gpu_telemetry.data_collector import GPUTelemetryDataCollector
+from aiperf.gpu_telemetry.manager import GPUTelemetryManager
+
+
+def _create_user_config(
+    gpu_telemetry: list[str] | None = None,
+    no_gpu_telemetry: bool = False,
+) -> UserConfig:
+    """Helper to create real UserConfig with GPU telemetry settings."""
+    kwargs: dict = {
+        "endpoint": EndpointConfig(
+            url="http://localhost:8000", model_names=["test-model"]
+        ),
+    }
+    if gpu_telemetry is not None:
+        kwargs["gpu_telemetry"] = gpu_telemetry
+    if no_gpu_telemetry:
+        kwargs["no_gpu_telemetry"] = no_gpu_telemetry
+    return UserConfig(**kwargs)
 
 
 class TestTelemetryManagerInitialization:
     """Test TelemetryManager initialization and configuration."""
 
-    def _create_manager_with_mocked_base(self, user_config):
+    def _create_manager_with_mocked_base(self, user_config: UserConfig):
         """Helper to create TelemetryManager with mocked BaseComponentService."""
         mock_service_config = MagicMock()
 
@@ -30,12 +48,12 @@ class TestTelemetryManagerInitialization:
             return_value=None,
         ):
             # Create manager and manually set up comms
-            manager = object.__new__(TelemetryManager)
+            manager = object.__new__(GPUTelemetryManager)
             manager.comms = MagicMock()
             manager.comms.create_push_client = MagicMock(return_value=MagicMock())
 
             # Call actual __init__ to run real initialization logic
-            TelemetryManager.__init__(
+            GPUTelemetryManager.__init__(
                 manager,
                 service_config=mock_service_config,
                 user_config=user_config,
@@ -45,21 +63,17 @@ class TestTelemetryManagerInitialization:
 
     def test_initialization_default_endpoint(self):
         """Test initialization with no user-provided endpoints uses defaults."""
-        mock_user_config = MagicMock(spec=UserConfig)
-        mock_user_config.gpu_telemetry = None
-        mock_user_config.gpu_telemetry_urls = None
+        user_config = _create_user_config()
 
-        manager = self._create_manager_with_mocked_base(mock_user_config)
+        manager = self._create_manager_with_mocked_base(user_config)
         assert manager._dcgm_endpoints == list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
 
     def test_initialization_custom_endpoints(self):
         """Test initialization with custom user-provided endpoints."""
-        mock_user_config = MagicMock(spec=UserConfig)
         custom_endpoint = "http://gpu-node-01:9401/metrics"
-        mock_user_config.gpu_telemetry = ["dashboard"]  # User configured telemetry
-        mock_user_config.gpu_telemetry_urls = [custom_endpoint]
+        user_config = _create_user_config(gpu_telemetry=[custom_endpoint])
 
-        manager = self._create_manager_with_mocked_base(mock_user_config)
+        manager = self._create_manager_with_mocked_base(user_config)
 
         # Should have both defaults + custom endpoint
         for default_endpoint in Environment.GPU.DEFAULT_DCGM_ENDPOINTS:
@@ -67,33 +81,15 @@ class TestTelemetryManagerInitialization:
         assert custom_endpoint in manager._dcgm_endpoints
         assert len(manager._dcgm_endpoints) == 3
 
-    def test_initialization_string_endpoint(self):
-        """Test initialization converts single string endpoint to list and prepends defaults."""
-        mock_user_config = MagicMock(spec=UserConfig)
-        mock_user_config.gpu_telemetry = ["dashboard"]  # User configured telemetry
-        mock_user_config.gpu_telemetry_urls = "http://single-node:9401/metrics"
-
-        manager = self._create_manager_with_mocked_base(mock_user_config)
-
-        assert isinstance(manager._dcgm_endpoints, list)
-        for default_endpoint in Environment.GPU.DEFAULT_DCGM_ENDPOINTS:
-            assert default_endpoint in manager._dcgm_endpoints
-        assert "http://single-node:9401/metrics" in manager._dcgm_endpoints
-        assert len(manager._dcgm_endpoints) == 3
-
     def test_initialization_filters_invalid_urls(self):
         """Test initialization with only valid URLs (invalid ones filtered by user_config validator)."""
-        mock_user_config = MagicMock(spec=UserConfig)
-        # user_config validator would have already filtered out invalid URLs
-        # so telemetry_manager only receives valid ones
         valid_urls = [
             "http://valid:9401/metrics",
             "http://another-valid:9401/metrics",
         ]
-        mock_user_config.gpu_telemetry = ["dashboard"]  # User configured telemetry
-        mock_user_config.gpu_telemetry_urls = valid_urls
+        user_config = _create_user_config(gpu_telemetry=valid_urls)
 
-        manager = self._create_manager_with_mocked_base(mock_user_config)
+        manager = self._create_manager_with_mocked_base(user_config)
 
         # Should have 2 defaults + 2 valid URLs
         assert len(manager._dcgm_endpoints) == 4
@@ -104,16 +100,14 @@ class TestTelemetryManagerInitialization:
 
     def test_initialization_deduplicates_endpoints(self):
         """Test initialization removes duplicate endpoints while preserving order."""
-        mock_user_config = MagicMock(spec=UserConfig)
         urls_with_duplicates = [
             "http://node1:9401/metrics",
             "http://node2:9401/metrics",
             "http://node1:9401/metrics",  # Duplicate
         ]
-        mock_user_config.gpu_telemetry = ["dashboard"]  # User configured telemetry
-        mock_user_config.gpu_telemetry_urls = urls_with_duplicates
+        user_config = _create_user_config(gpu_telemetry=urls_with_duplicates)
 
-        manager = self._create_manager_with_mocked_base(mock_user_config)
+        manager = self._create_manager_with_mocked_base(user_config)
 
         # Should have 2 defaults + 2 unique user endpoints (duplicate removed)
         assert len(manager._dcgm_endpoints) == 4
@@ -124,16 +118,14 @@ class TestTelemetryManagerInitialization:
 
     def test_user_provides_default_endpoint(self):
         """Test that explicitly providing a default endpoint doesn't duplicate it."""
-        mock_user_config = MagicMock(spec=UserConfig)
         urls = [
             "http://localhost:9400/metrics",  # This is a default
             "http://node1:9401/metrics",
             "http://localhost:9401/metrics",  # This is also a default
         ]
-        mock_user_config.gpu_telemetry = ["dashboard"]  # User configured telemetry
-        mock_user_config.gpu_telemetry_urls = urls
+        user_config = _create_user_config(gpu_telemetry=urls)
 
-        manager = self._create_manager_with_mocked_base(mock_user_config)
+        manager = self._create_manager_with_mocked_base(user_config)
 
         # Should have 2 defaults + 1 unique user endpoint (defaults not duplicated)
         assert len(manager._dcgm_endpoints) == 3
@@ -153,31 +145,31 @@ class TestUrlNormalization:
     def test_normalize_adds_metrics_suffix(self):
         """Test normalization adds /metrics suffix when missing."""
         url = "http://localhost:9401"
-        normalized = TelemetryManager._normalize_dcgm_url(url)
+        normalized = GPUTelemetryManager._normalize_dcgm_url(url)
         assert normalized == "http://localhost:9401/metrics"
 
     def test_normalize_preserves_metrics_suffix(self):
         """Test normalization preserves existing /metrics suffix."""
         url = "http://localhost:9401/metrics"
-        normalized = TelemetryManager._normalize_dcgm_url(url)
+        normalized = GPUTelemetryManager._normalize_dcgm_url(url)
         assert normalized == "http://localhost:9401/metrics"
 
     def test_normalize_removes_trailing_slash(self):
         """Test normalization removes trailing slash."""
         url = "http://localhost:9401/"
-        normalized = TelemetryManager._normalize_dcgm_url(url)
+        normalized = GPUTelemetryManager._normalize_dcgm_url(url)
         assert normalized == "http://localhost:9401/metrics"
 
     def test_normalize_trailing_slash_with_metrics(self):
         """Test normalization handles trailing slash after /metrics."""
         url = "http://localhost:9401/metrics/"
-        normalized = TelemetryManager._normalize_dcgm_url(url)
+        normalized = GPUTelemetryManager._normalize_dcgm_url(url)
         assert normalized == "http://localhost:9401/metrics"
 
     def test_normalize_complex_path(self):
         """Test normalization with complex URL paths."""
         url = "http://node1:9401/dcgm"
-        normalized = TelemetryManager._normalize_dcgm_url(url)
+        normalized = GPUTelemetryManager._normalize_dcgm_url(url)
         assert normalized == "http://node1:9401/dcgm/metrics"
 
 
@@ -187,14 +179,15 @@ class TestCallbackFunctions:
     def _create_test_manager(self):
         """Helper to create a TelemetryManager instance for testing."""
         # Create minimal manager instance without full initialization
-        manager = TelemetryManager.__new__(TelemetryManager)
+        manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
         manager._collector_id_to_url = {}
         manager._dcgm_endpoints = []
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
-        manager._collection_interval = 0.33
+        manager._telemetry_disabled = False
+        manager._collection_interval = 0.333
         return manager
 
     @pytest.mark.asyncio
@@ -304,14 +297,15 @@ class TestStatusMessaging:
 
     def _create_test_manager(self):
         """Helper to create a TelemetryManager instance for testing."""
-        manager = TelemetryManager.__new__(TelemetryManager)
+        manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
         manager._collector_id_to_url = {}
         manager._dcgm_endpoints = []
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
-        manager._collection_interval = 0.33
+        manager._telemetry_disabled = False
+        manager._collection_interval = 0.333
         return manager
 
     @pytest.mark.asyncio
@@ -401,7 +395,7 @@ class TestStatusMessaging:
             manager.error = MagicMock()  # Mock error logging
 
             # Add a mock collector that will fail to start
-            mock_collector = AsyncMock(spec=TelemetryDataCollector)
+            mock_collector = AsyncMock(spec=GPUTelemetryDataCollector)
             mock_collector.initialize.side_effect = Exception("Failed to initialize")
             manager._collectors["http://localhost:9400/metrics"] = mock_collector
 
@@ -429,14 +423,15 @@ class TestCollectorManagement:
 
     def _create_test_manager(self):
         """Helper to create a TelemetryManager instance for testing."""
-        manager = TelemetryManager.__new__(TelemetryManager)
+        manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
         manager._collector_id_to_url = {}
         manager._dcgm_endpoints = []
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
-        manager._collection_interval = 0.33
+        manager._telemetry_disabled = False
+        manager._collection_interval = 0.333
         return manager
 
     @pytest.mark.asyncio
@@ -445,8 +440,8 @@ class TestCollectorManagement:
         manager = self._create_test_manager()
 
         # Create mock collectors
-        mock_collector1 = AsyncMock(spec=TelemetryDataCollector)
-        mock_collector2 = AsyncMock(spec=TelemetryDataCollector)
+        mock_collector1 = AsyncMock(spec=GPUTelemetryDataCollector)
+        mock_collector2 = AsyncMock(spec=GPUTelemetryDataCollector)
 
         manager._collectors = {
             "http://node1:9401/metrics": mock_collector1,
@@ -474,9 +469,9 @@ class TestCollectorManagement:
         manager = self._create_test_manager()
 
         # Create mock collectors - one fails, one succeeds
-        mock_collector1 = AsyncMock(spec=TelemetryDataCollector)
+        mock_collector1 = AsyncMock(spec=GPUTelemetryDataCollector)
         mock_collector1.stop.side_effect = Exception("Stop failed")
-        mock_collector2 = AsyncMock(spec=TelemetryDataCollector)
+        mock_collector2 = AsyncMock(spec=GPUTelemetryDataCollector)
 
         manager._collectors = {
             "http://node1:9401/metrics": mock_collector1,
@@ -513,7 +508,7 @@ class TestCollectorManagement:
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
-    def _create_manager_with_mocked_base(self, user_config):
+    def _create_manager_with_mocked_base(self, user_config: UserConfig):
         """Helper to create TelemetryManager with mocked BaseComponentService."""
         mock_service_config = MagicMock()
 
@@ -522,12 +517,12 @@ class TestEdgeCases:
             return_value=None,
         ):
             # Create manager and manually set up comms
-            manager = object.__new__(TelemetryManager)
+            manager = object.__new__(GPUTelemetryManager)
             manager.comms = MagicMock()
             manager.comms.create_push_client = MagicMock(return_value=MagicMock())
 
             # Call actual __init__ to run real initialization logic
-            TelemetryManager.__init__(
+            GPUTelemetryManager.__init__(
                 manager,
                 service_config=mock_service_config,
                 user_config=user_config,
@@ -537,13 +532,9 @@ class TestEdgeCases:
 
     def test_invalid_endpoints_filtered_during_init(self):
         """Test that only valid URLs reach telemetry_manager (invalid ones filtered by user_config validator)."""
-        mock_user_config = MagicMock(spec=UserConfig)
-        # user_config validator would have already filtered out invalid URLs
-        # so telemetry_manager only receives valid ones
-        mock_user_config.gpu_telemetry = ["dashboard"]  # User configured telemetry
-        mock_user_config.gpu_telemetry_urls = ["http://valid:9401/metrics"]
+        user_config = _create_user_config(gpu_telemetry=["http://valid:9401/metrics"])
 
-        manager = self._create_manager_with_mocked_base(mock_user_config)
+        manager = self._create_manager_with_mocked_base(user_config)
 
         # Only 2 defaults + valid endpoint should remain
         assert len(manager._dcgm_endpoints) == 3
@@ -556,14 +547,14 @@ class TestEdgeCases:
         # normalize_dcgm_url is a simple string operation that assumes valid input
         # Invalid inputs are filtered before normalization in __init__
         url = "http://localhost:9401"
-        normalized = TelemetryManager._normalize_dcgm_url(url)
+        normalized = GPUTelemetryManager._normalize_dcgm_url(url)
         assert normalized == "http://localhost:9401/metrics"
 
 
 class TestBothDefaultEndpoints:
     """Test that both default endpoints (9400 and 9401) are tried."""
 
-    def _create_manager_with_mocked_base(self, user_config):
+    def _create_manager_with_mocked_base(self, user_config: UserConfig):
         """Helper to create TelemetryManager with mocked BaseComponentService."""
         mock_service_config = MagicMock()
 
@@ -571,11 +562,11 @@ class TestBothDefaultEndpoints:
             "aiperf.common.base_component_service.BaseComponentService.__init__",
             return_value=None,
         ):
-            manager = object.__new__(TelemetryManager)
+            manager = object.__new__(GPUTelemetryManager)
             manager.comms = MagicMock()
             manager.comms.create_push_client = MagicMock(return_value=MagicMock())
 
-            TelemetryManager.__init__(
+            GPUTelemetryManager.__init__(
                 manager,
                 service_config=mock_service_config,
                 user_config=user_config,
@@ -585,11 +576,9 @@ class TestBothDefaultEndpoints:
 
     def test_both_defaults_included_when_no_user_config(self):
         """Test that both default endpoints (9400 and 9401) are included with no user config."""
-        mock_user_config = MagicMock(spec=UserConfig)
-        mock_user_config.gpu_telemetry = None
-        mock_user_config.gpu_telemetry_urls = None
+        user_config = _create_user_config()
 
-        manager = self._create_manager_with_mocked_base(mock_user_config)
+        manager = self._create_manager_with_mocked_base(user_config)
 
         assert len(Environment.GPU.DEFAULT_DCGM_ENDPOINTS) == 2
         assert "http://localhost:9400/metrics" in Environment.GPU.DEFAULT_DCGM_ENDPOINTS
@@ -599,23 +588,32 @@ class TestBothDefaultEndpoints:
     def test_user_explicitly_configured_telemetry_flag(self):
         """Test that _user_explicitly_configured_telemetry flag is set correctly."""
         # Test with None (not configured)
-        mock_user_config = MagicMock(spec=UserConfig)
-        mock_user_config.gpu_telemetry = None
-        mock_user_config.gpu_telemetry_urls = None
-        manager = self._create_manager_with_mocked_base(mock_user_config)
+        user_config = _create_user_config()
+        manager = self._create_manager_with_mocked_base(user_config)
         assert manager._user_explicitly_configured_telemetry is False
 
-        # Test with value (configured)
-        mock_user_config.gpu_telemetry = ["dashboard"]  # User configured telemetry
-        mock_user_config.gpu_telemetry_urls = ["http://custom:9401/metrics"]
-        manager = self._create_manager_with_mocked_base(mock_user_config)
+        # Test with custom URL (configured)
+        user_config = _create_user_config(gpu_telemetry=["http://custom:9401/metrics"])
+        manager = self._create_manager_with_mocked_base(user_config)
         assert manager._user_explicitly_configured_telemetry is True
 
         # Test with empty list (configured)
-        mock_user_config.gpu_telemetry = []  # User explicitly passed --gpu-telemetry with no args
-        mock_user_config.gpu_telemetry_urls = []
-        manager = self._create_manager_with_mocked_base(mock_user_config)
+        user_config = _create_user_config(gpu_telemetry=[])
+        manager = self._create_manager_with_mocked_base(user_config)
         assert manager._user_explicitly_configured_telemetry is True
+
+    def test_telemetry_disabled_flag(self):
+        """Test that _telemetry_disabled flag is set correctly."""
+        # Test with default (not disabled)
+        user_config = _create_user_config()
+        manager = self._create_manager_with_mocked_base(user_config)
+        assert manager._telemetry_disabled is False
+
+        # Test with disabled
+        user_config = _create_user_config(no_gpu_telemetry=True)
+        manager = self._create_manager_with_mocked_base(user_config)
+        assert manager._telemetry_disabled is True
+        assert manager._user_explicitly_configured_telemetry is False
 
 
 class TestProfileConfigureCommand:
@@ -623,14 +621,15 @@ class TestProfileConfigureCommand:
 
     def _create_test_manager(self):
         """Helper to create a TelemetryManager instance for testing."""
-        manager = TelemetryManager.__new__(TelemetryManager)
+        manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
         manager._collector_id_to_url = {}
         manager._dcgm_endpoints = list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
-        manager._collection_interval = 0.33
+        manager._telemetry_disabled = False
+        manager._collection_interval = 0.333
         manager.error = MagicMock()
         manager.debug = MagicMock()
         return manager
@@ -641,9 +640,9 @@ class TestProfileConfigureCommand:
         manager = self._create_test_manager()
         manager.publish = AsyncMock()
 
-        # Mock TelemetryDataCollector to return unreachable
+        # Mock GPUTelemetryDataCollector to return unreachable
         with patch.object(
-            TelemetryDataCollector, "is_url_reachable", return_value=False
+            GPUTelemetryDataCollector, "is_url_reachable", return_value=False
         ):
             configure_msg = ProfileConfigureCommand(
                 command_id="test", service_id="system_controller", config={}
@@ -669,9 +668,9 @@ class TestProfileConfigureCommand:
         manager = self._create_test_manager()
         manager.publish = AsyncMock()
 
-        # Mock TelemetryDataCollector to return reachable
+        # Mock GPUTelemetryDataCollector to return reachable
         with patch.object(
-            TelemetryDataCollector, "is_url_reachable", return_value=True
+            GPUTelemetryDataCollector, "is_url_reachable", return_value=True
         ):
             configure_msg = ProfileConfigureCommand(
                 command_id="test", service_id="system_controller", config={}
@@ -700,13 +699,14 @@ class TestProfileStartCommand:
 
     def _create_test_manager(self):
         """Helper to create a TelemetryManager instance for testing."""
-        manager = TelemetryManager.__new__(TelemetryManager)
+        manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
         manager._dcgm_endpoints = list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
-        manager._collection_interval = 0.33
+        manager._telemetry_disabled = False
+        manager._collection_interval = 0.333
         manager.error = MagicMock()
         manager.warning = MagicMock()
         return manager
@@ -742,7 +742,7 @@ class TestProfileStartCommand:
         manager.publish = AsyncMock()
 
         # Add mock collector
-        mock_collector = AsyncMock(spec=TelemetryDataCollector)
+        mock_collector = AsyncMock(spec=GPUTelemetryDataCollector)
         manager._collectors["http://localhost:9400/metrics"] = mock_collector
 
         start_msg = ProfileStartCommand(
@@ -761,7 +761,7 @@ class TestSmartDefaultVisibility:
 
     def _create_test_manager(self, user_requested, user_endpoints):
         """Helper to create a minimal TelemetryManager instance for testing."""
-        manager = TelemetryManager.__new__(TelemetryManager)
+        manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
         manager._collector_id_to_url = {}
@@ -770,7 +770,8 @@ class TestSmartDefaultVisibility:
         )
         manager._user_provided_endpoints = user_endpoints
         manager._user_explicitly_configured_telemetry = user_requested
-        manager._collection_interval = 0.33
+        manager._telemetry_disabled = False
+        manager._collection_interval = 0.333
         manager.error = MagicMock()
         manager.debug = MagicMock()
         return manager
@@ -816,7 +817,7 @@ class TestSmartDefaultVisibility:
 
         # Mock all endpoints as unreachable
         with patch.object(
-            TelemetryDataCollector, "is_url_reachable", return_value=False
+            GPUTelemetryDataCollector, "is_url_reachable", return_value=False
         ):
             configure_msg = ProfileConfigureCommand(
                 command_id="test", service_id="system_controller", config={}
@@ -870,7 +871,7 @@ class TestSmartDefaultVisibility:
 
         # Mock all endpoints as unreachable
         with patch.object(
-            TelemetryDataCollector, "is_url_reachable", return_value=False
+            GPUTelemetryDataCollector, "is_url_reachable", return_value=False
         ):
             configure_msg = ProfileConfigureCommand(
                 command_id="test", service_id="system_controller", config={}

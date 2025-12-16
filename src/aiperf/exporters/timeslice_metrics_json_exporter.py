@@ -81,4 +81,6 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
             input_config=self._user_config,
         )
 
-        return export_data.model_dump_json(indent=2, exclude_unset=True)
+        return export_data.model_dump_json(
+            indent=2, exclude_unset=True, exclude_none=True
+        )

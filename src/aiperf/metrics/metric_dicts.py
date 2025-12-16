@@ -14,6 +14,7 @@ from aiperf.common.enums.metric_enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import MetricTypeError, MetricUnitError, NoMetricValue
+from aiperf.common.growable_array import GrowableArray
 from aiperf.common.models.record_models import MetricResult, MetricValue
 from aiperf.common.types import MetricTagT
 
@@ -144,53 +145,45 @@ class MetricArray(Generic[MetricValueTypeVarT]):
     """NumPy backed array for metric data.
 
     This is used to store the values of a metric over time.
+    Uses GrowableArray internally for efficient storage with automatic growth.
     """
 
     def __init__(
         self, initial_capacity: int = Environment.METRICS.ARRAY_INITIAL_CAPACITY
     ):
         """Initialize the array with the given initial capacity."""
-        if initial_capacity <= 0:
-            raise ValueError("Initial capacity must be greater than 0")
-        self._capacity = initial_capacity
-        self._data = np.empty(self._capacity)
-        self._size = 0
-        self._sum: MetricValueTypeVarT = 0  # type: ignore
+        self._array = GrowableArray(
+            initial_capacity=initial_capacity,
+            dtype=np.float64,
+            track_sum=True,
+        )
 
     def extend(self, values: list[MetricValueTypeVarT]) -> None:
         """Extend the array with a list of values."""
-        self._resize_if_needed(len(values))
-
-        end = self._size + len(values)
-        self._data[self._size : end] = values
-        self._sum += sum(values)  # type: ignore
-        self._size = end
+        self._array.extend(np.asarray(values, dtype=np.float64))
 
     def append(self, value: MetricValueTypeVarT) -> None:
         """Append a value to the array."""
-        self._resize_if_needed(1)
-
-        self._data[self._size] = value
-        self._size += 1
-        self._sum += value  # type: ignore
-
-    def _resize_if_needed(self, additional_size: int) -> None:
-        """Resize the array if needed."""
-        if self._size + additional_size > self._capacity:
-            self._capacity = max(self._capacity * 2, self._size + additional_size)
-            new_data = np.empty(self._capacity)
-            new_data[: self._size] = self._data[: self._size]
-            self._data = new_data
+        self._array.append(value)
 
     @property
     def sum(self) -> MetricValueTypeVarT:
         """Get the sum of the array."""
-        return self._sum
+        return self._array.sum  # type: ignore
 
     @property
     def data(self) -> np.ndarray:
-        """Return view of actual data"""
-        return self._data[: self._size]
+        """Return view of actual data."""
+        return self._array.data
+
+    @property
+    def capacity(self) -> int:
+        """Return current capacity."""
+        return self._array.capacity
+
+    def __len__(self) -> int:
+        """Return number of elements."""
+        return len(self._array)
 
     def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
         """Compute metric stats with zero-copy"""
@@ -216,5 +209,5 @@ class MetricArray(Generic[MetricValueTypeVarT]):
             p90=p90,
             p95=p95,
             p99=p99,
-            count=self._size,
+            count=len(self._array),
         )

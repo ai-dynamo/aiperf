@@ -5,7 +5,7 @@
 import pytest
 from pytest import approx
 
-from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
+from aiperf.gpu_telemetry.data_collector import GPUTelemetryDataCollector
 from tests.aiperf_mock_server.dcgm_faker import GPU_CONFIGS, DCGMFaker
 
 
@@ -20,7 +20,7 @@ class TestDCGMFaker:
         print(metrics_text)
 
         # Use real TelemetryDataCollector to parse the output
-        collector = TelemetryDataCollector(dcgm_url="http://fake")
+        collector = GPUTelemetryDataCollector(dcgm_url="http://fake")
         records = collector._parse_metrics_to_records(metrics_text)
 
         # Should get 2 TelemetryRecord objects (one per GPU)
@@ -28,17 +28,17 @@ class TestDCGMFaker:
         assert all(record is not None for record in records)
 
         # Verify GPU indices
-        gpu_indices = {record.gpu_index for record in records}
+        gpu_indices = {record.metadata.gpu_index for record in records}
         assert gpu_indices == {0, 1}
 
         # Verify metadata is correctly parsed
         for i, record in enumerate(records):
             gpu = faker.gpus[i]
-            assert record.gpu_model_name == gpu.cfg.model
-            assert record.hostname == faker.hostname
-            assert record.gpu_uuid == gpu.uuid
-            assert record.pci_bus_id == gpu.pci_bus_id
-            assert record.device == gpu.device
+            assert record.metadata.gpu_model_name == gpu.cfg.model
+            assert record.metadata.hostname == faker.hostname
+            assert record.metadata.gpu_uuid == gpu.uuid
+            assert record.metadata.pci_bus_id == gpu.pci_bus_id
+            assert record.metadata.device == gpu.device
 
             # Verify TelemetryMetrics are correctly scaled
             telemetry = record.telemetry_data
@@ -63,7 +63,7 @@ class TestDCGMFaker:
     def test_load_affects_telemetry_records(self):
         """Test that load changes affect TelemetryRecords when parsed by real collector."""
         faker = DCGMFaker(gpu_name="b200", num_gpus=1, seed=42)
-        collector = TelemetryDataCollector(dcgm_url="http://fake")
+        collector = GPUTelemetryDataCollector(dcgm_url="http://fake")
 
         # Low load
         faker.set_load(0.1)
@@ -86,7 +86,7 @@ class TestDCGMFaker:
     def test_metrics_clamped_to_bounds(self):
         """Test that all metrics are clamped to [0, max] bounds."""
         faker = DCGMFaker(gpu_name="h100", num_gpus=2, seed=42)
-        collector = TelemetryDataCollector(dcgm_url="http://fake")
+        collector = GPUTelemetryDataCollector(dcgm_url="http://fake")
 
         # Test extreme high load
         faker.set_load(1.0)

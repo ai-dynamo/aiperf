@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Integration tests for custom GPU metrics CSV loading functionality."""
 
+import platform
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,10 @@ from tests.integration.conftest import AIPerfCLI
 from tests.integration.models import AIPerfMockServer
 
 
+@pytest.mark.skipif(
+    platform.system() == "Darwin",
+    reason="Requires NVIDIA GPUs for DCGM telemetry (only available on Linux CI).",
+)
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestCustomGpuMetrics:
@@ -374,43 +379,3 @@ DCGM_FI_DEV_THERMAL_VIOLATION, counter, Throttling duration due to thermal const
                 assert "memory_temp" in gpu_data.metrics
                 assert "mem_copy_util" in gpu_data.metrics
                 assert "thermal_violation" in gpu_data.metrics
-
-    async def test_custom_metrics_with_real_csv_file(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
-    ):
-        """Test with the actual custom_gpu_metrics.csv from the repo root."""
-        repo_root = Path(__file__).parent.parent.parent
-        real_csv = repo_root / "custom_gpu_metrics.csv"
-
-        if not real_csv.exists():
-            pytest.skip("custom_gpu_metrics.csv not found in repo root")
-
-        result = await cli.run(
-            f"""
-            aiperf profile \
-                --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
-                --endpoint-type chat \
-                --gpu-telemetry {real_csv} {" ".join(aiperf_mock_server.dcgm_urls)} \
-                --request-count 50 \
-                --concurrency 2 \
-                --workers-max 2
-            """
-        )
-
-        assert result.request_count == 50
-        assert result.has_gpu_telemetry
-        assert result.json.telemetry_data.endpoints is not None
-
-        for dcgm_url in result.json.telemetry_data.endpoints:
-            endpoint_data = result.json.telemetry_data.endpoints[dcgm_url]
-            for gpu_data in endpoint_data.gpus.values():
-                metric_names = set(gpu_data.metrics.keys())
-                default_metric_names = {m[1] for m in GPU_TELEMETRY_METRICS_CONFIG}
-
-                custom_metrics = metric_names - default_metric_names
-                assert len(custom_metrics) > 0, (
-                    f"Expected custom metrics from {real_csv}, but found none. "
-                    f"Metrics: {metric_names}"
-                )

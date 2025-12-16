@@ -524,43 +524,42 @@ class TestMetricsCsvExporterTelemetry:
 
     @pytest.mark.asyncio
     async def test_csv_export_telemetry_metric_row_exceptions(self, mock_user_config):
-        """Test that metric row write handles exceptions gracefully."""
-        from unittest.mock import Mock
+        """Test that metric row write handles missing metrics gracefully."""
+        from datetime import datetime
 
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            ProfileResults,
-            TelemetryHierarchy,
-            TelemetryResults,
+        from aiperf.common.models import ProfileResults
+        from aiperf.common.models.export_models import (
+            EndpointData,
+            GpuSummary,
+            TelemetryExportData,
+            TelemetrySummary,
         )
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
             mock_user_config.output.artifact_directory = outdir
 
-            # Create GPU data that will fail on metric retrieval
-            gpu_data = Mock(spec=GpuTelemetryData)
-            gpu_data.metadata = GpuMetadata(
-                gpu_index=0,
-                model_name="Test GPU",
-                gpu_uuid="GPU-123",
-            )
-            gpu_data.get_metric_result = Mock(
-                side_effect=Exception("Metric not available")
-            )
-
-            hierarchy = TelemetryHierarchy()
-            hierarchy.dcgm_endpoints = {
-                "http://localhost:9400/metrics": {"GPU-123": gpu_data}
-            }
-
-            telemetry_results = TelemetryResults(
-                telemetry_data=hierarchy,
-                start_ns=0,
-                end_ns=0,
-                endpoints_configured=["http://localhost:9400/metrics"],
-                endpoints_successful=["http://localhost:9400/metrics"],
+            # Create TelemetryExportData with GPU that has no metrics
+            telemetry_results = TelemetryExportData(
+                summary=TelemetrySummary(
+                    endpoints_configured=["http://localhost:9400/metrics"],
+                    endpoints_successful=["http://localhost:9400/metrics"],
+                    start_time=datetime.fromtimestamp(0),
+                    end_time=datetime.fromtimestamp(0),
+                ),
+                endpoints={
+                    "localhost:9400": EndpointData(
+                        gpus={
+                            "gpu_0": GpuSummary(
+                                gpu_index=0,
+                                gpu_name="Test GPU",
+                                gpu_uuid="GPU-123",
+                                hostname="test-node",
+                                metrics={},  # No metrics - should skip gracefully
+                            ),
+                        }
+                    ),
+                },
             )
 
             results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
@@ -573,132 +572,120 @@ class TestMetricsCsvExporterTelemetry:
             )
 
             exporter = MetricsCsvExporter(cfg)
-            # Should not raise exception despite metric retrieval failures
+            # Should not raise exception despite missing metrics
             await exporter.export()
 
             csv_file = outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
             assert csv_file.exists()
 
     @pytest.mark.asyncio
-    async def test_csv_gpu_has_metric(self, mock_user_config):
-        """Test _gpu_has_metric detection method."""
-        from unittest.mock import Mock
-
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            MetricResult,
-            ProfileResults,
+    async def test_csv_gpu_summary_metrics_check(self, mock_user_config):
+        """Test that GPU metrics are checked correctly in the new structure."""
+        from aiperf.common.models.export_models import (
+            GpuSummary,
+            JsonMetricResult,
         )
 
-        results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
-
-        cfg = ExporterConfig(
-            results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
-            telemetry_results=None,
+        # GpuSummary with metrics
+        gpu_summary_with_metric = GpuSummary(
+            gpu_index=0,
+            gpu_name="Test GPU",
+            gpu_uuid="GPU-123",
+            hostname="test-node",
+            metrics={
+                "gpu_power_usage": JsonMetricResult(
+                    unit="W", avg=100.0, min=90.0, max=110.0
+                ),
+            },
         )
 
-        exporter = MetricsCsvExporter(cfg)
+        # Metric check is now a simple dict lookup
+        assert "gpu_power_usage" in gpu_summary_with_metric.metrics
+        assert "invalid_metric" not in gpu_summary_with_metric.metrics
 
-        # GPU data with working metric
-        gpu_data_with_metric = Mock(spec=GpuTelemetryData)
-        gpu_data_with_metric.metadata = GpuMetadata(
-            gpu_index=0, model_name="Test GPU", gpu_uuid="GPU-123"
-        )
-        gpu_data_with_metric.get_metric_result = Mock(
-            return_value=MetricResult(
-                tag="gpu_power_usage", header="Power", unit="W", avg=100.0
-            )
-        )
-
-        assert exporter._gpu_has_metric(gpu_data_with_metric, "gpu_power_usage") is True
-
-        # GPU data without metric
-        gpu_data_without_metric = Mock(spec=GpuTelemetryData)
-        gpu_data_without_metric.metadata = GpuMetadata(
-            gpu_index=1, model_name="Test GPU 2", gpu_uuid="GPU-456"
-        )
-        gpu_data_without_metric.get_metric_result = Mock(
-            side_effect=Exception("Not available")
+        # GpuSummary without metrics
+        gpu_summary_without_metric = GpuSummary(
+            gpu_index=1,
+            gpu_name="Test GPU 2",
+            gpu_uuid="GPU-456",
+            hostname="test-node",
+            metrics={},
         )
 
-        assert (
-            exporter._gpu_has_metric(gpu_data_without_metric, "invalid_metric") is False
-        )
+        assert "gpu_power_usage" not in gpu_summary_without_metric.metrics
 
     @pytest.mark.asyncio
     async def test_csv_export_telemetry_multi_endpoint(self, mock_user_config):
         """Test CSV export with multiple DCGM endpoints."""
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            ProfileResults,
-            TelemetryHierarchy,
-            TelemetryResults,
+        from datetime import datetime
+
+        from aiperf.common.models import ProfileResults
+        from aiperf.common.models.export_models import (
+            EndpointData,
+            GpuSummary,
+            JsonMetricResult,
+            TelemetryExportData,
+            TelemetrySummary,
         )
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
             mock_user_config.output.artifact_directory = outdir
 
-            # Create telemetry data for two endpoints
-            hierarchy = TelemetryHierarchy()
-
-            # Endpoint 1
-            gpu1_data = GpuTelemetryData(
-                metadata=GpuMetadata(
-                    gpu_index=0,
-                    model_name="GPU Model 1",
-                    gpu_uuid="GPU-111",
-                )
-            )
-            gpu1_data.time_series.append_snapshot(
-                {"gpu_power_usage": 100.0}, timestamp_ns=1000000000
-            )
-            gpu1_data.time_series.append_snapshot(
-                {"gpu_power_usage": 110.0}, timestamp_ns=2000000000
-            )
-            gpu1_data.time_series.append_snapshot(
-                {"gpu_power_usage": 105.0}, timestamp_ns=3000000000
-            )
-
-            # Endpoint 2
-            gpu2_data = GpuTelemetryData(
-                metadata=GpuMetadata(
-                    gpu_index=0,
-                    model_name="GPU Model 2",
-                    gpu_uuid="GPU-222",
-                )
-            )
-            gpu2_data.time_series.append_snapshot(
-                {"gpu_power_usage": 200.0}, timestamp_ns=1000000000
-            )
-            gpu2_data.time_series.append_snapshot(
-                {"gpu_power_usage": 210.0}, timestamp_ns=2000000000
-            )
-            gpu2_data.time_series.append_snapshot(
-                {"gpu_power_usage": 205.0}, timestamp_ns=3000000000
-            )
-
-            hierarchy.dcgm_endpoints = {
-                "http://node1:9400/metrics": {"GPU-111": gpu1_data},
-                "http://node2:9400/metrics": {"GPU-222": gpu2_data},
-            }
-
-            telemetry_results = TelemetryResults(
-                telemetry_data=hierarchy,
-                start_ns=0,
-                end_ns=0,
-                endpoints_configured=[
-                    "http://node1:9400/metrics",
-                    "http://node2:9400/metrics",
-                ],
-                endpoints_successful=[
-                    "http://node1:9400/metrics",
-                    "http://node2:9400/metrics",
-                ],
+            # Create TelemetryExportData for two endpoints
+            telemetry_results = TelemetryExportData(
+                summary=TelemetrySummary(
+                    endpoints_configured=[
+                        "http://node1:9400/metrics",
+                        "http://node2:9400/metrics",
+                    ],
+                    endpoints_successful=[
+                        "http://node1:9400/metrics",
+                        "http://node2:9400/metrics",
+                    ],
+                    start_time=datetime.fromtimestamp(0),
+                    end_time=datetime.fromtimestamp(0),
+                ),
+                endpoints={
+                    "node1:9400": EndpointData(
+                        gpus={
+                            "gpu_0": GpuSummary(
+                                gpu_index=0,
+                                gpu_name="GPU Model 1",
+                                gpu_uuid="GPU-111",
+                                hostname="node1",
+                                metrics={
+                                    "gpu_power_usage": JsonMetricResult(
+                                        unit="W",
+                                        avg=105.0,
+                                        min=100.0,
+                                        max=110.0,
+                                        std=5.0,
+                                    ),
+                                },
+                            ),
+                        }
+                    ),
+                    "node2:9400": EndpointData(
+                        gpus={
+                            "gpu_0": GpuSummary(
+                                gpu_index=0,
+                                gpu_name="GPU Model 2",
+                                gpu_uuid="GPU-222",
+                                hostname="node2",
+                                metrics={
+                                    "gpu_power_usage": JsonMetricResult(
+                                        unit="W",
+                                        avg=205.0,
+                                        min=200.0,
+                                        max=210.0,
+                                        std=5.0,
+                                    ),
+                                },
+                            ),
+                        }
+                    ),
+                },
             )
 
             results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
@@ -726,39 +713,41 @@ class TestMetricsCsvExporterTelemetry:
     @pytest.mark.asyncio
     async def test_csv_export_telemetry_empty_metrics(self, mock_user_config):
         """Test CSV export when GPU has no metric data."""
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            ProfileResults,
-            TelemetryHierarchy,
-            TelemetryResults,
+        from datetime import datetime
+
+        from aiperf.common.models import ProfileResults
+        from aiperf.common.models.export_models import (
+            EndpointData,
+            GpuSummary,
+            TelemetryExportData,
+            TelemetrySummary,
         )
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
             mock_user_config.output.artifact_directory = outdir
 
-            # Create GPU data with no metrics
-            hierarchy = TelemetryHierarchy()
-            gpu_data = GpuTelemetryData(
-                metadata=GpuMetadata(
-                    gpu_index=0,
-                    model_name="Empty GPU",
-                    gpu_uuid="GPU-EMPTY",
-                )
-            )
-            # Don't add any metrics
-
-            hierarchy.dcgm_endpoints = {
-                "http://localhost:9400/metrics": {"GPU-EMPTY": gpu_data}
-            }
-
-            telemetry_results = TelemetryResults(
-                telemetry_data=hierarchy,
-                start_ns=0,
-                end_ns=0,
-                endpoints_configured=["http://localhost:9400/metrics"],
-                endpoints_successful=["http://localhost:9400/metrics"],
+            # Create TelemetryExportData with GPU that has no metrics
+            telemetry_results = TelemetryExportData(
+                summary=TelemetrySummary(
+                    endpoints_configured=["http://localhost:9400/metrics"],
+                    endpoints_successful=["http://localhost:9400/metrics"],
+                    start_time=datetime.fromtimestamp(0),
+                    end_time=datetime.fromtimestamp(0),
+                ),
+                endpoints={
+                    "localhost:9400": EndpointData(
+                        gpus={
+                            "gpu_0": GpuSummary(
+                                gpu_index=0,
+                                gpu_name="Empty GPU",
+                                gpu_uuid="GPU-EMPTY",
+                                hostname="test-node",
+                                metrics={},  # No metrics
+                            ),
+                        }
+                    ),
+                },
             )
 
             results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
@@ -825,6 +814,175 @@ class TestMetricsCsvExporterTelemetry:
         # Test Decimal type
         result = exporter._format_number(Decimal("123.456"))
         assert result == "123.46"
+
+
+class TestOptionalTelemetryHeaders:
+    """Tests for optional hostname, namespace, and pod_name columns in telemetry CSV export."""
+
+    @staticmethod
+    def _make_telemetry(
+        gpus: list[tuple[str | None, str | None, str | None]],
+    ):
+        """Create TelemetryExportData with specified optional fields per GPU.
+
+        Args:
+            gpus: List of (hostname, namespace, pod_name) tuples, one per GPU
+        """
+        from datetime import datetime
+
+        from aiperf.common.models.export_models import (
+            EndpointData,
+            GpuSummary,
+            JsonMetricResult,
+            TelemetryExportData,
+            TelemetrySummary,
+        )
+
+        gpu_dict = {
+            f"gpu_{i}": GpuSummary(
+                gpu_index=i,
+                gpu_name="NVIDIA H100",
+                gpu_uuid=f"GPU-{i:05d}",
+                hostname=hostname,
+                namespace=namespace,
+                pod_name=pod_name,
+                metrics={
+                    "gpu_power_usage": JsonMetricResult(
+                        unit="W", avg=300.0, min=280.0, max=320.0
+                    )
+                },
+            )
+            for i, (hostname, namespace, pod_name) in enumerate(gpus)
+        }
+
+        return TelemetryExportData(
+            summary=TelemetrySummary(
+                endpoints_configured=["http://node1:9400/metrics"],
+                endpoints_successful=["http://node1:9400/metrics"],
+                start_time=datetime.fromtimestamp(0),
+                end_time=datetime.fromtimestamp(0),
+            ),
+            endpoints={"node1:9400": EndpointData(gpus=gpu_dict)},
+        )
+
+    def _make_exporter(self, mock_user_config, telemetry):
+        """Create exporter with given telemetry data."""
+        from aiperf.common.models import ProfileResults
+
+        results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+        cfg = ExporterConfig(
+            results=results,
+            user_config=mock_user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=telemetry,
+        )
+        return MetricsCsvExporter(cfg)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "gpus,expected_headers,expected_values,unexpected_headers",
+        [
+            pytest.param(
+                [("host1", "ns1", "pod1")],
+                ["Hostname", "Namespace", "Pod Name", "host1", "ns1", "pod1"],
+                [],
+                [],
+                id="all_fields_present",
+            ),
+            pytest.param(
+                [("standalone", None, None)],
+                ["Hostname", "standalone"],
+                [],
+                ["Namespace", "Pod Name"],
+                id="hostname_only",
+            ),
+            pytest.param(
+                [(None, None, None)],
+                ["Endpoint", "GPU_Index"],
+                [],
+                ["Hostname", "Namespace", "Pod Name"],
+                id="no_optional_fields",
+            ),
+            pytest.param(
+                [("node1", None, None), ("node1", "default", "worker-pod")],
+                ["Hostname", "Namespace", "Pod Name", "node1", "default", "worker-pod"],
+                [],
+                [],
+                id="mixed_fields_across_gpus",
+            ),
+        ],
+    )
+    async def test_csv_optional_headers(
+        self,
+        mock_user_config,
+        gpus,
+        expected_headers,
+        expected_values,
+        unexpected_headers,
+    ):
+        """Test CSV includes/excludes optional headers based on field presence."""
+        telemetry = self._make_telemetry(gpus)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            outdir = Path(tmp)
+            mock_user_config.output.artifact_directory = outdir
+
+            exporter = self._make_exporter(mock_user_config, telemetry)
+            await exporter.export()
+
+            content = (
+                outdir / OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
+            ).read_text()
+
+            for expected in expected_headers:
+                assert expected in content, f"Expected '{expected}' in CSV"
+            for unexpected in unexpected_headers:
+                assert unexpected not in content, f"'{unexpected}' should not be in CSV"
+
+    @pytest.mark.parametrize(
+        "gpus,input_headers,expected_headers,expected_fields",
+        [
+            pytest.param(
+                [("h", "n", "p")],
+                ("Hostname", "Namespace", "Pod Name"),
+                ["Hostname", "Namespace", "Pod Name"],
+                ["hostname", "namespace", "pod_name"],
+                id="all_present",
+            ),
+            pytest.param(
+                [("h", None, None)],
+                ("Hostname", "Namespace", "Pod Name"),
+                ["Hostname"],
+                ["hostname"],
+                id="hostname_only",
+            ),
+            pytest.param(
+                [(None, None, None)],
+                ("Hostname", "Namespace", "Pod Name"),
+                [],
+                [],
+                id="all_none",
+            ),
+            pytest.param(
+                [("h", "n", "p")],
+                ("Pod Name", "Hostname", "Namespace"),
+                ["Pod Name", "Hostname", "Namespace"],
+                ["pod_name", "hostname", "namespace"],
+                id="preserves_input_order",
+            ),
+        ],
+    )
+    def test_get_optional_headers_and_fields(
+        self, mock_user_config, gpus, input_headers, expected_headers, expected_fields
+    ):
+        """Test _get_optional_headers_and_fields returns correct headers and field mappings."""
+        telemetry = self._make_telemetry(gpus)
+        exporter = self._make_exporter(mock_user_config, telemetry)
+
+        headers, fields = exporter._get_optional_headers_and_fields(*input_headers)
+
+        assert headers == expected_headers
+        assert fields == expected_fields
 
 
 def test_metrics_csv_exporter_inherits_from_base(mock_user_config):

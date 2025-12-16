@@ -16,6 +16,7 @@ from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
     ServiceRunInfo,
+    TelemetryExportData,
     TelemetryRecord,
 )
 from aiperf.common.types import (
@@ -42,6 +43,12 @@ if TYPE_CHECKING:
     from aiperf.common.models.metadata import EndpointMetadata, TransportMetadata
     from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
     from aiperf.common.models.record_models import MetricResult
+    from aiperf.common.models.server_metrics_models import (
+        ErrorDetailsCount,
+        ServerMetricsRecord,
+        ServerMetricsResults,
+        TimeRangeFilter,
+    )
     from aiperf.dataset.loader.models import CustomDatasetT
     from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
     from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -618,10 +625,62 @@ class ResultsProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
 
 
 @runtime_checkable
-class TelemetryResultsProcessorProtocol(Protocol):
-    """Protocol for telemetry results processors that handle TelemetryRecord objects.
+class ServerMetricsProcessorProtocol(Protocol):
+    """Protocol for server metrics results processors that handle ServerMetricsRecord objects.
 
-    This protocol is separate from ResultsProcessorProtocol because telemetry data
+    This protocol is separate from ResultsProcessorProtocol because server metrics data
+    has fundamentally different structure (hierarchical Prometheus snapshots) compared
+    to inference metrics (flat key-value pairs).
+    """
+
+    async def process_server_metrics_record(
+        self, record: "ServerMetricsRecord"
+    ) -> None:
+        """Process individual server metrics record with complete Prometheus snapshot.
+
+        Args:
+            record: ServerMetricsRecord containing Prometheus metrics snapshot and metadata
+        """
+        ...
+
+    async def summarize(self) -> list["MetricResult"]: ...
+
+
+@runtime_checkable
+class ServerMetricsAccumulatorProtocol(ServerMetricsProcessorProtocol, Protocol):
+    """Protocol for server metrics accumulators that accumulate server metrics data and export aggregated results.
+
+    Extends ServerMetricsProcessorProtocol to provide result export functionality with time filtering
+    and error summary support. Implementations should accumulate Prometheus snapshot data and compute
+    aggregated statistics (mean, p50, p90, p95, p99) for configured metrics across collection windows.
+    """
+
+    async def export_results(
+        self,
+        start_ns: int,
+        end_ns: int,
+        time_filter: "TimeRangeFilter | None" = None,
+        error_summary: list["ErrorDetailsCount"] | None = None,
+    ) -> "ServerMetricsResults | None":
+        """Export accumulated server metrics as results.
+
+        Args:
+            start_ns: Start time of collection in nanoseconds
+            end_ns: End time of collection in nanoseconds
+            time_filter: Optional time filter for aggregation (excludes warmup/buffer)
+            error_summary: Optional list of error counts
+
+        Returns:
+            ServerMetricsResults if data was collected, None otherwise
+        """
+        ...
+
+
+@runtime_checkable
+class GPUTelemetryProcessorProtocol(Protocol):
+    """Protocol for GPU telemetry results processors that handle TelemetryRecord objects.
+
+    This protocol is separate from ResultsProcessorProtocol because GPU telemetry data
     has fundamentally different structure (hierarchical with metadata) compared
     to inference metrics (flat key-value pairs).
     """
@@ -633,6 +692,42 @@ class TelemetryResultsProcessorProtocol(Protocol):
             record: TelemetryRecord containing GPU metrics and hierarchical metadata
         """
         ...
+
+
+@runtime_checkable
+class GPUTelemetryAccumulatorProtocol(GPUTelemetryProcessorProtocol, Protocol):
+    """Protocol for GPU telemetry accumulators that accumulate GPU telemetry data and export pre-computed metrics.
+
+    Extends GPUTelemetryProcessorProtocol to provide result export, realtime telemetry, and summarization
+    capabilities. Implementations should accumulate DCGM metrics, compute aggregated statistics per GPU,
+    and support dynamic dashboard enablement for realtime monitoring.
+    """
+
+    def export_results(
+        self,
+        start_ns: int,
+        end_ns: int,
+        error_summary: list["ErrorDetailsCount"] | None = None,
+    ) -> "TelemetryExportData | None":
+        """Export accumulated telemetry data as a TelemetryExportData object.
+
+        Args:
+            start_ns: Start time of collection in nanoseconds
+            end_ns: End time of collection in nanoseconds
+            error_summary: Optional list of error counts
+
+        Returns:
+            TelemetryExportData object with pre-computed metrics for each GPU
+        """
+        ...
+
+    def start_realtime_telemetry(self) -> None:
+        """Start the realtime telemetry background task.
+
+        This is called when the user dynamically enables the telemetry dashboard
+        by pressing the telemetry option in the UI without having passed the 'dashboard' parameter
+        at startup.
+        """
 
     async def summarize(self) -> list["MetricResult"]:
         """Generate MetricResult list with hierarchical tags for telemetry data.

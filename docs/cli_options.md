@@ -8,6 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 ## `aiperf` Commands
 
 - [`profile`](#aiperf-profile) - Run the Profile subcommand.
+- [`plot`](#aiperf-plot) - Generate visualizations from AIPerf profiling data.
 
 ## `aiperf profile`
 
@@ -116,17 +117,7 @@ The seed used to generate random values. Set to some value to make the synthetic
 
 #### `--goodput` `<str>`
 
-Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric’s display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
-
-#### `--rankings-passages-mean` `<int>`
-
-Mean number of passages per rankings entry (per query)(default 1).
-<br>_Default: `1`_
-
-#### `--rankings-passages-stddev` `<int>`
-
-Stddev for passages per rankings entry (default 0).
-<br>_Default: `0`_
+Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric's display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
 
 ## Audio Input Options
 
@@ -292,6 +283,46 @@ The total size of the prefix prompt pool to select prefixes from. If this value 
 The number of tokens in each prefix prompt. This is only used if "num" is greater than zero. Note that due to the prefix and user prompts being concatenated, the number of tokens in the final prompt may be off by one.
 <br>_Default: `0`_
 
+#### `--shared-system-prompt-length` `<int>`
+
+Length of shared system prompt in tokens. This prompt is identical across all sessions and appears as a system message. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+
+#### `--user-context-prompt-length` `<int>`
+
+Length of per-session user context prompt in tokens. Each session gets a unique user context prompt. Requires --num-sessions to be specified. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+
+## Rankings Options
+
+#### `--rankings-passages-mean` `<int>`
+
+Mean number of passages per rankings entry (per query)(default 1).
+<br>_Default: `1`_
+
+#### `--rankings-passages-stddev` `<int>`
+
+Stddev for passages per rankings entry (default 0).
+<br>_Default: `0`_
+
+#### `--rankings-passages-prompt-token-mean` `<int>`
+
+Mean number of tokens in a passage entry for rankings (default 550).
+<br>_Default: `550`_
+
+#### `--rankings-passages-prompt-token-stddev` `<int>`
+
+Stddev for number of tokens in a passage entry for rankings (default 0).
+<br>_Default: `0`_
+
+#### `--rankings-query-prompt-token-mean` `<int>`
+
+Mean number of tokens in a query entry for rankings (default 550).
+<br>_Default: `550`_
+
+#### `--rankings-query-prompt-token-stddev` `<int>`
+
+Stddev for number of tokens in a query entry for rankings (default 0).
+<br>_Default: `0`_
+
 ## Conversation Input Options
 
 #### `--conversation-num`, `--num-conversations`, `--num-sessions` `<int>`
@@ -414,6 +445,25 @@ The delay in seconds before cancelling requests. This is used when --request-can
 
 Enable GPU telemetry console display and optionally specify: (1) 'dashboard' for realtime dashboard mode, (2) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (3) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default endpoints localhost:9400 and localhost:9401 are always attempted. Example: --gpu-telemetry dashboard node1:9400 custom.csv.
 
+#### `--no-gpu-telemetry`
+
+Disable GPU telemetry collection entirely.
+
+## Server Metrics Options
+
+#### `--server-metrics` `<list>`
+
+Server metrics collection (ENABLED BY DEFAULT). Automatically collects from inference endpoint base_url + `/metrics`. Optionally specify additional custom Prometheus-compatible endpoint URLs (e.g., http://node1:8081/metrics, http://node2:9090/metrics). Use `--no-server-metrics` to disable collection. Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints.
+
+#### `--no-server-metrics`
+
+Disable server metrics collection entirely.
+
+#### `--server-metrics-formats` `<list>`
+
+Specify which output formats to generate for server metrics. Options: json, csv, jsonl, and parquet. Default is json and csv (jsonl excluded due to large file size, parquet is opt-in only). Example: --server-metrics-formats json csv parquet.
+<br>_Default: `[ServerMetricsFormat.JSON, ServerMetricsFormat.CSV]`_
+
 ## ZMQ Communication Options
 
 #### `--zmq-host` `<str>`
@@ -456,3 +506,37 @@ Number of services to spawn for processing records. The higher the request rate,
 Type of UI to use.
 <br>_Choices: [`none`, `simple`, `dashboard`]_
 <br>_Default: `dashboard`_
+
+## `aiperf plot`
+
+## Parameters Options
+
+#### `--paths`, `--empty-paths` `<list>`
+
+Paths to profiling run directories. Defaults to ./artifacts if not specified.
+
+#### `--output` `<str>`
+
+Directory to save generated plots. Defaults to <first_path>/plots if not specified.
+
+#### `--theme` `<str>`
+
+Plot theme to use: 'light' (white background) or 'dark' (dark background). Defaults to 'light'.
+<br>_Default: `light`_
+
+#### `--config` `<str>`
+
+Path to custom plot configuration YAML file. If not specified, auto-creates and uses ~/.aiperf/plot_config.yaml.
+
+#### `--verbose`, `--no-verbose`
+
+Show detailed error tracebacks in console (errors are always logged to ~/.aiperf/plot.log).
+
+#### `--dashboard`, `--no-dashboard`
+
+Launch interactive dashboard server instead of generating static PNGs.
+
+#### `--port` `<int>`
+
+Port for dashboard server (only used with --dashboard). Defaults to 8050.
+<br>_Default: `8050`_
