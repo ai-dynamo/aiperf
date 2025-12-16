@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Core plot functionality including data loading and mode detection.
+"""
+
+from aiperf.plot.core.data_loader import (
+    DataLoader,
+    DerivedMetricCalculator,
+    RunData,
+    RunMetadata,
+)
+from aiperf.plot.core.data_preparation import (
+    aggregate_gpu_telemetry,
+    calculate_rolling_percentiles,
+    calculate_throughput_events,
+    flatten_config,
+    prepare_request_timeseries,
+    prepare_timeslice_metrics,
+    validate_request_uniformity,
+)
+from aiperf.plot.core.mode_detector import (
+    ModeDetector,
+    VisualizationMode,
+)
+from aiperf.plot.core.plot_generator import (
+    PlotGenerator,
+    detect_directional_outliers,
+    get_nvidia_color_scheme,
+)
+from aiperf.plot.core.plot_specs import (
+    DataSource,
+    ExperimentClassificationConfig,
+    MetricSpec,
+    PlotSpec,
+    PlotType,
+    PlotTypeInfo,
+    Style,
+    TimeSlicePlotSpec,
+    get_plot_type_info,
+)
+from aiperf.plot.core.plot_type_handlers import (
+    PlotTypeHandlerFactory,
+    PlotTypeHandlerProtocol,
+)
+from aiperf.plot.core.swept_params import (
+    DEFAULT_IGNORE_PARAMS,
+    auto_select_group_by,
+    auto_select_label_by,
+    detect_swept_parameters,
+)
+
+__all__ = [
+    "DEFAULT_IGNORE_PARAMS",
+    "DataLoader",
+    "DataSource",
+    "DerivedMetricCalculator",
+    "ExperimentClassificationConfig",
+    "MetricSpec",
+    "ModeDetector",
+    "PlotGenerator",
+    "PlotSpec",
+    "PlotType",
+    "PlotTypeHandlerFactory",
+    "PlotTypeHandlerProtocol",
+    "PlotTypeInfo",
+    "RunData",
+    "RunMetadata",
+    "Style",
+    "TimeSlicePlotSpec",
+    "VisualizationMode",
+    "aggregate_gpu_telemetry",
+    "auto_select_group_by",
+    "auto_select_label_by",
+    "calculate_rolling_percentiles",
+    "calculate_throughput_events",
+    "detect_directional_outliers",
+    "detect_swept_parameters",
+    "flatten_config",
+    "get_nvidia_color_scheme",
+    "get_plot_type_info",
+    "prepare_request_timeseries",
+    "prepare_timeslice_metrics",
+    "validate_request_uniformity",
+]

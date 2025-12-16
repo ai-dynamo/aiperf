@@ -2,12 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
+from typing import ClassVar
 
 from pydantic import ConfigDict, Field
 
 from aiperf.common.config import UserConfig
-from aiperf.common.models import ErrorDetailsCount
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.error_models import ErrorDetailsCount
+
+# =============================================================================
+# JSON Metric Result
+# =============================================================================
 
 
 class JsonMetricResult(AIPerfBaseModel):
@@ -35,11 +40,16 @@ class JsonMetricResult(AIPerfBaseModel):
     std: float | None = None
 
 
+# =============================================================================
+# Telemetry Export Data
+# =============================================================================
+
+
 class TelemetrySummary(AIPerfBaseModel):
     """Summary information for telemetry collection."""
 
-    endpoints_configured: list[str]
-    endpoints_successful: list[str]
+    endpoints_configured: list[str] | None = None
+    endpoints_successful: list[str] | None = None
     start_time: datetime
     end_time: datetime
 
@@ -51,6 +61,8 @@ class GpuSummary(AIPerfBaseModel):
     gpu_name: str
     gpu_uuid: str
     hostname: str | None
+    namespace: str | None = None
+    pod_name: str | None = None
     metrics: dict[str, JsonMetricResult]  # metric_key -> {stat_key -> value}
 
 
@@ -65,6 +77,15 @@ class TelemetryExportData(AIPerfBaseModel):
 
     summary: TelemetrySummary
     endpoints: dict[str, EndpointData]
+    error_summary: list[ErrorDetailsCount] | None = Field(
+        default=None,
+        description="A list of the unique error details and their counts",
+    )
+
+
+# =============================================================================
+# Timeslice Export Data
+# =============================================================================
 
 
 class TimesliceData(AIPerfBaseModel):
@@ -89,6 +110,11 @@ class TimesliceCollectionExportData(AIPerfBaseModel):
     input_config: UserConfig | None = None
 
 
+# =============================================================================
+# Main JSON Export Data
+# =============================================================================
+
+
 class JsonExportData(AIPerfBaseModel):
     """Summary data to be exported to a JSON file.
 
@@ -103,6 +129,21 @@ class JsonExportData(AIPerfBaseModel):
     #       but we are setting it here to guard against base model changes.
     model_config = ConfigDict(extra="allow")
 
+    # Increment on breaking changes to the export structure
+    SCHEMA_VERSION: ClassVar[str] = "1.0"
+
+    schema_version: str | None = Field(
+        default=None,
+        description="Schema version for this export format (for backward compatibility)",
+    )
+    aiperf_version: str | None = Field(
+        default=None,
+        description="AIPerf version that generated this export (for backward compatibility)",
+    )
+    benchmark_id: str | None = Field(
+        default=None,
+        description="Unique identifier for this benchmark run (for backward compatibility)",
+    )
     request_throughput: JsonMetricResult | None = None
     request_latency: JsonMetricResult | None = None
     request_count: JsonMetricResult | None = None

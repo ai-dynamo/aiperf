@@ -14,7 +14,9 @@ from aiperf.common.models import (
     JsonExportData,
     MetricRecordInfo,
     RawRecordInfo,
+    ServerMetricsExportData,
     SessionPayloads,
+    SlimRecord,
 )
 
 
@@ -39,6 +41,30 @@ class AIPerfMockServer:
     def dcgm_urls(self) -> list[str]:
         """AIPerfMockServer server DCGM metrics URLs."""
         return [f"{self.url}/dcgm{i}/metrics" for i in [1, 2]]
+
+    @property
+    def server_metrics_urls(self) -> dict[str, str]:
+        """Server metrics URLs for different server types."""
+        return {
+            "aiperf": f"{self.url}/metrics",
+            "vllm": f"{self.url}/vllm/metrics",
+            "sglang": f"{self.url}/sglang/metrics",
+            "trtllm": f"{self.url}/trtllm/metrics",
+            "dynamo_frontend": f"{self.url}/dynamo_frontend/metrics",
+            "dynamo_prefill": f"{self.url}/dynamo_component/prefill/metrics",
+            "dynamo_decode": f"{self.url}/dynamo_component/decode/metrics",
+        }
+
+    def get_server_metrics_url(self, *server_types: str) -> list[str]:
+        """Get server metrics URLs for specified server types.
+
+        Args:
+            *server_types: Server types to get URLs for (e.g., 'vllm', 'sglang')
+
+        Returns:
+            List of URLs for the specified server types.
+        """
+        return [self.server_metrics_urls[t] for t in server_types]
 
 
 class VideoDetails(BaseModel):
@@ -68,7 +94,15 @@ class AIPerfResults:
         self.inputs = self._load_inputs()
         self.jsonl = self._load_jsonl_records()
         self.raw_records = self._load_raw_records()
-        self.log = self._load_text_file("**/logs/aiperf.log")
+        self.log = self._load_text_file("**/logs/aiperf*.log")
+
+        # Server metrics outputs
+        self.server_metrics_json = self._load_server_metrics_json()
+        self.server_metrics_jsonl = self._load_server_metrics_jsonl()
+        self.server_metrics_csv = self._load_text_file("**/*server_metrics_export.csv")
+        self.server_metrics_parquet_path = self._find_file(
+            "**/*server_metrics_export.parquet"
+        )
 
     def _find_file(self, pattern: str) -> Path | None:
         """Find first file matching pattern in artifacts directory."""
@@ -117,6 +151,26 @@ class AIPerfResults:
             for line in f:
                 if line.strip():
                     records.append(RawRecordInfo.model_validate_json(line))
+        return records
+
+    def _load_server_metrics_json(self) -> ServerMetricsExportData | None:
+        """Load server metrics JSON export as Pydantic model."""
+        file_path = self._find_file("**/*server_metrics_export.json")
+        if not file_path:
+            return None
+        return ServerMetricsExportData.model_validate_json(file_path.read_text())
+
+    def _load_server_metrics_jsonl(self) -> list[SlimRecord] | None:
+        """Load server metrics JSONL records as Pydantic models."""
+        file_path = self._find_file("**/*server_metrics_export.jsonl")
+        if not file_path:
+            return None
+
+        records = []
+        with open(file_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    records.append(SlimRecord.model_validate_json(line))
         return records
 
     @property
@@ -252,6 +306,122 @@ class AIPerfResults:
     def has_gpu_telemetry(self) -> bool:
         """Check if GPU telemetry exists."""
         return self.json is not None and self.json.telemetry_data is not None
+
+    # ========================================================================
+    # Server Metrics Properties
+    # ========================================================================
+
+    @property
+    def has_server_metrics(self) -> bool:
+        """Check if server metrics data exists."""
+        return self.server_metrics_json is not None
+
+    @property
+    def has_server_metrics_jsonl(self) -> bool:
+        """Check if server metrics JSONL records exist."""
+        return (
+            self.server_metrics_jsonl is not None and len(self.server_metrics_jsonl) > 0
+        )
+
+    @property
+    def has_server_metrics_csv(self) -> bool:
+        """Check if server metrics CSV exists."""
+        return bool(self.server_metrics_csv)
+
+    @property
+    def has_server_metrics_parquet(self) -> bool:
+        """Check if server metrics parquet file exists."""
+        return self.server_metrics_parquet_path is not None
+
+    @property
+    def has_all_server_metrics_outputs(self) -> bool:
+        """Check if all server metrics output files exist."""
+        return (
+            self.has_server_metrics
+            and self.has_server_metrics_csv
+            and self.has_server_metrics_parquet
+            and self.has_server_metrics_jsonl
+        )
+
+    @property
+    def server_metrics_endpoints_configured(self) -> list[str]:
+        """Get list of configured server metrics endpoints."""
+        if not self.server_metrics_json:
+            return []
+        return self.server_metrics_json.summary.endpoints_configured
+
+    @property
+    def server_metrics_endpoints_successful(self) -> list[str]:
+        """Get list of successful server metrics endpoints."""
+        if not self.server_metrics_json:
+            return []
+        return self.server_metrics_json.summary.endpoints_successful
+
+    @property
+    def server_metrics_names(self) -> set[str]:
+        """Get set of all server metric names collected."""
+        if not self.server_metrics_json:
+            return set()
+        return set(self.server_metrics_json.metrics.keys())
+
+    @property
+    def server_metrics_record_count(self) -> int:
+        """Get total number of server metrics JSONL records."""
+        if not self.server_metrics_jsonl:
+            return 0
+        return len(self.server_metrics_jsonl)
+
+    def has_server_metric(self, metric_name: str) -> bool:
+        """Check if a specific server metric was collected.
+
+        Args:
+            metric_name: Full metric name (e.g., 'vllm:kv_cache_usage_perc')
+
+        Returns:
+            True if the metric exists in the export data.
+        """
+        return metric_name in self.server_metrics_names
+
+    def get_server_metric(self, metric_name: str) -> Any:
+        """Get server metric data by name.
+
+        Args:
+            metric_name: Full metric name (e.g., 'vllm:kv_cache_usage_perc')
+
+        Returns:
+            ServerMetricData for the metric, or None if not found.
+        """
+        if not self.server_metrics_json:
+            return None
+        return self.server_metrics_json.metrics.get(metric_name)
+
+    def assert_server_metrics_valid(self) -> None:
+        """Assert that server metrics are valid and complete."""
+        assert self.has_server_metrics, "Server metrics JSON should exist"
+        assert self.has_server_metrics_csv, "Server metrics CSV should exist"
+
+        # Validate at least one endpoint was successful
+        assert len(self.server_metrics_endpoints_successful) > 0, (
+            "At least one server metrics endpoint should be successful"
+        )
+
+        # Validate we have metrics data
+        assert len(self.server_metrics_names) > 0, (
+            "Server metrics should have metric data"
+        )
+
+        if self.has_server_metrics_jsonl:
+            # Validate JSONL records
+            assert self.server_metrics_record_count > 0, (
+                "Server metrics JSONL should have records"
+            )
+            # Validate each JSONL record
+            for record in self.server_metrics_jsonl:
+                assert isinstance(record, SlimRecord), (
+                    "All server metrics records should be ServerMetricsSlimRecord"
+                )
+                assert record.endpoint_url, "Record should have endpoint_url"
+                assert record.timestamp_ns > 0, "Record should have valid timestamp"
 
     def assert_valid(self) -> None:
         """Assert that the results are valid and all Pydantic models are properly loaded."""

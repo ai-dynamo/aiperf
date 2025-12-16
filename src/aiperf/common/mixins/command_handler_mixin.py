@@ -248,16 +248,28 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         # If the command ID is in the single response futures, we set the result of the future.
         # This will alert the the task that is waiting for the response to continue.
         if message.command_id in self._single_response_futures:
-            self._single_response_futures[message.command_id].set_result(message)
+            future = self._single_response_futures[message.command_id]
+            if not future.done():
+                future.set_result(message)
+            else:
+                self.debug(
+                    lambda: f"Already received response for command {message.command_id}, ignoring duplicate from {message.service_id}"
+                )
             return
 
         # If the command ID is in the multi response futures, we set the result of the future for the service ID of the sender.
         # This will alert the the task that is waiting for the response to continue.
         if message.command_id in self._multi_response_futures:
             if message.service_id in self._multi_response_futures[message.command_id]:
-                self._multi_response_futures[message.command_id][
+                future = self._multi_response_futures[message.command_id][
                     message.service_id
-                ].set_result(message)
+                ]
+                if not future.done():
+                    future.set_result(message)
+                else:
+                    self.debug(
+                        lambda: f"Already received response for command {message.command_id} from {message.service_id}, ignoring duplicate"
+                    )
             else:
                 self.warning(
                     f"Received command response for service we were not expecting: {message.service_id}. Ignoring."

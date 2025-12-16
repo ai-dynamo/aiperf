@@ -146,7 +146,12 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
         future = asyncio.Future[Message]()
 
         async def callback(response_message: Message) -> None:
-            future.set_result(response_message)
+            if not future.done():
+                future.set_result(response_message)
+            else:
+                self.warning(
+                    f"Received response for request {message.request_id} after it was already completed. Ignoring."
+                )
 
         await self.request_async(message, callback)
         return await asyncio.wait_for(future, timeout=timeout)

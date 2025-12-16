@@ -225,6 +225,7 @@ class TestZMQRouterReplyClientBackgroundTask:
                 handler=handler,
             )
 
+            # Wait for background task to process messages (mocked to instant)
             await asyncio.sleep(0.2)
 
             mock_socket.send_multipart.assert_called()
@@ -235,6 +236,7 @@ class TestZMQRouterReplyClientBackgroundTask:
         async with router_test_helper.create_client(
             auto_start=True, recv_multipart_side_effect=zmq.Again()
         ):
+            # Wait for background task (mocked to instant)
             await asyncio.sleep(0.1)
 
     @pytest.mark.asyncio
@@ -249,6 +251,7 @@ class TestZMQRouterReplyClientBackgroundTask:
         )
 
         async with router_test_helper.create_client(auto_start=True):
+            # Wait for background task (mocked to instant)
             await asyncio.sleep(0.1)
 
             mock_socket.send_multipart.assert_not_called()

@@ -120,6 +120,6 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             data = self.make_text_response_data("".join(chunks))
             return ParsedResponse(perf_ns=response.perf_ns, data=data)
 
-        except Exception:
-            self.debug(lambda: "Error parsing TGI stream: {e}")
+        except Exception as e:
+            self.debug(lambda e=e: f"Error parsing TGI stream: {e!r}")
             return None

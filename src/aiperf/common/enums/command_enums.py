@@ -8,6 +8,7 @@ class CommandType(CaseInsensitiveStrEnum):
     REALTIME_METRICS = "realtime_metrics"
     PROCESS_RECORDS = "process_records"
     PROFILE_CANCEL = "profile_cancel"
+    PROFILE_COMPLETE = "profile_complete"
     PROFILE_CONFIGURE = "profile_configure"
     PROFILE_START = "profile_start"
     REGISTER_SERVICE = "register_service"

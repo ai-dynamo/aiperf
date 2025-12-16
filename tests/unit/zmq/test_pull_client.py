@@ -211,6 +211,7 @@ class TestZMQPullClientConcurrency:
 
         async def slow_callback(msg: Message) -> None:
             processing.append(msg.request_id)
+            # Simulate slow processing (mocked to instant yield)
             await asyncio.sleep(0.1)
 
         client.register_pull_callback(MessageType.HEARTBEAT, slow_callback)
@@ -219,7 +220,7 @@ class TestZMQPullClientConcurrency:
         await client.start()
         await wait_for_background_task()
 
-        # Give time for multiple messages to be processed
+        # Give time for multiple messages to be processed (mocked to instant)
         await asyncio.sleep(0.2)
 
         await client.stop()
@@ -243,6 +244,7 @@ class TestZMQPullClientConcurrency:
         )
 
         async def callback(msg: Message) -> None:
+            # Simulate processing (mocked to instant yield)
             await asyncio.sleep(0.01)
 
         client.register_pull_callback(sample_message.message_type, callback)
@@ -253,7 +255,7 @@ class TestZMQPullClientConcurrency:
         await client.start()
         await wait_for_background_task()
 
-        # Wait for processing to complete
+        # Wait for processing to complete (mocked to instant yield)
         await asyncio.sleep(0.2)
 
         # Semaphore should be back to initial value

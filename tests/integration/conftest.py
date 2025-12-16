@@ -165,7 +165,10 @@ async def aiperf_mock_server(
 
     python_exe = get_venv_python()
 
-    # Start the aiperf-mock-server
+    # Disable server metrics collection flush period to avoid delays
+    os.environ["AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD"] = "0"
+
+    # Start the aiperf-mock-server with --fast for zero latency
     process = await asyncio.create_subprocess_exec(
         python_exe,
         "-m",
@@ -174,10 +177,7 @@ async def aiperf_mock_server(
         host,
         "--port",
         str(mock_server_port),
-        "--ttft",
-        "0",
-        "--itl",
-        "0",
+        "--fast",
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -250,7 +250,11 @@ async def aiperf_runner(
     """AIPerf subprocess runner."""
 
     async def runner(args: list[str], timeout: float = 60.0) -> AIPerfSubprocessResult:
-        full_args = args + ["--artifact-dir", str(temp_output_dir)]
+        full_args = args
+        # Only add --artifact-dir for profile command (not for plot)
+        if args and args[0] == "profile":
+            full_args += ["--artifact-dir", str(temp_output_dir)]
+
         python_exe = get_venv_python()
         cmd = [python_exe, "-m", "aiperf"] + full_args
 

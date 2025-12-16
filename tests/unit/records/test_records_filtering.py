@@ -9,12 +9,38 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.models.telemetry_models import (
+    TelemetryMetrics,
+    TelemetryRecord,
+)
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 
 # Constants
 START_TIME = 1000000000
+
+
+def make_telemetry_record(
+    *,
+    timestamp_ns: int = 1_000_000,
+    dcgm_url: str = "http://localhost:9400/metrics",
+    gpu_index: int = 0,
+    gpu_uuid: str = "GPU-test",
+    gpu_model_name: str = "Test GPU",
+    hostname: str = "localhost",
+    gpu_power_usage: float | None = 100.0,
+) -> TelemetryRecord:
+    """Factory for creating TelemetryRecord instances with sensible defaults."""
+    return TelemetryRecord(
+        timestamp_ns=timestamp_ns,
+        dcgm_url=dcgm_url,
+        gpu_index=gpu_index,
+        gpu_uuid=gpu_uuid,
+        gpu_model_name=gpu_model_name,
+        hostname=hostname,
+        telemetry_data=TelemetryMetrics(gpu_power_usage=gpu_power_usage),
+    )
 
 
 # Helper functions
@@ -329,25 +355,9 @@ class TestRecordsManagerTelemetry:
         from unittest.mock import AsyncMock, MagicMock
 
         from aiperf.common.messages import TelemetryRecordsMessage
-        from aiperf.common.models import (
-            TelemetryHierarchy,
-            TelemetryMetrics,
-            TelemetryRecord,
-        )
+        from aiperf.common.models import TelemetryHierarchy
 
-        # Create sample telemetry records
-        records = [
-            TelemetryRecord(
-                timestamp_ns=1000000,
-                dcgm_url="http://localhost:9400/metrics",
-                gpu_index=0,
-                gpu_uuid="GPU-123",
-                gpu_model_name="Test GPU",
-                telemetry_data=TelemetryMetrics(
-                    gpu_power_usage=100.0,
-                ),
-            )
-        ]
+        records = [make_telemetry_record(gpu_uuid="GPU-123")]
 
         message = TelemetryRecordsMessage(
             service_id="test_service",
@@ -357,19 +367,16 @@ class TestRecordsManagerTelemetry:
             error=None,
         )
 
-        # Mock the hierarchy
         mock_hierarchy = MagicMock(spec=TelemetryHierarchy)
         mock_hierarchy.add_record = MagicMock()
         mock_send_to_processors = AsyncMock()
 
-        # Test the logic directly without instantiating the full service
         for record in message.records:
             mock_hierarchy.add_record(record)
 
         if message.records:
             await mock_send_to_processors(message.records)
 
-        # Verify behavior
         assert mock_hierarchy.add_record.call_count == len(records)
         mock_send_to_processors.assert_called_once_with(records)
 
@@ -412,62 +419,31 @@ class TestRecordsManagerTelemetry:
         """Test sending telemetry records to processors."""
         from unittest.mock import AsyncMock, Mock
 
-        from aiperf.common.models import TelemetryMetrics, TelemetryRecord
-
-        # Create mock telemetry processor
         mock_processor = Mock()
         mock_processor.process_telemetry_record = AsyncMock()
 
         records = [
-            TelemetryRecord(
-                timestamp_ns=1000000,
-                dcgm_url="http://localhost:9400/metrics",
-                gpu_index=0,
-                gpu_uuid="GPU-123",
-                gpu_model_name="Test GPU",
-                telemetry_data=TelemetryMetrics(),
+            make_telemetry_record(
+                timestamp_ns=1000000, gpu_index=0, gpu_uuid="GPU-123"
             ),
-            TelemetryRecord(
-                timestamp_ns=1000001,
-                dcgm_url="http://localhost:9400/metrics",
-                gpu_index=1,
-                gpu_uuid="GPU-456",
-                gpu_model_name="Test GPU",
-                telemetry_data=TelemetryMetrics(),
+            make_telemetry_record(
+                timestamp_ns=1000001, gpu_index=1, gpu_uuid="GPU-456"
             ),
         ]
 
-        # Test the logic: each record should be sent to processor
         for record in records:
             await mock_processor.process_telemetry_record(record)
 
-        # Processor should be called for each record
         assert mock_processor.process_telemetry_record.call_count == len(records)
 
     def test_telemetry_hierarchy_add_record(self):
         """Test that telemetry hierarchy adds records correctly."""
-        from aiperf.common.models import (
-            TelemetryHierarchy,
-            TelemetryMetrics,
-            TelemetryRecord,
-        )
+        from aiperf.common.models import TelemetryHierarchy
 
         hierarchy = TelemetryHierarchy()
+        record = make_telemetry_record(gpu_uuid="GPU-123")
 
-        record = TelemetryRecord(
-            timestamp_ns=1000000,
-            dcgm_url="http://localhost:9400/metrics",
-            gpu_index=0,
-            gpu_uuid="GPU-123",
-            gpu_model_name="Test GPU",
-            telemetry_data=TelemetryMetrics(
-                gpu_power_usage=100.0,
-            ),
-        )
-
-        # Add record to hierarchy
         hierarchy.add_record(record)
 
-        # Verify hierarchy structure
         assert "http://localhost:9400/metrics" in hierarchy.dcgm_endpoints
         assert "GPU-123" in hierarchy.dcgm_endpoints["http://localhost:9400/metrics"]

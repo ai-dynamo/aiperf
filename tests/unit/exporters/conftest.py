@@ -3,17 +3,30 @@
 
 """Shared test fixtures for data exporters."""
 
+from datetime import datetime
+
 import pytest
 
-from aiperf.common.config import ServiceConfig
+from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models import MetricResult
+from aiperf.common.models.export_models import (
+    EndpointData,
+    GpuSummary,
+    JsonMetricResult,
+    TelemetryExportData,
+    TelemetrySummary,
+)
+from aiperf.common.models.server_metrics_models import (
+    MetricFamily,
+    MetricSample,
+    ServerMetricsRecord,
+    ServerMetricsResults,
+)
 from aiperf.common.models.telemetry_models import (
-    TelemetryHierarchy,
     TelemetryMetrics,
     TelemetryRecord,
-    TelemetryResults,
 )
-from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.server_metrics.storage import ServerMetricsHierarchy
 
 
 @pytest.fixture
@@ -42,133 +55,187 @@ def sample_telemetry_record():
 
 @pytest.fixture
 def sample_telemetry_results():
-    """Create a sample TelemetryResults with realistic multi-GPU, multi-endpoint data."""
-    hierarchy = TelemetryHierarchy()
+    """Create a sample TelemetryExportData with realistic multi-GPU, multi-endpoint data."""
 
-    # Endpoint 1: localhost with 2 GPUs
-    for gpu_idx in range(2):
-        for time_offset in range(5):  # 5 time samples per GPU
-            record = TelemetryRecord(
-                timestamp_ns=1000000000 + time_offset * 1000000000,
-                dcgm_url="http://localhost:9400/metrics",
-                gpu_index=gpu_idx,
-                gpu_model_name="NVIDIA H100",
-                gpu_uuid=f"GPU-12345678-1234-1234-1234-12345678{gpu_idx:04d}",
-                pci_bus_id=f"00000000:0{gpu_idx + 1}:00.0",
-                device=f"nvidia{gpu_idx}",
-                hostname="test-node-01",
-                telemetry_data=TelemetryMetrics(
-                    gpu_power_usage=280.0 + gpu_idx * 20 + time_offset * 5,
-                    energy_consumption=1000.0 + time_offset * 100,
-                    gpu_utilization=80.0 + time_offset * 2,
-                    gpu_memory_used=70.0 + gpu_idx * 5 + time_offset * 1,
-                    gpu_temperature=65.0 + time_offset * 2,
-                    xid_errors=0.0,
-                    power_violation=100.0 + time_offset * 10,
-                ),
-            )
-            hierarchy.add_record(record)
-
-    # Endpoint 2: remote node with 1 GPU
-    for time_offset in range(5):
-        record = TelemetryRecord(
-            timestamp_ns=1000000000 + time_offset * 1000000000,
-            dcgm_url="http://remote-node:9400/metrics",
-            gpu_index=0,
-            gpu_model_name="NVIDIA A100",
-            gpu_uuid="GPU-abcdef01-2345-6789-abcd-ef0123456789",
-            pci_bus_id="00000000:01:00.0",
-            device="nvidia0",
-            hostname="test-node-02",
-            telemetry_data=TelemetryMetrics(
-                gpu_power_usage=250.0 + time_offset * 10,
-                energy_consumption=800.0 + time_offset * 80,
-                gpu_utilization=75.0 + time_offset * 3,
-                gpu_memory_used=60.0 + time_offset * 2,
-                gpu_temperature=63.0 + time_offset * 2,
-                xid_errors=0.0,
-                power_violation=50.0 + time_offset * 5,
+    # Create JsonMetricResults for each GPU metric
+    def make_gpu_metrics(base_power, base_energy, base_util, base_mem, base_temp):
+        return {
+            "gpu_power_usage": JsonMetricResult(
+                unit="W",
+                avg=base_power,
+                min=base_power - 20,
+                max=base_power + 20,
+                p50=base_power,
+                p90=base_power + 15,
+                p99=base_power + 18,
+                std=5.0,
             ),
-        )
-        hierarchy.add_record(record)
+            "energy_consumption": JsonMetricResult(
+                unit="J",
+                avg=base_energy,
+                min=base_energy - 100,
+                max=base_energy + 400,
+                p50=base_energy + 100,
+                p90=base_energy + 300,
+                p99=base_energy + 380,
+                std=100.0,
+            ),
+            "gpu_utilization": JsonMetricResult(
+                unit="%",
+                avg=base_util,
+                min=base_util,
+                max=base_util + 8,
+                p50=base_util + 4,
+                p90=base_util + 7,
+                p99=base_util + 8,
+                std=2.0,
+            ),
+            "gpu_memory_used": JsonMetricResult(
+                unit="GB",
+                avg=base_mem,
+                min=base_mem,
+                max=base_mem + 4,
+                p50=base_mem + 2,
+                p90=base_mem + 3,
+                p99=base_mem + 4,
+                std=1.0,
+            ),
+            "gpu_temperature": JsonMetricResult(
+                unit="°C",
+                avg=base_temp,
+                min=base_temp,
+                max=base_temp + 8,
+                p50=base_temp + 4,
+                p90=base_temp + 6,
+                p99=base_temp + 7,
+                std=2.0,
+            ),
+            "xid_errors": JsonMetricResult(
+                unit="count",
+                avg=0.0,
+                min=0.0,
+                max=0.0,
+                p50=0.0,
+                p90=0.0,
+                p99=0.0,
+                std=0.0,
+            ),
+            "power_violation": JsonMetricResult(
+                unit="ms",
+                avg=120.0,
+                min=100.0,
+                max=140.0,
+                p50=120.0,
+                p90=135.0,
+                p99=140.0,
+                std=10.0,
+            ),
+        }
 
-    return TelemetryResults(
-        telemetry_data=hierarchy,
-        start_ns=1000000000,
-        end_ns=6000000000,
-        endpoints_configured=[
-            "http://localhost:9400/metrics",
-            "http://remote-node:9400/metrics",
-        ],
-        endpoints_successful=[
-            "http://localhost:9400/metrics",
-            "http://remote-node:9400/metrics",
-        ],
-        error_summary=[],
+    return TelemetryExportData(
+        summary=TelemetrySummary(
+            endpoints_configured=[
+                "http://localhost:9400/metrics",
+                "http://remote-node:9400/metrics",
+            ],
+            endpoints_successful=[
+                "http://localhost:9400/metrics",
+                "http://remote-node:9400/metrics",
+            ],
+            start_time=datetime.fromtimestamp(1.0),
+            end_time=datetime.fromtimestamp(6.0),
+        ),
+        endpoints={
+            "localhost:9400": EndpointData(
+                gpus={
+                    "gpu_0": GpuSummary(
+                        gpu_index=0,
+                        gpu_name="NVIDIA H100",
+                        gpu_uuid="GPU-12345678-1234-1234-1234-123456780000",
+                        hostname="test-node-01",
+                        metrics=make_gpu_metrics(290.0, 1200.0, 84.0, 72.0, 69.0),
+                    ),
+                    "gpu_1": GpuSummary(
+                        gpu_index=1,
+                        gpu_name="NVIDIA H100",
+                        gpu_uuid="GPU-12345678-1234-1234-1234-123456780001",
+                        hostname="test-node-01",
+                        metrics=make_gpu_metrics(310.0, 1200.0, 84.0, 77.0, 69.0),
+                    ),
+                }
+            ),
+            "remote-node:9400": EndpointData(
+                gpus={
+                    "gpu_0": GpuSummary(
+                        gpu_index=0,
+                        gpu_name="NVIDIA A100",
+                        gpu_uuid="GPU-abcdef01-2345-6789-abcd-ef0123456789",
+                        hostname="test-node-02",
+                        metrics=make_gpu_metrics(270.0, 1120.0, 81.0, 64.0, 69.0),
+                    ),
+                }
+            ),
+        },
     )
 
 
 @pytest.fixture
 def sample_telemetry_results_with_failures():
-    """Create TelemetryResults with some failed endpoints."""
-    hierarchy = TelemetryHierarchy()
-
-    # Only one successful endpoint
-    for time_offset in range(3):
-        record = TelemetryRecord(
-            timestamp_ns=1000000000 + time_offset * 1000000000,
-            dcgm_url="http://localhost:9400/metrics",
-            gpu_index=0,
-            gpu_model_name="NVIDIA H100",
-            gpu_uuid="GPU-12345678-1234-1234-1234-123456789abc",
-            telemetry_data=TelemetryMetrics(
-                gpu_power_usage=300.0 + time_offset * 10,
-                gpu_utilization=85.0,
-                gpu_memory_used=72.5,
-                gpu_temperature=70.0,
+    """Create TelemetryExportData with some failed endpoints."""
+    return TelemetryExportData(
+        summary=TelemetrySummary(
+            endpoints_configured=[
+                "http://localhost:9400/metrics",
+                "http://unreachable-node:9400/metrics",
+                "http://failed-node:9400/metrics",
+            ],
+            endpoints_successful=["http://localhost:9400/metrics"],
+            start_time=datetime.fromtimestamp(1.0),
+            end_time=datetime.fromtimestamp(4.0),
+        ),
+        endpoints={
+            "localhost:9400": EndpointData(
+                gpus={
+                    "gpu_0": GpuSummary(
+                        gpu_index=0,
+                        gpu_name="NVIDIA H100",
+                        gpu_uuid="GPU-12345678-1234-1234-1234-123456789abc",
+                        hostname="test-node-01",
+                        metrics={
+                            "gpu_power_usage": JsonMetricResult(
+                                unit="W", avg=310.0, min=300.0, max=320.0, std=10.0
+                            ),
+                            "gpu_utilization": JsonMetricResult(
+                                unit="%", avg=85.0, min=85.0, max=85.0, std=0.0
+                            ),
+                            "gpu_memory_used": JsonMetricResult(
+                                unit="GB", avg=72.5, min=72.5, max=72.5, std=0.0
+                            ),
+                            "gpu_temperature": JsonMetricResult(
+                                unit="°C", avg=70.0, min=70.0, max=70.0, std=0.0
+                            ),
+                        },
+                    ),
+                }
             ),
-        )
-        hierarchy.add_record(record)
-
-    return TelemetryResults(
-        telemetry_data=hierarchy,
-        start_ns=1000000000,
-        end_ns=4000000000,
-        endpoints_configured=[
-            "http://localhost:9400/metrics",
-            "http://unreachable-node:9400/metrics",
-            "http://failed-node:9400/metrics",
-        ],
-        endpoints_successful=["http://localhost:9400/metrics"],
-        error_summary=[],
+        },
     )
 
 
 @pytest.fixture
 def empty_telemetry_results():
-    """Create TelemetryResults with no GPU data (all endpoints failed)."""
-    return TelemetryResults(
-        telemetry_data=TelemetryHierarchy(),
-        start_ns=1000000000,
-        end_ns=2000000000,
-        endpoints_configured=[
-            "http://unreachable-1:9400/metrics",
-            "http://unreachable-2:9400/metrics",
-        ],
-        endpoints_successful=[],
-        error_summary=[],
-    )
-
-
-def create_exporter_config(
-    profile_results, user_config, telemetry_results=None, verbose=True
-):
-    """Helper to create ExporterConfig with common defaults."""
-    return ExporterConfig(
-        results=profile_results,
-        user_config=user_config,
-        service_config=ServiceConfig(verbose=verbose),
-        telemetry_results=telemetry_results,
+    """Create TelemetryExportData with no GPU data (all endpoints failed)."""
+    return TelemetryExportData(
+        summary=TelemetrySummary(
+            endpoints_configured=[
+                "http://unreachable-1:9400/metrics",
+                "http://unreachable-2:9400/metrics",
+            ],
+            endpoints_successful=[],
+            start_time=datetime.fromtimestamp(1.0),
+            end_time=datetime.fromtimestamp(2.0),
+        ),
+        endpoints={},
     )
 
 
@@ -263,3 +330,138 @@ def mock_results_without_timeslices():
             self.error_summary = []
 
     return MockResultsNoTimeslices()
+
+
+@pytest.fixture
+def sample_server_metrics_results():
+    """Create a sample ServerMetricsResults with realistic multi-endpoint data.
+
+    Includes three Prometheus metric types:
+    - Gauge: Point-in-time values
+    - Counter: Cumulative values (for delta calculation)
+    - Histogram: Distribution buckets with sum/count
+    """
+    hierarchy = ServerMetricsHierarchy()
+
+    # Endpoint 1: vLLM worker 1 with all metric types
+    for time_offset in range(5):
+        gauge = MetricFamily(
+            type=PrometheusMetricType.GAUGE,
+            description="KV cache usage percentage",
+            samples=[
+                MetricSample(labels=None, value=0.4 + time_offset * 0.05),
+            ],
+        )
+        counter = MetricFamily(
+            type=PrometheusMetricType.COUNTER,
+            description="Total number of requests",
+            samples=[
+                MetricSample(labels=None, value=100.0 + time_offset * 20),
+            ],
+        )
+        # Histogram for time-to-first-token latency distribution
+        histogram = MetricFamily(
+            type=PrometheusMetricType.HISTOGRAM,
+            description="Time to first token histogram",
+            samples=[
+                MetricSample(
+                    labels=None,
+                    buckets={
+                        "0.01": 5.0 + time_offset * 2,
+                        "0.1": 15.0 + time_offset * 5,
+                        "1.0": 50.0 + time_offset * 10,
+                        "+Inf": 100.0 + time_offset * 20,
+                    },
+                    sum=25.5 + time_offset * 5.0,
+                    count=100.0 + time_offset * 20,
+                ),
+            ],
+        )
+        record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8081/metrics",
+            timestamp_ns=1_000_000_000 + time_offset * 1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={
+                "vllm:kv_cache_usage_perc": gauge,
+                "vllm:request_success_total": counter,
+                "vllm:time_to_first_token_seconds": histogram,
+            },
+        )
+        hierarchy.add_record(record)
+
+    # Endpoint 2: vLLM worker 2 with all metric types
+    for time_offset in range(5):
+        gauge = MetricFamily(
+            type=PrometheusMetricType.GAUGE,
+            description="KV cache usage percentage",
+            samples=[
+                MetricSample(labels=None, value=0.5 + time_offset * 0.04),
+            ],
+        )
+        counter = MetricFamily(
+            type=PrometheusMetricType.COUNTER,
+            description="Total number of requests",
+            samples=[
+                MetricSample(labels=None, value=80.0 + time_offset * 25),
+            ],
+        )
+        # Histogram for time-to-first-token latency distribution
+        histogram = MetricFamily(
+            type=PrometheusMetricType.HISTOGRAM,
+            description="Time to first token histogram",
+            samples=[
+                MetricSample(
+                    labels=None,
+                    buckets={
+                        "0.01": 3.0 + time_offset * 1,
+                        "0.1": 10.0 + time_offset * 3,
+                        "1.0": 40.0 + time_offset * 8,
+                        "+Inf": 80.0 + time_offset * 15,
+                    },
+                    sum=20.0 + time_offset * 4.0,
+                    count=80.0 + time_offset * 15,
+                ),
+            ],
+        )
+        record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8082/metrics",
+            timestamp_ns=1_000_000_000 + time_offset * 1_000_000_000,
+            endpoint_latency_ns=6_000_000,
+            metrics={
+                "vllm:kv_cache_usage_perc": gauge,
+                "vllm:request_success_total": counter,
+                "vllm:time_to_first_token_seconds": histogram,
+            },
+        )
+        hierarchy.add_record(record)
+
+    return ServerMetricsResults(
+        server_metrics_data=hierarchy,
+        start_ns=1_000_000_000,
+        end_ns=6_000_000_000,
+        endpoints_configured=[
+            "http://localhost:8081/metrics",
+            "http://localhost:8082/metrics",
+        ],
+        endpoints_successful=[
+            "http://localhost:8081/metrics",
+            "http://localhost:8082/metrics",
+        ],
+        error_summary=[],
+    )
+
+
+@pytest.fixture
+def empty_server_metrics_results():
+    """Create ServerMetricsResults with no data (all endpoints failed)."""
+    return ServerMetricsResults(
+        server_metrics_data=ServerMetricsHierarchy(),
+        start_ns=1_000_000_000,
+        end_ns=2_000_000_000,
+        endpoints_configured=[
+            "http://unreachable-1:8081/metrics",
+            "http://unreachable-2:8081/metrics",
+        ],
+        endpoints_successful=[],
+        error_summary=[],
+    )

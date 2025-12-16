@@ -44,10 +44,8 @@ class ServiceType(CaseInsensitiveStrEnum):
     RECORDS_MANAGER = "records_manager"
     WORKER_MANAGER = "worker_manager"
     WORKER = "worker"
-    TELEMETRY_MANAGER = "telemetry_manager"
-
-    # For testing purposes only
-    TEST = "test_service"
+    GPU_TELEMETRY_MANAGER = "gpu_telemetry_manager"
+    SERVER_METRICS_MANAGER = "server_metrics_manager"
 
 
 class ServiceRegistrationStatus(CaseInsensitiveStrEnum):

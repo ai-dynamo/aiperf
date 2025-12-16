@@ -3,12 +3,21 @@
 
 """Tests for GPUTelemetryConsoleExporter."""
 
+from datetime import datetime
+
 import pytest
 from rich.console import Console
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import EndpointType
-from aiperf.common.models import ProfileResults
+from aiperf.common.models import (
+    EndpointData,
+    GpuSummary,
+    JsonMetricResult,
+    ProfileResults,
+    TelemetryExportData,
+    TelemetrySummary,
+)
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.gpu_telemetry_console_exporter import (
     GPUTelemetryConsoleExporter,
@@ -251,46 +260,32 @@ class TestGPUTelemetryConsoleExporter:
         await exporter.export(console)
 
         output = capsys.readouterr().out
-        # Check for key metrics
-        assert "Power Usage" in output
-        assert "Energy Consumption" in output
+        # Check for key metrics (may be wrapped across lines in table cells)
+        assert "Power" in output
+        assert "Usage" in output
+        assert "Energy" in output
         assert "Utilization" in output
-        assert "Memory Used" in output
+        assert "Memory" in output
         assert "Temperature" in output
         # Check for statistical columns
         assert "avg" in output or "min" in output or "max" in output
 
     @pytest.mark.asyncio
-    async def test_export_with_error_summary(
+    async def test_export_with_failed_endpoint(
         self, mock_profile_results, mock_user_config, capsys
     ):
-        """Test that error summary is displayed when errors occurred."""
-        from aiperf.common.models import (
-            ErrorDetails,
-            ErrorDetailsCount,
-            TelemetryHierarchy,
-            TelemetryResults,
-        )
-
+        """Test that failed endpoints show appropriate message."""
         service_config = ServiceConfig(verbose=True)
 
-        # Create telemetry results with errors but no data
-        telemetry_results = TelemetryResults(
-            telemetry_data=TelemetryHierarchy(),
-            start_ns=0,
-            end_ns=0,
-            endpoints_configured=["http://failed-node:9400/metrics"],
-            endpoints_successful=[],
-            error_summary=[
-                ErrorDetailsCount(
-                    error_details=ErrorDetails(message="Connection timeout", code=408),
-                    count=5,
-                ),
-                ErrorDetailsCount(
-                    error_details=ErrorDetails(message="Connection refused", code=503),
-                    count=1,
-                ),
-            ],
+        # Create telemetry results with failed endpoint (no data)
+        telemetry_results = TelemetryExportData(
+            summary=TelemetrySummary(
+                endpoints_configured=["http://failed-node:9400/metrics"],
+                endpoints_successful=[],
+                start_time=datetime.fromtimestamp(0),
+                end_time=datetime.fromtimestamp(0),
+            ),
+            endpoints={},
         )
 
         exporter_config = ExporterConfig(
@@ -306,48 +301,52 @@ class TestGPUTelemetryConsoleExporter:
 
         output = capsys.readouterr().out
         assert "No GPU telemetry data collected" in output
-        assert "Errors encountered" in output
-        assert "Connection timeout" in output
-        assert "5 occurrences" in output
-        assert "Connection refused" in output
+        assert "Unreachable endpoints" in output
+        assert "failed-node:9400" in output
 
     @pytest.mark.asyncio
-    async def test_export_handles_metric_retrieval_exceptions(
+    async def test_export_handles_missing_metrics(
         self, mock_profile_results, mock_user_config, capsys
     ):
-        """Test that metric retrieval exceptions are handled gracefully."""
-        from unittest.mock import Mock
+        """Test that missing metrics are handled gracefully."""
+        from datetime import datetime
 
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            TelemetryHierarchy,
-            TelemetryResults,
+        from aiperf.common.models.export_models import (
+            EndpointData,
+            GpuSummary,
+            JsonMetricResult,
+            TelemetryExportData,
+            TelemetrySummary,
         )
 
         service_config = ServiceConfig(verbose=True)
 
-        # Create telemetry results with GPU data that will fail on metric retrieval
-        gpu_data = Mock(spec=GpuTelemetryData)
-        gpu_data.metadata = GpuMetadata(
-            gpu_index=0,
-            model_name="Test GPU",
-            gpu_uuid="GPU-123",
-        )
-        # Make get_metric_result raise exception
-        gpu_data.get_metric_result = Mock(side_effect=Exception("Metric not available"))
-
-        hierarchy = TelemetryHierarchy()
-        hierarchy.dcgm_endpoints = {
-            "http://localhost:9400/metrics": {"GPU-123": gpu_data}
-        }
-
-        telemetry_results = TelemetryResults(
-            telemetry_data=hierarchy,
-            start_ns=0,
-            end_ns=0,
-            endpoints_configured=["http://localhost:9400/metrics"],
-            endpoints_successful=["http://localhost:9400/metrics"],
+        # Create telemetry results with GPU that only has some metrics
+        telemetry_results = TelemetryExportData(
+            summary=TelemetrySummary(
+                endpoints_configured=["http://localhost:9400/metrics"],
+                endpoints_successful=["http://localhost:9400/metrics"],
+                start_time=datetime.fromtimestamp(0),
+                end_time=datetime.fromtimestamp(0),
+            ),
+            endpoints={
+                "localhost:9400": EndpointData(
+                    gpus={
+                        "gpu_0": GpuSummary(
+                            gpu_index=0,
+                            gpu_name="Test GPU",
+                            gpu_uuid="GPU-123",
+                            hostname="test-node",
+                            metrics={
+                                # Only include one metric, others are missing
+                                "gpu_power_usage": JsonMetricResult(
+                                    unit="W", avg=100.0, min=90.0, max=110.0
+                                ),
+                            },
+                        ),
+                    }
+                ),
+            },
         )
 
         exporter_config = ExporterConfig(
@@ -360,32 +359,33 @@ class TestGPUTelemetryConsoleExporter:
         exporter = GPUTelemetryConsoleExporter(exporter_config)
         console = Console(width=150)
 
-        # Should not raise exception despite metric retrieval failures
+        # Should not raise exception despite missing metrics
         await exporter.export(console)
 
         output = capsys.readouterr().out
-        # Should still show GPU info even if metrics fail
+        # Should still show GPU info with available metrics
         assert "Test GPU" in output or "GPU 0" in output
+        assert "Power Usage" in output
 
     @pytest.mark.asyncio
     async def test_export_all_endpoints_failed(
         self, mock_profile_results, mock_user_config, capsys
     ):
         """Test display when all endpoints failed."""
-        from aiperf.common.models import TelemetryHierarchy, TelemetryResults
-
         service_config = ServiceConfig(verbose=True)
 
-        telemetry_results = TelemetryResults(
-            telemetry_data=TelemetryHierarchy(),
-            start_ns=0,
-            end_ns=0,
-            endpoints_configured=[
-                "http://node1:9400/metrics",
-                "http://node2:9400/metrics",
-                "http://node3:9400/metrics",
-            ],
-            endpoints_successful=[],
+        telemetry_results = TelemetryExportData(
+            summary=TelemetrySummary(
+                endpoints_configured=[
+                    "http://node1:9400/metrics",
+                    "http://node2:9400/metrics",
+                    "http://node3:9400/metrics",
+                ],
+                endpoints_successful=[],
+                start_time=datetime.fromtimestamp(0),
+                end_time=datetime.fromtimestamp(0),
+            ),
+            endpoints={},
         )
 
         exporter_config = ExporterConfig(
@@ -414,20 +414,19 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config
     ):
         """Test get_renderable with endpoint that has no GPU data."""
-        from aiperf.common.models import TelemetryHierarchy, TelemetryResults
-
         service_config = ServiceConfig(verbose=True)
 
         # Endpoint exists but has no GPU data
-        hierarchy = TelemetryHierarchy()
-        hierarchy.dcgm_endpoints = {"http://localhost:9400/metrics": {}}
-
-        telemetry_results = TelemetryResults(
-            telemetry_data=hierarchy,
-            start_ns=0,
-            end_ns=0,
-            endpoints_configured=["http://localhost:9400/metrics"],
-            endpoints_successful=["http://localhost:9400/metrics"],
+        telemetry_results = TelemetryExportData(
+            summary=TelemetrySummary(
+                endpoints_configured=["http://localhost:9400/metrics"],
+                endpoints_successful=["http://localhost:9400/metrics"],
+                start_time=datetime.fromtimestamp(0),
+                end_time=datetime.fromtimestamp(0),
+            ),
+            endpoints={
+                "localhost:9400": EndpointData(gpus={}),
+            },
         )
 
         exporter_config = ExporterConfig(
@@ -499,39 +498,36 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config, capsys
     ):
         """Test display with mix of successful and failed endpoints."""
-        from aiperf.common.models import (
-            GpuMetadata,
-            GpuTelemetryData,
-            TelemetryHierarchy,
-            TelemetryResults,
-        )
-
         service_config = ServiceConfig(verbose=True)
 
         # Create one successful endpoint with GPU data
-        gpu_data = GpuTelemetryData(
-            metadata=GpuMetadata(
-                gpu_index=0,
-                model_name="Test GPU",
-                gpu_uuid="GPU-123",
-            )
-        )
-        gpu_data.time_series.append_snapshot(
-            {"gpu_power_usage": 100.0}, timestamp_ns=1000000000
-        )
-
-        hierarchy = TelemetryHierarchy()
-        hierarchy.dcgm_endpoints = {"http://node1:9400/metrics": {"GPU-123": gpu_data}}
-
-        telemetry_results = TelemetryResults(
-            telemetry_data=hierarchy,
-            start_ns=0,
-            end_ns=0,
-            endpoints_configured=[
-                "http://node1:9400/metrics",
-                "http://node2:9400/metrics",
-            ],
-            endpoints_successful=["http://node1:9400/metrics"],
+        telemetry_results = TelemetryExportData(
+            summary=TelemetrySummary(
+                endpoints_configured=[
+                    "http://node1:9400/metrics",
+                    "http://node2:9400/metrics",
+                ],
+                endpoints_successful=["http://node1:9400/metrics"],
+                start_time=datetime.fromtimestamp(0),
+                end_time=datetime.fromtimestamp(0),
+            ),
+            endpoints={
+                "node1:9400": EndpointData(
+                    gpus={
+                        "gpu_0": GpuSummary(
+                            gpu_index=0,
+                            gpu_name="Test GPU",
+                            gpu_uuid="GPU-123",
+                            hostname="test-node",
+                            metrics={
+                                "gpu_power_usage": JsonMetricResult(
+                                    unit="W", avg=100.0, min=90.0, max=110.0
+                                ),
+                            },
+                        ),
+                    }
+                ),
+            },
         )
 
         exporter_config = ExporterConfig(

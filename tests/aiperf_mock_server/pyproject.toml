@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aiperf-mock-server"
-version = "0.3.0"
+version = "0.4.0"
 description = "AIPerf FastAPI-based OpenAI mock server for AI performance testing"
 authors = []
 dependencies = [
@@ -18,7 +18,8 @@ dependencies = [
     "pydantic>=2.5.0",
     "pydantic-settings>=2.0.0",
     "cyclopts>=3.0.0",
-    "orjson>=3.9.0"
+    "orjson>=3.9.0",
+    "prometheus-client>=0.20.0"
 ]
 readme = "README.md"
 requires-python = ">=3.10"

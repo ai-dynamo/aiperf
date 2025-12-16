@@ -68,6 +68,7 @@ class exit_on_error(AbstractContextManager):
         text_color: The text color to use.
         title: The title of the error.
         exit_code: The exit code to use.
+        show_traceback: Whether to show the full exception traceback. Defaults to True.
     """
 
     def __init__(
@@ -77,12 +78,14 @@ class exit_on_error(AbstractContextManager):
         text_color: "StyleType | None" = None,
         title: str = "Error",
         exit_code: int = 1,
+        show_traceback: bool = True,
     ):
         self.message: RenderableType = message
         self.text_color: StyleType | None = text_color
         self.title: str = title
         self.exit_code: int = exit_code
         self.exceptions: tuple[type[BaseException], ...] = exceptions
+        self.show_traceback: bool = show_traceback
 
     def __enter__(self):
         return self
@@ -98,13 +101,17 @@ class exit_on_error(AbstractContextManager):
             from rich.console import Console
 
             console = Console()
-            console.print_exception(
-                show_locals=True,
-                max_frames=10,
-                word_wrap=True,
-                width=console.width,
-            )
-            console.file.flush()
+
+            # Only show full traceback if requested
+            if self.show_traceback:
+                console.print_exception(
+                    show_locals=True,
+                    max_frames=10,
+                    word_wrap=True,
+                    width=console.width,
+                )
+                console.file.flush()
+
             message = (
                 self.message.format(e=exc_value)
                 if isinstance(self.message, str)

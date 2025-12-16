@@ -8,26 +8,30 @@ import random
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable
+from dataclasses import dataclass
 from functools import wraps
 from time import perf_counter
-from typing import Any, Generic
+from typing import Any
 
+import orjson
 from aiperf_mock_server.config import server_config
+from aiperf_mock_server.metrics_utils import (
+    record_itl,
+    record_streamed_token,
+    record_ttft,
+)
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
-    ChatDelta,
-    ChatStreamChoice,
-    ChatStreamCompletionResponse,
+    CohereRerankRequest,
     CompletionRequest,
     EmbeddingRequest,
+    HFTEIRerankRequest,
     RankingRequest,
-    RequestTypeVarT,
-    TextStreamChoice,
-    TextStreamCompletionResponse,
+    RequestT,
+    TGIGenerateRequest,
 )
-from aiperf_mock_server.tokens import Tokenizer
+from aiperf_mock_server.tokens import TokenizedText, tokenize_request
 from fastapi import HTTPException
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -59,57 +63,136 @@ def with_error_injection(func: Callable[..., Any]) -> Callable[..., Any]:
 class LatencySimulator:
     """Simulates API latency with TTFT and ITL."""
 
-    __slots__ = ("ttft_sec", "itl_sec", "start_time", "token_index")
+    __slots__ = (
+        "ttft_sec",
+        "itl_sec",
+        "start_time",
+        "token_index",
+        "last_token_time",
+        "endpoint",
+        "model",
+        "measured_ttft",
+        "measured_decode",
+    )
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        model: str,
+        start_time: float,
+    ) -> None:
         self.ttft_sec = server_config.ttft * 0.001
         self.itl_sec = server_config.itl * 0.001
-        self.start_time = perf_counter()
+        self.start_time = start_time
         self.token_index = 0
+        self.last_token_time: float | None = None
+        self.endpoint = endpoint
+        self.model = model
+        self.measured_ttft: float = 0.0
+        self.measured_decode: float = 0.0
 
     async def wait_for_next_token(self) -> None:
         """Wait for TTFT (first token) or ITL (subsequent tokens)."""
-        await self.wait_for_tokens(self.token_index)
+        await self._wait_for_token_at_index(self.token_index)
+
+        now = perf_counter()
+        if self.token_index == 0:
+            ttft = now - self.start_time
+            self.measured_ttft = ttft
+            record_ttft(self.endpoint, self.model, ttft)
+        elif self.last_token_time is not None:
+            itl = now - self.last_token_time
+            record_itl(self.endpoint, self.model, itl)
+
+        self.last_token_time = now
         self.token_index += 1
 
-    async def wait_for_tokens(self, num_tokens: int) -> None:
-        """Wait for entire completion (TTFT + ITL * num_tokens)."""
-        target_time = self.start_time + self.ttft_sec + (self.itl_sec * num_tokens)
+    async def _wait_for_token_at_index(self, token_index: int) -> None:
+        """Wait until the specified token index should be emitted."""
+        target_time = self.start_time + self.ttft_sec + (self.itl_sec * token_index)
         remaining = target_time - perf_counter()
-
         if remaining > 0:
             await asyncio.sleep(remaining)
 
+    async def wait_for_tokens(self, num_tokens: int) -> None:
+        """Wait for entire completion (TTFT + ITL * num_tokens)."""
+        # Wait for TTFT first (prefill phase)
+        ttft_target = self.start_time + self.ttft_sec
+        ttft_remaining = ttft_target - perf_counter()
+        if ttft_remaining > 0:
+            await asyncio.sleep(ttft_remaining)
 
-class RequestContext(Generic[RequestTypeVarT]):
-    """Context object for processing a request."""
+        self.measured_ttft = perf_counter() - self.start_time
 
-    def __init__(self, request: RequestTypeVarT) -> None:
-        self.request = request
-        self.latency_sim = LatencySimulator()
-        self.request_id = create_request_id(request)
-        self.tokenized = Tokenizer.tokenize_request(request)
+        # Wait for decode phase (ITL * num_tokens)
+        decode_target = ttft_target + (self.itl_sec * num_tokens)
+        decode_remaining = decode_target - perf_counter()
+        if decode_remaining > 0:
+            await asyncio.sleep(decode_remaining)
 
-    async def wait_until_completion(self) -> None:
-        """Wait until completion is ready."""
-        await self.latency_sim.wait_for_tokens(self.tokenized.count)
+        self.measured_decode = perf_counter() - self.start_time - self.measured_ttft
 
 
 # ============================================================================
-# Completion Handling
+# Request Context
 # ============================================================================
 
 
-def create_request_id(request: RequestTypeVarT) -> str:
+@dataclass(slots=True)
+class RequestCtx:
+    """Request context - all fields directly accessible."""
+
+    request_id: str
+    model: str
+    tokenized: TokenizedText
+    usage: dict[str, Any]
+    latency_sim: LatencySimulator
+
+    @property
+    def tokens(self) -> list[str]:
+        return self.tokenized.tokens
+
+    @property
+    def content(self) -> str:
+        return self.tokenized.content
+
+    @property
+    def finish_reason(self) -> str:
+        return self.tokenized.finish_reason
+
+    @property
+    def reasoning_content(self) -> str | None:
+        return self.tokenized.reasoning_content
+
+    @property
+    def reasoning_content_tokens(self) -> list[str]:
+        return self.tokenized.reasoning_content_tokens
+
+
+def make_ctx(request: RequestT, endpoint: str, start_time: float) -> RequestCtx:
+    """Create request context with all fields directly accessible."""
+    model = getattr(request, "model", "unknown")
+    tokenized = tokenize_request(request)
+
+    return RequestCtx(
+        request_id=_create_request_id(request),
+        model=model,
+        tokenized=tokenized,
+        usage=tokenized.create_usage(),
+        latency_sim=LatencySimulator(endpoint, model, start_time),
+    )
+
+
+def _create_request_id(request: RequestT) -> str:
     """Generate request ID based on request type."""
     match request:
         case ChatCompletionRequest():
             return f"chatcmpl-{uuid.uuid4()}"
-        case CompletionRequest():
+        case CompletionRequest() | TGIGenerateRequest():
             return f"cmpl-{uuid.uuid4()}"
         case EmbeddingRequest():
             return f"emb-{uuid.uuid4()}"
-        case RankingRequest():
+        case RankingRequest() | HFTEIRerankRequest() | CohereRerankRequest():
             return f"rank-{uuid.uuid4()}"
         case _:
             raise ValueError(f"Invalid request type: {type(request)}")
@@ -119,125 +202,116 @@ def create_request_id(request: RequestTypeVarT) -> str:
 # Streaming & Response Generation
 # ============================================================================
 
+# SSE prefix/suffix as bytes for efficient concatenation
+_SSE_DATA_PREFIX = b"data: "
+_SSE_NEWLINES = b"\n\n"
+_SSE_DONE = b"data: [DONE]\n\n"
+
+
+def _sse(data: dict[str, Any]) -> bytes:
+    """Format data as SSE chunk bytes."""
+    return _SSE_DATA_PREFIX + orjson.dumps(data) + _SSE_NEWLINES
+
 
 async def stream_chat_completion(
-    ctx: RequestContext[ChatCompletionRequest],
-) -> AsyncGenerator[str, None]:
+    ctx: RequestCtx, endpoint: str, include_usage: bool
+) -> AsyncGenerator[bytes, None]:
     """Stream chat completion tokens as SSE chunks."""
-    if ctx.tokenized.reasoning_content_tokens:
-        async for chunk in _stream_chat_reasoning_tokens(ctx):
-            yield chunk
+    has_reasoning = bool(ctx.reasoning_content_tokens)
 
-    async for chunk in _stream_chat_output_tokens(ctx):
-        yield chunk
-
-    if ctx.request.include_usage:
-        response = ChatStreamCompletionResponse(
-            id=ctx.request_id,
-            created=int(time.time()),
-            model=ctx.request.model,
-            choices=[],
-            usage=ctx.tokenized.create_usage(),
-        )
-        yield _format_sse_chunk(response)
-
-    yield "data: [DONE]\n\n"
-
-
-async def _stream_chat_reasoning_tokens(
-    ctx: RequestContext[ChatCompletionRequest],
-) -> AsyncGenerator[str, None]:
-    """Stream reasoning content tokens for chat completions."""
-    for token in ctx.tokenized.reasoning_content_tokens:
-        delta = ChatDelta(reasoning_content=token)
-        delta.role = "assistant"
-
-        choice = ChatStreamChoice(index=0, finish_reason=None, delta=delta)
-        response = ChatStreamCompletionResponse(
-            id=ctx.request_id,
-            created=int(time.time()),
-            model=ctx.request.model,
-            choices=[choice],
-        )
-
+    # Stream reasoning tokens first (if any)
+    for token in ctx.reasoning_content_tokens:
         await ctx.latency_sim.wait_for_next_token()
-        yield _format_sse_chunk(response)
+        record_streamed_token(endpoint, ctx.model)
+        yield _sse(
+            {
+                "id": ctx.request_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": ctx.model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "reasoning_content": token},
+                    }
+                ],
+            }
+        )
 
+    # Stream output tokens
+    num_tokens = len(ctx.tokens)
+    for i, token in enumerate(ctx.tokens):
+        await ctx.latency_sim.wait_for_next_token()
+        record_streamed_token(endpoint, ctx.model)
 
-async def _stream_chat_output_tokens(
-    ctx: RequestContext[ChatCompletionRequest],
-) -> AsyncGenerator[str, None]:
-    """Stream output content tokens for chat completions."""
-    has_reasoning = bool(ctx.tokenized.reasoning_content_tokens)
-
-    for i, token in enumerate(ctx.tokenized.tokens):
-        delta = ChatDelta(content=token)
+        delta: dict[str, Any] = {"content": token}
         if i == 0 and not has_reasoning:
-            delta.role = "assistant"
+            delta["role"] = "assistant"
 
-        choice = ChatStreamChoice(
-            index=0,
-            finish_reason=ctx.tokenized.finish_reason
-            if i == len(ctx.tokenized.tokens) - 1
-            else None,
-            delta=delta,
-        )
-        response = ChatStreamCompletionResponse(
-            id=ctx.request_id,
-            created=int(time.time()),
-            model=ctx.request.model,
-            choices=[choice],
-        )
+        choice: dict[str, Any] = {"index": 0, "delta": delta}
+        if i == num_tokens - 1:
+            choice["finish_reason"] = ctx.finish_reason
 
-        await ctx.latency_sim.wait_for_next_token()
-        yield _format_sse_chunk(response)
-
-
-async def _stream_text_output_tokens(
-    ctx: RequestContext[CompletionRequest],
-) -> AsyncGenerator[str, None]:
-    """Stream output content tokens for text completions."""
-    for i, token in enumerate(ctx.tokenized.tokens):
-        response = TextStreamCompletionResponse(
-            id=ctx.request_id,
-            created=int(time.time()),
-            model=ctx.request.model,
-            choices=[
-                TextStreamChoice(
-                    index=0,
-                    finish_reason=ctx.tokenized.finish_reason
-                    if i == len(ctx.tokenized.tokens) - 1
-                    else None,
-                    text=token,
-                )
-            ],
+        yield _sse(
+            {
+                "id": ctx.request_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": ctx.model,
+                "choices": [choice],
+            }
         )
 
-        await ctx.latency_sim.wait_for_next_token()
-        yield _format_sse_chunk(response)
+    # Final usage chunk (if requested)
+    if include_usage:
+        yield _sse(
+            {
+                "id": ctx.request_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": ctx.model,
+                "choices": [],
+                "usage": ctx.usage,
+            }
+        )
+
+    yield _SSE_DONE
 
 
 async def stream_text_completion(
-    ctx: RequestContext[CompletionRequest],
-) -> AsyncGenerator[str, None]:
+    ctx: RequestCtx, endpoint: str, include_usage: bool
+) -> AsyncGenerator[bytes, None]:
     """Stream text completion tokens as SSE chunks."""
-    async for chunk in _stream_text_output_tokens(ctx):
-        yield chunk
+    num_tokens = len(ctx.tokens)
 
-    if ctx.request.include_usage:
-        response = TextStreamCompletionResponse(
-            id=ctx.request_id,
-            created=int(time.time()),
-            model=ctx.request.model,
-            choices=[],
-            usage=ctx.tokenized.create_usage(),
+    for i, token in enumerate(ctx.tokens):
+        await ctx.latency_sim.wait_for_next_token()
+        record_streamed_token(endpoint, ctx.model)
+
+        choice: dict[str, Any] = {"index": 0, "text": token}
+        if i == num_tokens - 1:
+            choice["finish_reason"] = ctx.finish_reason
+
+        yield _sse(
+            {
+                "id": ctx.request_id,
+                "object": "text_completion",
+                "created": int(time.time()),
+                "model": ctx.model,
+                "choices": [choice],
+            }
         )
-        yield _format_sse_chunk(response)
 
-    yield "data: [DONE]\n\n"
+    if include_usage:
+        yield _sse(
+            {
+                "id": ctx.request_id,
+                "object": "text_completion",
+                "created": int(time.time()),
+                "model": ctx.model,
+                "choices": [],
+                "usage": ctx.usage,
+            }
+        )
 
-
-def _format_sse_chunk(model: BaseModel) -> str:
-    """Format data as SSE chunk."""
-    json_str = model.model_dump_json(exclude_none=True)
-    return f"data: {json_str}\n\n"
+    yield _SSE_DONE

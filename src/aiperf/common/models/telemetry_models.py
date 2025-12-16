@@ -6,7 +6,7 @@ from pydantic import ConfigDict, Field
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
-from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
+from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import MetricResult
 
 
@@ -45,21 +45,12 @@ class TelemetryMetrics(AIPerfBaseModel):
     )
 
 
-class TelemetryRecord(AIPerfBaseModel):
-    """Single telemetry data point from GPU monitoring.
+class GpuMetadata(AIPerfBaseModel):
+    """Static metadata for a GPU that doesn't change over time.
 
-    This record contains all telemetry data for one GPU at one point in time,
-    along with metadata to identify the source DCGM endpoint and specific GPU.
-    Used for hierarchical storage: dcgm_url -> gpu_uuid -> time series data.
+    This is stored once per GPU and referenced by all telemetry data points
+    to avoid duplicating metadata in every time-series entry.
     """
-
-    timestamp_ns: int = Field(
-        description="Nanosecond wall-clock timestamp when telemetry was collected (time_ns)"
-    )
-
-    dcgm_url: str = Field(
-        description="Source DCGM endpoint URL (e.g., 'http://node1:9401/metrics')"
-    )
 
     gpu_index: int = Field(
         description="GPU index on this node (0, 1, 2, etc.) - used for display ordering"
@@ -67,7 +58,6 @@ class TelemetryRecord(AIPerfBaseModel):
     gpu_uuid: str = Field(
         description="Unique GPU identifier (e.g., 'GPU-ef6ef310-...') - primary key for data"
     )
-
     gpu_model_name: str = Field(
         description="GPU model name (e.g., 'NVIDIA RTX 6000 Ada Generation')"
     )
@@ -80,25 +70,33 @@ class TelemetryRecord(AIPerfBaseModel):
     hostname: str | None = Field(
         default=None, description="Hostname where GPU is located"
     )
-
-    telemetry_data: TelemetryMetrics = Field(
-        description="GPU metrics snapshot collected at this timestamp"
+    namespace: str | None = Field(
+        default=None, description="Namespace where the GPU is located (kubernetes only)"
+    )
+    pod_name: str | None = Field(
+        default=None, description="Pod name where the GPU is located (kubernetes only)"
     )
 
 
-class GpuMetadata(AIPerfBaseModel):
-    """Static metadata for a GPU that doesn't change over time.
+class TelemetryRecord(GpuMetadata):
+    """Single telemetry data point from GPU monitoring.
 
-    This is stored once per GPU and referenced by all telemetry data points
-    to avoid duplicating metadata in every time-series entry.
+    This record contains all telemetry data for one GPU at one point in time,
+    along with metadata to identify the source DCGM endpoint and specific GPU.
+    Used for hierarchical storage: dcgm_url -> gpu_uuid -> time series data.
+
+    Inherits from GpuMetadata to avoid duplicating metadata fields.
     """
 
-    gpu_index: int = Field(description="GPU index for display ordering (0, 1, 2, etc.)")
-    gpu_uuid: str = Field(description="Unique GPU identifier - primary key")
-    model_name: str = Field(description="GPU hardware model name")
-    pci_bus_id: str | None = Field(default=None, description="PCI Bus location")
-    device: str | None = Field(default=None, description="System device identifier")
-    hostname: str | None = Field(default=None, description="Host machine name")
+    timestamp_ns: int = Field(
+        description="Nanosecond wall-clock timestamp when telemetry was collected (time_ns)"
+    )
+    dcgm_url: str = Field(
+        description="Source DCGM endpoint URL (e.g., 'http://node1:9401/metrics')"
+    )
+    telemetry_data: TelemetryMetrics = Field(
+        description="GPU metrics snapshot collected at this timestamp"
+    )
 
 
 class GpuTelemetrySnapshot(AIPerfBaseModel):
@@ -114,84 +112,140 @@ class GpuTelemetrySnapshot(AIPerfBaseModel):
     )
 
 
-class GpuMetricTimeSeries(AIPerfBaseModel):
-    """Time series data for all metrics on a single GPU.
+class GpuMetricTimeSeries:
+    """NumPy-backed columnar storage for GPU telemetry.
 
-    Uses grouped snapshots instead of individual metric time series to eliminate
-    timestamp duplication and improve storage efficiency.
+    Stores timestamps once with separate value arrays per metric.
+    Metric schema is determined on first snapshot - all subsequent snapshots
+    must contain the same metrics (DCGM metrics are static per run).
+
+    Data is kept sorted by timestamp using insert-sorted approach:
+    O(1) for in-order appends (99.9% of cases), O(k) for out-of-order.
     """
 
-    snapshots: list[GpuTelemetrySnapshot] = Field(
-        default_factory=list, description="Chronological snapshots of all metrics"
-    )
+    __slots__ = ("_timestamps", "_metrics", "_size", "_capacity")
+
+    _INITIAL_CAPACITY = 128
+
+    def __init__(self) -> None:
+        self._timestamps: np.ndarray = np.empty(self._INITIAL_CAPACITY, dtype=np.int64)
+        self._metrics: dict[str, np.ndarray] = {}
+        self._size: int = 0
+        self._capacity: int = self._INITIAL_CAPACITY
 
     def append_snapshot(self, metrics: dict[str, float], timestamp_ns: int) -> None:
-        """Add new snapshot with all metrics at once.
+        """Append all metrics from a single DCGM scrape (insert-sorted).
 
         Args:
-            metrics: Dictionary of metric_name -> value for this timestamp
-            timestamp_ns: Timestamp when measurements were taken
+            metrics: Dict of metric_name -> value (only present metrics)
+            timestamp_ns: Timestamp for this scrape
+
+        Note:
+            - Metric schema is determined on first snapshot. All subsequent snapshots
+              must contain the same metrics (DCGM metrics are static per run).
+            - Data kept sorted by timestamp (O(1) in-order, O(k) out-of-order).
         """
-        snapshot = GpuTelemetrySnapshot(
-            timestamp_ns=timestamp_ns,
-            metrics={k: v for k, v in metrics.items() if v is not None},
-        )
-        self.snapshots.append(snapshot)
+        if self._size >= self._capacity:
+            self._grow()
 
-    def get_metric_values(self, metric_name: str) -> list[tuple[float, int]]:
-        """Extract time series data for a specific metric.
+        # Fast path: in-order append (99.9% of cases)
+        if self._size == 0 or timestamp_ns >= self._timestamps[self._size - 1]:
+            insert_pos = self._size
+        else:
+            # Slow path: find insert position from end (reverse linear search)
+            insert_pos = self._size - 1
+            while insert_pos > 0 and self._timestamps[insert_pos - 1] > timestamp_ns:
+                insert_pos -= 1
 
-        Args:
-            metric_name: Name of the metric to extract
+            # Shift timestamps right
+            self._timestamps[insert_pos + 1 : self._size + 1] = self._timestamps[
+                insert_pos : self._size
+            ]
 
-        Returns:
-            List of (value, timestamp_ns) tuples for the specified metric
-        """
-        return [
-            (snapshot.metrics[metric_name], snapshot.timestamp_ns)
-            for snapshot in self.snapshots
-            if metric_name in snapshot.metrics
-        ]
+            # Shift all metric arrays right
+            for arr in self._metrics.values():
+                arr[insert_pos + 1 : self._size + 1] = arr[insert_pos : self._size]
+
+        # Insert timestamp at position
+        self._timestamps[insert_pos] = timestamp_ns
+
+        # Initialize metric arrays on first snapshot (schema determined here)
+        if not self._metrics:
+            for name in metrics:
+                self._metrics[name] = np.empty(self._capacity, dtype=np.float64)
+
+        # Set values for all metrics at insert position
+        for name, value in metrics.items():
+            self._metrics[name][insert_pos] = value
+
+        self._size += 1
+
+    def _grow(self) -> None:
+        """Double capacity of all arrays."""
+        new_capacity = self._capacity * 2
+
+        # Grow timestamps
+        new_ts = np.empty(new_capacity, dtype=np.int64)
+        new_ts[: self._size] = self._timestamps[: self._size]
+        self._timestamps = new_ts
+
+        # Grow each metric array
+        for name, old_arr in self._metrics.items():
+            new_arr = np.empty(new_capacity, dtype=np.float64)
+            new_arr[: self._size] = old_arr[: self._size]
+            self._metrics[name] = new_arr
+
+        self._capacity = new_capacity
+
+    @property
+    def timestamps(self) -> np.ndarray:
+        """View of timestamps array (no copy)."""
+        return self._timestamps[: self._size]
+
+    def get_metric_array(self, metric_name: str) -> np.ndarray | None:
+        """Get values array for a metric (no copy). Returns None if metric unknown."""
+        if metric_name not in self._metrics:
+            return None
+        return self._metrics[metric_name][: self._size]
 
     def to_metric_result(
         self, metric_name: str, tag: str, header: str, unit: str
     ) -> MetricResult:
-        """Convert metric time series to MetricResult with statistical summary.
+        """Compute stats for a metric using vectorized NumPy operations.
 
         Args:
             metric_name: Name of the metric to analyze
-            tag: Unique identifier for this metric (used by dashboard, exports, API)
+            tag: Unique identifier for this metric
             header: Human-readable name for display
-            unit: Unit of measurement (e.g., "W" for Watts, "%" for percentage)
+            unit: Unit of measurement
 
         Returns:
-            MetricResult with min/max/avg/percentiles computed from time series
+            MetricResult with min/max/avg/percentiles computed from all values
 
         Raises:
-            NoMetricValue: If no data points are available for the specified metric
+            NoMetricValue: If no data for this metric
         """
-        data_points = self.get_metric_values(metric_name)
-
-        if not data_points:
+        arr = self.get_metric_array(metric_name)
+        if arr is None or len(arr) == 0:
             raise NoMetricValue(
                 f"No telemetry data available for metric '{metric_name}'"
             )
 
-        values = np.array([point[0] for point in data_points])
+        # Vectorized stats computation
         p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
-            values, [1, 5, 10, 25, 50, 75, 90, 95, 99]
+            arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
 
         return MetricResult(
             tag=tag,
             header=header,
             unit=unit,
-            min=np.min(values),
-            max=np.max(values),
-            avg=float(np.mean(values)),
-            std=float(np.std(values)),
-            count=len(values),
-            current=float(data_points[-1][0]),
+            min=float(np.min(arr)),
+            max=float(np.max(arr)),
+            avg=float(np.mean(arr)),
+            std=float(np.std(arr)),
+            count=len(arr),
+            current=float(arr[-1]),
             p1=p1,
             p5=p5,
             p10=p10,
@@ -203,18 +257,25 @@ class GpuMetricTimeSeries(AIPerfBaseModel):
             p99=p99,
         )
 
+    def __len__(self) -> int:
+        """Return the number of snapshots in the time series."""
+        return self._size
+
 
 class GpuTelemetryData(AIPerfBaseModel):
     """Complete telemetry data for one GPU: metadata + grouped metric time series.
 
     This combines static GPU information with dynamic time-series data,
-    providing the complete picture for one GPU's telemetry using efficient grouped snapshots.
+    providing the complete picture for one GPU's telemetry using efficient columnar storage.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     metadata: GpuMetadata = Field(description="Static GPU information")
     time_series: GpuMetricTimeSeries = Field(
         default_factory=GpuMetricTimeSeries,
-        description="Grouped time series for all metrics",
+        description="Columnar time series for all metrics",
+        exclude=True,  # Numpy arrays are not serializable by default
     )
 
     def add_record(self, record: TelemetryRecord) -> None:
@@ -287,45 +348,18 @@ class TelemetryHierarchy(AIPerfBaseModel):
         dcgm_data = self.dcgm_endpoints[record.dcgm_url]
 
         if record.gpu_uuid not in dcgm_data:
-            metadata = GpuMetadata(
-                gpu_index=record.gpu_index,
-                gpu_uuid=record.gpu_uuid,
-                model_name=record.gpu_model_name,
-                pci_bus_id=record.pci_bus_id,
-                device=record.device,
-                hostname=record.hostname,
+            dcgm_data[record.gpu_uuid] = GpuTelemetryData(
+                metadata=GpuMetadata(
+                    gpu_index=record.gpu_index,
+                    gpu_uuid=record.gpu_uuid,
+                    gpu_model_name=record.gpu_model_name,
+                    hostname=record.hostname,
+                    namespace=record.namespace,
+                    pod_name=record.pod_name,
+                ),
             )
-            dcgm_data[record.gpu_uuid] = GpuTelemetryData(metadata=metadata)
 
         dcgm_data[record.gpu_uuid].add_record(record)
-
-
-class TelemetryResults(AIPerfBaseModel):
-    """Results from GPU telemetry collection during a profile run.
-
-    This class contains all telemetry data and metadata collected during
-    a benchmarking session, separate from inference performance results.
-    """
-
-    telemetry_data: TelemetryHierarchy = Field(
-        description="Hierarchical telemetry data organized by DCGM endpoint and GPU"
-    )
-    start_ns: int = Field(
-        description="Start time of telemetry collection in nanoseconds"
-    )
-    end_ns: int = Field(description="End time of telemetry collection in nanoseconds")
-    endpoints_configured: list[str] = Field(
-        default_factory=list,
-        description="List of DCGM endpoint URLs in configured scope for display",
-    )
-    endpoints_successful: list[str] = Field(
-        default_factory=list,
-        description="List of DCGM endpoint URLs that successfully provided telemetry data",
-    )
-    error_summary: list[ErrorDetailsCount] = Field(
-        default_factory=list,
-        description="A list of the unique error details and their counts",
-    )
 
 
 class ProcessTelemetryResult(AIPerfBaseModel):
@@ -333,10 +367,11 @@ class ProcessTelemetryResult(AIPerfBaseModel):
 
     This provides a parallel structure to ProcessRecordsResult for the telemetry pipeline,
     maintaining complete separation while following the same architectural patterns.
+
+    Note: Uses TelemetryExportData (wire-safe, pre-computed stats) rather than
+    TelemetryResults (internal, contains non-serializable GpuMetricTimeSeries).
     """
 
-    results: TelemetryResults = Field(description="The processed telemetry results")
-    errors: list[ErrorDetails] = Field(
-        default_factory=list,
-        description="Any errors that occurred while processing telemetry data",
+    results: TelemetryExportData | None = Field(
+        default=None, description="Pre-computed telemetry export data (wire-safe)"
     )
