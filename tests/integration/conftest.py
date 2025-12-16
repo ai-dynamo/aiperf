@@ -169,6 +169,8 @@ async def aiperf_mock_server(
     os.environ["AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD"] = "0"
 
     # Start the aiperf-mock-server with --fast for zero latency
+    # and --no-tokenizer to skip HuggingFace tokenizer loading for faster startup
+    # and to avoid getting hit with request rate limiting
     process = await asyncio.create_subprocess_exec(
         python_exe,
         "-m",
@@ -178,6 +180,7 @@ async def aiperf_mock_server(
         "--port",
         str(mock_server_port),
         "--fast",
+        "--no-tokenizer",
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
