@@ -46,7 +46,7 @@ URL of the endpoint to target for benchmarking.
 #### `--request-timeout-seconds` `<float>`
 
 The timeout in floating-point seconds for each request to the endpoint.
-<br>_Default: `600.0`_
+<br>_Default: `21600`_
 
 #### `--api-key` `<str>`
 
