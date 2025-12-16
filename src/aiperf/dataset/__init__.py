@@ -14,7 +14,10 @@ from aiperf.dataset.composer import (
     SyntheticDatasetComposer,
     SyntheticRankingsDatasetComposer,
 )
-from aiperf.dataset.dataset_manager import DatasetManager, main
+from aiperf.dataset.dataset_manager import (
+    DatasetManager,
+    main,
+)
 from aiperf.dataset.dataset_samplers import (
     BaseDatasetSampler,
     RandomSampler,
@@ -66,7 +69,11 @@ from aiperf.dataset.synthesis import (
     remove_leaves,
     validate_tree,
 )
-from aiperf.dataset.utils import check_file_exists, encode_image, open_image
+from aiperf.dataset.utils import (
+    check_file_exists,
+    encode_image,
+    open_image,
+)
 
 __all__ = [
     "AIPERF_DATASET_CACHE_DIR",
