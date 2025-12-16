@@ -75,3 +75,16 @@ class SynthesisConfig(BaseConfig):
         ),
         CLIParameter(name=("--synthesis-block-size",), group=_CLI_GROUP),
     ] = 512
+
+    def should_synthesize(self) -> bool:
+        """Check if synthesis should be auto-triggered based on non-default values.
+
+        Returns:
+            True if any synthesis parameter differs from defaults.
+        """
+        return (
+            self.speedup_ratio != 1.0
+            or self.prefix_len_multiplier != 1.0
+            or self.prefix_root_multiplier != 1
+            or self.prompt_len_multiplier != 1.0
+        )

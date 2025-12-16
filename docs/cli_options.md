@@ -8,7 +8,6 @@ SPDX-License-Identifier: Apache-2.0
 ## `aiperf` Commands
 
 - [`analyze-trace`](#aiperf-analyze-trace) - Analyze mooncake trace for prefix statistics
-- [`synthesize-trace`](#aiperf-synthesize-trace) - Generate synthetic trace with prefix patterns
 - [`profile`](#aiperf-profile) - Run the Profile subcommand.
 - [`plot`](#aiperf-plot) - Generate visualizations from AIPerf profiling data.
 
@@ -28,47 +27,6 @@ KV cache block size for analysis (default: 512).
 #### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
-
-## `aiperf synthesize-trace`
-
-## Parameters Options
-
-#### `--input-file` `<str>` _(Required)_
-
-Path to input mooncake trace JSONL file.
-
-#### `--output-file` `<str>` _(Required)_
-
-Path for synthesized output trace JSONL file.
-
-#### `--block-size` `<int>`
-
-KV cache block size (default: 512).
-<br>_Default: `512`_
-
-#### `--speedup-ratio` `<float>`
-
-Timestamp scaling multiplier (default: 1.0).
-<br>_Default: `1.0`_
-
-#### `--prefix-len-multiplier` `<float>`
-
-Core prefix length multiplier (default: 1.0).
-<br>_Default: `1.0`_
-
-#### `--prefix-root-multiplier` `<int>`
-
-Tree replication factor (default: 1).
-<br>_Default: `1`_
-
-#### `--prompt-len-multiplier` `<float>`
-
-Leaf prompt length multiplier (default: 1.0).
-<br>_Default: `1.0`_
-
-#### `--max-isl` `<int>`
-
-Maximum input sequence length filter (optional).
 
 ## `aiperf profile`
 
