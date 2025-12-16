@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Profile OpenAI-Compatible Text APIs Using AIPerf
 
-This guide demonstrates how to profile OpenAI-compatible text generation endpoints (Chat Completions, Completions, and the Responses API) using vLLM and AIPerf.
+This guide covers profiling OpenAI-compatible Chat Completions and Completions endpoints with vLLM and AIPerf.
 
 ## Start a vLLM server
 
