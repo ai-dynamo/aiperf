@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.common.enums import DatasetSamplingStrategy
 from aiperf.common.models import Conversation
 from aiperf.dataset.loader import ShareGPTLoader
 
@@ -85,3 +86,10 @@ class TestShareGPTLoader:
         assert turn.texts[0].contents[0] == "Hello how are you"
         assert turn.max_tokens == len(["This", "is", "test", "output"])
         assert turn.model == "test-model"
+
+    async def test_get_recommended_sampling_strategy(
+        self, sharegpt_loader: ShareGPTLoader
+    ):
+        """Test that ShareGPTLoader returns the correct recommended sampling strategy."""
+        strategy = sharegpt_loader.get_recommended_sampling_strategy()
+        assert strategy == DatasetSamplingStrategy.SEQUENTIAL

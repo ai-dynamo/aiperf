@@ -7,10 +7,15 @@ from unittest.mock import Mock, patch
 import pytest
 
 from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import CustomDatasetType
+from aiperf.common.config.config_defaults import InputDefaults
+from aiperf.common.enums import (
+    CustomDatasetType,
+    DatasetSamplingStrategy,
+    PublicDatasetType,
+)
 from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.dataset.dataset_manager import DatasetManager
-from aiperf.dataset.dataset_samplers import SequentialSampler
+from aiperf.dataset.dataset_samplers import SequentialSampler, ShuffleSampler
 
 
 class TestDatasetManagerSequentialIteration:
@@ -326,3 +331,158 @@ class TestDatasetManagerSequentialIteration:
 
         finally:
             Path(filename).unlink(missing_ok=True)
+
+
+class TestDatasetManagerSamplingStrategyDefaults:
+    """Test default sampling strategy behavior for different dataset types."""
+
+    @pytest.fixture(autouse=True)
+    async def teardown(self):
+        """Clean up after each test to prevent shared state issues."""
+        yield
+        from aiperf.common.factories import CommunicationFactory
+
+        if hasattr(CommunicationFactory, "_instances"):
+            CommunicationFactory._instances.clear()
+
+    @pytest.mark.asyncio
+    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
+    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load_dataset")
+    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.convert_to_conversations")
+    async def test_public_dataset_uses_loader_recommended_strategy(
+        self,
+        mock_convert,
+        mock_load,
+        mock_tokenizer_from_pretrained,
+        mock_tokenizer_cls,
+    ):
+        """Test that public datasets use the loader's recommended sampling strategy."""
+        from aiperf.common.models import Conversation, Text, Turn
+
+        # Mock tokenizer
+        mock_tokenizer_from_pretrained.return_value = (
+            mock_tokenizer_cls.from_pretrained("test-model")
+        )
+
+        # Mock dataset loading
+        mock_load.return_value = {}
+        mock_convert.return_value = [
+            Conversation(
+                session_id="session-1",
+                turns=[Turn(texts=[Text(contents=["Hello"])], model="test-model")],
+            ),
+            Conversation(
+                session_id="session-2",
+                turns=[Turn(texts=[Text(contents=["World"])], model="test-model")],
+            ),
+        ]
+
+        # Create config with public dataset and NO explicit sampling strategy
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(public_dataset=PublicDatasetType.SHAREGPT),
+        )
+        assert user_config.input.dataset_sampling_strategy is None
+
+        service_config = ServiceConfig()
+        dataset_manager = DatasetManager(service_config, user_config)
+
+        await dataset_manager.initialize()
+        await dataset_manager._profile_configure_command(
+            ProfileConfigureCommand(config=user_config, service_id="test_service")
+        )
+
+        # Verify the loader's recommended strategy was used (SEQUENTIAL for ShareGPT)
+        assert (
+            user_config.input.dataset_sampling_strategy
+            == DatasetSamplingStrategy.SEQUENTIAL
+        )
+        assert dataset_manager._dataset_sampler is not None
+        assert isinstance(dataset_manager._dataset_sampler, SequentialSampler)
+
+    @pytest.mark.asyncio
+    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
+    async def test_fallback_default_when_strategy_not_set(
+        self,
+        mock_tokenizer_from_pretrained,
+        mock_tokenizer_cls,
+    ):
+        """Test that InputDefaults.DATASET_SAMPLING_STRATEGY is used as fallback."""
+        # Mock tokenizer
+        mock_tokenizer_from_pretrained.return_value = (
+            mock_tokenizer_cls.from_pretrained("test-model")
+        )
+
+        # Create config with NO public dataset and NO explicit sampling strategy
+        # This will use synthetic dataset generation
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(),  # No public_dataset, no file - uses synthetic
+        )
+
+        service_config = ServiceConfig()
+        dataset_manager = DatasetManager(service_config, user_config)
+
+        await dataset_manager.initialize()
+        await dataset_manager._profile_configure_command(
+            ProfileConfigureCommand(config=user_config, service_id="test_service")
+        )
+
+        # Synthetic composer sets its own default, which should be the same as InputDefaults
+        assert user_config.input.dataset_sampling_strategy is not None
+        assert (
+            user_config.input.dataset_sampling_strategy
+            == InputDefaults.DATASET_SAMPLING_STRATEGY
+        )
+
+    @pytest.mark.asyncio
+    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
+    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load_dataset")
+    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.convert_to_conversations")
+    async def test_explicit_strategy_overrides_loader_recommendation(
+        self,
+        mock_convert,
+        mock_load,
+        mock_tokenizer_from_pretrained,
+        mock_tokenizer_cls,
+    ):
+        """Test that explicitly set strategy is not overridden by loader recommendation."""
+        from aiperf.common.models import Conversation, Text, Turn
+
+        # Mock tokenizer
+        mock_tokenizer_from_pretrained.return_value = (
+            mock_tokenizer_cls.from_pretrained("test-model")
+        )
+
+        # Mock dataset loading
+        mock_load.return_value = {}
+        mock_convert.return_value = [
+            Conversation(
+                session_id="session-1",
+                turns=[Turn(texts=[Text(contents=["Hello"])], model="test-model")],
+            ),
+        ]
+
+        # Create config with explicit SHUFFLE strategy (different from loader's SEQUENTIAL)
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                public_dataset=PublicDatasetType.SHAREGPT,
+                dataset_sampling_strategy=DatasetSamplingStrategy.SHUFFLE,
+            ),
+        )
+
+        service_config = ServiceConfig()
+        dataset_manager = DatasetManager(service_config, user_config)
+
+        await dataset_manager.initialize()
+        await dataset_manager._profile_configure_command(
+            ProfileConfigureCommand(config=user_config, service_id="test_service")
+        )
+
+        # Verify the explicit strategy was preserved, not overwritten by loader's SEQUENTIAL
+        assert (
+            user_config.input.dataset_sampling_strategy
+            == DatasetSamplingStrategy.SHUFFLE
+        )
+        assert isinstance(dataset_manager._dataset_sampler, ShuffleSampler)

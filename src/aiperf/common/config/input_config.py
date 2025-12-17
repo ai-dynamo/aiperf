@@ -258,6 +258,7 @@ class InputConfig(BaseConfig):
     dataset_sampling_strategy: Annotated[
         DatasetSamplingStrategy | None,
         Field(
+            default=InputDefaults.DATASET_SAMPLING_STRATEGY,
             description="The strategy to use for sampling the dataset.\n"
             "`sequential`: Iterate through the dataset sequentially, then wrap around to the beginning.\n"
             "`random`: Randomly select a conversation from the dataset. Will randomly sample with replacement.\n"
