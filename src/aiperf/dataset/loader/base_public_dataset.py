@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from aiperf.common.config.user_config import UserConfig
+from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation, RequestRecord
@@ -182,3 +183,13 @@ class BasePublicDatasetLoader(BaseLoader):
         return not (
             prompt_too_short or output_too_short or prompt_too_long or combined_too_long
         )
+
+    def get_recommended_sampling_strategy(self) -> "DatasetSamplingStrategy":
+        """Get the recommended sampling strategy for this dataset.
+
+        Subclasses should override this method to return their preferred strategy.
+
+        Returns:
+            DatasetSamplingStrategy: The recommended sampling strategy for this loader.
+        """
+        raise NotImplementedError("Subclasses must implement this method")

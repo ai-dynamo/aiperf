@@ -180,6 +180,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     async def _load_public_dataset(self) -> list[Conversation]:
         loader = ShareGPTLoader(self.user_config, self.tokenizer)
         dataset = await loader.load_dataset()
+        # Only use loader's recommended strategy if user hasn't explicitly set one
+        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
+            self.user_config.input.dataset_sampling_strategy = (
+                loader.get_recommended_sampling_strategy()
+            )
         return await loader.convert_to_conversations(dataset)
 
     def _load_custom_dataset(self) -> list[Conversation]:
