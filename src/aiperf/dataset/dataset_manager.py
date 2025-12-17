@@ -181,7 +181,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         loader = ShareGPTLoader(self.user_config, self.tokenizer)
         dataset = await loader.load_dataset()
         # Only use loader's recommended strategy if user hasn't explicitly set one
-        if self.user_config.input.dataset_sampling_strategy is None:
+        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
             self.user_config.input.dataset_sampling_strategy = (
                 loader.get_recommended_sampling_strategy()
             )
