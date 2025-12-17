@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.record_models import MetricResult
 from aiperf.plot.core.data_loader import RunData, RunMetadata
 from aiperf.plot.core.data_preparation import (
@@ -2097,6 +2098,175 @@ class TestDualAxisHandler:
 
         assert "Custom Throughput Label" in str(fig.layout.yaxis.title.text)
         assert "Custom GPU Label" in str(fig.layout.yaxis2.title.text)
+
+
+class TestMultiRunServerMetricsAggregation:
+    """Tests for server metrics aggregation in _runs_to_dataframe method."""
+
+    @staticmethod
+    def _make_run_with_server_metrics(
+        tmp_path: Path, metric_name: str, series_data: dict
+    ) -> list[RunData]:
+        """Create a RunData with server_metrics_aggregated for testing."""
+        return [
+            RunData(
+                metadata=RunMetadata(
+                    run_name="run_001",
+                    run_path=tmp_path / "run_001",
+                    model="TestModel",
+                    concurrency=4,
+                ),
+                requests=None,
+                aggregated={},
+                timeslices=None,
+                slice_duration=None,
+                server_metrics_aggregated={
+                    metric_name: {"http://localhost:8000": {"labels": series_data}}
+                },
+            )
+        ]
+
+    @pytest.mark.parametrize(
+        "metric_type,stats,expected",
+        [
+            (PrometheusMetricType.COUNTER, {"rate": 100.5}, 100.5),
+            (PrometheusMetricType.GAUGE, {"avg": 42.5}, 42.5),
+            (PrometheusMetricType.HISTOGRAM, {"avg": 150.0, "rate": 50.0}, 150.0),
+            (PrometheusMetricType.UNKNOWN, {"avg": 25.5, "rate": 10.0}, 25.5),
+            (None, {"avg": 30.0, "rate": 5.0}, 30.0),  # Missing type defaults to avg
+        ],
+        ids=["counter", "gauge", "histogram", "unknown", "missing_type"],
+    )  # fmt: skip
+    def test_metric_type_extracts_correct_stat(
+        self, multi_run_exporter, tmp_path, metric_type, stats, expected
+    ):
+        """Test that each metric type extracts the correct stat value."""
+        series_data = {"stats": stats}
+        if metric_type is not None:
+            series_data["type"] = metric_type
+        runs = self._make_run_with_server_metrics(tmp_path, "test_metric", series_data)
+
+        df = multi_run_exporter._runs_to_dataframe(runs, {})
+
+        assert df["test_metric"].iloc[0] == expected
+
+    @pytest.mark.parametrize(
+        "metric_type,stats",
+        [
+            (PrometheusMetricType.COUNTER, {"rate": None, "avg": 50.0}),
+            (PrometheusMetricType.GAUGE, {"avg": None, "rate": 10.0}),
+        ],
+        ids=["counter_none_rate", "gauge_none_avg"],
+    )  # fmt: skip
+    def test_none_stat_values_are_skipped(
+        self, multi_run_exporter, tmp_path, metric_type, stats
+    ):
+        """Test that None values for the expected stat field are skipped."""
+        series_data = {"type": metric_type, "stats": stats}
+        runs = self._make_run_with_server_metrics(tmp_path, "test_metric", series_data)
+
+        df = multi_run_exporter._runs_to_dataframe(runs, {})
+
+        assert "test_metric" not in df.columns
+
+    def test_gauge_averages_across_endpoints(self, multi_run_exporter, tmp_path):
+        """Test that GAUGE metrics average values across multiple endpoints."""
+        runs = [
+            RunData(
+                metadata=RunMetadata(
+                    run_name="run_001",
+                    run_path=tmp_path / "run_001",
+                    model="TestModel",
+                    concurrency=4,
+                ),
+                requests=None,
+                aggregated={},
+                timeslices=None,
+                slice_duration=None,
+                server_metrics_aggregated={
+                    "gpu_util": {
+                        "http://host1:8000": {
+                            "gpu_0": {
+                                "type": PrometheusMetricType.GAUGE,
+                                "stats": {"avg": 80.0},
+                            }
+                        },
+                        "http://host2:8000": {
+                            "gpu_0": {
+                                "type": PrometheusMetricType.GAUGE,
+                                "stats": {"avg": 60.0},
+                            }
+                        },
+                    }
+                },
+            )
+        ]
+
+        df = multi_run_exporter._runs_to_dataframe(runs, {})
+
+        assert df["gpu_util"].iloc[0] == 70.0  # (80 + 60) / 2
+
+    def test_counter_sums_across_endpoints(self, multi_run_exporter, tmp_path):
+        """Test that COUNTER metrics sum rates across multiple endpoints."""
+        runs = [
+            RunData(
+                metadata=RunMetadata(
+                    run_name="run_001",
+                    run_path=tmp_path / "run_001",
+                    model="TestModel",
+                    concurrency=4,
+                ),
+                requests=None,
+                aggregated={},
+                timeslices=None,
+                slice_duration=None,
+                server_metrics_aggregated={
+                    "total_reqs": {
+                        "http://host1:8000": {
+                            "l1": {
+                                "type": PrometheusMetricType.COUNTER,
+                                "stats": {"rate": 50.0},
+                            }
+                        },
+                        "http://host2:8000": {
+                            "l1": {
+                                "type": PrometheusMetricType.COUNTER,
+                                "stats": {"rate": 30.0},
+                            }
+                        },
+                    }
+                },
+            )
+        ]
+
+        df = multi_run_exporter._runs_to_dataframe(runs, {})
+
+        assert df["total_reqs"].iloc[0] == 80.0  # 50 + 30
+
+    def test_object_based_stats(self, multi_run_exporter, tmp_path):
+        """Test that object-based stats (with attributes) work correctly."""
+        from types import SimpleNamespace
+
+        series_data = {
+            "type": PrometheusMetricType.GAUGE,
+            "stats": SimpleNamespace(avg=45.0, rate=None),
+        }
+        runs = self._make_run_with_server_metrics(tmp_path, "obj_metric", series_data)
+
+        df = multi_run_exporter._runs_to_dataframe(runs, {})
+
+        assert df["obj_metric"].iloc[0] == 45.0
+
+    def test_static_value_without_stats(self, multi_run_exporter, tmp_path):
+        """Test that static values (stats=None) use the value field."""
+        series_data = {"stats": None, "value": 999.0}
+        runs = self._make_run_with_server_metrics(
+            tmp_path, "static_metric", series_data
+        )
+
+        df = multi_run_exporter._runs_to_dataframe(runs, {})
+
+        assert df["static_metric"].iloc[0] == 999.0
 
 
 class TestPlotSpecListValidation:
