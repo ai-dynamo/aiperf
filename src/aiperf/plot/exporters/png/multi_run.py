@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
 
+from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.record_models import MetricResult
 from aiperf.plot.constants import DEFAULT_PERCENTILE, NON_METRIC_KEYS
 from aiperf.plot.core.data_loader import RunData
@@ -194,26 +195,34 @@ class MultiRunPNGExporter(BasePNGExporter):
 
                             # Extract metric type (same for all series)
                             if metric_type is None:
-                                metric_type = series_data.get("type", "")
+                                metric_type = series_data.get(
+                                    "type", PrometheusMetricType.UNKNOWN
+                                )
 
                             # Extract appropriate stat based on metric type
-                            if metric_type == "COUNTER":
+                            if metric_type == PrometheusMetricType.COUNTER:
                                 # Use rate for counters
-                                if hasattr(stats, "rate"):
+                                if hasattr(stats, "rate") and stats.rate is not None:
                                     values.append(stats.rate)
-                                elif isinstance(stats, dict) and "rate" in stats:
+                                elif (
+                                    isinstance(stats, dict)
+                                    and stats.get("rate") is not None
+                                ):
                                     values.append(stats["rate"])
                             else:
                                 # Use avg for gauge/histogram
-                                if hasattr(stats, "avg"):
+                                if hasattr(stats, "avg") and stats.avg is not None:
                                     values.append(stats.avg)
-                                elif isinstance(stats, dict) and "avg" in stats:
+                                elif (
+                                    isinstance(stats, dict)
+                                    and stats.get("avg") is not None
+                                ):
                                     values.append(stats["avg"])
 
                     # Aggregate all values
                     if values:
                         # Use sum for counters (total rate), average for others
-                        if metric_type == "COUNTER":
+                        if metric_type == PrometheusMetricType.COUNTER:
                             row[metric_name] = sum(
                                 values
                             )  # Sum rates across all labels/endpoints
@@ -227,7 +236,7 @@ class MultiRunPNGExporter(BasePNGExporter):
                             self.debug(
                                 f"Server metric '{metric_name}' has {total_combinations} "
                                 f"endpoint+label combinations - aggregated to single value "
-                                f"({'sum' if metric_type == 'COUNTER' else 'average'})"
+                                f"({'sum' if metric_type == PrometheusMetricType.COUNTER else 'average'})"
                             )
 
             rows.append(row)
