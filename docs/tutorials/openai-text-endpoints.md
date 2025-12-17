@@ -9,15 +9,15 @@ This guide covers profiling OpenAI-compatible Chat Completions and Completions e
 
 ## Start a vLLM server
 
+Pull and start a vLLM server using Docker:
 ```bash
-# Pull and run vLLM Docker container:
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --model Qwen/Qwen3-0.6B \
-  --reasoning-parser qwen3 \
-  --host 0.0.0.0 --port 8000
+  --reasoning-parser qwen3
 ```
 
+Verify the server is ready:
 ```bash
 timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
 ```
@@ -27,6 +27,7 @@ The Chat Completions API uses the `/v1/chat/completions` endpoint.
 
 ### Profile with synthetic inputs
 
+Run AIPerf against the Chat Completions endpoint using synthetic inputs:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
@@ -44,17 +45,18 @@ aiperf profile \
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ### Profile with custom input file
-Create a JSONL input file:
 
+Create a JSONL input file:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 
 ```bash
 cat <<EOF > inputs.jsonl
-{"texts": ["Hello!", "How are you?"]}
-{"texts": ["Tell me a joke.", "Tell me a story."]}
+{"texts": ["Hello!"]}
+{"texts": ["Tell me a joke."]}
 EOF
 ```
 
+Run AIPerf against the Chat Completions endpoint using the custom input file:
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -73,6 +75,7 @@ The Completions API uses the `/v1/completions` endpoint.
 
 ### Profile with synthetic inputs
 
+Run AIPerf against the Completions endpoint using synthetic inputs:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
@@ -89,16 +92,17 @@ aiperf profile \
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ### Profile with custom input file
-Create a JSONL input file:
 
+Create a JSONL input file:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
-{"texts": ["Hello!", "What’s up?"]}
-{"texts": ["Tell me a joke.", "Give me a poem."]}
+{"texts": ["How are you?"]}
+{"texts": ["Give me a poem."]}
 EOF
-```
 
+```
+Run AIPerf against the Completions endpoint using the custom input file:
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
