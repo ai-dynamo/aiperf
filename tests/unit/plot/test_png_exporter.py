@@ -8,19 +8,22 @@ This module tests the PNG export functionality, ensuring that plots are
 correctly generated and saved as PNG files with proper metadata.
 """
 
+import json
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.record_models import MetricResult
-from aiperf.plot.core.data_loader import RunData, RunMetadata
+from aiperf.plot.core.data_loader import DataLoader, RunData, RunMetadata
 from aiperf.plot.core.data_preparation import (
     prepare_request_timeseries,
     validate_request_uniformity,
 )
+from aiperf.plot.core.plot_generator import PlotGenerator
 from aiperf.plot.core.plot_specs import (
     DataSource,
     MetricSpec,
@@ -30,6 +33,7 @@ from aiperf.plot.core.plot_specs import (
     TimeSlicePlotSpec,
 )
 from aiperf.plot.exporters.png import MultiRunPNGExporter, SingleRunPNGExporter
+from aiperf.plot.handlers.single_run_handlers import DualAxisHandler
 
 # Check if Chrome is available for Kaleido PNG export
 CHROME_AVAILABLE = (
@@ -1296,8 +1300,6 @@ class TestSingleRunPNGExporter:
         tmp_path,
     ):
         """Test that warning works when loading ISL/OSL from disk (requests=None)."""
-        import json
-
         run_path = tmp_path / "on_demand_test_run"
         run_path.mkdir()
 
@@ -1343,8 +1345,6 @@ class TestSingleRunPNGExporter:
         tmp_path,
     ):
         """Test that no warning appears when on-demand loading finds uniform requests."""
-        import json
-
         run_path = tmp_path / "on_demand_uniform_run"
         run_path.mkdir()
 
@@ -1759,22 +1759,16 @@ class TestDualAxisHandler:
     @pytest.fixture
     def plot_generator(self):
         """Create a PlotGenerator instance for testing."""
-        from aiperf.plot.core.plot_generator import PlotGenerator
-
         return PlotGenerator()
 
     @pytest.fixture
     def dual_axis_handler(self, plot_generator):
         """Create a DualAxisHandler instance for testing."""
-        from aiperf.plot.handlers.single_run_handlers import DualAxisHandler
-
         return DualAxisHandler(plot_generator=plot_generator)
 
     @pytest.fixture
     def data_loader(self):
         """Create a DataLoader instance for testing."""
-        from aiperf.plot.core.data_loader import DataLoader
-
         return DataLoader()
 
     @pytest.fixture
@@ -1803,13 +1797,6 @@ class TestDualAxisHandler:
         single_run_dir,
     ):
         """Test that the original GPU utilization plot still works."""
-        from aiperf.plot.core.plot_specs import (
-            DataSource,
-            MetricSpec,
-            PlotSpec,
-            PlotType,
-        )
-
         run_data = data_loader.load_run(single_run_dir)
 
         spec = PlotSpec(
@@ -1849,13 +1836,6 @@ class TestDualAxisHandler:
         single_run_dir,
     ):
         """Test that a dual-axis plot with a different name works (not hardcoded)."""
-        from aiperf.plot.core.plot_specs import (
-            DataSource,
-            MetricSpec,
-            PlotSpec,
-            PlotType,
-        )
-
         run_data = data_loader.load_run(single_run_dir)
 
         spec = PlotSpec(
@@ -1894,13 +1874,6 @@ class TestDualAxisHandler:
         single_run_dir,
     ):
         """Test that custom styling parameters are applied."""
-        from aiperf.plot.core.plot_specs import (
-            DataSource,
-            MetricSpec,
-            PlotSpec,
-            PlotType,
-        )
-
         run_data = data_loader.load_run(single_run_dir)
 
         spec = PlotSpec(
@@ -1938,13 +1911,6 @@ class TestDualAxisHandler:
         single_run_dir,
     ):
         """Test that missing x metric defaults to timestamp_s."""
-        from aiperf.plot.core.plot_specs import (
-            DataSource,
-            MetricSpec,
-            PlotSpec,
-            PlotType,
-        )
-
         run_data = data_loader.load_run(single_run_dir)
 
         spec = PlotSpec(
@@ -1969,13 +1935,6 @@ class TestDualAxisHandler:
 
     def test_can_handle_checks_gpu_telemetry(self, dual_axis_handler):
         """Test that can_handle properly checks for GPU telemetry data."""
-        from aiperf.plot.core.plot_specs import (
-            DataSource,
-            MetricSpec,
-            PlotSpec,
-            PlotType,
-        )
-
         metadata = RunMetadata(
             run_name="test_run",
             run_path=Path("/tmp"),
@@ -2016,13 +1975,6 @@ class TestDualAxisHandler:
         single_run_dir,
     ):
         """Test that empty primary data raises an appropriate error."""
-        from aiperf.plot.core.plot_specs import (
-            DataSource,
-            MetricSpec,
-            PlotSpec,
-            PlotType,
-        )
-
         run_data = data_loader.load_run(single_run_dir)
 
         spec = PlotSpec(
@@ -2056,13 +2008,6 @@ class TestDualAxisHandler:
         self, dual_axis_handler, data_loader, single_run_dir
     ):
         """Test that axis labels are derived from available_metrics."""
-        from aiperf.plot.core.plot_specs import (
-            DataSource,
-            MetricSpec,
-            PlotSpec,
-            PlotType,
-        )
-
         run_data = data_loader.load_run(single_run_dir)
 
         custom_metrics = {
@@ -2245,8 +2190,6 @@ class TestMultiRunServerMetricsAggregation:
 
     def test_object_based_stats(self, multi_run_exporter, tmp_path):
         """Test that object-based stats (with attributes) work correctly."""
-        from types import SimpleNamespace
-
         series_data = {
             "type": PrometheusMetricType.GAUGE,
             "stats": SimpleNamespace(avg=45.0, rate=None),
