@@ -83,6 +83,9 @@ class BaseExporter(AIPerfLoggerMixin, ABC):
         name = display_names.get(metric_tag, get_metric_display_name(metric_tag))
         unit = units.get(metric_tag, "")
 
+        if not unit and metric_tag in available_metrics:
+            unit = available_metrics[metric_tag].get("unit", "")
+
         label = f"{name} {stat.upper()}" if stat and stat != "value" else name
 
         if unit:
