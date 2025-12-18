@@ -109,6 +109,11 @@ class BaseMultiRunHandler:
         if not group_by or group_by not in data.columns:
             return None
 
+        # Only use group_display_name when grouping by experiment_group
+        # For other groupings (e.g., 'model'), use the actual group value
+        if group_by != "experiment_group":
+            return None
+
         if "group_display_name" not in data.columns:
             return None
 

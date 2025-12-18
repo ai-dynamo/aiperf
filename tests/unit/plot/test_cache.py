@@ -12,6 +12,7 @@ import time
 import plotly.graph_objects as go
 import pytest
 
+import aiperf.plot.dashboard.cache as cache_module
 from aiperf.plot.constants import PlotTheme
 from aiperf.plot.dashboard.cache import (
     CachedPlot,
@@ -62,8 +63,6 @@ def fresh_plot_cache() -> PlotCache:
 @pytest.fixture(autouse=True)
 def reset_global_cache():
     """Reset the global cache singleton before and after each test."""
-    import aiperf.plot.dashboard.cache as cache_module
-
     cache_module._PLOT_CACHE = None
     yield
     cache_module._PLOT_CACHE = None
@@ -479,8 +478,6 @@ class TestGetPlotCacheSingleton:
 
     def test_creates_new_instance_when_global_is_none(self):
         """Test that get_plot_cache creates new instance when global is None."""
-        import aiperf.plot.dashboard.cache as cache_module
-
         cache_module._PLOT_CACHE = None
         cache = get_plot_cache()
         assert cache is not None

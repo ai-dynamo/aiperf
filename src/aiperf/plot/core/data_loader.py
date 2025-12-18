@@ -22,12 +22,20 @@ from aiperf.common.constants import STAT_KEYS
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.record_models import MetricRecordInfo, MetricResult
+from aiperf.common.models.server_metrics_models import (
+    CounterTimeslice,
+    GaugeTimeslice,
+    HistogramTimeslice,
+    ServerMetricsExportData,
+)
 from aiperf.plot.constants import (
     NON_METRIC_KEYS,
     PROFILE_EXPORT_AIPERF_JSON,
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL,
     PROFILE_EXPORT_JSONL,
     PROFILE_EXPORT_TIMESLICES_CSV,
+    SERVER_METRICS_EXPORT_JSON,
+    SERVER_METRICS_EXPORT_PARQUET,
 )
 from aiperf.plot.core.plot_specs import ExperimentClassificationConfig
 from aiperf.plot.exceptions import DataLoadError
@@ -285,11 +293,6 @@ class DataLoader(AIPerfLoggerMixin):
                 self.warning(f"Failed to load GPU telemetry data: {e}")
 
         # Load server metrics - load BOTH Parquet (time-series) AND JSON (aggregated stats)
-        from aiperf.plot.constants import (
-            SERVER_METRICS_EXPORT_JSON,
-            SERVER_METRICS_EXPORT_PARQUET,
-        )
-
         server_metrics_df = None
         server_metrics_aggregated = {}
 
@@ -897,14 +900,6 @@ class DataLoader(AIPerfLoggerMixin):
         try:
             with open(json_path, "rb") as f:
                 data = orjson.loads(f.read())
-
-            # Import models locally to avoid circular dependencies
-            from aiperf.common.models.server_metrics_models import (
-                CounterTimeslice,
-                GaugeTimeslice,
-                HistogramTimeslice,
-                ServerMetricsExportData,
-            )
 
             export_data = ServerMetricsExportData.model_validate(data)
 

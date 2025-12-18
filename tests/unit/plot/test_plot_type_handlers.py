@@ -13,6 +13,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
+from aiperf.common.enums import EndpointType
+from aiperf.common.factories import EndpointFactory
 from aiperf.plot.core.plot_specs import PlotSpec, PlotType
 from aiperf.plot.core.plot_type_handlers import (
     PlotTypeHandlerFactory,
@@ -497,9 +499,6 @@ class TestPlotTypeHandlerFactory:
 
     def test_factory_registry_isolation(self):
         """Test that each factory subclass has its own registry."""
-        from aiperf.common.enums import EndpointType
-        from aiperf.common.factories import EndpointFactory
-
         assert len(PlotTypeHandlerFactory._registry) > 0
         assert len(EndpointFactory._registry) > 0
         assert PlotTypeHandlerFactory._registry != EndpointFactory._registry
