@@ -158,11 +158,20 @@ class BaseSingleRunHandler:
         Returns:
             Formatted metric label
         """
-        if metric_name in available_metrics:
+        display_name = None
+        unit = ""
+
+        if "display_names" in available_metrics or "units" in available_metrics:
+            display_name = available_metrics.get("display_names", {}).get(metric_name)
+            unit = available_metrics.get("units", {}).get(metric_name, "")
+
+        if not display_name and metric_name in available_metrics:
             display_name = available_metrics[metric_name].get(
                 "display_name", metric_name
             )
             unit = available_metrics[metric_name].get("unit", "")
+
+        if display_name:
             if stat and stat not in ["avg", "value"]:
                 display_name = f"{display_name} ({stat})"
             if unit:
