@@ -39,7 +39,6 @@ from aiperf.plot.dashboard.components import (
     create_global_stat_selector,
     create_label,
     create_run_selector_checklist,
-    create_section_header,
     create_sidebar_toggle_button,
 )
 from aiperf.plot.dashboard.styling import (
@@ -55,10 +54,12 @@ from aiperf.plot.dashboard.utils import (
     runs_to_dataframe,
 )
 from aiperf.plot.metric_names import (
+    _format_server_metric_name,
     get_gpu_metrics,
     get_metric_display_name,
     get_metric_display_name_with_unit,
 )
+from aiperf.plot.utils import get_server_metrics_summary
 
 CATEGORY_HEADERS = {
     "per_request": "── Per-Request Plots ──",
@@ -250,8 +251,6 @@ class DashboardBuilder:
             hasattr(first_run, "server_metrics_aggregated")
             and first_run.server_metrics_aggregated
         ):
-            from aiperf.plot.metric_names import _format_server_metric_name
-
             for (
                 metric_name,
                 endpoint_data,
@@ -328,8 +327,6 @@ class DashboardBuilder:
         """
         if run.server_metrics is None or run.server_metrics.empty:
             return []
-
-        from aiperf.plot.utils import get_server_metrics_summary
 
         server_summary = get_server_metrics_summary(run)
 
@@ -746,105 +743,6 @@ class DashboardBuilder:
             style=get_header_style(self.theme),
         )
 
-    def _build_server_metrics_info_card(self) -> html.Div | None:
-        """
-        Build server metrics information card showing endpoint and metric counts.
-
-        Returns:
-            HTML Div with server metrics info, or None if no server metrics available
-        """
-        # Check if any run has server metrics
-        has_server_metrics = False
-        total_metrics = set()
-        total_endpoints = set()
-
-        for run in self.runs:
-            if (
-                hasattr(run, "server_metrics_aggregated")
-                and run.server_metrics_aggregated
-            ):
-                has_server_metrics = True
-                total_metrics.update(run.server_metrics_aggregated.keys())
-                for endpoint_data in run.server_metrics_aggregated.values():
-                    total_endpoints.update(endpoint_data.keys())
-
-        if not has_server_metrics:
-            return None
-
-        # Build info card content
-        info_items = [
-            create_section_header("Server Metrics", self.theme, size="sm"),
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Span(
-                                "Metrics: ",
-                                style={
-                                    "font-weight": "500",
-                                    "color": self.colors["text"],
-                                    "font-size": "12px",
-                                },
-                            ),
-                            html.Span(
-                                f"{len(total_metrics)}",
-                                style={
-                                    "color": NVIDIA_GREEN,
-                                    "font-weight": "600",
-                                    "font-size": "12px",
-                                },
-                            ),
-                        ],
-                        style={"margin-bottom": "6px"},
-                    ),
-                    html.Div(
-                        [
-                            html.Span(
-                                "Endpoints: ",
-                                style={
-                                    "font-weight": "500",
-                                    "color": self.colors["text"],
-                                    "font-size": "12px",
-                                },
-                            ),
-                            html.Span(
-                                f"{len(total_endpoints)}",
-                                style={
-                                    "color": NVIDIA_GREEN,
-                                    "font-weight": "600",
-                                    "font-size": "12px",
-                                },
-                            ),
-                        ],
-                        style={"margin-bottom": "6px"},
-                    ),
-                    html.Div(
-                        [
-                            html.Span(
-                                "Source: ",
-                                style={
-                                    "font-weight": "500",
-                                    "color": self.colors["text"],
-                                    "font-size": "12px",
-                                },
-                            ),
-                            html.Span(
-                                "Prometheus",
-                                style={
-                                    "color": self.colors["text"],
-                                    "font-size": "12px",
-                                    "opacity": "0.8",
-                                },
-                            ),
-                        ],
-                    ),
-                ],
-                style={"padding": "8px 0"},
-            ),
-        ]
-
-        return html.Div(info_items)
-
     def _build_sidebar(self) -> html.Div:
         """Build reorganized sidebar with collapsible controls and visual cards."""
         sections = []
@@ -872,18 +770,7 @@ class DashboardBuilder:
             )
         )
 
-        # 2. Server Metrics Info Card (if available)
-        server_metrics_card = self._build_server_metrics_info_card()
-        if server_metrics_card:
-            sections.append(
-                html.Div(
-                    [server_metrics_card],
-                    id="sidebar-server-metrics-card",
-                    style=card_style,
-                )
-            )
-
-        # 3. Layout & Plots - wrapped in card
+        # 2. Layout & Plots - wrapped in card
         sections.append(
             html.Div(
                 [self._build_layout_and_plots_section()],
@@ -1825,18 +1712,6 @@ class DashboardBuilder:
             )
             y_metric_options.extend(gpu_metrics)
 
-        # Server metrics (for timeslice, area, and dual-axis plots)
-        server_metrics = self._get_server_metrics_options(run)
-        if server_metrics:
-            y_metric_options.append(
-                {
-                    "label": "── Server Metrics ──",
-                    "value": "_server_divider",
-                    "disabled": True,
-                }
-            )
-            y_metric_options.extend(server_metrics)
-
         # Stat options for histogram (kept for backward compatibility)
         stat_options = self._get_stat_options_ordered()
 
@@ -2143,18 +2018,6 @@ class DashboardBuilder:
                 }
             )
             y_metric_options.extend(gpu_metrics)
-
-        # Server metrics (for timeslice, area, and dual-axis plots)
-        server_metrics = self._get_server_metrics_options(run)
-        if server_metrics:
-            y_metric_options.append(
-                {
-                    "label": "── Server Metrics ──",
-                    "value": "_server_divider",
-                    "disabled": True,
-                }
-            )
-            y_metric_options.extend(server_metrics)
 
         # Stat options for histogram (kept for backward compatibility)
         stat_options = self._get_stat_options_ordered()

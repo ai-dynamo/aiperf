@@ -8,13 +8,19 @@ This module tests the plot generation functionality, ensuring that each plot
 type is created correctly with proper styling and data handling.
 """
 
+import time
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
+from aiperf.common.enums import PlotMetricDirection
+from aiperf.common.enums.metric_enums import MetricFlags
 from aiperf.plot.constants import (
     DARK_THEME_COLORS,
+    LIGHT_THEME_COLORS,
     NVIDIA_CARD_BG,
     NVIDIA_DARK_BG,
     NVIDIA_GRAY,
@@ -26,6 +32,7 @@ from aiperf.plot.constants import (
 from aiperf.plot.core.plot_generator import (
     PlotGenerator,
     detect_directional_outliers,
+    get_nvidia_color_scheme,
 )
 from aiperf.plot.core.plot_specs import Style
 
@@ -697,8 +704,6 @@ class TestDualAxisPlots:
         assert fig.layout.yaxis2.side == "right"
 
         # Verify theme consistency for yaxis2
-        from aiperf.plot.constants import LIGHT_THEME_COLORS
-
         assert fig.layout.yaxis2.gridcolor == LIGHT_THEME_COLORS["grid"]
         assert fig.layout.yaxis2.linecolor == LIGHT_THEME_COLORS["border"]
         assert fig.layout.yaxis2.color == LIGHT_THEME_COLORS["text"]
@@ -1145,8 +1150,6 @@ class TestGetNvidiaColorScheme:
 
     def test_brand_colors_less_than_requested(self):
         """Returns only NVIDIA colors when n_colors <= 2."""
-        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
-
         colors = get_nvidia_color_scheme(n_colors=1, use_brand_colors=True)
         assert len(colors) == 1
         assert colors[0] == NVIDIA_GREEN
@@ -1157,8 +1160,6 @@ class TestGetNvidiaColorScheme:
 
     def test_brand_colors_with_palette_expansion(self):
         """Adds seaborn colors when n_colors > 2."""
-        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
-
         colors = get_nvidia_color_scheme(n_colors=5, use_brand_colors=True)
         assert len(colors) == 5
         assert colors[0] == NVIDIA_GREEN
@@ -1168,8 +1169,6 @@ class TestGetNvidiaColorScheme:
 
     def test_without_brand_colors(self):
         """Uses only seaborn palette when use_brand_colors=False."""
-        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
-
         colors = get_nvidia_color_scheme(n_colors=5, use_brand_colors=False)
         assert len(colors) == 5
         # Should not start with NVIDIA brand colors
@@ -1180,8 +1179,6 @@ class TestGetNvidiaColorScheme:
 
     def test_bright_palette_with_brand_colors(self):
         """Verifies bright palette used with brand colors."""
-        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
-
         colors = get_nvidia_color_scheme(
             n_colors=5, palette_name="bright", use_brand_colors=True
         )
@@ -1190,8 +1187,6 @@ class TestGetNvidiaColorScheme:
 
     def test_deep_palette_without_brand_colors(self):
         """Verifies deep palette used without brand colors."""
-        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
-
         colors = get_nvidia_color_scheme(
             n_colors=5, palette_name="deep", use_brand_colors=False
         )
@@ -1201,8 +1196,6 @@ class TestGetNvidiaColorScheme:
 
     def test_color_pool_cycling(self):
         """Verifies colors are valid hex strings."""
-        from aiperf.plot.core.plot_generator import get_nvidia_color_scheme
-
         colors = get_nvidia_color_scheme(n_colors=15, use_brand_colors=True)
         assert len(colors) == 15
         for color in colors:
@@ -1215,11 +1208,6 @@ class TestGetMetricDirection:
 
     def test_get_metric_direction_from_registry(self):
         """Uses MetricRegistry when available."""
-        from unittest.mock import patch
-
-        from aiperf.common.enums import PlotMetricDirection
-        from aiperf.common.enums.metric_enums import MetricFlags
-
         plot_gen = PlotGenerator()
 
         # Mock a metric with LARGER_IS_BETTER flag
@@ -1240,10 +1228,6 @@ class TestGetMetricDirection:
 
     def test_get_metric_direction_fallback_to_derived(self):
         """Falls back to DERIVED_METRIC_DIRECTIONS."""
-        from unittest.mock import patch
-
-        from aiperf.common.enums import PlotMetricDirection
-
         plot_gen = PlotGenerator()
 
         # Mock MetricRegistry to raise exception
@@ -1262,8 +1246,6 @@ class TestGetMetricDirection:
 
     def test_get_metric_direction_default_to_empty_string(self):
         """Returns empty string for unknown metrics."""
-        from unittest.mock import patch
-
         plot_gen = PlotGenerator()
 
         # Mock MetricRegistry to raise exception and empty derived directions
@@ -1476,8 +1458,6 @@ class TestParetoFrontierOptimization:
         self, plot_generator, x_dir, y_dir, x_vals, y_vals, expected
     ):
         """Test Pareto frontier calculation for all direction combinations."""
-        from aiperf.common.enums import PlotMetricDirection
-
         x_direction = PlotMetricDirection(x_dir)
         y_direction = PlotMetricDirection(y_dir)
 
@@ -1497,8 +1477,6 @@ class TestParetoFrontierOptimization:
 
     def test_pareto_empty_array(self, plot_generator):
         """Test with empty arrays."""
-        from aiperf.common.enums import PlotMetricDirection
-
         result = plot_generator._compute_pareto_frontier(
             np.array([]),
             np.array([]),
@@ -1510,8 +1488,6 @@ class TestParetoFrontierOptimization:
 
     def test_pareto_single_point(self, plot_generator):
         """Test with single point."""
-        from aiperf.common.enums import PlotMetricDirection
-
         result = plot_generator._compute_pareto_frontier(
             np.array([1.0]),
             np.array([2.0]),
@@ -1522,8 +1498,6 @@ class TestParetoFrontierOptimization:
 
     def test_pareto_two_points(self, plot_generator):
         """Test with two points - various domination scenarios."""
-        from aiperf.common.enums import PlotMetricDirection
-
         # Point 2 dominates point 1 (minimize x, maximize y)
         # Data must be sorted by x ascending (1.0 comes before 2.0)
         result = plot_generator._compute_pareto_frontier(
@@ -1551,8 +1525,6 @@ class TestParetoFrontierOptimization:
         Verify that the optimized algorithm produces identical results to the
         O(n²) algorithm for typical multi-run data.
         """
-        from aiperf.common.enums import PlotMetricDirection
-
         plot_gen = PlotGenerator()
         df = multi_run_df.sort_values("request_latency")
 
@@ -1581,10 +1553,6 @@ class TestParetoFrontierOptimization:
 
     def test_pareto_performance_large_dataset(self, plot_generator):
         """Benchmark with large dataset to verify O(n log n) performance."""
-        import time
-
-        from aiperf.common.enums import PlotMetricDirection
-
         # Generate 1000 random points
         np.random.seed(42)
         n = 1000
@@ -1608,8 +1576,6 @@ class TestParetoFrontierOptimization:
 
     def test_pareto_all_points_identical(self, plot_generator):
         """Test when all points have identical coordinates."""
-        from aiperf.common.enums import PlotMetricDirection
-
         # All points are identical, so all should be on the frontier
         result = plot_generator._compute_pareto_frontier(
             np.array([5.0, 5.0, 5.0]),
@@ -1622,8 +1588,6 @@ class TestParetoFrontierOptimization:
 
     def test_pareto_raises_error_for_unknown_metric_directions(self, multi_run_df):
         """Test that ValueError is raised when metric directions are unknown."""
-        from unittest.mock import patch
-
         plot_gen = PlotGenerator()
 
         # Mock _get_metric_direction to return empty string (unknown direction)
@@ -1644,10 +1608,6 @@ class TestParetoFrontierOptimization:
 
     def test_pareto_raises_error_for_one_unknown_metric(self, multi_run_df):
         """Test that ValueError is raised when one metric direction is unknown."""
-        from unittest.mock import patch
-
-        from aiperf.common.enums import PlotMetricDirection
-
         plot_gen = PlotGenerator()
 
         # Mock _get_metric_direction to return known for x, unknown for y

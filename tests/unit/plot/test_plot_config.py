@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.plot.config import PlotConfig
+from aiperf.plot.config import PlotConfig, _parse_and_validate_metric_name
 from aiperf.plot.core.plot_specs import (
     DataSource,
     MetricSpec,
@@ -968,16 +968,12 @@ class TestMetricNameValidation:
 
     def test_parse_metric_with_avg_stat(self):
         """Test parsing metric with avg stat suffix."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         base, stat = _parse_and_validate_metric_name("request_latency_avg")
         assert base == "request_latency"
         assert stat == "avg"
 
     def test_parse_metric_with_percentile_stats(self):
         """Test parsing metrics with valid percentile suffixes."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         for p in [1, 5, 10, 25, 50, 75, 90, 95, 99]:
             base, stat = _parse_and_validate_metric_name(f"metric_p{p}")
             assert base == "metric"
@@ -985,8 +981,6 @@ class TestMetricNameValidation:
 
     def test_parse_metric_with_all_basic_stats(self):
         """Test parsing metrics with min, max, std stats."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         for stat_type in ["min", "max", "std"]:
             base, stat = _parse_and_validate_metric_name(f"latency_{stat_type}")
             assert base == "latency"
@@ -994,16 +988,12 @@ class TestMetricNameValidation:
 
     def test_parse_metric_without_stat(self):
         """Test parsing simple metric name without stat suffix."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         base, stat = _parse_and_validate_metric_name("request_number")
         assert base == "request_number"
         assert stat is None
 
     def test_invalid_percentile_p100_raises_error(self):
         """Test that p100 raises an error with suggestions."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         with pytest.raises(ValueError) as exc_info:
             _parse_and_validate_metric_name("metric_p100")
 
@@ -1014,8 +1004,6 @@ class TestMetricNameValidation:
 
     def test_invalid_percentile_p999_raises_error(self):
         """Test that p999 raises an error."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         with pytest.raises(ValueError) as exc_info:
             _parse_and_validate_metric_name("metric_p999")
 
@@ -1023,16 +1011,12 @@ class TestMetricNameValidation:
 
     def test_metric_with_underscore_in_name(self):
         """Test metric with underscores in base name."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         base, stat = _parse_and_validate_metric_name("time_to_first_token_p50")
         assert base == "time_to_first_token"
         assert stat == "p50"
 
     def test_invalid_percentile_p42_raises_error(self):
         """Test that p42 raises an error with suggestions."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         with pytest.raises(ValueError) as exc_info:
             _parse_and_validate_metric_name("metric_p42")
 
@@ -1041,8 +1025,6 @@ class TestMetricNameValidation:
 
     def test_invalid_stat_suffix_raises_helpful_error(self):
         """Test that invalid stat suffixes like p67 raise helpful errors."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         with pytest.raises(ValueError) as exc_info:
             _parse_and_validate_metric_name("latency_p67")
 
@@ -1055,8 +1037,6 @@ class TestMetricNameValidation:
 
     def test_fuzzy_matching_suggests_close_percentiles(self):
         """Test that fuzzy matching suggests numerically close percentiles."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         with pytest.raises(ValueError) as exc_info:
             _parse_and_validate_metric_name("latency_p92")
 
@@ -1065,8 +1045,6 @@ class TestMetricNameValidation:
 
     def test_valid_percentiles_do_not_raise(self):
         """Test that valid percentiles don't raise errors."""
-        from aiperf.plot.config import _parse_and_validate_metric_name
-
         base, stat = _parse_and_validate_metric_name("metric_p50")
         assert base == "metric"
         assert stat == "p50"

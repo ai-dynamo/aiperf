@@ -10,6 +10,10 @@ cross-cutting concerns used by multiple plot modules.
 
 import re
 
+import orjson
+
+from aiperf.plot.metric_names import _format_server_metric_name
+
 
 def parse_server_metric_spec(metric_spec: str) -> tuple[str, str | None, dict | None]:
     """
@@ -136,8 +140,6 @@ def filter_server_metrics_dataframe(
     Raises:
         ValueError: If no data remains after filtering
     """
-    import orjson
-
     # Filter by metric name
     filtered = df[df["metric_name"] == metric_name].copy()
 
@@ -267,8 +269,6 @@ def create_series_legend_label(
         ...                        {"component":"prefill","endpoint":"clear"}])
         'backend/generate'
     """
-    import orjson
-
     # Parse labels
     labels_dict = orjson.loads(labels_json.encode()) if labels_json != "{}" else {}
 
@@ -385,8 +385,6 @@ def get_available_labels_for_metric(
         >>> labels["http://localhost:8081/metrics"]
         [{"method": "GET"}, {"method": "POST"}]
     """
-    import orjson
-
     if metric_name not in server_metrics_aggregated:
         return {}
 
@@ -435,10 +433,6 @@ def get_server_metrics_summary(run_data) -> dict[str, dict]:
         >>> summary["vllm:request_success"]["label_combinations"]
         4  # 2 endpoints × 2 label combos each
     """
-    import orjson
-
-    from aiperf.plot.metric_names import _format_server_metric_name
-
     if (
         not hasattr(run_data, "server_metrics_aggregated")
         or not run_data.server_metrics_aggregated

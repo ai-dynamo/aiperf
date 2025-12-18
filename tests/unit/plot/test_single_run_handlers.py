@@ -14,6 +14,7 @@ import pytest
 
 from aiperf.plot.core.plot_generator import PlotGenerator
 from aiperf.plot.core.plot_specs import DataSource, MetricSpec, PlotSpec, PlotType
+from aiperf.plot.exceptions import PlotGenerationError
 from aiperf.plot.handlers.single_run_handlers import (
     AreaHandler,
     BaseSingleRunHandler,
@@ -206,8 +207,6 @@ class TestBaseSingleRunHandler:
 
     def test_prepare_data_raises_for_unsupported_source(self, handler):
         """Test that unsupported source raises PlotGenerationError."""
-        from aiperf.plot.exceptions import PlotGenerationError
-
         mock_run = MagicMock()
 
         with pytest.raises(PlotGenerationError):

@@ -256,6 +256,67 @@ class TestBaseMultiRunHandler:
         display_names = handler._extract_group_display_names(df, "experiment_group")
         assert display_names is None
 
+    def test_extract_group_display_names_returns_none_for_non_experiment_group(
+        self, mock_plot_generator
+    ):
+        """Returns None when group_by is not 'experiment_group'.
+
+        This is the key fix for the bug where legend showed run_name instead of
+        model name. When grouping by 'model', the group_display_name column
+        (which is derived from experiment_group/run_name) should NOT be used.
+        Instead, the actual model value should be used as the legend label.
+        """
+        # Simulate a DataFrame with multiple runs of the same model
+        # group_display_name is set to run_name (derived from experiment_group)
+        df = pd.DataFrame(
+            {
+                "run_name": ["model_concurrency1", "model_concurrency50"],
+                "model": [
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic",
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic",
+                ],
+                "experiment_group": ["model_concurrency1", "model_concurrency50"],
+                "group_display_name": ["model_concurrency1", "model_concurrency50"],
+                "concurrency": [1, 50],
+                "request_latency": [100.0, 150.0],
+            }
+        )
+        handler = BaseMultiRunHandler(mock_plot_generator)
+
+        # When grouping by 'model', should return None so the actual model
+        # value is used as the legend label (not the run_name)
+        display_names = handler._extract_group_display_names(df, "model")
+        assert display_names is None
+
+    def test_extract_group_display_names_returns_names_for_experiment_group(
+        self, mock_plot_generator
+    ):
+        """Returns display names when group_by is 'experiment_group'.
+
+        When explicitly grouping by experiment_group, the group_display_name
+        column should be used for legend labels.
+        """
+        df = pd.DataFrame(
+            {
+                "run_name": ["model_concurrency1", "model_concurrency50"],
+                "model": [
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic",
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic",
+                ],
+                "experiment_group": ["baseline", "treatment"],
+                "group_display_name": ["Baseline Run", "Treatment Run"],
+                "concurrency": [1, 50],
+                "request_latency": [100.0, 150.0],
+            }
+        )
+        handler = BaseMultiRunHandler(mock_plot_generator)
+
+        # When grouping by 'experiment_group', should return display names
+        display_names = handler._extract_group_display_names(df, "experiment_group")
+        assert display_names is not None
+        assert display_names["baseline"] == "Baseline Run"
+        assert display_names["treatment"] == "Treatment Run"
+
 
 class TestParetoHandler:
     """Tests for ParetoHandler class."""

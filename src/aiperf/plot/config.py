@@ -12,6 +12,7 @@ Loads plot specifications from YAML files with the following priority:
 
 import difflib
 import logging
+import re
 import shutil
 from pathlib import Path
 
@@ -501,8 +502,6 @@ class PlotConfig:
             True if likely a server metric, False otherwise
         """
         # Strip endpoint/label filters first
-        import re
-
         base_name = re.sub(r"\[.*?\]|\{.*?\}", "", metric_name).strip()
 
         # Check for Prometheus namespace convention (most reliable indicator)
