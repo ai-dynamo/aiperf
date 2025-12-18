@@ -3,6 +3,7 @@
 
 """Tests for PlotController."""
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,7 @@ import pytest
 
 from aiperf.plot.constants import PlotMode, PlotTheme
 from aiperf.plot.core.mode_detector import VisualizationMode
+from aiperf.plot.exceptions import ModeDetectionError
 from aiperf.plot.plot_controller import PlotController
 
 
@@ -171,8 +173,6 @@ class TestPlotControllerDetectVisualizationMode:
 
     def test_detect_mode_with_no_valid_runs_raises_error(self, tmp_path: Path) -> None:
         """Test that detection with no valid runs raises ModeDetectionError."""
-        from aiperf.plot.exceptions import ModeDetectionError
-
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
 
@@ -382,8 +382,6 @@ class TestPlotControllerGeneratePNGPlots:
         caplog,
     ) -> None:
         """Test full PNG generation flow for single run."""
-        import logging
-
         # Setup mock
         mock_exporter = MagicMock()
         mock_exporter.export.return_value = [tmp_path / "plot1.png"]
@@ -420,8 +418,6 @@ class TestPlotControllerGeneratePNGPlots:
         caplog,
     ) -> None:
         """Test full PNG generation flow for multi-run."""
-        import logging
-
         # Setup mock
         mock_exporter = MagicMock()
         mock_exporter.export.return_value = [tmp_path / "plot1.png"]

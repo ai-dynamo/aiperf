@@ -380,7 +380,7 @@ class PlotGenerator:
                 self._next_color_index += 1
 
         group_colors = {group: self._group_color_registry[group] for group in groups}
-        return groups, group_colors, {}
+        return groups, group_colors, (group_display_names or {})
 
     def _validate_line_count(self, n_traces: int) -> None:
         """Warn if more than 4 lines/traces in a single plot (once per session)."""

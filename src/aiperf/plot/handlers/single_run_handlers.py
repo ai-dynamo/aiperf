@@ -9,6 +9,7 @@ Handlers for creating plots from single profiling run data.
 
 import logging
 
+import orjson
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -35,6 +36,13 @@ from aiperf.plot.exceptions import (
     PlotGenerationError,
 )
 from aiperf.plot.metric_names import get_all_metric_display_names, get_gpu_metric_unit
+from aiperf.plot.utils import (
+    create_series_legend_label,
+    detect_server_metric_series,
+    filter_server_metrics_dataframe,
+    parse_server_metric_spec,
+)
+from aiperf.server_metrics.histogram_percentiles import compute_prometheus_percentiles
 
 _logger = logging.getLogger(__name__)
 
@@ -247,11 +255,6 @@ class ScatterHandler(BaseSingleRunHandler):
                 )
 
             # Parse metric name and apply filters
-            from aiperf.plot.utils import (
-                filter_server_metrics_dataframe,
-                parse_server_metric_spec,
-            )
-
             metric_name, endpoint_filter, labels_filter = parse_server_metric_spec(
                 y_metric.name
             )
@@ -379,12 +382,6 @@ class AreaHandler(BaseSingleRunHandler):
         Returns:
             DataFrame with timestamp_s and metric value column
         """
-        from aiperf.plot.utils import (
-            detect_server_metric_series,
-            filter_server_metrics_dataframe,
-            parse_server_metric_spec,
-        )
-
         # Parse and filter using shared utility
         base_metric, endpoint_filter, labels_filter = parse_server_metric_spec(
             metric_name
@@ -569,11 +566,6 @@ class TimeSliceHandler(BaseSingleRunHandler):
             )
 
         # Parse metric name for optional endpoint/label filters (using shared utility)
-        from aiperf.plot.utils import (
-            filter_server_metrics_dataframe,
-            parse_server_metric_spec,
-        )
-
         metric_name, endpoint_filter, labels_filter = parse_server_metric_spec(
             y_metric.name
         )
@@ -590,10 +582,6 @@ class TimeSliceHandler(BaseSingleRunHandler):
             ) from e
 
         # Detect if multiple series exist (different endpoint/label combinations)
-        from aiperf.plot.utils import (
-            detect_server_metric_series,
-        )
-
         series_list = detect_server_metric_series(df)
 
         # If multiple series and no explicit filter, create multi-series plot
@@ -658,16 +646,12 @@ class TimeSliceHandler(BaseSingleRunHandler):
         Returns:
             Plotly Figure with multiple traces
         """
-        from aiperf.plot.utils import create_series_legend_label
-
         # Create figure manually with multiple traces
         fig = go.Figure()
 
         total_series = len(series_list)
 
         # Extract all labels for smart filtering
-        import orjson
-
         all_series_labels = [
             orjson.loads(labels_json.encode()) if labels_json != "{}" else {}
             for _, labels_json in series_list
@@ -745,19 +729,21 @@ class TimeSliceHandler(BaseSingleRunHandler):
             Tuple of (average_value, formatted_label, std_value)
         """
         if not data.server_metrics_aggregated:
-            self.debug(
-                lambda: "Server metrics aggregated stats not available. "
-                "Average line will not be displayed. "
-                "Ensure server_metrics_export.json exists alongside Parquet file."
-            )
+            if self.logger:
+                self.logger.debug(
+                    "Server metrics aggregated stats not available. "
+                    "Average line will not be displayed. "
+                    "Ensure server_metrics_export.json exists alongside Parquet file."
+                )
             return None, None, None
 
         if metric_name not in data.server_metrics_aggregated:
-            available = list(data.server_metrics_aggregated.keys())[:5]
-            self.debug(
-                lambda: f"Metric '{metric_name}' not found in aggregated stats. "
-                f"Available metrics: {available}..."
-            )
+            if self.logger:
+                available = list(data.server_metrics_aggregated.keys())[:5]
+                self.logger.debug(
+                    f"Metric '{metric_name}' not found in aggregated stats. "
+                    f"Available metrics: {available}..."
+                )
             return None, None, None
 
         metric_data = data.server_metrics_aggregated[metric_name]
@@ -770,8 +756,6 @@ class TimeSliceHandler(BaseSingleRunHandler):
 
         if endpoint not in metric_data:
             return None, None, None
-
-        import orjson
 
         labels_key = (
             orjson.dumps(labels, option=orjson.OPT_SORT_KEYS).decode()
@@ -960,8 +944,6 @@ class HistogramHandler(BaseSingleRunHandler):
         Returns:
             Plotly Figure with bucket distribution bar chart
         """
-        from aiperf.plot.utils import parse_server_metric_spec
-
         metric_name, endpoint_filter, labels_filter = parse_server_metric_spec(
             y_metric.name
         )
@@ -986,8 +968,6 @@ class HistogramHandler(BaseSingleRunHandler):
                 f"Endpoint '{endpoint_filter}' not found for metric '{metric_name}'",
                 data_type="server_metrics",
             )
-
-        import orjson
 
         labels_key = (
             orjson.dumps(labels_filter, option=orjson.OPT_SORT_KEYS).decode()
@@ -1113,11 +1093,6 @@ class DualAxisHandler(BaseSingleRunHandler):
         Returns:
             DataFrame with timestamp_s and value columns
         """
-        from aiperf.plot.utils import (
-            filter_server_metrics_dataframe,
-            parse_server_metric_spec,
-        )
-
         # Parse and filter using shared utility
         base_metric, endpoint_filter, labels_filter = parse_server_metric_spec(
             metric_name
@@ -1280,8 +1255,6 @@ class PercentileBandsHandler(BaseSingleRunHandler):
         metric_name = y_metric.name
 
         # Parse metric specification (handle endpoint/label filters)
-        from aiperf.plot.utils import parse_server_metric_spec
-
         metric_name, endpoint_filter, labels_filter = parse_server_metric_spec(
             metric_name
         )
@@ -1306,8 +1279,6 @@ class PercentileBandsHandler(BaseSingleRunHandler):
                 f"Endpoint '{endpoint_filter}' not found for metric '{metric_name}'",
                 data_type="server_metrics",
             )
-
-        import orjson
 
         labels_key = (
             orjson.dumps(labels_filter, option=orjson.OPT_SORT_KEYS).decode()
@@ -1334,10 +1305,6 @@ class PercentileBandsHandler(BaseSingleRunHandler):
             )
 
         # Build DataFrame from timeslices
-        from aiperf.server_metrics.histogram_percentiles import (
-            compute_prometheus_percentiles,
-        )
-
         rows = []
         for ts in timeslices:
             timestamp_s = (ts.start_ns + ts.end_ns) / 2 / 1e9  # Midpoint

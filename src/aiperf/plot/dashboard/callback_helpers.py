@@ -12,6 +12,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from aiperf.plot.constants import ALL_STAT_KEYS, STAT_LABELS
+from aiperf.plot.dashboard.utils import (
+    get_single_run_metrics_with_stats,
+    resolve_single_run_column_name,
+)
+from aiperf.plot.metric_names import (
+    get_gpu_metrics,
+    get_metric_display_name,
+    get_metric_display_name_with_unit,
+)
 
 if TYPE_CHECKING:
     from aiperf.plot.core.data_loader import RunData
@@ -228,12 +237,6 @@ def get_single_run_y_metric_options(
     Returns:
         List of metric options with label/value dicts.
     """
-    from aiperf.plot.dashboard.utils import get_single_run_metrics_with_stats
-    from aiperf.plot.metric_names import (
-        get_gpu_metrics,
-        get_metric_display_name_with_unit,
-    )
-
     if plot_type == "timeslice":
         if run.timeslices is not None and not run.timeslices.empty:
             timeslice_metrics = run.timeslices["Metric"].unique().tolist()
@@ -332,9 +335,6 @@ def build_single_run_plot_config(
     Returns:
         Plot configuration dictionary.
     """
-    from aiperf.plot.dashboard.utils import resolve_single_run_column_name
-    from aiperf.plot.metric_names import get_metric_display_name
-
     # Resolve actual column name and generate title
     if plot_type == "timeslice":
         actual_column = y_metric
