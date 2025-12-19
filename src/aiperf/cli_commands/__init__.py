@@ -3,8 +3,9 @@
 """CLI commands for AIPerf."""
 
 from aiperf.cli_commands.analyze_trace import (
+    STAT_COLUMNS,
     analyze_app,
     analyze_trace,
 )
 
-__all__ = ["analyze_app", "analyze_trace"]
+__all__ = ["STAT_COLUMNS", "analyze_app", "analyze_trace"]

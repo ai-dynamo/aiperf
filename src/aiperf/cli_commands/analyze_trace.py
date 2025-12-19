@@ -5,6 +5,8 @@
 from pathlib import Path
 
 from cyclopts import App
+from rich.console import Console
+from rich.table import Table
 
 from aiperf.dataset.synthesis import MetricStats, PrefixAnalyzer
 
@@ -12,49 +14,39 @@ analyze_app = App(
     name="analyze-trace", help="Analyze mooncake trace for prefix statistics"
 )
 
+STAT_COLUMNS = ["Mean", "Std Dev", "Min", "P25", "Median", "P75", "Max"]
 
-def _format_stats_table(
-    metrics: dict[str, MetricStats | None],
-) -> str:
-    """Format metric statistics as a table.
+
+def _build_stats_table(metrics: dict[str, MetricStats | None]) -> Table:
+    """Build a Rich table with metric statistics.
 
     Args:
         metrics: Dictionary mapping metric names to MetricStats objects.
 
     Returns:
-        Formatted table string.
+        Rich Table object.
     """
-    headers = ["", "Mean", "Std Dev", "Min", "P25", "Median", "P75", "Max"]
-    col_widths = [max(len(name) for name in metrics) + 1]
-    col_widths.extend([10] * 7)
+    table = Table(title="Trace Statistics")
+    table.add_column("Metric", justify="right", style="cyan", no_wrap=True)
+    for col in STAT_COLUMNS:
+        table.add_column(col, justify="right", style="green", no_wrap=True)
 
-    # Header row
-    header_line = (
-        "| " + " | ".join(h.rjust(col_widths[i]) for i, h in enumerate(headers)) + " |"
-    )
-    separator = "+" + "+".join("-" * (w + 2) for w in col_widths) + "+"
-
-    lines = [separator, header_line, separator]
-
-    # Data rows
     for name, stats in metrics.items():
         if stats is None:
-            row = [name.ljust(col_widths[0])] + ["N/A".rjust(10)] * 7
+            table.add_row(name, *["[dim]N/A[/dim]"] * len(STAT_COLUMNS))
         else:
-            row = [
-                name.ljust(col_widths[0]),
-                f"{stats.mean:,.2f}".rjust(10),
-                f"{stats.std_dev:,.2f}".rjust(10),
-                f"{stats.min:,.2f}".rjust(10),
-                f"{stats.p25:,.2f}".rjust(10),
-                f"{stats.median:,.2f}".rjust(10),
-                f"{stats.p75:,.2f}".rjust(10),
-                f"{stats.max:,.2f}".rjust(10),
-            ]
-        lines.append("| " + " | ".join(row) + " |")
+            table.add_row(
+                name,
+                f"{stats.mean:,.2f}",
+                f"{stats.std_dev:,.2f}",
+                f"{stats.min:,.2f}",
+                f"{stats.p25:,.2f}",
+                f"{stats.median:,.2f}",
+                f"{stats.p75:,.2f}",
+                f"{stats.max:,.2f}",
+            )
 
-    lines.append(separator)
-    return "\n".join(lines)
+    return table
 
 
 @analyze_app.default
@@ -77,13 +69,16 @@ def analyze_trace(
     analyzer = PrefixAnalyzer(block_size=block_size)
     stats = analyzer.analyze_file(input_file)
 
-    # Print to console
-    print("\nTrace Analysis Report")
-    print(f"Total requests:  {stats.total_requests:,}")
-    print(f"Unique prefixes: {stats.unique_prefixes:,}")
-    print()
+    console = Console(width=120)
 
-    # Build metrics dictionary for table
+    # Print header info
+    console.print()
+    console.print("[bold]Trace Analysis Report[/bold]")
+    console.print(f"Total requests:  {stats.total_requests:,}")
+    console.print(f"Unique prefixes: {stats.unique_prefixes:,}")
+    console.print()
+
+    # Build and print metrics table
     metrics = {
         "Input Length": stats.isl_stats,
         "Context Length": stats.context_length_stats,
@@ -92,11 +87,11 @@ def analyze_trace(
         "Theoretical Hit Rates": stats.hit_rate_stats,
     }
 
-    print(_format_stats_table(metrics))
-    print()
+    console.print(_build_stats_table(metrics))
+    console.print()
 
     # Save to file if specified
     if output_file:
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.write_text(stats.model_dump_json(indent=2))
-        print(f"Analysis report saved to {output_file}")
+        console.print(f"Analysis report saved to {output_file}")
