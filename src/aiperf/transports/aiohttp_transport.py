@@ -150,7 +150,6 @@ class AioHttpTransport(BaseTransport):
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
             json_str = orjson.dumps(payload).decode("utf-8")
-            record = await self.aiohttp_client.post_request(url, json_str, headers)
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
