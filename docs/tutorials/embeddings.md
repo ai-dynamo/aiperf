@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Profile Embedding Models with AIPerf
 
-AIPerf supports benchmarking **embedding models** that convert text into dense vector representations.
+AIPerf supports benchmarking embedding models that convert text into dense vector representations.
 
 This guide covers profiling OpenAI-compatible embedding endpoints using vLLM.
 
@@ -20,15 +20,14 @@ Launch a vLLM server with an embedding model:
 ```bash
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
-  --model nomic-ai/nomic-embed-text-v1.5 \
-  --host 0.0.0.0 --port 8000
+  --model BAAI/bge-small-en-v1.5
 ```
 
 Verify the server is ready:
 ```bash
 curl -s http://localhost:8000/v1/embeddings \
   -H "Content-Type: application/json" \
-  -d '{"model":"nomic-ai/nomic-embed-text-v1.5","input":"test"}' | jq
+  -d '{"model":"BAAI/bge-small-en-v1.5","input":"test"}' | jq
 ```
 
 ### Profile with Synthetic Inputs
@@ -38,7 +37,7 @@ Run AIPerf against the embeddings endpoint using synthetic inputs:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
-    --model nomic-ai/nomic-embed-text-v1.5 \
+    --model BAAI/bge-small-en-v1.5 \
     --endpoint-type embeddings \
     --endpoint /v1/embeddings \
     --synthetic-input-tokens-mean 100 \
@@ -65,7 +64,7 @@ EOF
 Run AIPerf using the custom input file:
 ```bash
 aiperf profile \
-    --model nomic-ai/nomic-embed-text-v1.5 \
+    --model BAAI/bge-small-en-v1.5 \
     --endpoint-type embeddings \
     --endpoint /v1/embeddings \
     --input-file inputs.jsonl \
