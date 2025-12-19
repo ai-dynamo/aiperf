@@ -12,7 +12,12 @@ from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import EndpointDefaults
 from aiperf.common.config.config_validators import parse_str_or_list
 from aiperf.common.config.groups import Groups
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy, TransportType
+from aiperf.common.enums import (
+    ConnectionReuseStrategy,
+    EndpointType,
+    ModelSelectionStrategy,
+    TransportType,
+)
 
 _logger = AIPerfLogger(__name__)
 
@@ -197,3 +202,18 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
+
+    connection_reuse_strategy: Annotated[
+        ConnectionReuseStrategy,
+        Field(
+            description=(
+                "Transport connection reuse strategy. "
+                "'pooled' (default): connections are pooled and reused across all requests. "
+                "'never': new connection for each request, closed after response. "
+            ),
+        ),
+        CLIParameter(
+            name=("--connection-reuse-strategy",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.CONNECTION_REUSE_STRATEGY

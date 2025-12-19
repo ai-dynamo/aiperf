@@ -187,7 +187,7 @@ class _HTTPSettings(BaseSettings):
         description="Maximum number of concurrent HTTP connections",
     )
     KEEPALIVE_TIMEOUT: int = Field(
-        ge=1,
+        ge=0,
         le=10000,
         default=300,
         description="HTTP connection keepalive timeout in seconds for connection pooling",
@@ -239,10 +239,22 @@ class _HTTPSettings(BaseSettings):
         description="TCP user timeout in milliseconds (Linux-specific, detects dead connections)",
     )
     TTL_DNS_CACHE: int = Field(
-        ge=1,
+        ge=0,
         le=1000000,
         default=300,
         description="DNS cache TTL in seconds for aiohttp client sessions",
+    )
+    FORCE_CLOSE: bool = Field(
+        default=False,
+        description="Force close connections after each request",
+    )
+    ENABLE_CLEANUP_CLOSED: bool = Field(
+        default=False,
+        description="Enable cleanup of closed ssl connections",
+    )
+    USE_DNS_CACHE: bool = Field(
+        default=True,
+        description="Enable DNS cache",
     )
 
 

@@ -10,6 +10,8 @@ from aiperf.common.enums import (
     AIPerfUIType,
     AudioFormat,
     CommunicationBackend,
+    ConnectionReuseStrategy,
+    DatasetSamplingStrategy,
     EndpointType,
     ExportLevel,
     ImageFormat,
@@ -21,7 +23,6 @@ from aiperf.common.enums import (
     VideoFormat,
     VideoSynthType,
 )
-from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
 
 
 #
@@ -42,6 +43,7 @@ class EndpointDefaults:
     API_KEY = None
     USE_LEGACY_MAX_TOKENS = False
     USE_SERVER_TOKEN_COUNT = False
+    CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
 
 
 @dataclass(frozen=True)

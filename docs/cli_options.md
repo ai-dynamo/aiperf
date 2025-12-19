@@ -65,6 +65,12 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 
 Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
 
+#### `--connection-reuse-strategy` `<str>`
+
+Transport connection reuse strategy. 'pooled' (default): connections are pooled and reused across all requests. 'never': new connection for each request, closed after response.
+<br>_Choices: [`pooled`, `never`]_
+<br>_Default: `pooled`_
+
 ## Input Options
 
 #### `--extra-inputs` `<list>`
