@@ -56,6 +56,7 @@ from aiperf.dataset.loader import (
 from aiperf.dataset.synthesis import (
     AnalysisStats,
     EmpiricalSampler,
+    MetricStats,
     PrefixAnalyzer,
     RadixNode,
     RadixTree,
@@ -94,6 +95,7 @@ __all__ = [
     "ImageGenerator",
     "MP3_SUPPORTED_SAMPLE_RATES",
     "MediaConversionMixin",
+    "MetricStats",
     "MooncakeTrace",
     "MooncakeTraceDatasetLoader",
     "MultiTurn",

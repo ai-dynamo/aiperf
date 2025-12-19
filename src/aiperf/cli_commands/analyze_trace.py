@@ -6,11 +6,39 @@ from pathlib import Path
 
 from cyclopts import App
 
-from aiperf.dataset.synthesis import PrefixAnalyzer
+from aiperf.dataset.synthesis import MetricStats, PrefixAnalyzer
 
 analyze_app = App(
     name="analyze-trace", help="Analyze mooncake trace for prefix statistics"
 )
+
+
+def _format_metric_stats(name: str, stats: MetricStats | None, indent: int = 2) -> str:
+    """Format metric statistics in a vertical layout.
+
+    Args:
+        name: Name of the metric.
+        stats: MetricStats object or None.
+        indent: Number of spaces for indentation.
+
+    Returns:
+        Formatted string with statistics.
+    """
+    if stats is None:
+        return f"{name}:\n{' ' * indent}No data\n"
+
+    prefix = " " * indent
+    lines = [
+        f"{name}:",
+        f"{prefix}Mean:    {stats.mean:,.2f}",
+        f"{prefix}Std Dev: {stats.std_dev:,.2f}",
+        f"{prefix}Min:     {stats.min:,.2f}",
+        f"{prefix}P25:     {stats.p25:,.2f}",
+        f"{prefix}Median:  {stats.median:,.2f}",
+        f"{prefix}P75:     {stats.p75:,.2f}",
+        f"{prefix}Max:     {stats.max:,.2f}",
+    ]
+    return "\n".join(lines)
 
 
 @analyze_app.default
@@ -38,18 +66,21 @@ def analyze_trace(
     print(f"{'=' * 60}")
     print(f"Total requests:        {stats.total_requests:,}")
     print(f"Unique prefixes:       {stats.unique_prefixes:,}")
-    print(f"Cache hit rate:        {stats.cache_hit_rate:.2%}")
     print(f"Prefix reuse ratio:    {stats.prefix_reuse_ratio:.2%}")
     print()
-    print("ISL (Input Sequence Length):")
-    print(f"  Min:     {stats.min_isl:,}")
-    print(f"  Max:     {stats.max_isl:,}")
-    print(f"  Average: {stats.avg_isl:,.1f}")
+
+    # Print extended statistics in vertical layout
+    print(_format_metric_stats("Input Length", stats.isl_stats))
     print()
-    print("OSL (Output Sequence Length):")
-    print(f"  Min:     {stats.min_osl:,}")
-    print(f"  Max:     {stats.max_osl:,}")
-    print(f"  Average: {stats.avg_osl:,.1f}")
+    print(_format_metric_stats("Context Length", stats.context_length_stats))
+    print()
+    print(
+        _format_metric_stats("Unique Prompt Length", stats.unique_prompt_length_stats)
+    )
+    print()
+    print(_format_metric_stats("Output Length", stats.osl_stats))
+    print()
+    print(_format_metric_stats("Theoretical Hit Rates", stats.hit_rate_stats))
     print(f"{'=' * 60}\n")
 
     # Save to file if specified

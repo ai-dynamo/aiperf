@@ -3,11 +3,12 @@
 """Analyzer for extracting prefix statistics from traces."""
 
 import json
+import statistics
 from collections import Counter
 from pathlib import Path
 
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.dataset.synthesis.models import AnalysisStats
+from aiperf.dataset.synthesis.models import AnalysisStats, MetricStats
 from aiperf.dataset.synthesis.radix_tree import RadixTree
 
 
@@ -43,11 +44,15 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
         self._reset()
         trace_file = Path(trace_file)
 
+        # First pass: collect all data
         with open(trace_file) as f:
             for line in f:
                 if line.strip():
                     data = json.loads(line)
-                    self._process_trace(data)
+                    self._process_trace_first_pass(data)
+
+        # Second pass: compute context lengths
+        self._compute_context_lengths()
 
         return self._compute_stats()
 
@@ -61,20 +66,26 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
             AnalysisStats with computed statistics.
         """
         self._reset()
+        # First pass
         for trace in traces:
-            self._process_trace(trace)
+            self._process_trace_first_pass(trace)
+        # Second pass
+        self._compute_context_lengths()
         return self._compute_stats()
 
     def _reset(self) -> None:
         """Reset internal state."""
         self.isls: list[int] = []
         self.osls: list[int] = []
+        self.context_lengths: list[int] = []
+        self.unique_prompt_lengths: list[int] = []
         self.hash_ids_per_trace: list[list[int]] = []
         self._prefix_tree = RadixTree()
         self._prefix_counter: Counter[tuple[int, ...]] = Counter()
+        self._hash_position_counter: Counter[tuple[int, int]] = Counter()
 
-    def _process_trace(self, trace: dict) -> None:
-        """Process a single trace entry.
+    def _process_trace_first_pass(self, trace: dict) -> None:
+        """First pass: collect basic data and build hash position counter.
 
         Args:
             trace: Dictionary with 'input_length', 'output_length', and optional 'hash_ids'.
@@ -94,6 +105,84 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
             for i in range(1, len(hash_ids) + 1):
                 prefix = tuple(hash_ids[:i])
                 self._prefix_counter[prefix] += 1
+            # Track (position, hash_id) pairs for context length calculation
+            for pos, hash_id in enumerate(hash_ids):
+                self._hash_position_counter[(pos, hash_id)] += 1
+        else:
+            self.hash_ids_per_trace.append([])
+
+    def _compute_context_lengths(self) -> None:
+        """Second pass: compute context and unique prompt lengths."""
+        # Find repeated (position, hash_id) pairs
+        repeated_hash_ids = {
+            (pos, hash_id)
+            for (pos, hash_id), count in self._hash_position_counter.items()
+            if count > 1
+        }
+
+        for isl, hash_ids in zip(self.isls, self.hash_ids_per_trace, strict=True):
+            if not hash_ids:
+                self.context_lengths.append(0)
+                self.unique_prompt_lengths.append(isl)
+                continue
+
+            # Check if all (position, hash_id) pairs are repeated
+            if all(
+                (pos, hash_id) in repeated_hash_ids
+                for pos, hash_id in enumerate(hash_ids)
+            ):
+                context_len = isl
+                unique_prompt_len = 0
+            else:
+                # Count repeated (position, hash_id) pairs
+                repeated_count = sum(
+                    1
+                    for pos, hash_id in enumerate(hash_ids)
+                    if (pos, hash_id) in repeated_hash_ids
+                )
+                context_len = repeated_count * self.block_size
+                unique_prompt_len = isl - context_len
+
+            self.context_lengths.append(context_len)
+            self.unique_prompt_lengths.append(unique_prompt_len)
+
+    def _compute_metric_stats(self, values: list[float | int]) -> MetricStats | None:
+        """Compute full statistics for a list of values.
+
+        Args:
+            values: List of numeric values.
+
+        Returns:
+            MetricStats with mean, std_dev, min, percentiles, max, or None if empty.
+        """
+        if not values:
+            return None
+
+        sorted_values = sorted(values)
+        n = len(sorted_values)
+
+        def percentile(p: float) -> float:
+            """Compute percentile using linear interpolation."""
+            if n == 1:
+                return float(sorted_values[0])
+            k = (n - 1) * p
+            f = int(k)
+            c = f + 1 if f + 1 < n else f
+            return sorted_values[f] + (k - f) * (sorted_values[c] - sorted_values[f])
+
+        mean = sum(values) / n
+        variance = sum((x - mean) ** 2 for x in values) / n
+        std_dev = variance**0.5
+
+        return MetricStats(
+            mean=mean,
+            std_dev=std_dev,
+            min=float(min(values)),
+            p25=percentile(0.25),
+            median=percentile(0.5),
+            p75=percentile(0.75),
+            max=float(max(values)),
+        )
 
     def _compute_stats(self) -> AnalysisStats:
         """Compute final statistics.
@@ -102,7 +191,10 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
             AnalysisStats with all computed metrics.
         """
         total = len(self.isls)
-        cache_hit_rate = self._compute_cache_hit_rate()
+        per_request_hit_rates = self._compute_per_request_hit_rates()
+        cache_hit_rate = (
+            statistics.mean(per_request_hit_rates) if per_request_hit_rates else 0.0
+        )
         prefix_reuse = self._compute_prefix_reuse()
 
         return AnalysisStats(
@@ -116,31 +208,50 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
             max_osl=max(self.osls) if self.osls else 0,
             avg_osl=sum(self.osls) / len(self.osls) if self.osls else 0.0,
             prefix_reuse_ratio=prefix_reuse,
+            # Extended statistics
+            isl_stats=self._compute_metric_stats(self.isls),
+            osl_stats=self._compute_metric_stats(self.osls),
+            context_length_stats=self._compute_metric_stats(self.context_lengths),
+            unique_prompt_length_stats=self._compute_metric_stats(
+                self.unique_prompt_lengths
+            ),
+            hit_rate_stats=self._compute_metric_stats(per_request_hit_rates),
         )
 
-    def _compute_cache_hit_rate(self) -> float:
-        """Compute theoretical cache hit rate assuming infinite cache.
+    def _compute_per_request_hit_rates(self) -> list[float]:
+        """Compute per-request cache hit rates assuming infinite cache.
+
+        For each request, computes the fraction of hash_ids that were already
+        in cache when the request arrived. Uses the dynamo algorithm: finds
+        the first unseen hash_id position to determine hit rate.
 
         Returns:
-            Cache hit rate as a fraction (0.0 to 1.0).
+            List of cache hit rates (0.0 to 1.0) for each request.
         """
         if not self.hash_ids_per_trace:
-            return 0.0
+            return []
 
-        total_blocks = 0
-        reused_blocks = 0
-
-        seen_blocks: set[int] = set()
+        seen_hash_ids: set[int] = set()
+        hit_rates: list[float] = []
 
         for hash_ids in self.hash_ids_per_trace:
-            for hash_id in hash_ids:
-                total_blocks += 1
-                if hash_id in seen_blocks:
-                    reused_blocks += 1
-                else:
-                    seen_blocks.add(hash_id)
+            if not hash_ids:
+                continue
 
-        return reused_blocks / total_blocks if total_blocks > 0 else 0.0
+            # Find first index where hash_id hasn't been seen
+            first_unseen_idx = len(hash_ids)
+            for idx, hash_id in enumerate(hash_ids):
+                if hash_id not in seen_hash_ids:
+                    first_unseen_idx = idx
+                    break
+
+            hit_rate = first_unseen_idx / len(hash_ids)
+            hit_rates.append(hit_rate)
+
+            # Add all hash_ids to seen set
+            seen_hash_ids.update(hash_ids)
+
+        return hit_rates
 
     def _compute_prefix_reuse(self) -> float:
         """Compute ratio of reused prefixes to total prefixes.

@@ -17,6 +17,7 @@ from aiperf.dataset.synthesis.integration import (
 )
 from aiperf.dataset.synthesis.models import (
     AnalysisStats,
+    MetricStats,
     SynthesisParams,
 )
 from aiperf.dataset.synthesis.prefix_analyzer import (
@@ -36,6 +37,7 @@ from aiperf.dataset.synthesis.synthesizer import (
 __all__ = [
     "AnalysisStats",
     "EmpiricalSampler",
+    "MetricStats",
     "PrefixAnalyzer",
     "RadixNode",
     "RadixTree",

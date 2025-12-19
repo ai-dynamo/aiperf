@@ -7,6 +7,18 @@ from pydantic import Field
 from aiperf.common.models import AIPerfBaseModel
 
 
+class MetricStats(AIPerfBaseModel):
+    """Statistics for a single metric."""
+
+    mean: float = Field(description="Mean value")
+    std_dev: float = Field(description="Standard deviation")
+    min: float = Field(description="Minimum value")
+    p25: float = Field(description="25th percentile")
+    median: float = Field(description="Median (50th percentile)")
+    p75: float = Field(description="75th percentile")
+    max: float = Field(description="Maximum value")
+
+
 class AnalysisStats(AIPerfBaseModel):
     """Statistics extracted from trace analysis."""
 
@@ -23,6 +35,22 @@ class AnalysisStats(AIPerfBaseModel):
     avg_osl: float = Field(description="Average output sequence length")
     prefix_reuse_ratio: float = Field(
         description="Ratio of reused prefixes to total prefixes (0.0 to 1.0)"
+    )
+    # Extended statistics matching prefix_data_generator output
+    isl_stats: MetricStats | None = Field(
+        default=None, description="Full statistics for input sequence length"
+    )
+    osl_stats: MetricStats | None = Field(
+        default=None, description="Full statistics for output sequence length"
+    )
+    context_length_stats: MetricStats | None = Field(
+        default=None, description="Full statistics for context (shared prefix) length"
+    )
+    unique_prompt_length_stats: MetricStats | None = Field(
+        default=None, description="Full statistics for unique prompt length"
+    )
+    hit_rate_stats: MetricStats | None = Field(
+        default=None, description="Full statistics for per-request cache hit rates"
     )
 
 
