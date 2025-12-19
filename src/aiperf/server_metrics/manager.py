@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -186,7 +187,7 @@ class ServerMetricsManager(BaseComponentService):
         """
         if not self._collectors:
             # Server metrics disabled status already sent in _profile_configure_command, only shutdown here
-            await self.stop()
+            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
             return
 
         started_count = 0
@@ -206,7 +207,7 @@ class ServerMetricsManager(BaseComponentService):
                 endpoints_configured=self._server_metrics_endpoints,
                 endpoints_reachable=[],
             )
-            await self.stop()
+            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
             return
         elif started_count < total_collectors:
             self.warning(
@@ -307,6 +308,15 @@ class ServerMetricsManager(BaseComponentService):
                 await collector.stop()
             except Exception as e:
                 self.error(f"Failed to stop collector for {endpoint_url}: {e}")
+
+    async def _delayed_shutdown(self) -> None:
+        """Shutdown service after a delay to allow command response to be sent.
+
+        Waits before calling stop() to ensure the command response
+        has time to be published and transmitted to the SystemController.
+        """
+        await asyncio.sleep(Environment.SERVER_METRICS.SHUTDOWN_DELAY)
+        await self.stop()
 
     async def _on_server_metrics_records(
         self, records: list[ServerMetricsRecord], collector_id: str
