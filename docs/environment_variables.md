@@ -51,7 +51,7 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_HTTP_CONNECTION_LIMIT` | `2500` | ≥ 1, ≤ 65000 | Maximum number of concurrent HTTP connections |
-| `AIPERF_HTTP_KEEPALIVE_TIMEOUT` | `300` | ≥ 1, ≤ 10000 | HTTP connection keepalive timeout in seconds for connection pooling |
+| `AIPERF_HTTP_KEEPALIVE_TIMEOUT` | `300` | ≥ 0, ≤ 10000 | HTTP connection keepalive timeout in seconds for connection pooling |
 | `AIPERF_HTTP_SO_RCVBUF` | `10485760` | ≥ 1024 | Socket receive buffer size in bytes (default: 10MB for high-throughput streaming) |
 | `AIPERF_HTTP_SO_RCVTIMEO` | `30` | ≥ 1, ≤ 100000 | Socket receive timeout in seconds |
 | `AIPERF_HTTP_SO_SNDBUF` | `10485760` | ≥ 1024 | Socket send buffer size in bytes (default: 10MB for high-throughput streaming) |
@@ -60,7 +60,10 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | `AIPERF_HTTP_TCP_KEEPIDLE` | `60` | ≥ 1, ≤ 100000 | Time in seconds before starting TCP keepalive probes on idle connections |
 | `AIPERF_HTTP_TCP_KEEPINTVL` | `30` | ≥ 1, ≤ 100000 | Interval in seconds between TCP keepalive probes |
 | `AIPERF_HTTP_TCP_USER_TIMEOUT` | `30000` | ≥ 1, ≤ 1000000 | TCP user timeout in milliseconds (Linux-specific, detects dead connections) |
-| `AIPERF_HTTP_TTL_DNS_CACHE` | `300` | ≥ 1, ≤ 1000000 | DNS cache TTL in seconds for aiohttp client sessions |
+| `AIPERF_HTTP_TTL_DNS_CACHE` | `300` | ≥ 0, ≤ 1000000 | DNS cache TTL in seconds for aiohttp client sessions |
+| `AIPERF_HTTP_FORCE_CLOSE` | `False` | — | Force close connections after each request |
+| `AIPERF_HTTP_ENABLE_CLEANUP_CLOSED` | `False` | — | Enable cleanup of closed ssl connections |
+| `AIPERF_HTTP_USE_DNS_CACHE` | `True` | — | Enable DNS cache |
 
 ## LOGGING
 

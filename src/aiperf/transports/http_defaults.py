@@ -69,9 +69,11 @@ class AioHttpDefaults:
         0  # Maximum number of concurrent connections per host (0 will set to LIMIT)
     )
     TTL_DNS_CACHE = Environment.HTTP.TTL_DNS_CACHE  # Time to live for DNS cache
-    USE_DNS_CACHE = True  # Enable DNS cache
-    ENABLE_CLEANUP_CLOSED = False  # Disable cleanup of closed connections
-    FORCE_CLOSE = False  # Disable force close connections
+    USE_DNS_CACHE = Environment.HTTP.USE_DNS_CACHE  # Enable DNS cache
+    ENABLE_CLEANUP_CLOSED = (
+        Environment.HTTP.ENABLE_CLEANUP_CLOSED
+    )  # Disable cleanup of closed connections
+    FORCE_CLOSE = Environment.HTTP.FORCE_CLOSE  # Disable force close connections
     KEEPALIVE_TIMEOUT = Environment.HTTP.KEEPALIVE_TIMEOUT  # Keepalive timeout
     HAPPY_EYEBALLS_DELAY = None  # Happy eyeballs delay (None = disabled)
     SOCKET_FAMILY = socket.AF_INET  # Family of the socket (IPv4)
@@ -82,11 +84,11 @@ class AioHttpDefaults:
         return {
             "limit": cls.LIMIT,
             "limit_per_host": cls.LIMIT_PER_HOST,
-            "ttl_dns_cache": cls.TTL_DNS_CACHE,
+            "ttl_dns_cache": cls.TTL_DNS_CACHE or None,
             "use_dns_cache": cls.USE_DNS_CACHE,
             "enable_cleanup_closed": cls.ENABLE_CLEANUP_CLOSED,
             "force_close": cls.FORCE_CLOSE,
-            "keepalive_timeout": cls.KEEPALIVE_TIMEOUT,
+            "keepalive_timeout": cls.KEEPALIVE_TIMEOUT or None,
             "happy_eyeballs_delay": cls.HAPPY_EYEBALLS_DELAY,
             "family": cls.SOCKET_FAMILY,
         }

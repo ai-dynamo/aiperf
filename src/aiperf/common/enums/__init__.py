@@ -82,6 +82,7 @@ from aiperf.common.enums.model_enums import (
 )
 from aiperf.common.enums.plugin_enums import (
     AIPerfUIType,
+    ConnectionReuseStrategy,
     EndpointType,
     TransportType,
 )
@@ -132,6 +133,7 @@ __all__ = [
     "CommandType",
     "CommunicationBackend",
     "ComposerType",
+    "ConnectionReuseStrategy",
     "ConsoleExporterType",
     "CreditPhase",
     "CustomDatasetType",
