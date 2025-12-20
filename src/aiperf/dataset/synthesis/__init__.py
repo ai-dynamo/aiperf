@@ -29,6 +29,8 @@ from aiperf.dataset.synthesis.radix_tree import (
 )
 from aiperf.dataset.synthesis.rolling_hasher import (
     RollingHasher,
+    hashes_to_texts,
+    texts_to_hashes,
 )
 from aiperf.dataset.synthesis.synthesizer import (
     Synthesizer,
@@ -47,7 +49,9 @@ __all__ = [
     "Synthesizer",
     "compute_transition_cdfs",
     "get_tree_stats",
+    "hashes_to_texts",
     "merge_unary_chains",
     "remove_leaves",
+    "texts_to_hashes",
     "validate_tree",
 ]

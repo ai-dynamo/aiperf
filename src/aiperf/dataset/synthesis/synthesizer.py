@@ -134,39 +134,55 @@ class Synthesizer(AIPerfLoggerMixin):
     def _apply_multipliers(self, hash_ids: list[int]) -> list[int]:
         """Apply multiplier transformations to hash IDs.
 
+        New hash IDs are generated as consecutive integers continuing from
+        the last hash ID in the specific list. Two hash_ids sharing the same
+        integers represents prefix overlap.
+
         Args:
             hash_ids: Original hash IDs from trace.
 
         Returns:
-            Transformed hash IDs.
+            Transformed hash IDs with new consecutive integers for extensions.
         """
         if not hash_ids:
             return []
 
-        # Apply prefix length multiplier
+        # Start with original hash_ids (preserves prefix overlap)
         scaled_ids = hash_ids[:]
+        # Next ID continues from the last one in this specific list (not the max)
+        next_id = hash_ids[-1] + 1
 
         if self.params.prefix_len_multiplier != 1.0:
-            # Extend core prefix based on multiplier
             scale = self.params.prefix_len_multiplier
             if scale > 1.0:
-                # Replicate ids to extend prefix
-                num_to_add = int(len(scaled_ids) * (scale - 1))
-                scaled_ids.extend(scaled_ids[:num_to_add])
+                # Extend prefix with NEW consecutive hash IDs
+                num_to_add = int(len(hash_ids) * (scale - 1))
+                for _ in range(num_to_add):
+                    scaled_ids.append(next_id)
+                    next_id += 1
             elif scale < 1.0:
                 # Shorten prefix
                 num_to_keep = max(1, int(len(scaled_ids) * scale))
                 scaled_ids = scaled_ids[:num_to_keep]
 
-        # Apply prompt length multiplier (affects last unique block)
+        # Apply prompt length multiplier (affects unique prompt portion)
         if self.params.prompt_len_multiplier != 1.0 and scaled_ids:
-            # The prompt multiplier affects synthesis of unique tokens
-            # For now, we apply it proportionally to the last element
-            pass  # Implementation depends on token-level synthesis
+            prompt_scale = self.params.prompt_len_multiplier
+            if prompt_scale > 1.0:
+                # Add new hash IDs for extended prompt portion
+                num_to_add = int(prompt_scale - 1)
+                for _ in range(num_to_add):
+                    scaled_ids.append(next_id)
+                    next_id += 1
 
-        # Apply root replication (tree replication)
+        # Apply root replication (creates independent trees with new IDs)
         if self.params.prefix_root_multiplier > 1:
-            scaled_ids = scaled_ids * self.params.prefix_root_multiplier
+            original_len = len(scaled_ids)
+            for _ in range(self.params.prefix_root_multiplier - 1):
+                # Generate new IDs for each replication
+                for _ in range(original_len):
+                    scaled_ids.append(next_id)
+                    next_id += 1
 
         return scaled_ids
 

@@ -51,14 +51,16 @@ class SynthesisIntegration(AIPerfLoggerMixin):
         Args:
             conversations: Input conversations to synthesize.
             is_synthetic_data: If True, generate hash_ids before synthesis.
+                Note: hash_ids are always generated if missing, regardless of this flag.
 
         Returns:
             Tuple of (synthesized conversations, synthesized traces for file output).
         """
         # Convert to mooncake format
+        # Always generate hash_ids if missing - needed for prefix-aware synthesis
         traces = self._conversations_to_mooncake_traces(
             conversations,
-            generate_hash_ids=is_synthetic_data,
+            generate_hash_ids=True,
         )
 
         self.info(

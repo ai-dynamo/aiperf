@@ -66,8 +66,10 @@ from aiperf.dataset.synthesis import (
     Synthesizer,
     compute_transition_cdfs,
     get_tree_stats,
+    hashes_to_texts,
     merge_unary_chains,
     remove_leaves,
+    texts_to_hashes,
     validate_tree,
 )
 from aiperf.dataset.utils import (
@@ -124,10 +126,12 @@ __all__ = [
     "compute_transition_cdfs",
     "encode_image",
     "get_tree_stats",
+    "hashes_to_texts",
     "main",
     "merge_unary_chains",
     "open_image",
     "parallel_decode",
     "remove_leaves",
+    "texts_to_hashes",
     "validate_tree",
 ]

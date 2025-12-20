@@ -1,8 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Rolling hasher for converting text blocks to unique hash IDs."""
+"""Rolling hasher for converting text blocks to unique hash IDs.
+
+Provides functions for converting between texts and hash IDs:
+- texts_to_hashes: Convert texts to hash ID sequences
+- hashes_to_texts: Convert hash IDs back to reproducible texts
+
+The hash IDs are consecutive integers where shared values between
+sequences represent prefix overlap (cache hits).
+"""
+
+from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+from aiperf.common.tokenizer import Tokenizer
+
+if TYPE_CHECKING:
+    from aiperf.dataset.generator import PromptGenerator
 
 
 class RollingHasher:
@@ -86,3 +102,112 @@ class RollingHasher:
             "total_hashes": len(self._hash_to_id),
             "max_id": self._id_counter - 1 if self._id_counter > 0 else 0,
         }
+
+    def hash_token_blocks(self, blocks: Sequence[Sequence[int]]) -> list[int]:
+        """Convert a sequence of token blocks to hash IDs.
+
+        Args:
+            blocks: Sequence of token blocks (each block is a sequence of token IDs).
+
+        Returns:
+            List of unique hash IDs corresponding to each block.
+        """
+        hash_ids: list[int] = []
+        parent_hash = 0
+
+        for block in blocks:
+            block_tuple = tuple(block) if not isinstance(block, tuple) else block
+            combined = (parent_hash, hash(block_tuple))
+            global_hash = hash(combined)
+
+            if global_hash not in self._hash_to_id:
+                self._hash_to_id[global_hash] = self._id_counter
+                self._id_counter += 1
+
+            hash_ids.append(self._hash_to_id[global_hash])
+            parent_hash = global_hash
+
+        return hash_ids
+
+
+def texts_to_hashes(
+    tokenizer: Tokenizer,
+    texts: list[str],
+    block_size: int = 512,
+) -> list[list[int]]:
+    """Convert a list of texts to hash ID sequences.
+
+    Tokenizes texts, splits into blocks, and generates consecutive hash IDs.
+    Shared hash IDs between texts represent prefix overlap (cache hits).
+
+    Args:
+        tokenizer: Tokenizer for encoding texts.
+        texts: List of input text strings.
+        block_size: Number of tokens per block (default: 512).
+
+    Returns:
+        List of hash ID sequences, one per input text.
+        len(hash_ids) == input_length // block_size for each text.
+    """
+    hasher = RollingHasher(block_size=block_size)
+    results: list[list[int]] = []
+
+    for text in texts:
+        tokens = tokenizer.encode(text)
+        blocks: list[list[int]] = [
+            tokens[i : i + block_size] for i in range(0, len(tokens), block_size)
+        ]
+        if blocks:
+            hashes = hasher.hash_token_blocks(blocks)
+            results.append(hashes)
+        else:
+            results.append([])
+
+    return results
+
+
+def hashes_to_texts(
+    prompt_generator: PromptGenerator,
+    hash_ids_list: list[list[int]],
+    input_lengths: list[int],
+    block_size: int = 512,
+) -> list[str]:
+    """Convert hash ID sequences back to text strings.
+
+    Uses the PromptGenerator's cache to ensure the same hash ID always produces
+    the same token block, enabling prefix sharing. Text is generated from the
+    Shakespeare corpus used by PromptGenerator.
+
+    Args:
+        prompt_generator: PromptGenerator instance for generating text from hash_ids.
+        hash_ids_list: List of hash ID sequences.
+        input_lengths: Target input lengths (in tokens) for each sequence.
+        block_size: Number of tokens per block (default: 512).
+
+    Returns:
+        List of text strings, one per hash ID sequence.
+
+    Raises:
+        ValueError: If len(hash_ids) * block_size < input_length for any sequence.
+    """
+    results: list[str] = []
+
+    for hash_ids, input_len in zip(hash_ids_list, input_lengths, strict=True):
+        # Verify constraint: len(hash_ids) * block_size >= input_len
+        if hash_ids and len(hash_ids) * block_size < input_len:
+            raise ValueError(
+                f"Constraint violation: len(hash_ids) * block_size "
+                f"({len(hash_ids) * block_size}) < input_len ({input_len})"
+            )
+
+        if hash_ids:
+            # Use PromptGenerator to generate text from hash_ids
+            # This uses the Shakespeare corpus and caches blocks by hash_id
+            text = prompt_generator.generate(mean=input_len, hash_ids=hash_ids)
+        else:
+            # No hash_ids - generate plain text of target length
+            text = prompt_generator.generate(mean=input_len)
+
+        results.append(text)
+
+    return results
