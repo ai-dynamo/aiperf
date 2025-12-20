@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -239,22 +239,40 @@ class TestProfileStartCommand:
         mock_collector.start.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_start_with_no_collectors(
+    async def test_start_triggers_delayed_shutdown_when_no_collectors(
         self,
         service_config: ServiceConfig,
         user_config_with_endpoint: UserConfig,
     ):
-        """Test start command when no collectors configured."""
+        """Test that start triggers delayed shutdown when no collectors available.
+
+        When no endpoints are reachable, the manager should use delayed shutdown
+        to allow the command response to be sent before stopping. This prevents
+        timeout errors in the SystemController.
+        """
+
+        def close_coroutine(coro):
+            coro.close()
+            return MagicMock()
+
         manager = ServerMetricsManager(
             service_config=service_config,
             user_config=user_config_with_endpoint,
         )
+        manager._collectors = {}  # No collectors
 
-        await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
+        with patch(
+            "asyncio.create_task", side_effect=close_coroutine
+        ) as mock_create_task:
+            await manager._on_start_profiling(
+                ProfileStartCommand(
+                    service_id=manager.id, command=CommandType.PROFILE_START
+                )
             )
-        )
+
+            # Verify delayed shutdown was scheduled via asyncio.create_task
+            mock_create_task.assert_called_once()
+            assert hasattr(manager, "_shutdown_task")
 
     @pytest.mark.asyncio
     async def test_start_handles_initialization_failure(
@@ -277,6 +295,44 @@ class TestProfileStartCommand:
                 service_id=manager.id, command=CommandType.PROFILE_START
             )
         )
+
+    @pytest.mark.asyncio
+    async def test_start_triggers_delayed_shutdown_when_all_collectors_fail(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that start triggers delayed shutdown when all collectors fail to start.
+
+        When all collectors fail to start, the manager should use delayed shutdown
+        to allow the command response to be sent before stopping.
+        """
+
+        def close_coroutine(coro):
+            coro.close()
+            return MagicMock()
+
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        mock_collector = AsyncMock()
+        mock_collector.start.side_effect = Exception("Start failed")
+        manager._collectors["http://localhost:8081/metrics"] = mock_collector
+
+        with patch(
+            "asyncio.create_task", side_effect=close_coroutine
+        ) as mock_create_task:
+            await manager._on_start_profiling(
+                ProfileStartCommand(
+                    service_id=manager.id, command=CommandType.PROFILE_START
+                )
+            )
+
+            # Verify delayed shutdown was scheduled via asyncio.create_task
+            mock_create_task.assert_called_once()
+            assert hasattr(manager, "_shutdown_task")
 
 
 class TestManagerCallbackFunctionality:

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -84,6 +85,9 @@ class ServerMetricsManager(BaseComponentService):
 
         # Use server metrics collection interval
         self._collection_interval = Environment.SERVER_METRICS.COLLECTION_INTERVAL
+
+        # Task for delayed shutdown, created when no endpoints are reachable
+        self._shutdown_task: asyncio.Task[None] | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -186,7 +190,7 @@ class ServerMetricsManager(BaseComponentService):
         """
         if not self._collectors:
             # Server metrics disabled status already sent in _profile_configure_command, only shutdown here
-            await self.stop()
+            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
             return
 
         started_count = 0
@@ -206,7 +210,7 @@ class ServerMetricsManager(BaseComponentService):
                 endpoints_configured=self._server_metrics_endpoints,
                 endpoints_reachable=[],
             )
-            await self.stop()
+            self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
             return
         elif started_count < total_collectors:
             self.warning(
@@ -282,7 +286,24 @@ class ServerMetricsManager(BaseComponentService):
         Ensures all collectors are properly stopped and cleaned up even if shutdown
         command was not received.
         """
+        await self._cancel_shutdown_task()
         await self._stop_all_collectors()
+
+    async def _cancel_shutdown_task(self) -> None:
+        """Cancel the delayed shutdown task if it exists and is still running."""
+        if self._shutdown_task is not None and not self._shutdown_task.done():
+            shutdown_task = self._shutdown_task
+            self.debug("Cancelling delayed shutdown task")
+            shutdown_task.cancel()
+            try:
+                await asyncio.wait_for(
+                    shutdown_task, timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT
+                )
+            except asyncio.TimeoutError:
+                self.warning("Timed out waiting for delayed shutdown task to complete")
+            finally:
+                self._shutdown_task = None
+                self.debug("Delayed shutdown task cancelled")
 
     async def _stop_all_collectors(self) -> None:
         """Stop all server metrics collectors.
@@ -307,6 +328,15 @@ class ServerMetricsManager(BaseComponentService):
                 await collector.stop()
             except Exception as e:
                 self.error(f"Failed to stop collector for {endpoint_url}: {e}")
+
+    async def _delayed_shutdown(self) -> None:
+        """Shutdown service after a delay to allow command response to be sent.
+
+        Waits before calling stop() to ensure the command response
+        has time to be published and transmitted to the SystemController.
+        """
+        await asyncio.sleep(Environment.SERVER_METRICS.SHUTDOWN_DELAY)
+        await self.stop()
 
     async def _on_server_metrics_records(
         self, records: list[ServerMetricsRecord], collector_id: str
