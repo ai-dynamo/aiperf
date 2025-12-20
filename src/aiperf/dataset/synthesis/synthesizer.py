@@ -100,6 +100,17 @@ class Synthesizer(AIPerfLoggerMixin):
             isl = self._sample_isl()
             osl = self._sample_osl()
 
+            # Ensure ISL is compatible with hash_ids
+            # Constraint: 0 < isl - (len(hash_ids)-1)*block_size <= block_size
+            # This means: (len(hash_ids)-1)*block_size < isl <= len(hash_ids)*block_size
+            if new_hash_ids:
+                min_isl = (len(new_hash_ids) - 1) * self.params.block_size + 1
+                max_isl_for_hashes = len(new_hash_ids) * self.params.block_size
+                if isl < min_isl:
+                    isl = min_isl
+                elif isl > max_isl_for_hashes:
+                    isl = max_isl_for_hashes
+
             # Apply max_isl filter
             if self.params.max_isl and isl > self.params.max_isl:
                 isl = self.params.max_isl
