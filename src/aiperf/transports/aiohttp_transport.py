@@ -9,12 +9,12 @@ from typing import Any
 
 import orjson
 
-from aiperf.common.enums import TransportType
+from aiperf.common.enums import ConnectionReuseStrategy, TransportType
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.factories import TransportFactory
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord
-from aiperf.transports.aiohttp_client import AioHttpClient
+from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
 from aiperf.transports.base_transports import BaseTransport, TransportMetadata
 
 
@@ -39,7 +39,7 @@ class AioHttpTransport(BaseTransport):
             **kwargs: Additional arguments passed to parent classes
         """
         super().__init__(**kwargs)
-        self.tcp_kwargs = tcp_kwargs
+        self.tcp_kwargs = tcp_kwargs or {}
         self.aiohttp_client = None
 
     @on_init
@@ -144,13 +144,42 @@ class AioHttpTransport(BaseTransport):
 
         start_perf_ns = time.perf_counter_ns()
         headers = None
+        reuse_strategy = self.model_endpoint.endpoint.connection_reuse_strategy
+
         try:
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
-
-            # Serialize with orjson for performance
             json_str = orjson.dumps(payload).decode("utf-8")
-            record = await self.aiohttp_client.post_request(url, json_str, headers)
+
+            match reuse_strategy:
+                case ConnectionReuseStrategy.NEVER:
+                    # Create a new connector for this request, and have aiohttp
+                    # close it when the request is done by setting connector_owner to True
+                    kwargs = self.tcp_kwargs.copy()
+                    kwargs["force_close"] = True
+                    kwargs["limit"] = 1
+                    kwargs["keepalive_timeout"] = None
+                    connector = create_tcp_connector(**kwargs)
+                    connector_owner = True
+
+                case ConnectionReuseStrategy.POOLED:
+                    # Setting connector to None uses the shared pool internally, and connector_owner
+                    # is set to False to ensure the connector is not closed automatically by aiohttp.
+                    connector = None
+                    connector_owner = False
+
+                case _:
+                    raise ValueError(
+                        f"Invalid connection reuse strategy: {self.model_endpoint.endpoint.connection_reuse_strategy}"
+                    )
+
+            record = await self.aiohttp_client.post_request(
+                url,
+                json_str,
+                headers,
+                connector=connector,
+                connector_owner=connector_owner,
+            )
             record.request_headers = headers
         except Exception as e:
             # Capture all exceptions with timing and error details

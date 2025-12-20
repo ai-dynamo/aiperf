@@ -39,3 +39,15 @@ class TransportType(CaseInsensitiveStrEnum):
     """The various types of transports for an endpoint."""
 
     HTTP = "http"
+
+
+class ConnectionReuseStrategy(CaseInsensitiveStrEnum):
+    """Transport connection reuse strategy.
+
+    Controls how connections are reused across requests:
+    - POOLED: Connections are pooled and reused across all requests (default)
+    - NEVER: New connection for each request, closed after response
+    """
+
+    POOLED = "pooled"
+    NEVER = "never"

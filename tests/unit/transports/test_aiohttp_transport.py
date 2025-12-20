@@ -70,7 +70,7 @@ class TestAioHttpTransport:
     @pytest.mark.asyncio
     async def test_init_with_default_tcp_kwargs(self, transport):
         """Test initialization with default TCP kwargs."""
-        assert transport.tcp_kwargs is None
+        assert transport.tcp_kwargs == {}
         assert transport.aiohttp_client is None
 
     @pytest.mark.asyncio

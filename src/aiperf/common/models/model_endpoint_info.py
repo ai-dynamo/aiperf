@@ -12,7 +12,12 @@ from typing import Any
 from pydantic import Field
 
 from aiperf.common.config import EndpointDefaults, UserConfig
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy, TransportType
+from aiperf.common.enums import (
+    ConnectionReuseStrategy,
+    EndpointType,
+    ModelSelectionStrategy,
+    TransportType,
+)
 from aiperf.common.models import AIPerfBaseModel
 
 
@@ -107,9 +112,14 @@ class EndpointInfo(AIPerfBaseModel):
         description="Use server-reported token counts from API usage fields instead of client-side tokenization.",
     )
 
+    connection_reuse_strategy: ConnectionReuseStrategy = Field(
+        default=EndpointDefaults.CONNECTION_REUSE_STRATEGY,
+        description="Transport connection reuse strategy.",
+    )
+
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> "EndpointInfo":
-        """Create an HttpEndpointInfo from a UserConfig."""
+        """Create an EndpointInfo from a UserConfig."""
         return cls(
             type=user_config.endpoint.type,
             custom_endpoint=user_config.endpoint.custom_endpoint,
@@ -121,6 +131,7 @@ class EndpointInfo(AIPerfBaseModel):
             api_key=user_config.endpoint.api_key,
             use_legacy_max_tokens=user_config.endpoint.use_legacy_max_tokens,
             use_server_token_count=user_config.endpoint.use_server_token_count,
+            connection_reuse_strategy=user_config.endpoint.connection_reuse_strategy,
         )
 
 
