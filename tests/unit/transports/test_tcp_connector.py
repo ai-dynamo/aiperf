@@ -37,11 +37,16 @@ class TestCreateTcpConnector:
             # Verify default parameters
             assert call_kwargs["limit"] == Environment.HTTP.CONNECTION_LIMIT
             assert call_kwargs["limit_per_host"] == 0
-            assert call_kwargs["ttl_dns_cache"] == 300
-            assert call_kwargs["use_dns_cache"] is True
-            assert call_kwargs["enable_cleanup_closed"] is False
-            assert call_kwargs["force_close"] is False
-            assert call_kwargs["keepalive_timeout"] == 300
+            assert call_kwargs["ttl_dns_cache"] == Environment.HTTP.TTL_DNS_CACHE
+            assert call_kwargs["use_dns_cache"] is Environment.HTTP.USE_DNS_CACHE
+            assert (
+                call_kwargs["enable_cleanup_closed"]
+                is Environment.HTTP.ENABLE_CLEANUP_CLOSED
+            )
+            assert call_kwargs["force_close"] is Environment.HTTP.FORCE_CLOSE
+            assert (
+                call_kwargs["keepalive_timeout"] == Environment.HTTP.KEEPALIVE_TIMEOUT
+            )
             assert call_kwargs["happy_eyeballs_delay"] is None
             assert call_kwargs["family"] == socket.AF_INET
             assert callable(call_kwargs["socket_factory"])
@@ -71,7 +76,7 @@ class TestCreateTcpConnector:
             assert call_kwargs["keepalive_timeout"] == 120
 
             # Verify other defaults are preserved
-            assert call_kwargs["use_dns_cache"] is True
+            assert call_kwargs["use_dns_cache"] is Environment.HTTP.USE_DNS_CACHE
             assert call_kwargs["family"] == socket.AF_INET
 
     def test_socket_factory_configuration(self, socket_factory_setup) -> None:
