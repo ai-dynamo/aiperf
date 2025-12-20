@@ -100,7 +100,7 @@ class RollingHasher:
         """
         return {
             "total_hashes": len(self._hash_to_id),
-            "max_id": self._id_counter - 1 if self._id_counter > 0 else 0,
+            "max_id": self._id_counter - 1 if self._id_counter > 0 else -1,
         }
 
     def hash_token_blocks(self, blocks: Sequence[Sequence[int]]) -> list[int]:

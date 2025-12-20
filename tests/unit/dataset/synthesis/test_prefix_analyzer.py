@@ -132,8 +132,11 @@ class TestPrefixAnalyzer:
         analyzer = PrefixAnalyzer()
         stats = analyzer.analyze_traces(traces)
 
-        # All hash IDs are reused
-        assert stats.cache_hit_rate == 1.0
+        # First trace: 2 misses (cold cache)
+        # Second trace: 2 hits (already seen)
+        # Third trace: 2 hits (already seen)
+        # Total: 6 blocks, 4 hits = 4/6 = 0.6667
+        assert abs(stats.cache_hit_rate - (4 / 6)) < 0.01
 
     # ============================================================================
     # Prefix Reuse Tests

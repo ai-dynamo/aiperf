@@ -34,6 +34,10 @@ def merge_unary_chains(tree: RadixTree) -> None:
                 new_label = (node.label or 0) + child.label
                 grandchild_label, grandchild = next(iter(child.children.items()))
 
+                # Remove child from tree's internal tracking
+                if child.node_id in tree._nodes_by_id:
+                    del tree._nodes_by_id[child.node_id]
+
                 node.children.clear()
                 node.add_child(grandchild_label, grandchild)
                 grandchild.label = new_label
@@ -59,6 +63,9 @@ def remove_leaves(tree: RadixTree, visit_threshold: int = 1) -> None:
             for label, child in list(leaf.parent.children.items()):
                 if child.node_id == leaf.node_id:
                     del leaf.parent.children[label]
+                    # Also remove from tree's internal tracking
+                    if leaf.node_id in tree._nodes_by_id:
+                        del tree._nodes_by_id[leaf.node_id]
                     break
 
 

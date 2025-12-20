@@ -70,8 +70,8 @@ class EmpiricalSampler:
             Dictionary with distribution statistics.
         """
         return {
-            "min": int(self._values[0]),
-            "max": int(self._values[-1]),
+            "min": float(self._values[0]),
+            "max": float(self._values[-1]),
             "mean": float(np.mean(self._values)),
             "median": float(np.median(self._values)),
             "num_unique": len(self._values),
