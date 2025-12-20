@@ -86,6 +86,9 @@ class ServerMetricsManager(BaseComponentService):
         # Use server metrics collection interval
         self._collection_interval = Environment.SERVER_METRICS.COLLECTION_INTERVAL
 
+        # Task for delayed shutdown, created when no endpoints are reachable
+        self._shutdown_task: asyncio.Task[None] | None = None
+
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
         self, message: ProfileConfigureCommand
@@ -283,7 +286,24 @@ class ServerMetricsManager(BaseComponentService):
         Ensures all collectors are properly stopped and cleaned up even if shutdown
         command was not received.
         """
+        await self._cancel_shutdown_task()
         await self._stop_all_collectors()
+
+    async def _cancel_shutdown_task(self) -> None:
+        """Cancel the delayed shutdown task if it exists and is still running."""
+        if self._shutdown_task is not None and not self._shutdown_task.done():
+            shutdown_task = self._shutdown_task
+            self.debug("Cancelling delayed shutdown task")
+            shutdown_task.cancel()
+            try:
+                await asyncio.wait_for(
+                    shutdown_task, timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT
+                )
+            except asyncio.TimeoutError:
+                self.warning("Timed out waiting for delayed shutdown task to complete")
+            finally:
+                self._shutdown_task = None
+                self.debug("Delayed shutdown task cancelled")
 
     async def _stop_all_collectors(self) -> None:
         """Stop all server metrics collectors.
