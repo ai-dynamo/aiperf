@@ -55,9 +55,11 @@ Create a JSONL embeddings input file:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
-{"text": "What is artificial intelligence?"}
-{"text": "Explain machine learning."}
-{"text": "How do neural networks work?"}
+{"texts": ["What is artificial intelligence?"]}
+{"texts": ["Explain machine learning."]}
+{"texts": ["How do neural networks work?"]}
+{"texts": ["Define deep learning."]}
+{"texts": ["What are transformers in AI?"]}
 EOF
 ```
 
@@ -70,6 +72,6 @@ aiperf profile \
     --input-file inputs.jsonl \
     --custom-dataset-type single_turn \
     --url localhost:8000 \
-    --request-count 10
+    --request-count 5
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
