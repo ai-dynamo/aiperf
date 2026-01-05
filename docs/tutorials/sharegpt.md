@@ -34,6 +34,7 @@ curl -s localhost:8000/v1/chat/completions \
 
 AIPerf automatically downloads and caches the ShareGPT dataset from HuggingFace.
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -44,3 +45,4 @@ aiperf profile \
     --request-count 20 \
     --concurrency 4
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
