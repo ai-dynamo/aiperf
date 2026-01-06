@@ -92,24 +92,18 @@ class Synthesizer(AIPerfLoggerMixin):
         synthetic_traces = []
         for trace in traces:
             hash_ids = trace.get("hash_ids", [])
+            original_isl = trace.get("input_length", 0)
 
-            # Generate new hash_ids based on parameters
-            new_hash_ids = self._apply_multipliers(hash_ids) if hash_ids else []
+            # Generate new hash_ids and input_length based on parameters
+            if hash_ids:
+                new_hash_ids, isl = self._apply_multipliers(hash_ids, original_isl)
+            else:
+                new_hash_ids = []
+                # Sample ISL from distribution when no hash_ids
+                isl = self._sample_isl()
 
-            # Sample ISL/OSL from distributions
-            isl = self._sample_isl()
+            # Sample OSL from distribution
             osl = self._sample_osl()
-
-            # Ensure ISL is compatible with hash_ids
-            # Constraint: 0 < isl - (len(hash_ids)-1)*block_size <= block_size
-            # This means: (len(hash_ids)-1)*block_size < isl <= len(hash_ids)*block_size
-            if new_hash_ids:
-                min_isl = (len(new_hash_ids) - 1) * self.params.block_size + 1
-                max_isl_for_hashes = len(new_hash_ids) * self.params.block_size
-                if isl < min_isl:
-                    isl = min_isl
-                elif isl > max_isl_for_hashes:
-                    isl = max_isl_for_hashes
 
             # Apply max_isl filter
             if self.params.max_isl and isl > self.params.max_isl:
@@ -142,8 +136,15 @@ class Synthesizer(AIPerfLoggerMixin):
         self.info(f"Generated {len(synthetic_traces)} synthetic traces")
         return synthetic_traces
 
-    def _apply_multipliers(self, hash_ids: list[int]) -> list[int]:
-        """Apply multiplier transformations to hash IDs.
+    def _apply_multipliers(
+        self, hash_ids: list[int], input_length: int
+    ) -> tuple[list[int], int]:
+        """Apply multiplier transformations to hash IDs and input length.
+
+        When extending hash_ids, properly handles incomplete final blocks:
+        - The original incomplete block becomes complete
+        - New blocks are added (complete except the final one)
+        - The new final block preserves the original's incomplete portion
 
         New hash IDs are generated as consecutive integers continuing from
         the last hash ID in the specific list. Two hash_ids sharing the same
@@ -151,15 +152,24 @@ class Synthesizer(AIPerfLoggerMixin):
 
         Args:
             hash_ids: Original hash IDs from trace.
+            input_length: Original input length in tokens.
 
         Returns:
-            Transformed hash IDs with new consecutive integers for extensions.
+            Tuple of (transformed hash_ids, new input_length).
         """
         if not hash_ids:
-            return []
+            return [], input_length
+
+        block_size = self.params.block_size
+
+        # Calculate original incomplete block size (1 to block_size)
+        incomplete_tokens = input_length % block_size
+        if incomplete_tokens == 0:
+            incomplete_tokens = block_size  # Last block was complete
 
         # Start with original hash_ids (preserves prefix overlap)
         scaled_ids = hash_ids[:]
+        new_input_length = input_length
         # Next ID continues from the last one in this specific list (not the max)
         next_id = hash_ids[-1] + 1
 
@@ -168,25 +178,56 @@ class Synthesizer(AIPerfLoggerMixin):
             if scale > 1.0:
                 # Extend prefix with NEW consecutive hash IDs
                 num_to_add = int(len(hash_ids) * (scale - 1))
-                for _ in range(num_to_add):
+                if num_to_add > 0:
+                    # Complete the original final block
+                    tokens_to_complete = block_size - incomplete_tokens
+                    new_input_length += tokens_to_complete
+
+                    # Add new complete blocks (all but the last)
+                    for _ in range(num_to_add - 1):
+                        scaled_ids.append(next_id)
+                        next_id += 1
+                        new_input_length += block_size
+
+                    # Add final new block (incomplete, matching original pattern)
                     scaled_ids.append(next_id)
                     next_id += 1
+                    new_input_length += incomplete_tokens
             elif scale < 1.0:
                 # Shorten prefix
                 num_to_keep = max(1, int(len(scaled_ids) * scale))
                 scaled_ids = scaled_ids[:num_to_keep]
+                # Preserve incomplete portion for new final block
+                new_input_length = (num_to_keep - 1) * block_size + incomplete_tokens
 
         # Apply prompt length multiplier (affects unique prompt portion)
         if self.params.prompt_len_multiplier != 1.0 and scaled_ids:
             prompt_scale = self.params.prompt_len_multiplier
             if prompt_scale > 1.0:
-                # Add new hash IDs for extended prompt portion
                 num_to_add = int(prompt_scale - 1)
-                for _ in range(num_to_add):
+                if num_to_add > 0:
+                    # Recalculate current incomplete portion
+                    current_incomplete = new_input_length % block_size
+                    if current_incomplete == 0:
+                        current_incomplete = block_size
+
+                    # Complete current final block
+                    tokens_to_complete = block_size - current_incomplete
+                    new_input_length += tokens_to_complete
+
+                    # Add new complete blocks (all but the last)
+                    for _ in range(num_to_add - 1):
+                        scaled_ids.append(next_id)
+                        next_id += 1
+                        new_input_length += block_size
+
+                    # Add final new block (incomplete)
                     scaled_ids.append(next_id)
                     next_id += 1
+                    new_input_length += current_incomplete
 
         # Apply root replication (creates independent trees with new IDs)
+        # Note: This doesn't change input_length - it's for tree structure replication
         if self.params.prefix_root_multiplier > 1:
             original_len = len(scaled_ids)
             for _ in range(self.params.prefix_root_multiplier - 1):
@@ -195,7 +236,7 @@ class Synthesizer(AIPerfLoggerMixin):
                     scaled_ids.append(next_id)
                     next_id += 1
 
-        return scaled_ids
+        return scaled_ids, new_input_length
 
     def _sample_isl(self) -> int:
         """Sample input sequence length from learned distribution.

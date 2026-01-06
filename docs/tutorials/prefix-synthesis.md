@@ -48,22 +48,45 @@ Prefix reuse ratio:    45.2%
 
 ISL (Input Sequence Length):
   Min:     512
+  P25:     1,024
+  Median:  1,920
+  P75:     2,816
   Max:     4,096
-  Average: 1,920.3
+  Mean:    1,920.3
+  Std Dev: 856.2
 
 OSL (Output Sequence Length):
   Min:     64
+  P25:     96
+  Median:  144
+  P75:     208
   Max:     512
-  Average: 156.8
+  Mean:    156.8
+  Std Dev: 72.4
 ============================================================
 ```
 
 ### Understanding the Statistics
 
+**Summary metrics:**
 - **Total requests**: Number of individual requests in the trace
 - **Unique prefixes**: How many distinct prefix patterns were observed
 - **Cache hit rate**: Percentage of tokens that could be reused (assuming infinite cache)
 - **Prefix reuse ratio**: How many prefixes appear more than once
+
+**Percentile statistics** (computed for ISL, OSL, context length, unique prompt length, and hit rate):
+
+| Statistic | Description |
+|-----------|-------------|
+| `min` | Minimum value |
+| `p25` | 25th percentile (Q1) |
+| `median` | 50th percentile (P50) |
+| `p75` | 75th percentile (Q3) |
+| `max` | Maximum value |
+| `mean` | Arithmetic mean |
+| `std_dev` | Standard deviation (population) |
+
+Percentiles are calculated using linear interpolation: for percentile `p` with `n` sorted values, compute index `k = (n - 1) * p`, then interpolate between `values[floor(k)]` and `values[ceil(k)]`.
 
 These metrics help you understand how much prefix caching could benefit your workload.
 
