@@ -359,10 +359,11 @@ class TestTemplateEndpointParseResponse:
         [
             {"choices": [{"text": "Response"}]},
             {"choices": [{"message": {"content": "Response"}}]},
+            {"choices": [{"delta": {"content": "Response"}}]},
         ],
     )
     def test_openai_format(self, endpoint, json_data):
-        """Test OpenAI-style response formats."""
+        """Test OpenAI-style response formats (completions, chat, and streaming)."""
         parsed = endpoint.parse_response(create_mock_response(json_data=json_data))
 
         assert parsed.data.text == "Response"
