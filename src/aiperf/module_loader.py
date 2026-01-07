@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Module loader for AIPerf.
 
@@ -28,6 +28,8 @@ def _load_all_modules() -> None:
             module.is_dir()
             and not module.name.startswith("_")
             and not module.name.startswith(".")
+            # ignore plot module to avoid loading plot dependencies (slow)
+            and module.name != "plot"
             and (module / "__init__.py").exists()
         ):
             _logger.debug(f"Loading module: aiperf.{module.name}")
