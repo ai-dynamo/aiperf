@@ -21,23 +21,27 @@ class EmpiricalSampler:
             data: List of observed values to learn distribution from.
         """
         if not data:
+            self._original_data = np.array([0])
             self._values = np.array([0])
             self._cdf = np.array([1.0])
             return
 
+        # Store original data for statistics
+        self._original_data = np.array(data)
+
         # Sort unique values and compute CDF
-        sorted_data = np.sort(np.array(data))
+        sorted_data = np.sort(self._original_data)
         self._values, counts = np.unique(sorted_data, return_counts=True)
         self._cdf = np.cumsum(counts) / len(sorted_data)
 
-    def sample(self, rng: np.random.Generator | None = None) -> Any:
+    def sample(self, rng: np.random.Generator | None = None) -> int | float:
         """Draw a single sample from the learned distribution.
 
         Args:
             rng: Optional numpy random generator. If None, uses default random state.
 
         Returns:
-            A value sampled from the empirical distribution.
+            A value sampled from the empirical distribution, preserving original type.
         """
         if rng is None:
             rng = np.random.default_rng()
@@ -47,11 +51,12 @@ class EmpiricalSampler:
         idx = np.searchsorted(self._cdf, u)
         idx = min(idx, len(self._values) - 1)
 
-        return int(self._values[idx])
+        # Convert numpy scalar to Python type
+        return self._values[idx].item()
 
     def sample_batch(
         self, size: int, rng: np.random.Generator | None = None
-    ) -> list[Any]:
+    ) -> list[int | float]:
         """Draw multiple samples from the learned distribution.
 
         Args:
@@ -67,12 +72,12 @@ class EmpiricalSampler:
         """Get statistics about the learned distribution.
 
         Returns:
-            Dictionary with distribution statistics.
+            Dictionary with distribution statistics computed from original data.
         """
         return {
-            "min": float(self._values[0]),
-            "max": float(self._values[-1]),
-            "mean": float(np.mean(self._values)),
-            "median": float(np.median(self._values)),
+            "min": float(np.min(self._original_data)),
+            "max": float(np.max(self._original_data)),
+            "mean": float(np.mean(self._original_data)),
+            "median": float(np.median(self._original_data)),
             "num_unique": len(self._values),
         }

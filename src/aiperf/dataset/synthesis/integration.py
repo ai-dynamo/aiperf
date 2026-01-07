@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Integration utilities for synthesis with AIPerf dataset pipeline."""
 
-import json
 from pathlib import Path
+
+import aiofiles
+import orjson
 
 from aiperf.common.config import SynthesisConfig
 from aiperf.common.mixins import AIPerfLoggerMixin
@@ -44,14 +46,11 @@ class SynthesisIntegration(AIPerfLoggerMixin):
     def synthesize_conversations(
         self,
         conversations: list[Conversation],
-        is_synthetic_data: bool = False,
     ) -> tuple[list[Conversation], list[dict]]:
         """Apply synthesis to conversations.
 
         Args:
             conversations: Input conversations to synthesize.
-            is_synthetic_data: If True, generate hash_ids before synthesis.
-                Note: hash_ids are always generated if missing, regardless of this flag.
 
         Returns:
             Tuple of (synthesized conversations, synthesized traces for file output).
@@ -105,7 +104,26 @@ class SynthesisIntegration(AIPerfLoggerMixin):
 
         with open(output_path, "w") as f:
             for trace in traces:
-                f.write(json.dumps(trace) + "\n")
+                f.write(orjson.dumps(trace).decode() + "\n")
+
+        self.info(f"Wrote {len(traces)} synthesized traces to {output_path}")
+
+    async def write_synthesized_traces_async(
+        self,
+        traces: list[dict],
+        output_path: Path,
+    ) -> None:
+        """Write synthesized traces to JSONL file asynchronously.
+
+        Args:
+            traces: Synthesized trace dictionaries.
+            output_path: Path to output file.
+        """
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        async with aiofiles.open(output_path, "w") as f:
+            for trace in traces:
+                await f.write(orjson.dumps(trace).decode() + "\n")
 
         self.info(f"Wrote {len(traces)} synthesized traces to {output_path}")
 
@@ -150,13 +168,13 @@ class SynthesisIntegration(AIPerfLoggerMixin):
         Returns:
             Mooncake trace dictionary.
         """
-        # Extract text content for tokenization
-        text_content = ""
+        # Extract text content for tokenization (aggregate all text contents)
+        all_contents: list[str] = []
         if turn.texts:
             for text in turn.texts:
                 if text.contents:
-                    text_content = " ".join(text.contents)
-                    break
+                    all_contents.extend(text.contents)
+        text_content = " ".join(all_contents)
 
         # Calculate input_length via tokenization
         input_length = len(self.tokenizer.encode(text_content)) if text_content else 0

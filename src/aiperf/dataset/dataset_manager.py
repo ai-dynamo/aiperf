@@ -215,16 +215,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         return composer.create_dataset()
 
-    def _apply_synthesis(
+    async def _apply_synthesis(
         self,
         conversations: list[Conversation],
-        is_synthetic_data: bool,
     ) -> list[Conversation]:
         """Apply synthesis transformations to conversations.
 
         Args:
             conversations: Input conversations to synthesize.
-            is_synthetic_data: Whether data was synthetically generated (no input file).
 
         Returns:
             Synthesized conversations.
@@ -248,17 +246,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         # Run synthesis
         synthesized_conversations, synthesized_traces = (
-            integration.synthesize_conversations(
-                conversations,
-                is_synthetic_data=is_synthetic_data,
-            )
+            integration.synthesize_conversations(conversations)
         )
 
         # Write synthesized traces to artifacts directory
         output_path = (
             self.user_config.output.artifact_directory / "synthesized_trace.jsonl"
         )
-        integration.write_synthesized_traces(synthesized_traces, output_path)
+        await integration.write_synthesized_traces_async(
+            synthesized_traces, output_path
+        )
 
         self.info(f"Synthesis complete: {len(synthesized_conversations)} conversations")
         return synthesized_conversations
@@ -280,9 +277,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         self.dataset_configured.clear()
 
-        # Track if this is synthetic data (no input file)
-        is_synthetic_data = False
-
         if self.user_config.input.public_dataset is not None:
             conversations = await self._load_public_dataset()
         elif (
@@ -295,12 +289,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             conversations = self._load_custom_dataset()
         else:
             conversations = self._load_synthetic_dataset()
-            is_synthetic_data = True
 
         # Apply synthesis if needed
         synthesis_config = self.user_config.input.synthesis
         if synthesis_config.should_synthesize():
-            conversations = self._apply_synthesis(conversations, is_synthetic_data)
+            conversations = await self._apply_synthesis(conversations)
 
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._session_ids_cache = list(self.dataset.keys())

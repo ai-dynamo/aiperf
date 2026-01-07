@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Fixtures for synthesis tests."""
 
-import json
 import tempfile
 from pathlib import Path
 
+import orjson
 import pytest
 
 
@@ -46,7 +46,7 @@ def trace_file_simple(sample_trace_data: list[dict]) -> Path:
     """Create a temporary trace JSONL file."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
         for trace in sample_trace_data:
-            f.write(json.dumps(trace) + "\n")
+            f.write(orjson.dumps(trace).decode() + "\n")
         filename = f.name
 
     yield Path(filename)

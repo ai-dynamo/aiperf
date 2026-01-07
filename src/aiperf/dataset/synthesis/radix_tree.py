@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass
+@dataclass(slots=True)
 class RadixNode:
     """A node in the radix tree representing a prefix path.
 
@@ -86,14 +86,15 @@ class RadixTree:
             The leaf node at the end of the path.
         """
         current = self._root
+        current.visit_count += 1
         for label in path:
             child = current.get_child(label)
             if child is None:
                 child = self._create_node(label)
                 current.add_child(label, child)
             current = child
+            current.visit_count += 1
 
-        current.visit_count += 1
         return current
 
     def _create_node(self, label: int | None) -> RadixNode:
@@ -137,7 +138,8 @@ class RadixTree:
         """
         num_nodes = len(self._nodes_by_id)
         num_leaves = sum(1 for node in self._nodes_by_id.values() if node.is_leaf())
-        total_visits = sum(node.visit_count for node in self._nodes_by_id.values())
+        # total_visits is the number of paths added (root visit count)
+        total_visits = self._root.visit_count
 
         return {
             "num_nodes": num_nodes,

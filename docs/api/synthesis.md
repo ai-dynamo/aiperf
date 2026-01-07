@@ -504,5 +504,4 @@ except ValueError as e:
 ## See Also
 
 - [Prefix Synthesis Tutorial](../tutorials/prefix-synthesis.md)
-- [Mooncake Trace Format](../formats/mooncake-trace.md)
-- [AIPerf Configuration](../configuration.md)
+- [Trace Replay](../benchmark_modes/trace_replay.md)

@@ -88,7 +88,7 @@ class TestSynthesisIntegration:
         conversations = [sample_conversation]
 
         result_conversations, result_traces = integration.synthesize_conversations(
-            conversations, is_synthetic_data=False
+            conversations
         )
 
         assert len(result_conversations) >= 1

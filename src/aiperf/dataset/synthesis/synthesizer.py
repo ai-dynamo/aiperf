@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Synthesizer for generating synthetic traces with prefix patterns."""
 
-import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import orjson
 
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.dataset.synthesis.empirical_sampler import EmpiricalSampler
@@ -52,7 +52,7 @@ class Synthesizer(AIPerfLoggerMixin):
         with open(trace_file) as f:
             for line in f:
                 if line.strip():
-                    traces.append(json.loads(line))
+                    traces.append(orjson.loads(line))
 
         return self.synthesize_traces(traces)
 
@@ -111,7 +111,7 @@ class Synthesizer(AIPerfLoggerMixin):
 
             # Apply timestamp scaling if present
             timestamp = trace.get("timestamp")
-            if timestamp is not None:
+            if timestamp is not None and self.params.speedup_ratio > 0:
                 timestamp = int(timestamp / self.params.speedup_ratio)
 
             synthetic_trace = {

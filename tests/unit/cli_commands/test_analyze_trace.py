@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for analyze_trace CLI command."""
 
-import json
 import tempfile
 from pathlib import Path
 
+import orjson
 import pytest
 
 from aiperf.cli_commands.analyze_trace import _build_stats_table, analyze_trace
@@ -87,7 +87,7 @@ class TestAnalyzeTrace:
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             for trace in traces:
-                f.write(json.dumps(trace) + "\n")
+                f.write(orjson.dumps(trace).decode() + "\n")
             filepath = f.name
 
         yield Path(filepath)
@@ -113,7 +113,7 @@ class TestAnalyzeTrace:
 
             assert output_file.exists()
             # Verify it's valid JSON
-            data = json.loads(output_file.read_text())
+            data = orjson.loads(output_file.read_bytes())
             assert "total_requests" in data
 
     def test_analyze_trace_nonexistent_file(self, capsys) -> None:
