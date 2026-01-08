@@ -25,7 +25,7 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
   "aiofiles~=24.1.0",
-  "aiohttp~=3.12.14",
+  "aiohttp~=3.13.3",
   "cyclopts>=4,<5",
   "ffmpeg-python~=0.2.0",
   "jinja2~=3.1.5",  # NOTE: Versions prior to 3.1.5 have vuln exploits
