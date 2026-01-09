@@ -40,7 +40,7 @@ Required fields for trace replay:
 Example entry:
 
 ```json
-{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
+{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [0, 1, 2]}
 ```
 
 ## Profile using a Custom Trace File
@@ -50,9 +50,9 @@ Create a trace file with timing information:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat > custom_trace.jsonl << 'EOF'
-{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
-{"timestamp": 10535, "input_length": 672, "output_length": 26, "hash_ids": [46, 47]}
-{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
+{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [0, 1, 2]}
+{"timestamp": 10535, "input_length": 672, "output_length": 26, "hash_ids": [0, 3, 4, 5]}
+{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [0, 6, 7]}
 EOF
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
