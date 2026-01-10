@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -9,7 +9,6 @@ correctly generated and saved as PNG files with proper metadata.
 """
 
 import json
-import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,14 +33,6 @@ from aiperf.plot.core.plot_specs import (
 )
 from aiperf.plot.exporters.png import MultiRunPNGExporter, SingleRunPNGExporter
 from aiperf.plot.handlers.single_run_handlers import DualAxisHandler
-
-# Check if Chrome is available for Kaleido PNG export
-CHROME_AVAILABLE = (
-    shutil.which("google-chrome") is not None or shutil.which("chromium") is not None
-)
-requires_chrome = pytest.mark.skipif(
-    not CHROME_AVAILABLE, reason="Chrome/Chromium is required for PNG export tests"
-)
 
 # Module-level constants for plot specs (used in tests)
 SINGLE_RUN_PLOT_SPECS = [
@@ -639,7 +630,6 @@ class TestMultiRunPNGExporter:
         assert isinstance(multi_run_exporter, MultiRunPNGExporter)
         assert isinstance(multi_run_exporter.output_dir, Path)
 
-    @requires_chrome
     def test_export_multi_run_creates_files(
         self,
         multi_run_exporter,
@@ -660,7 +650,6 @@ class TestMultiRunPNGExporter:
             assert file_path.exists()
             assert file_path.suffix == ".png"
 
-    @requires_chrome
     def test_export_multi_run_creates_expected_plots(
         self,
         multi_run_exporter,
@@ -681,7 +670,6 @@ class TestMultiRunPNGExporter:
             f"Generated unexpected files: {filenames - spec_filenames}"
         )
 
-    @requires_chrome
     def test_export_multi_run_creates_summary(
         self,
         multi_run_exporter,
@@ -813,7 +801,6 @@ class TestSingleRunPNGExporter:
         assert isinstance(single_run_exporter, SingleRunPNGExporter)
         assert isinstance(single_run_exporter.output_dir, Path)
 
-    @requires_chrome
     def test_export_single_run_creates_files(
         self,
         single_run_exporter,
@@ -835,7 +822,6 @@ class TestSingleRunPNGExporter:
             assert file_path.exists()
             assert file_path.suffix == ".png"
 
-    @requires_chrome
     def test_export_single_run_creates_expected_plots(
         self,
         single_run_exporter,
@@ -927,7 +913,6 @@ class TestSingleRunPNGExporter:
         # Should use formatted metric tag as fallback
         assert "Unknown Metric" in label
 
-    @requires_chrome
     def test_export_single_run_with_timeslice_data(
         self,
         single_run_exporter,
@@ -986,7 +971,6 @@ class TestSingleRunPNGExporter:
         assert fig.layout.xaxis.title.text == "Time (s)"
         assert fig.layout.yaxis.title.text == "TTFT (ms)"
 
-    @requires_chrome
     def test_timeslices_plot_handles_missing_data_gracefully(
         self,
         single_run_exporter,
@@ -1012,7 +996,6 @@ class TestSingleRunPNGExporter:
         )
         assert "timeslices_ttft.png" not in filenames
 
-    @requires_chrome
     def test_uniform_requests_no_warning(
         self,
         single_run_exporter,
@@ -1227,7 +1210,6 @@ class TestSingleRunPNGExporter:
         assert warning is not None
         assert "varying ISL/OSL" in warning
 
-    @requires_chrome
     def test_warning_only_on_throughput_plot(
         self,
         single_run_exporter,
@@ -1428,7 +1410,6 @@ class TestSharedExporterFunctionality:
         assert output_dir.exists()
         assert output_dir.is_dir()
 
-    @requires_chrome
     def test_export_handles_missing_metrics_gracefully(
         self, tmp_path, sample_available_metrics, sample_multi_run_plot_specs
     ):
@@ -1516,7 +1497,6 @@ class TestSingleRunGPUPlots:
             }
         )
 
-    @requires_chrome
     def test_generate_gpu_plots_with_telemetry(
         self,
         tmp_path,
@@ -1604,7 +1584,6 @@ class TestSingleRunGPUPlots:
 
         assert gpu_files == []
 
-    @requires_chrome
     def test_generate_gpu_utilization_with_throughput(
         self,
         tmp_path,
@@ -1671,7 +1650,6 @@ class TestSingleRunGPUPlots:
 
         assert gpu_util_files == []
 
-    @requires_chrome
     def test_generate_dispersed_throughput_over_time(
         self, tmp_path, sample_available_metrics, sample_plot_specs, requests_df_for_gpu
     ):
@@ -1701,7 +1679,6 @@ class TestSingleRunGPUPlots:
         assert len(throughput_files) == 1
         assert throughput_files[0].exists()
 
-    @requires_chrome
     def test_generate_gpu_plots_multi_gpu_aggregation(
         self, tmp_path, sample_available_metrics, sample_plot_specs, requests_df_for_gpu
     ):

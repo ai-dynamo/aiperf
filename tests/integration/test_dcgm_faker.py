@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for DCGMFaker using real telemetry parsing logic."""
 
@@ -28,17 +28,17 @@ class TestDCGMFaker:
         assert all(record is not None for record in records)
 
         # Verify GPU indices
-        gpu_indices = {record.metadata.gpu_index for record in records}
+        gpu_indices = {record.gpu_index for record in records}
         assert gpu_indices == {0, 1}
 
-        # Verify metadata is correctly parsed
+        # Verify metadata fields (TelemetryRecord inherits from GpuMetadata)
         for i, record in enumerate(records):
             gpu = faker.gpus[i]
-            assert record.metadata.gpu_model_name == gpu.cfg.model
-            assert record.metadata.hostname == faker.hostname
-            assert record.metadata.gpu_uuid == gpu.uuid
-            assert record.metadata.pci_bus_id == gpu.pci_bus_id
-            assert record.metadata.device == gpu.device
+            assert record.gpu_model_name == gpu.cfg.model
+            assert record.hostname == faker.hostname
+            assert record.gpu_uuid == gpu.uuid
+            assert record.pci_bus_id == gpu.pci_bus_id
+            assert record.device == gpu.device
 
             # Verify TelemetryMetrics are correctly scaled
             telemetry = record.telemetry_data

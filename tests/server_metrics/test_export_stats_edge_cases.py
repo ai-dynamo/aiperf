@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Edge case tests for export_stats.py functions."""
@@ -73,7 +73,7 @@ class TestComputeTimesliceBoundaries:
         assert len(is_complete) == 1
         assert starts[0] == 0
         assert ends[0] == int(1.5 * NANOS_PER_SECOND)
-        assert is_complete[0] is False  # noqa: E712
+        assert is_complete[0] == False  # noqa: E712
 
     def test_returns_single_complete_plus_partial(self) -> None:
         """Test returns one complete and one partial timeslice."""
@@ -91,11 +91,11 @@ class TestComputeTimesliceBoundaries:
         # First slice: [0, 1s) - complete
         assert starts[0] == 0
         assert ends[0] == NANOS_PER_SECOND
-        assert is_complete[0] is None
+        assert is_complete[0] == True  # noqa: E712
         # Second slice: [1s, 1.5s) - partial
         assert starts[1] == NANOS_PER_SECOND
         assert ends[1] == int(1.5 * NANOS_PER_SECOND)
-        assert is_complete[1] is False  # noqa: E712
+        assert is_complete[1] == False  # noqa: E712
 
     def test_exact_fit_multiple_timeslices(self) -> None:
         """Test exact fit returns all complete timeslices with no partial."""
@@ -111,7 +111,7 @@ class TestComputeTimesliceBoundaries:
         assert len(ends) == 3
         assert len(is_complete) == 3
         # All should be complete (exact fit, no partial)
-        assert all(is_complete is None)
+        assert all(is_complete)
 
     def test_partial_final_timeslice_included(self) -> None:
         """Test partial final timeslice is included and marked incomplete."""
@@ -127,8 +127,8 @@ class TestComputeTimesliceBoundaries:
         assert len(ends) == 3
         assert len(is_complete) == 3
         # First two complete, last partial
-        assert is_complete[0] is None
-        assert is_complete[1] is None
+        assert is_complete[0] == True  # noqa: E712
+        assert is_complete[1] == True  # noqa: E712
         assert is_complete[2] == False  # noqa: E712
         # Check boundaries
         assert starts[2] == 2 * NANOS_PER_SECOND
