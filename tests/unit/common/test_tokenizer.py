@@ -1,10 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
 import pytest
 
-from aiperf.common.exceptions import InitializationError, NotInitializedError
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.tokenizer import Tokenizer
 
 
