@@ -81,4 +81,4 @@ def _create_generic_error_message(
     tokenizer_name: str, original_error: Exception
 ) -> str:
     """Create generic helpful message when specific pattern not matched."""
-    return f"Failed to initialize tokenizer '{tokenizer_name}'. Try: --tokenizer <model-path> or check network/authentication."
+    return f"Failed to initialize tokenizer '{tokenizer_name}'."

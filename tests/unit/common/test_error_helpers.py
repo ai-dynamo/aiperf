@@ -97,8 +97,8 @@ class TestErrorMessageCreation:
 
         # Check key guidance elements
         assert "Failed to initialize tokenizer" in result
-        assert "--tokenizer" in result
         assert "unknown-model" in result
+        # Generic message doesn't provide specific guidance since error cause is unknown
 
     def test_create_tokenizer_error_message_clean_output(self):
         """Test that error message is clean without original error duplication."""
