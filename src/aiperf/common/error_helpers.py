@@ -67,40 +67,18 @@ def _create_model_not_found_message(
     tokenizer_name: str, original_error: Exception
 ) -> str:
     """Create message for model/tokenizer not found errors."""
-    return (
-        f"Failed to auto-detect tokenizer for '{tokenizer_name}'.\n\n"
-        f"The model name is not available on HuggingFace Hub or is not a valid local path.\n\n"
-        f"To fix this, re-run your profiling command with an explicit tokenizer:\n"
-        f"  --tokenizer <huggingface-model-path-or-local-path>\n\n"
-        f"You can search for models at: https://huggingface.co/models"
-    )
+    return f"Tokenizer '{tokenizer_name}' not found. Re-run with: --tokenizer <model-path-or-huggingface-id>"
 
 
 def _create_authentication_required_message(
     tokenizer_name: str, original_error: Exception
 ) -> str:
     """Create message for authentication/authorization errors."""
-    return (
-        f"Tokenizer '{tokenizer_name}' requires HuggingFace authentication.\n\n"
-        f"To fix this:\n"
-        f"  1. Get your HuggingFace token: https://huggingface.co/settings/tokens\n"
-        f"  2. If the model is gated, accept the license: https://huggingface.co/{tokenizer_name}\n"
-        f"  3. Set your token as an environment variable:\n"
-        f"       export HF_TOKEN=<your-token>\n\n"
-        f"Note: The --tokenizer-hf-token CLI flag will be available in a future release."
-    )
+    return f"Tokenizer '{tokenizer_name}' requires authentication. Set HF_TOKEN environment variable with your HuggingFace token."
 
 
 def _create_generic_error_message(
     tokenizer_name: str, original_error: Exception
 ) -> str:
     """Create generic helpful message when specific pattern not matched."""
-    return (
-        f"Failed to initialize tokenizer '{tokenizer_name}'.\n\n"
-        f"Common solutions:\n"
-        f"  • Specify an explicit tokenizer: --tokenizer <huggingface-model-path>\n"
-        f"  • Use a local tokenizer: --tokenizer /path/to/local/tokenizer\n"
-        f"  • Verify the model exists at: https://huggingface.co/{tokenizer_name}\n"
-        f"  • Check your internet connection\n"
-        f"  • If the model is private/gated, set: export HF_TOKEN=<your-token>"
-    )
+    return f"Failed to initialize tokenizer '{tokenizer_name}'. Try: --tokenizer <model-path> or check network/authentication."

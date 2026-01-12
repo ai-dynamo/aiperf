@@ -66,9 +66,9 @@ class TestErrorMessageCreation:
         )
 
         # Check key guidance elements
-        assert "Failed to auto-detect tokenizer for 'custom-model-123'" in result
-        assert "--tokenizer <huggingface-model-path-or-local-path>" in result
-        assert "https://huggingface.co/models" in result
+        assert "not found" in result
+        assert "--tokenizer" in result
+        assert "custom-model-123" in result
 
     def test_create_tokenizer_error_message_authentication(self):
         """Test helpful message for authentication errors."""
@@ -82,10 +82,9 @@ class TestErrorMessageCreation:
         )
 
         # Check key guidance elements
-        assert "requires HuggingFace authentication" in result
-        assert "https://huggingface.co/settings/tokens" in result
-        assert "export HF_TOKEN=" in result
-        assert "https://huggingface.co/meta-llama/Llama-3-70b" in result
+        assert "authentication" in result
+        assert "HF_TOKEN" in result
+        assert "meta-llama/Llama-3-70b" in result
 
     def test_create_tokenizer_error_message_generic(self):
         """Test generic helpful message for unrecognized errors."""
@@ -97,10 +96,9 @@ class TestErrorMessageCreation:
         )
 
         # Check key guidance elements
-        assert "Failed to initialize tokenizer 'unknown-model'" in result
-        assert "Common solutions:" in result
-        assert "--tokenizer <huggingface-model-path>" in result
-        assert "https://huggingface.co/unknown-model" in result
+        assert "Failed to initialize tokenizer" in result
+        assert "--tokenizer" in result
+        assert "unknown-model" in result
 
     def test_create_tokenizer_error_message_clean_output(self):
         """Test that error message is clean without original error duplication."""
@@ -111,11 +109,12 @@ class TestErrorMessageCreation:
             tokenizer_name="test",
         )
 
-        # Should have helpful guidance but NOT duplicate the original error
-        # (AIPerf's error reporting already shows it in the "Cause" field)
-        assert "Failed to auto-detect tokenizer" in result
-        assert "--tokenizer" in result
-        assert "Original error:" not in result
+        # Should be short and concise without duplication
+        # (AIPerf's error reporting already shows details in "Cause" field)
+        assert "tokenizer" in result.lower()
+        assert "test" in result
+        # Message should be short (under 150 chars)
+        assert len(result) < 150
 
 
 class TestCaseSensitivity:
@@ -132,5 +131,5 @@ class TestCaseSensitivity:
         result_lower = create_tokenizer_error_message(lower_error, "model")
 
         # Both should detect as model not found and create similar messages
-        assert "Failed to auto-detect tokenizer" in result_upper
-        assert "Failed to auto-detect tokenizer" in result_lower
+        assert "not found" in result_upper
+        assert "not found" in result_lower
