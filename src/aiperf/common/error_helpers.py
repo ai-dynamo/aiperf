@@ -72,8 +72,7 @@ def _create_model_not_found_message(
         f"The model name is not available on HuggingFace Hub or is not a valid local path.\n\n"
         f"To fix this, re-run your profiling command with an explicit tokenizer:\n"
         f"  --tokenizer <huggingface-model-path-or-local-path>\n\n"
-        f"You can search for models at: https://huggingface.co/models\n\n"
-        f"Original error: {original_error}"
+        f"You can search for models at: https://huggingface.co/models"
     )
 
 
@@ -88,8 +87,7 @@ def _create_authentication_required_message(
         f"  2. If the model is gated, accept the license: https://huggingface.co/{tokenizer_name}\n"
         f"  3. Set your token as an environment variable:\n"
         f"       export HF_TOKEN=<your-token>\n\n"
-        f"Note: The --tokenizer-hf-token CLI flag will be available in a future release.\n\n"
-        f"Original error: {original_error}"
+        f"Note: The --tokenizer-hf-token CLI flag will be available in a future release."
     )
 
 
@@ -104,6 +102,5 @@ def _create_generic_error_message(
         f"  • Use a local tokenizer: --tokenizer /path/to/local/tokenizer\n"
         f"  • Verify the model exists at: https://huggingface.co/{tokenizer_name}\n"
         f"  • Check your internet connection\n"
-        f"  • If the model is private/gated, set: export HF_TOKEN=<your-token>\n\n"
-        f"Original error: {original_error}"
+        f"  • If the model is private/gated, set: export HF_TOKEN=<your-token>"
     )

@@ -69,7 +69,6 @@ class TestErrorMessageCreation:
         assert "Failed to auto-detect tokenizer for 'custom-model-123'" in result
         assert "--tokenizer <huggingface-model-path-or-local-path>" in result
         assert "https://huggingface.co/models" in result
-        assert str(original_error) in result
 
     def test_create_tokenizer_error_message_authentication(self):
         """Test helpful message for authentication errors."""
@@ -87,7 +86,6 @@ class TestErrorMessageCreation:
         assert "https://huggingface.co/settings/tokens" in result
         assert "export HF_TOKEN=" in result
         assert "https://huggingface.co/meta-llama/Llama-3-70b" in result
-        assert str(original_error) in result
 
     def test_create_tokenizer_error_message_generic(self):
         """Test generic helpful message for unrecognized errors."""
@@ -103,10 +101,9 @@ class TestErrorMessageCreation:
         assert "Common solutions:" in result
         assert "--tokenizer <huggingface-model-path>" in result
         assert "https://huggingface.co/unknown-model" in result
-        assert str(original_error) in result
 
-    def test_create_tokenizer_error_message_preserves_original_context(self):
-        """Test that original error is always included for debugging."""
+    def test_create_tokenizer_error_message_clean_output(self):
+        """Test that error message is clean without original error duplication."""
         original_error = OSError("'test' is not a valid model identifier")
 
         result = create_tokenizer_error_message(
@@ -114,9 +111,11 @@ class TestErrorMessageCreation:
             tokenizer_name="test",
         )
 
-        # Original error should be at the end
-        assert "Original error:" in result
-        assert str(original_error) in result
+        # Should have helpful guidance but NOT duplicate the original error
+        # (AIPerf's error reporting already shows it in the "Cause" field)
+        assert "Failed to auto-detect tokenizer" in result
+        assert "--tokenizer" in result
+        assert "Original error:" not in result
 
 
 class TestCaseSensitivity:
