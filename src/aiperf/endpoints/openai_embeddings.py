@@ -46,6 +46,27 @@ class EmbeddingsEndpoint(BaseEndpoint):
         Returns:
             OpenAI Embeddings API payload
         """
+        turn = self._validate_and_get_turn(request_info)
+
+        # Extract text contents
+        inputs = [
+            content for text in turn.texts for content in text.contents if content
+        ]
+
+        return self._build_payload(request_info, inputs)
+
+    def _validate_and_get_turn(self, request_info: RequestInfo):
+        """Validate request and return the single turn.
+
+        Args:
+            request_info: Request context including turns
+
+        Returns:
+            The single turn from the request
+
+        Raises:
+            ValueError: If request doesn't contain exactly one turn
+        """
         if len(request_info.turns) != 1:
             raise ValueError("Embeddings endpoint only supports one turn.")
 
@@ -54,12 +75,7 @@ class EmbeddingsEndpoint(BaseEndpoint):
         if turn.max_tokens:
             self.error("Max_tokens is provided but is not supported for embeddings.")
 
-        # Extract text contents
-        inputs = [
-            content for text in turn.texts for content in text.contents if content
-        ]
-
-        return self._build_payload(request_info, inputs)
+        return turn
 
     def _build_payload(
         self, request_info: RequestInfo, inputs: list[str]

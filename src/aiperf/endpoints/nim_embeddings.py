@@ -42,13 +42,7 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
         Returns:
             NIM Embeddings API payload (supports text and/or images)
         """
-        if len(request_info.turns) != 1:
-            raise ValueError("Embeddings endpoint only supports one turn.")
-
-        turn = request_info.turns[0]
-
-        if turn.max_tokens:
-            self.error("Max_tokens is provided but is not supported for embeddings.")
+        turn = self._validate_and_get_turn(request_info)
 
         # Extract text contents
         texts = [content for text in turn.texts for content in text.contents if content]
@@ -62,14 +56,12 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
         ]
 
         # Build input based on what's provided
-        inputs = self._build_multimodal_inputs(texts, images)
+        inputs = self._build_inputs(texts, images)
 
         return self._build_payload(request_info, inputs)
 
-    def _build_multimodal_inputs(
-        self, texts: list[str], images: list[str]
-    ) -> list[str]:
-        """Build multimodal inputs combining text and images.
+    def _build_inputs(self, texts: list[str], images: list[str]) -> list[str]:
+        """Build inputs from text and/or images.
 
         Args:
             texts: List of text contents
