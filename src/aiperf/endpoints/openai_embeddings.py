@@ -49,42 +49,31 @@ class EmbeddingsEndpoint(BaseEndpoint):
         if len(request_info.turns) != 1:
             raise ValueError("Embeddings endpoint only supports one turn.")
 
-        # Use first turn (hardcoded for now)
         turn = request_info.turns[0]
 
         if turn.max_tokens:
             self.error("Max_tokens is provided but is not supported for embeddings.")
 
         # Extract text contents
-        texts = [
+        inputs = [
             content for text in turn.texts for content in text.contents if content
         ]
 
-        # Extract images (list of data URL strings)
-        images = [
-            image_content 
-            for image in turn.images for image_content in image.contents if image_content
-        ]
+        return self._build_payload(request_info, inputs)
 
-        # Build input based on what's provided
-        if texts and images:
-            # Both text and images provided - must be same length
-            if len(texts) != len(images):
-                raise ValueError(
-                    f"When both texts and images are provided, they must have the same length. "
-                    f"Got {len(texts)} texts and {len(images)} images."
-                )
-            # Combine as "text <img src='data_url'/>"
-            inputs = [
-                f"{text} <img src='{image}'/>" for text, image in zip(texts, images)
-            ]
-        elif images:
-            # Only images provided - wrap each in an img tag
-            inputs = [f"<img src='{image}'/>" for image in images]
-        else:
-            # Only text provided (or nothing)
-            inputs = texts
+    def _build_payload(
+        self, request_info: RequestInfo, inputs: list[str]
+    ) -> RequestOutputT:
+        """Build the final payload dictionary.
 
+        Args:
+            request_info: Request context including model endpoint and turns
+            inputs: List of input strings to embed
+
+        Returns:
+            OpenAI Embeddings API payload
+        """
+        turn = request_info.turns[0]
         model_endpoint = request_info.model_endpoint
 
         payload: dict[str, Any] = {

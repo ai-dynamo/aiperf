@@ -49,6 +49,8 @@ class EndpointType(CaseInsensitiveStrEnum):
     IMAGE_GENERATION = "image_generation"
     """OpenAI Image Generation API. Generates images from text prompts (e.g., FLUX.1)."""
 
+    NIM_EMBEDDINGS = "nim_embeddings"
+
     NIM_RANKINGS = "nim_rankings"
     """NVIDIA NIM Rankings API. Ranks passages by relevance scores for a given query."""
 
