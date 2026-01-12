@@ -111,6 +111,7 @@ aiperf profile --benchmark-duration 300.0 --benchmark-grace-period 30.0 [other o
 - OpenAI embeddings
 - OpenAI audio: request throughput and latency
 - OpenAI images: request throughput and latency
+- NIM embeddings
 - NIM rankings
 
 </br>
