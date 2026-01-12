@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import patch
+
 import pytest
 
-from aiperf.common.exceptions import NotInitializedError
+from aiperf.common.exceptions import InitializationError, NotInitializedError
 from aiperf.common.tokenizer import Tokenizer
 
 
@@ -39,3 +41,7 @@ class TestTokenizer:
             revision="11c5a3d5811f50298f278a704980280950aedb10",
         )
         assert tokenizer._tokenizer is not None
+
+
+# Note: Integration tests for tokenizer error messages are in test_error_helpers.py
+# These tests verify the error message creation logic independently of HuggingFace imports

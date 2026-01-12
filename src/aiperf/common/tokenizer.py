@@ -60,7 +60,10 @@ class Tokenizer:
                 )
 
         except Exception as e:
-            raise InitializationError(e) from e
+            raise InitializationError.from_tokenizer_error(
+                original_error=e,
+                tokenizer_name=name,
+            ) from e
         return tokenizer_cls
 
     def __call__(self, text, **kwargs) -> "BatchEncoding":
