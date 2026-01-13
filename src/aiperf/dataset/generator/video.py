@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
@@ -314,7 +314,8 @@ class VideoGenerator(BaseGenerator):
         return frame.tobytes()
 
     def _create_video_with_pipes(self, frames: list[Image.Image]) -> str:
-        """Create video using pipes via stdin/stdout (no temporary files)."""
+        """Create video using pipes via stdin and either stdout or temp file output."""
+        temp_output_path = None
         try:
             # Gather all frame data first to prevent deadlocks due to pipe input/output synchronization issues
             all_data = b"".join(
@@ -327,13 +328,22 @@ class VideoGenerator(BaseGenerator):
                 "pix_fmt": "yuv420p",
             }
 
-            # Add format-specific options for streaming/pipe output
+            # Determine output destination based on format
             if self.config.format == VideoFormat.MP4:
-                # For pipes, we need frag_keyframe and empty_moov for non-seekable output
-                output_options["movflags"] = (
-                    "frag_keyframe+empty_moov+default_base_moof"
+                # MP4 requires seekable output, use temp file
+                output_options["movflags"] = "faststart"
+                # Ignore SIM115 warning as we are closing the file in the finally block
+                temp_output = tempfile.NamedTemporaryFile(  # noqa: SIM115
+                    suffix=f".{self.config.format}", delete=False
                 )
+                temp_output_path = temp_output.name
+                temp_output.close()
+                output_dest = temp_output_path
+            else:
+                # WebM and other formats can use pipe output
+                output_dest = "pipe:"
 
+            # Run ffmpeg
             stdout, _ = (
                 ffmpeg.input(
                     "pipe:",
@@ -342,19 +352,36 @@ class VideoGenerator(BaseGenerator):
                     s=f"{self.config.width}x{self.config.height}",
                     r=self.config.fps,
                 )
-                .output("pipe:", **output_options)
+                .output(output_dest, **output_options)
+                .overwrite_output()
                 .run(input=all_data, capture_stdout=True, capture_stderr=True)
             )
 
-            if not stdout:
+            # Read output based on destination
+            if temp_output_path is not None:
+                with open(temp_output_path, "rb") as f:
+                    video_data = f.read()
+            else:
+                video_data = stdout
+
+            if not video_data:
                 raise RuntimeError("FFmpeg produced no output")
 
-            return f"data:video/{self.config.format};base64,{base64.b64encode(stdout).decode()}"
+            return f"data:video/{self.config.format};base64,{base64.b64encode(video_data).decode()}"
 
         except ffmpeg.Error as e:
             error_msg = e.stderr.decode() if e.stderr else "Unknown ffmpeg error"
             self.logger.error(f"FFmpeg error: {error_msg}")
             raise RuntimeError(f"FFmpeg process failed: {error_msg}") from e
+        finally:
+            # Clean up temporary output file if it was created
+            if temp_output_path and os.path.exists(temp_output_path):
+                try:
+                    os.unlink(temp_output_path)
+                except OSError as e:
+                    self.logger.debug(
+                        f"Failed to remove temporary output file: {temp_output_path}: {e!r}"
+                    )
 
     def _create_video_with_temp_files(self, frames: list[Image.Image]) -> str:
         """Create video using temporary files (fallback method)."""

@@ -1,9 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import base64
 import io
 from contextlib import ExitStack
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
 
 import pytest
 from PIL import Image
@@ -216,3 +217,74 @@ class TestVideoGenerator:
         ):
             result = generator._create_video_with_ffmpeg(frames)
             assert result == mock_result
+
+    @pytest.mark.parametrize(
+        "video_format,codec,expected_output,expected_movflags",
+        [
+            (VideoFormat.MP4, "libx264", "/tmp/test_video.mp4", "faststart"),
+            (VideoFormat.WEBM, "libvpx-vp9", "pipe:", None),
+        ],
+    )
+    def test_create_video_with_pipes_format_handling(
+        self, video_format, codec, expected_output, expected_movflags
+    ):
+        """Test that MP4 uses temp file output and WebM uses pipe output."""
+        config = VideoConfig(
+            width=64,
+            height=64,
+            duration=0.5,
+            fps=2,
+            format=video_format,
+            codec=codec,
+            synth_type=VideoSynthType.MOVING_SHAPES,
+        )
+        generator = VideoGenerator(config)
+        frames = [Image.new("RGB", (64, 64), (255, 0, 0))]
+
+        # Use different data for file vs pipe to verify correct reading source
+        file_data = b"file_video_data"
+        pipe_data = b"pipe_video_data"
+        expected_data = file_data if video_format == VideoFormat.MP4 else pipe_data
+
+        with (
+            patch("aiperf.dataset.generator.video.ffmpeg") as mock_ffmpeg,
+            patch("tempfile.NamedTemporaryFile") as mock_tempfile,
+            patch("builtins.open", mock_open(read_data=file_data)) as mock_file_open,
+        ):
+            # Setup mock ffmpeg chain
+            mock_input = Mock()
+            mock_output = Mock()
+            mock_ffmpeg.input.return_value = mock_input
+            mock_input.output.return_value = mock_output
+            mock_output.overwrite_output.return_value = mock_output
+            mock_output.run.return_value = (pipe_data, b"")
+
+            # Mock temp file for MP4
+            mock_file = Mock()
+            mock_file.name = "/tmp/test_video.mp4"
+            mock_tempfile.return_value = mock_file
+
+            result = generator._create_video_with_pipes(frames)
+
+            # Verify output destination
+            output_call = mock_input.output.call_args
+            assert output_call[0][0] == expected_output
+
+            # Verify movflags
+            if expected_movflags:
+                assert output_call[1]["movflags"] == expected_movflags
+            else:
+                assert "movflags" not in output_call[1]
+
+            # Verify correct reading source was used
+            if video_format == VideoFormat.MP4:
+                # MP4 should read from temp file
+                mock_file_open.assert_called_once_with("/tmp/test_video.mp4", "rb")
+            else:
+                # WebM should NOT read from file (use pipe data from stdout)
+                mock_file_open.assert_not_called()
+
+            # Verify result contains data from correct source
+            expected_base64 = base64.b64encode(expected_data).decode()
+            assert result.startswith(f"data:video/{video_format};base64,")
+            assert expected_base64 in result

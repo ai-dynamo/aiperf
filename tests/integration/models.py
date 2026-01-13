@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Data models for integration tests."""
 
@@ -77,6 +77,7 @@ class VideoDetails(BaseModel):
     height: int
     fps: float
     pix_fmt: str | None = None
+    is_fragmented: bool = False
 
 
 class AIPerfResults:

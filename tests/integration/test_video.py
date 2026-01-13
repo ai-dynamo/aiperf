@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for video inputs."""
 
@@ -36,6 +36,8 @@ class TestVideo:
                 --num-dataset-entries 4 \
                 --request-rate 2.0 \
                 --request-count 4 \
+                --video-format webm \
+                --video-codec libvpx-vp9 \
                 --workers-max {defaults.workers_max}
             """
         )
@@ -74,6 +76,8 @@ class TestVideo:
                 --num-dataset-entries 4 \
                 --request-rate 2.0 \
                 --request-count 4 \
+                --video-format mp4 \
+                --video-codec libx264 \
                 --workers-max {defaults.workers_max}
             """
         )
@@ -93,3 +97,7 @@ class TestVideo:
                                 assert details.height == 360
                                 assert details.fps == approx(6.0)
                                 assert details.duration == approx(10.0)
+                                # Verify MP4 is not fragmented (uses faststart)
+                                assert not details.is_fragmented, (
+                                    "MP4 should not be fragmented"
+                                )

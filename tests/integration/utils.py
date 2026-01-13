@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Utility functions for integration tests."""
 
@@ -36,6 +36,25 @@ def create_rankings_dataset(tmp_path: Path, num_entries: int) -> Path:
             }
             f.write(orjson.dumps(entry).decode("utf-8") + "\n")
     return dataset_path
+
+
+def _check_mp4_fragmentation(video_bytes: bytes) -> bool:
+    """Check if MP4 video is fragmented by looking for moof (movie fragment) boxes.
+
+    Fragmented MP4s contain 'moof' boxes instead of a single 'moov' box.
+    Non-fragmented MP4s with faststart have 'moov' before 'mdat'.
+
+    Args:
+        video_bytes: Raw video file bytes
+
+    Returns:
+        True if the MP4 is fragmented, False otherwise
+    """
+    # Look for 'moof' (movie fragment) box which indicates fragmentation
+    # MP4 boxes are: [4 bytes size][4 bytes type][data]
+    # We search for b'moof' in the first 10KB which should contain the header structure
+    header_size = min(len(video_bytes), 10240)
+    return b"moof" in video_bytes[:header_size]
 
 
 def extract_base64_video_details(base64_data: str) -> VideoDetails:
@@ -81,15 +100,22 @@ def extract_base64_video_details(base64_data: str) -> VideoDetails:
         if frame_count and fps:
             duration = float(frame_count) / fps
 
+    # Check for MP4 fragmentation
+    is_fragmented = False
+    format_name = format_info.get("format_name", "unknown")
+    if "mp4" in format_name.lower():
+        is_fragmented = _check_mp4_fragmentation(video_bytes)
+
     try:
         return VideoDetails(
-            format_name=format_info.get("format_name", "unknown"),
+            format_name=format_name,
             duration=float(duration) if duration else 0.0,
             codec_name=video_stream.get("codec_name", "unknown"),
             width=video_stream.get("width", 0),
             height=video_stream.get("height", 0),
             fps=fps,
             pix_fmt=video_stream.get("pix_fmt"),
+            is_fragmented=is_fragmented,
         )
     except Exception as e:
         if result.stderr:
