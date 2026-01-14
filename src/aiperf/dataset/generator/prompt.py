@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import os
@@ -50,6 +50,10 @@ class PromptGenerator(BaseGenerator):
 
         # Cached prompts: block ID -> list of tokens
         self._cache: dict[int, list[int]] = {}
+
+        # Decoded string cache: (hash_ids tuple, num_tokens, block_size) -> decoded string
+        # This avoids redundant tokenizer.decode() calls for repeated hash_id combinations
+        self._decoded_cache: dict[tuple[tuple[int, ...], int, int], str] = {}
 
         # TODO: move this under initialize() method
         # Initialize corpus if not already done
@@ -212,6 +216,43 @@ class PromptGenerator(BaseGenerator):
         Raises:
             ConfigurationError: If the input parameters are not compatible.
         """
+        # Check decoded string cache first to avoid redundant decode calls
+        cache_key = (tuple(hash_ids), num_tokens, block_size)
+        if cache_key in self._decoded_cache:
+            return self._decoded_cache[cache_key]
+
+        # Build token sequence using _build_token_sequence (shared logic)
+        final_prompt = self._build_token_sequence(num_tokens, hash_ids, block_size)
+
+        # Decode and cache the result
+        decoded = self.tokenizer.decode(final_prompt, skip_special_tokens=False)
+        self._decoded_cache[cache_key] = decoded
+        return decoded
+
+    def _build_token_sequence(
+        self,
+        num_tokens: int,
+        hash_ids: list[int],
+        block_size: int,
+    ) -> list[int]:
+        """
+        Build a token sequence without decoding. Used for batch parallel decode.
+
+        Each hash index in `hash_ids` corresponds to a block of `block_size` tokens.
+        If a hash index is found in `_cache`, its stored tokens are reused.
+        Otherwise, new tokens are sampled and stored in `_cache`.
+
+        Args:
+            num_tokens: The number of tokens required in the prompt.
+            hash_ids: A list of hash IDs to use for token reuse.
+            block_size: The number of tokens allocated per hash block.
+
+        Returns:
+            list[int]: A list of token IDs.
+
+        Raises:
+            ConfigurationError: If the input parameters are not compatible.
+        """
         final_prompt: list[int] = []
         current_block_size = block_size
 
@@ -244,7 +285,7 @@ class PromptGenerator(BaseGenerator):
 
             final_prompt.extend(self._cache[hash_id])
 
-        return self.tokenizer.decode(final_prompt, skip_special_tokens=False)
+        return final_prompt
 
     def _sample_tokens(self, num_tokens: int) -> list[int]:
         """Generate a list of token IDs containing exactly `num_tokens` number of tokens

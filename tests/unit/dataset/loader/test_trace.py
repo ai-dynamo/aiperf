@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import logging
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -102,6 +102,10 @@ class TestMooncakeTraceDatasetLoader:
         """Create a mock prompt generator for testing."""
         generator = Mock()
         generator.generate.return_value = "Generated prompt text"
+        # Required for convert_to_conversations() to check string cache
+        generator._decoded_cache = {}
+        # Mock _build_token_sequence to return a simple token list
+        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
         return generator
 
     @pytest.fixture
@@ -332,8 +336,18 @@ class TestMooncakeTraceDatasetLoader:
         # Check that the skipped traces message is logged
         assert f"Skipped {expected_skipped:,} traces" in caplog.text
 
-    def test_convert_to_conversations(self, mock_prompt_generator, default_user_config):
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    def test_convert_to_conversations(
+        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+    ):
         """Test conversion of trace data to conversations."""
+        # Mock parallel_decode to return decoded prompts
+        mock_parallel_decode.return_value = [
+            "decoded prompt 1",
+            "decoded prompt 2",
+            "decoded prompt 3",
+        ]
+
         # Setup trace data
         trace_data = {
             "session-1": [

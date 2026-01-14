@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -659,3 +659,127 @@ class TestPromptGeneratorComprehensive:
             generator.generate_user_context_prompt(0)
 
         assert "corpus" in str(exc_info.value).lower()
+
+    # ============================================================================
+    # Decoded String Cache Tests
+    # ============================================================================
+
+    def test_decoded_cache_initialized_empty(self, basic_config):
+        """Test that decoded cache is initialized as empty dict."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        assert hasattr(generator, "_decoded_cache")
+        assert isinstance(generator._decoded_cache, dict)
+        assert len(generator._decoded_cache) == 0
+
+    def test_decoded_cache_populated_on_first_call(self, basic_config):
+        """Test that decoded cache is populated after first call."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        _ = generator._generate_cached_prompt(10, [1, 2], 5)
+
+        # Should have one entry in decoded cache
+        expected_key = ((1, 2), 10, 5)
+        assert expected_key in generator._decoded_cache
+        assert isinstance(generator._decoded_cache[expected_key], str)
+
+    def test_decoded_cache_hit_on_repeated_call(self, basic_config):
+        """Test that decoded cache is hit on repeated calls with same params."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        # First call - should populate cache
+        result1 = generator._generate_cached_prompt(10, [1, 2], 5)
+
+        # Second call with same params - should hit cache
+        with patch.object(generator.tokenizer, "decode") as mock_decode:
+            result2 = generator._generate_cached_prompt(10, [1, 2], 5)
+            mock_decode.assert_not_called()  # Decode should NOT be called
+
+        assert result1 == result2
+
+    def test_decoded_cache_miss_different_hash_ids(self, basic_config):
+        """Test that different hash_ids create different cache entries."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        _ = generator._generate_cached_prompt(10, [1, 2], 5)
+        _ = generator._generate_cached_prompt(10, [3, 4], 5)
+
+        # Both should be cached separately
+        assert ((1, 2), 10, 5) in generator._decoded_cache
+        assert ((3, 4), 10, 5) in generator._decoded_cache
+        assert len(generator._decoded_cache) == 2
+
+    def test_decoded_cache_miss_different_num_tokens(self, basic_config):
+        """Test that different num_tokens creates different cache entry."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        _ = generator._generate_cached_prompt(10, [1, 2], 5)
+        _ = generator._generate_cached_prompt(8, [1, 2], 5)  # Different final block
+
+        # Should have two separate entries
+        assert ((1, 2), 10, 5) in generator._decoded_cache
+        assert ((1, 2), 8, 5) in generator._decoded_cache
+        assert len(generator._decoded_cache) == 2
+
+    def test_decoded_cache_key_structure(self, basic_config):
+        """Test that cache key is (tuple(hash_ids), num_tokens, block_size)."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        # 12 tokens = 5 + 5 + 2 (valid final block size)
+        generator._generate_cached_prompt(12, [1, 2, 3], 5)
+
+        expected_key = ((1, 2, 3), 12, 5)
+        assert expected_key in generator._decoded_cache
+
+    # ============================================================================
+    # _build_token_sequence Method Tests
+    # ============================================================================
+
+    def test_build_token_sequence_returns_tokens(self, basic_config):
+        """Test that _build_token_sequence returns a list of token IDs."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        tokens = generator._build_token_sequence(10, [1, 2], 5)
+
+        assert isinstance(tokens, list)
+        assert all(isinstance(t, int) for t in tokens)
+        assert len(tokens) == 10
+
+    def test_build_token_sequence_populates_cache(self, basic_config):
+        """Test that _build_token_sequence populates the token block cache."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        _ = generator._build_token_sequence(10, [1, 2], 5)
+
+        # Token block cache should be populated
+        assert 1 in generator._cache
+        assert 2 in generator._cache
+
+    def test_build_token_sequence_does_not_populate_decoded_cache(self, basic_config):
+        """Test that _build_token_sequence does NOT populate decoded cache."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        _ = generator._build_token_sequence(10, [1, 2], 5)
+
+        # Decoded cache should remain empty
+        assert len(generator._decoded_cache) == 0
+
+    def test_build_token_sequence_same_validation_as_generate_cached(
+        self, basic_config
+    ):
+        """Test that _build_token_sequence has same validation as _generate_cached_prompt."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        # This should raise same error as _generate_cached_prompt
+        with pytest.raises(ConfigurationError):
+            generator._build_token_sequence(10, [1, 2, 3], 5)  # final_block_size = 0
