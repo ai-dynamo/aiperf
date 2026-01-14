@@ -3,9 +3,22 @@ SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Trace Replay
+# Trace Replay with Mooncake Traces
 
-This tutorial takes you through an example trace replay profile. Trace Replay benchmarking helps reproduce performance benchmarking results for validation or testing your system under a specific load pattern.
+This tutorial covers replaying production traces using the Mooncake trace format. Trace replay benchmarking reproduces real-world traffic patterns with precise timing control, enabling performance validation and capacity planning under realistic load.
+
+## When to Use This Tutorial
+
+Use this approach when you need to:
+- Replay production traffic patterns captured from real systems
+- Validate performance with industry-standard Mooncake FAST'25 traces
+- Test system behavior under specific temporal load patterns
+- Reproduce benchmark results for regression testing
+
+For other use cases:
+- **Custom prompts without timing**: See [Custom Prompt Benchmarking](../tutorials/custom-prompt-benchmarking.md)
+- **Precise timestamp control for any dataset**: See [Fixed Schedule](../tutorials/fixed-schedule.md)
+- **Multi-turn conversations from files**: See [Multi-Turn Conversations](../tutorials/multi-turn.md)
 
 ## Start a vLLM Server
 

@@ -3,24 +3,24 @@ SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Trace Benchmarking with Mooncake Traces
+# Custom Prompt Benchmarking
 
-Trace benchmarking allows you to send
-**exactly the payloads specified in your trace file**.
-Unlike other dataset types that sample or generate requests, mooncake traces
-with `text_input` provide complete control over what gets sent to your inference server.
+Benchmark with prompts from your own file, sent exactly as specified without sampling or generation.
 
 ## Overview
 
+This tutorial uses the `mooncake_trace` dataset type with `text_input` field to send prompts exactly as-is:
+- **Each line = one request** sent in the order it appears
+- **No sampling** (unlike `random_pool`)
+- **No generation** (unlike synthetic datasets)
+- **Deterministic**: Same file always produces the same request sequence
+
 The `mooncake_trace` dataset type with `text_input` provides:
 
-- **Exact Payload Control**: Send precisely the text you specify
-- **Deterministic Testing**: Same trace file produces identical requests every time
+- **Exact Control**: Send precisely the text you specify
+- **Deterministic Testing**: Same file produces identical request sequence every time
 - **Production Replay**: Use real user queries for realistic benchmarking
 - **Debugging**: Isolate performance issues with specific prompts
-
-This is different from `random_pool` which samples from a dataset.
-Traces send each entry exactly once in order.
 
 ### Setting Up the Server
 

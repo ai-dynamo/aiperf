@@ -125,6 +125,6 @@ aiperf profile \
 
 ## Related Tutorials
 
-- [Trace Benchmarking](trace-benchmarking.md) - For deterministic request patterns
+- [Custom Prompt Benchmarking](custom-prompt-benchmarking.md) - For sending custom prompts without timing control
 - [Time-based Benchmarking](time-based-benchmarking.md) - For duration-based testing
 - [Request Cancellation](request-cancellation.md) - For timeout testing
