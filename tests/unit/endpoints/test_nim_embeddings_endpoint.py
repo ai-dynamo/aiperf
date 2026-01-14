@@ -11,10 +11,15 @@ from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
 )
+from tests.unit.endpoints.test_embeddings_endpoint import TestEmbeddingsEndpoint
 
 
-class TestNIMEmbeddingsEndpoint:
-    """Tests for NIMEmbeddingsEndpoint multimodal functionality."""
+class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
+    """Tests for NIMEmbeddingsEndpoint.
+
+    Inherits all base EmbeddingsEndpoint tests and adds NIM-specific
+    multimodal functionality tests.
+    """
 
     @pytest.fixture
     def model_endpoint(self):
@@ -30,18 +35,9 @@ class TestNIMEmbeddingsEndpoint:
             NIMEmbeddingsEndpoint, model_endpoint
         )
 
-    def test_format_payload_text_only(self, endpoint, model_endpoint):
-        """Test that text-only requests work (inherited from base class)."""
-        turn = Turn(
-            texts=[Text(contents=["Embed this text"])],
-            model="nim-embeddings-model",
-        )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
-
-        payload = endpoint.format_payload(request_info)
-
-        assert payload["model"] == "nim-embeddings-model"
-        assert payload["input"] == ["Embed this text"]
+    # =========================================================================
+    # NIM-specific multimodal tests (image support)
+    # =========================================================================
 
     def test_format_payload_image_only(self, endpoint, model_endpoint):
         """Test embedding request with images only."""
