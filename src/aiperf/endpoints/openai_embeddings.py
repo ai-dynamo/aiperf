@@ -23,7 +23,7 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 class EmbeddingsEndpoint(BaseEndpoint):
     """OpenAI Embeddings endpoint.
 
-    Generates vector embeddings for text and/or image inputs.
+    Generates vector embeddings for text inputs.
     """
 
     @classmethod
