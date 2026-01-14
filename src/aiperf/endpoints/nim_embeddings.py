@@ -28,6 +28,7 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
         return EndpointMetadata(
             endpoint_path="/v1/embeddings",
             supports_streaming=False,
+            supports_images=True,
             produces_tokens=False,
             tokenizes_input=True,
             metrics_title="NIM Embeddings Metrics",
