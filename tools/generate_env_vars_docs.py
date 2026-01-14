@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Generate environment variable documentation for AIPerf."""
 
@@ -221,7 +221,7 @@ def generate_markdown_docs(settings_classes: list[SettingsClass]) -> str:
     """Generate markdown documentation for environment variables."""
     lines = [
         "<!--",
-        "SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+        "SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
         "SPDX-License-Identifier: Apache-2.0",
         "-->",
         "",
