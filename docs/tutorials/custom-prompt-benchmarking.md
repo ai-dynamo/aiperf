@@ -18,6 +18,9 @@ The `mooncake_trace` dataset type with `text_input` provides:
 - **Production Replay**: Use real user queries for realistic benchmarking
 - **Debugging**: Isolate performance issues with specific prompts
 
+This is different from `random_pool` which samples from a dataset.
+Traces send each entry exactly once in order.
+
 ### Setting Up the Server
 
 ```bash
@@ -64,6 +67,7 @@ aiperf profile \
 
 **Key Points:**
 - Each line in the JSONL file becomes exactly one request
+- Requests are sent in the order they appear in the file
 - The `text_input` is sent exactly as specified
 
 
