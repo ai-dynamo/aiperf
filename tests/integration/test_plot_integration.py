@@ -277,19 +277,6 @@ class TestPlotIntegration:
                 f"{png_path.name} has unexpectedly small dimensions: {width}x{height}"
             )
 
-        # Check for common server metrics plots (may not all exist depending on mock metrics)
-        # Just log what was created for debugging
-        plot_names = [p.name for p in png_files]
-        server_metric_plot_patterns = ["cache", "requests", "dual_axis"]
-        _ = [
-            name
-            for name in plot_names
-            if any(pattern in name for pattern in server_metric_plot_patterns)
-        ]
-
-        # If we have server metrics data, we should have generated at least some plots
-        # But don't fail if specific plots are missing (depends on mock server metrics)
-
     async def test_plot_with_server_metrics_parquet_only(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):

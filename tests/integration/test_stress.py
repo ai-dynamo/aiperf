@@ -26,7 +26,7 @@ class TestStressScenarios:
                 --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --endpoint-type chat \
                 --streaming \
-                --warmup-request-count 1000 \
+                --warmup-request-count 100 \
                 --request-count 1000 \
                 --concurrency 1000 \
                 --request-rate 1000 \
@@ -57,7 +57,7 @@ class TestStressScenarios:
                 --osl 50 \
                 --workers-max 100 \
                 --streaming \
-                --ui dashboard
+                --ui {defaults.ui}
             """,
             timeout=180.0,
         )

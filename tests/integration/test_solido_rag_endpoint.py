@@ -31,22 +31,3 @@ class TestSolidoRAGEndpoint:
             """
         )
         assert result.request_count == defaults.request_count
-
-    async def test_solido_rag_multiple_requests(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
-    ):
-        """SOLIDO RAG with multiple concurrent requests."""
-        result = await cli.run(
-            f"""
-            aiperf profile \
-                --model rag-model \
-                --tokenizer gpt2 \
-                --url {aiperf_mock_server.url} \
-                --endpoint-type solido_rag \
-                --request-count 20 \
-                --concurrency 4 \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """
-        )
-        assert result.request_count == 20

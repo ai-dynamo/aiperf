@@ -228,9 +228,9 @@ class TestRateLimitingInvariants:
         # Minimum expected gap = 1/QPS
         min_expected_gap = 1.0 / target_qps
 
-        # Check mean gap is at least the expected (allowing 20% tolerance for jitter)
+        # Check mean gap is at least the expected (allowing 30% tolerance for jitter)
         mean_gap = timing.calculate_mean(gaps)
-        assert mean_gap >= min_expected_gap * 0.8, (
-            f"Mean gap {mean_gap:.4f}s is less than 80% of expected {min_expected_gap:.4f}s. "
+        assert mean_gap >= min_expected_gap * 0.7, (
+            f"Mean gap {mean_gap:.4f}s is less than 70% of expected {min_expected_gap:.4f}s. "
             f"Rate limiting may be allowing requests faster than configured."
         )

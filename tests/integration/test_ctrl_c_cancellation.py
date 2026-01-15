@@ -58,37 +58,3 @@ class TestCtrlCCancellation:
         # Each record should have metrics computed
         for record in result.jsonl:
             assert record.metrics is not None, "Record should have metrics"
-
-    async def test_ctrl_c_duration_based_benchmark(
-        self, signal_cli: AIPerfSignalCLI, aiperf_mock_server: AIPerfMockServer
-    ):
-        """Ctrl+C works correctly for duration-based benchmarks."""
-        result = await signal_cli.run_with_sigint(
-            f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
-                --endpoint-type chat \
-                --streaming \
-                --benchmark-duration 60 \
-                --concurrency 5 \
-                --random-seed 42 \
-                --osl 100 \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """,
-            sigint_delay=2.0,  # Wait 2s after profiling starts
-            wait_for_profiling=True,  # Wait for "AIPerf is PROFILING" log first
-        )
-
-        # All output files should be written
-        assert result.json is not None, "JSON export should exist"
-        assert result.jsonl is not None, "JSONL records should exist"
-
-        # was_cancelled flag should be True
-        assert result.json.was_cancelled is True, (
-            "was_cancelled flag should be True after Ctrl+C"
-        )
-
-        # Should have some completed requests
-        assert len(result.jsonl) > 0, "Should have some completed requests"

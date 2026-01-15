@@ -336,8 +336,13 @@ def cli(
     return AIPerfCLI(aiperf_runner)
 
 
-class AIPerfSignalCLI(AIPerfCLI):
-    """CLI wrapper with SIGINT signal support for testing Ctrl+C cancellation."""
+class AIPerfSignalCLI:
+    """CLI wrapper with SIGINT signal support for testing Ctrl+C cancellation.
+
+    Note: This class does not inherit from AIPerfCLI because it needs different
+    subprocess handling (stdout capture, delayed SIGINT). It uses AIPerfCLI._parse_command
+    as a static method for command parsing.
+    """
 
     def __init__(
         self,
@@ -363,7 +368,7 @@ class AIPerfSignalCLI(AIPerfCLI):
         Returns:
             AIPerfResults object containing output artifacts
         """
-        args = self._parse_command(command)
+        args = AIPerfCLI._parse_command(command)
         full_args = args + [
             "--artifact-dir",
             str(self._temp_output_dir),

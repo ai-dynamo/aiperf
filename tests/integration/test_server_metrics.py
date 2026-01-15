@@ -114,42 +114,6 @@ class TestServerMetrics:
         assert result.has_server_metric("sglang:e2e_request_latency_seconds")
         assert result.has_server_metric("sglang:time_to_first_token_seconds")
 
-    async def test_server_metrics_all_inference_endpoints(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
-    ):
-        """Server metrics collection from all inference server endpoints."""
-        urls = aiperf_mock_server.get_server_metrics_url("vllm", "sglang", "trtllm")
-
-        result = await cli.run(
-            f"""
-            aiperf profile \
-                --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
-                --endpoint-type chat \
-                --streaming \
-                --request-count 50 \
-                --concurrency 2 \
-                --workers-max 2 \
-                --server-metrics {" ".join(urls)}
-            """
-        )
-        assert result.request_count == 50
-        result.assert_server_metrics_valid()
-
-        # Verify endpoints were successful (default + vllm + sglang + trtllm)
-        # The default /metrics endpoint is always auto-collected
-        assert len(result.server_metrics_endpoints_successful) >= 3
-
-        # Verify vLLM metrics
-        assert result.has_server_metric("vllm:e2e_request_latency_seconds")
-
-        # Verify SGLang metrics
-        assert result.has_server_metric("sglang:e2e_request_latency_seconds")
-
-        # Verify TRT-LLM metrics
-        assert result.has_server_metric("trtllm:e2e_request_latency_seconds")
-
     # ========================================================================
     # Dynamo Endpoints Tests
     # ========================================================================

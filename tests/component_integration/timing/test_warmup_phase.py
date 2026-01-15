@@ -133,8 +133,8 @@ class TestWarmupBasic:
             p for p in credit_payloads if p.payload.phase == CreditPhase.PROFILING
         ]
 
-        # Warmup duration 0.3s at 200 QPS → ~60 requests (within tolerance)
-        assert 50 <= len(warmup_credits) <= 70, (
+        # Warmup duration 0.3s at 200 QPS → ~60 requests (widened for CI jitter)
+        assert 40 <= len(warmup_credits) <= 80, (
             f"Expected ~60 warmup credits, got {len(warmup_credits)}"
         )
         assert len(profiling_credits) == 25

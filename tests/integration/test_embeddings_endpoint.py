@@ -16,7 +16,7 @@ class TestEmbeddingsEndpoint:
     async def test_basic_embeddings(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
-        """Basic embeddings request."""
+        """Basic embeddings request completes with expected request count."""
         result = await cli.run(
             f"""
             aiperf profile \
@@ -31,7 +31,5 @@ class TestEmbeddingsEndpoint:
             """
         )
         assert result.request_count == defaults.request_count
-        assert (
-            not hasattr(result.json, "time_to_first_token")
-            or result.json.time_to_first_token is None
-        )
+        # Embeddings are non-streaming, so streaming metrics should not be present
+        assert result.json.time_to_first_token is None
