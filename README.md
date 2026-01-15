@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -52,7 +52,7 @@ Features
 |---------|-------------|-----------|
 | **[Random Number Generation & Reproducibility](docs/reproducibility.md)** | Deterministic dataset generation with `--random-seed` | Debugging, regression testing, controlled experiments |
 | **[Request Cancellation](docs/tutorials/request-cancellation.md)** | Test timeout behavior and service resilience | SLA validation, cancellation modeling |
-| **[Trace Benchmarking](docs/tutorials/trace-benchmarking.md)** | Deterministic workload replay with custom datasets | Regression testing, A/B testing |
+| **[Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md)** | Send each prompt from your file exactly as-is, without sampling or generation | Regression testing, A/B testing, debugging specific prompts |
 | **[Fixed Schedule](docs/tutorials/fixed-schedule.md)** | Precise timestamp-based request execution | Traffic replay, temporal analysis, burst testing |
 | **[Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md)** | Duration-based testing with grace period control | Stability testing, sustained performance |
 | **[Timeslice Metrics](docs/tutorials/timeslices.md)** | Split up benchmark into timeslices and calculate metrics for each timeslice | Load pattern impact, detecting warm-up effects, performance degradation analysis |
