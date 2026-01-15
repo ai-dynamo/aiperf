@@ -1,13 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for StopConditionChecker and individual stop conditions.
-
-Tests cover:
-- Individual stop conditions (Lifecycle, RequestCount, SessionCount, Duration)
-- StopConditionChecker composition and short-circuit evaluation
-- can_send_any_turn vs can_start_new_session distinction
-- Edge cases and boundary conditions
-"""
+"""Tests for StopConditionChecker and individual stop conditions."""
 
 from unittest.mock import MagicMock
 
@@ -25,17 +18,12 @@ from aiperf.timing.phase.stop_conditions import (
     StopConditionChecker,
 )
 
-# =============================================================================
-# Test Fixtures and Helpers
-# =============================================================================
-
 
 def make_config(
     total_expected_requests: int | None = None,
     expected_num_sessions: int | None = None,
     expected_duration_sec: float | None = None,
 ) -> CreditPhaseConfig:
-    """Create a CreditPhaseConfig for testing."""
     return CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
         timing_mode=TimingMode.REQUEST_RATE,
@@ -50,7 +38,6 @@ def make_mock_lifecycle(
     is_sending_complete: bool = False,
     time_left: float = 10.0,
 ) -> MagicMock:
-    """Create a mock PhaseLifecycleProtocol."""
     lifecycle = MagicMock(spec=PhaseLifecycle)
     lifecycle.was_cancelled = was_cancelled
     lifecycle.is_sending_complete = is_sending_complete
@@ -63,7 +50,6 @@ def make_mock_counter(
     sent_sessions: int = 0,
     total_session_turns: int = 0,
 ) -> MagicMock:
-    """Create a mock CreditCounterProtocol."""
     counter = MagicMock(spec=CreditCounter)
     counter.requests_sent = requests_sent
     counter.sent_sessions = sent_sessions
@@ -71,61 +57,37 @@ def make_mock_counter(
     return counter
 
 
-# =============================================================================
-# LifecycleStopCondition Tests
-# =============================================================================
-
-
 class TestLifecycleStopCondition:
-    """Test lifecycle-based stop condition."""
-
-    def test_should_use_always_returns_true(self):
-        """Lifecycle condition is always used."""
+    def test_should_use_always_returns_true(self) -> None:
         assert LifecycleStopCondition.should_use(make_config()) is True
 
-    def test_can_send_when_not_cancelled_and_not_complete(self):
-        """Can send when phase is active."""
+    def test_can_send_when_not_cancelled_and_not_complete(self) -> None:
         lifecycle = make_mock_lifecycle(was_cancelled=False, is_sending_complete=False)
         counter = make_mock_counter()
         condition = LifecycleStopCondition(make_config(), lifecycle, counter)
-
         assert condition.can_send_any_turn() is True
 
-    def test_cannot_send_when_cancelled(self):
-        """Cannot send when phase is cancelled."""
+    def test_cannot_send_when_cancelled(self) -> None:
         lifecycle = make_mock_lifecycle(was_cancelled=True, is_sending_complete=False)
         counter = make_mock_counter()
         condition = LifecycleStopCondition(make_config(), lifecycle, counter)
-
         assert condition.can_send_any_turn() is False
 
-    def test_cannot_send_when_sending_complete(self):
-        """Cannot send when sending is marked complete."""
+    def test_cannot_send_when_sending_complete(self) -> None:
         lifecycle = make_mock_lifecycle(was_cancelled=False, is_sending_complete=True)
         counter = make_mock_counter()
         condition = LifecycleStopCondition(make_config(), lifecycle, counter)
-
         assert condition.can_send_any_turn() is False
 
-    def test_can_start_new_session_returns_true(self):
-        """Lifecycle condition has no session-specific restriction."""
+    def test_can_start_new_session_returns_true(self) -> None:
         lifecycle = make_mock_lifecycle()
         counter = make_mock_counter()
         condition = LifecycleStopCondition(make_config(), lifecycle, counter)
-
         assert condition.can_start_new_session() is True
 
 
-# =============================================================================
-# RequestCountStopCondition Tests
-# =============================================================================
-
-
 class TestRequestCountStopCondition:
-    """Test request count based stop condition."""
-
-    def test_should_use_when_request_count_configured(self):
-        """Should use when total_expected_requests is set."""
+    def test_should_use_when_request_count_configured(self) -> None:
         assert (
             RequestCountStopCondition.should_use(
                 make_config(total_expected_requests=100)
@@ -133,8 +95,7 @@ class TestRequestCountStopCondition:
             is True
         )
 
-    def test_should_not_use_when_no_request_count(self):
-        """Should not use when total_expected_requests is None."""
+    def test_should_not_use_when_no_request_count(self) -> None:
         assert (
             RequestCountStopCondition.should_use(
                 make_config(total_expected_requests=None)
@@ -142,33 +103,7 @@ class TestRequestCountStopCondition:
             is False
         )
 
-    def test_can_send_when_under_limit(self):
-        """Can send when requests sent is below limit."""
-        config = make_config(total_expected_requests=100)
-        lifecycle = make_mock_lifecycle()
-        counter = make_mock_counter(requests_sent=50)
-        condition = RequestCountStopCondition(config, lifecycle, counter)
-
-        assert condition.can_send_any_turn() is True
-
-    def test_cannot_send_when_at_limit(self):
-        """Cannot send when requests sent equals limit."""
-        config = make_config(total_expected_requests=100)
-        lifecycle = make_mock_lifecycle()
-        counter = make_mock_counter(requests_sent=100)
-        condition = RequestCountStopCondition(config, lifecycle, counter)
-
-        assert condition.can_send_any_turn() is False
-
-    def test_cannot_send_when_over_limit(self):
-        """Cannot send when requests sent exceeds limit."""
-        config = make_config(total_expected_requests=100)
-        lifecycle = make_mock_lifecycle()
-        counter = make_mock_counter(requests_sent=150)
-        condition = RequestCountStopCondition(config, lifecycle, counter)
-
-        assert condition.can_send_any_turn() is False
-
+    # fmt: skip
     @pytest.mark.parametrize(
         "sent,limit,expected",
         [
@@ -176,36 +111,27 @@ class TestRequestCountStopCondition:
             (0, 100, True),
             (99, 100, True),
             (100, 100, False),
-            (101, 100, False),
+            (150, 100, False),
         ],
     )
-    def test_various_request_counts(self, sent, limit, expected):
-        """Test various request count scenarios."""
+    def test_request_count_scenarios(
+        self, sent: int, limit: int, expected: bool
+    ) -> None:
         config = make_config(total_expected_requests=limit)
         lifecycle = make_mock_lifecycle()
         counter = make_mock_counter(requests_sent=sent)
         condition = RequestCountStopCondition(config, lifecycle, counter)
-
         assert condition.can_send_any_turn() is expected
 
 
-# =============================================================================
-# SessionCountStopCondition Tests
-# =============================================================================
-
-
 class TestSessionCountStopCondition:
-    """Test session count based stop condition."""
-
-    def test_should_use_when_session_count_configured(self):
-        """Should use when expected_num_sessions is set."""
+    def test_should_use_when_session_count_configured(self) -> None:
         assert (
             SessionCountStopCondition.should_use(make_config(expected_num_sessions=10))
             is True
         )
 
-    def test_should_not_use_when_no_session_count(self):
-        """Should not use when expected_num_sessions is None."""
+    def test_should_not_use_when_no_session_count(self) -> None:
         assert (
             SessionCountStopCondition.should_use(
                 make_config(expected_num_sessions=None)
@@ -213,144 +139,93 @@ class TestSessionCountStopCondition:
             is False
         )
 
-    def test_can_send_when_sessions_under_limit(self):
-        """Can send when sessions sent is below limit."""
+    def test_can_send_when_sessions_under_limit(self) -> None:
         config = make_config(expected_num_sessions=10)
         lifecycle = make_mock_lifecycle()
         counter = make_mock_counter(sent_sessions=5)
         condition = SessionCountStopCondition(config, lifecycle, counter)
-
         assert condition.can_send_any_turn() is True
 
-    def test_can_send_when_sessions_at_limit_but_turns_remaining(self):
-        """Can send turns for existing sessions even when session limit reached."""
+    def test_can_send_when_sessions_at_limit_but_turns_remaining(self) -> None:
         config = make_config(expected_num_sessions=10)
         lifecycle = make_mock_lifecycle()
-        # 10 sessions started, but only 15 of 20 expected turns sent
         counter = make_mock_counter(
             sent_sessions=10, requests_sent=15, total_session_turns=20
         )
         condition = SessionCountStopCondition(config, lifecycle, counter)
-
         assert condition.can_send_any_turn() is True
 
-    def test_cannot_send_when_all_session_turns_complete(self):
-        """Cannot send when all session turns have been sent."""
+    def test_cannot_send_when_all_session_turns_complete(self) -> None:
         config = make_config(expected_num_sessions=10)
         lifecycle = make_mock_lifecycle()
         counter = make_mock_counter(
             sent_sessions=10, requests_sent=20, total_session_turns=20
         )
         condition = SessionCountStopCondition(config, lifecycle, counter)
-
         assert condition.can_send_any_turn() is False
 
-    def test_can_start_new_session_when_under_limit(self):
-        """Can start new session when under session limit."""
+    def test_can_start_new_session_when_under_limit(self) -> None:
         config = make_config(expected_num_sessions=10)
         lifecycle = make_mock_lifecycle()
         counter = make_mock_counter(sent_sessions=5)
         condition = SessionCountStopCondition(config, lifecycle, counter)
-
         assert condition.can_start_new_session() is True
 
-    def test_cannot_start_new_session_when_at_limit(self):
-        """Cannot start new session when at session limit."""
+    def test_cannot_start_new_session_when_at_limit(self) -> None:
         config = make_config(expected_num_sessions=10)
         lifecycle = make_mock_lifecycle()
         counter = make_mock_counter(
             sent_sessions=10, requests_sent=5, total_session_turns=20
         )
         condition = SessionCountStopCondition(config, lifecycle, counter)
-
-        # can_send_any_turn is True (remaining turns exist)
         assert condition.can_send_any_turn() is True
-        # but can_start_new_session is False (session limit reached)
         assert condition.can_start_new_session() is False
 
 
-# =============================================================================
-# DurationStopCondition Tests
-# =============================================================================
-
-
 class TestDurationStopCondition:
-    """Test duration based stop condition."""
-
-    def test_should_use_when_duration_configured(self):
-        """Should use when expected_duration_sec is set."""
+    def test_should_use_when_duration_configured(self) -> None:
         assert (
             DurationStopCondition.should_use(make_config(expected_duration_sec=60.0))
             is True
         )
 
-    def test_should_not_use_when_no_duration(self):
-        """Should not use when expected_duration_sec is None."""
+    def test_should_not_use_when_no_duration(self) -> None:
         assert (
             DurationStopCondition.should_use(make_config(expected_duration_sec=None))
             is False
         )
 
-    def test_can_send_when_time_remaining(self):
-        """Can send when time remains."""
+    # fmt: skip
+    @pytest.mark.parametrize(
+        "time_left,expected",
+        [(30.0, True), (0.001, True), (0.0, False), (-5.0, False)],
+    )
+    def test_duration_scenarios(self, time_left: float, expected: bool) -> None:
         config = make_config(expected_duration_sec=60.0)
-        lifecycle = make_mock_lifecycle(time_left=30.0)
+        lifecycle = make_mock_lifecycle(time_left=time_left)
         counter = make_mock_counter()
         condition = DurationStopCondition(config, lifecycle, counter)
-
-        assert condition.can_send_any_turn() is True
-
-    def test_cannot_send_when_no_time_remaining(self):
-        """Cannot send when no time remains."""
-        config = make_config(expected_duration_sec=60.0)
-        lifecycle = make_mock_lifecycle(time_left=0.0)
-        counter = make_mock_counter()
-        condition = DurationStopCondition(config, lifecycle, counter)
-
-        assert condition.can_send_any_turn() is False
-
-    def test_cannot_send_when_time_negative(self):
-        """Cannot send when time is negative (past deadline)."""
-        config = make_config(expected_duration_sec=60.0)
-        lifecycle = make_mock_lifecycle(time_left=-5.0)
-        counter = make_mock_counter()
-        condition = DurationStopCondition(config, lifecycle, counter)
-
-        assert condition.can_send_any_turn() is False
-
-
-# =============================================================================
-# StopConditionChecker Integration Tests
-# =============================================================================
+        assert condition.can_send_any_turn() is expected
 
 
 class TestStopConditionCheckerConfiguration:
-    """Test StopConditionChecker initialization and configuration."""
-
-    def test_lifecycle_always_included(self):
-        """Lifecycle condition should always be included."""
+    def test_lifecycle_always_included(self) -> None:
         checker = StopConditionChecker(
-            make_config(),
-            make_mock_lifecycle(),
-            make_mock_counter(),
+            make_config(), make_mock_lifecycle(), make_mock_counter()
         )
-        # Should have at least lifecycle condition
         assert len(checker._stop_conditions) >= 1
 
-    def test_request_count_condition_included_when_configured(self):
-        """Request count condition included when configured."""
+    def test_request_count_condition_included_when_configured(self) -> None:
         checker = StopConditionChecker(
             make_config(total_expected_requests=100),
             make_mock_lifecycle(),
             make_mock_counter(),
         )
-        # Should have lifecycle + request count
         condition_types = [type(c).__name__ for c in checker._stop_conditions]
         assert "LifecycleStopCondition" in condition_types
         assert "RequestCountStopCondition" in condition_types
 
-    def test_all_conditions_included_when_all_configured(self):
-        """All conditions included when all are configured."""
+    def test_all_conditions_included_when_all_configured(self) -> None:
         checker = StopConditionChecker(
             make_config(
                 total_expected_requests=100,
@@ -368,10 +243,7 @@ class TestStopConditionCheckerConfiguration:
 
 
 class TestStopConditionCheckerCanSendAnyTurn:
-    """Test can_send_any_turn behavior."""
-
-    def test_can_send_when_all_conditions_pass(self):
-        """Can send when all conditions allow."""
+    def test_can_send_when_all_conditions_pass(self) -> None:
         checker = StopConditionChecker(
             make_config(total_expected_requests=100),
             make_mock_lifecycle(was_cancelled=False, is_sending_complete=False),
@@ -379,8 +251,7 @@ class TestStopConditionCheckerCanSendAnyTurn:
         )
         assert checker.can_send_any_turn() is True
 
-    def test_cannot_send_when_lifecycle_fails(self):
-        """Cannot send when lifecycle condition fails."""
+    def test_cannot_send_when_lifecycle_fails(self) -> None:
         checker = StopConditionChecker(
             make_config(total_expected_requests=100),
             make_mock_lifecycle(was_cancelled=True),
@@ -388,8 +259,7 @@ class TestStopConditionCheckerCanSendAnyTurn:
         )
         assert checker.can_send_any_turn() is False
 
-    def test_cannot_send_when_request_count_reached(self):
-        """Cannot send when request count limit reached."""
+    def test_cannot_send_when_request_count_reached(self) -> None:
         checker = StopConditionChecker(
             make_config(total_expected_requests=100),
             make_mock_lifecycle(),
@@ -397,8 +267,7 @@ class TestStopConditionCheckerCanSendAnyTurn:
         )
         assert checker.can_send_any_turn() is False
 
-    def test_cannot_send_when_duration_expired(self):
-        """Cannot send when duration expired."""
+    def test_cannot_send_when_duration_expired(self) -> None:
         checker = StopConditionChecker(
             make_config(expected_duration_sec=60.0),
             make_mock_lifecycle(time_left=0.0),
@@ -408,10 +277,7 @@ class TestStopConditionCheckerCanSendAnyTurn:
 
 
 class TestStopConditionCheckerCanStartNewSession:
-    """Test can_start_new_session behavior."""
-
-    def test_can_start_session_when_all_conditions_pass(self):
-        """Can start new session when all conditions allow."""
+    def test_can_start_session_when_all_conditions_pass(self) -> None:
         checker = StopConditionChecker(
             make_config(expected_num_sessions=10),
             make_mock_lifecycle(),
@@ -419,20 +285,16 @@ class TestStopConditionCheckerCanStartNewSession:
         )
         assert checker.can_start_new_session() is True
 
-    def test_cannot_start_session_when_general_condition_fails(self):
-        """Cannot start session when can_send_any_turn fails."""
+    def test_cannot_start_session_when_general_condition_fails(self) -> None:
         checker = StopConditionChecker(
             make_config(expected_num_sessions=10),
             make_mock_lifecycle(was_cancelled=True),
             make_mock_counter(sent_sessions=5),
         )
-        # General check fails
         assert checker.can_send_any_turn() is False
-        # Therefore session check also fails
         assert checker.can_start_new_session() is False
 
-    def test_cannot_start_session_when_session_limit_reached(self):
-        """Cannot start session when session limit reached."""
+    def test_cannot_start_session_when_session_limit_reached(self) -> None:
         checker = StopConditionChecker(
             make_config(expected_num_sessions=10),
             make_mock_lifecycle(),
@@ -440,60 +302,50 @@ class TestStopConditionCheckerCanStartNewSession:
                 sent_sessions=10, requests_sent=5, total_session_turns=20
             ),
         )
-        # Can send turns for existing sessions
         assert checker.can_send_any_turn() is True
-        # But cannot start new sessions
         assert checker.can_start_new_session() is False
 
 
 class TestStopConditionCheckerEdgeCases:
-    """Test edge cases and boundary conditions."""
-
-    def test_empty_config_only_lifecycle(self):
-        """With no limits configured, only lifecycle is checked."""
+    def test_empty_config_only_lifecycle(self) -> None:
         checker = StopConditionChecker(
             make_config(),
             make_mock_lifecycle(),
             make_mock_counter(requests_sent=1_000_000),
         )
-        # No request/session/duration limits, so can always send
         assert checker.can_send_any_turn() is True
         assert checker.can_start_new_session() is True
 
-    def test_first_condition_failure_short_circuits(self):
-        """First failing condition should short-circuit evaluation."""
+    def test_first_condition_failure_short_circuits(self) -> None:
         lifecycle = make_mock_lifecycle(was_cancelled=True)
         counter = make_mock_counter()
-
         checker = StopConditionChecker(
             make_config(total_expected_requests=100, expected_duration_sec=60.0),
             lifecycle,
             counter,
         )
-
         assert checker.can_send_any_turn() is False
-        # time_left_in_seconds should not be called because lifecycle fails first
-        # (This verifies short-circuit behavior)
 
+    # fmt: skip
     @pytest.mark.parametrize(
         "requests,sessions,turns,expected_any,expected_new",
         [
-            # Under all limits
             (5, 5, 20, True, True),
-            # Request limit at boundary
             (99, 5, 20, True, True),
             (100, 5, 20, False, False),
-            # Session limit at boundary (turns remaining)
             (5, 9, 20, True, True),
-            (5, 10, 20, True, False),  # Can send existing turns, can't start new
-            # All session turns complete
+            (5, 10, 20, True, False),
             (20, 10, 20, False, False),
         ],
     )
     def test_boundary_conditions(
-        self, requests, sessions, turns, expected_any, expected_new
-    ):
-        """Test various boundary conditions."""
+        self,
+        requests: int,
+        sessions: int,
+        turns: int,
+        expected_any: bool,
+        expected_new: bool,
+    ) -> None:
         checker = StopConditionChecker(
             make_config(total_expected_requests=100, expected_num_sessions=10),
             make_mock_lifecycle(),

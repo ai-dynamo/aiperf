@@ -64,6 +64,43 @@ The stagger ensures requests are evenly distributed from the start, avoiding a t
 
 ## Timing Model
 
+### Virtual History & Start Order
+
+Simulates steady-state from t=0 by distributing users across the "session lifetime"
+(the time from a user's first turn to their last, measured in gaps = session_turns - 1).
+
+Each user is assigned a virtual "age" representing how far through their session they are:
+- User 1 (oldest): virtually done - all turns completed before t=0, replaced immediately
+- User N (youngest): just started - most turns remaining
+
+The user who just finished (User 1) is replaced by a fresh user who fires first at t=0.
+Other users fire in staggered order based on their position in the session lifetime.
+This creates immediate user churn rather than waiting for the first natural completions.
+
+#### Example: 15 users, 20 turns, 1.0 QPS
+
+```
+-------------------------------------------
+ User | Turns | Time | Turn Visualization
+-------------------------------------------
+    1 |     - |    - | (All turns completed before t=0) ← User 1 is "virtually done"
+   16 |    20 |   0s | ████████████████████ ← New user at t=0 with all turns remaining
+    5 |     6 |   1s | ██████
+    9 |    11 |   2s | ███████████
+   13 |    16 |   3s | ████████████████
+    2 |     2 |   4s | ██
+    6 |     7 |   5s | ███████
+   10 |    12 |   6s | ████████████
+   14 |    17 |   7s | █████████████████
+    3 |     3 |   8s | ███
+    7 |     8 |   9s | ████████
+   11 |    13 |  10s | █████████████
+   15 |    18 |  11s | ██████████████████
+    4 |     4 |  12s | ████
+    8 |     9 |  13s | █████████
+   12 |    14 |  14s | ██████████████
+```
+
 ### Gap Calculation
 
 The gap between each user's requests is calculated as:

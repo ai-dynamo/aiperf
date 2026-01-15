@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for TimingConfig validation and construction.
-
-Tests:
-- Field validation constraints (ge=0, ge=1) in CreditPhaseConfig
-- TimingConfig.from_user_config() class method
-- Frozen model behavior
-"""
+"""Tests for TimingConfig validation and construction."""
 
 from unittest.mock import MagicMock
 
@@ -20,10 +14,6 @@ from aiperf.timing.config import (
     RequestCancellationConfig,
     TimingConfig,
 )
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
 
 
 def make_phase_config(**overrides) -> CreditPhaseConfig:
@@ -99,15 +89,10 @@ def make_user_config(**overrides) -> UserConfig:
     return user_config
 
 
-# =============================================================================
-# Valid Configuration Tests
-# =============================================================================
-
-
 class TestTimingConfigValidConfigurations:
     """Tests for valid TimingConfig configurations."""
 
-    def test_minimal_request_rate_config(self):
+    def test_minimal_request_rate_config(self) -> None:
         """Minimal valid configuration for REQUEST_RATE mode."""
         phase_config = make_phase_config()
         config = TimingConfig(phase_configs=[phase_config])
@@ -117,7 +102,7 @@ class TestTimingConfigValidConfigurations:
         assert config.phase_configs[0].concurrency is None
         assert config.phase_configs[0].request_rate is None
 
-    def test_full_request_rate_config(self):
+    def test_full_request_rate_config(self) -> None:
         """Full configuration for REQUEST_RATE mode."""
         phase_config = make_phase_config(
             concurrency=10,
@@ -126,10 +111,7 @@ class TestTimingConfigValidConfigurations:
             arrival_pattern=ArrivalPattern.CONSTANT,
             total_expected_requests=1000,
         )
-        config = TimingConfig(
-            phase_configs=[phase_config],
-            random_seed=42,
-        )
+        config = TimingConfig(phase_configs=[phase_config], random_seed=42)
 
         pc = config.phase_configs[0]
         assert pc.timing_mode == TimingMode.REQUEST_RATE
@@ -140,7 +122,7 @@ class TestTimingConfigValidConfigurations:
         assert pc.total_expected_requests == 1000
         assert config.random_seed == 42
 
-    def test_fixed_schedule_config(self):
+    def test_fixed_schedule_config(self) -> None:
         """Valid configuration for FIXED_SCHEDULE mode."""
         phase_config = make_phase_config(
             timing_mode=TimingMode.FIXED_SCHEDULE,
@@ -156,7 +138,7 @@ class TestTimingConfigValidConfigurations:
         assert pc.fixed_schedule_start_offset == 1000
         assert pc.fixed_schedule_end_offset == 5000
 
-    def test_user_centric_config(self):
+    def test_user_centric_config(self) -> None:
         """Valid configuration for USER_CENTRIC_RATE mode."""
         phase_config = make_phase_config(
             timing_mode=TimingMode.USER_CENTRIC_RATE,
@@ -172,7 +154,7 @@ class TestTimingConfigValidConfigurations:
         assert pc.concurrency == 5
         assert pc.expected_num_sessions == 100
 
-    def test_cancellation_config(self):
+    def test_cancellation_config(self) -> None:
         """Valid cancellation configuration."""
         phase_config = make_phase_config()
         config = TimingConfig(
@@ -183,7 +165,7 @@ class TestTimingConfigValidConfigurations:
         assert config.request_cancellation.rate == 50.0
         assert config.request_cancellation.delay == 2.5
 
-    def test_zero_values_allowed_for_ge0_fields(self):
+    def test_zero_values_allowed_for_ge0_fields(self) -> None:
         """Zero is valid for fields with ge=0 constraint."""
         phase_config = make_phase_config(
             fixed_schedule_start_offset=0,
@@ -199,11 +181,6 @@ class TestTimingConfigValidConfigurations:
         assert config.request_cancellation.rate == 0.0
 
 
-# =============================================================================
-# Validation Error Tests
-# =============================================================================
-
-
 class TestTimingConfigValidationErrors:
     """Tests for TimingConfig validation errors."""
 
@@ -216,7 +193,7 @@ class TestTimingConfigValidationErrors:
             ("prefill_concurrency", -1),
         ],
     )  # fmt: skip
-    def test_ge1_fields_reject_zero_and_negative(self, field: str, value: int):
+    def test_ge1_fields_reject_zero_and_negative(self, field: str, value: int) -> None:
         """Fields with ge=1 constraint reject zero and negative values."""
         with pytest.raises(ValidationError) as exc_info:
             make_phase_config(**{field: value})
@@ -227,15 +204,10 @@ class TestTimingConfigValidationErrors:
         assert "greater than" in errors[0]["msg"]
 
 
-# =============================================================================
-# Frozen Model Tests
-# =============================================================================
-
-
 class TestTimingConfigFrozen:
     """Tests for TimingConfig frozen model behavior."""
 
-    def test_config_is_frozen(self):
+    def test_config_is_frozen(self) -> None:
         """Config cannot be modified after creation."""
         phase_config = make_phase_config()
         config = TimingConfig(phase_configs=[phase_config])
@@ -243,45 +215,31 @@ class TestTimingConfigFrozen:
         with pytest.raises(ValidationError):
             config.random_seed = 42
 
-    def test_phase_config_is_hashable(self):
+    def test_phase_config_is_hashable(self) -> None:
         """Frozen phase config can be used as dict key."""
-        # Note: TimingConfig itself isn't hashable (contains list),
-        # but CreditPhaseConfig is.
         phase_config = make_phase_config()
-
         d = {phase_config: "value"}
         assert d[phase_config] == "value"
-
-
-# =============================================================================
-# from_user_config Tests
-# =============================================================================
 
 
 class TestTimingConfigFromUserConfig:
     """Tests for TimingConfig.from_user_config() class method."""
 
-    def test_maps_timing_mode(self):
+    def test_maps_timing_mode(self) -> None:
         """timing_mode is mapped from user_config to profiling phase config."""
         user_config = make_user_config(timing_mode=TimingMode.FIXED_SCHEDULE)
-
         config = TimingConfig.from_user_config(user_config)
 
-        # Profiling phase should have the timing mode
         profiling = next(
             pc for pc in config.phase_configs if pc.phase == CreditPhase.PROFILING
         )
         assert profiling.timing_mode == TimingMode.FIXED_SCHEDULE
 
-    def test_maps_loadgen_fields(self):
+    def test_maps_loadgen_fields(self) -> None:
         """Loadgen fields are mapped to profiling phase config."""
         user_config = make_user_config(
-            concurrency=8,
-            prefill_concurrency=4,
-            request_rate=50.0,
-            request_count=500,
+            concurrency=8, prefill_concurrency=4, request_rate=50.0, request_count=500
         )
-
         config = TimingConfig.from_user_config(user_config)
 
         profiling = next(
@@ -292,32 +250,26 @@ class TestTimingConfigFromUserConfig:
         assert profiling.request_rate == 50.0
         assert profiling.total_expected_requests == 500
 
-    def test_creates_warmup_when_configured(self):
+    def test_creates_warmup_when_configured(self) -> None:
         """Creates warmup phase when warmup settings are provided."""
-        user_config = make_user_config(
-            warmup_request_count=25,
-        )
-
+        user_config = make_user_config(warmup_request_count=25)
         config = TimingConfig.from_user_config(user_config)
 
-        # Should have both warmup and profiling
         phases = [pc.phase for pc in config.phase_configs]
         assert CreditPhase.WARMUP in phases
         assert CreditPhase.PROFILING in phases
-        # Warmup should be first
         assert config.phase_configs[0].phase == CreditPhase.WARMUP
 
-    def test_no_warmup_when_not_configured(self):
+    def test_no_warmup_when_not_configured(self) -> None:
         """No warmup phase when warmup settings are not provided."""
         user_config = make_user_config()
-
         config = TimingConfig.from_user_config(user_config)
 
         phases = [pc.phase for pc in config.phase_configs]
         assert CreditPhase.WARMUP not in phases
         assert len(config.phase_configs) == 1
 
-    def test_maps_fixed_schedule_fields(self):
+    def test_maps_fixed_schedule_fields(self) -> None:
         """Fixed schedule fields are mapped to profiling phase config."""
         user_config = make_user_config(
             timing_mode=TimingMode.FIXED_SCHEDULE,
@@ -325,7 +277,6 @@ class TestTimingConfigFromUserConfig:
             fixed_schedule_start_offset=2000,
             fixed_schedule_end_offset=8000,
         )
-
         config = TimingConfig.from_user_config(user_config)
 
         profiling = next(
@@ -335,25 +286,19 @@ class TestTimingConfigFromUserConfig:
         assert profiling.fixed_schedule_start_offset == 2000
         assert profiling.fixed_schedule_end_offset == 8000
 
-    def test_maps_cancellation_fields(self):
+    def test_maps_cancellation_fields(self) -> None:
         """Cancellation fields are mapped correctly to TimingConfig."""
         user_config = make_user_config(
-            request_cancellation_rate=25.0,
-            request_cancellation_delay=1.5,
+            request_cancellation_rate=25.0, request_cancellation_delay=1.5
         )
-
         config = TimingConfig.from_user_config(user_config)
 
         assert config.request_cancellation.rate == 25.0
         assert config.request_cancellation.delay == 1.5
 
-    def test_uses_user_centric_rate_when_request_rate_is_none(self):
+    def test_uses_user_centric_rate_when_request_rate_is_none(self) -> None:
         """user_centric_rate is used when request_rate is None."""
-        user_config = make_user_config(
-            request_rate=None,
-            user_centric_rate=15.0,
-        )
-
+        user_config = make_user_config(request_rate=None, user_centric_rate=15.0)
         config = TimingConfig.from_user_config(user_config)
 
         profiling = next(
@@ -361,10 +306,9 @@ class TestTimingConfigFromUserConfig:
         )
         assert profiling.request_rate == 15.0
 
-    def test_maps_num_sessions(self):
+    def test_maps_num_sessions(self) -> None:
         """num_sessions is mapped from input.conversation.num."""
         user_config = make_user_config(num_sessions=50)
-
         config = TimingConfig.from_user_config(user_config)
 
         profiling = next(
@@ -372,41 +316,21 @@ class TestTimingConfigFromUserConfig:
         )
         assert profiling.expected_num_sessions == 50
 
-    def test_warmup_grace_period_default_is_infinity(self):
-        """Warmup grace period defaults to infinity when not specified."""
-        user_config = make_user_config(warmup_request_count=10)
-
-        config = TimingConfig.from_user_config(user_config)
-
-        warmup = next(
-            pc for pc in config.phase_configs if pc.phase == CreditPhase.WARMUP
-        )
-        assert warmup.grace_period_sec == float("inf")
-
-    def test_warmup_grace_period_maps_from_user_config(self):
-        """Warmup grace period is mapped from user config."""
+    # fmt: skip
+    @pytest.mark.parametrize(
+        "warmup_grace_period,expected",
+        [(None, float("inf")), (15.0, 15.0), (0.0, 0.0)],
+    )
+    def test_warmup_grace_period(
+        self, warmup_grace_period: float | None, expected: float
+    ) -> None:
+        """Warmup grace period is mapped correctly from user config."""
         user_config = make_user_config(
-            warmup_request_count=10,
-            warmup_grace_period=15.0,
+            warmup_request_count=10, warmup_grace_period=warmup_grace_period
         )
-
         config = TimingConfig.from_user_config(user_config)
 
         warmup = next(
             pc for pc in config.phase_configs if pc.phase == CreditPhase.WARMUP
         )
-        assert warmup.grace_period_sec == 15.0
-
-    def test_warmup_grace_period_zero_is_valid(self):
-        """Zero warmup grace period means don't wait for responses."""
-        user_config = make_user_config(
-            warmup_request_count=10,
-            warmup_grace_period=0.0,
-        )
-
-        config = TimingConfig.from_user_config(user_config)
-
-        warmup = next(
-            pc for pc in config.phase_configs if pc.phase == CreditPhase.WARMUP
-        )
-        assert warmup.grace_period_sec == 0.0
+        assert warmup.grace_period_sec == expected

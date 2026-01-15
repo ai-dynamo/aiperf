@@ -1,10 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for RequestRateStrategy deadlock prevention.
-
-Uses real PhaseOrchestrator with mock credit router - only the transport
-layer is mocked to capture credits and inject returns.
-"""
+"""Tests for RequestRateStrategy deadlock prevention."""
 
 from collections.abc import Callable
 
@@ -15,14 +11,12 @@ from tests.unit.timing.conftest import OrchestratorHarness
 
 @pytest.mark.asyncio
 class TestSingleTurnExitsCleanly:
-    """Single-turn conversations complete without deadlock."""
-
     @pytest.mark.parametrize(
         "concurrency,num_sessions,request_count",
         [
-            (None, 3, None),  # Rate-centric with session limit
-            (None, None, 3),  # Rate-centric with request limit
-            (10, 3, None),  # Session-centric mode
+            (None, 3, None),
+            (None, None, 3),
+            (10, 3, None),
         ],
     )  # fmt: skip
     async def test_single_turn_completes(
@@ -47,16 +41,13 @@ class TestSingleTurnExitsCleanly:
 
 @pytest.mark.asyncio
 class TestMultiTurnHandling:
-    """Multi-turn conversations process all turns correctly."""
-
-    # fmt: skip
     @pytest.mark.parametrize(
         "concurrency",
         [
-            None,  # Rate-centric mode
-            10,  # Session-centric mode
+            None,
+            10,
         ],
-    )
+    )  # fmt: skip
     async def test_processes_all_turns(
         self,
         mock_orchestrator: Callable[..., OrchestratorHarness],
@@ -76,8 +67,6 @@ class TestMultiTurnHandling:
 
 @pytest.mark.asyncio
 class TestLimitSemantics:
-    """Verify request_count vs num_sessions semantics."""
-
     async def test_request_count_limits_total_requests(
         self, mock_orchestrator: Callable[..., OrchestratorHarness]
     ) -> None:
