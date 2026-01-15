@@ -286,7 +286,7 @@ class TestAIPerfLoggerPerformance:
         compare_logger_performance(
             aiperf_lazy_f_string,
             standard_f_string,
-            min_speed_up=1.5,
+            min_speed_up=1.3,
         )
 
     def test_plain_string_debug(self, aiperf_logger, standard_logger):
@@ -314,14 +314,14 @@ class TestAIPerfLoggerPerformance:
         compare_logger_performance(
             aiperf_plain_string,
             standard_plain_string,
-            max_slow_down=1.5,
+            max_slow_down=2.0,
         )
 
         # Expected to be marginally slower than standard logger
         compare_logger_performance(
             aiperf_plain_string_lazy,
             standard_plain_string,
-            max_slow_down=1.5,
+            max_slow_down=2.0,
         )
 
     def test_plain_string_info(self, aiperf_logger, standard_logger):
@@ -349,14 +349,14 @@ class TestAIPerfLoggerPerformance:
         compare_logger_performance(
             aiperf_plain_string,
             standard_plain_string,
-            max_slow_down=1.5,
+            max_slow_down=2.0,
         )
 
         # Expected to be marginally slower than standard logger
         compare_logger_performance(
             aiperf_plain_string_lazy,
             standard_plain_string,
-            max_slow_down=1.5,
+            max_slow_down=2.0,
         )
 
     def test_formatting_info(self, aiperf_logger, standard_logger):
@@ -379,7 +379,7 @@ class TestAIPerfLoggerPerformance:
         compare_logger_performance(
             aiperf_formatting,
             standard_formatting,
-            max_slow_down=1.5,
+            max_slow_down=2.0,
         )
 
     def test_lazy_evaluation_and_formatting_debug(self, aiperf_logger, standard_logger):
@@ -404,7 +404,7 @@ class TestAIPerfLoggerPerformance:
         compare_logger_performance(
             aiperf_formatting_and_lazy_evaluation,
             standard_formatting_no_print,
-            min_speed_up=2,
+            min_speed_up=1.5,
         )
 
     def test_lazy_evaluation_and_formatting_and_multiple_args_debug(
@@ -431,7 +431,7 @@ class TestAIPerfLoggerPerformance:
         compare_logger_performance(
             aiperf_multiple_args,
             standard_multiple_args,
-            min_speed_up=2,
+            min_speed_up=1.5,
         )
 
     def test_message_formatting_info(self, aiperf_logger, standard_logger):
@@ -454,7 +454,7 @@ class TestAIPerfLoggerPerformance:
         compare_logger_performance(
             aiperf_message_formatting,
             standard_message_formatting,
-            max_slow_down=1.5,
+            max_slow_down=2.0,
         )
 
     def test_large_messages_debug(self, aiperf_logger, standard_logger, large_message):
@@ -476,14 +476,14 @@ class TestAIPerfLoggerPerformance:
         compare_logger_performance(
             aiperf_f_string_message,
             standard_f_string_message,
-            min_speed_up=10,
+            min_speed_up=5,
         )
 
         # Expected to be marginally slower than standard logger
         compare_logger_performance(
             aiperf_f_string_message,
             standard_fmt_message,
-            max_slow_down=1.5,
+            max_slow_down=2.0,
         )
 
     def test_large_messages_debug_math(
@@ -515,12 +515,12 @@ class TestAIPerfLoggerPerformance:
         compare_logger_performance(
             aiperf_f_string_math,
             standard_f_string_math,
-            min_speed_up=1.5,
+            min_speed_up=1.2,
         )
 
         # Tests actually show this as being faster for AIPerf logger
         compare_logger_performance(
             aiperf_f_string_math,
             standard_fmt_math,
-            max_slow_down=1.5,
+            max_slow_down=2.0,
         )

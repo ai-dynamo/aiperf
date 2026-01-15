@@ -504,7 +504,8 @@ class TestProgressReporting:
     ) -> None:
         r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         task = asyncio.create_task(r._progress_report_loop())
-        await asyncio.sleep(0.05)
+        # Use longer sleep to ensure at least one progress publish in CI environments
+        await asyncio.sleep(0.1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task

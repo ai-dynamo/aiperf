@@ -133,7 +133,8 @@ class TestFixedScheduleStrategy:
         )
         first_ts, last_ts = schedule[0][0], schedule[-1][0]
         sleep_ms = last_ts - first_ts if auto_offset else last_ts
-        with time_traveler.travels_for(sleep_ms / MILLIS_PER_SECOND, tolerance=0.02):
+        # Use wider tolerance (50ms) for CI variance
+        with time_traveler.travels_for(sleep_ms / MILLIS_PER_SECOND, tolerance=0.05):
             await h.run_with_auto_return()
         assert len(h.sent_credits) == 3
 

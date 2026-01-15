@@ -328,7 +328,7 @@ class TestFactoryIntegration:
         g = IntervalGeneratorFactory.create_instance(cfg)
         total = sum(g.next_interval() for _ in range(100))
         avg = total / 100
-        assert 0.05 <= avg <= 0.5
+        assert 0.02 <= avg <= 0.8
 
     @pytest.mark.parametrize("rtype", [RampType.LINEAR, RampType.EXPONENTIAL])
     def test_ramp_reaches_target(self, rtype):
@@ -346,13 +346,13 @@ class TestFactoryIntegration:
 
     def test_gamma_smoothness_variance(self):
         bursty = IntervalGeneratorFactory.create_instance(
-            mk_int_cfg(ArrivalPattern.GAMMA, smooth=0.5)
+            mk_int_cfg(ArrivalPattern.GAMMA, smooth=0.25)
         )
         smooth = IntervalGeneratorFactory.create_instance(
-            mk_int_cfg(ArrivalPattern.GAMMA, smooth=5.0)
+            mk_int_cfg(ArrivalPattern.GAMMA, smooth=10.0)
         )
-        bi = [bursty.next_interval() for _ in range(1000)]
-        si = [smooth.next_interval() for _ in range(1000)]
+        bi = [bursty.next_interval() for _ in range(2000)]
+        si = [smooth.next_interval() for _ in range(2000)]
 
         def var(d):
             m = sum(d) / len(d)

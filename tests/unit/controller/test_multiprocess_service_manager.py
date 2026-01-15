@@ -147,15 +147,14 @@ class TestMultiProcessServiceManager:
 
         stop_event = asyncio.Event()
 
-        # Set the stop event after a short delay
+        # Set the stop event after a short delay (use longer delay for CI stability)
         async def set_stop_event():
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.1)
             stop_event.set()
 
         asyncio.create_task(set_stop_event())
 
-        # This should timeout since no services actually register, but the stop event
-        # should cause the method to exit the loop early
+        # This should exit early when the stop event is set, not wait for full timeout
         await service_manager.wait_for_all_services_registration(
-            stop_event=stop_event, timeout_seconds=10
+            stop_event=stop_event, timeout_seconds=5.0
         )

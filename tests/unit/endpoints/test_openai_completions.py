@@ -40,7 +40,6 @@ class TestCompletionsEndpoint:
         turns = [turn]
         request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
-        print(f"Payload: {payload}")
         expected_payload = {
             "prompt": ["Hello, world!"],
             "model": "test-model",
@@ -60,7 +59,6 @@ class TestCompletionsEndpoint:
         model_endpoint.endpoint.extra = [("ignore_eos", True)]
         request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
-        print(f"Payload: {payload}")
         expected_payload = {
             "prompt": ["Hello, world!"],
             "model": "test-model",

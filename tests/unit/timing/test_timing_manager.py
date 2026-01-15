@@ -85,7 +85,7 @@ class TestTimingManagerDatasetConfiguration:
                     )
                 )
             )
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)
             await mgr._on_dataset_configured_notification(
                 DatasetConfiguredNotification(
                     service_id="test-dataset-manager",
@@ -238,7 +238,7 @@ class TestTimingManagerStartProfilingAndInitialization:
             await mgr._on_start_profiling(
                 CommandMessage.model_construct(service_id="test-controller")
             )
-        await asyncio.sleep(0.01)  # Allow execute_async to run
+        await asyncio.sleep(0.05)  # Allow execute_async to run
         assert start_called.is_set()
 
     @pytest.mark.asyncio

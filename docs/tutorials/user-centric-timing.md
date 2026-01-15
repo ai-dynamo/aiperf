@@ -5,6 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # User-Centric Timing for KV Cache Benchmarking
 
+![User-centric rate mode](../media/images/user-centric-rate.png)
+
 User-centric timing mode provides per-user rate limiting designed specifically for KV cache benchmarking. This mode models realistic multi-user behavior where each user maintains their own request cadence, making it ideal for measuring cache effectiveness.
 
 ## Overview

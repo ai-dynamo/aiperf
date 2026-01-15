@@ -104,10 +104,10 @@ class TestDynamicConcurrencyLimit:
             acquired.append(i)
 
         tasks = [asyncio.create_task(waiter(i)) for i in range(3)]
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         assert len(acquired) == 0
         lim.set_limit(3)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         assert len(acquired) == 3
         for t in tasks:
             await _cancel(t)
@@ -238,13 +238,13 @@ class TestDynamicConcurrencyLimit:
             cnt += 1
 
         tasks = [asyncio.create_task(waiter()) for _ in range(5)]
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         assert cnt == 0
         lim.set_limit(1)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         assert cnt == 1
         lim.set_limit(3)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         assert cnt == 3
         for t in tasks:
             await _cancel(t)
@@ -275,7 +275,7 @@ class TestDynamicConcurrencyLimit:
         for _ in range(25):
             await lim.acquire()
         task = asyncio.create_task(lim.acquire())
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         assert not task.done()
         await _cancel(task)
 
@@ -400,10 +400,10 @@ class TestConcurrencyManager:
         m.configure_for_phase(P, 1, None)
         await m.acquire_session_slot(P, lambda: True)
         task = asyncio.create_task(m.acquire_session_slot(P, lambda: True))
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         assert not task.done()
         m.release_session_slot(P)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         assert task.done()
         await _cancel(task)
 

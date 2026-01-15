@@ -61,8 +61,8 @@ class TestSetupSignalHandlers:
             # Invoke the captured signal handler with the captured args
             captured_handler(*captured_args)
 
-            # Wait for the callback task to complete
-            await asyncio.sleep(0.05)
+            # Wait for the callback task to complete (use longer delay for CI stability)
+            await asyncio.sleep(0.1)
 
             # Verify callback was invoked with SIGINT
             callback.assert_called_once_with(signal.SIGINT)

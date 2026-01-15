@@ -215,8 +215,8 @@ class TestProxyLifecycle:
 
             # Start
             await proxy.start()
-            # Wait for background task (mocked to instant)
-            await asyncio.sleep(0.1)
+            # Yield to event loop to let background task run
+            await asyncio.sleep(0)
 
             # Stop
             await proxy.stop()

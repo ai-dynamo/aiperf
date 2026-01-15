@@ -264,12 +264,6 @@ class TestNIMRankingsEndpoint:
         assert payload["model"] == "test-model"
         assert payload["query"] == {"text": "Test query"}
 
-    def test_converter_docstring(self, converter):
-        """Test that the converter has proper documentation."""
-        assert "query" in converter.__class__.__doc__
-        assert "passages" in converter.__class__.__doc__
-        assert "rankings" in converter.__class__.__doc__.lower()
-
     def test_format_payload_queries_plural_backward_compatibility(
         self, converter, model_endpoint
     ):

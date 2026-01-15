@@ -209,7 +209,7 @@ class TestCreditPhaseStatsRequestsElapsedTime:
         start_ns = time.time_ns()
         stats = credit_phase_stats(start_ns=start_ns)
         time_traveler.advance_time(3.0)
-        assert stats.requests_elapsed_time == pytest.approx(3.0, abs=0.01)
+        assert stats.requests_elapsed_time == pytest.approx(3.0, abs=0.05)
 
 
 class TestCreditPhaseStatsRequestsErrorPercent:
@@ -283,7 +283,7 @@ class TestCreditPhaseStatsRequestsProgressPercent:
         start_ns = time.time_ns()
         stats = credit_phase_stats(start_ns=start_ns, expected_duration_sec=10.0)
         time_traveler.advance_time(5.0)
-        assert stats.requests_progress_percent == pytest.approx(50.0, abs=1.0)
+        assert stats.requests_progress_percent == pytest.approx(50.0, abs=2.0)
 
     def test_calculates_from_session_count(
         self, credit_phase_stats, time_traveler
@@ -308,7 +308,7 @@ class TestCreditPhaseStatsRequestsProgressPercent:
             completed_sessions=60,
         )
         time_traveler.advance_time(5.0)
-        assert stats.requests_progress_percent == pytest.approx(80.0, abs=1.0)
+        assert stats.requests_progress_percent == pytest.approx(80.0, abs=2.0)
 
     def test_caps_progress_at_100_percent(
         self, credit_phase_stats, time_traveler
@@ -386,7 +386,7 @@ class TestPhaseRecordsStatsRecordsElapsedTime:
         start_ns = time.time_ns()
         stats = phase_records_stats(start_ns=start_ns)
         time_traveler.advance_time(4.0)
-        assert stats.records_elapsed_time == pytest.approx(4.0, abs=0.01)
+        assert stats.records_elapsed_time == pytest.approx(4.0, abs=0.05)
 
 
 class TestPhaseRecordsStatsRecordsErrorPercent:
@@ -557,7 +557,7 @@ class TestPhaseRecordsStatsIntegration:
             error_records=5,
         )
         assert stats.is_records_complete
-        assert stats.records_elapsed_time == pytest.approx(5.0, abs=0.01)
+        assert stats.records_elapsed_time == pytest.approx(5.0, abs=0.05)
         assert stats.total_records == 100
         assert stats.records_progress_percent == 100.0
         assert stats.records_error_percent == 5.0

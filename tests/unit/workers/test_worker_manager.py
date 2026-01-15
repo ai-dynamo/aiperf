@@ -4,7 +4,6 @@
 Simple test for WorkerManager max workers functionality.
 """
 
-import asyncio
 import time
 from unittest.mock import MagicMock, patch
 
@@ -216,8 +215,7 @@ class TestHighCPUWarning:
         assert worker_info.last_high_load_ns is not None
         worker_manager.warning.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_multiple_consecutive_high_cpu_messages(
+    def test_multiple_consecutive_high_cpu_messages(
         self,
         worker_manager: WorkerManager,
         worker_info: WorkerStatusInfo,
@@ -231,7 +229,8 @@ class TestHighCPUWarning:
         assert worker_info.status == WorkerStatus.HIGH_LOAD
         assert worker_manager.warning.call_count == 1
 
-        await asyncio.sleep(2.0)
+        # Simulate time passing by manually updating the worker_info timestamp
+        # (the actual implementation uses time.time_ns() internally)
         worker_manager._update_worker_status(
             worker_info,
             create_health_message(cpu_usage=92.0, uptime=102.0, total=12, completed=6),

@@ -373,7 +373,7 @@ class TestStreamingClientsErrorHandling:
         await client.start()
 
         try:
-            await asyncio.sleep(0.1)
+            await wait_for_background_task()
             # Should not crash, should log error and continue
             handler.assert_not_called()
         finally:
@@ -415,7 +415,7 @@ class TestStreamingClientsErrorHandling:
         await client.start()
 
         try:
-            await asyncio.sleep(0.1)
+            await wait_for_background_task()
             # Should not crash, should log error and continue
             handler.assert_not_called()
         finally:
