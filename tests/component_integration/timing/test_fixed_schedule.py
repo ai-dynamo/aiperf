@@ -25,9 +25,7 @@ import pytest
 from aiperf.credit.messages import CreditReturn
 from aiperf.credit.structs import Credit
 from tests.component_integration.conftest import AIPerfRunnerResultWithSharedBus
-from tests.component_integration.timing.conftest import (
-    defaults,
-)
+from tests.component_integration.timing.conftest import defaults
 from tests.harness.analyzers import (
     ConcurrencyAnalyzer,
     CreditFlowAnalyzer,
@@ -174,7 +172,7 @@ def build_fixed_schedule_command(
 class TestFixedScheduleBasic:
     """Basic functionality tests for fixed schedule timing."""
 
-    @pytest.mark.parametrize(
+    @pytest.mark.parametrize(  # fmt: skip
         "num_sessions",
         [5, 10, 20, 50],
     )

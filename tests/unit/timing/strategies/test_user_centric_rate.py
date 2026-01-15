@@ -1,16 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Comprehensive unit tests for user-centric rate timing strategy.
+"""Comprehensive unit tests for user-centric rate timing strategy."""
 
-Tests cover:
-- Initialization and validation
-- User pre-generation with virtual history
-- Turn gap and stagger calculations
-- Precise mode execution
-- LMBench mode execution
-- Credit return handling
-- Edge cases (single user, high QPS, etc.)
-"""
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,17 +11,8 @@ from aiperf.common.enums import (
     TimingMode,
 )
 from aiperf.timing.config import CreditPhaseConfig
+from aiperf.timing.strategies.user_centric_rate import User, UserCentricStrategy
 from tests.unit.timing.conftest import OrchestratorHarness
-
-# =============================================================================
-# Fixtures
-# =============================================================================
-
-
-# NOTE: We use the DEFAULT time_traveler (which DOES patch asyncio.sleep)
-# because user_centric_rate uses asyncio.sleep in the spawn loop.
-# If we use time_traveler_no_patch_sleep, the spawn loop sleeps in real time
-# while scheduled coroutines use virtual time, causing a mismatch.
 
 
 @pytest.fixture
@@ -42,11 +25,6 @@ def two_turn_conversations():
 def multi_turn_conversations():
     """Dataset with multi-turn conversations."""
     return [("conv1", 3), ("conv2", 3), ("conv3", 3), ("conv4", 3)]
-
-
-# =============================================================================
-# Initialization and Validation Tests
-# =============================================================================
 
 
 class TestUserCentricStrategyInitialization:
@@ -73,12 +51,8 @@ class TestUserCentricStrategyInitialization:
             == CreditPhase.PROFILING
         )
 
-    def test_direct_init_requires_num_users(self):
+    def test_direct_init_requires_num_users(self) -> None:
         """UserCentricStrategy constructor requires num_users to be set."""
-        from unittest.mock import MagicMock
-
-        from aiperf.timing.strategies.user_centric_rate import UserCentricStrategy
-
         config = CreditPhaseConfig(
             phase=CreditPhase.PROFILING,
             timing_mode=TimingMode.USER_CENTRIC_RATE,
@@ -97,12 +71,8 @@ class TestUserCentricStrategyInitialization:
                 lifecycle=MagicMock(),
             )
 
-    def test_direct_init_requires_positive_request_rate(self):
+    def test_direct_init_requires_positive_request_rate(self) -> None:
         """UserCentricStrategy constructor requires positive request_rate."""
-        from unittest.mock import MagicMock
-
-        from aiperf.timing.strategies.user_centric_rate import UserCentricStrategy
-
         config = CreditPhaseConfig(
             phase=CreditPhase.PROFILING,
             timing_mode=TimingMode.USER_CENTRIC_RATE,
@@ -120,11 +90,6 @@ class TestUserCentricStrategyInitialization:
                 credit_issuer=MagicMock(),
                 lifecycle=MagicMock(),
             )
-
-
-# =============================================================================
-# Setup Phase Tests
-# =============================================================================
 
 
 class TestUserCentricSetupPhase:
@@ -180,11 +145,6 @@ class TestUserCentricSetupPhase:
 
         # Should send credits successfully
         assert len(harness.sent_credits) == 4
-
-
-# =============================================================================
-# Precise Mode Execution Tests
-# =============================================================================
 
 
 class TestPreciseModeExecution:
@@ -879,8 +839,6 @@ class TestUserClass:
         """User.x_correlation_id returns sampled.x_correlation_id."""
         from unittest.mock import MagicMock
 
-        from aiperf.timing.strategies.user_centric_rate import User
-
         mock_sampled = MagicMock()
         mock_sampled.x_correlation_id = "test-corr-id"
 
@@ -891,8 +849,6 @@ class TestUserClass:
     def test_user_build_first_turn(self):
         """User.build_first_turn delegates to sampled.build_first_turn."""
         from unittest.mock import MagicMock
-
-        from aiperf.timing.strategies.user_centric_rate import User
 
         mock_sampled = MagicMock()
         mock_turn = MagicMock()
@@ -909,8 +865,6 @@ class TestUserClass:
     def test_user_dataclass_creation(self, user_id):
         """User dataclass can be created with various user IDs."""
         from unittest.mock import MagicMock
-
-        from aiperf.timing.strategies.user_centric_rate import User
 
         mock_sampled = MagicMock()
         mock_sampled.x_correlation_id = f"corr-{user_id}"

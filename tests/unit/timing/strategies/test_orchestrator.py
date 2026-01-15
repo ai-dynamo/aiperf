@@ -28,10 +28,6 @@ from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
 from tests.unit.timing.conftest import make_phase_config, make_timing_config
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
 
 def make_dataset_metadata(
     num_conversations: int = 3,
@@ -49,11 +45,6 @@ def make_dataset_metadata(
         conversations=conversations,
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
-
-
-# =============================================================================
-# Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -110,11 +101,6 @@ async def orchestrator(
     )
     await orch.initialize()
     return orch
-
-
-# =============================================================================
-# Initialization Tests
-# =============================================================================
 
 
 class TestOrchestratorInitialization:
@@ -174,11 +160,6 @@ class TestOrchestratorInitialization:
         assert orchestrator._active_runners == []
 
 
-# =============================================================================
-# Cancellation Tests
-# =============================================================================
-
-
 class TestCancellation:
     """Tests for PhaseOrchestrator.cancel."""
 
@@ -209,11 +190,6 @@ class TestCancellation:
         await orchestrator.cancel()
         # Should complete without error
         mock_credit_router.cancel_all_credits.assert_called_once()
-
-
-# =============================================================================
-# Phase Configuration Tests
-# =============================================================================
 
 
 class TestPhaseConfiguration:
@@ -286,11 +262,6 @@ class TestPhaseConfiguration:
 
         phases = [pc.phase for pc in orch._ordered_phase_configs]
         assert phases == [CreditPhase.WARMUP, CreditPhase.PROFILING]
-
-
-# =============================================================================
-# Component Wiring Tests
-# =============================================================================
 
 
 class TestComponentWiring:

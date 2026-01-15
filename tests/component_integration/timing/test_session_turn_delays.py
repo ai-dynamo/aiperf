@@ -26,13 +26,13 @@ CRITICAL INTERACTIONS TO TEST:
 - Delays + duration: In-flight turns may not complete
 """
 
+import statistics
+
 import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.structs import Credit
-from tests.component_integration.timing.conftest import (
-    defaults,
-)
+from tests.component_integration.timing.conftest import defaults
 from tests.harness.analyzers import CreditFlowAnalyzer
 from tests.harness.utils import AIPerfCLI
 
@@ -433,8 +433,6 @@ class TestVariableTurnCounts:
         turn_counts = [
             len(payloads) for payloads in credit_analyzer.credits_by_session.values()
         ]
-
-        import statistics
 
         if len(turn_counts) > 1:
             stddev = statistics.stdev(turn_counts)

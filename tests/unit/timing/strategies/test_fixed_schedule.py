@@ -36,10 +36,6 @@ from tests.unit.timing.conftest import (
     create_mock_dataset_sampler,
 )
 
-# =============================================================================
-# Fixtures
-# =============================================================================
-
 
 @pytest.fixture
 async def time_traveler(time_traveler_no_patch_sleep):
@@ -328,11 +324,6 @@ class TestFixedScheduleStrategy:
         assert len(harness.sent_credits) == 3
 
 
-# =============================================================================
-# Unit Tests (Direct Strategy Testing)
-# =============================================================================
-
-
 @pytest.fixture
 def fixed_schedule_strategy_factory(
     mock_scheduler, mock_stop_checker, mock_credit_issuer, mock_lifecycle
@@ -563,11 +554,6 @@ class TestFixedScheduleTimestampConversion:
         actual = strategy._timestamp_to_perf_sec(100)
 
         assert actual == expected
-
-
-# =============================================================================
-# Edge Cases and Error Handling
-# =============================================================================
 
 
 @pytest.mark.asyncio

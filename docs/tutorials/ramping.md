@@ -15,14 +15,14 @@ When a benchmark starts, immediately hitting your target load can cause problems
 Without ramping:                     With ramping:
 
 Concurrency                          Concurrency
- 100 ┤●━━━━━━━━━━━━━━━━━━━            100 ┤              ●━━━━━━━━━
-     │                                    │            ╱
-     │  SPIKE! Server overwhelmed          │          ╱
-     │  - Connection storms                │        ╱  Gradual increase
-     │  - Memory allocation spikes     50 ┤      ╱    Server stabilizes
-     │  - Cold-start pollution             │    ╱      at each level
-   0 ┼──────────────────────▶            0 ┼──●─────────────────────▶
-     0                      Time           0   30s                 Time
+ 100 ┤●━━━━━━━━━━━━━━━━━━━            100 ┤           ●━━━━━━━━━
+     │                                    │         ╱
+     │  SPIKE! Server overwhelmed         │       ╱
+     │  - Connection storms               │     ╱  Gradual increase
+     │  - Memory allocation spikes     50 ┤   ╱    Server stabilizes
+     │  - Cold-start pollution            │ ╱      at each level
+   0 ┼──────────────────────▶          0 ┼●─────────────────────▶
+     0                      Time           0                    30s Time
 ```
 
 **Problems without ramping:**
@@ -65,13 +65,13 @@ aiperf profile \
 **What happens:**
 ```
 Concurrency
- 100 ┤                              ●━━━━━━━━━━━
-  75 ┤                         ●────┘
-  50 ┤                    ●────┘
-  25 ┤               ●────┘
-   1 ┤●──────────────┘
+ 100 ┤                    ●━━━━━━━━━━━
+  75 ┤               ●────┘
+  50 ┤          ●────┘
+  25 ┤     ●────┘
+   1 ┤●────┘
      └─────┬─────┬─────┬─────┬─────────────────▶
-           7.5s  15s  22.5s  30s              Time
+          7.5s  15s  22.5s  30s              Time
 ```
 
 ### Ramping Request Rate
@@ -90,11 +90,11 @@ aiperf profile \
 **What happens:**
 ```
 Request Rate (QPS)
- 100 ┤                              ●━━━━━━━━━━━
-  75 ┤                         ●────┘
-  50 ┤                    ●────┘
-  25 ┤               ●────┘
-   0 ┤●──────────────┘
+ 100 ┤                    ●━━━━━━━━━━━
+  75 ┤               ●────┘
+  50 ┤          ●────┘
+  25 ┤     ●────┘
+   0 ┤●────┘
      └─────┬─────┬─────┬─────┬─────────────────▶
           15s   30s   45s   60s              Time
 ```
@@ -150,21 +150,6 @@ aiperf profile \
     --concurrency 200 \
     --concurrency-ramp-duration 30 \
     --request-count 2000
-```
-
-**Timeline:**
-```
-Concurrency
- 200 ┤                    │                              ●━━━━━━━━━
- 150 ┤                    │                         ●────┘
- 100 ┤                    │                    ●────┘
-  50 ┤              ●━━━━━│━━━●────────────────┘
-  25 ┤         ●────┘     │
-   1 ┤●────────┘          │
-     └────────────────────┼─────────────────────────────────────▶
-     0         10s        │              30s                 Time
-                    Warmup │ Profiling
-                     ends
 ```
 
 ## Common Scenarios

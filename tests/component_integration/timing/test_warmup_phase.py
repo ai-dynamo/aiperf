@@ -28,9 +28,7 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.messages import CreditReturn
 from aiperf.credit.structs import Credit
-from tests.component_integration.timing.conftest import (
-    defaults,
-)
+from tests.component_integration.timing.conftest import defaults
 from tests.harness.utils import AIPerfCLI
 
 

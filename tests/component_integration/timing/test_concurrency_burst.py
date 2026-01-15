@@ -82,7 +82,7 @@ def build_burst_command(
 class TestConcurrencyBurstBasic:
     """Basic functionality tests for concurrency burst timing."""
 
-    @pytest.mark.parametrize(
+    @pytest.mark.parametrize(  # fmt: skip
         "num_sessions,concurrency",
         [
             (15, 3),
@@ -194,7 +194,7 @@ class TestConcurrencyBurstLimits(BaseConcurrencyTests):
         """Build burst mode command."""
         return build_burst_command(config)
 
-    @pytest.mark.parametrize(
+    @pytest.mark.parametrize(  # fmt: skip
         "concurrency",
         [2, 4, 8, 12],
     )
