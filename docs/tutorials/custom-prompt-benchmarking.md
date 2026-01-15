@@ -9,11 +9,7 @@ Benchmark with prompts from your own file, sent exactly as specified without sam
 
 ## Overview
 
-This tutorial uses the `mooncake_trace` dataset type with `text_input` field to send prompts exactly as-is:
-- **Each line = one request** sent in the order it appears
-- **No sampling** (unlike `random_pool`)
-- **No generation** (unlike synthetic datasets)
-- **Deterministic**: Same file always produces the same request sequence
+This tutorial uses the `mooncake_trace` dataset type with `text_input` field to send prompts exactly as-is.
 
 The `mooncake_trace` dataset type with `text_input` provides:
 
@@ -68,7 +64,6 @@ aiperf profile \
 
 **Key Points:**
 - Each line in the JSONL file becomes exactly one request
-- Requests are sent in the order they appear in the file
 - The `text_input` is sent exactly as specified
 
 
