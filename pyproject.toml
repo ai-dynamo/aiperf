@@ -25,6 +25,7 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
   "aiofiles~=24.1.0",
+  "async-timeout>=4.0.0; python_version < '3.11'",
   "aiohttp~=3.13.3",
   "cyclopts>=4,<5",
   "ffmpeg-python~=0.2.0",
