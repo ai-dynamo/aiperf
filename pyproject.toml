@@ -122,7 +122,7 @@ verbosity_assertions = 2
 # Deselect performance, ffmpeg, and stress, and statistical tests by default
 # To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical' -n auto "
+addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical'"
 # Filter out known warnings from third-party libraries
 filterwarnings = [
     "ignore:Fixture.*has the empty cache of scopes.*:RuntimeWarning:looptime.plugin",

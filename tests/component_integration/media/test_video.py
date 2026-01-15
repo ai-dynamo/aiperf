@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for video inputs."""
 
+import shutil
+
 import pytest
 from pytest import approx
 
@@ -11,7 +13,10 @@ from tests.component_integration.conftest import (
 from tests.harness.utils import AIPerfCLI
 from tests.integration.utils import extract_base64_video_details
 
+FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 
+
+@pytest.mark.skipif(not FFMPEG_AVAILABLE, reason="ffmpeg not installed")
 @pytest.mark.ffmpeg
 @pytest.mark.component_integration
 class TestVideo:
