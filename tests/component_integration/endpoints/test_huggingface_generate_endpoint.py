@@ -16,10 +16,12 @@ from tests.harness.utils import AIPerfCLI
 class TestHuggingFaceGenerateEndpoint:
     """Tests for huggingface_generate endpoint."""
 
-    def _create_input_file(self, lines: list[str], tmp_path: Path) -> Path:
-        """Helper to create a temporary input file with given text lines."""
+    def _create_input_file(self, tmp_path: Path) -> Path:
+        """Helper to create a temporary input file."""
         input_file = tmp_path / "inputs.jsonl"
-        input_file.write_text("".join(f'{{"text": "{line}"}}\n' for line in lines))
+        input_file.write_text(
+            '{"text": "Hello TinyLlama!"}\n{"text": "Tell me a joke."}\n'
+        )
         return input_file
 
     def _run_profile(
@@ -53,28 +55,33 @@ class TestHuggingFaceGenerateEndpoint:
         assert result.request_count == defaults.request_count
         return result
 
-    def test_synthetic_non_streaming(self, cli: AIPerfCLI):
-        """Synthetic (no input file) non-streaming run."""
-        result = self._run_profile(cli, streaming=False)
-        assert not result.has_streaming_metrics
+    @pytest.mark.parametrize(
+        ("streaming", "use_file_input"),
+        [
+            (False, False),  # synthetic non-streaming
+            (True, False),  # synthetic streaming
+            (False, True),  # file input non-streaming
+            (True, True),  # file input streaming
+        ],  # fmt: skip
+        ids=[
+            "synthetic_non_streaming",
+            "synthetic_streaming",
+            "file_input_non_streaming",
+            "file_input_streaming",
+        ],
+    )
+    def test_huggingface_generate(
+        self,
+        cli: AIPerfCLI,
+        tmp_path: Path,
+        streaming: bool,
+        use_file_input: bool,
+    ):
+        """Test huggingface_generate endpoint with various configurations."""
+        input_file = self._create_input_file(tmp_path) if use_file_input else None
+        result = self._run_profile(cli, streaming=streaming, input_file=input_file)
 
-    def test_synthetic_streaming(self, cli: AIPerfCLI):
-        """Synthetic (no input file) streaming run."""
-        result = self._run_profile(cli, streaming=True)
-        assert result.has_streaming_metrics
-
-    def test_file_input_non_streaming(self, cli: AIPerfCLI, tmp_path: Path):
-        """File input non-streaming run."""
-        input_file = self._create_input_file(
-            ["Hello TinyLlama!", "Tell me a joke."], tmp_path
-        )
-        result = self._run_profile(cli, streaming=False, input_file=input_file)
-        assert not result.has_streaming_metrics
-
-    def test_file_input_streaming(self, cli: AIPerfCLI, tmp_path: Path):
-        """File input streaming run."""
-        input_file = self._create_input_file(
-            ["Stream something poetic.", "Give me a haiku."], tmp_path
-        )
-        result = self._run_profile(cli, streaming=True, input_file=input_file)
-        assert result.has_streaming_metrics
+        if streaming:
+            assert result.has_streaming_metrics
+        else:
+            assert not result.has_streaming_metrics

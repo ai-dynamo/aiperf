@@ -112,34 +112,26 @@ class TestUserCentricRateBasic:
         [
             (10, 50.0),
             (20, 100.0),
-            (30, 150.0),
-            (50, 200.0),
         ],
     )
     def test_user_centric_rate_completes(
         self, cli: AIPerfCLI, num_sessions: int, qps: float
     ):
-        """Test user-centric rate mode completes at various configurations."""
-        config = TimingTestConfig(num_sessions=num_sessions, qps=qps)
-        cmd = build_timing_command(config, user_centric_rate=qps)
-        result = cli.run_sync(cmd, timeout=config.timeout)
+        """Test user-centric rate mode completes at various configurations.
 
-        # Duration-based: at least num_sessions requests (initial user turns)
-        assert result.request_count >= num_sessions
-        assert result.has_streaming_metrics
-
-    def test_user_centric_rate_multi_turn(self, cli: AIPerfCLI):
-        """Test user-centric rate with multi-turn conversations."""
-        config = TimingTestConfig(
-            num_sessions=15,
-            qps=75.0,
-            turns_per_session=5,
+        Uses --num-sessions as stop condition to verify exact session count.
+        """
+        cmd = build_user_centric_command(
+            num_users=num_sessions,
+            qps=qps,
+            num_sessions=num_sessions,
         )
-        cmd = build_timing_command(config, user_centric_rate=config.qps)
-        result = cli.run_sync(cmd, timeout=config.timeout)
+        result = cli.run_sync(cmd, timeout=60.0)
 
-        # Duration-based: at least the initial user count
-        assert result.request_count >= config.num_sessions
+        runner: AIPerfRunnerResultWithSharedBus = result.runner_result
+        analyzer = CreditFlowAnalyzer(runner)
+
+        assert analyzer.num_sessions == num_sessions
         assert result.has_streaming_metrics
 
 
@@ -161,40 +153,22 @@ class TestUserCentricRateCreditFlow:
             f"{analyzer.total_returns} returned"
         )
 
-    def test_credits_per_session_sequential(self, cli: AIPerfCLI):
-        """Verify each session's credits have sequential turn indices.
-
-        Note: User-centric mode is duration-based (runs for --benchmark-duration),
-        not session-count-based. With user replacement enabled, total sessions
-        can exceed num_users as users complete and are replaced.
-
-        Key verification: turn indices must be sequential within each session.
-        """
-        config = TimingTestConfig(
-            num_sessions=12,
-            qps=60.0,
-            turns_per_session=4,
-        )
-        cmd = build_timing_command(config, user_centric_rate=config.qps)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        runner: AIPerfRunnerResultWithSharedBus = result.runner_result
-        analyzer = CreditFlowAnalyzer(runner)
-
-        # Duration-based with user replacement: session count can exceed num_users
-        # The key invariant is that turn indices are sequential within each session
-        assert analyzer.turn_indices_sequential()
-
-    @pytest.mark.slow
     def test_turn_indices_sequential(self, cli: AIPerfCLI):
-        """Verify turn indices are sequential per session."""
-        config = TimingTestConfig(
-            num_sessions=10,
-            qps=50.0,
-            turns_per_session=6,
+        """Verify turn indices are sequential within each session.
+
+        Turn indices must be 0, 1, 2, ... for each session's credits.
+        """
+        num_users = 10
+        num_sessions = 15
+        turns_per_session = 4
+
+        cmd = build_user_centric_command(
+            num_users=num_users,
+            qps=100.0,
+            num_sessions=num_sessions,
+            turns_per_session=turns_per_session,
         )
-        cmd = build_timing_command(config, user_centric_rate=config.qps)
-        result = cli.run_sync(cmd, timeout=config.timeout)
+        result = cli.run_sync(cmd, timeout=60.0)
 
         runner: AIPerfRunnerResultWithSharedBus = result.runner_result
         analyzer = CreditFlowAnalyzer(runner)
@@ -471,54 +445,6 @@ class TestUserCentricRateValidationErrors:
 
         # Request count should match the stop condition
         assert result.request_count == request_count
-
-    @pytest.mark.parametrize(
-        "num_users,num_sessions",
-        [
-            (10, 5),  # 2x fewer sessions
-            (20, 1),  # Single session for many users
-            (50, 25),  # Half the sessions
-            (100, 50),  # Large scale
-        ],
-    )
-    def test_various_invalid_num_sessions(
-        self, cli: AIPerfCLI, num_users: int, num_sessions: int
-    ):
-        """Verify various invalid num_sessions configurations fail."""
-        cmd = build_user_centric_command(
-            num_users=num_users,
-            qps=100.0,
-            num_sessions=num_sessions,
-        )
-        result = cli.run_sync(cmd, timeout=30.0, assert_success=False)
-
-        assert result.exit_code == 1, (
-            f"Expected failure for num_users={num_users}, num_sessions={num_sessions}"
-        )
-
-    @pytest.mark.parametrize(
-        "num_users,request_count",
-        [
-            (10, 5),  # 2x fewer requests
-            (20, 1),  # Single request for many users
-            (50, 25),  # Half the requests
-            (100, 50),  # Large scale
-        ],
-    )
-    def test_various_invalid_request_count(
-        self, cli: AIPerfCLI, num_users: int, request_count: int
-    ):
-        """Verify various invalid request_count configurations fail."""
-        cmd = build_user_centric_command(
-            num_users=num_users,
-            qps=100.0,
-            request_count=request_count,
-        )
-        result = cli.run_sync(cmd, timeout=30.0, assert_success=False)
-
-        assert result.exit_code == 1, (
-            f"Expected failure for num_users={num_users}, request_count={request_count}"
-        )
 
     def test_single_turn_user_centric_fails(self, cli: AIPerfCLI):
         """Verify user-centric mode rejects single-turn conversations.

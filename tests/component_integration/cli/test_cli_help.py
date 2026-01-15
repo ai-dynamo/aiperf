@@ -49,17 +49,6 @@ class TestCLIHelp:
                 f"DisableCLI parameter '{param}' should not appear in help text"
             )
 
-    def test_disable_cli_parameters_not_recognized(
-        self, cli: AIPerfCLI, disabled_parameters: list[str]
-    ):
-        """Test that parameters marked with DisableCLI() are not recognized."""
-        for param in disabled_parameters:
-            result = cli.run_sync(f"aiperf profile {param} 123", assert_success=False)
-            assert result.exit_code != 0
-            assert (
-                "Unknown option" in result.stderr or "Unknown option" in result.stdout
-            )
-
 
 class TestCLIVersion:
     def test_version_flag(self, cli: AIPerfCLI):

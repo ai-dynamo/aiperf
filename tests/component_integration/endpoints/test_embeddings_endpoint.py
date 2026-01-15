@@ -29,7 +29,5 @@ class TestEmbeddingsEndpoint:
             """
         )
         assert result.request_count == defaults.request_count
-        assert (
-            not hasattr(result.json, "time_to_first_token")
-            or result.json.time_to_first_token is None
-        )
+        # Embeddings don't stream, so streaming metrics should be absent
+        assert result.json.time_to_first_token is None

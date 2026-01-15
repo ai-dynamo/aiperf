@@ -1,25 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Simple test that runs the aiperf profile command with mocked services."""
-
-from collections import defaultdict
+"""Integration test that runs the aiperf profile command with mocked services."""
 
 import pytest
 
-# Import aiperf modules first to avoid circular import issues.
-from aiperf.common.enums import CommunicationBackend, ServiceRunType, TransportType
-from aiperf.common.factories import (
-    CommunicationFactory,
-    ServiceManagerFactory,
-    TransportFactory,
-)
-from aiperf.common.tokenizer import Tokenizer
 from aiperf.credit.messages import CreditReturn
-
-# Import harness modules for registration side effects.
-# MockServiceManager overrides ServiceManagerFactory to run services in-process.
-# FakeTransport overrides TransportFactory to bypass HTTP entirely.
-# MockCommunication overrides CommunicationFactory to bypass ZMQ.
 from aiperf.credit.structs import Credit
 from tests.component_integration.conftest import AIPerfRunnerResultWithSharedBus
 from tests.harness import (
@@ -31,30 +16,17 @@ from tests.harness.utils import AIPerfCLI
 
 
 @pytest.mark.component_integration
-def test_timing_harness_mocks_registered():
-    """Verify harness mocks are registered with high priority."""
-    # Verify FakeTransport overrides HTTP transport
-    http_class = TransportFactory.get_class_from_type(TransportType.HTTP)
-    assert http_class.__name__ == "FakeTransport"
-
-    # Verify MockServiceManager overrides multiprocessing manager
-    mp_class = ServiceManagerFactory.get_class_from_type(ServiceRunType.MULTIPROCESSING)
-    assert mp_class.__name__ == "FakeServiceManager"
-
-    # Verify MockCommunication overrides ZMQ IPC backend
-    ipc_class = CommunicationFactory.get_class_from_type(CommunicationBackend.ZMQ_IPC)
-    assert ipc_class.__name__ == "FakeCommunication"
-
-    assert Tokenizer.from_pretrained.__qualname__ == "FakeTokenizer.from_pretrained"
-
-
-@pytest.mark.component_integration
 class TestCLIProfile:
     """Tests for CLI profile command."""
 
-    def test_profile_command_runs(self, cli: AIPerfCLI):
-        """Basic test that aiperf profile command runs with mocked services."""
+    def test_profile_command_completes_with_credit_accounting(self, cli: AIPerfCLI):
+        """Verify profile command completes and credits are properly accounted for.
 
+        This test validates the end-to-end flow:
+        1. CLI profile command runs to completion
+        2. All issued credits are eventually returned (no credit leaks)
+        3. Request cancellation works correctly with the credit system
+        """
         concurrency = 13
         workers_max = 3
         request_count = 100
@@ -75,16 +47,20 @@ class TestCLIProfile:
                 --streaming
             """
         )
-        # With seed 42 and 50% cancellation rate, expect 47 completed requests
-        # (53 cancelled out of 100 total due to random timing)
+
+        # Verify benchmark completed with expected request count
+        # With seed 42 and 50% cancellation rate, 47 requests complete
         assert result.request_count == 47
+
+        # Verify credit accounting: all credits issued must be returned
         runner_result: AIPerfRunnerResultWithSharedBus = result.runner_result
         assert runner_result.shared_bus is not None
-        credits = [p for p in runner_result.payloads_by_type(Credit, sent=True)]
-        credit_returns = [
-            p.payload for p in runner_result.payloads_by_type(CreditReturn, sent=True)
-        ]
-        assert len(credits) == len(credit_returns)
-        credits_by_worker = defaultdict(list)
-        for credit in credits:
-            credits_by_worker[credit.receiver_identity].append(credit)
+
+        credits = list(runner_result.payloads_by_type(Credit, sent=True))
+        credit_returns = list(runner_result.payloads_by_type(CreditReturn, sent=True))
+
+        # Every credit issued must have a corresponding return (no leaks)
+        assert len(credits) == len(credit_returns), (
+            f"Credit leak detected: {len(credits)} credits issued but "
+            f"{len(credit_returns)} returned"
+        )

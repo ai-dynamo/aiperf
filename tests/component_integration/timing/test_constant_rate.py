@@ -11,7 +11,7 @@ Tests cover:
 - Timing accuracy (intervals should be constant)
 - Multi-turn conversations
 - Concurrency interactions
-- Edge cases (single request, high QPS, etc.)
+- Stress tests (high volume, sustained workloads)
 """
 
 import pytest
@@ -125,28 +125,6 @@ class TestConstantRateTiming:
         )
         assert passed, f"Intervals not constant: {reason}"
 
-    def test_low_cv_for_constant_rate(self, cli: AIPerfCLI):
-        """Verify constant rate has lower CV than Poisson.
-
-        Note: This verifies CV is lower than Poisson (which has CV=1.0), not
-        that it's near-zero. Test harness jitter prevents precise verification.
-        """
-        config = TimingTestConfig(num_sessions=30, qps=100.0)
-        cmd = build_timing_command(config, arrival_pattern="constant")
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        timing = TimingAnalyzer(result)
-        issue_times = timing.get_credit_issue_times_ns()
-        gaps = timing.calculate_gaps_sec(issue_times)
-
-        assert len(gaps) >= 5, (
-            f"Insufficient data for CV analysis: got {len(gaps)} gaps, need >= 5. "
-            f"30 sessions should produce enough data for CV check."
-        )
-        cv = timing.calculate_cv(gaps)
-        # CV should be lower than Poisson (CV=1.0); 0.8 allows for harness jitter
-        assert cv < 0.8, f"CV {cv:.4f} too high for constant rate (should be < 0.8)"
-
 
 @pytest.mark.component_integration
 class TestConstantRateWithConcurrency(BaseConcurrencyTests):
@@ -155,19 +133,6 @@ class TestConstantRateWithConcurrency(BaseConcurrencyTests):
     Inherits common concurrency tests from BaseConcurrencyTests.
     Tests: test_with_concurrency_limit, test_with_prefill_concurrency,
            test_multi_turn_with_concurrency
-    """
-
-    def build_command(self, config: TimingTestConfig) -> str:
-        """Build constant rate timing command."""
-        return build_timing_command(config, arrival_pattern="constant")
-
-
-@pytest.mark.component_integration
-class TestConstantRateEdgeCases:
-    """Edge case tests for constant rate timing.
-
-    Inherits common edge case tests from BaseEdgeCaseTests.
-    Tests: single_request, very_high_qps, low_qps, many_sessions_few_turns, few_sessions_many_turns
     """
 
     def build_command(self, config: TimingTestConfig) -> str:

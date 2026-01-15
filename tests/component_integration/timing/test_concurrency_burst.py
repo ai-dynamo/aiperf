@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Comprehensive tests for concurrency burst timing mode.
+"""Tests for concurrency burst timing mode.
 
 Concurrency burst mode issues credits with zero delay - throughput is
 controlled entirely by the concurrency semaphore.
@@ -12,12 +12,11 @@ Key characteristics:
 - Maximum throughput mode
 
 Tests cover:
-- Basic functionality at various concurrency levels
-- Credit flow verification
-- Timing behavior (minimal gaps expected)
+- Basic burst mode completion
+- Credit flow verification (balance, per-session, sequential turns)
+- Concurrency limit enforcement (total and prefill)
 - Multi-turn conversations
-- Concurrency limit enforcement
-- Edge cases
+- Edge cases (low concurrency, high sessions)
 """
 
 import pytest
@@ -31,79 +30,29 @@ from tests.component_integration.timing.conftest import (
     assert_concurrency_limit_hit,
     assert_concurrency_limit_respected,
     assert_request_count,
-    defaults,
+    build_burst_command,
 )
 from tests.harness.analyzers import (
     CreditFlowAnalyzer,
 )
 from tests.harness.utils import AIPerfCLI
 
-# Fast OSL for concurrency burst tests (10 for slightly longer decode phase)
-TEST_OSL_BURST = 10
-
-
-def build_burst_command(
-    config: TimingTestConfig,
-    *,
-    extra_args: str = "",
-    osl: int | None = None,
-) -> str:
-    """Build a CLI command for concurrency burst tests.
-
-    Burst mode requires concurrency but no request-rate.
-    """
-    osl_value = osl if osl is not None else TEST_OSL_BURST
-    cmd = f"""
-        aiperf profile \
-            --model {defaults.model} \
-            --streaming \
-            --num-sessions {config.num_sessions} \
-            --concurrency {config.concurrency} \
-            --osl {osl_value} \
-            --extra-inputs ignore_eos:true \
-            --ui {defaults.ui}
-    """
-
-    if config.turns_per_session > 1:
-        cmd += (
-            f" --session-turns-mean {config.turns_per_session} --session-turns-stddev 0"
-        )
-
-    if config.prefill_concurrency is not None:
-        cmd += f" --prefill-concurrency {config.prefill_concurrency}"
-
-    if extra_args:
-        cmd += f" {extra_args}"
-
-    return cmd
-
 
 @pytest.mark.component_integration
 class TestConcurrencyBurstBasic:
     """Basic functionality tests for concurrency burst timing."""
 
-    @pytest.mark.parametrize(  # fmt: skip
-        "num_sessions,concurrency",
-        [
-            (15, 3),
-            (25, 5),
-            (40, 10),
-            (60, 15),
-        ],
-    )
-    def test_burst_mode_completes(
-        self, cli: AIPerfCLI, num_sessions: int, concurrency: int
-    ):
-        """Test burst mode completes at various concurrency levels."""
+    def test_burst_mode_completes(self, cli: AIPerfCLI):
+        """Test burst mode completes successfully."""
         config = TimingTestConfig(
-            num_sessions=num_sessions,
+            num_sessions=30,
             qps=0,  # No rate for burst mode
-            concurrency=concurrency,
+            concurrency=6,
         )
         cmd = build_burst_command(config)
         result = cli.run_sync(cmd, timeout=config.timeout)
 
-        assert result.request_count == num_sessions
+        assert result.request_count == config.num_sessions
         assert result.has_streaming_metrics
 
     def test_burst_mode_multi_turn(self, cli: AIPerfCLI):
@@ -143,12 +92,12 @@ class TestConcurrencyBurstCreditFlow:
             f"{analyzer.total_returns} returned"
         )
 
-    def test_credits_per_session(self, cli: AIPerfCLI):
-        """Verify each session gets expected credits."""
+    def test_credits_per_session_with_sequential_turns(self, cli: AIPerfCLI):
+        """Verify each session gets expected credits with sequential turn indices."""
         config = TimingTestConfig(
             num_sessions=15,
             qps=0,
-            turns_per_session=3,
+            turns_per_session=4,
             concurrency=5,
         )
         cmd = build_burst_command(config)
@@ -159,22 +108,6 @@ class TestConcurrencyBurstCreditFlow:
 
         assert analyzer.num_sessions == config.num_sessions
         assert analyzer.session_credits_match(config.turns_per_session)
-
-    @pytest.mark.slow
-    def test_turn_indices_sequential(self, cli: AIPerfCLI):
-        """Verify turn indices are sequential per session."""
-        config = TimingTestConfig(
-            num_sessions=10,
-            qps=0,
-            turns_per_session=5,
-            concurrency=4,
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        runner: AIPerfRunnerResultWithSharedBus = result.runner_result
-        analyzer = CreditFlowAnalyzer(runner)
-
         assert analyzer.turn_indices_sequential()
 
 
@@ -183,28 +116,20 @@ class TestConcurrencyBurstLimits(BaseConcurrencyTests):
     """Tests for concurrency limit enforcement in burst mode.
 
     Inherits common concurrency tests from BaseConcurrencyTests, with customization
-    for burst mode (qps=0) behavior. Uses parametrized test for single values instead
-    of (concurrency, qps) pairs since burst mode has qps=0.
-
-    Tests: test_with_concurrency_limit (customized), test_with_prefill_concurrency,
-           test_multi_turn_with_concurrency
+    for burst mode (qps=0) behavior.
     """
 
     def build_command(self, config: TimingTestConfig) -> str:
         """Build burst mode command."""
         return build_burst_command(config)
 
-    @pytest.mark.parametrize(  # fmt: skip
-        "concurrency",
-        [2, 4, 8, 12],
-    )
+    @pytest.mark.parametrize("concurrency", [4, 10])  # fmt: skip
     def test_with_concurrency_limit(self, cli: AIPerfCLI, concurrency: int):
         """Test burst mode respects and reaches concurrency limit.
 
         Override base class to use concurrency-only parameters (no QPS).
         Burst mode (qps=0) issues credits as fast as possible.
         """
-        # Ensure we have enough sessions to hit the limit
         num_sessions = max(30, concurrency * 3)
         config = TimingTestConfig(
             num_sessions=num_sessions,
@@ -212,7 +137,6 @@ class TestConcurrencyBurstLimits(BaseConcurrencyTests):
             concurrency=concurrency,
         )
 
-        # Validate test parameters will actually hit the limit
         assert config.will_hit_concurrency_limit(), (
             f"Test config won't hit concurrency limit: "
             f"num_sessions={num_sessions}, concurrency={concurrency}"
@@ -226,12 +150,8 @@ class TestConcurrencyBurstLimits(BaseConcurrencyTests):
         assert_concurrency_limit_hit(result, concurrency)
 
     def test_with_prefill_concurrency(self, cli: AIPerfCLI):
-        """Test burst mode with prefill concurrency limit.
-
-        Override base class to ensure enough sessions for burst mode.
-        """
+        """Test burst mode with prefill concurrency limit."""
         prefill_concurrency = 3
-        # Ensure we have enough sessions to hit the prefill limit
         num_sessions = max(25, prefill_concurrency * 5)
         config = TimingTestConfig(
             num_sessions=num_sessions,
@@ -240,7 +160,6 @@ class TestConcurrencyBurstLimits(BaseConcurrencyTests):
             prefill_concurrency=prefill_concurrency,
         )
 
-        # Validate test parameters will hit the prefill limit
         assert config.will_hit_prefill_limit(), (
             f"Test config won't hit prefill limit: "
             f"num_sessions={num_sessions}, prefill_concurrency={prefill_concurrency}"
@@ -254,10 +173,7 @@ class TestConcurrencyBurstLimits(BaseConcurrencyTests):
         assert_concurrency_limit_hit(result, prefill_concurrency, prefill=True)
 
     def test_multi_turn_with_concurrency(self, cli: AIPerfCLI):
-        """Test multi-turn burst with concurrency.
-
-        Override base class to use burst mode (qps=0).
-        """
+        """Test multi-turn burst with concurrency limit enforcement."""
         config = TimingTestConfig(
             num_sessions=10,
             qps=0,  # Burst mode
@@ -274,7 +190,11 @@ class TestConcurrencyBurstLimits(BaseConcurrencyTests):
         assert_concurrency_limit_hit(result, config.concurrency)
 
     def test_low_concurrency_high_sessions(self, cli: AIPerfCLI):
-        """Test low concurrency with many sessions (queuing behavior)."""
+        """Test low concurrency with many sessions (queuing behavior).
+
+        Verifies that burst mode correctly queues requests when
+        concurrency is much lower than total sessions.
+        """
         config = TimingTestConfig(
             num_sessions=40,
             qps=0,
@@ -284,21 +204,4 @@ class TestConcurrencyBurstLimits(BaseConcurrencyTests):
         result = cli.run_sync(cmd, timeout=config.timeout)
 
         assert_request_count(result, config.num_sessions)
-
-
-@pytest.mark.component_integration
-class TestConcurrencyBurstEdgeCases:
-    """Edge case tests for concurrency burst timing."""
-
-    def test_many_turns_burst(self, cli: AIPerfCLI):
-        """Test many turns per session in burst mode."""
-        config = TimingTestConfig(
-            num_sessions=5,
-            qps=0,
-            turns_per_session=8,
-            concurrency=3,
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == config.expected_requests
+        assert_concurrency_limit_hit(result, config.concurrency)

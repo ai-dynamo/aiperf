@@ -6,22 +6,21 @@ These tests verify fundamental correctness properties that MUST hold regardless
 of timing mode, rate, concurrency, or other configuration. Failures here indicate
 serious bugs in the timing framework.
 
-Invariants tested:
-1. **Credit Lifecycle**: Each credit is issued exactly once and returned exactly once
-2. **Credit ID Uniqueness**: No duplicate credit IDs within a run
-3. **Timestamp Monotonicity**: Credit issue times are strictly increasing
-4. **Turn Index Correctness**: Turn indices are 0-indexed and sequential per session
-5. **Session Isolation**: Each session's credits have consistent metadata
-6. **Concurrency Bounds**: Actual concurrency never exceeds configured limits
-7. **Rate Limiting Bounds**: Actual rate approximately matches configured rate
-8. **No Credit Leaks**: Every issued credit is eventually returned
+Invariants tested via InvariantChecker (TestCreditLifecycleInvariants):
+- Credit ID uniqueness within each phase
+- Credit return matching (each credit returned exactly once)
+- No double returns
+- Timestamp monotonicity (credit issue times strictly increasing)
+- Turn index correctness (0-indexed, sequential per session)
+- Session metadata consistency
+- Return-after-issue ordering
 
-These invariants are checked across ALL timing modes to ensure consistent behavior.
+Additional invariants tested separately:
+- Concurrency bounds (TestConcurrencyInvariants)
+- Rate limiting bounds (TestRateLimitingInvariants)
 
-References:
-- Race conditions in rate limiting: https://www.thegreenreport.blog/articles/using-stress-tests-to-catch-race-conditions-in-api-rate-limiting-logic/
-- Statistical validation: https://www.itl.nist.gov/div898/handbook/eda/section3/eda35f.htm
-- Reliable benchmarking: https://dl.acm.org/doi/10.1007/s10009-017-0469-y
+These invariants are checked across multiple timing modes (rate-limited, burst,
+user-centric) to ensure consistent behavior.
 """
 
 import pytest
@@ -32,8 +31,8 @@ from tests.component_integration.conftest import (
 )
 from tests.component_integration.timing.conftest import (
     TimingTestConfig,
+    build_burst_command,
     build_timing_command,
-    defaults,
 )
 from tests.harness.analyzers import (
     ConcurrencyAnalyzer,
@@ -41,25 +40,6 @@ from tests.harness.analyzers import (
     TimingAnalyzer,
 )
 from tests.harness.utils import AIPerfCLI
-
-
-def build_burst_command(config: TimingTestConfig) -> str:
-    """Build burst mode command."""
-    cmd = f"""
-        aiperf profile \
-            --model {defaults.model} \
-            --streaming \
-            --num-sessions {config.num_sessions} \
-            --concurrency {config.concurrency} \
-            --osl {config.osl} \
-            --extra-inputs ignore_eos:true \
-            --ui {defaults.ui}
-    """
-    if config.turns_per_session > 1:
-        cmd += (
-            f" --session-turns-mean {config.turns_per_session} --session-turns-stddev 0"
-        )
-    return cmd
 
 
 @pytest.mark.component_integration
@@ -118,51 +98,6 @@ class TestCreditLifecycleInvariants:
 
         for name, passed, reason in checker.run_all_checks():
             assert passed, f"Invariant '{name}' failed: {reason}"
-
-
-@pytest.mark.component_integration
-class TestTimestampInvariants:
-    """Tests for timestamp ordering and consistency."""
-
-    def test_credit_issue_ordering_under_high_concurrency(self, cli: AIPerfCLI):
-        """Verify timestamp monotonicity under high concurrency stress.
-
-        High concurrency is most likely to expose race conditions in timestamp
-        generation or credit issuance ordering.
-        """
-        config = TimingTestConfig(
-            num_sessions=100,
-            qps=0,
-            concurrency=50,  # High concurrency stress
-            timeout=90.0,
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        runner: AIPerfRunnerResultWithSharedBus = result.runner_result
-        checker = InvariantChecker(runner)
-
-        passed, reason = checker.check_timestamp_monotonicity()
-        assert passed, reason
-
-    def test_credit_issue_ordering_high_rate(self, cli: AIPerfCLI):
-        """Verify timestamp monotonicity under high rate stress.
-
-        High QPS is most likely to expose race conditions in rapid-fire
-        credit issuance.
-        """
-        config = TimingTestConfig(
-            num_sessions=80,
-            qps=500.0,  # High rate stress
-        )
-        cmd = build_timing_command(config, arrival_pattern="constant")
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        runner: AIPerfRunnerResultWithSharedBus = result.runner_result
-        checker = InvariantChecker(runner)
-
-        passed, reason = checker.check_timestamp_monotonicity()
-        assert passed, reason
 
 
 @pytest.mark.component_integration
@@ -299,33 +234,3 @@ class TestRateLimitingInvariants:
             f"Mean gap {mean_gap:.4f}s is less than 80% of expected {min_expected_gap:.4f}s. "
             f"Rate limiting may be allowing requests faster than configured."
         )
-
-
-@pytest.mark.component_integration
-class TestTurnIndexInvariants:
-    """Tests for turn index correctness across all modes."""
-
-    @pytest.mark.parametrize(
-        "turns_per_session",
-        [2, 5, 10],
-    )
-    def test_turn_indices_0_indexed_and_sequential(
-        self, cli: AIPerfCLI, turns_per_session: int
-    ):
-        """Verify turn indices start at 0 and are sequential.
-
-        This is a fundamental correctness requirement for multi-turn conversations.
-        """
-        config = TimingTestConfig(
-            num_sessions=15,
-            qps=400.0,
-            turns_per_session=turns_per_session,
-        )
-        cmd = build_timing_command(config, arrival_pattern="constant")
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        runner: AIPerfRunnerResultWithSharedBus = result.runner_result
-        checker = InvariantChecker(runner)
-
-        passed, reason = checker.check_turn_index_correctness()
-        assert passed, reason

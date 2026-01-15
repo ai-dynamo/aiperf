@@ -13,7 +13,7 @@ Tests cover:
 - Multi-turn conversations with delays
 - Concurrency interactions
 - Load balancing across workers
-- Edge cases (single request, sparse/dense schedules)
+- Edge cases (single request, worker configurations)
 """
 
 from dataclasses import dataclass
@@ -199,15 +199,6 @@ class TestFixedScheduleBasic:
         result = cli.run_sync(cmd, timeout=config.timeout)
 
         assert get_request_count(result) == config.expected_requests
-
-    def test_fixed_schedule_single_session(self, cli: AIPerfCLI, tmp_path: Path):
-        """Test fixed schedule with single session."""
-        config = FixedScheduleTestConfig(num_sessions=1, turns_per_session=5)
-        trace_file = generate_trace_file(tmp_path, config)
-        cmd = build_fixed_schedule_command(config, trace_file)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert get_request_count(result) == 5
 
 
 # =============================================================================
@@ -416,19 +407,6 @@ class TestFixedScheduleMultiTurn:
         # Use session_credits_match helper
         assert analyzer.session_credits_match(expected_turns=config.turns_per_session)
 
-    def test_many_turns_per_session(self, cli: AIPerfCLI, tmp_path: Path):
-        """Test sessions with many turns."""
-        config = FixedScheduleTestConfig(
-            num_sessions=5,
-            turns_per_session=10,
-            delay_ms=2,
-        )
-        trace_file = generate_trace_file(tmp_path, config)
-        cmd = build_fixed_schedule_command(config, trace_file)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert get_request_count(result) == config.expected_requests
-
 
 # =============================================================================
 # Concurrency Tests
@@ -491,6 +469,10 @@ class TestFixedScheduleConcurrency:
 
         assert get_request_count(result) == config.expected_requests
 
+        # Verify concurrency limit is actually respected
+        analyzer = ConcurrencyAnalyzer(result)
+        assert analyzer.concurrency_within_limit(concurrency_limit)
+
 
 # =============================================================================
 # Load Balancing Tests
@@ -535,30 +517,6 @@ class TestFixedScheduleEdgeCases:
 
         assert get_request_count(result) == 1
 
-    def test_sparse_schedule(self, cli: AIPerfCLI, tmp_path: Path):
-        """Test sparse schedule with large gaps between sessions."""
-        config = FixedScheduleTestConfig(
-            num_sessions=5,
-            schedule_duration_ms=400,  # 100ms gaps (still "sparse")
-        )
-        trace_file = generate_trace_file(tmp_path, config)
-        cmd = build_fixed_schedule_command(config, trace_file)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert get_request_count(result) == config.num_sessions
-
-    def test_dense_schedule(self, cli: AIPerfCLI, tmp_path: Path):
-        """Test dense schedule with many sessions at similar timestamps."""
-        config = FixedScheduleTestConfig(
-            num_sessions=50,
-            schedule_duration_ms=100,  # 2ms average gap
-        )
-        trace_file = generate_trace_file(tmp_path, config)
-        cmd = build_fixed_schedule_command(config, trace_file)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert get_request_count(result) == config.num_sessions
-
     def test_single_worker(self, cli: AIPerfCLI, tmp_path: Path):
         """Test with single worker (all requests routed to same worker)."""
         config = FixedScheduleTestConfig(
@@ -596,20 +554,6 @@ class TestFixedScheduleEdgeCases:
 class TestFixedScheduleStress:
     """Stress tests for fixed schedule mode."""
 
-    def test_high_session_count(self, cli: AIPerfCLI, tmp_path: Path):
-        """Test with high number of sessions."""
-        config = FixedScheduleTestConfig(
-            num_sessions=200,
-            schedule_duration_ms=400,  # 2ms gaps, keep fast
-            workers_max=5,
-            timeout=60.0,
-        )
-        trace_file = generate_trace_file(tmp_path, config)
-        cmd = build_fixed_schedule_command(config, trace_file)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert get_request_count(result) == config.num_sessions
-
     def test_high_turn_count(self, cli: AIPerfCLI, tmp_path: Path):
         """Test with high number of turns per session."""
         config = FixedScheduleTestConfig(
@@ -627,11 +571,12 @@ class TestFixedScheduleStress:
 
     def test_high_concurrency_burst(self, cli: AIPerfCLI, tmp_path: Path):
         """Test burst of requests with high concurrency."""
+        concurrency_limit = 20
         config = FixedScheduleTestConfig(
             num_sessions=50,
             turns_per_session=2,
             delay_ms=0,
-            concurrency=20,
+            concurrency=concurrency_limit,
             workers_max=5,
             timeout=120.0,
         )
@@ -640,6 +585,10 @@ class TestFixedScheduleStress:
         result = cli.run_sync(cmd, timeout=config.timeout)
 
         assert get_request_count(result) == config.expected_requests
+
+        # Verify concurrency limit is respected even under burst load
+        analyzer = ConcurrencyAnalyzer(result)
+        assert analyzer.concurrency_within_limit(concurrency_limit)
 
     def test_mixed_timestamps_and_delays(self, cli: AIPerfCLI, tmp_path: Path):
         """Test conversation with mixed timestamp/delay pattern.

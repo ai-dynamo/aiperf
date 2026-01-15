@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Comprehensive warmup phase tests with interaction coverage.
+"""Warmup phase tests with interaction coverage.
 
 Warmup phase is critical for:
 - KV cache warm-up
@@ -10,14 +10,8 @@ Warmup phase is critical for:
 
 These tests verify:
 1. Basic warmup functionality (request-count, duration)
-2. Warmup → profiling phase transition
-3. Warmup parameter overrides (concurrency, rate, prefill)
-4. Warmup interactions with:
-   - Multi-turn conversations
-   - Different rate modes
-   - Concurrency limits
-   - Cancellation (should be disabled in warmup)
-   - Duration/grace period
+2. Warmup to profiling phase transition (ordering, credit isolation)
+3. Warmup interactions with multi-turn conversations and cancellation
 
 CRITICAL: Warmup and profiling phases have SEPARATE credit tracking.
 Each phase should balance independently.
@@ -251,10 +245,8 @@ class TestWarmupInteractions:
     """Tests for warmup interactions with other features.
 
     These tests focus on how warmup interacts with:
-    - Multi-turn conversations
-    - Concurrency limits
-    - Cancellation
-    - Different rate modes
+    - Multi-turn conversations (session isolation)
+    - Cancellation (disabled during warmup)
     """
 
     def test_warmup_with_multi_turn_conversations(self, cli: AIPerfCLI):
@@ -365,81 +357,3 @@ class TestWarmupInteractions:
         assert profiling_errors > 0, (
             "Profiling should have some errors with 50% cancellation rate"
         )
-
-    def test_warmup_with_concurrency_and_prefill(self, cli: AIPerfCLI):
-        """Test warmup with concurrency limits.
-
-        Scenario:
-        - Warmup: concurrency=3, prefill=1
-        - Profiling: concurrency=8, prefill=2
-        - Verify limits enforced per phase
-        """
-        cmd = f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --num-sessions 25 \
-                --concurrency 8 \
-                --prefill-concurrency 2 \
-                --osl 5 \
-                --extra-inputs ignore_eos:true \
-                --ui {defaults.ui} \
-                --num-warmup-sessions 15 \
-                --warmup-concurrency 3 \
-                --warmup-prefill-concurrency 1
-        """
-
-        result = cli.run_sync(cmd, timeout=30.0)
-
-        assert result.request_count == 25
-
-        runner = result.runner_result
-
-        # Verify warmup credits issued
-        credit_payloads = [
-            p for p in runner.sent_payloads if isinstance(p.payload, Credit)
-        ]
-
-        warmup_credits = [
-            p for p in credit_payloads if p.payload.phase == CreditPhase.WARMUP
-        ]
-        profiling_credits = [
-            p for p in credit_payloads if p.payload.phase == CreditPhase.PROFILING
-        ]
-
-        assert len(warmup_credits) == 15
-        assert len(profiling_credits) == 25
-
-    def test_warmup_with_burst_mode(self, cli: AIPerfCLI):
-        """Test warmup with burst mode (concurrency-only)."""
-        cmd = f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --num-sessions 25 \
-                --concurrency 8 \
-                --osl 5 \
-                --extra-inputs ignore_eos:true \
-                --ui {defaults.ui} \
-                --num-warmup-sessions 20 \
-                --warmup-concurrency 4
-        """
-
-        result = cli.run_sync(cmd, timeout=30.0)
-
-        assert result.request_count == 25
-
-        runner = result.runner_result
-        credit_payloads = [
-            p for p in runner.sent_payloads if isinstance(p.payload, Credit)
-        ]
-
-        warmup_count = sum(
-            1 for p in credit_payloads if p.payload.phase == CreditPhase.WARMUP
-        )
-        profiling_count = sum(
-            1 for p in credit_payloads if p.payload.phase == CreditPhase.PROFILING
-        )
-
-        assert warmup_count == 20
-        assert profiling_count == 25

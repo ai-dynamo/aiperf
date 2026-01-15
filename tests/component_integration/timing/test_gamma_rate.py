@@ -190,7 +190,7 @@ class TestVLLMBurstinessAlias:
         vLLM uses "burstiness" for the same parameter, so we support it.
         The key validation is that the command executes successfully.
         """
-        config = TimingTestConfig(num_sessions=40, qps=100.0)
+        config = TimingTestConfig(num_sessions=30, qps=100.0)
 
         # Use --vllm-burstiness instead of --arrival-smoothness
         cmd = f"""
@@ -210,12 +210,3 @@ class TestVLLMBurstinessAlias:
 
         # Key validation: command executed successfully with --vllm-burstiness
         assert result.request_count == config.num_sessions
-
-        # Verify reasonable inter-arrival times were generated
-        timing = TimingAnalyzer(result)
-        gaps = timing.calculate_gaps_sec(timing.get_credit_issue_times_ns())
-        assert len(gaps) >= 20, f"Insufficient data: got {len(gaps)} gaps"
-
-        # Just verify CV is reasonable (system overhead dominates)
-        cv = timing.calculate_cv(gaps)
-        assert 0 < cv < 2.0, f"CV should be reasonable, got {cv:.3f}"

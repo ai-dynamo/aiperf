@@ -4,10 +4,10 @@
 
 This module provides:
 - Test configuration dataclasses (TimingTestConfig, RealisticLatencyConfig)
-- Command building utilities (build_timing_command, etc.)
+- Command building utilities (build_timing_command, build_burst_command)
 - Assertion helpers for common test patterns
-- Base test classes for shared test logic (BaseCreditFlowTests, etc.)
-- Test fixtures (realistic_latency, slow_latency_for_cancellation, etc.)
+- Base test classes for shared test logic (BaseCreditFlowTests, BaseConcurrencyTests)
+- Session-scoped realistic_latency fixture for FakeTransport timing simulation
 
 Analyzer classes (CreditFlowAnalyzer, TimingAnalyzer, etc.) are imported from
 tests.harness.analyzers for reuse across all test modules.
@@ -249,55 +249,6 @@ def build_timing_command(
     return cmd
 
 
-@pytest.fixture(scope="class")
-def slow_latency_for_cancellation():
-    """Slow latency fixture for testing request cancellation.
-
-    Sets TTFT=100ms and ITL=10ms so that requests take long enough
-    for short cancellation delays (e.g., 3ms) to reliably trigger.
-
-    Normal realistic latency (TTFT=5ms) is too fast for cancellation
-    testing since requests complete before the timeout fires.
-    """
-    from aiperf_mock_server.config import MockServerConfig
-
-    from tests.harness.fake_transport import FakeTransport
-
-    original = FakeTransport._DEFAULT_CONFIG
-    FakeTransport._DEFAULT_CONFIG = MockServerConfig(
-        ttft=100.0,  # 100ms time to first token
-        itl=10.0,  # 10ms inter-token latency
-    )
-    yield
-    FakeTransport._DEFAULT_CONFIG = original
-
-
-@pytest.fixture(scope="class")
-def super_slow_latency_for_grace_period():
-    """Slow latency fixture for testing grace period timeout.
-
-    Sets TTFT=200ms and ITL=10ms so that requests take ~700ms (with OSL=50).
-    This allows us to test grace period timeout scenarios where:
-    - Duration expires quickly
-    - Requests are still in-flight
-    - Grace period expires before requests complete
-    - System force-cancels remaining requests
-
-    Used to verify grace period timeout behavior.
-    """
-    from aiperf_mock_server.config import MockServerConfig
-
-    from tests.harness.fake_transport import FakeTransport
-
-    original = FakeTransport._DEFAULT_CONFIG
-    FakeTransport._DEFAULT_CONFIG = MockServerConfig(
-        ttft=200.0,  # 200ms time to first token
-        itl=10.0,  # 10ms inter-token latency (~700ms total with OSL=50)
-    )
-    yield
-    FakeTransport._DEFAULT_CONFIG = original
-
-
 def build_burst_command(config: TimingTestConfig) -> str:
     """Build burst mode command (no rate limiting, concurrency-limited only)."""
     cmd = f"""
@@ -424,13 +375,13 @@ def assert_fair_load_distribution(
         tolerance_pct: Allowed deviation from perfect balance (default 30%)
     """
     analyzer = LoadBalancingAnalyzer(result)
-    distribution = analyzer.get_request_distribution()
+    distribution = analyzer.credits_per_worker()
 
     assert len(distribution) == num_workers, (
         f"Expected {num_workers} workers, got {len(distribution)}: {list(distribution.keys())}"
     )
 
-    passed, reason = analyzer.is_fairly_distributed(tolerance_pct=tolerance_pct)
+    passed, reason = analyzer.verify_fair_distribution(tolerance_pct=tolerance_pct)
     assert passed, f"Load not fairly distributed: {reason}"
 
 

@@ -73,6 +73,20 @@ class TestRequestCancellationMultiTurn:
         valid_requests = result.request_count
         assert valid_requests == total_requests - cancelled_requests
 
+        # Verify error summary captures cancellations
+        assert result.json.error_summary is not None
+        assert result.json.error_summary
+        cancellation_error = next(
+            (
+                e
+                for e in result.json.error_summary
+                if e.error_details.type == "RequestCancellationError"
+            ),
+            None,
+        )
+        assert cancellation_error is not None
+        assert cancellation_error.count == cancelled_requests
+
         # Verify sessions still completed their turns despite cancellations
         session_turns = {}
         for record in result.jsonl:
@@ -167,121 +181,6 @@ class TestRequestCancellationMultiTurn:
                     mid_session_cancelled = True
 
         assert mid_session_cancelled
-
-    @pytest.mark.slow
-    def test_cancellation_with_poisson_rate(self, cli: AIPerfCLI):
-        """Test request cancellation with poisson request rate and multi-turn."""
-        result = cli.run_sync(
-            f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --request-rate {TEST_QPS} \
-                --request-rate-mode poisson \
-                --num-sessions 8 \
-                --session-turns-mean 3 \
-                --session-turns-stddev 0 \
-                --request-cancellation-rate {TEST_CANCELLATION_RATE} \
-                --request-cancellation-delay {TEST_CANCELLATION_DELAY} \
-                --osl {TEST_OSL} \
-                --random-seed 42 \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """,
-            timeout=120.0,
-        )
-
-        # 8 sessions × 3 turns = 24 total requests
-        assert len(result.jsonl) == 24
-
-        cancelled_requests = sum(
-            1 for record in result.jsonl if record.metadata.was_cancelled
-        )
-        assert cancelled_requests > 1
-        assert result.request_count == len(result.jsonl) - cancelled_requests
-
-    @pytest.mark.slow
-    def test_cancellation_with_turn_delays(self, cli: AIPerfCLI):
-        """Test request cancellation with inter-turn delays."""
-        result = cli.run_sync(
-            f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --request-rate {TEST_QPS} \
-                --num-sessions 5 \
-                --session-turns-mean 4 \
-                --session-turns-stddev 0 \
-                --session-turn-delay-mean 50 \
-                --session-turn-delay-stddev 10 \
-                --request-cancellation-rate 20 \
-                --request-cancellation-delay {TEST_CANCELLATION_DELAY} \
-                --osl {TEST_OSL} \
-                --random-seed 42 \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """,
-            timeout=120.0,
-        )
-
-        # 5 sessions × 4 turns = 20 total requests
-        assert len(result.jsonl) == 20
-
-        cancelled_requests = sum(
-            1 for record in result.jsonl if record.metadata.was_cancelled
-        )
-        assert cancelled_requests >= 1
-        assert result.request_count == len(result.jsonl) - cancelled_requests
-
-    @pytest.mark.slow
-    def test_high_cancellation_rate_multi_turn(self, cli: AIPerfCLI):
-        """Test high cancellation rate with multi-turn sessions.
-
-        Even with high cancellation rate, sessions should still progress
-        through their turns.
-        """
-        result = cli.run_sync(
-            f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --request-rate {TEST_QPS} \
-                --num-sessions 6 \
-                --session-turns-mean 4 \
-                --session-turns-stddev 0 \
-                --request-cancellation-rate 60 \
-                --request-cancellation-delay {TEST_CANCELLATION_DELAY} \
-                --osl {TEST_OSL} \
-                --random-seed 42 \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """,
-            timeout=120.0,
-        )
-
-        # 6 sessions × 4 turns = 24 total requests
-        assert len(result.jsonl) == 24
-
-        cancelled_requests = sum(
-            1 for record in result.jsonl if record.metadata.was_cancelled
-        )
-        # With 60% cancellation rate, expect significant cancellations
-        assert cancelled_requests > 10
-        assert result.request_count == len(result.jsonl) - cancelled_requests
-
-        # Verify error summary captures cancellations
-        assert result.json.error_summary is not None
-        assert result.json.error_summary
-        cancellation_error = next(
-            (
-                e
-                for e in result.json.error_summary
-                if e.error_details.type == "RequestCancellationError"
-            ),
-            None,
-        )
-        assert cancellation_error is not None
-        assert cancellation_error.count > 10
 
     @pytest.mark.slow
     def test_cancellation_sticky_routing_integrity(self, cli: AIPerfCLI):

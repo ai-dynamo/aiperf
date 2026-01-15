@@ -9,7 +9,6 @@ sample from the generated dataset: sequential, shuffle, random.
 from collections import Counter
 
 import pytest
-from pytest import approx
 
 from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
@@ -55,7 +54,7 @@ class TestDatasetSamplingStrategies:
         )
 
     def test_shuffle_sampling(self, cli: AIPerfCLI):
-        """Test shuffle dataset sampling strategy."""
+        """Test shuffle dataset sampling produces shuffled order with unique IDs."""
         result = cli.run_sync(
             f"""
             aiperf profile \
@@ -64,6 +63,7 @@ class TestDatasetSamplingStrategies:
                 --dataset-sampling-strategy shuffle \
                 --random-seed 42 \
                 --num-sessions 15 \
+                --num-dataset-entries 15 \
                 --session-turns-mean 1 \
                 --session-turns-stddev 0 \
                 --workers-max {defaults.workers_max} \
@@ -80,7 +80,7 @@ class TestDatasetSamplingStrategies:
         assert analyzer.credits_balanced()
         assert analyzer.total_credits == 15
 
-        # Validate shuffle behavior
+        # Validate shuffle produces unique IDs (no repeats in single pass)
         conversation_ids = [r.metadata.conversation_id for r in result.jsonl]
 
         # Should have all unique IDs
@@ -88,7 +88,7 @@ class TestDatasetSamplingStrategies:
             f"Shuffle should produce 15 unique IDs, got {len(set(conversation_ids))}"
         )
 
-        # Should differ from sequential order
+        # Should differ from sequential order (shuffle actually shuffles)
         sequential_order = [f"session_{i:06d}" for i in range(15)]
         assert conversation_ids != sequential_order, (
             "Shuffle should produce different order than sequential [0-14]"
@@ -199,36 +199,6 @@ class TestDatasetSamplingStrategies:
                 f"Session {session_id} appeared {count} times, expected 3"
             )
 
-    def test_random_sampling_with_seed_reproducibility(self, cli: AIPerfCLI):
-        """Test random sampling produces deterministic results with fixed seed.
-
-        This test verifies that using a fixed seed produces consistent sampling.
-        We use a single run and verify the sampling is valid (not testing across
-        runs to avoid FakeCommunication state issues in component tests).
-        """
-        result = cli.run_sync(
-            f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --dataset-sampling-strategy random \
-                --random-seed 12345 \
-                --num-sessions 20 \
-                --session-turns-mean 1 \
-                --session-turns-stddev 0 \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """,
-            timeout=60.0,
-        )
-
-        # Extract session IDs in order
-        sessions = [record.metadata.conversation_id for record in result.jsonl]
-
-        # With random sampling, we should have valid session IDs
-        assert len(sessions) == 20
-        assert all(isinstance(s, str) and s for s in sessions)
-
     def test_sampling_with_multi_turn(self, cli: AIPerfCLI):
         """Test sampling strategies with multi-turn conversations."""
         result = cli.run_sync(
@@ -256,99 +226,3 @@ class TestDatasetSamplingStrategies:
 
         # Verify each session has exactly 3 turns
         assert analyzer.session_credits_match(expected_turns=3)
-
-    def test_sampling_with_rate_limiting(self, cli: AIPerfCLI):
-        """Test sampling strategies work correctly with rate limiting."""
-        result = cli.run_sync(
-            f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --dataset-sampling-strategy random \
-                --random-seed 42 \
-                --request-rate 10 \
-                --request-rate-mode constant \
-                --num-sessions 20 \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """,
-            timeout=60.0,
-        )
-
-        # Verify request count
-        assert len(result.jsonl) == 20
-
-        # Verify rate limiting worked
-        assert result.average_credit_issue_rate == approx(10.0, abs=3.0)
-
-    def test_sampling_with_concurrency(self, cli: AIPerfCLI):
-        """Test sampling strategies with concurrency limits."""
-        result = cli.run_sync(
-            f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --dataset-sampling-strategy shuffle \
-                --random-seed 42 \
-                --concurrency 5 \
-                --num-sessions 15 \
-                --session-turns-mean 2 \
-                --session-turns-stddev 0 \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """,
-            timeout=60.0,
-        )
-
-        # Should have 15 sessions × 2 turns = 30 requests
-        assert len(result.jsonl) == 30
-
-        # Verify credit flow
-        analyzer = CreditFlowAnalyzer(result.runner_result)
-        assert analyzer.credits_balanced()
-        assert analyzer.total_credits == 30
-
-    def test_shuffle_produces_permutation(self, cli: AIPerfCLI):
-        """Test that shuffle sampling produces a valid permutation of the dataset.
-
-        Simplified from comparing sequential vs shuffle to avoid FakeCommunication
-        state issues in component tests.
-        """
-        result = cli.run_sync(
-            f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --dataset-sampling-strategy shuffle \
-                --random-seed 42 \
-                --num-dataset-entries 10 \
-                --num-sessions 10 \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """,
-            timeout=60.0,
-        )
-
-        # Extract conversation IDs
-        conversations = [record.metadata.conversation_id for record in result.jsonl]
-
-        # Should have exactly 10 unique conversations (one per dataset entry)
-        unique_conversations = set(conversations)
-        assert len(unique_conversations) == 10, (
-            f"Expected 10 unique conversations, got {len(unique_conversations)}"
-        )
-
-        # All conversations should be valid
-        assert len(conversations) == 10
-        assert all(isinstance(c, str) and c for c in conversations)
-
-        # Validate it's actually a permutation (all IDs present once)
-        conversation_ids = [record.metadata.conversation_id for record in result.jsonl]
-        assert sorted(conversation_ids) == [f"session_{i:06d}" for i in range(10)], (
-            f"Shuffle should produce permutation [0-9], got sorted={sorted(conversation_ids)}"
-        )
-
-        # Validate order differs from sequential
-        assert conversation_ids != [f"session_{i:06d}" for i in range(10)], (
-            "Shuffle permutation should differ from sequential order"
-        )

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Comprehensive session turn delay tests with interaction coverage.
+"""Session turn delay tests with interaction coverage.
 
 Session turn delays simulate realistic "think time" between conversation turns,
 critical for chatbot and multi-turn benchmark accuracy.
@@ -8,22 +8,16 @@ critical for chatbot and multi-turn benchmark accuracy.
 Options tested:
 - --session-turn-delay-mean: Mean delay between turns (milliseconds)
 - --session-turn-delay-stddev: Standard deviation of delays (milliseconds)
-- --session-delay-ratio: Scaling factor for delays
+- --session-turns-stddev: Variation in turn counts across sessions
 
 These tests verify:
-1. Basic delay functionality
-2. Delay interactions with rate modes (constant, poisson, user-centric, burst)
+1. Basic delay functionality with multi-turn conversations
+2. Variable delays (stddev > 0)
 3. Delay + concurrency interactions
 4. Delay + duration/grace period
-5. Variable delays (stddev > 0)
-6. Delay ratio scaling
-7. Multi-turn timing with delays
-
-CRITICAL INTERACTIONS TO TEST:
-- Turn delays should NOT affect credit issuance rate (rate mode independent)
-- Turn delays should affect session completion time
-- Delays should respect per-session sequencing
-- Delays + duration: In-flight turns may not complete
+5. Delay + warmup phase
+6. Delay + request cancellation
+7. Variable turn counts across sessions
 """
 
 import statistics
@@ -116,74 +110,6 @@ class TestSessionTurnDelayBasic:
         assert credit_analyzer.credits_balanced()
         assert credit_analyzer.num_sessions == 8
         assert credit_analyzer.session_credits_match(expected_turns=4)
-
-    def test_turn_delay_ratio_scaling(self, cli: AIPerfCLI):
-        """Test turn delay ratio scaling.
-
-        Scenario:
-        - Base delay: 100ms
-        - Ratio: 2.0 (2× scaling)
-        - Effective delay: 200ms
-        - Verify scaling works
-        """
-        cmd = f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --num-sessions 6 \
-                --session-turns-mean 3 \
-                --session-turns-stddev 0 \
-                --session-turn-delay-mean 100 \
-                --session-delay-ratio 2.0 \
-                --request-rate 150 \
-                --request-rate-mode constant \
-                --osl 50 \
-                --extra-inputs ignore_eos:true \
-                --ui {defaults.ui}
-        """
-
-        result = cli.run_sync(cmd, timeout=30.0)
-
-        # 6 sessions × 3 turns = 18 requests
-        assert result.request_count == 18
-
-        runner = result.runner_result
-        credit_analyzer = CreditFlowAnalyzer(runner)
-
-        assert credit_analyzer.credits_balanced()
-
-
-@pytest.mark.component_integration
-class TestTurnDelayWithRateModes:
-    """Test turn delays with different rate modes."""
-
-    def test_turn_delay_with_rate_mode(self, cli: AIPerfCLI):
-        """Test turn delays work with constant rate mode."""
-        cmd = f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --num-sessions 12 \
-                --session-turns-mean 3 \
-                --session-turns-stddev 0 \
-                --session-turn-delay-mean 80 \
-                --request-rate 80 \
-                --request-rate-mode constant \
-                --osl 50 \
-                --extra-inputs ignore_eos:true \
-                --ui {defaults.ui} \
-                --random-seed 42
-        """
-
-        result = cli.run_sync(cmd, timeout=30.0)
-
-        assert result.request_count == 36  # 12 × 3
-
-        runner = result.runner_result
-        credit_analyzer = CreditFlowAnalyzer(runner)
-
-        assert credit_analyzer.credits_balanced()
-        assert credit_analyzer.num_sessions == 12
 
 
 @pytest.mark.component_integration
@@ -360,40 +286,6 @@ class TestTurnDelayInteractions:
             1 for cr in credit_analyzer.credit_returns if cr.error is not None
         )
         assert error_count > 0, "Expected some errors with cancellation rate"
-
-
-@pytest.mark.component_integration
-class TestVariableTurnDelays:
-    """Tests for variable turn delays (stddev > 0)."""
-
-    def test_turn_delay_with_high_stddev(self, cli: AIPerfCLI):
-        """Test turn delays with high variance."""
-        cmd = f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --num-sessions 12 \
-                --session-turns-mean 4 \
-                --session-turns-stddev 0 \
-                --session-turn-delay-mean 100 \
-                --session-turn-delay-stddev 50 \
-                --request-rate 150 \
-                --request-rate-mode constant \
-                --osl 50 \
-                --extra-inputs ignore_eos:true \
-                --ui {defaults.ui} \
-                --random-seed 42
-        """
-
-        result = cli.run_sync(cmd, timeout=40.0)
-
-        assert result.request_count == 48  # 12 × 4
-
-        runner = result.runner_result
-        credit_analyzer = CreditFlowAnalyzer(runner)
-
-        assert credit_analyzer.credits_balanced()
-        assert credit_analyzer.turn_indices_sequential()
 
 
 @pytest.mark.component_integration

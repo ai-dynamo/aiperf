@@ -51,12 +51,14 @@ class TestImageGenerationEndpoint:
             or result.json.time_to_first_token is None
         )
 
-    def test_image_generation_with_size_quality(self, cli: AIPerfCLI):
-        """Image generation with size and quality parameters.
+    def test_image_generation_with_extra_inputs(self, cli: AIPerfCLI):
+        """Image generation with extra-inputs for size and quality.
 
         Based on tutorial example:
         aiperf profile --endpoint-type image_generation
                        --extra-inputs size:512x512 quality:standard
+
+        Validates that extra-inputs are accepted for image generation endpoints.
         """
         result = cli.run_sync(
             f"""
@@ -72,22 +74,8 @@ class TestImageGenerationEndpoint:
             """
         )
         assert result.request_count == defaults.request_count
-
-    def test_image_generation_basic(self, cli: AIPerfCLI):
-        """Basic image generation without extra parameters.
-
-        Simplified test for basic functionality.
-        """
-        result = cli.run_sync(
-            f"""
-            aiperf profile \
-                --model black-forest-labs/FLUX.1-dev \
-                --tokenizer gpt2 \
-                --endpoint-type image_generation \
-                --request-count {defaults.request_count} \
-                --concurrency {defaults.concurrency} \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """
+        # Image generation doesn't produce tokens, so no token-based streaming metrics
+        assert (
+            not hasattr(result.json, "time_to_first_token")
+            or result.json.time_to_first_token is None
         )
-        assert result.request_count == defaults.request_count

@@ -30,12 +30,14 @@ from aiperf.common import random_generator as rng
 from aiperf.common.enums import CommClientType
 from aiperf.common.environment import Environment
 from aiperf.common.factories import CommunicationFactory
+
+# Import fakes for factory registration side effects (they register themselves on import)
 from tests.harness import (
     FakeCommunication,
     FakeCommunicationBus,
-    FakeServiceManager,  # noqa: F401
-    FakeTokenizer,  # noqa: F401
-    FakeTransport,  # noqa: F401
+    FakeServiceManager,  # noqa: F401 - imported for factory registration
+    FakeTokenizer,  # noqa: F401 - imported for factory registration
+    FakeTransport,  # noqa: F401 - imported for factory registration
 )
 from tests.harness.fake_communication import CapturedPayload
 from tests.harness.fake_tokenizer import TOKEN, TOKEN_LEN

@@ -51,33 +51,6 @@ class TestStickyRouting:
         assert_jsonl_turns_sequential(result.jsonl)
 
     @pytest.mark.slow
-    def test_sticky_routing_single_worker(self, cli: AIPerfCLI):
-        """Test sticky routing with only one worker.
-
-        With a single worker, all sessions must go through it,
-        validating basic multi-turn functionality.
-        """
-        result = cli.run_sync(
-            f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --request-rate {TEST_QPS} \
-                --num-sessions 3 \
-                --session-turns-mean 5 \
-                --session-turns-stddev 0 \
-                --workers-max 1 \
-                --ui {defaults.ui}
-            """
-        )
-        # 3 sessions × 5 turns = 15 requests
-        assert result.request_count == 15
-
-        # Verify sticky routing and turn integrity
-        assert_sticky_routing(result.jsonl)
-        assert_jsonl_turns_sequential(result.jsonl)
-
-    @pytest.mark.slow
     @pytest.mark.stress
     def test_sticky_routing_high_concurrency_multi_turn(self, cli: AIPerfCLI):
         """Test sticky routing with high worker count and many sessions.

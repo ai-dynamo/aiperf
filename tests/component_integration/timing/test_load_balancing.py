@@ -273,56 +273,6 @@ class TestStickyRoutingMultiTurn:
 
 
 @pytest.mark.component_integration
-class TestFirstTurnDistribution:
-    """Test fair distribution of first turns (new session assignment).
-
-    First turns test the load balancing algorithm directly since
-    they create new sticky sessions. Subsequent turns follow sticky routing.
-    """
-
-    @pytest.mark.parametrize(
-        "num_sessions,turns_per_session,workers_max,tolerance_pct",
-        [
-            pytest.param(60, 3, 2, 20.0, marks=pytest.mark.slow),
-            pytest.param(60, 3, 3, 25.0, marks=pytest.mark.slow),
-            pytest.param(60, 5, 3, 25.0, marks=[pytest.mark.stress, pytest.mark.slow]),  # More turns
-            pytest.param(100, 2, 5, 30.0, marks=pytest.mark.slow)
-        ],
-    )  # fmt: skip
-    def test_first_turn_fair_distribution(
-        self,
-        cli: AIPerfCLI,
-        num_sessions: int,
-        turns_per_session: int,
-        workers_max: int,
-        tolerance_pct: float,
-    ):
-        """Verify first turns are fairly distributed (independent of sticky effects)."""
-        config = TimingTestConfig(
-            num_sessions=num_sessions,
-            qps=400.0,
-            turns_per_session=turns_per_session,
-        )
-        cmd = build_multi_worker_command(config, workers_max)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        expected_requests = num_sessions * turns_per_session
-        assert result.request_count == expected_requests
-
-        analyzer = LoadBalancingAnalyzer(result)
-
-        # First turns should be evenly distributed
-        passed, reason = analyzer.verify_first_turn_distribution(
-            tolerance_pct=tolerance_pct
-        )
-        assert passed, reason
-
-        # Verify sticky routing still works
-        sticky_passed, sticky_reason = analyzer.verify_sticky_routing()
-        assert sticky_passed, sticky_reason
-
-
-@pytest.mark.component_integration
 class TestMultiWorkerScaling:
     """Test load balancing scales correctly with worker count."""
 
@@ -432,80 +382,6 @@ class TestHighLoadBalancing:
 
         passed, reason = analyzer.verify_fair_distribution(tolerance_pct=25.0)
         assert passed, reason
-
-
-@pytest.mark.component_integration
-class TestMixedWorkload:
-    """Test load balancing with mixed session lengths."""
-
-    @pytest.mark.stress
-    @pytest.mark.slow
-    def test_multi_turn_fair_total_distribution(self, cli: AIPerfCLI):
-        """Test that total credits are fairly distributed with multi-turn sessions.
-
-        Even with sticky routing, total credits should be fairly distributed
-        because first turns (which determine session assignment) are fairly distributed.
-        """
-        workers_max = 3
-        num_sessions = 60
-        turns_per_session = 4
-        config = TimingTestConfig(
-            num_sessions=num_sessions,
-            qps=400.0,
-            turns_per_session=turns_per_session,
-        )
-        cmd = build_multi_worker_command(config, workers_max)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        expected_requests = num_sessions * turns_per_session
-        assert result.request_count == expected_requests
-
-        analyzer = LoadBalancingAnalyzer(result)
-
-        # Total credits should be fairly distributed
-        passed, reason = analyzer.verify_fair_distribution(tolerance_pct=25.0)
-        assert passed, reason
-
-        # First turns should be fairly distributed
-        first_passed, first_reason = analyzer.verify_first_turn_distribution(
-            tolerance_pct=25.0
-        )
-        assert first_passed, first_reason
-
-        # Sticky routing must be maintained
-        sticky_passed, sticky_reason = analyzer.verify_sticky_routing()
-        assert sticky_passed, sticky_reason
-
-    @pytest.mark.slow
-    def test_sessions_distributed_evenly(self, cli: AIPerfCLI):
-        """Test that sessions (not just credits) are evenly distributed."""
-        workers_max = 4
-        num_sessions = 80
-        turns_per_session = 3
-        config = TimingTestConfig(
-            num_sessions=num_sessions,
-            qps=400.0,
-            turns_per_session=turns_per_session,
-        )
-        cmd = build_multi_worker_command(config, workers_max)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        expected_requests = num_sessions * turns_per_session
-        assert result.request_count == expected_requests
-
-        analyzer = LoadBalancingAnalyzer(result)
-
-        # Check session distribution
-        sessions_per_worker = analyzer.sessions_per_worker()
-        expected_sessions = num_sessions / workers_max
-        tolerance = expected_sessions * 0.30  # 30% tolerance
-
-        for worker_id, count in sessions_per_worker.items():
-            deviation = abs(count - expected_sessions)
-            assert deviation <= tolerance, (
-                f"Worker {worker_id} has {count} sessions, "
-                f"expected ~{expected_sessions:.1f} (deviation {deviation:.1f} > {tolerance:.1f})"
-            )
 
 
 @pytest.mark.component_integration

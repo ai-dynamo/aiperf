@@ -12,10 +12,10 @@ Key characteristics:
 
 Tests cover:
 - Basic functionality at various QPS levels
-- Statistical distribution verification
+- Statistical distribution verification (comprehensive test with 4 checks)
 - Multi-turn conversations
 - Concurrency interactions
-- Comparison with constant rate (higher variability expected)
+- Stress tests including bursty pattern verification
 """
 
 import pytest
@@ -93,10 +93,10 @@ class TestPoissonRateStatistics:
     """Statistical distribution tests for Poisson rate mode.
 
     Tests verify that the timing system produces inter-arrival times following
-    an exponential distribution (Poisson process). Key properties tested:
+    an exponential distribution (Poisson process). The comprehensive test validates:
 
     1. Mean ≈ 1/rate (correct average spacing)
-    2. Std ≈ Mean (exponential property: σ = μ)
+    2. Std ≈ Mean (exponential property: sigma = mu)
     3. CV ≈ 1.0 (coefficient of variation for exponential)
     4. CDF property: ~63.2% of values below mean
     5. Independence: consecutive intervals uncorrelated
@@ -108,6 +108,12 @@ class TestPoissonRateStatistics:
 
         Runs 4 independent statistical tests and passes if at least 3 pass.
         This is more robust than single-test validation.
+
+        Tests include:
+        - Mean/Std/CV verification (exponential property)
+        - CDF property (63.2% below mean)
+        - Independence (memoryless property)
+        - Index of dispersion
         """
         config = TimingTestConfig(num_sessions=60, qps=100.0)
         cmd = build_timing_command(config, arrival_pattern="poisson")
@@ -130,120 +136,6 @@ class TestPoissonRateStatistics:
 
         assert passed, f"Comprehensive Poisson check failed: {summary}"
 
-    def test_exponential_mean_std_cv(self, cli: AIPerfCLI):
-        """Verify exponential distribution: Mean ≈ Std ≈ 1/rate, CV ≈ 1.0.
-
-        For exponential distribution with rate λ:
-        - Mean = 1/λ (expected inter-arrival time)
-        - Standard deviation = 1/λ (same as mean!)
-        - CV = σ/μ = 1.0
-
-        This is the defining characteristic of exponential distribution.
-        """
-        config = TimingTestConfig(num_sessions=50, qps=100.0)
-        cmd = build_timing_command(config, arrival_pattern="poisson")
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        timing = TimingAnalyzer(result)
-        gaps = timing.calculate_gaps_sec(timing.get_credit_issue_times_ns())
-
-        assert len(gaps) >= 20, (
-            f"Insufficient data for mean/std/cv analysis: got {len(gaps)} gaps, need >= 20."
-        )
-
-        passed, reason = StatisticalAnalyzer.verify_exponential_mean_std_cv(
-            gaps, expected_rate=config.qps, tolerance_pct=25.0
-        )
-        assert passed, f"Exponential mean/std/cv check failed: {reason}"
-
-    def test_exponential_cdf_property(self, cli: AIPerfCLI):
-        """Verify exponential CDF: ~63.2% of values are below the mean.
-
-        This is a fundamental property of exponential distribution:
-        P(X < μ) = 1 - e^(-1) ≈ 0.6321
-
-        This test is rate-independent and only checks the distribution shape.
-        """
-        config = TimingTestConfig(num_sessions=60, qps=100.0)
-        cmd = build_timing_command(config, arrival_pattern="poisson")
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        timing = TimingAnalyzer(result)
-        gaps = timing.calculate_gaps_sec(timing.get_credit_issue_times_ns())
-
-        assert len(gaps) >= 30, (
-            f"Insufficient data for CDF property test: got {len(gaps)} gaps, need >= 30."
-        )
-
-        passed, reason = StatisticalAnalyzer.verify_exponential_cdf_property(gaps)
-        assert passed, f"CDF property check failed: {reason}"
-
-    def test_memoryless_property(self, cli: AIPerfCLI):
-        """Verify memoryless property: consecutive intervals are independent.
-
-        The Poisson process is memoryless - knowing one inter-arrival time tells
-        you nothing about the next. This means consecutive intervals should have
-        near-zero correlation.
-        """
-        config = TimingTestConfig(num_sessions=60, qps=100.0)
-        cmd = build_timing_command(config, arrival_pattern="poisson")
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        timing = TimingAnalyzer(result)
-        gaps = timing.calculate_gaps_sec(timing.get_credit_issue_times_ns())
-
-        assert len(gaps) >= 30, (
-            f"Insufficient data for independence test: got {len(gaps)} gaps, need >= 30."
-        )
-
-        passed, reason = StatisticalAnalyzer.verify_independence(gaps)
-        assert passed, f"Independence (memoryless) check failed: {reason}"
-
-    def test_higher_cv_than_constant(self, cli: AIPerfCLI):
-        """Verify CV is higher than constant rate (more variability).
-
-        Poisson process should have CV ~ 1.0 (exponential distribution).
-        Constant rate should have CV < 0.3.
-        """
-        config = TimingTestConfig(num_sessions=40, qps=100.0)
-        cmd = build_timing_command(config, arrival_pattern="poisson")
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        timing = TimingAnalyzer(result)
-        gaps = timing.calculate_gaps_sec(timing.get_credit_issue_times_ns())
-
-        assert len(gaps) >= 20, (
-            f"Insufficient data for CV analysis: got {len(gaps)} gaps, need >= 20."
-        )
-
-        cv = timing.calculate_cv(gaps)
-        # Poisson should have CV in range [0.5, 1.5]
-        # Constant rate should have CV < 0.3
-        assert 0.5 < cv < 1.5, (
-            f"CV {cv:.4f} outside expected range [0.5, 1.5] for Poisson process"
-        )
-
-    def test_mean_rate_matches_target(self, cli: AIPerfCLI):
-        """Verify mean rate approximately matches target QPS."""
-        config = TimingTestConfig(num_sessions=50, qps=100.0)
-        cmd = build_timing_command(config, arrival_pattern="poisson")
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        timing = TimingAnalyzer(result)
-        gaps = timing.calculate_gaps_sec(timing.get_credit_issue_times_ns())
-
-        assert len(gaps) >= 20, (
-            f"Insufficient data for mean rate analysis: got {len(gaps)} gaps, need >= 20."
-        )
-
-        mean_gap = timing.calculate_mean(gaps)
-        expected_gap = 1.0 / config.qps
-        tolerance = expected_gap * 0.4  # 40% tolerance
-
-        assert abs(mean_gap - expected_gap) < tolerance, (
-            f"Mean gap {mean_gap:.4f}s differs from expected {expected_gap:.4f}s"
-        )
-
 
 @pytest.mark.component_integration
 class TestPoissonRateWithConcurrency(BaseConcurrencyTests):
@@ -252,19 +144,6 @@ class TestPoissonRateWithConcurrency(BaseConcurrencyTests):
     Inherits common concurrency tests from BaseConcurrencyTests.
     Tests: test_with_concurrency_limit, test_with_prefill_concurrency,
            test_multi_turn_with_concurrency
-    """
-
-    def build_command(self, config: TimingTestConfig) -> str:
-        """Build Poisson rate timing command."""
-        return build_timing_command(config, arrival_pattern="poisson")
-
-
-@pytest.mark.component_integration
-class TestPoissonRateEdgeCases:
-    """Edge case tests for Poisson rate timing.
-
-    Inherits common edge case tests from BaseEdgeCaseTests.
-    Tests: single_request, very_high_qps, low_qps, many_sessions_few_turns, few_sessions_many_turns
     """
 
     def build_command(self, config: TimingTestConfig) -> str:
