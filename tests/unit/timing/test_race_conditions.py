@@ -282,7 +282,7 @@ class TestRecordsManagerCompletionRace:
         # Process 5 records (success)
         for _i in range(5):
             phase_tracker = records_tracker._get_phase_tracker(CreditPhase.PROFILING)
-            phase_tracker.atomic_increment_success_records()
+            phase_tracker.increment_success_records()
 
         # Check if all records received - should be FALSE because we don't have
         # final_requests_completed set yet
@@ -331,8 +331,8 @@ class TestRecordsManagerCompletionRace:
 
         # Process 2 records
         phase_tracker = records_tracker._get_phase_tracker(CreditPhase.PROFILING)
-        phase_tracker.atomic_increment_success_records()
-        phase_tracker.atomic_increment_success_records()
+        phase_tracker.increment_success_records()
+        phase_tracker.increment_success_records()
 
         # Still not complete
         result = records_tracker.check_and_set_all_records_received_for_phase(
@@ -341,7 +341,7 @@ class TestRecordsManagerCompletionRace:
         assert result is False
 
         # Third record arrives
-        phase_tracker.atomic_increment_success_records()
+        phase_tracker.increment_success_records()
 
         # NOW should be complete
         result = records_tracker.check_and_set_all_records_received_for_phase(
@@ -367,7 +367,7 @@ class TestRecordsManagerCompletionRace:
 
         # Process 1 record
         phase_tracker = records_tracker._get_phase_tracker(CreditPhase.PROFILING)
-        phase_tracker.atomic_increment_success_records()
+        phase_tracker.increment_success_records()
 
         # First check should return True
         result1 = records_tracker.check_and_set_all_records_received_for_phase(
@@ -477,8 +477,8 @@ class TestCreditCounterAtomicity:
     single-threaded execution) correctly serializes operations.
     """
 
-    def test_atomic_increment_sent_returns_unique_indices(self):
-        """Test that atomic_increment_sent returns unique credit indices.
+    def test_increment_sent_returns_unique_indices(self):
+        """Test that increment_sent returns unique credit indices.
 
         Each call should return a unique index even under rapid calls.
         """
@@ -492,7 +492,7 @@ class TestCreditCounterAtomicity:
         indices = []
         for i in range(100):
             turn = create_turn_to_send(f"conv{i}", turn_index=0, num_turns=1)
-            index, is_final = counter.atomic_increment_sent(turn)
+            index, is_final = counter.increment_sent(turn)
             indices.append(index)
 
         # All indices should be unique and sequential
@@ -500,7 +500,7 @@ class TestCreditCounterAtomicity:
         # Last one should be final
         assert counter.requests_sent == 100
 
-    def test_atomic_increment_returned_tracks_correctly(self):
+    def test_increment_returned_tracks_correctly(self):
         """Test that returned credit counting is accurate."""
         config = CreditPhaseConfig(
             phase=CreditPhase.PROFILING,
@@ -512,20 +512,18 @@ class TestCreditCounterAtomicity:
         # Send 10 credits
         for i in range(10):
             turn = create_turn_to_send(f"conv{i}", turn_index=0, num_turns=1)
-            counter.atomic_increment_sent(turn)
+            counter.increment_sent(turn)
 
         counter.freeze_sent_counts()
 
         # Return 5 completed, 5 cancelled
         for i in range(5):
             credit = create_credit(credit_id=i, conversation_id=f"conv{i}")
-            counter.atomic_increment_returned(credit.is_final_turn, cancelled=False)
+            counter.increment_returned(credit.is_final_turn, cancelled=False)
 
         for i in range(5, 10):
             credit = create_credit(credit_id=i, conversation_id=f"conv{i}")
-            result = counter.atomic_increment_returned(
-                credit.is_final_turn, cancelled=True
-            )
+            result = counter.increment_returned(credit.is_final_turn, cancelled=True)
             if i == 9:
                 assert result is True  # Final return
 
@@ -550,7 +548,7 @@ class TestCreditCounterAtomicity:
         # First turns
         for i in range(3):
             turn = create_turn_to_send(f"conv{i}", turn_index=0, num_turns=2)
-            counter.atomic_increment_sent(turn)
+            counter.increment_sent(turn)
 
         assert counter.sent_sessions == 3
         assert counter.total_session_turns == 6  # 3 convs * 2 turns
@@ -560,7 +558,7 @@ class TestCreditCounterAtomicity:
             turn = create_turn_to_send(
                 f"conv{i}", turn_index=1, num_turns=2, x_correlation_id=f"corr-conv{i}"
             )
-            counter.atomic_increment_sent(turn)
+            counter.increment_sent(turn)
 
         # sent_sessions should still be 3 (not 6)
         assert counter.sent_sessions == 3
@@ -574,7 +572,7 @@ class TestCreditCounterAtomicity:
             credit = create_credit(
                 credit_id=i * 2, conversation_id=f"conv{i}", turn_index=0, num_turns=2
             )
-            counter.atomic_increment_returned(credit.is_final_turn, cancelled=False)
+            counter.increment_returned(credit.is_final_turn, cancelled=False)
 
         assert counter.completed_sessions == 0  # No final turns completed yet
 
@@ -586,7 +584,7 @@ class TestCreditCounterAtomicity:
                 turn_index=1,
                 num_turns=2,
             )
-            counter.atomic_increment_returned(credit.is_final_turn, cancelled=False)
+            counter.increment_returned(credit.is_final_turn, cancelled=False)
 
         assert counter.completed_sessions == 3
 
@@ -606,7 +604,7 @@ class TestCreditCounterAtomicity:
         # Send 3 single-turn conversations
         for i in range(3):
             turn = create_turn_to_send(f"conv{i}", turn_index=0, num_turns=1)
-            counter.atomic_increment_sent(turn)
+            counter.increment_sent(turn)
 
         assert counter.sent_sessions == 3
         assert counter.in_flight_sessions == 3  # All in flight
@@ -615,10 +613,10 @@ class TestCreditCounterAtomicity:
 
         # Complete 2, cancel 1
         credit1 = create_credit(credit_id=0, conversation_id="conv0")
-        counter.atomic_increment_returned(credit1.is_final_turn, cancelled=False)
+        counter.increment_returned(credit1.is_final_turn, cancelled=False)
 
         credit2 = create_credit(credit_id=1, conversation_id="conv1")
-        counter.atomic_increment_returned(credit2.is_final_turn, cancelled=False)
+        counter.increment_returned(credit2.is_final_turn, cancelled=False)
 
         assert counter.completed_sessions == 2
         assert counter.cancelled_sessions == 0
@@ -626,7 +624,7 @@ class TestCreditCounterAtomicity:
 
         # Cancel the last one (final turn)
         credit3 = create_credit(credit_id=2, conversation_id="conv2")
-        counter.atomic_increment_returned(credit3.is_final_turn, cancelled=True)
+        counter.increment_returned(credit3.is_final_turn, cancelled=True)
 
         assert counter.completed_sessions == 2
         assert counter.cancelled_sessions == 1
@@ -648,7 +646,7 @@ class TestCreditCounterAtomicity:
         # Send 3 conversations with 2 turns each (only first turns)
         for i in range(3):
             turn = create_turn_to_send(f"conv{i}", turn_index=0, num_turns=2)
-            counter.atomic_increment_sent(turn)
+            counter.increment_sent(turn)
 
         assert counter.sent_sessions == 3
         assert counter.in_flight_sessions == 3
@@ -659,7 +657,7 @@ class TestCreditCounterAtomicity:
                 credit_id=i, conversation_id=f"conv{i}", turn_index=0, num_turns=2
             )
             assert credit.is_final_turn is False
-            counter.atomic_increment_returned(credit.is_final_turn, cancelled=False)
+            counter.increment_returned(credit.is_final_turn, cancelled=False)
 
         # Sessions are still in-flight (no final turn returned)
         assert counter.completed_sessions == 0
@@ -1363,13 +1361,13 @@ class TestRecordsTrackerPhaseRace:
 
         # Simulate records from 3 workers
         for _ in range(10):  # Worker 1: 10 success
-            phase.atomic_increment_success_records()
+            phase.increment_success_records()
         for _ in range(10):  # Worker 2: 10 success
-            phase.atomic_increment_success_records()
+            phase.increment_success_records()
         for _ in range(8):  # Worker 3: 8 success, 2 errors
-            phase.atomic_increment_success_records()
+            phase.increment_success_records()
         for _ in range(2):
-            phase.atomic_increment_error_records()
+            phase.increment_error_records()
 
         # Check completion
         result = tracker.check_and_set_all_records_received_for_phase(

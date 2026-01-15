@@ -99,12 +99,12 @@ class TestCreditCounterInitialState:
 
 
 class TestAtomicIncrementSent:
-    """Test atomic_increment_sent behavior."""
+    """Test increment_sent behavior."""
 
     def test_returns_zero_index_for_first_credit(self):
         """First credit should have index 0."""
         counter = CreditCounter(make_config())
-        index, is_final = counter.atomic_increment_sent(make_turn())
+        index, is_final = counter.increment_sent(make_turn())
         assert index == 0
 
     def test_increments_index_sequentially(self):
@@ -112,24 +112,24 @@ class TestAtomicIncrementSent:
         counter = CreditCounter(make_config())
 
         for expected_index in range(10):
-            index, _ = counter.atomic_increment_sent(make_turn(turn_index=0))
+            index, _ = counter.increment_sent(make_turn(turn_index=0))
             assert index == expected_index
 
     def test_increments_sent_count(self):
         """requests_sent should increment on each call."""
         counter = CreditCounter(make_config())
 
-        counter.atomic_increment_sent(make_turn())
+        counter.increment_sent(make_turn())
         assert counter.requests_sent == 1
 
-        counter.atomic_increment_sent(make_turn())
+        counter.increment_sent(make_turn())
         assert counter.requests_sent == 2
 
     def test_first_turn_increments_session_count(self):
         """First turn (turn_index=0) should increment sent_sessions."""
         counter = CreditCounter(make_config())
 
-        counter.atomic_increment_sent(make_turn(turn_index=0, num_turns=3))
+        counter.increment_sent(make_turn(turn_index=0, num_turns=3))
         assert counter.sent_sessions == 1
         assert counter.total_session_turns == 3
 
@@ -138,12 +138,12 @@ class TestAtomicIncrementSent:
         counter = CreditCounter(make_config())
 
         # First turn
-        counter.atomic_increment_sent(make_turn(turn_index=0, num_turns=3))
+        counter.increment_sent(make_turn(turn_index=0, num_turns=3))
         assert counter.sent_sessions == 1
 
         # Subsequent turns
-        counter.atomic_increment_sent(make_turn(turn_index=1, num_turns=3))
-        counter.atomic_increment_sent(make_turn(turn_index=2, num_turns=3))
+        counter.increment_sent(make_turn(turn_index=1, num_turns=3))
+        counter.increment_sent(make_turn(turn_index=2, num_turns=3))
         assert counter.sent_sessions == 1  # Unchanged
         assert counter.requests_sent == 3
 
@@ -152,33 +152,33 @@ class TestAtomicIncrementSent:
         counter = CreditCounter(make_config())
 
         # First session: 3 turns
-        counter.atomic_increment_sent(make_turn(turn_index=0, num_turns=3))
+        counter.increment_sent(make_turn(turn_index=0, num_turns=3))
         assert counter.total_session_turns == 3
 
         # Send remaining turns of first session
-        counter.atomic_increment_sent(make_turn(turn_index=1, num_turns=3))
-        counter.atomic_increment_sent(make_turn(turn_index=2, num_turns=3))
+        counter.increment_sent(make_turn(turn_index=1, num_turns=3))
+        counter.increment_sent(make_turn(turn_index=2, num_turns=3))
         assert counter.total_session_turns == 3  # Unchanged
 
         # Second session: 5 turns
-        counter.atomic_increment_sent(make_turn(turn_index=0, num_turns=5))
+        counter.increment_sent(make_turn(turn_index=0, num_turns=5))
         assert counter.total_session_turns == 8  # 3 + 5
 
 
 class TestAtomicIncrementSentFinalDetection:
-    """Test final credit detection in atomic_increment_sent."""
+    """Test final credit detection in increment_sent."""
 
     def test_final_when_request_count_reached(self):
         """Should detect final credit when request count reached."""
         counter = CreditCounter(make_config(total_expected_requests=3))
 
-        _, is_final = counter.atomic_increment_sent(make_turn())
+        _, is_final = counter.increment_sent(make_turn())
         assert not is_final
 
-        _, is_final = counter.atomic_increment_sent(make_turn())
+        _, is_final = counter.increment_sent(make_turn())
         assert not is_final
 
-        _, is_final = counter.atomic_increment_sent(make_turn())
+        _, is_final = counter.increment_sent(make_turn())
         assert is_final
 
     def test_not_final_without_request_count_limit(self):
@@ -186,7 +186,7 @@ class TestAtomicIncrementSentFinalDetection:
         counter = CreditCounter(make_config(total_expected_requests=None))
 
         for _ in range(100):
-            _, is_final = counter.atomic_increment_sent(make_turn())
+            _, is_final = counter.increment_sent(make_turn())
             assert not is_final
 
     def test_final_when_sessions_complete(self):
@@ -194,24 +194,16 @@ class TestAtomicIncrementSentFinalDetection:
         counter = CreditCounter(make_config(expected_num_sessions=2))
 
         # Session 1: 2 turns
-        _, is_final = counter.atomic_increment_sent(
-            make_turn(turn_index=0, num_turns=2)
-        )
+        _, is_final = counter.increment_sent(make_turn(turn_index=0, num_turns=2))
         assert not is_final
-        _, is_final = counter.atomic_increment_sent(
-            make_turn(turn_index=1, num_turns=2)
-        )
+        _, is_final = counter.increment_sent(make_turn(turn_index=1, num_turns=2))
         assert not is_final
 
         # Session 2: 2 turns
-        _, is_final = counter.atomic_increment_sent(
-            make_turn(turn_index=0, num_turns=2)
-        )
+        _, is_final = counter.increment_sent(make_turn(turn_index=0, num_turns=2))
         assert not is_final
         # Final turn of final session
-        _, is_final = counter.atomic_increment_sent(
-            make_turn(turn_index=1, num_turns=2)
-        )
+        _, is_final = counter.increment_sent(make_turn(turn_index=1, num_turns=2))
         assert is_final
 
     def test_not_final_until_all_session_turns_sent(self):
@@ -219,33 +211,23 @@ class TestAtomicIncrementSentFinalDetection:
         counter = CreditCounter(make_config(expected_num_sessions=2))
 
         # Session 1 first turn
-        _, is_final = counter.atomic_increment_sent(
-            make_turn(turn_index=0, num_turns=3)
-        )
+        _, is_final = counter.increment_sent(make_turn(turn_index=0, num_turns=3))
         assert not is_final
 
         # Session 2 first turn - sessions reached but turns not complete
-        _, is_final = counter.atomic_increment_sent(
-            make_turn(turn_index=0, num_turns=2)
-        )
+        _, is_final = counter.increment_sent(make_turn(turn_index=0, num_turns=2))
         assert not is_final
 
         # Session 1 second turn
-        _, is_final = counter.atomic_increment_sent(
-            make_turn(turn_index=1, num_turns=3)
-        )
+        _, is_final = counter.increment_sent(make_turn(turn_index=1, num_turns=3))
         assert not is_final
 
         # Session 2 second (final) turn
-        _, is_final = counter.atomic_increment_sent(
-            make_turn(turn_index=1, num_turns=2)
-        )
+        _, is_final = counter.increment_sent(make_turn(turn_index=1, num_turns=2))
         assert not is_final  # Still have session 1's third turn
 
         # Session 1 final turn
-        _, is_final = counter.atomic_increment_sent(
-            make_turn(turn_index=2, num_turns=3)
-        )
+        _, is_final = counter.increment_sent(make_turn(turn_index=2, num_turns=3))
         assert is_final
 
 
@@ -255,23 +237,23 @@ class TestAtomicIncrementSentFinalDetection:
 
 
 class TestAtomicIncrementReturned:
-    """Test atomic_increment_returned behavior."""
+    """Test increment_returned behavior."""
 
     def test_increments_completed_for_success(self):
         """Successful returns should increment requests_completed."""
         counter = CreditCounter(make_config())
-        counter.atomic_increment_sent(make_turn())
+        counter.increment_sent(make_turn())
 
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=False)
+        counter.increment_returned(is_final_turn=False, cancelled=False)
         assert counter.requests_completed == 1
         assert counter.requests_cancelled == 0
 
     def test_increments_cancelled_for_cancellation(self):
         """Cancelled returns should increment requests_cancelled."""
         counter = CreditCounter(make_config())
-        counter.atomic_increment_sent(make_turn())
+        counter.increment_sent(make_turn())
 
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=True)
+        counter.increment_returned(is_final_turn=False, cancelled=True)
         assert counter.requests_cancelled == 1
         assert counter.requests_completed == 0
 
@@ -279,50 +261,46 @@ class TestAtomicIncrementReturned:
         """Final turn completion should increment completed_sessions."""
         counter = CreditCounter(make_config())
         # Send 2 turns for session
-        counter.atomic_increment_sent(make_turn(turn_index=0, num_turns=2))
-        counter.atomic_increment_sent(make_turn(turn_index=1, num_turns=2))
+        counter.increment_sent(make_turn(turn_index=0, num_turns=2))
+        counter.increment_sent(make_turn(turn_index=1, num_turns=2))
 
         # Return first turn (not final)
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=False)
+        counter.increment_returned(is_final_turn=False, cancelled=False)
         assert counter.completed_sessions == 0
 
         # Return final turn
-        counter.atomic_increment_returned(is_final_turn=True, cancelled=False)
+        counter.increment_returned(is_final_turn=True, cancelled=False)
         assert counter.completed_sessions == 1
 
     def test_increments_cancelled_sessions_on_final_cancelled_turn(self):
         """Cancelled final turn should increment cancelled_sessions."""
         counter = CreditCounter(make_config())
-        counter.atomic_increment_sent(make_turn(turn_index=0, num_turns=1))
+        counter.increment_sent(make_turn(turn_index=0, num_turns=1))
 
-        counter.atomic_increment_returned(is_final_turn=True, cancelled=True)
+        counter.increment_returned(is_final_turn=True, cancelled=True)
         assert counter.cancelled_sessions == 1
         assert counter.completed_sessions == 0
 
     def test_returns_false_when_more_credits_in_flight(self):
         """Should return False if credits still in flight."""
         counter = CreditCounter(make_config())
-        counter.atomic_increment_sent(make_turn())
-        counter.atomic_increment_sent(make_turn())
+        counter.increment_sent(make_turn())
+        counter.increment_sent(make_turn())
         counter.freeze_sent_counts()
 
-        all_done = counter.atomic_increment_returned(
-            is_final_turn=False, cancelled=False
-        )
+        all_done = counter.increment_returned(is_final_turn=False, cancelled=False)
         assert not all_done
         assert counter.in_flight == 1
 
     def test_returns_true_when_all_returned(self):
         """Should return True when all sent credits are returned."""
         counter = CreditCounter(make_config())
-        counter.atomic_increment_sent(make_turn())
-        counter.atomic_increment_sent(make_turn())
+        counter.increment_sent(make_turn())
+        counter.increment_sent(make_turn())
         counter.freeze_sent_counts()
 
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=False)
-        all_done = counter.atomic_increment_returned(
-            is_final_turn=True, cancelled=False
-        )
+        counter.increment_returned(is_final_turn=False, cancelled=False)
+        all_done = counter.increment_returned(is_final_turn=True, cancelled=False)
         assert all_done
 
 
@@ -338,15 +316,15 @@ class TestInFlightProperties:
         """in_flight should be sent - (completed + cancelled)."""
         counter = CreditCounter(make_config())
 
-        counter.atomic_increment_sent(make_turn())
-        counter.atomic_increment_sent(make_turn())
-        counter.atomic_increment_sent(make_turn())
+        counter.increment_sent(make_turn())
+        counter.increment_sent(make_turn())
+        counter.increment_sent(make_turn())
         assert counter.in_flight == 3
 
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=False)
+        counter.increment_returned(is_final_turn=False, cancelled=False)
         assert counter.in_flight == 2
 
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=True)
+        counter.increment_returned(is_final_turn=False, cancelled=True)
         assert counter.in_flight == 1
 
     def test_in_flight_sessions(self):
@@ -354,38 +332,36 @@ class TestInFlightProperties:
         counter = CreditCounter(make_config())
 
         # Start 3 sessions
-        counter.atomic_increment_sent(
+        counter.increment_sent(
             make_turn(turn_index=0, num_turns=2, conversation_id="a")
         )
-        counter.atomic_increment_sent(
+        counter.increment_sent(
             make_turn(turn_index=0, num_turns=2, conversation_id="b")
         )
-        counter.atomic_increment_sent(
+        counter.increment_sent(
             make_turn(turn_index=0, num_turns=2, conversation_id="c")
         )
         assert counter.in_flight_sessions == 3
 
         # Complete one session
-        counter.atomic_increment_sent(
+        counter.increment_sent(
             make_turn(turn_index=1, num_turns=2, conversation_id="a")
         )
-        counter.atomic_increment_returned(
-            is_final_turn=False, cancelled=False
-        )  # turn 0
-        counter.atomic_increment_returned(is_final_turn=True, cancelled=False)  # turn 1
+        counter.increment_returned(is_final_turn=False, cancelled=False)  # turn 0
+        counter.increment_returned(is_final_turn=True, cancelled=False)  # turn 1
         assert counter.in_flight_sessions == 2
 
         # Cancel one session
-        counter.atomic_increment_returned(is_final_turn=True, cancelled=True)
+        counter.increment_returned(is_final_turn=True, cancelled=True)
         assert counter.in_flight_sessions == 1
 
     def test_in_flight_prefills(self):
         """in_flight_prefills should track requests awaiting TTFT."""
         counter = CreditCounter(make_config())
 
-        counter.atomic_increment_sent(make_turn())
-        counter.atomic_increment_sent(make_turn())
-        counter.atomic_increment_sent(make_turn())
+        counter.increment_sent(make_turn())
+        counter.increment_sent(make_turn())
+        counter.increment_sent(make_turn())
         assert counter.in_flight_prefills == 3
 
         counter.increment_prefill_released()
@@ -408,8 +384,8 @@ class TestFreezeCounts:
         """freeze_sent_counts should capture current sent values."""
         counter = CreditCounter(make_config())
 
-        counter.atomic_increment_sent(make_turn(turn_index=0, num_turns=3))
-        counter.atomic_increment_sent(make_turn(turn_index=1, num_turns=3))
+        counter.increment_sent(make_turn(turn_index=0, num_turns=3))
+        counter.increment_sent(make_turn(turn_index=1, num_turns=3))
 
         counter.freeze_sent_counts()
 
@@ -417,7 +393,7 @@ class TestFreezeCounts:
         assert counter.final_sent_sessions == 1
 
         # Further sends don't affect final counts
-        counter.atomic_increment_sent(make_turn(turn_index=2, num_turns=3))
+        counter.increment_sent(make_turn(turn_index=2, num_turns=3))
         assert counter.final_requests_sent == 2  # Still 2
         assert counter.requests_sent == 3  # But live count updates
 
@@ -425,11 +401,11 @@ class TestFreezeCounts:
         """freeze_completed_counts should capture current completed values."""
         counter = CreditCounter(make_config())
 
-        counter.atomic_increment_sent(make_turn(turn_index=0, num_turns=2))
-        counter.atomic_increment_sent(make_turn(turn_index=1, num_turns=2))
+        counter.increment_sent(make_turn(turn_index=0, num_turns=2))
+        counter.increment_sent(make_turn(turn_index=1, num_turns=2))
         counter.freeze_sent_counts()
 
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=False)
+        counter.increment_returned(is_final_turn=False, cancelled=False)
         counter.freeze_completed_counts()
 
         assert counter.final_requests_completed == 1
@@ -440,18 +416,18 @@ class TestFreezeCounts:
         """check_all_returned_or_cancelled requires frozen sent counts."""
         counter = CreditCounter(make_config())
 
-        counter.atomic_increment_sent(make_turn())
-        counter.atomic_increment_returned(is_final_turn=True, cancelled=False)
+        counter.increment_sent(make_turn())
+        counter.increment_returned(is_final_turn=True, cancelled=False)
 
         # Without freeze, always returns False
         assert not counter.check_all_returned_or_cancelled()
 
-        counter.atomic_increment_sent(make_turn())
+        counter.increment_sent(make_turn())
         counter.freeze_sent_counts()
 
         # Now it should work
         assert not counter.check_all_returned_or_cancelled()  # 1 returned, 2 sent
-        counter.atomic_increment_returned(is_final_turn=True, cancelled=False)
+        counter.increment_returned(is_final_turn=True, cancelled=False)
         assert counter.check_all_returned_or_cancelled()
 
 
@@ -466,15 +442,13 @@ class TestCreditCounterEdgeCases:
     def test_single_request_limit(self):
         """Single request limit means first credit is final."""
         counter = CreditCounter(make_config(total_expected_requests=1))
-        _, is_final = counter.atomic_increment_sent(make_turn())
+        _, is_final = counter.increment_sent(make_turn())
         assert is_final
 
     def test_single_session_single_turn(self):
         """Single session with single turn should be final immediately."""
         counter = CreditCounter(make_config(expected_num_sessions=1))
-        _, is_final = counter.atomic_increment_sent(
-            make_turn(turn_index=0, num_turns=1)
-        )
+        _, is_final = counter.increment_sent(make_turn(turn_index=0, num_turns=1))
         assert is_final
 
     def test_mixed_completed_and_cancelled(self):
@@ -483,14 +457,14 @@ class TestCreditCounterEdgeCases:
 
         # Send 5 credits
         for _ in range(5):
-            counter.atomic_increment_sent(make_turn())
+            counter.increment_sent(make_turn())
         counter.freeze_sent_counts()
 
         # Complete 2, cancel 2
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=False)
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=False)
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=True)
-        counter.atomic_increment_returned(is_final_turn=False, cancelled=True)
+        counter.increment_returned(is_final_turn=False, cancelled=False)
+        counter.increment_returned(is_final_turn=False, cancelled=False)
+        counter.increment_returned(is_final_turn=False, cancelled=True)
+        counter.increment_returned(is_final_turn=False, cancelled=True)
 
         assert counter.requests_completed == 2
         assert counter.requests_cancelled == 2
@@ -498,7 +472,7 @@ class TestCreditCounterEdgeCases:
         assert not counter.check_all_returned_or_cancelled()
 
         # Final return
-        counter.atomic_increment_returned(is_final_turn=True, cancelled=False)
+        counter.increment_returned(is_final_turn=True, cancelled=False)
         assert counter.check_all_returned_or_cancelled()
 
     @pytest.mark.parametrize(
@@ -520,7 +494,7 @@ class TestCreditCounterEdgeCases:
 
         for session in range(num_sessions):
             for turn in range(turns_per_session):
-                _, is_final = counter.atomic_increment_sent(
+                _, is_final = counter.increment_sent(
                     make_turn(
                         turn_index=turn,
                         num_turns=turns_per_session,
