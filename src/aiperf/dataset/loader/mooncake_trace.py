@@ -191,7 +191,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
 
             # Fill in placeholders and update cache
             for (session_id, idx, _, cache_key), prompt in zip(
-                pending_decodes, decoded_prompts, strict=False
+                pending_decodes, decoded_prompts, strict=True
             ):
                 # Update decoded cache for future reuse
                 self.prompt_generator._decoded_cache[cache_key] = prompt

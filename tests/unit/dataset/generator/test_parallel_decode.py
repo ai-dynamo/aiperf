@@ -3,15 +3,15 @@
 
 """Unit tests for parallel_decode module."""
 
+import importlib
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.dataset.generator.parallel_decode import (
-    _decode_tokens,
-    _init_worker,
-    parallel_decode,
-)
+from aiperf.dataset.generator.parallel_decode import parallel_decode
+
+# Import the module directly (not through __init__.py which exports the function)
+pd_module = importlib.import_module("aiperf.dataset.generator.parallel_decode")
 
 
 class TestParallelDecode:
@@ -98,73 +98,62 @@ class TestWorkerFunctions:
 
     def test_decode_tokens_raises_without_init(self):
         """Test that _decode_tokens raises if worker not initialized."""
-        # Reset global state
-        import aiperf.dataset.generator.parallel_decode as pd
-
-        pd._worker_tokenizer = None
+        pd_module._worker_tokenizer = None
 
         with pytest.raises(RuntimeError, match="not initialized"):
-            _decode_tokens([1, 2, 3])
+            pd_module._decode_tokens([1, 2, 3])
 
     @patch("aiperf.common.tokenizer.Tokenizer")
     def test_init_worker_loads_tokenizer(self, mock_tokenizer_class):
         """Test that _init_worker loads the tokenizer."""
-        import aiperf.dataset.generator.parallel_decode as pd
-
-        pd._worker_tokenizer = None
-        pd._worker_tokenizer_name = None
+        pd_module._worker_tokenizer = None
+        pd_module._worker_tokenizer_name = None
 
         mock_tokenizer = MagicMock()
         mock_tokenizer_class.from_pretrained.return_value = mock_tokenizer
 
-        _init_worker("gpt2")
+        pd_module._init_worker("gpt2")
 
         mock_tokenizer_class.from_pretrained.assert_called_once_with("gpt2")
-        assert pd._worker_tokenizer == mock_tokenizer
-        assert pd._worker_tokenizer_name == "gpt2"
+        assert pd_module._worker_tokenizer is mock_tokenizer
+        assert pd_module._worker_tokenizer_name == "gpt2"
 
     @patch("aiperf.common.tokenizer.Tokenizer")
     def test_init_worker_reuses_tokenizer_same_name(self, mock_tokenizer_class):
         """Test that _init_worker reuses tokenizer if same name."""
-        import aiperf.dataset.generator.parallel_decode as pd
-
         mock_tokenizer = MagicMock()
-        pd._worker_tokenizer = mock_tokenizer
-        pd._worker_tokenizer_name = "gpt2"
+        pd_module._worker_tokenizer = mock_tokenizer
+        pd_module._worker_tokenizer_name = "gpt2"
 
-        _init_worker("gpt2")
+        pd_module._init_worker("gpt2")
 
         # Should NOT call from_pretrained again
         mock_tokenizer_class.from_pretrained.assert_not_called()
-        assert pd._worker_tokenizer == mock_tokenizer
+        assert pd_module._worker_tokenizer is mock_tokenizer
 
     @patch("aiperf.common.tokenizer.Tokenizer")
     def test_init_worker_reloads_tokenizer_different_name(self, mock_tokenizer_class):
         """Test that _init_worker reloads tokenizer if different name."""
-        import aiperf.dataset.generator.parallel_decode as pd
-
         old_tokenizer = MagicMock()
-        pd._worker_tokenizer = old_tokenizer
-        pd._worker_tokenizer_name = "gpt2"
+        pd_module._worker_tokenizer = old_tokenizer
+        pd_module._worker_tokenizer_name = "gpt2"
 
         new_tokenizer = MagicMock()
         mock_tokenizer_class.from_pretrained.return_value = new_tokenizer
 
-        _init_worker("llama")
+        pd_module._init_worker("llama")
 
         mock_tokenizer_class.from_pretrained.assert_called_once_with("llama")
-        assert pd._worker_tokenizer == new_tokenizer
-        assert pd._worker_tokenizer_name == "llama"
+        assert pd_module._worker_tokenizer is new_tokenizer
+        assert pd_module._worker_tokenizer_name == "llama"
 
     def test_decode_tokens_uses_worker_tokenizer(self):
         """Test that _decode_tokens uses the worker tokenizer."""
-        import aiperf.dataset.generator.parallel_decode as pd
-
         mock_tokenizer = MagicMock()
         mock_tokenizer.decode.return_value = "decoded text"
-        pd._worker_tokenizer = mock_tokenizer
+        pd_module._worker_tokenizer = mock_tokenizer
 
-        result = _decode_tokens([1, 2, 3])
+        result = pd_module._decode_tokens([1, 2, 3])
 
         mock_tokenizer.decode.assert_called_once_with(
             [1, 2, 3], skip_special_tokens=False
