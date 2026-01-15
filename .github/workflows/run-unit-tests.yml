@@ -30,7 +30,7 @@ jobs:
       run: |
         make test-ci PYTHON_VERSION=${{ matrix.python-version }}
     - name: Upload results to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.10'
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}

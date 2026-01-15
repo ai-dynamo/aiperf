@@ -1,7 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Fixtures for timing phases tests."""
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,46 +11,38 @@ from aiperf.timing.config import CreditPhaseConfig
 
 @pytest.fixture
 def mock_pub_client() -> MagicMock:
-    mock = MagicMock()
-    mock.publish = AsyncMock()
-    return mock
+    m = MagicMock()
+    m.publish = AsyncMock()
+    return m
 
 
 @pytest.fixture
 def mock_phase_publisher() -> MagicMock:
-    mock = MagicMock()
-    mock.publish_phase_start = AsyncMock()
-    mock.publish_phase_sending_complete = AsyncMock()
-    mock.publish_phase_complete = AsyncMock()
-    mock.publish_progress = AsyncMock()
-    mock.publish_credits_complete = AsyncMock()
-    return mock
+    m = MagicMock()
+    m.publish_phase_start = AsyncMock()
+    m.publish_phase_sending_complete = AsyncMock()
+    m.publish_phase_complete = AsyncMock()
+    m.publish_progress = AsyncMock()
+    m.publish_credits_complete = AsyncMock()
+    return m
 
 
 @pytest.fixture
 def mock_credit_router() -> MagicMock:
-    mock = MagicMock()
-    mock.send_credit = AsyncMock()
-    mock.cancel_all_credits = AsyncMock()
-    mock.mark_credits_complete = MagicMock()
-    mock.reset = MagicMock()
-    return mock
-
-
-@pytest.fixture
-def mock_credit_manager_simple() -> MagicMock:
-    mock = MagicMock()
-    mock.configure_for_phase = MagicMock()
-    mock.release_stuck_slots = MagicMock(return_value=(0, 0))
-    return mock
+    m = MagicMock()
+    m.send_credit = AsyncMock()
+    m.cancel_all_credits = AsyncMock()
+    m.mark_credits_complete = MagicMock()
+    m.reset = MagicMock()
+    return m
 
 
 @pytest.fixture
 def mock_credit_manager() -> MagicMock:
-    mock = MagicMock()
-    mock.configure_for_phase = MagicMock()
-    mock.release_stuck_slots = MagicMock(return_value=(0, 0))
-    return mock
+    m = MagicMock()
+    m.configure_for_phase = MagicMock()
+    m.release_stuck_slots = MagicMock(return_value=(0, 0))
+    return m
 
 
 @pytest.fixture

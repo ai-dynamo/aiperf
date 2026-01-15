@@ -1,32 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the timing manager fixed schedule strategy."""
-
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
 
 from aiperf.common.constants import MILLIS_PER_SECOND
-from aiperf.common.enums import (
-    CreditPhase,
-    DatasetSamplingStrategy,
-    TimingMode,
-)
-from aiperf.common.loop_scheduler import LoopScheduler
-from aiperf.common.models import (
-    ConversationMetadata,
-    DatasetMetadata,
-    TurnMetadata,
-)
+from aiperf.common.enums import CreditPhase, DatasetSamplingStrategy, TimingMode
+from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.strategies.fixed_schedule import FixedScheduleStrategy
-from tests.unit.timing.conftest import (
-    OrchestratorHarness,
-    create_mock_dataset_sampler,
-)
+from tests.unit.timing.conftest import OrchestratorHarness, make_sampler
 
 
 @pytest.fixture
@@ -34,534 +20,341 @@ async def time_traveler(time_traveler_no_patch_sleep):
     return time_traveler_no_patch_sleep
 
 
-@pytest.fixture
-def mock_scheduler():
-    scheduler = MagicMock(spec=LoopScheduler)
+def make_dataset(schedule: list[tuple[int, str]]) -> DatasetMetadata:
+    conv_ts: dict[str, list[int]] = {}
+    for ts, cid in schedule:
+        conv_ts.setdefault(cid, []).append(ts)
+    convs = []
+    for cid, ts_list in conv_ts.items():
+        turns = [TurnMetadata(timestamp_ms=ts_list[0], delay_ms=None)]
+        turns.extend(
+            TurnMetadata(timestamp_ms=ts, delay_ms=ts - ts_list[i])
+            for i, ts in enumerate(ts_list[1:])
+        )
+        convs.append(ConversationMetadata(conversation_id=cid, turns=turns))
+    return DatasetMetadata(
+        conversations=convs, sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL
+    )
+
+
+def make_strategy(
+    schedule: list[tuple[int, str]],
+    auto_offset: bool = True,
+    manual_offset: int | None = None,
+) -> tuple[FixedScheduleStrategy, MagicMock, MagicMock]:
+    scheduler = MagicMock()
     scheduler.schedule_at_perf_ns = MagicMock()
     scheduler.schedule_later = MagicMock()
     scheduler.schedule_soon = MagicMock()
-    return scheduler
-
-
-@pytest.fixture
-def mock_stop_checker():
-    checker = MagicMock()
-    checker.can_send_any_turn = MagicMock(return_value=True)
-    checker.can_start_new_session = MagicMock(return_value=True)
-    return checker
-
-
-@pytest.fixture
-def mock_credit_issuer():
+    stop_checker = MagicMock()
+    stop_checker.can_send_any_turn = MagicMock(return_value=True)
+    stop_checker.can_start_new_session = MagicMock(return_value=True)
     issuer = MagicMock()
-
-    async def mock_issue_credit(*args, **kwargs):
-        return True
-
-    issuer.issue_credit = mock_issue_credit
-    return issuer
-
-
-@pytest.fixture
-def mock_lifecycle():
+    issuer.issue_credit = lambda *a, **k: True
     lifecycle = MagicMock()
     lifecycle.started_at_perf_ns = 1_000_000_000
-    return lifecycle
-
-
-def make_dataset_from_schedule(
-    schedule: list[tuple[int, str]],
-) -> DatasetMetadata:
-    """Create DatasetMetadata from a schedule for fixed schedule testing."""
-    conv_timestamps: dict[str, list[int]] = {}
-    for timestamp, conv_id in schedule:
-        if conv_id not in conv_timestamps:
-            conv_timestamps[conv_id] = []
-        conv_timestamps[conv_id].append(timestamp)
-
-    conversations = []
-    for conv_id, timestamps_list in conv_timestamps.items():
-        turns = []
-        for i, timestamp in enumerate(timestamps_list):
-            if i == 0:
-                turns.append(TurnMetadata(timestamp_ms=timestamp, delay_ms=None))
-            else:
-                delay = timestamp - timestamps_list[i - 1]
-                turns.append(TurnMetadata(timestamp_ms=timestamp, delay_ms=delay))
-        conversations.append(ConversationMetadata(conversation_id=conv_id, turns=turns))
-
-    return DatasetMetadata(
-        conversations=conversations,
-        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    ds = make_dataset(schedule)
+    sampler = make_sampler(
+        [c.conversation_id for c in ds.conversations],
+        DatasetSamplingStrategy.SEQUENTIAL,
     )
+    src = ConversationSource(ds, sampler)
+    cfg = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.FIXED_SCHEDULE,
+        total_expected_requests=len(schedule),
+        auto_offset_timestamps=auto_offset,
+        fixed_schedule_start_offset=manual_offset,
+    )
+    strategy = FixedScheduleStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=stop_checker,
+        credit_issuer=issuer,
+        lifecycle=lifecycle,
+    )
+    return strategy, scheduler, lifecycle
 
 
+@pytest.mark.asyncio
 class TestFixedScheduleStrategy:
-    @pytest.fixture
-    def simple_schedule(self) -> list[tuple[int, str]]:
-        return [
-            (0, "conv1"),
-            (100, "conv2"),
-            (200, "conv3"),
-        ]
-
-    @pytest.fixture
-    def schedule_with_offset(self) -> list[tuple[int, str]]:
-        return [(1000, "conv1"), (1100, "conv2"), (1200, "conv3")]
-
-    @pytest.mark.asyncio
-    async def test_initialization_phase_configs(
-        self,
-        simple_schedule: list[tuple[int, str]],
-        create_orchestrator_harness,
-    ) -> None:
-        harness: OrchestratorHarness = create_orchestrator_harness(
-            schedule=simple_schedule,
-        )
-        await harness.orchestrator.initialize()
-
-        assert len(harness.orchestrator._ordered_phase_configs) == 1
-        assert (
-            harness.orchestrator._ordered_phase_configs[0].phase
-            == CreditPhase.PROFILING
-        )
-
-    @pytest.mark.asyncio
-    async def test_empty_schedule_raises_error(
-        self, create_orchestrator_harness
-    ) -> None:
+    async def test_empty_schedule_raises(self, create_orchestrator_harness) -> None:
         with pytest.raises(ValidationError, match="greater than 0"):
             create_orchestrator_harness(schedule=[])
 
+    async def test_init_phase_configs(self, create_orchestrator_harness) -> None:
+        h: OrchestratorHarness = create_orchestrator_harness(
+            schedule=[(0, "c1"), (100, "c2"), (200, "c3")]
+        )
+        await h.orchestrator.initialize()
+        assert len(h.orchestrator._ordered_phase_configs) == 1
+        assert h.orchestrator._ordered_phase_configs[0].phase == CreditPhase.PROFILING
+
     @pytest.mark.parametrize(
-        "schedule,expected_groups,expected_keys",
+        "schedule,expected_convs",
         [
-            (
-                [(0, "conv1"), (100, "conv2"), (200, "conv3")],
-                {0: ["conv1"], 100: ["conv2"], 200: ["conv3"]},
-                [0, 100, 200],
-            ),
-            (
-                [(0, "conv1"), (0, "conv2"), (100, "conv3"), (100, "conv4")],
-                {0: ["conv1", "conv2"], 100: ["conv3", "conv4"]},
-                [0, 100],
-            ),
+            ([(0, "c1"), (100, "c2"), (200, "c3")], {"c1", "c2", "c3"}),
+            ([(0, "c1"), (0, "c2"), (100, "c3"), (100, "c4")], {"c1", "c2", "c3", "c4"}),
         ],
-    )
-    @pytest.mark.asyncio
+    )  # fmt: skip
     async def test_timestamp_grouping(
-        self,
-        create_orchestrator_harness,
-        schedule: list[tuple[int, str]],
-        expected_groups: dict[int, list[str]],
-        expected_keys: list[int],
+        self, create_orchestrator_harness, schedule, expected_convs
     ) -> None:
-        harness: OrchestratorHarness = create_orchestrator_harness(
-            schedule=schedule,
-        )
-
-        await harness.run_with_auto_return()
-
-        assert len(harness.sent_credits) == len(schedule)
-
-        sent_conversations = {credit.conversation_id for credit in harness.sent_credits}
-        expected_conversations = {conv_id for _, conv_id in schedule}
-        assert sent_conversations == expected_conversations
+        h: OrchestratorHarness = create_orchestrator_harness(schedule=schedule)
+        await h.run_with_auto_return()
+        assert len(h.sent_credits) == len(schedule)
+        assert {c.conversation_id for c in h.sent_credits} == expected_convs
 
     @pytest.mark.parametrize(
-        "auto_offset,manual_offset,expected_zero_ms",
-        [
-            (True, None, 1000),
-            (False, 500, 500),
-            (False, None, 0),
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_schedule_offset_configurations(
-        self,
-        mock_scheduler,
-        mock_stop_checker,
-        mock_credit_issuer,
-        mock_lifecycle,
-        schedule_with_offset: list[tuple[int, str]],
-        auto_offset: bool,
-        manual_offset: int | None,
-        expected_zero_ms: int,
+        "auto_offset,manual_offset,expected_zero",
+        [(True, None, 1000), (False, 500, 500), (False, None, 0)],
+    )  # fmt: skip
+    async def test_offset_configs(
+        self, auto_offset, manual_offset, expected_zero
     ) -> None:
-        dataset = make_dataset_from_schedule(schedule_with_offset)
-        sampler = create_mock_dataset_sampler(
-            conversation_ids=[conv.conversation_id for conv in dataset.conversations],
-            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-        )
-        conversation_source = ConversationSource(dataset, sampler)
-
-        config = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
-            timing_mode=TimingMode.FIXED_SCHEDULE,
-            total_expected_requests=len(schedule_with_offset),
-            auto_offset_timestamps=auto_offset,
-            fixed_schedule_start_offset=manual_offset,
-        )
-
-        strategy = FixedScheduleStrategy(
-            config=config,
-            conversation_source=conversation_source,
-            scheduler=mock_scheduler,
-            stop_checker=mock_stop_checker,
-            credit_issuer=mock_credit_issuer,
-            lifecycle=mock_lifecycle,
-        )
-
+        schedule = [(1000, "c1"), (1100, "c2"), (1200, "c3")]
+        strategy, _, _ = make_strategy(schedule, auto_offset, manual_offset)
         await strategy.setup_phase()
+        assert strategy._schedule_zero_ms == expected_zero
 
-        assert strategy._schedule_zero_ms == expected_zero_ms
-
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "schedule,expected_duration",
+        "schedule",
         [
-            ([(0, "conv1"), (100, "conv2"), (200, "conv3")], 0.2),
-            ([(0, "conv1"), (0, "conv2"), (0, "conv3")], 0.0),
-            ([(-100, "conv1"), (-50, "conv2"), (0, "conv3")], 0.0),
+            [(0, "c1"), (100, "c2"), (200, "c3")],
+            [(0, "c1"), (0, "c2"), (0, "c3")],
+            [(-100, "c1"), (-50, "c2"), (0, "c3")],
         ],
-    )
+    )  # fmt: skip
     async def test_execution_timing(
-        self,
-        create_orchestrator_harness,
-        schedule: list[tuple[int, str]],
-        expected_duration: float,
+        self, create_orchestrator_harness, schedule
     ) -> None:
-        harness: OrchestratorHarness = create_orchestrator_harness(
-            schedule=schedule,
-        )
-
-        await harness.run_with_auto_return()
-
-        assert len(harness.sent_credits) == len(schedule)
-
-        sent_conversations = {credit.conversation_id for credit in harness.sent_credits}
-        assert sent_conversations == {conv_id for _, conv_id in schedule}
+        h: OrchestratorHarness = create_orchestrator_harness(schedule=schedule)
+        await h.run_with_auto_return()
+        assert len(h.sent_credits) == len(schedule)
+        assert {c.conversation_id for c in h.sent_credits} == {
+            cid for _, cid in schedule
+        }
 
     @pytest.mark.parametrize("auto_offset", [True, False])
     @pytest.mark.parametrize(
         "schedule",
         [
-            [(1000, "conv1"), (1100, "conv2"), (1200, "conv3")],
-            [(600, "conv1"), (700, "conv2"), (800, "conv3")],
-            [(0, "conv1"), (100, "conv2"), (200, "conv3")],
+            [(1000, "c1"), (1100, "c2"), (1200, "c3")],
+            [(600, "c1"), (700, "c2"), (800, "c3")],
+            [(0, "c1"), (100, "c2"), (200, "c3")],
         ],
     )  # fmt: skip
-    @pytest.mark.asyncio
-    async def test_execution_with_auto_offset(
-        self,
-        create_orchestrator_harness,
-        time_traveler,
-        auto_offset: bool,
-        schedule: list[tuple[int, str]],
+    async def test_with_auto_offset(
+        self, create_orchestrator_harness, time_traveler, auto_offset, schedule
     ) -> None:
-        harness: OrchestratorHarness = create_orchestrator_harness(
-            schedule=schedule,
-            auto_offset_timestamps=auto_offset,
+        h: OrchestratorHarness = create_orchestrator_harness(
+            schedule=schedule, auto_offset_timestamps=auto_offset
         )
-
-        first_timestamp_ms = schedule[0][0]
-        last_timestamp_ms = schedule[-1][0]
-
-        sleep_duration_ms = (
-            last_timestamp_ms - first_timestamp_ms if auto_offset else last_timestamp_ms
-        )
-        with time_traveler.travels_for(
-            sleep_duration_ms / MILLIS_PER_SECOND, tolerance=0.02
-        ):
-            await harness.run_with_auto_return()
-
-        assert len(harness.sent_credits) == 3
-
-
-@pytest.fixture
-def fixed_schedule_strategy_factory(
-    mock_scheduler, mock_stop_checker, mock_credit_issuer, mock_lifecycle
-):
-    async def _create_strategy(
-        schedule: list[tuple[int, str]],
-        auto_offset: bool = True,
-        manual_offset: int | None = None,
-    ):
-        dataset = make_dataset_from_schedule(schedule)
-        sampler = create_mock_dataset_sampler(
-            conversation_ids=[conv.conversation_id for conv in dataset.conversations],
-            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-        )
-        conversation_source = ConversationSource(dataset, sampler)
-
-        config = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
-            timing_mode=TimingMode.FIXED_SCHEDULE,
-            total_expected_requests=len(schedule),
-            auto_offset_timestamps=auto_offset,
-            fixed_schedule_start_offset=manual_offset,
-        )
-
-        strategy = FixedScheduleStrategy(
-            config=config,
-            conversation_source=conversation_source,
-            scheduler=mock_scheduler,
-            stop_checker=mock_stop_checker,
-            credit_issuer=mock_credit_issuer,
-            lifecycle=mock_lifecycle,
-        )
-
-        await strategy.setup_phase()
-        return strategy
-
-    return _create_strategy
+        first_ts, last_ts = schedule[0][0], schedule[-1][0]
+        sleep_ms = last_ts - first_ts if auto_offset else last_ts
+        with time_traveler.travels_for(sleep_ms / MILLIS_PER_SECOND, tolerance=0.02):
+            await h.run_with_auto_return()
+        assert len(h.sent_credits) == 3
 
 
 @pytest.mark.asyncio
-class TestFixedScheduleStrategySetup:
-    async def test_setup_builds_sorted_schedule(
-        self, fixed_schedule_strategy_factory
-    ) -> None:
-        schedule = [(200, "conv3"), (0, "conv1"), (100, "conv2")]
-        strategy = await fixed_schedule_strategy_factory(schedule)
-
+class TestFixedScheduleSetup:
+    async def test_builds_sorted_schedule(self) -> None:
+        strategy, _, _ = make_strategy([(200, "c3"), (0, "c1"), (100, "c2")])
+        await strategy.setup_phase()
         timestamps = [ts for ts, _ in strategy._absolute_schedule]
         assert timestamps == sorted(timestamps)
 
-    async def test_setup_with_auto_offset(
-        self, fixed_schedule_strategy_factory
+    @pytest.mark.parametrize(
+        "auto_offset,manual_offset,expected",
+        [(True, None, 1000), (False, 500, 500), (False, None, 0)],
+    )  # fmt: skip
+    async def test_offset_variations(
+        self, auto_offset, manual_offset, expected
     ) -> None:
-        schedule = [(1000, "conv1"), (1100, "conv2"), (1200, "conv3")]
-        strategy = await fixed_schedule_strategy_factory(schedule, auto_offset=True)
-
-        assert strategy._schedule_zero_ms == 1000
-
-    async def test_setup_with_manual_offset(
-        self, fixed_schedule_strategy_factory
-    ) -> None:
-        schedule = [(1000, "conv1"), (1100, "conv2"), (1200, "conv3")]
-        strategy = await fixed_schedule_strategy_factory(
-            schedule, auto_offset=False, manual_offset=500
+        strategy, _, _ = make_strategy(
+            [(1000, "c1"), (1100, "c2"), (1200, "c3")], auto_offset, manual_offset
         )
+        await strategy.setup_phase()
+        assert strategy._schedule_zero_ms == expected
 
-        assert strategy._schedule_zero_ms == 500
-
-    async def test_setup_without_offset(self, fixed_schedule_strategy_factory) -> None:
-        schedule = [(1000, "conv1"), (1100, "conv2"), (1200, "conv3")]
-        strategy = await fixed_schedule_strategy_factory(
-            schedule, auto_offset=False, manual_offset=None
-        )
-
-        assert strategy._schedule_zero_ms == 0
-
-    async def test_setup_stores_lifecycle(
-        self, fixed_schedule_strategy_factory
-    ) -> None:
-        schedule = [(0, "conv1")]
-        strategy = await fixed_schedule_strategy_factory(schedule)
-
+    async def test_stores_lifecycle(self) -> None:
+        strategy, _, lifecycle = make_strategy([(0, "c1")])
+        await strategy.setup_phase()
         assert strategy._lifecycle is not None
         assert strategy._lifecycle.started_at_perf_ns == 1_000_000_000
 
 
 @pytest.mark.asyncio
-class TestFixedScheduleStrategyExecutePhase:
-    async def test_execute_phase_schedules_all_first_turns(
-        self, fixed_schedule_strategy_factory, mock_scheduler
-    ) -> None:
-        schedule = [(0, "conv1"), (100, "conv2"), (200, "conv3")]
-        strategy = await fixed_schedule_strategy_factory(schedule)
-
+class TestFixedScheduleExecutePhase:
+    async def test_schedules_all_first_turns(self) -> None:
+        strategy, scheduler, _ = make_strategy([(0, "c1"), (100, "c2"), (200, "c3")])
+        await strategy.setup_phase()
         await strategy.execute_phase()
+        assert scheduler.schedule_at_perf_sec.call_count == 3
 
-        assert mock_scheduler.schedule_at_perf_sec.call_count == 3
-
-    async def test_execute_phase_raises_without_started_at_perf_ns(
-        self, mock_scheduler, mock_stop_checker, mock_credit_issuer
-    ) -> None:
-        schedule = [(0, "conv1")]
-        dataset = make_dataset_from_schedule(schedule)
-        sampler = create_mock_dataset_sampler(
-            conversation_ids=["conv1"],
-            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-        )
-        conversation_source = ConversationSource(dataset, sampler)
-
-        mock_lifecycle = MagicMock()
-        mock_lifecycle.started_at_perf_ns = None
-
-        config = CreditPhaseConfig(
+    async def test_raises_without_started_at_perf_ns(self) -> None:
+        scheduler = MagicMock()
+        stop_checker = MagicMock()
+        stop_checker.can_send_any_turn = MagicMock(return_value=True)
+        stop_checker.can_start_new_session = MagicMock(return_value=True)
+        issuer = MagicMock()
+        issuer.issue_credit = lambda *a, **k: True
+        lifecycle = MagicMock()
+        lifecycle.started_at_perf_ns = None
+        ds = make_dataset([(0, "c1")])
+        sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
+        src = ConversationSource(ds, sampler)
+        cfg = CreditPhaseConfig(
             phase=CreditPhase.PROFILING,
             timing_mode=TimingMode.FIXED_SCHEDULE,
             total_expected_requests=1,
             auto_offset_timestamps=True,
         )
-
         strategy = FixedScheduleStrategy(
-            config=config,
-            conversation_source=conversation_source,
-            scheduler=mock_scheduler,
-            stop_checker=mock_stop_checker,
-            credit_issuer=mock_credit_issuer,
-            lifecycle=mock_lifecycle,
+            config=cfg,
+            conversation_source=src,
+            scheduler=scheduler,
+            stop_checker=stop_checker,
+            credit_issuer=issuer,
+            lifecycle=lifecycle,
         )
-
         await strategy.setup_phase()
-
         with pytest.raises(RuntimeError, match="started_at_perf_ns is not set"):
             await strategy.execute_phase()
 
 
 @pytest.mark.asyncio
-class TestFixedScheduleStrategyCreditReturn:
-    async def test_final_turn_returns_immediately(
-        self, fixed_schedule_strategy_factory, mock_scheduler
-    ) -> None:
-        schedule = [(0, "conv1"), (100, "conv1")]
-        strategy = await fixed_schedule_strategy_factory(schedule)
-
+class TestFixedScheduleCreditReturn:
+    async def test_final_turn_returns_immediately(self) -> None:
+        strategy, scheduler, _ = make_strategy([(0, "c1"), (100, "c1")])
+        await strategy.setup_phase()
         credit = Credit(
             id=1,
             phase=CreditPhase.PROFILING,
-            conversation_id="conv1",
-            x_correlation_id="corr-conv1",
+            conversation_id="c1",
+            x_correlation_id="corr-c1",
             turn_index=1,
             num_turns=2,
             issued_at_ns=1000,
         )
-
         await strategy.handle_credit_return(credit)
+        scheduler.schedule_at_perf_sec.assert_not_called()
+        scheduler.schedule_later.assert_not_called()
+        scheduler.schedule_soon.assert_not_called()
 
-        mock_scheduler.schedule_at_perf_sec.assert_not_called()
-        mock_scheduler.schedule_later.assert_not_called()
-        mock_scheduler.schedule_soon.assert_not_called()
-
-    async def test_credit_return_with_timestamp_schedules_at_perf_sec(
-        self, fixed_schedule_strategy_factory, mock_scheduler
-    ) -> None:
-        schedule = [(0, "conv1"), (100, "conv1")]
-        strategy = await fixed_schedule_strategy_factory(schedule)
-
+    async def test_schedules_next_turn(self) -> None:
+        strategy, scheduler, _ = make_strategy([(0, "c1"), (100, "c1")])
+        await strategy.setup_phase()
         credit = Credit(
             id=1,
             phase=CreditPhase.PROFILING,
-            conversation_id="conv1",
-            x_correlation_id="corr-conv1",
+            conversation_id="c1",
+            x_correlation_id="corr-c1",
             turn_index=0,
             num_turns=2,
             issued_at_ns=1000,
         )
-
         await strategy.handle_credit_return(credit)
-
-        mock_scheduler.schedule_at_perf_sec.assert_called_once()
+        scheduler.schedule_at_perf_sec.assert_called_once()
 
 
 @pytest.mark.asyncio
 class TestFixedScheduleTimestampConversion:
-    async def test_timestamp_to_perf_sec_with_auto_offset(
-        self, fixed_schedule_strategy_factory
-    ) -> None:
-        schedule = [(1000, "conv1"), (1100, "conv2")]
-        strategy = await fixed_schedule_strategy_factory(schedule, auto_offset=True)
-
-        expected = strategy._lifecycle.started_at_perf_sec + (100 / MILLIS_PER_SECOND)
-        actual = strategy._timestamp_to_perf_sec(1100)
-
-        assert actual == expected
-
-    async def test_timestamp_to_perf_sec_without_offset(
-        self, fixed_schedule_strategy_factory
-    ) -> None:
-        schedule = [(100, "conv1"), (200, "conv2")]
-        strategy = await fixed_schedule_strategy_factory(
-            schedule, auto_offset=False, manual_offset=None
+    @pytest.mark.parametrize(
+        "auto_offset,manual_offset",
+        [(True, None), (False, None)],
+    )  # fmt: skip
+    async def test_timestamp_to_perf_sec(self, auto_offset, manual_offset) -> None:
+        schedule = (
+            [(100, "c1"), (200, "c2")]
+            if not auto_offset
+            else [(1000, "c1"), (1100, "c2")]
         )
-
+        strategy, _, _ = make_strategy(schedule, auto_offset, manual_offset)
+        await strategy.setup_phase()
         expected = strategy._lifecycle.started_at_perf_sec + (100 / MILLIS_PER_SECOND)
-        actual = strategy._timestamp_to_perf_sec(100)
-
+        actual = strategy._timestamp_to_perf_sec(1100 if auto_offset else 100)
         assert actual == expected
 
 
 @pytest.mark.asyncio
-class TestFixedScheduleStrategyEdgeCases:
-    async def test_missing_first_turn_timestamp_raises_error(
-        self, mock_scheduler, mock_stop_checker, mock_credit_issuer, mock_lifecycle
-    ) -> None:
-        dataset = DatasetMetadata(
+class TestFixedScheduleEdgeCases:
+    async def test_missing_first_turn_timestamp_raises(self) -> None:
+        scheduler, stop_checker, issuer, lifecycle = (
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+        )
+        stop_checker.can_send_any_turn = MagicMock(return_value=True)
+        stop_checker.can_start_new_session = MagicMock(return_value=True)
+        issuer.issue_credit = lambda *a, **k: True
+        lifecycle.started_at_perf_ns = 1_000_000_000
+        ds = DatasetMetadata(
             conversations=[
                 ConversationMetadata(
-                    conversation_id="conv1",
-                    turns=[TurnMetadata(timestamp_ms=None)],
+                    conversation_id="c1", turns=[TurnMetadata(timestamp_ms=None)]
                 )
             ],
             sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
         )
-        sampler = create_mock_dataset_sampler(
-            conversation_ids=["conv1"],
-            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-        )
-        conversation_source = ConversationSource(dataset, sampler)
-
-        config = CreditPhaseConfig(
+        sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
+        src = ConversationSource(ds, sampler)
+        cfg = CreditPhaseConfig(
             phase=CreditPhase.PROFILING,
             timing_mode=TimingMode.FIXED_SCHEDULE,
             total_expected_requests=1,
             auto_offset_timestamps=True,
         )
-
         strategy = FixedScheduleStrategy(
-            config=config,
-            conversation_source=conversation_source,
-            scheduler=mock_scheduler,
-            stop_checker=mock_stop_checker,
-            credit_issuer=mock_credit_issuer,
-            lifecycle=mock_lifecycle,
+            config=cfg,
+            conversation_source=src,
+            scheduler=scheduler,
+            stop_checker=stop_checker,
+            credit_issuer=issuer,
+            lifecycle=lifecycle,
         )
-
         with pytest.raises(ValueError, match="missing timestamp_ms"):
             await strategy.setup_phase()
 
-    async def test_empty_conversations_raises_error(
-        self, mock_scheduler, mock_stop_checker, mock_credit_issuer, mock_lifecycle
-    ) -> None:
-        dataset = DatasetMetadata(
-            conversations=[
-                ConversationMetadata(conversation_id="conv1", turns=[]),
-            ],
+    async def test_empty_conversations_raises(self) -> None:
+        scheduler, stop_checker, issuer, lifecycle = (
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+        )
+        stop_checker.can_send_any_turn = MagicMock(return_value=True)
+        stop_checker.can_start_new_session = MagicMock(return_value=True)
+        issuer.issue_credit = lambda *a, **k: True
+        lifecycle.started_at_perf_ns = 1_000_000_000
+        ds = DatasetMetadata(
+            conversations=[ConversationMetadata(conversation_id="c1", turns=[])],
             sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
         )
-        sampler = create_mock_dataset_sampler(
-            conversation_ids=["conv1"],
-            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-        )
-        conversation_source = ConversationSource(dataset, sampler)
-
-        config = CreditPhaseConfig(
+        sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
+        src = ConversationSource(ds, sampler)
+        cfg = CreditPhaseConfig(
             phase=CreditPhase.PROFILING,
             timing_mode=TimingMode.FIXED_SCHEDULE,
             total_expected_requests=1,
             auto_offset_timestamps=True,
         )
-
         strategy = FixedScheduleStrategy(
-            config=config,
-            conversation_source=conversation_source,
-            scheduler=mock_scheduler,
-            stop_checker=mock_stop_checker,
-            credit_issuer=mock_credit_issuer,
-            lifecycle=mock_lifecycle,
+            config=cfg,
+            conversation_source=src,
+            scheduler=scheduler,
+            stop_checker=stop_checker,
+            credit_issuer=issuer,
+            lifecycle=lifecycle,
         )
-
         with pytest.raises(ValueError, match="No conversations with valid"):
             await strategy.setup_phase()
 
-    async def test_single_conversation_works(
-        self, fixed_schedule_strategy_factory
-    ) -> None:
-        schedule = [(0, "conv1")]
-        strategy = await fixed_schedule_strategy_factory(schedule)
-
+    async def test_single_conversation(self) -> None:
+        strategy, _, _ = make_strategy([(0, "c1")])
+        await strategy.setup_phase()
         assert len(strategy._absolute_schedule) == 1
         assert strategy._absolute_schedule[0][0] == 0

@@ -1,7 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the Ramper class."""
-
 import asyncio
 import contextlib
 from unittest.mock import MagicMock
@@ -11,451 +9,188 @@ import pytest
 from aiperf.timing.ramping import RampConfig, Ramper, RampType
 
 
-def linear_config(
-    start: float, target: float, duration_sec: float, step_size: float | None = None
-) -> RampConfig:
-    """Helper to create a LinearStrategy config."""
+def lin(s: float, t: float, d: float, step: float | None = None) -> RampConfig:
+    return RampConfig(
+        ramp_type=RampType.LINEAR, start=s, target=t, duration_sec=d, step_size=step
+    )
+
+
+def exp(s: float, t: float, d: float, e: float = 2.0) -> RampConfig:
+    return RampConfig(
+        ramp_type=RampType.EXPONENTIAL, start=s, target=t, duration_sec=d, exponent=e
+    )
+
+
+def cont(s: float, t: float, d: float, interval: float) -> RampConfig:
     return RampConfig(
         ramp_type=RampType.LINEAR,
-        start=start,
-        target=target,
-        duration_sec=duration_sec,
-        step_size=step_size,
+        start=s,
+        target=t,
+        duration_sec=d,
+        update_interval=interval,
     )
 
 
-def exponential_config(
-    start: float, target: float, duration_sec: float, exponent: float = 2.0
-) -> RampConfig:
-    """Helper to create an ExponentialStrategy config."""
-    return RampConfig(
-        ramp_type=RampType.EXPONENTIAL,
-        start=start,
-        target=target,
-        duration_sec=duration_sec,
-        exponent=exponent,
+class TestRamper:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "cfg,expected",
+        [  # fmt: skip
+            (lin(10, 10, 1.0), [10]),
+            (lin(1, 5, 0.1), [1, 2, 3, 4, 5]),
+            (lin(5, 1, 0.1), [5, 4, 3, 2, 1]),
+            (lin(50, 50, 1.0), [50]),
+            (lin(1, 100, 0.1, step=25), [1, 26, 51, 76, 100]),
+        ],
     )
-
-
-class TestRamperBasics:
-    """Test basic Ramper functionality."""
-
-    @pytest.mark.asyncio
-    async def test_calls_setter_with_start_value(self, time_traveler):
-        """Should call setter with start value immediately."""
-        values: list[float] = []
-        setter = values.append
-
-        config = linear_config(start=10, target=10, duration_sec=1.0)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        assert 10 in values
+    async def test_linear_sequences(self, time_traveler, cfg, expected):
+        vals: list[float] = []
+        await Ramper(setter=vals.append, config=cfg).start()
+        assert vals == expected
 
     @pytest.mark.asyncio
-    async def test_calls_setter_with_target_value(self, time_traveler):
-        """Should call setter with target value at completion."""
-        values: list[float] = []
-        setter = values.append
-
-        config = linear_config(start=1, target=5, duration_sec=0.1)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        assert values[-1] == 5
+    async def test_exponential(self, time_traveler):
+        vals: list[float] = []
+        await Ramper(setter=vals.append, config=exp(1, 100, 1.0)).start()
+        assert vals[0] == 1 and vals[-1] == 100 and len(vals) == 100
+        for i, v in enumerate(vals):
+            assert v == i + 1
 
     @pytest.mark.asyncio
-    async def test_ramps_through_all_values_linear(self, time_traveler):
-        """Should ramp through all intermediate values with LinearStrategy."""
-        values: list[float] = []
-        setter = values.append
+    async def test_large_ramp(self, time_traveler):
+        cnt = 0
 
-        config = linear_config(start=1, target=5, duration_sec=0.1)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
+        def counter(v: float) -> None:
+            nonlocal cnt
+            cnt += 1
 
-        assert values == [1, 2, 3, 4, 5]
-
-    @pytest.mark.asyncio
-    async def test_ramps_down_correctly(self, time_traveler):
-        """Should ramp down through values."""
-        values: list[float] = []
-        setter = values.append
-
-        config = linear_config(start=5, target=1, duration_sec=0.1)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        assert values == [5, 4, 3, 2, 1]
+        await Ramper(setter=counter, config=lin(1, 1000, 0.1, step=100)).start()
+        assert cnt == 11
 
     @pytest.mark.asyncio
-    async def test_start_equals_target(self, time_traveler):
-        """Should handle start == target (no ramping needed)."""
-        values: list[float] = []
-        setter = values.append
+    async def test_very_short_duration(self, time_traveler):
+        vals: list[float] = []
+        await Ramper(setter=vals.append, config=lin(1, 5, 0.001)).start()
+        assert vals == [1, 2, 3, 4, 5]
 
-        config = linear_config(start=50, target=50, duration_sec=1.0)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
+    @pytest.mark.asyncio
+    async def test_setter_exception(self, time_traveler):
+        def fail(v: float) -> None:
+            if v > 2:
+                raise ValueError("Test error")
 
-        # Should set initial value, strategy returns None, done
-        assert values == [50]
+        with pytest.raises(ValueError, match="Test error"):
+            await Ramper(setter=fail, config=lin(1, 5, 0.1)).start()
+
+    @pytest.mark.asyncio
+    async def test_restart_with_new_ramper(self, time_traveler):
+        vals: list[float] = []
+        await Ramper(setter=vals.append, config=lin(1, 3, 0.05)).start()
+        assert vals == [1, 2, 3]
+        vals.clear()
+        await Ramper(setter=vals.append, config=lin(10, 12, 0.05)).start()
+        assert vals == [10, 11, 12]
 
 
 class TestRamperStop:
-    """Test Ramper stop behavior."""
-
     @pytest.mark.asyncio
-    async def test_stop_stays_at_current_value(self, time_traveler):
-        """Should stay at current value when stop() is called."""
-        values: list[float] = []
-        setter = values.append
-
-        config = linear_config(start=1, target=100, duration_sec=10.0)
-        ramper = Ramper(setter=setter, config=config)
-
-        # Start in background (don't await - it would block)
-        task = ramper.start()
-
-        # Let it start (virtual time)
+    async def test_stop_stays_at_current(self, time_traveler):
+        vals: list[float] = []
+        r = Ramper(setter=vals.append, config=lin(1, 100, 10.0))
+        task = r.start()
         await time_traveler.sleep(0.01)
-        assert ramper.is_running
-
-        # Stop early (cancels task)
-        ramper.stop()
-
-        # Wait for task to complete
+        assert r.is_running
+        r.stop()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-
-        # Should NOT have jumped to target - stays at current value
-        assert values[-1] != 100
-        assert values[-1] >= 1  # At least the start value was set
+        assert vals[-1] != 100 and vals[-1] >= 1
 
     @pytest.mark.asyncio
-    async def test_stop_is_idempotent(self, time_traveler):
-        """Should be safe to call stop() multiple times."""
-        setter = MagicMock()
-        config = linear_config(start=1, target=10, duration_sec=0.1)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        # Should not raise
-        ramper.stop()
-        ramper.stop()
-        ramper.stop()
+    async def test_stop_idempotent(self, time_traveler):
+        r = Ramper(setter=MagicMock(), config=lin(1, 10, 0.1))
+        await r.start()
+        r.stop()
+        r.stop()
+        r.stop()
 
     @pytest.mark.asyncio
     async def test_stop_before_start(self):
-        """Should be safe to call stop() before start()."""
-        setter = MagicMock()
-        config = linear_config(start=1, target=10, duration_sec=0.1)
-        ramper = Ramper(setter=setter, config=config)
-
-        # Should not raise
-        ramper.stop()
-
-
-class TestRamperWithRampTypes:
-    """Test Ramper with different ramp types."""
-
-    @pytest.mark.asyncio
-    async def test_with_step_size(self, time_traveler):
-        """Should work with custom step_size."""
-        values: list[float] = []
-        setter = values.append
-
-        config = linear_config(start=1, target=100, duration_sec=0.1, step_size=25)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        # Should step by 25: 1, 26, 51, 76, 100
-        assert values == [1, 26, 51, 76, 100]
-
-    @pytest.mark.asyncio
-    async def test_with_exponential_config(self, time_traveler):
-        """Should work with EXPONENTIAL ramp type (ease-in curve)."""
-        values: list[float] = []
-        setter = values.append
-
-        config = exponential_config(start=1, target=100, duration_sec=1.0, exponent=2.0)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        # Should follow ease-in curve with precise timing
-        # Each step is exactly +1, covering all values from 1 to 100
-        assert values[0] == 1  # Starts at 1
-        assert values[-1] == 100  # Ends at target
-        assert len(values) == 100  # Should have exactly 100 values (1 through 100)
-
-        # Verify values are consecutive (incrementing by 1.0)
-        for i, val in enumerate(values):
-            assert val == i + 1, f"Expected {i + 1}, got {val} at index {i}"
+        r = Ramper(setter=MagicMock(), config=lin(1, 10, 0.1))
+        r.stop()
 
 
 class TestRamperIsRunning:
-    """Test Ramper is_running property."""
-
     @pytest.mark.asyncio
     async def test_not_running_before_start(self):
-        """Should not be running before start()."""
-        setter = MagicMock()
-        config = linear_config(start=1, target=10, duration_sec=0.1)
-        ramper = Ramper(setter=setter, config=config)
-        assert not ramper.is_running
+        assert not Ramper(setter=MagicMock(), config=lin(1, 10, 0.1)).is_running
 
     @pytest.mark.asyncio
     async def test_running_during_ramp(self, time_traveler):
-        """Should be running during ramping."""
-        setter = MagicMock()
-        config = linear_config(start=1, target=100, duration_sec=10.0)
-        ramper = Ramper(setter=setter, config=config)
-
-        # Start in background
-        task = ramper.start()
-
+        r = Ramper(setter=MagicMock(), config=lin(1, 100, 10.0))
+        task = r.start()
         await time_traveler.sleep(0.01)
-        assert ramper.is_running
-
-        ramper.stop()
+        assert r.is_running
+        r.stop()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
     @pytest.mark.asyncio
     async def test_not_running_after_completion(self, time_traveler):
-        """Should not be running after completion."""
-        setter = MagicMock()
-        config = linear_config(start=1, target=5, duration_sec=0.05)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        assert not ramper.is_running
+        r = Ramper(setter=MagicMock(), config=lin(1, 5, 0.05))
+        await r.start()
+        assert not r.is_running
 
 
-class TestRamperTiming:
-    """Test Ramper timing behavior."""
-
+class TestRamperContinuous:
     @pytest.mark.asyncio
-    async def test_ramp_completes_all_steps(self, time_traveler):
-        """Should complete all ramp steps from start to target."""
-        values: list[float] = []
-        setter = values.append
-
-        config = linear_config(start=1, target=10, duration_sec=0.2)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        # Should have called setter for all values from 1 to 10
-        assert values == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
-
-class TestRamperEdgeCases:
-    """Test Ramper edge cases."""
-
-    @pytest.mark.asyncio
-    async def test_large_ramp(self, time_traveler):
-        """Should handle large ramps efficiently."""
-        call_count = 0
-
-        def counting_setter(value: float) -> None:
-            nonlocal call_count
-            call_count += 1
-
-        # Use step_size=100 to avoid 999 individual calls
-        config = linear_config(start=1, target=1000, duration_sec=0.1, step_size=100)
-        ramper = Ramper(setter=counting_setter, config=config)
-        await ramper.start()
-
-        # Should be reasonable number of calls (10 steps + initial)
-        assert call_count == 11
-
-    @pytest.mark.asyncio
-    async def test_very_short_duration(self, time_traveler):
-        """Should handle very short duration by completing quickly."""
-        values: list[float] = []
-        setter = values.append
-
-        config = linear_config(start=1, target=5, duration_sec=0.001)
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        # With very short duration, it should still ramp through all values
-        assert values == [1, 2, 3, 4, 5]
-
-    @pytest.mark.asyncio
-    async def test_setter_exception_handling(self, time_traveler):
-        """Should propagate setter exceptions."""
-
-        def failing_setter(value: float) -> None:
-            if value > 2:
-                raise ValueError("Test error")
-
-        config = linear_config(start=1, target=5, duration_sec=0.1)
-        ramper = Ramper(setter=failing_setter, config=config)
-
-        with pytest.raises(ValueError, match="Test error"):
-            await ramper.start()
-
-    @pytest.mark.asyncio
-    async def test_restart_with_new_ramper(self, time_traveler):
-        """Should be able to create a new ramper after completion."""
-        values: list[float] = []
-        setter = values.append
-
-        config1 = linear_config(start=1, target=3, duration_sec=0.05)
-        ramper = Ramper(setter=setter, config=config1)
-
-        # First ramp
-        await ramper.start()
-        assert values == [1, 2, 3]
-
-        # Clear values and create new ramper with new config
-        values.clear()
-        config2 = linear_config(start=10, target=12, duration_sec=0.05)
-        ramper2 = Ramper(setter=setter, config=config2)
-        await ramper2.start()
-        assert values == [10, 11, 12]
-
-
-def continuous_config(
-    start: float, target: float, duration_sec: float, update_interval: float
-) -> RampConfig:
-    """Helper to create a continuous (update_interval-based) config."""
-    return RampConfig(
-        ramp_type=RampType.LINEAR,
-        start=start,
-        target=target,
-        duration_sec=duration_sec,
-        update_interval=update_interval,
+    @pytest.mark.parametrize(
+        "s,t,first,last",
+        [  # fmt: skip
+            (10, 100, 10.0, 100.0),
+            (1, 100, 1.0, 100.0),
+            (1.5, 5.5, 1.5, 5.5),
+            (100, 1, 100.0, 1.0),
+        ],
     )
-
-
-class TestRamperContinuousMode:
-    """Test Ramper continuous mode using value_at() and update_interval."""
-
-    @pytest.mark.asyncio
-    async def test_sets_start_value_immediately(self, time_traveler):
-        """Should set start value before any sleeps."""
-        values: list[float] = []
-        setter = values.append
-
-        config = continuous_config(
-            start=10, target=100, duration_sec=1.0, update_interval=0.2
-        )
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        # First value should be the start
-        assert values[0] == 10.0
+    async def test_start_and_target(self, time_traveler, s, t, first, last):
+        vals: list[float] = []
+        await Ramper(setter=vals.append, config=cont(s, t, 1.0, 0.2)).start()
+        assert vals[0] == first and vals[-1] == last
 
     @pytest.mark.asyncio
-    async def test_sets_target_value_at_completion(self, time_traveler):
-        """Should set target value when ramp completes."""
-        values: list[float] = []
-        setter = values.append
-
-        config = continuous_config(
-            start=1, target=100, duration_sec=1.0, update_interval=0.2
-        )
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        # Last value should be the target
-        assert values[-1] == 100.0
+    async def test_interpolation(self, time_traveler):
+        vals: list[float] = []
+        await Ramper(setter=vals.append, config=cont(1, 100, 10.0, 2.0)).start()
+        assert vals[0] == 1.0 and vals[-1] == 100.0 and len(vals) >= 5
 
     @pytest.mark.asyncio
-    async def test_interpolates_values(self, time_traveler):
-        """Should set interpolated values at each update interval."""
-        values: list[float] = []
-        setter = values.append
-
-        # 10 second duration, update every 2 seconds = 5 updates + start + target
-        config = continuous_config(
-            start=1, target=100, duration_sec=10.0, update_interval=2.0
-        )
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        # Should have: start (1), then intermediate values, then target (100)
-        assert values[0] == 1.0
-        assert values[-1] == 100.0
-        # Intermediate values should be roughly linear
-        assert len(values) >= 5
+    async def test_update_interval_frequency(self, time_traveler):
+        vals: list[float] = []
+        await Ramper(setter=vals.append, config=cont(1, 10, 0.5, 0.1)).start()
+        assert len(vals) >= 5
 
     @pytest.mark.asyncio
-    async def test_uses_update_interval_for_sleep(self, time_traveler):
-        """Should sleep for update_interval duration between updates."""
-        values: list[float] = []
-        setter = values.append
-
-        # Short duration for quick test
-        config = continuous_config(
-            start=1, target=10, duration_sec=0.5, update_interval=0.1
-        )
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        # With 0.5s duration and 0.1s interval, should have ~5 intermediate values
-        # Plus start and target
-        assert len(values) >= 5
-
-    @pytest.mark.asyncio
-    async def test_stop_stays_at_current_value(self, time_traveler):
-        """Should stay at current value when stop() is called in continuous mode."""
-        values: list[float] = []
-        setter = values.append
-
-        config = continuous_config(
-            start=1, target=100, duration_sec=10.0, update_interval=0.5
-        )
-        ramper = Ramper(setter=setter, config=config)
-
-        # Start in background
-        task = ramper.start()
+    async def test_stop_stays_at_current(self, time_traveler):
+        vals: list[float] = []
+        r = Ramper(setter=vals.append, config=cont(1, 100, 10.0, 0.5))
+        task = r.start()
         await time_traveler.sleep(0.01)
-        assert ramper.is_running
-
-        # Stop early
-        ramper.stop()
+        assert r.is_running
+        r.stop()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-
-        # Should NOT have jumped to target
-        assert values[-1] != 100.0
-        assert values[-1] >= 1.0
+        assert vals[-1] != 100.0 and vals[-1] >= 1.0
 
     @pytest.mark.asyncio
-    async def test_handles_float_values(self, time_traveler):
-        """Should handle float start/target values correctly."""
-        values: list[float] = []
-        setter = values.append
-
-        config = continuous_config(
-            start=1.5, target=5.5, duration_sec=1.0, update_interval=0.2
-        )
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        assert values[0] == 1.5
-        assert values[-1] == 5.5
-        # All values should be between start and target
-        for v in values:
+    async def test_float_bounds(self, time_traveler):
+        vals: list[float] = []
+        await Ramper(setter=vals.append, config=cont(1.5, 5.5, 1.0, 0.2)).start()
+        for v in vals:
             assert 1.5 <= v <= 5.5
 
     @pytest.mark.asyncio
-    async def test_ramp_down_continuous(self, time_traveler):
-        """Should handle ramp-down in continuous mode."""
-        values: list[float] = []
-        setter = values.append
-
-        config = continuous_config(
-            start=100, target=1, duration_sec=1.0, update_interval=0.2
-        )
-        ramper = Ramper(setter=setter, config=config)
-        await ramper.start()
-
-        assert values[0] == 100.0
-        assert values[-1] == 1.0
-        # Values should be decreasing
-        for i in range(1, len(values)):
-            assert values[i] <= values[i - 1]
+    async def test_ramp_down_decreasing(self, time_traveler):
+        vals: list[float] = []
+        await Ramper(setter=vals.append, config=cont(100, 1, 1.0, 0.2)).start()
+        for i in range(1, len(vals)):
+            assert vals[i] <= vals[i - 1]

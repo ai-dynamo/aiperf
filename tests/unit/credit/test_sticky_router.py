@@ -34,10 +34,10 @@ class TestStickyCreditRouterFairLoadBalancing:
         router._min_load = 2
 
         credit = make_credit(
-            credit_id=1,
-            conversation_id="session-1",
-            turn_index=0,
-            x_correlation_id="test-corr-id-1",
+            id=1,
+            conv_id="session-1",
+            turn=0,
+            corr_id="test-corr-id-1",
             num_turns=3,
         )
 
@@ -56,9 +56,7 @@ class TestStickyCreditRouterFairLoadBalancing:
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
 
-        credit = make_credit(
-            credit_id=1, x_correlation_id="test-corr-id", turn_index=0, num_turns=3
-        )
+        credit = make_credit(id=1, corr_id="test-corr-id", turn=0, num_turns=3)
 
         await router.send_credit(credit)
 
@@ -90,10 +88,10 @@ class TestStickyCreditRouterStickyRouting:
         router._sticky_sessions[instance_id] = "worker-A"
 
         credit = make_credit(
-            credit_id=2,
-            conversation_id="session-123",
-            turn_index=1,
-            x_correlation_id=instance_id,
+            id=2,
+            conv_id="session-123",
+            turn=1,
+            corr_id=instance_id,
             num_turns=5,
         )
 
@@ -114,10 +112,10 @@ class TestStickyCreditRouterStickyRouting:
         router._sticky_sessions[instance_id] = "worker-A"
 
         credit = make_credit(
-            credit_id=5,
-            conversation_id="session-456",
-            turn_index=4,
-            x_correlation_id=instance_id,
+            id=5,
+            conv_id="session-456",
+            turn=4,
+            corr_id=instance_id,
             num_turns=5,
         )
 
@@ -145,10 +143,10 @@ class TestStickyCreditRouterStickyRouting:
         router._min_load = 2
 
         credit = make_credit(
-            credit_id=10,
-            conversation_id="session-999",
-            turn_index=1,
-            x_correlation_id="test-corr-id",
+            id=10,
+            conv_id="session-999",
+            turn=1,
+            corr_id="test-corr-id",
             num_turns=3,
         )
 
@@ -241,10 +239,10 @@ class TestStickyCreditRouterCompleteScenario:
 
         # Turn 1 (first turn, fair load)
         credit1 = make_credit(
-            credit_id=1,
-            conversation_id="session-test",
-            turn_index=0,
-            x_correlation_id=instance_id,
+            id=1,
+            conv_id="session-test",
+            turn=0,
+            corr_id=instance_id,
             num_turns=num_turns,
         )
 
@@ -255,10 +253,10 @@ class TestStickyCreditRouterCompleteScenario:
         # Turns 2-5 (sticky)
         for turn_idx in range(1, 5):
             credit = make_credit(
-                credit_id=turn_idx + 1,
-                conversation_id="session-test",
-                turn_index=turn_idx,
-                x_correlation_id=instance_id,
+                id=turn_idx + 1,
+                conv_id="session-test",
+                turn=turn_idx,
+                corr_id=instance_id,
                 num_turns=num_turns,
             )
             await router.send_credit(credit)
@@ -283,10 +281,10 @@ class TestStickyCreditRouterCompleteScenario:
         for i in range(9):
             instance_id = f"instance-{i}"
             credit = make_credit(
-                credit_id=i,
-                conversation_id=f"session-{i}",
-                turn_index=0,
-                x_correlation_id=instance_id,
+                id=i,
+                conv_id=f"session-{i}",
+                turn=0,
+                corr_id=instance_id,
                 num_turns=3,  # Multi-turn so it creates sticky sessions
             )
 
@@ -300,10 +298,10 @@ class TestStickyCreditRouterCompleteScenario:
         for i, instance_id in enumerate(instance_ids):
             expected_worker = router._sticky_sessions[instance_id]
             credit = make_credit(
-                credit_id=100 + i,
-                conversation_id="session-test",
-                turn_index=1,
-                x_correlation_id=instance_id,
+                id=100 + i,
+                conv_id="session-test",
+                turn=1,
+                corr_id=instance_id,
                 num_turns=3,
             )
 
@@ -325,10 +323,10 @@ class TestStickyCreditRouterEdgeCases:
 
         for i in range(10):
             credit = make_credit(
-                credit_id=i,
-                conversation_id=f"session-{i}",
-                turn_index=0,
-                x_correlation_id=f"test-corr-id-{i}",
+                id=i,
+                conv_id=f"session-{i}",
+                turn=0,
+                corr_id=f"test-corr-id-{i}",
                 num_turns=1,  # Single-turn (final) conversations
             )
 
@@ -495,8 +493,8 @@ class TestStickyCreditRouterLateJoiningWorker:
 
         for i in range(30):
             credit = make_credit(
-                credit_id=i,
-                x_correlation_id=f"session-{i}",
+                id=i,
+                corr_id=f"session-{i}",
                 num_turns=1,  # Single turn - no sticky session
             )
             await router.send_credit(credit)
@@ -539,7 +537,7 @@ class TestStickyCreditRouterLateJoiningWorker:
         assert router._workers["worker-2"].virtual_sent_credits == 100
         assert router._workers["worker-2"].total_sent_credits == 0
 
-        credit = make_credit(credit_id=1, x_correlation_id="s1", num_turns=1)
+        credit = make_credit(id=1, corr_id="s1", num_turns=1)
         router._workers_by_load[0] = {"worker-2"}  # Force selection
         router._min_load = 0
         await router.send_credit(credit)
@@ -817,7 +815,7 @@ class TestStickyCreditRouterTieBreaking:
         router._workers["worker-1"].last_sent_at_ns = 1000
         router._workers["worker-2"].last_sent_at_ns = 1000
 
-        credit = make_credit(credit_id=1, x_correlation_id="test-session", num_turns=1)
+        credit = make_credit(id=1, corr_id="test-session", num_turns=1)
 
         await router.send_credit(credit)
 
@@ -844,7 +842,7 @@ class TestStickyCreditRouterTieBreaking:
         router._workers["worker-1"].last_sent_at_ns = 1000
         router._workers["worker-2"].last_sent_at_ns = 1000
 
-        credit = make_credit(credit_id=1, x_correlation_id="test-session", num_turns=1)
+        credit = make_credit(id=1, corr_id="test-session", num_turns=1)
 
         await router.send_credit(credit)
 
@@ -869,7 +867,7 @@ class TestStickyCreditRouterTieBreaking:
         router._workers["worker-1"].last_sent_at_ns = 1000  # Earlier (preferred)
         router._workers["worker-2"].last_sent_at_ns = 2000
 
-        credit = make_credit(credit_id=1, x_correlation_id="test-session", num_turns=1)
+        credit = make_credit(id=1, corr_id="test-session", num_turns=1)
 
         await router.send_credit(credit)
 
@@ -924,9 +922,9 @@ class TestStickyCreditRouterStickySessionReassignment:
 
         # Now send a credit for this session - should fall back to fair load
         credit = make_credit(
-            credit_id=1,
-            x_correlation_id="session-X",
-            turn_index=1,
+            id=1,
+            corr_id="session-X",
+            turn=1,
             num_turns=3,
         )
 
