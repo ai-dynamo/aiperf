@@ -48,11 +48,10 @@ aiperf profile \
     --benchmark-duration 100
 ```
 
-This creates 15 simulated users, each sending 20 turns:
+This configures 15 simulated users with 20-turn sessions:
 
 - **Gap**: 15 users / 1.0 req/s = 15 seconds between each user's turns
-- **Stagger**: 1 / 1.0 req/s = 1 second between each user's first turn
-- **Startup sequence**: User 0 at t=0s, User 1 at t=1s, User 2 at t=2s, ... User 14 at t=14s
+- **Stagger**: 1 / 1.0 req/s = 1 second between successive first turns
 - **System throughput**: ~1.0 requests/second (one request every second)
 - **Shared system prompt**: 1000 tokens shared across ALL users (KV cache prefix)
 - **User context**: 20000 tokens unique per user (simulated chat history)
@@ -60,7 +59,7 @@ This creates 15 simulated users, each sending 20 turns:
 
 The stagger ensures requests are evenly distributed from the start, avoiding a thundering herd of all users sending simultaneously.
 
-> **Note**: User-centric mode uses `--num-users` to specify the number of concurrent users. Each user has exactly one request in flight at a time, so maximum concurrency equals `--num-users`. You can optionally use `--concurrency` as an additional limiter, but it's typically unnecessary.
+> **Note**: User-centric mode uses `--num-users` to specify the number of simulated users. Each user has exactly one request in flight at a time. However, concurrency is **not automatically limited**—if responses are slow, requests can build up. See [Concurrency Options](#concurrency-options) if you need to cap concurrent requests.
 
 ## Timing Model
 
@@ -77,28 +76,29 @@ The user who just finished (User 1) is replaced by a fresh user who fires first 
 Other users fire in staggered order based on their position in the session lifetime.
 This creates immediate user churn rather than waiting for the first natural completions.
 
-#### Example: 15 users, 20 turns, 1.0 QPS
+#### Example: 15 users, 20-turn sessions, 1.0 QPS
+
+The "Remaining" column shows turns each user will send (not total session turns):
 
 ```
--------------------------------------------
- User | Turns | Time | Turn Visualization
--------------------------------------------
-    1 |     - |    - | (All turns completed before t=0) ← User 1 is "virtually done"
-   16 |    20 |   0s | ████████████████████ ← New user at t=0 with all turns remaining
-    5 |     6 |   1s | ██████
-    9 |    11 |   2s | ███████████
-   13 |    16 |   3s | ████████████████
-    2 |     2 |   4s | ██
-    6 |     7 |   5s | ███████
-   10 |    12 |   6s | ████████████
-   14 |    17 |   7s | █████████████████
-    3 |     3 |   8s | ███
-    7 |     8 |   9s | ████████
-   11 |    13 |  10s | █████████████
-   15 |    18 |  11s | ██████████████████
-    4 |     4 |  12s | ████
-    8 |     9 |  13s | █████████
-   12 |    14 |  14s | ██████████████
+ User | Remaining | Start | Visualization
+------+----------+-------+----------------------------------------
+    1 |     -    |    -  | (Virtually done - replaced by User 16)
+   16 |    20    |   0s  | ████████████████████ ← New user (full session)
+    5 |     6    |   1s  | ██████
+    9 |    11    |   2s  | ███████████
+   13 |    16    |   3s  | ████████████████
+    2 |     2    |   4s  | ██
+    6 |     7    |   5s  | ███████
+   10 |    12    |   6s  | ████████████
+   14 |    17    |   7s  | █████████████████
+    3 |     3    |   8s  | ███
+    7 |     8    |   9s  | ████████
+   11 |    13    |  10s  | █████████████
+   15 |    18    |  11s  | ██████████████████
+    4 |     4    |  12s  | ████
+    8 |     9    |  13s  | █████████
+   12 |    14    |  14s  | ██████████████
 ```
 
 ### Gap Calculation
@@ -281,8 +281,8 @@ aiperf profile \
     --random-seed 42
 ```
 
-This creates:
-- **15 users** with **20 turns** each
+This configures:
+- **15 users** with **20-turn sessions**
 - **15-second gaps** between each user's turns (15 / 1.0 = 15s)
 - **1000-token shared system prompt** (prefix shared across ALL users)
 - **20000-token user context** (unique per user, simulates chat history)

@@ -279,13 +279,13 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 | `--num-users` | int | None | Concurrent users (required with `--user-centric-rate`) |
 | `--arrival-pattern` | enum | poisson | Request arrival distribution: `constant`, `poisson`, `gamma` (only with `--request-rate`) |
 | `--arrival-smoothness` | float | 1.0 | Gamma distribution shape (only with `--arrival-pattern gamma`) |
-| `--request-rate-ramp-duration` | float | None | Seconds to ramp request rate from 1 QPS (only with `--request-rate`) |
+| `--request-rate-ramp-duration` | float | None | Seconds to ramp request rate from proportional minimum to target (only with `--request-rate`) |
 
 ### Concurrency Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--concurrency` | int | 1 | Max concurrent sessions; drives throughput when no rate option specified |
+| `--concurrency` | int | None | Max concurrent sessions; drives throughput when no rate option specified |
 | `--prefill-concurrency` | int | None | Max requests in prefill stage (requires `--streaming`) |
 | `--concurrency-ramp-duration` | float | None | Seconds to ramp concurrency from 1 to target |
 | `--prefill-concurrency-ramp-duration` | float | None | Seconds to ramp prefill concurrency |
@@ -326,7 +326,7 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--fixed-schedule-auto-offset` | bool | true | Auto-offset timestamps to start at 0 (requires `--fixed-schedule`) |
+| `--fixed-schedule-auto-offset` | bool | false | Auto-offset timestamps to start at 0 (requires `--fixed-schedule`) |
 | `--fixed-schedule-start-offset` | int | None | Start offset in milliseconds (requires `--fixed-schedule`) |
 | `--fixed-schedule-end-offset` | int | None | End offset in milliseconds (requires `--fixed-schedule`) |
 

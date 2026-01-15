@@ -84,7 +84,7 @@ aiperf profile \
     --url localhost:8000 \
     --request-rate 100 \
     --request-rate-ramp-duration 60 \
-    --duration 120
+    --benchmark-duration 120
 ```
 
 **What happens:**
@@ -94,12 +94,12 @@ Request Rate (QPS)
   75 ┤               ●────┘
   50 ┤          ●────┘
   25 ┤     ●────┘
-   0 ┤●────┘
+ ~0 ┤●────┘
      └─────┬─────┬─────┬─────┬─────────────────▶
           15s   30s   45s   60s              Time
 ```
 
-> **Note**: The starting rate is calculated proportionally: `start = target * (update_interval / duration)`. With default settings (0.1s updates), ramping from 0 to 100 QPS over 60 seconds starts at ~0.17 QPS.
+> **Note**: The starting rate is calculated proportionally: `start = target * (update_interval / duration)`. With default settings (0.1s updates), ramping to 100 QPS over 60 seconds starts at ~0.17 QPS (not zero).
 
 ### Combining Rate and Concurrency Ramping
 
@@ -113,7 +113,7 @@ aiperf profile \
     --request-rate-ramp-duration 30 \
     --concurrency 100 \
     --concurrency-ramp-duration 30 \
-    --duration 120
+    --benchmark-duration 120
 ```
 
 Both ramp in parallel, reaching their targets at 30 seconds.
@@ -164,7 +164,7 @@ aiperf profile \
     --url localhost:8000 \
     --concurrency 500 \
     --concurrency-ramp-duration 60 \
-    --duration 300
+    --benchmark-duration 300
 ```
 
 The 60-second ramp gives the server time to allocate resources (~8 new connections per second).
@@ -197,7 +197,7 @@ aiperf profile \
     --request-rate-ramp-duration 120 \
     --concurrency 200 \
     --concurrency-ramp-duration 120 \
-    --duration 180
+    --benchmark-duration 180
 ```
 
 Watch latency and throughput metrics as load increases. When latency spikes or errors appear, you've found the limit.

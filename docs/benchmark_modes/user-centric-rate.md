@@ -43,7 +43,9 @@ user_offset = slot_index * stagger
 
 With 15 users at 1.0 QPS:
 - Stagger = 1 / 1.0 = 1 second
-- User 0 fires at offset 0s, User 1 at 1s, User 2 at 2s, etc.
+- Slot 0 fires at offset 0s, Slot 1 at 1s, Slot 2 at 2s, etc.
+
+(Virtual history assigns users to slots based on their session age—see [Virtual History](#virtual-history) for actual startup order.)
 
 ### Spawn Timing (When New Users Join)
 
