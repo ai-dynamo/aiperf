@@ -388,6 +388,7 @@ class TestStatisticalInvariants:
     correct distributions, not just approximately correct ones.
     """
 
+    @pytest.mark.statistical
     def test_poisson_interarrival_variance(self, cli: AIPerfCLI):
         """Verify Poisson mode has correct variance properties.
 
@@ -419,6 +420,7 @@ class TestStatisticalInvariants:
             f"Mean={mean:.4f}s, Std={std:.4f}s"
         )
 
+    @pytest.mark.statistical
     def test_constant_rate_low_variance(self, cli: AIPerfCLI):
         """Verify constant rate has very low variance.
 
