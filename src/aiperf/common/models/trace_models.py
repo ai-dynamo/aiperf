@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from time import perf_counter_ns, time_ns
-from typing import Any, ClassVar, Literal, Self
+from typing import Any, ClassVar, Literal
 
 from pydantic import ConfigDict, Field, computed_field
 
@@ -12,24 +12,24 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 class TraceDataExport(AIPerfBaseModel):
     """Export model with wall-clock timestamps following k6 and HAR conventions.
 
-           All timestamps are converted from perf_counter to wall-clock time (time.time_ns())
-           for correlation with logs, metadata, and cross-system analysis.
+    All timestamps are converted from perf_counter to wall-clock time (time.time_ns())
+    for correlation with logs, metadata, and cross-system analysis.
 
-           Create from BaseTraceData using trace_data.to_export() method.
+    Create from BaseTraceData using trace_data.to_export() method.
 
-           Fields match BaseTraceData exactly, but with _perf_ns replaced by _ns (wall-clock).
+    Fields match BaseTraceData exactly, but with _perf_ns replaced by _ns (wall-clock).
 
-           Timing Diagram::
-
-           request_send_start ──────────────────────────────────────────────────────►
-                   │                    │                    │                      │
-                   │◄── sending_ns ────►│◄── waiting_ns ────►│◄── receiving_ns ────►│
-                   │                    │              │     │                      │
-               request start      request_send_end     first body chunk        last body chunk
-                                  (last chunk sent)   (response_chunks[0])
-                                                       │
-                                                       ├── response_headers_received_ns
-
+    Timing Diagram
+    ```
+    request_send_start ──────────────────────────────────────────────────────►
+            │                    │                    │                      │
+            │◄── sending_ns ────►│◄── waiting_ns ────►│◄── receiving_ns ────►│
+            │                    │              │     │                      │
+        request start      request_send_end     first body chunk        last body chunk
+                            (last chunk sent)   (response_chunks[0])
+                                                │
+                                                ├── response_headers_received_ns
+    ```
     ```
     Request Lifecycle ──────────────────────────────────────────────────────────────────────────────►
         │              │              │                │                    │                       │
@@ -43,30 +43,30 @@ class TraceDataExport(AIPerfBaseModel):
                         └─ connection_reused_ns (skip TCP/TLS)
     ```
 
-        ● k6 vs AIPerf vs HAR: Complete Metrics Equivalence
+    k6 vs AIPerf vs HAR: Complete Metrics Equivalence
 
-          Timing Metrics Comparison
+    Timing Metrics Comparison
 
-          | Phase                | HAR                | k6                       | AIPerf                      |
-          |----------------------|--------------------|--------------------------|-----------------------------|
-          | Connection Pool Wait | blocked            | http_req_blocked         | http_req_blocked            |
-          | DNS Resolution       | dns                | http_req_looking_up      | http_req_dns_lookup         |
-          | TCP Handshake        | Part of connect    | http_req_connecting      | Part of http_req_connecting |
-          | TLS/SSL Handshake    | ssl (+ in connect) | http_req_tls_handshaking | Part of http_req_connecting |
-          | Request Send         | send               | http_req_sending         | http_req_sending            |
-          | Server Wait (TTFB)   | wait               | http_req_waiting         | http_req_waiting            |
-          | Response Receive     | receive            | http_req_receiving       | http_req_receiving          |
-          | Total Duration       | time               | http_req_duration        | http_req_duration           |
+    | Phase                | HAR                | k6                       | AIPerf                      |
+    |----------------------|--------------------|--------------------------|-----------------------------|
+    | Connection Pool Wait | blocked            | http_req_blocked         | http_req_blocked            |
+    | DNS Resolution       | dns                | http_req_looking_up      | http_req_dns_lookup         |
+    | TCP Handshake        | Part of connect    | http_req_connecting      | Part of http_req_connecting |
+    | TLS/SSL Handshake    | ssl (+ in connect) | http_req_tls_handshaking | Part of http_req_connecting |
+    | Request Send         | send               | http_req_sending         | http_req_sending            |
+    | Server Wait (TTFB)   | wait               | http_req_waiting         | http_req_waiting            |
+    | Response Receive     | receive            | http_req_receiving       | http_req_receiving          |
+    | Total Duration       | time               | http_req_duration        | http_req_duration           |
 
 
-            Computed Durations (k6/HAR compatible):
-              - request_send_end_ns: True request completion (computed from last chunk)
-              - sending_ns: Request send time (k6: http_req_sending, HAR: send)
-              - waiting_ns: TTFB to first body byte (k6: http_req_waiting, HAR: wait)
-              - receiving_ns: Response transfer time (k6: http_req_receiving, HAR: receive)
-              - duration_ns: Total request duration (k6: http_req_duration, HAR: time)
+    Computed Durations (k6/HAR compatible):
+        - request_send_end_ns: True request completion (computed from last chunk)
+        - sending_ns: Request send time (k6: http_req_sending, HAR: send)
+        - waiting_ns: TTFB to first body byte (k6: http_req_waiting, HAR: wait)
+        - receiving_ns: Response transfer time (k6: http_req_receiving, HAR: receive)
+        - duration_ns: Total request duration (k6: http_req_duration, HAR: time)
 
-            Note: All timestamps are in wall-clock time (time.time_ns()) for cross-system correlation.
+    Note: All timestamps are in wall-clock time (time.time_ns()) for cross-system correlation.
     """
 
     # For auto-routed-model serialization and deserialization
@@ -74,7 +74,7 @@ class TraceDataExport(AIPerfBaseModel):
 
     trace_type: str = Field(
         ...,
-        description="The type of the trace. This is typically the name of the library used"
+        description="The type of the trace. This is typically the name of the library used "
         "and must match the trace_type of the corresponding trace data model.",
     )
 
@@ -433,14 +433,14 @@ class BaseTraceData(AIPerfBaseModel):
             )
         return self.reference_time_ns + (perf_ns - self.reference_perf_ns)
 
-    def to_export(self) -> Self:
+    def to_export(self) -> TraceDataExport:
         """Convert to export model with wall-clock timestamps.
 
         Uses TraceDataExport's _model_lookup_table to auto-detect the correct export class
         based on trace_type (leverages the auto-routed-model infrastructure).
 
         Returns:
-            Export model with all perf_counter timestamps converted to wall-clock time
+            TraceDataExport (or subclass) with all perf_counter timestamps converted to wall-clock time
         """
         # Auto-detect export class using the trace_type discriminator
         # This leverages the existing auto-routed-model infrastructure

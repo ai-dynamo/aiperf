@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
@@ -341,13 +342,14 @@ class AioHttpClient(AIPerfLoggerMixin):
         )
 
         # Wait for request to be sent, then apply cancellation timeout.
-        # Use wait_for with a generous timeout as a safety net - the request_task
-        # should complete (with error) or set the event on exception, but if
-        # something goes wrong we don't want to hang forever.
+        # Use wait_for with a safety net timeout - the request_task should complete
+        # (with error) or set the event on exception, but if something goes wrong
+        # we don't want to hang forever.
+        send_timeout = (
+            self.timeout.total or Environment.HTTP.REQUEST_CANCELLATION_SEND_TIMEOUT
+        )
         try:
-            await asyncio.wait_for(
-                request_sent.wait(), timeout=self.timeout.total or 300
-            )
+            await asyncio.wait_for(request_sent.wait(), timeout=send_timeout)
         except asyncio.TimeoutError:
             # Request never got sent - cancel and return error
             request_task.cancel()

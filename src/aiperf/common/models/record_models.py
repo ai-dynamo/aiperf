@@ -326,11 +326,12 @@ class SSEMessage(BaseInferenceServerResponse):
         return message
 
     def extract_data_content(self) -> str:
-        """Extract the data contents from the SSE message as a list of strings. Note that the SSE spec specifies
-        that each data content should be combined and delimited by a single \n.
+        """Extract and combine the data contents from the SSE message.
+
+        Per the SSE spec, multiple data fields are combined and delimited by a single newline.
 
         Returns:
-            list[str]: A list of strings containing the data contents of the SSE message.
+            str: The combined data contents of the SSE message, joined by newlines.
         """
         return "\n".join(
             packet.value

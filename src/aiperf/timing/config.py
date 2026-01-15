@@ -178,6 +178,11 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
     Returns None if warmup disabled (no stop conditions).
     Warmup triggers JIT compilation, memory allocation, and connection pool
     initialization so profiling measurements aren't polluted by cold-start effects.
+
+    Note:
+        When warmup_grace_period is not specified, defaults to infinity (wait forever
+        for in-flight requests). This differs from the CreditPhaseConfig field default
+        of None (disabled) because warmup should always complete all requests.
     """
     loadgen = user_config.loadgen
     if not (

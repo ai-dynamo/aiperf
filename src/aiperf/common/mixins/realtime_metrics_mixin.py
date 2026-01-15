@@ -22,6 +22,7 @@ class RealtimeMetricsMixin(MessageBusClientMixin):
         """Update the metrics from a real-time metrics message.
 
         Lock-free because self._metrics is atomically replaced.
+        Operations are atomic only when used in a single thread asyncio context.
         """
         self._metrics = message.metrics
         await self.run_hooks(

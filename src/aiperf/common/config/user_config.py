@@ -670,8 +670,8 @@ class UserConfig(BaseConfig):
                 return "fixed_schedule"
             case TimingMode.USER_CENTRIC_RATE:
                 stimulus = ["user_centric"]
-                if self.input.conversation.num is not None:
-                    stimulus.append(f"users{self.input.conversation.num}")
+                if self.loadgen.num_users is not None:
+                    stimulus.append(f"users{self.loadgen.num_users}")
                 if self.loadgen.user_centric_rate is not None:
                     stimulus.append(f"qps{self.loadgen.user_centric_rate}")
                 return "-".join(stimulus)

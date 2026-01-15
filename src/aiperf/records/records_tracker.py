@@ -19,15 +19,15 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
     as provide atomic operations for incrementing the processed and error counts.
 
     Thread Safety:
-        The atomic_increment_* methods guarantee no partial updates.
+        The increment_* methods guarantee no partial updates.
         Safe for asyncio concurrent access without locks because:
             1. Updates use atomic incrementation (no in-place mutation)
             2. No await points between read and write in atomic methods
         3. Asyncio event loop serializes all operations
 
     Key Methods:
-        - atomic_increment_processed(): Atomically increment the processed count
-        - atomic_increment_errors(): Atomically increment the errors count
+        - increment_processed(): Atomically increment the processed count
+        - increment_errors(): Atomically increment the errors count
         - create_stats(): Create a new immutable RecordsPhaseStats object for the phase (for use in messages).
         - mark_started(): Mark the phase as started (set the start_ns).
         - mark_processing_complete(): Mark the phase as processing complete (set the processing_end_ns).
@@ -117,19 +117,19 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         )
         self._was_cancelled = credit_stats.was_cancelled
 
-    def atomic_increment_success_records(self) -> None:
+    def increment_success_records(self) -> None:
         """Increment the success records count."""
         self._success_records += 1
 
-    def atomic_increment_error_records(self) -> None:
+    def increment_error_records(self) -> None:
         """Increment the error records count."""
         self._error_records += 1
 
-    def atomic_increment_worker_success_records(self, worker_id: str) -> None:
+    def increment_worker_success_records(self, worker_id: str) -> None:
         """Increment the success records count for a worker."""
         self._worker_stats[worker_id].success_records += 1
 
-    def atomic_increment_worker_error_records(self, worker_id: str) -> None:
+    def increment_worker_error_records(self, worker_id: str) -> None:
         """Increment the error records count for a worker."""
         self._worker_stats[worker_id].error_records += 1
 
@@ -190,19 +190,17 @@ class RecordsTracker:
         phase_tracker = self._get_phase_tracker(credit_phase_stats.phase)
         phase_tracker.update_from_credit_phase_stats(credit_phase_stats)
 
-    def atomic_update_from_record_data(self, record_data: MetricRecordsData) -> None:
+    def update_from_record_data(self, record_data: MetricRecordsData) -> None:
         """Update the phase tracker from a record data."""
         phase_tracker = self._get_phase_tracker(record_data.metadata.benchmark_phase)
         if record_data.valid:
-            phase_tracker.atomic_increment_success_records()
-            phase_tracker.atomic_increment_worker_success_records(
+            phase_tracker.increment_success_records()
+            phase_tracker.increment_worker_success_records(
                 record_data.metadata.worker_id
             )
         else:
-            phase_tracker.atomic_increment_error_records()
-            phase_tracker.atomic_increment_worker_error_records(
-                record_data.metadata.worker_id
-            )
+            phase_tracker.increment_error_records()
+            phase_tracker.increment_worker_error_records(record_data.metadata.worker_id)
 
     def was_phase_cancelled(self, phase: CreditPhase) -> bool:
         """Check if the phase was cancelled."""

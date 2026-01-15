@@ -65,6 +65,7 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | `AIPERF_HTTP_FORCE_CLOSE` | `False` | — | Force close connections after each request |
 | `AIPERF_HTTP_ENABLE_CLEANUP_CLOSED` | `False` | — | Enable cleanup of closed ssl connections |
 | `AIPERF_HTTP_USE_DNS_CACHE` | `True` | — | Enable DNS cache |
+| `AIPERF_HTTP_REQUEST_CANCELLATION_SEND_TIMEOUT` | `300.0` | ≥ 10.0, ≤ 3600.0 | Safety net timeout in seconds for waiting for HTTP request to be fully sent when request cancellation is enabled. Used as fallback when no explicit timeout is configured to prevent hanging indefinitely while waiting for the request to be written to the socket. |
 
 ## LOGGING
 

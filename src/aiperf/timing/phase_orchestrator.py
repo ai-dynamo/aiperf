@@ -4,15 +4,17 @@
 
 The orchestrator handles all orchestration concerns:
 - Lifecycle management (init, start, stop)
-- Phase execution and progress reporting
+- Phase execution loop (creates PhaseRunner per phase)
 - Cancellation
 
 The actual timing logic is delegated to a pluggable TimingMode (created per-phase).
 Credit callbacks are handled by CreditCallbackHandler (registered directly with router).
+Progress reporting is delegated to PhaseRunner.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from aiperf.common.factories import DatasetSamplingStrategyFactory
@@ -38,7 +40,6 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
     - Component composition (ConversationSource, ConcurrencyManager, CancellationPolicy)
     - Lifecycle hooks (@on_init, @on_start)
     - Phase execution loop (creates PhaseRunner per phase)
-    - Progress reporting
     - Cancellation
 
     The orchestrator does NOT handle:
@@ -171,6 +172,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         """
         for i, phase_config in enumerate(self._ordered_phase_configs):
             is_final_phase = i == len(self._ordered_phase_configs) - 1
+            is_seamless_non_final = phase_config.seamless and not is_final_phase
 
             runner = PhaseRunner(
                 config=phase_config,
@@ -182,6 +184,13 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 callback_handler=self._callback_handler,
             )
 
+            # For seamless non-final phases, set callback to remove from active runners
+            # when background return wait completes
+            if is_seamless_non_final:
+                runner.set_phase_complete_callback(
+                    self._phase_runner_cleanup_callback(runner)
+                )
+
             # Track active runner (multiple possible with seamless mode)
             self._active_runners.append(runner)
 
@@ -191,8 +200,18 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
 
             # Remove from active runners when fully complete
             # For seamless phases, this happens after returns complete (background task)
-            if not phase_config.seamless or is_final_phase:
+            if not is_seamless_non_final:
                 self._active_runners.remove(runner)
+
+    def _phase_runner_cleanup_callback(self, runner: PhaseRunner) -> Callable[[], None]:
+        """Create callback that removes runner from active list when phase completes."""
+
+        def cleanup() -> None:
+            if runner in self._active_runners:
+                self._active_runners.remove(runner)
+                self.debug(f"Removed completed runner for phase {runner.phase}")
+
+        return cleanup
 
     async def cancel(self) -> None:
         """Cancel the orchestrator gracefully.

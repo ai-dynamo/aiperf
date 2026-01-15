@@ -11,7 +11,6 @@ Cancellation is a flag (can happen at any state), not a state itself.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -33,7 +32,6 @@ class PhaseState(CaseInsensitiveStrEnum):
 _SENDING_COMPLETE_STATES = {PhaseState.SENDING_COMPLETE, PhaseState.COMPLETE}
 
 
-@dataclass
 class PhaseLifecycle:
     """Explicit phase state machine with timestamps.
 
@@ -97,7 +95,7 @@ class PhaseLifecycle:
             ValueError: If not started or already in SENDING_COMPLETE/COMPLETE.
         """
         if self.state == PhaseState.CREATED:
-            raise ValueError("Credit phase not started. Call mark_started() first.")
+            raise ValueError("Credit phase not started. Call start() first.")
         if self.state in _SENDING_COMPLETE_STATES:
             raise ValueError("Credit phase already completed sending")
         self.state = PhaseState.SENDING_COMPLETE

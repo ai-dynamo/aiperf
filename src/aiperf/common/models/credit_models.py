@@ -188,6 +188,8 @@ class CreditPhaseStats(BasePhaseStats):
     def requests_error_percent(self) -> float:
         """The error percentage of the requests completed."""
         if self.final_requests_completed is not None:
+            if self.final_requests_completed == 0:
+                return 0.0
             return (self.final_request_errors / self.final_requests_completed) * 100
 
         if self.requests_completed == 0:

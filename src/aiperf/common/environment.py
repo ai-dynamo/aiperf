@@ -266,6 +266,14 @@ class _HTTPSettings(BaseSettings):
         default=True,
         description="Enable DNS cache",
     )
+    REQUEST_CANCELLATION_SEND_TIMEOUT: float = Field(
+        ge=10.0,
+        le=3600.0,
+        default=300.0,
+        description="Safety net timeout in seconds for waiting for HTTP request to be fully sent "
+        "when request cancellation is enabled. Used as fallback when no explicit timeout is configured "
+        "to prevent hanging indefinitely while waiting for the request to be written to the socket.",
+    )
 
 
 class _LoggingSettings(BaseSettings):

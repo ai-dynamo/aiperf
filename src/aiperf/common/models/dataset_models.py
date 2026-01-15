@@ -12,12 +12,11 @@ from aiperf.common.enums import (
     DatasetSamplingStrategy,
     MediaType,
 )
-from aiperf.common.models.auto_routed_model import AutoRoutedModel
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import MediaTypeT
 
 
-class DatasetClientMetadata(AutoRoutedModel):
+class DatasetClientMetadata(AIPerfBaseModel):
     """Base class for dataset client access metadata.
 
     Uses discriminated union pattern based on client_type for extensibility.

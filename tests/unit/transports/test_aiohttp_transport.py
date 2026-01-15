@@ -17,6 +17,36 @@ from tests.unit.transports.conftest import create_model_endpoint_info
 from tests.unit.transports.test_base_transport import AIPERF_USER_AGENT
 
 
+def create_request_info(
+    model_endpoint,
+    *,
+    endpoint_headers: dict | None = None,
+    endpoint_params: dict | None = None,
+    x_request_id: str = "test-request-id",
+    x_correlation_id: str = "test-correlation-id",
+    conversation_id: str = "test-conversation-id",
+    cancel_after_ns: int | None = None,
+    is_final_turn: bool = True,
+    turn_index: int = 0,
+    credit_num: int = 1,
+) -> RequestInfo:
+    """Create RequestInfo with sensible defaults for transport tests."""
+    return RequestInfo(
+        model_endpoint=model_endpoint,
+        turns=[],
+        endpoint_headers=endpoint_headers or {},
+        endpoint_params=endpoint_params or {},
+        turn_index=turn_index,
+        credit_num=credit_num,
+        credit_phase=CreditPhase.PROFILING,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        conversation_id=conversation_id,
+        cancel_after_ns=cancel_after_ns,
+        is_final_turn=is_final_turn,
+    )
+
+
 class TestAioHttpTransport:
     """Comprehensive tests for AioHttpTransport."""
 
@@ -39,28 +69,6 @@ class TestAioHttpTransport:
         await transport.initialize()
         yield transport
         await transport.stop()
-
-    def _create_request_info(
-        self,
-        model_endpoint,
-        endpoint_headers=None,
-        endpoint_params=None,
-        x_request_id=None,
-        x_correlation_id=None,
-    ):
-        """Helper to create RequestInfo with defaults."""
-        return RequestInfo(
-            model_endpoint=model_endpoint,
-            turns=[],
-            endpoint_headers=endpoint_headers or {},
-            endpoint_params=endpoint_params or {},
-            turn_index=0,
-            credit_num=1,
-            credit_phase=CreditPhase.PROFILING,
-            x_request_id=x_request_id or "test-request-id",
-            x_correlation_id=x_correlation_id or "test-correlation-id",
-            conversation_id="test-conversation-id",
-        )
 
     def _extract_call_args(self, mock_call_args):
         """Extract URL, JSON, and headers from mock call_args."""
@@ -126,7 +134,7 @@ class TestAioHttpTransport:
     def test_get_transport_headers(self, transport, streaming, expected_accept):
         """Test transport headers for different streaming modes."""
         model_endpoint = create_model_endpoint_info(streaming=streaming)
-        request_info = self._create_request_info(model_endpoint)
+        request_info = create_request_info(model_endpoint)
         headers = transport.get_transport_headers(request_info)
 
         assert headers["Content-Type"] == "application/json"
@@ -153,7 +161,7 @@ class TestAioHttpTransport:
         model_endpoint_non_streaming.endpoint.custom_endpoint = custom_endpoint
 
         transport = AioHttpTransport(model_endpoint=model_endpoint_non_streaming)
-        request_info = self._create_request_info(model_endpoint_non_streaming)
+        request_info = create_request_info(model_endpoint_non_streaming)
         url = transport.get_url(request_info)
         assert url == expected_url
 
@@ -166,7 +174,7 @@ class TestAioHttpTransport:
         mock_record = RequestRecord(responses=[], error=None)
         transport.aiohttp_client.post_request = AsyncMock(return_value=mock_record)
 
-        request_info = self._create_request_info(
+        request_info = create_request_info(
             model_endpoint_non_streaming,
             endpoint_headers={"Authorization": "Bearer token"},
         )
@@ -188,7 +196,7 @@ class TestAioHttpTransport:
         """Test that send_request builds URL correctly with params."""
         await self._setup_initialized_transport_with_mock(transport)
 
-        request_info = self._create_request_info(
+        request_info = create_request_info(
             model_endpoint_non_streaming,
             endpoint_params={"api-version": "2024-10-01"},
         )
@@ -206,7 +214,7 @@ class TestAioHttpTransport:
         """Test that send_request builds headers correctly."""
         await self._setup_initialized_transport_with_mock(transport)
 
-        request_info = self._create_request_info(
+        request_info = create_request_info(
             model_endpoint_non_streaming,
             endpoint_headers={"Authorization": "Bearer token123"},
             x_request_id="req-456",
@@ -231,7 +239,7 @@ class TestAioHttpTransport:
         """Test that payload is serialized using orjson."""
         await self._setup_initialized_transport_with_mock(transport)
 
-        request_info = self._create_request_info(model_endpoint_non_streaming)
+        request_info = create_request_info(model_endpoint_non_streaming)
         payload = {"messages": [{"role": "user", "content": "Test"}], "model": "gpt-4"}
 
         await transport.send_request(request_info, payload)
@@ -253,7 +261,7 @@ class TestAioHttpTransport:
             side_effect=ValueError("Test error")
         )
 
-        request_info = self._create_request_info(model_endpoint_non_streaming)
+        request_info = create_request_info(model_endpoint_non_streaming)
         payload = {"test": "data"}
 
         record = await transport.send_request(request_info, payload)
@@ -274,7 +282,7 @@ class TestAioHttpTransport:
             side_effect=RuntimeError("Connection failed")
         )
 
-        request_info = self._create_request_info(model_endpoint_non_streaming)
+        request_info = create_request_info(model_endpoint_non_streaming)
         payload = {"test": "data"}
 
         record = await transport.send_request(request_info, payload)
@@ -293,7 +301,7 @@ class TestAioHttpTransport:
         mock_record = RequestRecord()
         transport.aiohttp_client.post_request = AsyncMock(return_value=mock_record)
 
-        request_info = self._create_request_info(model_endpoint_streaming)
+        request_info = create_request_info(model_endpoint_streaming)
         payload = {"stream": True}
 
         await transport.send_request(request_info, payload)
@@ -309,7 +317,7 @@ class TestAioHttpTransport:
         """Test send_request with empty payload."""
         await self._setup_initialized_transport_with_mock(transport)
 
-        request_info = self._create_request_info(model_endpoint_non_streaming)
+        request_info = create_request_info(model_endpoint_non_streaming)
         payload = {}
 
         record = await transport.send_request(request_info, payload)
@@ -325,7 +333,7 @@ class TestAioHttpTransport:
         """Test send_request with complex nested payload."""
         await self._setup_initialized_transport_with_mock(transport)
 
-        request_info = self._create_request_info(model_endpoint_non_streaming)
+        request_info = create_request_info(model_endpoint_non_streaming)
         payload = {
             "messages": [
                 {"role": "user", "content": "Test"},
@@ -469,26 +477,6 @@ class TestAioHttpTransportCancellation:
     asyncio.sleep(0) to yield to the event loop, which works with mocked time.
     """
 
-    def _create_request_info(
-        self,
-        model_endpoint,
-        cancel_after_ns=None,
-    ):
-        """Helper to create RequestInfo with defaults."""
-        return RequestInfo(
-            model_endpoint=model_endpoint,
-            turns=[],
-            endpoint_headers={},
-            endpoint_params={},
-            turn_index=0,
-            credit_num=1,
-            credit_phase=CreditPhase.PROFILING,
-            x_request_id="test-request-id",
-            x_correlation_id="test-correlation-id",
-            conversation_id="test-conversation-id",
-            cancel_after_ns=cancel_after_ns,
-        )
-
     def _create_mock_session_factory(self, complete_immediately: bool = True):
         """Create a mock session factory for cancellation tests.
 
@@ -558,7 +546,7 @@ class TestAioHttpTransportCancellation:
         mock_record = RequestRecord()
         transport.aiohttp_client.post_request = AsyncMock(return_value=mock_record)
 
-        request_info = self._create_request_info(
+        request_info = create_request_info(
             model_endpoint_non_streaming, cancel_after_ns=None
         )
         payload = {"test": "data"}
@@ -590,7 +578,7 @@ class TestAioHttpTransportCancellation:
 
             # 10 second timeout - request should complete before this
             cancel_after_ns = 10 * 1_000_000_000
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint_non_streaming, cancel_after_ns=cancel_after_ns
             )
             payload = {"test": "data"}
@@ -630,7 +618,7 @@ class TestAioHttpTransportCancellation:
             mock_session_class.side_effect = capture_session
 
             # cancel_after_ns=0 means cancel immediately after request is sent
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint_non_streaming, cancel_after_ns=0
             )
             payload = {"test": "data"}
@@ -669,7 +657,7 @@ class TestAioHttpTransportCancellation:
             mock_session_class.side_effect = capture_session
 
             cancel_after_ns = 100_000_000  # 100ms
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint_non_streaming, cancel_after_ns=cancel_after_ns
             )
             payload = {"test": "data"}
@@ -703,7 +691,7 @@ class TestAioHttpTransportCancellation:
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_session_class.side_effect = capture_session
 
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint_non_streaming,
                 cancel_after_ns=50_000_000,  # 50ms
             )
@@ -742,7 +730,7 @@ class TestAioHttpTransportCancellation:
 
             # Test with 200ms cancellation delay
             cancel_after_ns = 200_000_000  # 200ms = 0.2 seconds
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint_non_streaming, cancel_after_ns=cancel_after_ns
             )
             payload = {"test": "data"}
@@ -837,27 +825,6 @@ class TestConnectionLeaseManager:
 class TestConnectionStrategies:
     """Tests for different connection strategies."""
 
-    def _create_request_info(
-        self,
-        model_endpoint,
-        x_correlation_id="test-session-1",
-        is_final_turn=True,
-    ):
-        """Helper to create RequestInfo with defaults."""
-        return RequestInfo(
-            model_endpoint=model_endpoint,
-            turns=[],
-            endpoint_headers={},
-            endpoint_params={},
-            turn_index=0,
-            credit_num=1,
-            credit_phase=CreditPhase.PROFILING,
-            x_request_id="test-request-id",
-            x_correlation_id=x_correlation_id,
-            conversation_id="test-conversation-id",
-            is_final_turn=is_final_turn,
-        )
-
     @pytest.mark.asyncio
     async def test_pooled_strategy_uses_shared_connector(self):
         """Test that POOLED strategy uses the shared connection pool."""
@@ -873,7 +840,7 @@ class TestConnectionStrategies:
         mock_record = RequestRecord()
         transport.aiohttp_client.post_request = AsyncMock(return_value=mock_record)
 
-        request_info = self._create_request_info(model_endpoint)
+        request_info = create_request_info(model_endpoint)
         await transport.send_request(request_info, {"test": "data"})
 
         # Verify post_request was called with connector=None (uses shared pool)
@@ -898,7 +865,7 @@ class TestConnectionStrategies:
         mock_record = RequestRecord()
         transport.aiohttp_client.post_request = AsyncMock(return_value=mock_record)
 
-        request_info = self._create_request_info(model_endpoint)
+        request_info = create_request_info(model_endpoint)
         await transport.send_request(request_info, {"test": "data"})
 
         # Verify post_request was called with a connector and connector_owner=True
@@ -936,7 +903,7 @@ class TestConnectionStrategies:
         transport.aiohttp_client.post_request = AsyncMock(return_value=mock_record)
 
         # First turn - not final
-        request_info_1 = self._create_request_info(
+        request_info_1 = create_request_info(
             model_endpoint, x_correlation_id="session-1", is_final_turn=False
         )
         await transport.send_request(request_info_1, {"test": "data"})
@@ -945,7 +912,7 @@ class TestConnectionStrategies:
         first_connector = first_call_kwargs.get("connector")
 
         # Second turn - not final
-        request_info_2 = self._create_request_info(
+        request_info_2 = create_request_info(
             model_endpoint, x_correlation_id="session-1", is_final_turn=False
         )
         await transport.send_request(request_info_2, {"test": "data"})
@@ -974,7 +941,7 @@ class TestConnectionStrategies:
         transport.aiohttp_client.post_request = AsyncMock(return_value=mock_record)
 
         # First turn - not final
-        request_info_1 = self._create_request_info(
+        request_info_1 = create_request_info(
             model_endpoint, x_correlation_id="session-1", is_final_turn=False
         )
         await transport.send_request(request_info_1, {"test": "data"})
@@ -985,7 +952,7 @@ class TestConnectionStrategies:
         assert "session-1" in transport.lease_manager._leases
 
         # Final turn
-        request_info_2 = self._create_request_info(
+        request_info_2 = create_request_info(
             model_endpoint, x_correlation_id="session-1", is_final_turn=True
         )
         await transport.send_request(request_info_2, {"test": "data"})
@@ -1011,14 +978,14 @@ class TestConnectionStrategies:
         transport.aiohttp_client.post_request = AsyncMock(return_value=mock_record)
 
         # Request for conversation 1
-        request_info_1 = self._create_request_info(
+        request_info_1 = create_request_info(
             model_endpoint, x_correlation_id="session-1", is_final_turn=False
         )
         await transport.send_request(request_info_1, {"test": "data"})
         connector_1 = transport.aiohttp_client.post_request.call_args[1]["connector"]
 
         # Request for conversation 2
-        request_info_2 = self._create_request_info(
+        request_info_2 = create_request_info(
             model_endpoint, x_correlation_id="session-2", is_final_turn=False
         )
         await transport.send_request(request_info_2, {"test": "data"})
@@ -1042,11 +1009,11 @@ class TestConnectionStrategies:
         transport.aiohttp_client.post_request = AsyncMock(return_value=mock_record)
 
         # Create some leases
-        request_info_1 = self._create_request_info(
+        request_info_1 = create_request_info(
             model_endpoint, x_correlation_id="session-1", is_final_turn=False
         )
         await transport.send_request(request_info_1, {"test": "data"})
-        request_info_2 = self._create_request_info(
+        request_info_2 = create_request_info(
             model_endpoint, x_correlation_id="session-2", is_final_turn=False
         )
         await transport.send_request(request_info_2, {"test": "data"})
@@ -1078,7 +1045,7 @@ class TestConnectionStrategies:
         transport.aiohttp_client.post_request = AsyncMock(return_value=cancelled_record)
 
         # First turn - not final, but will be cancelled
-        request_info = self._create_request_info(
+        request_info = create_request_info(
             model_endpoint, x_correlation_id="session-1", is_final_turn=False
         )
         await transport.send_request(request_info, {"test": "data"})
@@ -1102,7 +1069,7 @@ class TestConnectionStrategies:
         transport.aiohttp_client.post_request = AsyncMock(return_value=success_record)
 
         # Non-final turn
-        request_info = self._create_request_info(
+        request_info = create_request_info(
             model_endpoint, x_correlation_id="session-1", is_final_turn=False
         )
         await transport.send_request(request_info, {"test": "data"})
@@ -1120,27 +1087,6 @@ class TestConnectionStrategiesStress:
     with many concurrent sessions and requests.
     """
 
-    def _create_request_info(
-        self,
-        model_endpoint,
-        x_correlation_id="test-session-1",
-        is_final_turn=True,
-    ):
-        """Helper to create RequestInfo with defaults."""
-        return RequestInfo(
-            model_endpoint=model_endpoint,
-            turns=[],
-            endpoint_headers={},
-            endpoint_params={},
-            turn_index=0,
-            credit_num=1,
-            credit_phase=CreditPhase.PROFILING,
-            x_request_id="test-request-id",
-            x_correlation_id=x_correlation_id,
-            conversation_id="test-conversation-id",
-            is_final_turn=is_final_turn,
-        )
-
     @pytest.mark.asyncio
     async def test_sticky_sessions_concurrent_sessions(self):
         """Test many concurrent user sessions each getting their own connector."""
@@ -1157,7 +1103,7 @@ class TestConnectionStrategiesStress:
         connectors_by_session: dict[str, object] = {}
 
         async def make_request(session_id: str) -> None:
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint, x_correlation_id=session_id, is_final_turn=False
             )
             await transport.send_request(request_info, {"test": "data"})
@@ -1199,7 +1145,7 @@ class TestConnectionStrategiesStress:
         connectors_used: list[object] = []
 
         async def make_turn() -> None:
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint, x_correlation_id=session_id, is_final_turn=False
             )
             await transport.send_request(request_info, {"test": "data"})
@@ -1239,7 +1185,7 @@ class TestConnectionStrategiesStress:
         }
 
         async def make_turn(session_id: str) -> None:
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint, x_correlation_id=session_id, is_final_turn=False
             )
             await transport.send_request(request_info, {"test": "data"})
@@ -1288,13 +1234,13 @@ class TestConnectionStrategiesStress:
         async def create_and_release_session(idx: int) -> None:
             session_id = f"ephemeral-{idx}"
             # First turn (not final)
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint, x_correlation_id=session_id, is_final_turn=False
             )
             await transport.send_request(request_info, {"test": "data"})
 
             # Final turn (releases lease)
-            request_info_final = self._create_request_info(
+            request_info_final = create_request_info(
                 model_endpoint, x_correlation_id=session_id, is_final_turn=True
             )
             await transport.send_request(request_info_final, {"test": "data"})
@@ -1330,12 +1276,12 @@ class TestConnectionStrategiesStress:
 
         async def complete_session(session_id: str) -> None:
             # Non-final turn
-            req1 = self._create_request_info(
+            req1 = create_request_info(
                 model_endpoint, x_correlation_id=session_id, is_final_turn=False
             )
             await transport.send_request(req1, {"test": "data"})
             # Final turn
-            req2 = self._create_request_info(
+            req2 = create_request_info(
                 model_endpoint, x_correlation_id=session_id, is_final_turn=True
             )
             await transport.send_request(req2, {"test": "data"})
@@ -1343,7 +1289,7 @@ class TestConnectionStrategiesStress:
         async def ongoing_session(session_id: str) -> None:
             # Just non-final turns
             for _ in range(3):
-                req = self._create_request_info(
+                req = create_request_info(
                     model_endpoint, x_correlation_id=session_id, is_final_turn=False
                 )
                 await transport.send_request(req, {"test": "data"})
@@ -1378,7 +1324,7 @@ class TestConnectionStrategiesStress:
         connectors_used: list[object] = []
 
         async def make_request(idx: int) -> None:
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint, x_correlation_id=f"req-{idx}"
             )
             await transport.send_request(request_info, {"test": "data"})
@@ -1413,7 +1359,7 @@ class TestConnectionStrategiesStress:
         connectors_used: list[object] = []
 
         async def make_request(idx: int) -> None:
-            request_info = self._create_request_info(
+            request_info = create_request_info(
                 model_endpoint, x_correlation_id=f"req-{idx}"
             )
             await transport.send_request(request_info, {"test": "data"})
@@ -1492,7 +1438,7 @@ class TestConnectionStrategiesStress:
             """Returns True if session completed without cancellation."""
             for turn in range(3):
                 is_final = turn == 2
-                request_info = self._create_request_info(
+                request_info = create_request_info(
                     model_endpoint, x_correlation_id=session_id, is_final_turn=is_final
                 )
                 record = await transport.send_request(request_info, {"test": "data"})
@@ -1560,7 +1506,7 @@ class TestConnectionStrategiesStress:
                     connector = transport.lease_manager.get_connector(session_id)
                     session_connectors[session_id].add(id(connector))
 
-                request_info = self._create_request_info(
+                request_info = create_request_info(
                     model_endpoint, x_correlation_id=session_id, is_final_turn=is_final
                 )
                 await transport.send_request(request_info, {"test": "data"})

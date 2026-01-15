@@ -154,7 +154,7 @@ class LoadGeneratorConfig(BaseConfig):
         float | None,
         Field(
             gt=0,
-            description="The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value."
+            description="The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. "
             "If neither are set, no warmup phase will be used.",
         ),
         CLIParameter(
@@ -261,7 +261,7 @@ class LoadGeneratorConfig(BaseConfig):
         Field(
             ge=0.0,
             description="Seconds to wait after the request is fully sent before cancelling. "
-            "A delay of 0 means 'send the full request, then immediately disconnect'."
+            "A delay of 0 means 'send the full request, then immediately disconnect'. "
             "Requires --request-cancellation-rate to be set.",
         ),
         CLIParameter(
@@ -354,8 +354,9 @@ class LoadGeneratorConfig(BaseConfig):
         float | None,
         Field(
             gt=0,
-            description="Duration in seconds to ramp request rate from 1 QPS to target. "
-            "Useful for gradual warm-up of the target system.",
+            description="Duration in seconds to ramp request rate from a proportional minimum to target. "
+            "Start rate is calculated as target * (update_interval / duration), ensuring correct "
+            "behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.",
         ),
         CLIParameter(
             name=("--request-rate-ramp-duration",),
@@ -367,7 +368,8 @@ class LoadGeneratorConfig(BaseConfig):
         float | None,
         Field(
             gt=0,
-            description="Duration in seconds to ramp warmup request rate from 1 QPS to target. "
+            description="Duration in seconds to ramp warmup request rate from a proportional minimum to target. "
+            "Start rate is calculated as target * (update_interval / duration). "
             "If not set, uses `--request-rate-ramp-duration` value.",
         ),
         CLIParameter(

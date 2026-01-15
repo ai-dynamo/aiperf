@@ -55,6 +55,7 @@ class LoopScheduler:
         """
         Args:
             loop: Event loop to use. If None, uses asyncio.get_running_loop().
+                Must be called from within an async context if loop is not provided.
             exception_handler: Called when a task raises an unhandled exception.
         """
         self._loop: asyncio.AbstractEventLoop = loop or asyncio.get_running_loop()

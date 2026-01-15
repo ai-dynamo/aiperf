@@ -104,9 +104,12 @@ class InferenceResultParser(CommunicationMixin):
         self, request_record: RequestRecord
     ) -> ParsedResponseRecord:
         """Handle an inference results message."""
+        request_info = request_record.request_info
         self.trace_or_debug(
             lambda: f"Received inference results message: {request_record}",
-            lambda: f"Received inference results for credit '{request_record.request_info.credit_num}' (id: {request_record.request_info.x_request_id})",
+            lambda: f"Received inference results for credit '{request_info.credit_num}' (id: {request_info.x_request_id})"
+            if request_info
+            else "Received inference results (no request_info)",
         )
 
         # Make sure any invalid request records are converted to error records for combined processing.

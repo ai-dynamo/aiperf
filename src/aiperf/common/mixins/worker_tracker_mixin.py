@@ -21,7 +21,7 @@ class WorkerTrackerMixin(MessageBusClientMixin):
     async def _on_worker_health(self, message: WorkerHealthMessage):
         """Update the worker stats from a worker health message."""
         worker_id = message.service_id
-        self._atomic_update_worker_stats(worker_id, message.health, message.task_stats)
+        self._update_worker_stats(worker_id, message.health, message.task_stats)
 
         await self.run_hooks(
             AIPerfHook.ON_WORKER_UPDATE,
@@ -32,16 +32,14 @@ class WorkerTrackerMixin(MessageBusClientMixin):
     @on_message(MessageType.WORKER_STATUS_SUMMARY)
     async def _on_worker_status_summary(self, message: WorkerStatusSummaryMessage):
         """Update the worker stats from a worker status summary message."""
-        self._atomic_update_worker_statuses(message.worker_statuses)
+        self._update_worker_statuses(message.worker_statuses)
 
         await self.run_hooks(
             AIPerfHook.ON_WORKER_STATUS_SUMMARY,
             worker_status_summary=message.worker_statuses,
         )
 
-    def _atomic_update_worker_statuses(
-        self, worker_statuses: dict[str, WorkerStatus]
-    ) -> None:
+    def _update_worker_statuses(self, worker_statuses: dict[str, WorkerStatus]) -> None:
         """Update the worker statuses atomically."""
         for worker_id, status in worker_statuses.items():
             if worker_id not in self._workers_stats:
@@ -49,7 +47,7 @@ class WorkerTrackerMixin(MessageBusClientMixin):
                 continue
             self._workers_stats[worker_id].status = status
 
-    def _atomic_update_worker_stats(
+    def _update_worker_stats(
         self, worker_id: str, health: ProcessHealth, task_stats: WorkerTaskStats
     ) -> None:
         """Update the worker health and task stats atomically."""

@@ -283,9 +283,10 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _handle_register_service_command(
         self, message: RegisterServiceCommand
     ) -> None:
-        """Process a registration message from a service. It will
-        add the service to the service manager and send a configure command
-        to the service.
+        """Process a registration message from a service.
+
+        Adds the service to the service manager's tracking maps (service_id_map and
+        service_map) so it can participate in lifecycle coordination.
 
         Args:
             message: The registration message to process
@@ -342,8 +343,7 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _process_credits_complete_message(
         self, message: CreditsCompleteMessage
     ) -> None:
-        """Process a credits complete message from a service. It will
-        update the state of the service with the service manager.
+        """Log receipt of credits complete message from a service.
 
         Args:
             message: The credits complete message to process

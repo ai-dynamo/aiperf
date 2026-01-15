@@ -45,6 +45,65 @@ from tests.harness.analyzers import (
 from tests.harness.utils import AIPerfCLI
 
 
+def build_user_centric_command(
+    num_users: int,
+    qps: float,
+    *,
+    num_sessions: int | None = None,
+    request_count: int | None = None,
+    turns_per_session: int = 2,
+    osl: int = 50,
+    benchmark_duration: float | None = None,
+    benchmark_grace_period: float = 0.5,
+    skip_multi_turn: bool = False,
+) -> str:
+    """Build CLI command for user-centric rate tests.
+
+    Unified helper that supports all stop conditions:
+    - num_sessions: Stop after completing N sessions
+    - request_count: Stop after sending N requests
+    - benchmark_duration: Stop after N seconds
+
+    Args:
+        num_users: Number of concurrent user slots
+        qps: User-centric QPS (--user-centric-rate)
+        num_sessions: Session count stop condition (optional)
+        request_count: Request count stop condition (optional)
+        turns_per_session: Turns per session (min 2 for user-centric)
+        osl: Output sequence length
+        benchmark_duration: Duration stop condition (optional)
+        benchmark_grace_period: Grace period after duration
+        skip_multi_turn: Skip multi-turn args (for validation tests)
+    """
+    cmd = f"""
+        aiperf profile \
+            --model {defaults.model} \
+            --streaming \
+            --osl {osl} \
+            --extra-inputs ignore_eos:true \
+            --ui {defaults.ui} \
+            --num-users {num_users} \
+            --user-centric-rate {qps}
+    """
+
+    # User-centric mode requires multi-turn (unless testing validation)
+    if not skip_multi_turn:
+        turns = max(turns_per_session, 2)
+        cmd += f" --session-turns-mean {turns} --session-turns-stddev 0"
+
+    if num_sessions is not None:
+        cmd += f" --num-sessions {num_sessions}"
+
+    if request_count is not None:
+        cmd += f" --request-count {request_count}"
+
+    if benchmark_duration is not None:
+        cmd += f" --benchmark-duration {benchmark_duration}"
+        cmd += f" --benchmark-grace-period {benchmark_grace_period}"
+
+    return cmd
+
+
 @pytest.mark.component_integration
 class TestUserCentricRateBasic:
     """Basic functionality tests for user-centric rate timing."""
@@ -522,44 +581,6 @@ class TestUserCentricRateSessionCountStop:
     - Long duration but sessions should still restrict execution
     """
 
-    def _build_session_count_command(
-        self,
-        num_users: int,
-        num_sessions: int,
-        qps: float,
-        turns_per_session: int = 2,  # Minimum 2 turns for user-centric mode
-        osl: int = 50,
-        benchmark_duration: float | None = None,
-    ) -> str:
-        """Build user-centric command with session count stop condition.
-
-        Unlike build_timing_command(), this allows specifying num_users and
-        num_sessions independently, and optionally omits --benchmark-duration
-        to test session-count-only stopping.
-        """
-        from tests.component_integration.timing.conftest import defaults
-
-        # User-centric mode requires multi-turn conversations
-        turns = max(turns_per_session, 2)
-
-        cmd = f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --osl {osl} \
-                --extra-inputs ignore_eos:true \
-                --ui {defaults.ui} \
-                --num-users {num_users} \
-                --num-sessions {num_sessions} \
-                --user-centric-rate {qps} \
-                --session-turns-mean {turns} --session-turns-stddev 0
-        """
-
-        if benchmark_duration is not None:
-            cmd += f" --benchmark-duration {benchmark_duration} --benchmark-grace-period 0.5"
-
-        return cmd
-
     def test_session_count_only_stop_condition(self, cli: AIPerfCLI):
         """Test user-centric mode with --num-sessions as the only stop condition.
 
@@ -573,10 +594,10 @@ class TestUserCentricRateSessionCountStop:
         num_sessions = 20
         qps = 100.0
 
-        cmd = self._build_session_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
-            num_sessions=num_sessions,
             qps=qps,
+            num_sessions=num_sessions,
         )
         result = cli.run_sync(cmd, timeout=60.0)
 
@@ -596,10 +617,10 @@ class TestUserCentricRateSessionCountStop:
         num_sessions = 30
         qps = 150.0
 
-        cmd = self._build_session_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
-            num_sessions=num_sessions,
             qps=qps,
+            num_sessions=num_sessions,
             benchmark_duration=60.0,  # Long duration that won't be reached
         )
         result = cli.run_sync(cmd, timeout=45.0)
@@ -621,7 +642,7 @@ class TestUserCentricRateSessionCountStop:
         num_sessions = 15  # 1.5x users
         qps = 100.0
 
-        cmd = self._build_session_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             num_sessions=num_sessions,
             qps=qps,
@@ -644,7 +665,7 @@ class TestUserCentricRateSessionCountStop:
         num_sessions = 20  # 2x users
         qps = 100.0
 
-        cmd = self._build_session_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             num_sessions=num_sessions,
             qps=qps,
@@ -670,7 +691,7 @@ class TestUserCentricRateSessionCountStop:
         turns_per_session = 3
         qps = 100.0
 
-        cmd = self._build_session_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             num_sessions=num_sessions,
             qps=qps,
@@ -697,7 +718,7 @@ class TestUserCentricRateSessionCountStop:
         num_sessions = 10
         qps = 100.0
 
-        cmd = self._build_session_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             num_sessions=num_sessions,
             qps=qps,
@@ -719,7 +740,7 @@ class TestUserCentricRateSessionCountStop:
         num_sessions = 25  # 5x users
         qps = 100.0
 
-        cmd = self._build_session_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             num_sessions=num_sessions,
             qps=qps,
@@ -748,43 +769,6 @@ class TestUserCentricRateRequestCountStop:
     can stop execution mid-session.
     """
 
-    def _build_request_count_command(
-        self,
-        num_users: int,
-        request_count: int,
-        qps: float,
-        turns_per_session: int = 2,  # Minimum 2 turns for user-centric mode
-        osl: int = 50,
-        benchmark_duration: float | None = None,
-    ) -> str:
-        """Build user-centric command with request count stop condition.
-
-        Uses --request-count (aka --num-requests) as the stop condition
-        instead of --num-sessions or --benchmark-duration.
-        """
-        from tests.component_integration.timing.conftest import defaults
-
-        # User-centric mode requires multi-turn conversations
-        turns = max(turns_per_session, 2)
-
-        cmd = f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --osl {osl} \
-                --extra-inputs ignore_eos:true \
-                --ui {defaults.ui} \
-                --num-users {num_users} \
-                --request-count {request_count} \
-                --user-centric-rate {qps} \
-                --session-turns-mean {turns} --session-turns-stddev 0
-        """
-
-        if benchmark_duration is not None:
-            cmd += f" --benchmark-duration {benchmark_duration} --benchmark-grace-period 0.5"
-
-        return cmd
-
     def test_request_count_only_stop_condition(self, cli: AIPerfCLI):
         """Test user-centric mode with --request-count as the only stop condition.
 
@@ -795,7 +779,7 @@ class TestUserCentricRateRequestCountStop:
         request_count = 25
         qps = 100.0
 
-        cmd = self._build_request_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             request_count=request_count,
             qps=qps,
@@ -815,7 +799,7 @@ class TestUserCentricRateRequestCountStop:
         request_count = 40
         qps = 150.0
 
-        cmd = self._build_request_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             request_count=request_count,
             qps=qps,
@@ -837,7 +821,7 @@ class TestUserCentricRateRequestCountStop:
         request_count = 20  # Minimum valid: one request per user
         qps = 100.0
 
-        cmd = self._build_request_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             request_count=request_count,
             qps=qps,
@@ -858,7 +842,7 @@ class TestUserCentricRateRequestCountStop:
         request_count = 30  # Exactly 10 sessions × 3 turns
         qps = 100.0
 
-        cmd = self._build_request_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             request_count=request_count,
             qps=qps,
@@ -883,7 +867,7 @@ class TestUserCentricRateRequestCountStop:
         request_count = 25  # Less than 10 sessions × 3 turns = 30
         qps = 100.0
 
-        cmd = self._build_request_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             request_count=request_count,
             qps=qps,
@@ -909,7 +893,7 @@ class TestUserCentricRateRequestCountStop:
         request_count = 15  # 1.5x users
         qps = 100.0
 
-        cmd = self._build_request_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             request_count=request_count,
             qps=qps,
@@ -931,7 +915,7 @@ class TestUserCentricRateRequestCountStop:
         request_count = 50  # 10x users
         qps = 100.0
 
-        cmd = self._build_request_count_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             request_count=request_count,
             qps=qps,
@@ -954,41 +938,6 @@ class TestUserCentricRateValidationErrors:
     - --request-count < --num-users (each user needs at least one request)
     """
 
-    def _build_validation_test_command(
-        self,
-        num_users: int,
-        qps: float,
-        num_sessions: int | None = None,
-        request_count: int | None = None,
-        osl: int = 50,
-        skip_multi_turn: bool = False,  # For testing single-turn validation error
-    ) -> str:
-        """Build command for validation testing."""
-        from tests.component_integration.timing.conftest import defaults
-
-        cmd = f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --osl {osl} \
-                --extra-inputs ignore_eos:true \
-                --ui {defaults.ui} \
-                --num-users {num_users} \
-                --user-centric-rate {qps}
-        """
-
-        # User-centric mode requires multi-turn (unless we're testing that validation)
-        if not skip_multi_turn:
-            cmd += " --session-turns-mean 2 --session-turns-stddev 0"
-
-        if num_sessions is not None:
-            cmd += f" --num-sessions {num_sessions}"
-
-        if request_count is not None:
-            cmd += f" --request-count {request_count}"
-
-        return cmd
-
     def test_num_sessions_less_than_num_users_fails(self, cli: AIPerfCLI):
         """Verify CLI fails when --num-sessions < --num-users.
 
@@ -997,7 +946,7 @@ class TestUserCentricRateValidationErrors:
         num_users = 20
         num_sessions = 10  # Invalid: less than num_users
 
-        cmd = self._build_validation_test_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             qps=100.0,
             num_sessions=num_sessions,
@@ -1021,7 +970,7 @@ class TestUserCentricRateValidationErrors:
         num_users = 20
         request_count = 15  # Invalid: less than num_users
 
-        cmd = self._build_validation_test_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             qps=100.0,
             request_count=request_count,
@@ -1042,7 +991,7 @@ class TestUserCentricRateValidationErrors:
         num_users = 10
         num_sessions = 10  # Valid: exactly one session per user
 
-        cmd = self._build_validation_test_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             qps=100.0,
             num_sessions=num_sessions,
@@ -1065,7 +1014,7 @@ class TestUserCentricRateValidationErrors:
         num_users = 10
         request_count = 10  # Valid: exactly one request per user
 
-        cmd = self._build_validation_test_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             qps=100.0,
             request_count=request_count,
@@ -1088,7 +1037,7 @@ class TestUserCentricRateValidationErrors:
         self, cli: AIPerfCLI, num_users: int, num_sessions: int
     ):
         """Verify various invalid num_sessions configurations fail."""
-        cmd = self._build_validation_test_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             qps=100.0,
             num_sessions=num_sessions,
@@ -1112,7 +1061,7 @@ class TestUserCentricRateValidationErrors:
         self, cli: AIPerfCLI, num_users: int, request_count: int
     ):
         """Verify various invalid request_count configurations fail."""
-        cmd = self._build_validation_test_command(
+        cmd = build_user_centric_command(
             num_users=num_users,
             qps=100.0,
             request_count=request_count,
@@ -1130,7 +1079,7 @@ class TestUserCentricRateValidationErrors:
         For single-turn workloads, it degenerates to request-rate mode with extra overhead,
         so we reject it at config validation time to guide users to the right mode.
         """
-        cmd = self._build_validation_test_command(
+        cmd = build_user_centric_command(
             num_users=10,
             qps=100.0,
             num_sessions=10,

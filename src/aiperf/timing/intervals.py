@@ -252,4 +252,4 @@ class ConcurrencyBurstIntervalGenerator:
 
     def next_interval(self) -> float:
         """Return zero (no delay between credits)."""
-        return 0
+        return 0.0

@@ -27,6 +27,8 @@ Naming Convention:
     All metrics use http_req_ prefix to match k6 naming conventions.
 """
 
+from typing import ClassVar
+
 from aiperf.common.enums import (
     GenericMetricUnit,
     MetricFlags,
@@ -556,7 +558,7 @@ class HttpConnectionOverheadMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
-    required_metrics = {
+    required_metrics: ClassVar[set[str]] = {
         "http_req_blocked",
         "http_req_dns_lookup",
         "http_req_connecting",

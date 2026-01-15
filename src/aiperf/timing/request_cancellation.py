@@ -136,5 +136,5 @@ class RequestCancellationSimulator:
 
     @property
     def is_cancellation_enabled(self) -> bool:
-        """True if request_cancellation_rate > 0."""
+        """True if config.rate is set and non-zero."""
         return self._is_cancellation_enabled

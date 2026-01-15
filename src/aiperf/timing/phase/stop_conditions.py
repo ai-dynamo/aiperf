@@ -57,9 +57,12 @@ class StopCondition(ABC):
         pass
 
     def can_start_new_session(self) -> bool:
-        """True if phase can start a NEW session. This is checked in addition to can_send_any_turn() on every first turn.
+        """True if phase can start a NEW session.
 
-        By default, we return True because can_send_any_turn() is always checked first, so this is a no-op.
+        Checked in addition to can_send_any_turn() on every first turn.
+        Default returns True (no additional restriction). Subclasses like
+        SessionCountStopCondition override to prevent new sessions while
+        still allowing continuation turns from existing sessions.
         """
         return True
 
@@ -92,7 +95,7 @@ class RequestCountStopCondition(StopCondition):
         return config.total_expected_requests is not None
 
     def can_send_any_turn(self) -> bool:
-        """Returns True if the request count has not been reached."""
+        """Returns True if the request count limit has not been reached."""
         return self._counter.requests_sent < self._config.total_expected_requests
 
 
@@ -105,14 +108,22 @@ class SessionCountStopCondition(StopCondition):
         return config.expected_num_sessions is not None
 
     def can_send_any_turn(self) -> bool:
-        """Returns True if there are more sessions to send, or if the current sessions have not sent all their turns."""
+        """Returns True if more turns can be sent.
+
+        True when either: session limit not reached (can start new sessions),
+        OR already-started sessions still have unsent turns remaining.
+        """
         return (
             self._counter.sent_sessions < self._config.expected_num_sessions
             or self._counter.requests_sent < self._counter.total_session_turns
         )
 
     def can_start_new_session(self) -> bool:
-        """Returns True if the session count limit has not been reached."""
+        """Returns True if new sessions can be started (limit not reached).
+
+        More restrictive than can_send_any_turn(): prevents starting NEW sessions
+        but can_send_any_turn() may still allow turns from already-started sessions.
+        """
         return self._counter.sent_sessions < self._config.expected_num_sessions
 
 
@@ -126,7 +137,8 @@ class DurationStopCondition(StopCondition):
 
     def can_send_any_turn(self) -> bool:
         """Returns True if the duration has not been reached."""
-        return self._lifecycle.time_left_in_seconds() > 0
+        time_left = self._lifecycle.time_left_in_seconds()
+        return time_left is not None and time_left > 0
 
 
 # NOTE: The order of these classes will determine the order that the stop conditions are checked in.

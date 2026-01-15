@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 _logger = AIPerfLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class PhaseCallbackContext:
     """Context for handling callbacks for a specific phase.
 

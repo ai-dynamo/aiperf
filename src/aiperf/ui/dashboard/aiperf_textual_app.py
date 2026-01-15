@@ -228,11 +228,13 @@ class AIPerfTextualApp(App):
                 self.progress_dashboard.on_warmup_progress(warmup_stats)
 
         if self.progress_header:
-            self.progress_header.update_progress(
-                header="Warmup",
-                progress=warmup_stats.requests_progress_percent,
-                total=100,
-            )
+            progress = warmup_stats.requests_progress_percent
+            if progress is not None:
+                self.progress_header.update_progress(
+                    header="Warmup",
+                    progress=progress,
+                    total=100,
+                )
 
     async def on_profiling_progress(self, profiling_stats: CombinedPhaseStats) -> None:
         """Forward requests phase progress updates to the Textual App."""
@@ -243,11 +245,13 @@ class AIPerfTextualApp(App):
             async with self.progress_dashboard.batch():
                 self.progress_dashboard.on_profiling_progress(profiling_stats)
         if self.progress_header:
-            self.progress_header.update_progress(
-                header="Profiling",
-                progress=profiling_stats.requests_progress_percent,
-                total=100,
-            )
+            progress = profiling_stats.requests_progress_percent
+            if progress is not None:
+                self.progress_header.update_progress(
+                    header="Profiling",
+                    progress=progress,
+                    total=100,
+                )
 
     async def on_records_progress(self, records_stats: CombinedPhaseStats) -> None:
         """Forward records progress updates to the Textual App."""

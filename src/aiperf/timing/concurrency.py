@@ -221,8 +221,9 @@ class GlobalPhaseConcurrencyLimiter:
 
         Args:
             phase: The phase to configure
-            limit: Maximum concurrent slots for this phase
-                If None, concurrency limiting is disabled for this phase.
+            limit: Maximum concurrent slots for this phase.
+                If None, concurrency limiting is disabled globally for this limiter
+                (not just for this phase).
         """
         if limit is None:
             self._enabled = False
@@ -416,16 +417,16 @@ class ConcurrencyManager:
     ) -> None:
         """Configure concurrency limits for a new phase.
 
-        Must be called before acquiring slots for a phase. Updates session
-        and/or prefill limiters if they are enabled and the
-        concurrency and prefill_concurrency are not None.
+        Must be called before acquiring slots for a phase. Configures both
+        session and prefill limiters unconditionally - each limiter internally
+        enables/disables based on whether the limit is None.
 
         Args:
             phase: The phase to configure
-            concurrency: Maximum concurrent session slots for this phase
-                If None, concurrency limiting is disabled for this phase.
-            prefill_concurrency: Maximum concurrent prefill slots for this phase
-                If None, prefill concurrency limiting is disabled for this phase.
+            concurrency: Maximum concurrent session slots for this phase.
+                If None, session concurrency limiting is disabled globally.
+            prefill_concurrency: Maximum concurrent prefill slots for this phase.
+                If None, prefill concurrency limiting is disabled globally.
         """
         self._session_limiter.configure_for_phase(phase, concurrency)
         self._prefill_limiter.configure_for_phase(phase, prefill_concurrency)

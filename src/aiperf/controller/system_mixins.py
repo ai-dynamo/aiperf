@@ -16,8 +16,7 @@ class SignalHandlerMixin(AIPerfLoggerMixin):
         super().__init__(**kwargs)
 
     def setup_signal_handlers(self, callback: Callable[[int], Coroutine]) -> None:
-        """This method will set up signal handlers for the SIGTERM and SIGINT signals
-        in order to trigger a graceful shutdown of the service.
+        """Set up signal handler for the SIGINT signal to trigger graceful shutdown.
 
         Args:
             callback: The callback to call when a signal is received

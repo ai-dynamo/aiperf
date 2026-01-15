@@ -132,7 +132,10 @@ class RampStrategyProtocol(Protocol):
     def next_step(
         self, current: float, elapsed_sec: float
     ) -> tuple[float, float] | None:
-        """Return (delay, next_value) or None if complete. For discrete stepping."""
+        """Return (delay_sec, next_value) or None if ramp complete. For discrete stepping.
+
+        Returns the next value to apply and how long to wait before applying it.
+        """
         ...
 
     def value_at(self, elapsed_sec: float) -> float | None:
@@ -300,8 +303,9 @@ class Ramper:
 class BaseRampStrategy(ABC):
     """Base class with common ramp logic. Config computed once in __init__.
 
-    Subclasses override _compute_next_value for discrete mode and optionally
-    _apply_curve to modify the time-to-progress mapping.
+    Subclasses override _compute_next_value for discrete mode and optionally:
+    - _apply_curve: modify time-to-progress mapping for non-linear curves
+    - _time_to_value_progress: inverse of _apply_curve for continuous sampling
     """
 
     def __init__(self, config: RampConfig) -> None:
@@ -387,8 +391,9 @@ class BaseRampStrategy(ABC):
     def _time_to_value_progress(self, time_progress: float) -> float:
         """Transform time progress [0,1] to value progress [0,1]. Default: linear.
 
-        This is the inverse of _apply_curve for continuous sampling mode.
-        Override in subclasses that have non-linear curves.
+        Used by continuous sampling mode to compute value at any point in time.
+        For non-linear strategies, this must be the mathematical inverse of
+        _apply_curve. Override in subclasses that have non-linear curves.
         """
         return time_progress
 

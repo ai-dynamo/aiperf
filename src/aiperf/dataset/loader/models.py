@@ -39,10 +39,10 @@ class SingleTurn(AIPerfBaseModel):
         None,
         description="List of audio strings or Audio objects format",
     )
-    timestamp: int | None = Field(
+    timestamp: int | float | None = Field(
         default=None, description="Timestamp of the turn in milliseconds."
     )
-    delay: int | None = Field(
+    delay: int | float | None = Field(
         default=None,
         description="Amount of milliseconds to wait before sending the turn.",
     )
@@ -183,11 +183,11 @@ class MooncakeTrace(AIPerfBaseModel):
     hash_ids: list[int] | None = Field(None, description="The hash ids of a request")
     timestamp: int | float | None = Field(
         None,
-        description="The timestamp of a request in milliseconds. Supports floating point by rounding to the nearest millisecond.",
+        description="The timestamp of a request in milliseconds. Supports floating point, but scheduling accuracy is at the millisecond level.",
     )
     delay: int | float | None = Field(
         None,
-        description="Amount of milliseconds to wait before sending the turn. Supports floating point by rounding to the nearest millisecond.",
+        description="Amount of milliseconds to wait before sending the turn. Supports floating point, but scheduling accuracy is at the millisecond level.",
     )
     session_id: str | None = Field(
         None, description="Unique identifier for the conversation session"

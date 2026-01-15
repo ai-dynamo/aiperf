@@ -79,9 +79,9 @@ def create_aiohttp_trace_config(
         trace_data: The AioHttpTraceData instance to populate.
         on_request_sent_event: Optional asyncio.Event to set when the full request
             (headers + body) is sent. Useful for request cancellation timing.
-        expected_body_size: Expected size of request body in bytes. If provided along
-            with on_request_sent_event, the event will be triggered when this many
-            bytes have been sent via on_request_chunk_sent.
+        expected_request_body_size: Expected size of request body in bytes. If provided
+            along with on_request_sent_event, the event will be triggered when this
+            many bytes have been sent via on_request_chunk_sent.
 
     Returns:
         A TraceConfig to attach to an aiohttp ClientSession.

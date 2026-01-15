@@ -456,7 +456,7 @@ The maximum number of warmup requests to send before benchmarking. If not set an
 
 #### `--warmup-duration` `<float>`
 
-The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value.If neither are set, no warmup phase will be used.
+The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. If neither are set, no warmup phase will be used.
 <br>_Constraints: > 0_
 
 #### `--num-warmup-sessions` `<int>`
@@ -494,7 +494,7 @@ Percentage of requests to cancel (0.0 - 100.0). Tests how inference servers hand
 
 #### `--request-cancellation-delay` `<float>`
 
-Seconds to wait after the request is fully sent before cancelling. A delay of 0 means 'send the full request, then immediately disconnect'.Requires --request-cancellation-rate to be set.
+Seconds to wait after the request is fully sent before cancelling. A delay of 0 means 'send the full request, then immediately disconnect'. Requires --request-cancellation-rate to be set.
 <br>_Constraints: ≥ 0.0_
 <br>_Default: `0.0`_
 
@@ -530,12 +530,12 @@ Duration in seconds to ramp warmup prefill concurrency from 1 to target. If not 
 
 #### `--request-rate-ramp-duration` `<float>`
 
-Duration in seconds to ramp request rate from 1 QPS to target. Useful for gradual warm-up of the target system.
+Duration in seconds to ramp request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration), ensuring correct behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.
 <br>_Constraints: > 0_
 
 #### `--warmup-request-rate-ramp-duration` `<float>`
 
-Duration in seconds to ramp warmup request rate from 1 QPS to target. If not set, uses `--request-rate-ramp-duration` value.
+Duration in seconds to ramp warmup request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration). If not set, uses `--request-rate-ramp-duration` value.
 <br>_Constraints: > 0_
 
 ## Telemetry Options

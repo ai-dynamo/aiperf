@@ -131,6 +131,9 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         maintaining throughput (preventing bursts) over preserving the exact
         arrival distribution.
         """
+        if self._lifecycle.started_at_perf_ns is None:
+            raise RuntimeError("started_at_perf_ns is not set in the lifecycle")
+
         perf_start = self._lifecycle.started_at_perf_ns / NANOS_PER_SECOND
         next_target_perf = perf_start + self._rate_generator.next_interval()
 

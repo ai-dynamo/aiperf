@@ -282,7 +282,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             conversations = self._load_synthetic_dataset()
 
         self.dataset = {conv.session_id: conv for conv in conversations}
-        self._session_ids_cache = [
+        self._conversation_ids_cache = [
             conversation.session_id for conversation in conversations
         ]
 

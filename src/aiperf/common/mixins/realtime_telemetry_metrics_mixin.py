@@ -24,6 +24,7 @@ class RealtimeTelemetryMetricsMixin(MessageBusClientMixin):
         """Update the telemetry metrics from a real-time telemetry metrics message.
 
         Lock-free because self._telemetry_metrics is atomically replaced.
+        Operations are atomic only when used in a single thread asyncio context.
         """
         self.debug(
             f"Mixin received telemetry message with {len(message.metrics)} metrics, triggering hook"

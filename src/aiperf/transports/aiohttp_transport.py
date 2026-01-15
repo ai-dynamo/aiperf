@@ -235,6 +235,9 @@ class AioHttpTransport(BaseTransport):
         headers = None
         reuse_strategy = self.model_endpoint.endpoint.connection_reuse_strategy
 
+        # Capture lease_manager reference to avoid race with concurrent shutdown
+        lease_manager = self.lease_manager
+
         try:
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
@@ -252,13 +255,13 @@ class AioHttpTransport(BaseTransport):
                     connector_owner = True
 
                 case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
-                    if self.lease_manager is None:
+                    if lease_manager is None:
                         raise NotInitializedError(
                             "ConnectionLeaseManager not initialized for sticky-user-sessions strategy"
                         )
                     # Use x_correlation_id as the session key - it's the shared ID
                     # for all turns in a multi-turn conversation.
-                    connector = self.lease_manager.get_connector(
+                    connector = lease_manager.get_connector(
                         request_info.x_correlation_id
                     )
                     # We are going to manage the connector lifecycle ourselves, so we don't want aiohttp to close it.
@@ -290,7 +293,7 @@ class AioHttpTransport(BaseTransport):
             # or the request was cancelled (connection is now dirty/closed), or there was an error.
             if (
                 reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
-                and self.lease_manager is not None
+                and lease_manager is not None
             ):
                 should_release = (
                     request_info.is_final_turn
@@ -298,18 +301,16 @@ class AioHttpTransport(BaseTransport):
                     or record.error is not None
                 )
                 if should_release:
-                    await self.lease_manager.release_lease(
-                        request_info.x_correlation_id
-                    )
+                    await lease_manager.release_lease(request_info.x_correlation_id)
 
         except asyncio.CancelledError:
             # Task was cancelled externally (e.g., credit cancellation from router)
             # Release the lease since the connection is now dirty/unusable
             if (
                 reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
-                and self.lease_manager is not None
+                and lease_manager is not None
             ):
-                await self.lease_manager.release_lease(request_info.x_correlation_id)
+                await lease_manager.release_lease(request_info.x_correlation_id)
             raise
         except Exception as e:
             record = RequestRecord(
@@ -322,8 +323,8 @@ class AioHttpTransport(BaseTransport):
             # Release lease on exception - connection is likely broken
             if (
                 reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
-                and self.lease_manager is not None
+                and lease_manager is not None
             ):
-                await self.lease_manager.release_lease(request_info.x_correlation_id)
+                await lease_manager.release_lease(request_info.x_correlation_id)
 
         return record
