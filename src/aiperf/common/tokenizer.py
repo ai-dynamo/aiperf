@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
@@ -60,7 +60,10 @@ class Tokenizer:
                 )
 
         except Exception as e:
-            raise InitializationError(e) from e
+            raise InitializationError.from_tokenizer_error(
+                original_error=e,
+                tokenizer_name=name,
+            ) from e
         return tokenizer_cls
 
     def __call__(self, text, **kwargs) -> "BatchEncoding":
