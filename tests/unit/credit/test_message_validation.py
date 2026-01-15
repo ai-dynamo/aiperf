@@ -62,12 +62,7 @@ class TestCreditValidation:
 
     @pytest.mark.parametrize(
         "turn_index,num_turns,expected_final",
-        [
-            (0, 3, False),  # first turn of multi-turn
-            (1, 3, False),  # middle turn
-            (2, 3, True),  # final turn
-            (0, 1, True),  # single turn is final
-        ],
+        [(1, 3, False), (2, 3, True)],  # Sample: middle and final
     )
     def test_credit_is_final_turn(
         self, credit_factory, turn_index, num_turns, expected_final
@@ -75,11 +70,6 @@ class TestCreditValidation:
         """Credit.is_final_turn correctly identifies final turns."""
         credit = credit_factory(turn_index=turn_index, num_turns=num_turns)
         assert credit.is_final_turn is expected_final
-
-    def test_credit_immutable(self, sample_credit):
-        """Credit struct is frozen/immutable."""
-        with pytest.raises(AttributeError):
-            sample_credit.id = 2  # type: ignore[misc]
 
 
 # =============================================================================

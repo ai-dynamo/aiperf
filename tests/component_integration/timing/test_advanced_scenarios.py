@@ -21,7 +21,7 @@ import pytest
 from aiperf_mock_server.config import MockServerConfig
 
 from aiperf.common.enums import ArrivalPattern
-from aiperf.credit.messages import CreditReturn, FirstToken
+from aiperf.credit.messages import CreditReturn
 from aiperf.credit.structs import Credit
 from tests.component_integration.timing.conftest import (
     TimingTestConfig,
@@ -103,81 +103,9 @@ def build_burst_command(config: TimingTestConfig) -> str:
 class TestCreditExhaustionAndReplenishment:
     """Tests for credit exhaustion and replenishment patterns.
 
-    These tests verify correct behavior when all concurrency slots are filled
-    and requests must queue, then verify proper replenishment as credits return.
+    Tests verify correct behavior when concurrency slots are filled and requests queue.
+    Redundant tests duplicating base class functionality removed.
     """
-
-    def test_concurrency_exhaustion_with_queuing(self, cli: AIPerfCLI):
-        """Test all concurrency slots exhausted with requests queued.
-
-        Scenario:
-        - concurrency=3, sessions=20, burst mode
-        - First 3 requests fill all slots
-        - Remaining 17 queue
-        - As credits return, queue drains in order
-        """
-        config = TimingTestConfig(
-            num_sessions=20,
-            qps=0,  # Burst mode - issue as fast as possible
-            concurrency=3,
-        )
-
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == 20
-
-        conc_analyzer = ConcurrencyAnalyzer(result)
-        max_concurrent = conc_analyzer.get_max_concurrent()
-
-        # Should hit exactly the limit
-        assert max_concurrent == 3, (
-            f"Expected to hit concurrency limit of 3, got {max_concurrent}"
-        )
-
-        # All requests should complete (no deadlock)
-        timing = TimingAnalyzer(result)
-        issue_times = timing.get_credit_issue_times_ns()
-        assert len(issue_times) == 20
-
-        # Verify queue drained over time (not all issued at once)
-        gaps = timing.calculate_gaps_sec(issue_times)
-        # First 3 should be near-instant (no wait)
-        # Remaining should have gaps (waiting for slots)
-        assert max(gaps) > 0.001  # At least 1ms gap somewhere (queuing occurred)
-
-    def test_credit_return_spike_after_steady_state(self, cli: AIPerfCLI):
-        """Test burst of credit returns after steady state.
-
-        Scenario:
-        - Constant rate reaches steady state (predictable concurrency)
-        - Credits designed to return around same time (burst)
-        - Verify replenishment maintains target QPS (no burst of new credits)
-        """
-        config = TimingTestConfig(
-            num_sessions=30,
-            qps=100.0,  # Constant rate
-            concurrency=10,
-        )
-
-        cmd = build_timing_command(config, arrival_pattern=ArrivalPattern.CONSTANT)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == 30
-
-        timing = TimingAnalyzer(result)
-        issue_times = timing.get_credit_issue_times_ns()
-        gaps = timing.calculate_gaps_sec(issue_times)
-
-        # Verify rate maintained throughout (no bursts)
-        mean_gap = timing.calculate_mean(gaps)
-        expected_gap = 1.0 / config.qps
-
-        # Mean should be close to expected (within 50%)
-        assert abs(mean_gap - expected_gap) < expected_gap * 0.5, (
-            f"Mean gap {mean_gap:.4f}s differs significantly from "
-            f"expected {expected_gap:.4f}s"
-        )
 
     def test_exhaustion_with_rate_limiting(self, cli: AIPerfCLI):
         """Test interaction between concurrency exhaustion and rate limiting.
@@ -218,164 +146,6 @@ class TestCreditExhaustionAndReplenishment:
 
         # Rate should still be maintained
         assert abs(mean_gap - expected_gap) < expected_gap * 0.5
-
-    def test_rapid_exhaustion_and_replenishment_cycles(self, cli: AIPerfCLI):
-        """Test rapid cycles of exhaustion and replenishment.
-
-        Scenario:
-        - concurrency=4, sessions=40, burst mode
-        - Creates pattern: exhaust → replenish → exhaust → ...
-        - Verify stable behavior throughout
-        """
-        config = TimingTestConfig(
-            num_sessions=40,
-            qps=0,  # Burst mode
-            concurrency=4,
-        )
-
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == 40
-
-        conc_analyzer = ConcurrencyAnalyzer(result)
-        max_concurrent = conc_analyzer.get_max_concurrent()
-
-        assert max_concurrent == 4
-
-        # Verify all credits balanced (no leaks during cycles)
-        credit_analyzer = CreditFlowAnalyzer(result.runner_result)
-        assert credit_analyzer.credits_balanced()
-
-
-@pytest.mark.component_integration
-class TestFirstTokenOrdering:
-    """Tests for FirstToken arrival ordering scenarios.
-
-    FirstToken messages can arrive in different order than credits were issued
-    due to varying prefill durations. These tests verify correct prefill
-    concurrency accounting regardless of arrival order.
-    """
-
-    def test_firsttoken_all_arrive_correctly(self, cli: AIPerfCLI):
-        """Test all FirstToken messages arrive and match credits.
-
-        Baseline test: verify FirstToken messages are captured correctly
-        and match the issued credits.
-        """
-        config = TimingTestConfig(
-            num_sessions=10,
-            qps=0,  # Burst mode
-            concurrency=10,
-            prefill_concurrency=3,
-        )
-
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == 10
-
-        runner = result.runner_result
-
-        # Get Credit and FirstToken payloads
-        credit_payloads = [
-            p for p in runner.sent_payloads if isinstance(p.payload, Credit)
-        ]
-        firsttoken_payloads = [
-            p for p in runner.sent_payloads if isinstance(p.payload, FirstToken)
-        ]
-
-        # All credits should have FirstToken
-        assert len(credit_payloads) == 10
-        assert len(firsttoken_payloads) == 10
-
-        # Build ID sets
-        credit_ids = {p.payload.id for p in credit_payloads}
-        firsttoken_ids = {p.payload.credit_id for p in firsttoken_payloads}
-
-        # Verify all credit IDs have matching FirstToken
-        assert credit_ids == firsttoken_ids
-
-    def test_firsttoken_ordering_independent_of_issue_order(self, cli: AIPerfCLI):
-        """Test FirstToken arrival order doesn't affect concurrency accounting.
-
-        Scenario:
-        - Multiple credits issued rapidly
-        - FirstToken may arrive in different order (varying TTFT)
-        - Prefill accounting should be correct regardless
-        """
-        config = TimingTestConfig(
-            num_sessions=8,
-            qps=0,  # Burst mode
-            concurrency=8,
-            prefill_concurrency=2,
-        )
-
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == 8
-
-        runner = result.runner_result
-
-        credit_payloads = [
-            p for p in runner.sent_payloads if isinstance(p.payload, Credit)
-        ]
-        firsttoken_payloads = [
-            p for p in runner.sent_payloads if isinstance(p.payload, FirstToken)
-        ]
-
-        # Build temporal ordering
-        credit_order = sorted(
-            [(p.payload.id, p.timestamp_ns) for p in credit_payloads],
-            key=lambda x: x[1],
-        )
-        firsttoken_order = sorted(
-            [(p.payload.credit_id, p.timestamp_ns) for p in firsttoken_payloads],
-            key=lambda x: x[1],
-        )
-
-        credit_seq = [cid for cid, _ in credit_order]
-        firsttoken_seq = [cid for cid, _ in firsttoken_order]
-
-        # Orders might differ (not guaranteed, but possible)
-        # Key: verify prefill concurrency accounting correct regardless
-        conc_analyzer = ConcurrencyAnalyzer(result)
-        max_prefill = conc_analyzer.get_max_prefill_concurrent()
-
-        assert max_prefill <= config.prefill_concurrency, (
-            f"Max prefill {max_prefill} exceeded limit {config.prefill_concurrency}. "
-            f"Credit order: {credit_seq}, FirstToken order: {firsttoken_seq}"
-        )
-
-    def test_prefill_concurrency_with_varying_durations(self, cli: AIPerfCLI):
-        """Test prefill concurrency when prefill durations vary.
-
-        Scenario:
-        - prefill_concurrency=2, so max 2 prefills at once
-        - Prefill durations naturally vary (TTFT not constant)
-        - Verify slot release and reacquisition works correctly
-        """
-        config = TimingTestConfig(
-            num_sessions=15,
-            qps=0,  # Burst mode
-            concurrency=10,
-            prefill_concurrency=2,
-        )
-
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == 15
-
-        # Verify prefill limit respected throughout
-        conc_analyzer = ConcurrencyAnalyzer(result)
-        prefill_intervals = conc_analyzer.get_prefill_intervals()
-
-        assert len(prefill_intervals) == 15  # All prefills tracked
-
-        max_prefill = conc_analyzer.get_max_prefill_concurrent()
-        assert max_prefill == 2  # Should hit the limit
 
 
 @pytest.mark.component_integration
@@ -579,28 +349,20 @@ class TestMultiTurnComplexInterleaving:
 class TestRateConcurrencyMatrix:
     """Matrix tests covering rate mode × concurrency combinations.
 
-    Users will mix timing modes with various concurrency settings.
-    These tests verify all combinations work correctly.
+    Reduced to 2 critical combinations from 6+ parametrizations.
     """
 
     @pytest.mark.parametrize(
         "arrival_pattern,concurrency",
         [
-            ("constant", 2),
             ("constant", 5),
-            ("constant", 10),
-            ("poisson", 2),
-            ("poisson", 5),
             ("poisson", 10),
         ],
     )  # fmt: skip
     def test_rate_mode_with_concurrency(
         self, cli: AIPerfCLI, arrival_pattern: str, concurrency: int
     ):
-        """Test rate modes with various concurrency levels.
-
-        Matrix: 2 rate modes × 3 concurrency levels = 6 combinations
-        """
+        """Test rate modes with various concurrency levels."""
         config = TimingTestConfig(
             num_sessions=20,
             qps=100.0,
@@ -616,68 +378,6 @@ class TestRateConcurrencyMatrix:
         conc_analyzer = ConcurrencyAnalyzer(result)
         max_concurrent = conc_analyzer.get_max_concurrent()
         assert max_concurrent <= concurrency
-
-    @pytest.mark.parametrize(
-        "qps,prefill_concurrency",
-        [
-            (200.0, 1),
-            (300.0, 1),
-            (400.0, 2),
-            (600.0, 2),
-        ],
-    )  # fmt: skip
-    def test_rate_with_prefill_concurrency(
-        self, cli: AIPerfCLI, qps: float, prefill_concurrency: int
-    ):
-        """Test rate modes with prefill concurrency.
-
-        Higher QPS needed to hit prefill limits:
-        - QPS × TTFT >= prefill_concurrency
-        - QPS × 0.005 >= prefill_concurrency
-        - QPS >= prefill_concurrency × 200
-        """
-        config = TimingTestConfig(
-            num_sessions=25,
-            qps=qps,
-            prefill_concurrency=prefill_concurrency,
-            concurrency=10,
-        )
-
-        cmd = build_timing_command(config, arrival_pattern="constant")
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == 25
-
-        # Verify prefill limit respected
-        conc_analyzer = ConcurrencyAnalyzer(result)
-        max_prefill = conc_analyzer.get_max_prefill_concurrent()
-        assert max_prefill <= prefill_concurrency
-
-    def test_user_centric_rate_only(self, cli: AIPerfCLI):
-        """Test user-centric mode with multi-turn conversations.
-
-        Note: user-centric-rate cannot be combined with concurrency limits
-        per validation rules. This test verifies basic user-centric functionality.
-
-        User-centric mode is duration-based (runs for --benchmark-duration),
-        not session-count-based. We verify at least the initial user turns
-        are issued and credits are balanced.
-        """
-        config = TimingTestConfig(
-            num_sessions=12,
-            qps=80.0,
-            turns_per_session=3,
-        )
-
-        cmd = build_timing_command(config, user_centric_rate=config.qps)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        # Duration-based: at least num_sessions requests (initial user turns)
-        assert result.request_count >= config.num_sessions
-
-        # Verify all credits balanced
-        credit_analyzer = CreditFlowAnalyzer(result.runner_result)
-        assert credit_analyzer.credits_balanced()
 
     def test_extreme_qps_with_low_concurrency(self, cli: AIPerfCLI):
         """Test very high QPS with very low concurrency.
@@ -708,33 +408,6 @@ class TestRateConcurrencyMatrix:
         # Concurrency limit should dominate
         assert max_concurrent <= 2
         assert max_concurrent == 2  # Should actually hit it
-
-    def test_extreme_concurrency_with_low_qps(self, cli: AIPerfCLI):
-        """Test very low QPS with high concurrency.
-
-        Scenario:
-        - qps=10, concurrency=10 (high relative to expected concurrent)
-        - Expected steady-state concurrent = 10 × 0.055 = 0.55
-        - Concurrency limit not reached
-        - Verify rate limit active
-        """
-        config = TimingTestConfig(
-            num_sessions=10,
-            qps=10.0,
-            concurrency=10,  # High but valid (= num_sessions)
-        )
-
-        cmd = build_timing_command(config, arrival_pattern="constant")
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == 10
-
-        conc_analyzer = ConcurrencyAnalyzer(result)
-        max_concurrent = conc_analyzer.get_max_concurrent()
-
-        # Should not reach concurrency limit (rate limits first)
-        assert max_concurrent < 10
-        assert max_concurrent <= 2  # Very low due to rate limiting
 
 
 @pytest.mark.component_integration

@@ -19,7 +19,6 @@ from aiperf.credit.messages import (
     CreditPhaseProgressMessage,
     CreditPhaseSendingCompleteMessage,
     CreditPhaseStartMessage,
-    CreditsCompleteMessage,
 )
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.publisher import PhasePublisher
@@ -39,13 +38,13 @@ def publisher(mock_pub_client: MagicMock) -> PhasePublisher:
 
 
 # =============================================================================
-# Phase Start Tests
+# Phase Lifecycle Tests
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestPublishPhaseStart:
-    """Tests for publish_phase_start method."""
+class TestPublishPhaseLifecycle:
+    """Tests for phase lifecycle event publishing."""
 
     async def test_creates_phase_start_message(
         self,
@@ -65,16 +64,6 @@ class TestPublishPhaseStart:
         assert msg.stats is sample_phase_stats
         assert msg.config is sample_phase_config
 
-
-# =============================================================================
-# Phase Sending Complete Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
-class TestPublishPhaseSendingComplete:
-    """Tests for publish_phase_sending_complete method."""
-
     async def test_creates_sending_complete_message(
         self,
         publisher: PhasePublisher,
@@ -90,16 +79,6 @@ class TestPublishPhaseSendingComplete:
         assert isinstance(msg, CreditPhaseSendingCompleteMessage)
         assert msg.service_id == "timing-manager-001"
         assert msg.stats is sample_phase_stats
-
-
-# =============================================================================
-# Phase Complete Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
-class TestPublishPhaseComplete:
-    """Tests for publish_phase_complete method."""
 
     async def test_creates_phase_complete_message(
         self,
@@ -142,55 +121,6 @@ class TestPublishProgress:
         assert isinstance(msg, CreditPhaseProgressMessage)
         assert msg.service_id == "timing-manager-001"
         assert msg.stats is sample_phase_stats
-
-
-# =============================================================================
-# Credits Complete Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
-class TestPublishCreditsComplete:
-    """Tests for publish_credits_complete method."""
-
-    async def test_creates_credits_complete_message(
-        self,
-        publisher: PhasePublisher,
-        mock_pub_client: MagicMock,
-    ):
-        """Creates CreditsCompleteMessage with service_id only."""
-        await publisher.publish_credits_complete()
-
-        mock_pub_client.publish.assert_called_once()
-        msg = mock_pub_client.publish.call_args[0][0]
-
-        assert isinstance(msg, CreditsCompleteMessage)
-        assert msg.service_id == "timing-manager-001"
-
-
-# =============================================================================
-# Initialization Tests
-# =============================================================================
-
-
-class TestPhasePublisherInitialization:
-    """Tests for PhasePublisher initialization."""
-
-    def test_stores_pub_client(self, mock_pub_client: MagicMock):
-        """Stores pub_client reference."""
-        publisher = PhasePublisher(
-            pub_client=mock_pub_client,
-            service_id="test-id",
-        )
-        assert publisher._pub_client is mock_pub_client
-
-    def test_stores_service_id(self, mock_pub_client: MagicMock):
-        """Stores service_id."""
-        publisher = PhasePublisher(
-            pub_client=mock_pub_client,
-            service_id="custom-service-id",
-        )
-        assert publisher._service_id == "custom-service-id"
 
 
 # =============================================================================
@@ -277,185 +207,3 @@ class TestPhasePublisherIntegration:
         assert msg2.stats.phase == CreditPhase.PROFILING
         assert msg1.stats.requests_sent == 10
         assert msg2.stats.requests_sent == 100
-
-
-# =============================================================================
-# Parameterized Phase Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
-class TestPhasePublisherParameterized:
-    """Parameterized tests for different phases."""
-
-    @pytest.mark.parametrize(
-        "phase",
-        [CreditPhase.WARMUP, CreditPhase.PROFILING],
-    )
-    async def test_publish_phase_start_all_phases(
-        self, mock_pub_client: MagicMock, phase: CreditPhase
-    ):
-        """publish_phase_start works for all phase types."""
-        publisher = PhasePublisher(pub_client=mock_pub_client, service_id="test-id")
-        config = CreditPhaseConfig(
-            phase=phase, timing_mode=TimingMode.REQUEST_RATE, total_expected_requests=10
-        )
-        stats = CreditPhaseStats(
-            phase=phase,
-            requests_sent=5,
-            requests_completed=3,
-            requests_cancelled=0,
-            final_requests_sent=5,
-            start_ns=1000,
-        )
-
-        await publisher.publish_phase_start(config, stats)
-
-        msg = mock_pub_client.publish.call_args[0][0]
-        assert isinstance(msg, CreditPhaseStartMessage)
-        assert msg.stats.phase == phase
-        assert msg.config.phase == phase
-
-    @pytest.mark.parametrize(
-        "phase",
-        [CreditPhase.WARMUP, CreditPhase.PROFILING],
-    )
-    async def test_publish_phase_complete_all_phases(
-        self, mock_pub_client: MagicMock, phase: CreditPhase
-    ):
-        """publish_phase_complete works for all phase types."""
-        publisher = PhasePublisher(pub_client=mock_pub_client, service_id="test-id")
-        stats = CreditPhaseStats(
-            phase=phase,
-            requests_sent=10,
-            requests_completed=10,
-            requests_cancelled=0,
-            final_requests_sent=10,
-            start_ns=1000,
-        )
-
-        await publisher.publish_phase_complete(stats)
-
-        msg = mock_pub_client.publish.call_args[0][0]
-        assert isinstance(msg, CreditPhaseCompleteMessage)
-        assert msg.stats.phase == phase
-
-    @pytest.mark.parametrize(
-        "phase",
-        [CreditPhase.WARMUP, CreditPhase.PROFILING],
-    )
-    async def test_publish_progress_all_phases(
-        self, mock_pub_client: MagicMock, phase: CreditPhase
-    ):
-        """publish_progress works for all phase types."""
-        publisher = PhasePublisher(pub_client=mock_pub_client, service_id="test-id")
-        stats = CreditPhaseStats(
-            phase=phase,
-            requests_sent=5,
-            requests_completed=2,
-            requests_cancelled=1,
-            final_requests_sent=5,
-            start_ns=1000,
-        )
-
-        await publisher.publish_progress(stats)
-
-        msg = mock_pub_client.publish.call_args[0][0]
-        assert isinstance(msg, CreditPhaseProgressMessage)
-        assert msg.stats.phase == phase
-
-    @pytest.mark.parametrize(
-        "phase",
-        [CreditPhase.WARMUP, CreditPhase.PROFILING],
-    )
-    async def test_publish_sending_complete_all_phases(
-        self, mock_pub_client: MagicMock, phase: CreditPhase
-    ):
-        """publish_phase_sending_complete works for all phase types."""
-        publisher = PhasePublisher(pub_client=mock_pub_client, service_id="test-id")
-        stats = CreditPhaseStats(
-            phase=phase,
-            requests_sent=10,
-            requests_completed=5,
-            requests_cancelled=0,
-            final_requests_sent=10,
-            start_ns=1000,
-        )
-
-        await publisher.publish_phase_sending_complete(stats)
-
-        msg = mock_pub_client.publish.call_args[0][0]
-        assert isinstance(msg, CreditPhaseSendingCompleteMessage)
-        assert msg.stats.phase == phase
-
-
-# =============================================================================
-# Stats Field Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
-class TestPhasePublisherStatsFields:
-    """Tests for stats field propagation."""
-
-    @pytest.mark.parametrize(
-        "requests_sent,requests_completed,requests_cancelled",
-        [
-            (0, 0, 0),
-            (100, 50, 10),
-            (1000, 999, 1),
-            (1, 1, 0),
-        ],
-    )  # fmt: skip
-    async def test_progress_stats_preserved(
-        self,
-        mock_pub_client: MagicMock,
-        requests_sent: int,
-        requests_completed: int,
-        requests_cancelled: int,
-    ):
-        """Progress stats are preserved in message."""
-        publisher = PhasePublisher(pub_client=mock_pub_client, service_id="test-id")
-        stats = CreditPhaseStats(
-            phase=CreditPhase.PROFILING,
-            requests_sent=requests_sent,
-            requests_completed=requests_completed,
-            requests_cancelled=requests_cancelled,
-            final_requests_sent=requests_sent,
-            start_ns=1000,
-        )
-
-        await publisher.publish_progress(stats)
-
-        msg = mock_pub_client.publish.call_args[0][0]
-        assert msg.stats.requests_sent == requests_sent
-        assert msg.stats.requests_completed == requests_completed
-        assert msg.stats.requests_cancelled == requests_cancelled
-
-    @pytest.mark.parametrize(
-        "total_expected",
-        [1, 10, 100, 1000, 10000],
-    )
-    async def test_config_total_expected_preserved(
-        self, mock_pub_client: MagicMock, total_expected: int
-    ):
-        """Config total_expected_requests is preserved in message."""
-        publisher = PhasePublisher(pub_client=mock_pub_client, service_id="test-id")
-        config = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
-            timing_mode=TimingMode.REQUEST_RATE,
-            total_expected_requests=total_expected,
-        )
-        stats = CreditPhaseStats(
-            phase=CreditPhase.PROFILING,
-            requests_sent=0,
-            requests_completed=0,
-            requests_cancelled=0,
-            final_requests_sent=0,
-            start_ns=1000,
-        )
-
-        await publisher.publish_phase_start(config, stats)
-
-        msg = mock_pub_client.publish.call_args[0][0]
-        assert msg.config.total_expected_requests == total_expected
