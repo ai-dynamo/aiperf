@@ -37,7 +37,7 @@ class TestParallelDecode:
         assert mock_tokenizer.decode.call_count == 2
         assert result == ["decoded", "decoded"]
 
-    @patch("aiperf.dataset.generator.parallel_decode.ProcessPoolExecutor")
+    @patch.object(pd_module, "ProcessPoolExecutor")
     def test_parallel_decode_large_batch_uses_executor(self, mock_executor_class):
         """Test that large batches (>= 10) use ProcessPoolExecutor."""
         mock_executor = MagicMock()
@@ -54,8 +54,8 @@ class TestParallelDecode:
         mock_executor.map.assert_called_once()
         assert len(result) == 15
 
-    @patch("aiperf.dataset.generator.parallel_decode.mp")
-    @patch("aiperf.dataset.generator.parallel_decode.ProcessPoolExecutor")
+    @patch.object(pd_module, "mp")
+    @patch.object(pd_module, "ProcessPoolExecutor")
     def test_parallel_decode_respects_max_workers(self, mock_executor_class, mock_mp):
         """Test that max_workers parameter is respected."""
         mock_mp.cpu_count.return_value = 16
@@ -72,8 +72,8 @@ class TestParallelDecode:
         call_kwargs = mock_executor_class.call_args.kwargs
         assert call_kwargs["max_workers"] == 4
 
-    @patch("aiperf.dataset.generator.parallel_decode.mp")
-    @patch("aiperf.dataset.generator.parallel_decode.ProcessPoolExecutor")
+    @patch.object(pd_module, "mp")
+    @patch.object(pd_module, "ProcessPoolExecutor")
     def test_parallel_decode_default_max_workers_capped_at_8(
         self, mock_executor_class, mock_mp
     ):
