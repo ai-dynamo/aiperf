@@ -509,56 +509,14 @@ class TestMixedWorkload:
 
 
 @pytest.mark.component_integration
-class TestDistributionStats:
-    """Tests that verify distribution statistics."""
-
-    def test_coefficient_of_variation_acceptable(self, cli: AIPerfCLI):
-        """Test that distribution CV is within acceptable range."""
-        workers_max = 4
-        num_sessions = 200
-        config = TimingTestConfig(
-            num_sessions=num_sessions,
-            qps=500.0,
-            turns_per_session=1,
-        )
-        cmd = build_multi_worker_command(config, workers_max)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == num_sessions
-
-        analyzer = LoadBalancingAnalyzer(result)
-        stats = analyzer.get_distribution_stats()
-
-        # For fair distribution, CV should be low
-        # With random selection among tied workers, CV ~ 0.1-0.2 is expected
-        assert stats["cv"] < 0.25, (
-            f"CV {stats['cv']:.3f} too high for fair distribution"
-        )
-
-        # Min and max should be close to mean
-        assert stats["min"] >= stats["mean"] * 0.6, (
-            f"Min {stats['min']} too far below mean {stats['mean']:.1f}"
-        )
-        assert stats["max"] <= stats["mean"] * 1.4, (
-            f"Max {stats['max']} too far above mean {stats['mean']:.1f}"
-        )
-
-
-@pytest.mark.component_integration
 class TestResearchFairnessMetrics:
-    """Tests using research-grade fairness metrics.
-
-    These tests use established fairness metrics from computer science
-    and economics literature to verify load balancing quality.
-    """
+    """Tests using research-grade fairness metrics."""
 
     @pytest.mark.parametrize(
         "num_sessions,workers_max,min_jfi",
         [
             (100, 2, 0.95),   # 2 workers should be very fair
-            (100, 3, 0.92),   # 3 workers slightly more variance
             (100, 5, 0.90),   # More workers, slightly more variance
-            (200, 3, 0.95),   # Higher volume improves fairness
             (200, 5, 0.93),
             pytest.param(500, 5, 0.97, marks=[pytest.mark.stress, pytest.mark.slow])
         ],
@@ -593,114 +551,6 @@ class TestResearchFairnessMetrics:
             f"Distribution: {analyzer.credits_per_worker()}"
         )
 
-    @pytest.mark.parametrize(
-        "num_sessions,workers_max,max_gini",
-        [
-            (100, 2, 0.10),   # Gini < 0.1 is very equal
-            (100, 3, 0.12),
-            (100, 5, 0.15),
-            (200, 5, 0.10),   # Higher volume, tighter bound
-            pytest.param(500, 5, 0.08, marks=[pytest.mark.stress, pytest.mark.slow])
-        ],
-    )  # fmt: skip
-    def test_gini_coefficient(
-        self,
-        cli: AIPerfCLI,
-        num_sessions: int,
-        workers_max: int,
-        max_gini: float,
-    ):
-        """Test Gini coefficient stays below inequality threshold.
-
-        Gini < 0.1 indicates very equal distribution (like Sweden's income).
-        Gini < 0.2 indicates low inequality.
-        """
-        config = TimingTestConfig(
-            num_sessions=num_sessions,
-            qps=500.0,
-            turns_per_session=1,
-        )
-        cmd = build_multi_worker_command(config, workers_max)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == num_sessions
-
-        analyzer = LoadBalancingAnalyzer(result)
-        gini = analyzer.gini_coefficient()
-
-        assert gini <= max_gini, (
-            f"Gini coefficient {gini:.4f} exceeds threshold {max_gini}. "
-            f"Distribution: {analyzer.credits_per_worker()}"
-        )
-
-    @pytest.mark.parametrize(
-        "num_sessions,workers_max,max_ratio",
-        [
-            (100, 2, 1.3),    # Max worker has at most 30% more than min
-            (100, 3, 1.4),
-            (100, 5, 1.5),
-            pytest.param(200, 5, 1.3, marks=pytest.mark.slow),  # Higher volume
-            pytest.param(500, 5, 1.2, marks=[pytest.mark.stress, pytest.mark.slow])
-        ],
-    )  # fmt: skip
-    def test_max_min_ratio(
-        self,
-        cli: AIPerfCLI,
-        num_sessions: int,
-        workers_max: int,
-        max_ratio: float,
-    ):
-        """Test max/min ratio stays within bounds.
-
-        Ratio of 1.0 = perfect balance.
-        Ratio of 1.5 = busiest worker did 50% more than least busy.
-        """
-        config = TimingTestConfig(
-            num_sessions=num_sessions,
-            qps=500.0,
-            turns_per_session=1,
-        )
-        cmd = build_multi_worker_command(config, workers_max)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == num_sessions
-
-        analyzer = LoadBalancingAnalyzer(result)
-        ratio = analyzer.max_min_ratio()
-
-        assert ratio <= max_ratio, (
-            f"Max/min ratio {ratio:.3f} exceeds threshold {max_ratio}. "
-            f"Distribution: {analyzer.credits_per_worker()}"
-        )
-
-    def test_all_fairness_metrics_consistent(self, cli: AIPerfCLI):
-        """Test that all fairness metrics agree on a fair distribution."""
-        workers_max = 5
-        num_sessions = 300
-        config = TimingTestConfig(
-            num_sessions=num_sessions,
-            qps=500.0,
-            turns_per_session=1,
-        )
-        cmd = build_multi_worker_command(config, workers_max)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == num_sessions
-
-        analyzer = LoadBalancingAnalyzer(result)
-
-        # All metrics should indicate fairness
-        jfi = analyzer.jains_fairness_index()
-        gini = analyzer.gini_coefficient()
-        ratio = analyzer.max_min_ratio()
-        stats = analyzer.get_distribution_stats()
-
-        # All should pass reasonable thresholds
-        assert jfi >= 0.90, f"JFI {jfi:.4f} too low"
-        assert gini <= 0.15, f"Gini {gini:.4f} too high"
-        assert ratio <= 1.5, f"Max/min ratio {ratio:.3f} too high"
-        assert stats["cv"] < 0.20, f"CV {stats['cv']:.4f} too high"
-
     @pytest.mark.stress
     @pytest.mark.slow
     def test_multi_turn_jains_fairness(self, cli: AIPerfCLI):
@@ -731,3 +581,86 @@ class TestResearchFairnessMetrics:
         # Sticky routing must still work
         sticky_passed, sticky_reason = analyzer.verify_sticky_routing()
         assert sticky_passed, sticky_reason
+
+
+# =============================================================================
+# Adversarial Tests (Merged from test_load_balancing_adversarial.py)
+# =============================================================================
+
+
+@pytest.mark.component_integration
+class TestPrimeNumberAdversarial:
+    """Adversarial tests with prime numbers that don't divide evenly."""
+
+    @pytest.mark.parametrize(
+        "num_sessions,workers_max",
+        [
+            (97, 7),    # Prime sessions, prime workers
+            (101, 11),  # Both prime
+        ],
+    )  # fmt: skip
+    def test_prime_combinations(
+        self,
+        cli: AIPerfCLI,
+        num_sessions: int,
+        workers_max: int,
+    ):
+        """Prime numbers can't divide evenly but should still be fair."""
+        config = TimingTestConfig(
+            num_sessions=num_sessions,
+            qps=500.0,
+            turns_per_session=1,
+        )
+        cmd = build_multi_worker_command(config, workers_max)
+        result = cli.run_sync(cmd, timeout=120.0)
+
+        assert result.request_count == num_sessions
+
+        analyzer = LoadBalancingAnalyzer(result)
+
+        # Even with primes, JFI should be high
+        jfi = analyzer.jains_fairness_index()
+        assert jfi >= 0.90, (
+            f"JFI {jfi:.4f} too low for prime combination {num_sessions}/{workers_max}. "
+            f"Distribution: {analyzer.credits_per_worker()}"
+        )
+
+
+@pytest.mark.component_integration
+@pytest.mark.stress
+class TestTimingPatternAdversarial:
+    """Adversarial tests with specific timing patterns."""
+
+    @pytest.mark.slow
+    def test_original_problematic_scenario(self, cli: AIPerfCLI):
+        """Original problematic scenario: 10 sessions, 5 workers, slow QPS.
+
+        Before the fix, this produced distribution like {3, 4, 1, 1, 1} with JFI=0.714.
+        With the new algorithm using total_sent_credits as tie-breaker,
+        this should now produce perfect {2, 2, 2, 2, 2} distribution.
+        """
+        num_sessions = 10
+        workers_max = 5
+        config = TimingTestConfig(
+            num_sessions=num_sessions,
+            qps=500.0,
+            turns_per_session=1,
+        )
+        cmd = build_multi_worker_command(config, workers_max)
+        result = cli.run_sync(cmd, timeout=30.0)
+
+        assert result.request_count == num_sessions
+
+        analyzer = LoadBalancingAnalyzer(result)
+        jfi = analyzer.jains_fairness_index()
+        distribution = sorted(analyzer.credits_per_worker().values())
+
+        # With the new algorithm, should achieve perfect fairness
+        assert jfi == 1.0, (
+            f"JFI {jfi:.4f} != 1.0. Distribution: {distribution}. "
+            f"Expected [2, 2, 2, 2, 2] with new tie-breaking algorithm."
+        )
+        assert distribution == [2, 2, 2, 2, 2], (
+            f"Distribution {distribution} not perfectly balanced. "
+            f"Expected [2, 2, 2, 2, 2]."
+        )

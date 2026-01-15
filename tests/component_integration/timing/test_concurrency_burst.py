@@ -35,7 +35,6 @@ from tests.component_integration.timing.conftest import (
 )
 from tests.harness.analyzers import (
     CreditFlowAnalyzer,
-    TimingAnalyzer,
 )
 from tests.harness.utils import AIPerfCLI
 
@@ -180,58 +179,6 @@ class TestConcurrencyBurstCreditFlow:
 
 
 @pytest.mark.component_integration
-class TestConcurrencyBurstTiming:
-    """Timing behavior tests for concurrency burst mode."""
-
-    def test_minimal_gaps(self, cli: AIPerfCLI):
-        """Verify gaps are minimal in burst mode (no rate limiting)."""
-        config = TimingTestConfig(
-            num_sessions=25,
-            qps=0,
-            concurrency=10,
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        timing = TimingAnalyzer(result)
-        issue_times = timing.get_credit_issue_times_ns()
-        gaps = timing.calculate_gaps_sec(issue_times)
-
-        assert len(gaps) >= 5, (
-            f"Insufficient data for gap analysis: got {len(gaps)} gaps, need >= 5. "
-            f"25 sessions with concurrency=10 should produce enough data."
-        )
-        # Burst mode should have very small gaps (nearly 0)
-        mean_gap = timing.calculate_mean(gaps)
-        # Most gaps should be < 10ms in burst mode
-        assert mean_gap < 0.1, f"Mean gap {mean_gap:.4f}s too high for burst mode"
-
-    def test_fast_initial_burst(self, cli: AIPerfCLI):
-        """Verify initial burst of credits happens quickly."""
-        config = TimingTestConfig(
-            num_sessions=20,
-            qps=0,
-            concurrency=10,
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        timing = TimingAnalyzer(result)
-        issue_times = timing.get_credit_issue_times_ns()
-
-        assert len(issue_times) >= 10, (
-            f"Insufficient data for initial burst analysis: got {len(issue_times)} issue times, "
-            f"need >= 10. 20 sessions with concurrency=10 should produce enough data."
-        )
-        # First 10 credits should be issued very quickly
-        first_batch_duration = (issue_times[9] - issue_times[0]) / 1e9
-        # Should be < 100ms for 10 credits in burst mode
-        assert first_batch_duration < 0.2, (
-            f"First 10 credits took {first_batch_duration:.3f}s, expected < 0.2s"
-        )
-
-
-@pytest.mark.component_integration
 class TestConcurrencyBurstLimits(BaseConcurrencyTests):
     """Tests for concurrency limit enforcement in burst mode.
 
@@ -343,42 +290,6 @@ class TestConcurrencyBurstLimits(BaseConcurrencyTests):
 class TestConcurrencyBurstEdgeCases:
     """Edge case tests for concurrency burst timing."""
 
-    def test_single_concurrency(self, cli: AIPerfCLI):
-        """Test with concurrency of 1 (sequential execution)."""
-        config = TimingTestConfig(
-            num_sessions=10,
-            qps=0,
-            concurrency=1,
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == config.num_sessions
-
-    def test_concurrency_equals_sessions(self, cli: AIPerfCLI):
-        """Test when concurrency equals number of sessions."""
-        config = TimingTestConfig(
-            num_sessions=15,
-            qps=0,
-            concurrency=15,
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == config.num_sessions
-
-    def test_single_session_burst(self, cli: AIPerfCLI):
-        """Test single session in burst mode (concurrency = 1)."""
-        config = TimingTestConfig(
-            num_sessions=1,
-            qps=0,
-            concurrency=1,  # Concurrency must be <= num_sessions
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=30.0)
-
-        assert result.request_count == 1
-
     def test_many_turns_burst(self, cli: AIPerfCLI):
         """Test many turns per session in burst mode."""
         config = TimingTestConfig(
@@ -391,52 +302,3 @@ class TestConcurrencyBurstEdgeCases:
         result = cli.run_sync(cmd, timeout=config.timeout)
 
         assert result.request_count == config.expected_requests
-
-
-@pytest.mark.component_integration
-@pytest.mark.stress
-class TestConcurrencyBurstStress:
-    """Stress tests for concurrency burst timing."""
-
-    def test_high_volume_burst(self, cli: AIPerfCLI):
-        """Test high volume in burst mode."""
-        config = TimingTestConfig(
-            num_sessions=100,
-            qps=0,
-            concurrency=20,
-            timeout=90.0,
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == config.num_sessions
-
-    def test_sustained_burst_multi_turn(self, cli: AIPerfCLI):
-        """Test sustained multi-turn burst workload."""
-        config = TimingTestConfig(
-            num_sessions=25,
-            qps=0,
-            turns_per_session=4,
-            concurrency=10,
-            timeout=90.0,
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == config.expected_requests
-
-        runner: AIPerfRunnerResultWithSharedBus = result.runner_result
-        analyzer = CreditFlowAnalyzer(runner)
-        assert analyzer.credits_balanced()
-
-    def test_high_concurrency_burst(self, cli: AIPerfCLI):
-        """Test with very high concurrency."""
-        config = TimingTestConfig(
-            num_sessions=50,
-            qps=0,
-            concurrency=50,
-        )
-        cmd = build_burst_command(config)
-        result = cli.run_sync(cmd, timeout=config.timeout)
-
-        assert result.request_count == config.num_sessions

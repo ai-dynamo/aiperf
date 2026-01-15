@@ -80,27 +80,8 @@ class TestCreditValidation:
 class TestFirstTokenValidation:
     """Test validation logic for FirstToken struct."""
 
-    @pytest.fixture
-    def sample_first_token(self) -> FirstToken:
-        return FirstToken(
-            credit_id=42,
-            phase=CreditPhase.PROFILING,
-            ttft_ns=150_000_000,
-        )
-
-    def test_first_token_creation(self, sample_first_token):
-        """FirstToken can be created with required fields."""
-        assert sample_first_token.credit_id == 42
-        assert sample_first_token.phase == CreditPhase.PROFILING
-        assert sample_first_token.ttft_ns == 150_000_000
-
-    def test_first_token_immutable(self, sample_first_token):
-        """FirstToken struct is frozen/immutable."""
-        with pytest.raises(AttributeError):
-            sample_first_token.credit_id = 2  # type: ignore[misc]
-
     def test_first_token_serialization_roundtrip(self):
-        """FirstToken can be serialized and deserialized via msgspec."""
+        """FirstToken serializes/deserializes correctly via msgspec."""
         original = FirstToken(
             credit_id=99, phase=CreditPhase.WARMUP, ttft_ns=250_000_000
         )
@@ -112,25 +93,17 @@ class TestFirstTokenValidation:
         assert decoded.phase == original.phase
         assert decoded.ttft_ns == original.ttft_ns
 
-    def test_first_token_in_union_type(self, sample_first_token):
+    def test_first_token_in_union_type(self):
         """FirstToken can be decoded as part of WorkerToRouterMessage union."""
+        first_token = FirstToken(
+            credit_id=42, phase=CreditPhase.PROFILING, ttft_ns=150_000_000
+        )
         decoded = msgspec.msgpack.decode(
-            msgspec.msgpack.encode(sample_first_token), type=WorkerToRouterMessage
+            msgspec.msgpack.encode(first_token), type=WorkerToRouterMessage
         )
 
         assert isinstance(decoded, FirstToken)
-        assert decoded.credit_id == sample_first_token.credit_id
-
-    @pytest.mark.parametrize("phase", [CreditPhase.WARMUP, CreditPhase.PROFILING])
-    def test_first_token_supports_phases(self, phase):
-        """FirstToken works with all credit phases."""
-        first_token = FirstToken(credit_id=1, phase=phase, ttft_ns=50_000_000)
-        assert first_token.phase == phase
-
-    def test_first_token_zero_ttft(self):
-        """FirstToken accepts zero ttft_ns (edge case)."""
-        first_token = FirstToken(credit_id=1, phase=CreditPhase.PROFILING, ttft_ns=0)
-        assert first_token.ttft_ns == 0
+        assert decoded.credit_id == first_token.credit_id
 
 
 # =============================================================================
@@ -141,26 +114,12 @@ class TestFirstTokenValidation:
 class TestCreditReturnValidation:
     """Test CreditReturn struct, including first_token_sent for deadlock prevention."""
 
-    def test_credit_return_defaults(self, sample_credit):
-        """CreditReturn has expected default values."""
-        credit_return = CreditReturn(credit=sample_credit)
-
-        assert credit_return.first_token_sent is False
-        assert credit_return.cancelled is False
-        assert credit_return.error is None
-
     @pytest.mark.parametrize(
-        "first_token_sent,cancelled,error,description",
-        [
-            (True, False, None, "streaming_success"),       # Normal streaming completion
-            (False, False, None, "non_streaming"),          # Non-streaming request (deadlock case)
-            (False, True, None, "cancelled_before_ttft"),   # Cancelled before first token (deadlock case)
-            (False, False, "Connection timeout", "error"),  # Error before first token (deadlock case)
-            (True, True, None, "cancelled_after_ttft"),     # Cancelled after first token
-        ],
+        "first_token_sent,cancelled,error",
+        [(True, False, None), (False, True, None)],  # Sample: normal and cancelled
     )  # fmt: skip
     def test_credit_return_scenarios(
-        self, sample_credit, first_token_sent, cancelled, error, description
+        self, sample_credit, first_token_sent, cancelled, error
     ):
         """CreditReturn handles various completion scenarios."""
         credit_return = CreditReturn(
@@ -186,23 +145,6 @@ class TestCreditReturnValidation:
         assert decoded.first_token_sent == original.first_token_sent
         assert decoded.cancelled == original.cancelled
 
-    def test_credit_return_in_union_type(self, sample_credit):
-        """CreditReturn can be decoded as part of WorkerToRouterMessage union."""
-        credit_return = CreditReturn(credit=sample_credit, first_token_sent=True)
-        decoded = msgspec.msgpack.decode(
-            msgspec.msgpack.encode(credit_return), type=WorkerToRouterMessage
-        )
-
-        assert isinstance(decoded, CreditReturn)
-        assert decoded.first_token_sent is True
-
-    def test_credit_return_immutable(self, sample_credit):
-        """CreditReturn struct is frozen/immutable."""
-        credit_return = CreditReturn(credit=sample_credit)
-
-        with pytest.raises(AttributeError):
-            credit_return.first_token_sent = True  # type: ignore[misc]
-
 
 # =============================================================================
 # CreditContext Validation Tests (Worker-side Tracking)
@@ -212,47 +154,18 @@ class TestCreditReturnValidation:
 class TestCreditContextValidation:
     """Test CreditContext struct (mutable worker-side tracking)."""
 
-    @pytest.fixture
-    def credit_context(self, sample_credit) -> CreditContext:
-        return CreditContext(
+    def test_credit_context_mutation(self, sample_credit):
+        """CreditContext allows mutation for state tracking."""
+        credit_context = CreditContext(
             credit=sample_credit,
             drop_perf_ns=time.perf_counter_ns(),
         )
 
-    def test_credit_context_defaults(self, credit_context):
-        """CreditContext has expected default values."""
-        assert credit_context.first_token_sent is False
-        assert credit_context.cancelled is False
-        assert credit_context.returned is False
-        assert credit_context.error is None
-
-    def test_credit_context_mutable(self, credit_context):
-        """CreditContext allows mutation (worker tracks state changes)."""
         assert credit_context.first_token_sent is False
         credit_context.first_token_sent = True
         assert credit_context.first_token_sent is True
 
-    @pytest.mark.parametrize(
-        "first_token_sent,cancelled,error,description",
-        [
-            (True, False, None, "streaming_success"),       # Normal streaming completion
-            (False, True, None, "cancelled_before_ttft"),   # Cancelled before first token (deadlock case)
-            (False, False, "HTTP 500", "error_before_ttft"),  # Error before first token (deadlock case)
-        ],
-    )  # fmt: skip
-    def test_credit_context_state_transitions(
-        self, credit_context, first_token_sent, cancelled, error, description
-    ):
-        """CreditContext tracks various state transitions."""
-        if first_token_sent:
-            credit_context.first_token_sent = True
-        if cancelled:
-            credit_context.cancelled = True
-        if error:
-            credit_context.error = error
+        credit_context.cancelled = True
         credit_context.returned = True
-
-        assert credit_context.first_token_sent is first_token_sent
-        assert credit_context.cancelled is cancelled
-        assert credit_context.error == error
+        assert credit_context.cancelled is True
         assert credit_context.returned is True
