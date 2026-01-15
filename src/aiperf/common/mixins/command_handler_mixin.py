@@ -1,7 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import sys
 from abc import ABC
+
+if sys.version_info >= (3, 11):
+    from asyncio import timeout as async_timeout
+else:
+    from async_timeout import timeout as async_timeout
 from collections.abc import AsyncIterator, Iterable
 from typing import Any
 
@@ -255,7 +261,7 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         seen: set[str] = set()
 
         try:
-            async with asyncio.timeout(timeout):
+            async with async_timeout(timeout):
                 for coro in asyncio.as_completed(futures.values()):
                     response = await coro
                     seen.add(response.service_id)
