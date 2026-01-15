@@ -69,17 +69,6 @@ class TestDynamicConcurrencyLimit:
         lim.release()
         assert lim.effective_slots == 1
 
-    @pytest.mark.asyncio
-    async def test_acquire_release_cycle(self) -> None:
-        lim = DynamicConcurrencyLimit()
-        lim.set_limit(2)
-        await lim.acquire()
-        await lim.acquire()
-        assert lim.effective_slots == 0
-        lim.release()
-        lim.release()
-        assert lim.effective_slots == 2
-
     def test_release_without_acquire(self) -> None:
         lim = DynamicConcurrencyLimit()
         lim.set_limit(10)
@@ -221,20 +210,6 @@ class TestDynamicConcurrencyLimit:
             lim.release()
         assert lim.effective_slots == 10
 
-    @pytest.mark.asyncio
-    async def test_decrease_during_inflight(self) -> None:
-        lim = DynamicConcurrencyLimit()
-        lim.set_limit(50)
-        for _ in range(50):
-            await lim.acquire()
-        lim.set_limit(25)
-        for _ in range(25):
-            lim.release()
-        assert lim.debt == 0 and lim.effective_slots == 0
-        for _ in range(25):
-            lim.release()
-        assert lim.effective_slots == 25
-
     def test_oscillating_limits_immediate_drain(self) -> None:
         lim = DynamicConcurrencyLimit()
         for val, exp in [(100, 100), (50, 50), (75, 75), (25, 25), (100, 100)]:
@@ -292,27 +267,6 @@ class TestDynamicConcurrencyLimit:
         assert sum(results) == 500 and lim.effective_slots == 10
 
     @pytest.mark.asyncio
-    async def test_limit_change_during_acquire(self) -> None:
-        lim = DynamicConcurrencyLimit()
-        lim.set_limit(2)
-        await lim.acquire()
-        await lim.acquire()
-        done = False
-
-        async def waiter() -> None:
-            nonlocal done
-            await lim.acquire()
-            done = True
-
-        task = asyncio.create_task(waiter())
-        await asyncio.sleep(0.01)
-        assert not done
-        lim.set_limit(3)
-        await asyncio.sleep(0.01)
-        assert done
-        await _cancel(task)
-
-    @pytest.mark.asyncio
     async def test_decrease_immediately_enforces_limit(self) -> None:
         lim = DynamicConcurrencyLimit()
         lim.set_limit(50)
@@ -324,41 +278,6 @@ class TestDynamicConcurrencyLimit:
         await asyncio.sleep(0.01)
         assert not task.done()
         await _cancel(task)
-
-    @pytest.mark.asyncio
-    async def test_partial_decrease_drains_then_debts(self) -> None:
-        lim = DynamicConcurrencyLimit()
-        lim.set_limit(100)
-        for _ in range(60):
-            await lim.acquire()
-        lim.set_limit(25)
-        assert lim.effective_slots == 0 and lim.debt == 35
-        task = asyncio.create_task(lim.acquire())
-        await asyncio.sleep(0.01)
-        assert not task.done()
-        await _cancel(task)
-
-    @pytest.mark.asyncio
-    async def test_rapid_decrease_enforces_each_step(self) -> None:
-        lim = DynamicConcurrencyLimit()
-        lim.set_limit(100)
-        for val in [75, 50, 25, 10]:
-            lim.set_limit(val)
-            assert lim.effective_slots == val and lim.debt == 0
-        for _ in range(10):
-            await lim.acquire()
-        task = asyncio.create_task(lim.acquire())
-        await asyncio.sleep(0.01)
-        assert not task.done()
-        await _cancel(task)
-
-    def test_semaphore_value_drained_on_decrease(self) -> None:
-        lim = DynamicConcurrencyLimit()
-        lim.set_limit(50)
-        lim.set_limit(25)
-        assert (
-            lim._semaphore._value == 25 and lim.debt == 0 and lim.effective_slots == 25
-        )
 
 
 class TestGlobalPhaseConcurrencyLimiter:

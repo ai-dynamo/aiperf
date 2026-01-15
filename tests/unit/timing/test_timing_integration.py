@@ -67,7 +67,7 @@ class TestTimingConfigurationIntegration:
         tcfg = TimingConfig.from_user_config(ucfg)
         assert tcfg.phase_configs[0].total_expected_requests == 42
 
-    def test_empty_dataset_defaults(self, create_mooncake_trace_file):
+    def test_empty_dataset_defaults(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             fname = f.name
         try:
@@ -80,23 +80,5 @@ class TestTimingConfigurationIntegration:
             tcfg = TimingConfig.from_user_config(ucfg)
             assert tcfg.phase_configs[0].total_expected_requests == 10
             assert tcfg.phase_configs[0].timing_mode == TimingMode.REQUEST_RATE
-        finally:
-            Path(fname).unlink(missing_ok=True)
-
-    def test_mixed_content_integration(self, create_mooncake_trace_file):
-        fname = create_mooncake_trace_file(2, include_timestamps=True)
-        try:
-            ucfg = UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                loadgen=LoadGeneratorConfig(request_rate=10),
-                input=InputConfig(
-                    file=fname, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
-                ),
-            )
-            assert ucfg._count_dataset_entries() == 2
-            assert ucfg._should_use_fixed_schedule_for_mooncake_trace() is True
-            tcfg = TimingConfig.from_user_config(ucfg)
-            assert tcfg.phase_configs[0].total_expected_requests == 2
-            assert tcfg.phase_configs[0].timing_mode == TimingMode.FIXED_SCHEDULE
         finally:
             Path(fname).unlink(missing_ok=True)

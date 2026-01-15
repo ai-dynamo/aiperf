@@ -70,10 +70,6 @@ class TestConversationSource:
         with pytest.raises(KeyError, match="No metadata for conversation bad"):
             src.get_metadata("bad")
 
-    def test_get_metadata_matches_sampled(self, src):
-        s = src.next()
-        assert src.get_metadata(s.conversation_id) == s.metadata
-
 
 class TestMultiTurn:
     @pytest.fixture

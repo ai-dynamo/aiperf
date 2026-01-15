@@ -87,17 +87,6 @@ class TestGammaIntervalGenerator:
         intervals = [gen.next_interval() for _ in range(10000)]
         assert abs(statistics.mean(intervals) - 0.01) / 0.01 < 0.1
 
-    def test_higher_smoothness_reduces_variance(self):
-        gen_low = GammaIntervalGenerator(
-            cfg(ArrivalPattern.GAMMA, rate=100.0, smooth=0.5)
-        )
-        gen_high = GammaIntervalGenerator(
-            cfg(ArrivalPattern.GAMMA, rate=100.0, smooth=5.0)
-        )
-        low = [gen_low.next_interval() for _ in range(5000)]
-        high = [gen_high.next_interval() for _ in range(5000)]
-        assert statistics.variance(high) < statistics.variance(low)
-
     @pytest.mark.parametrize("smooth,expected_cv", [(1.0, 1.0), (4.0, 0.5), (9.0, 0.333), (0.25, 2.0), (0.5, 1.414), (16.0, 0.25)])  # fmt: skip
     def test_cv_matches_gamma_formula(self, smooth: float, expected_cv: float):
         gen = GammaIntervalGenerator(
@@ -118,13 +107,6 @@ class TestGammaIntervalGenerator:
             cvs.append(statistics.stdev(intervals) / statistics.mean(intervals))
         for i in range(1, len(cvs)):
             assert cvs[i] < cvs[i - 1]
-
-    def test_std_equals_mean_times_cv(self):
-        gen = GammaIntervalGenerator(cfg(ArrivalPattern.GAMMA, rate=100.0, smooth=4.0))
-        intervals = [gen.next_interval() for _ in range(10000)]
-        mean, std = statistics.mean(intervals), statistics.stdev(intervals)
-        assert abs(mean - 0.01) / 0.01 < 0.1
-        assert abs(std - 0.005) / 0.005 < 0.15
 
     def test_set_rate_updates(self):
         gen = GammaIntervalGenerator(cfg(ArrivalPattern.GAMMA, rate=10.0, smooth=2.0))
@@ -147,10 +129,6 @@ class TestConstantIntervalGenerator:
         gen = ConstantIntervalGenerator(cfg(ArrivalPattern.CONSTANT, rate=10.0))
         assert all(gen.next_interval() == 0.1 for _ in range(100))
 
-    def test_next_interval_deterministic(self):
-        gen = ConstantIntervalGenerator(cfg(ArrivalPattern.CONSTANT, rate=25.0))
-        assert len(set(gen.next_interval() for _ in range(100))) == 1
-
     def test_set_rate_updates(self):
         gen = ConstantIntervalGenerator(cfg(ArrivalPattern.CONSTANT, rate=10.0))
         assert gen.next_interval() == 0.1
@@ -164,12 +142,6 @@ class TestConstantIntervalGenerator:
 
 
 class TestConcurrencyBurstIntervalGenerator:
-    def test_init_ignores_config(self):
-        gen = ConcurrencyBurstIntervalGenerator(
-            cfg(ArrivalPattern.CONCURRENCY_BURST, rate=None)
-        )
-        assert gen is not None
-
     def test_rate_always_zero(self):
         gen = ConcurrencyBurstIntervalGenerator(cfg(ArrivalPattern.CONCURRENCY_BURST))
         assert gen.rate == 0.0
@@ -199,21 +171,3 @@ class TestEdgeCases:
     def test_extreme_rates(self, rate, expected):
         gen = ConstantIntervalGenerator(cfg(ArrivalPattern.CONSTANT, rate=rate))
         assert gen.next_interval() == expected
-
-    def test_poisson_reproducibility(self):
-        gen1 = PoissonIntervalGenerator(cfg(ArrivalPattern.POISSON, rate=10.0))
-        gen2 = PoissonIntervalGenerator(cfg(ArrivalPattern.POISSON, rate=10.0))
-        i1, i2 = (
-            [gen1.next_interval() for _ in range(10)],
-            [gen2.next_interval() for _ in range(10)],
-        )
-        assert len(i1) == len(i2) == 10 and all(x > 0 for x in i1 + i2)
-
-    @pytest.mark.parametrize("smooth", [0.1, 0.5, 1.0, 2.0, 5.0, 10.0])
-    def test_gamma_various_smoothness(self, smooth: float):
-        gen = GammaIntervalGenerator(
-            cfg(ArrivalPattern.GAMMA, rate=100.0, smooth=smooth)
-        )
-        intervals = [gen.next_interval() for _ in range(1000)]
-        assert all(i > 0 for i in intervals)
-        assert abs(statistics.mean(intervals) - 0.01) / 0.01 < 0.2

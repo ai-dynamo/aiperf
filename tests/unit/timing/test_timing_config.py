@@ -96,7 +96,7 @@ class TestTimingConfig:
             arrival_pattern=ArrivalPattern.CONSTANT,
             total_expected_requests=1000,
         )
-        cfg = TimingConfig(phase_configs=[pc], random_seed=42)
+        cfg = TimingConfig(phase_configs=[pc])
         p = cfg.phase_configs[0]
         assert (p.timing_mode, p.concurrency, p.prefill_concurrency) == (
             TimingMode.REQUEST_RATE,
@@ -108,7 +108,6 @@ class TestTimingConfig:
             ArrivalPattern.CONSTANT,
             1000,
         )
-        assert cfg.random_seed == 42
 
     def test_fixed_schedule_config(self) -> None:
         pc = make_phase_config(
@@ -158,11 +157,12 @@ class TestTimingConfig:
         )
         cfg = TimingConfig(
             phase_configs=[pc],
-            random_seed=0,
-            request_cancellation=RequestCancellationConfig(rate=0.0),
+            request_cancellation=RequestCancellationConfig(rate=0.0, delay=0.0),
         )
-        assert cfg.random_seed == 0
+        assert pc.fixed_schedule_start_offset == 0
+        assert pc.fixed_schedule_end_offset == 0
         assert cfg.request_cancellation.rate == 0.0
+        assert cfg.request_cancellation.delay == 0.0
 
     @pytest.mark.parametrize(
         "field,value",
@@ -179,7 +179,7 @@ class TestTimingConfig:
     def test_config_is_frozen(self) -> None:
         cfg = TimingConfig(phase_configs=[make_phase_config()])
         with pytest.raises(ValidationError):
-            cfg.random_seed = 42
+            cfg.request_cancellation = RequestCancellationConfig(rate=50.0)
 
     def test_phase_config_is_hashable(self) -> None:
         pc = make_phase_config()

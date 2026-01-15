@@ -83,24 +83,20 @@ class TestFixedScheduleStrategy:
         with pytest.raises(ValidationError, match="greater than 0"):
             create_orchestrator_harness(schedule=[])
 
-    async def test_init_phase_configs(self, create_orchestrator_harness) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            schedule=[(0, "c1"), (100, "c2"), (200, "c3")]
-        )
-        await h.orchestrator.initialize()
-        assert len(h.orchestrator._ordered_phase_configs) == 1
-        assert h.orchestrator._ordered_phase_configs[0].phase == CreditPhase.PROFILING
-
     @pytest.mark.parametrize(
-        "schedule,expected_convs",
+        "schedule",
         [
-            ([(0, "c1"), (100, "c2"), (200, "c3")], {"c1", "c2", "c3"}),
-            ([(0, "c1"), (0, "c2"), (100, "c3"), (100, "c4")], {"c1", "c2", "c3", "c4"}),
+            [(0, "c1"), (100, "c2"), (200, "c3")],
+            [(0, "c1"), (0, "c2"), (100, "c3"), (100, "c4")],
+            [(0, "c1"), (0, "c2"), (0, "c3")],
+            [(-100, "c1"), (-50, "c2"), (0, "c3")],
         ],
     )  # fmt: skip
-    async def test_timestamp_grouping(
-        self, create_orchestrator_harness, schedule, expected_convs
+    async def test_sends_credits_for_all_conversations(
+        self, create_orchestrator_harness, schedule
     ) -> None:
+        """Verify all conversations in schedule receive credits."""
+        expected_convs = {cid for _, cid in schedule}
         h: OrchestratorHarness = create_orchestrator_harness(schedule=schedule)
         await h.run_with_auto_return()
         assert len(h.sent_credits) == len(schedule)
@@ -113,28 +109,11 @@ class TestFixedScheduleStrategy:
     async def test_offset_configs(
         self, auto_offset, manual_offset, expected_zero
     ) -> None:
+        """Verify schedule_zero_ms is computed correctly from offset settings."""
         schedule = [(1000, "c1"), (1100, "c2"), (1200, "c3")]
         strategy, _, _ = make_strategy(schedule, auto_offset, manual_offset)
         await strategy.setup_phase()
         assert strategy._schedule_zero_ms == expected_zero
-
-    @pytest.mark.parametrize(
-        "schedule",
-        [
-            [(0, "c1"), (100, "c2"), (200, "c3")],
-            [(0, "c1"), (0, "c2"), (0, "c3")],
-            [(-100, "c1"), (-50, "c2"), (0, "c3")],
-        ],
-    )  # fmt: skip
-    async def test_execution_timing(
-        self, create_orchestrator_harness, schedule
-    ) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(schedule=schedule)
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) == len(schedule)
-        assert {c.conversation_id for c in h.sent_credits} == {
-            cid for _, cid in schedule
-        }
 
     @pytest.mark.parametrize("auto_offset", [True, False])
     @pytest.mark.parametrize(
@@ -145,9 +124,10 @@ class TestFixedScheduleStrategy:
             [(0, "c1"), (100, "c2"), (200, "c3")],
         ],
     )  # fmt: skip
-    async def test_with_auto_offset(
+    async def test_auto_offset_affects_execution_duration(
         self, create_orchestrator_harness, time_traveler, auto_offset, schedule
     ) -> None:
+        """Verify auto_offset=True reduces execution time by skipping initial gap."""
         h: OrchestratorHarness = create_orchestrator_harness(
             schedule=schedule, auto_offset_timestamps=auto_offset
         )
@@ -161,40 +141,24 @@ class TestFixedScheduleStrategy:
 @pytest.mark.asyncio
 class TestFixedScheduleSetup:
     async def test_builds_sorted_schedule(self) -> None:
+        """Verify schedule entries are sorted by timestamp regardless of input order."""
         strategy, _, _ = make_strategy([(200, "c3"), (0, "c1"), (100, "c2")])
         await strategy.setup_phase()
         timestamps = [ts for ts, _ in strategy._absolute_schedule]
         assert timestamps == sorted(timestamps)
 
-    @pytest.mark.parametrize(
-        "auto_offset,manual_offset,expected",
-        [(True, None, 1000), (False, 500, 500), (False, None, 0)],
-    )  # fmt: skip
-    async def test_offset_variations(
-        self, auto_offset, manual_offset, expected
-    ) -> None:
-        strategy, _, _ = make_strategy(
-            [(1000, "c1"), (1100, "c2"), (1200, "c3")], auto_offset, manual_offset
-        )
-        await strategy.setup_phase()
-        assert strategy._schedule_zero_ms == expected
-
-    async def test_stores_lifecycle(self) -> None:
-        strategy, _, lifecycle = make_strategy([(0, "c1")])
-        await strategy.setup_phase()
-        assert strategy._lifecycle is not None
-        assert strategy._lifecycle.started_at_perf_ns == 1_000_000_000
-
 
 @pytest.mark.asyncio
 class TestFixedScheduleExecutePhase:
     async def test_schedules_all_first_turns(self) -> None:
+        """Verify execute_phase schedules one call per first turn."""
         strategy, scheduler, _ = make_strategy([(0, "c1"), (100, "c2"), (200, "c3")])
         await strategy.setup_phase()
         await strategy.execute_phase()
         assert scheduler.schedule_at_perf_sec.call_count == 3
 
     async def test_raises_without_started_at_perf_ns(self) -> None:
+        """Verify execute_phase raises RuntimeError if lifecycle not started."""
         scheduler = MagicMock()
         stop_checker = MagicMock()
         stop_checker.can_send_any_turn = MagicMock(return_value=True)
@@ -227,7 +191,8 @@ class TestFixedScheduleExecutePhase:
 
 @pytest.mark.asyncio
 class TestFixedScheduleCreditReturn:
-    async def test_final_turn_returns_immediately(self) -> None:
+    async def test_final_turn_does_not_schedule(self) -> None:
+        """Verify final turn of conversation does not schedule any follow-up."""
         strategy, scheduler, _ = make_strategy([(0, "c1"), (100, "c1")])
         await strategy.setup_phase()
         credit = Credit(
@@ -244,7 +209,8 @@ class TestFixedScheduleCreditReturn:
         scheduler.schedule_later.assert_not_called()
         scheduler.schedule_soon.assert_not_called()
 
-    async def test_schedules_next_turn(self) -> None:
+    async def test_non_final_turn_schedules_next(self) -> None:
+        """Verify non-final turn schedules the next turn in the conversation."""
         strategy, scheduler, _ = make_strategy([(0, "c1"), (100, "c1")])
         await strategy.setup_phase()
         credit = Credit(
@@ -267,6 +233,7 @@ class TestFixedScheduleTimestampConversion:
         [(True, None), (False, None)],
     )  # fmt: skip
     async def test_timestamp_to_perf_sec(self, auto_offset, manual_offset) -> None:
+        """Verify timestamp conversion accounts for schedule_zero_ms offset."""
         schedule = (
             [(100, "c1"), (200, "c2")]
             if not auto_offset
@@ -282,6 +249,7 @@ class TestFixedScheduleTimestampConversion:
 @pytest.mark.asyncio
 class TestFixedScheduleEdgeCases:
     async def test_missing_first_turn_timestamp_raises(self) -> None:
+        """Verify setup_phase raises ValueError when first turn lacks timestamp."""
         scheduler, stop_checker, issuer, lifecycle = (
             MagicMock(),
             MagicMock(),
@@ -320,6 +288,7 @@ class TestFixedScheduleEdgeCases:
             await strategy.setup_phase()
 
     async def test_empty_conversations_raises(self) -> None:
+        """Verify setup_phase raises ValueError when no valid timestamps found."""
         scheduler, stop_checker, issuer, lifecycle = (
             MagicMock(),
             MagicMock(),
@@ -353,7 +322,8 @@ class TestFixedScheduleEdgeCases:
         with pytest.raises(ValueError, match="No conversations with valid"):
             await strategy.setup_phase()
 
-    async def test_single_conversation(self) -> None:
+    async def test_single_conversation_works(self) -> None:
+        """Verify strategy handles single-conversation schedule correctly."""
         strategy, _, _ = make_strategy([(0, "c1")])
         await strategy.setup_phase()
         assert len(strategy._absolute_schedule) == 1

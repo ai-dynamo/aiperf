@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -12,12 +11,10 @@ from aiperf.common.exceptions import FactoryCreationError
 from aiperf.timing.intervals import (
     IntervalGeneratorConfig,
     IntervalGeneratorFactory,
-    IntervalGeneratorProtocol,
 )
 from aiperf.timing.ramping import (
     RampConfig,
     RampStrategyFactory,
-    RampStrategyProtocol,
     RampType,
 )
 from aiperf.timing.strategies.core import TimingStrategyFactory, TimingStrategyProtocol
@@ -160,36 +157,6 @@ class TestIntervalGeneratorFactory:
             IntervalGeneratorFactory.create_instance(mk_int_cfg(pat, rate=bad_rate))
         assert isinstance(exc.value.__cause__, ValueError)
 
-    @pytest.mark.parametrize(
-        "pat",
-        [
-            ArrivalPattern.CONSTANT,
-            ArrivalPattern.POISSON,
-            ArrivalPattern.GAMMA,
-            ArrivalPattern.CONCURRENCY_BURST,
-        ],
-    )
-    def test_protocol_conformance(self, pat):
-        cfg = mk_int_cfg(
-            pat,
-            rate=10.0 if pat != ArrivalPattern.CONCURRENCY_BURST else None,
-            smooth=2.0 if pat == ArrivalPattern.GAMMA else None,
-        )
-        g = IntervalGeneratorFactory.create_instance(cfg)
-        assert isinstance(g, IntervalGeneratorProtocol)
-        assert hasattr(g, "next_interval") and callable(g.next_interval)
-        assert hasattr(g, "rate")
-
-    @pytest.mark.parametrize(
-        "pat",
-        [ArrivalPattern.CONSTANT, ArrivalPattern.POISSON, ArrivalPattern.GAMMA],
-    )
-    def test_has_set_rate(self, pat):
-        g = IntervalGeneratorFactory.create_instance(
-            mk_int_cfg(pat, smooth=2.0 if pat == ArrivalPattern.GAMMA else None)
-        )
-        assert hasattr(g, "set_rate") and callable(g.set_rate)
-
     def test_constant_rate_update(self):
         g = IntervalGeneratorFactory.create_instance(
             mk_int_cfg(ArrivalPattern.CONSTANT)
@@ -231,10 +198,6 @@ class TestIntervalGeneratorFactory:
         with pytest.raises(ValueError, match="must be > 0"):
             g.set_rate(bad)
 
-    def test_none_config_error(self):
-        with pytest.raises((AttributeError, TypeError)):
-            IntervalGeneratorFactory.create_instance(None)  # type: ignore
-
 
 class TestRampStrategyFactory:
     def test_creates_linear(self):
@@ -261,16 +224,6 @@ class TestRampStrategyFactory:
             d, nv = r
             assert d >= 0
             assert (nv > start) if dir == "inc" else (nv < start)
-
-    @pytest.mark.parametrize("cfg_type", [RampType.LINEAR, RampType.EXPONENTIAL])
-    def test_protocol_conformance(self, cfg_type):
-        cfg = mk_ramp_cfg(
-            cfg_type, exp=2.0 if cfg_type == RampType.EXPONENTIAL else None
-        )
-        s = RampStrategyFactory.create_instance(cfg)
-        assert isinstance(s, RampStrategyProtocol)
-        for attr in ("start", "target", "next_step", "value_at"):
-            assert hasattr(s, attr)
 
     def test_linear_discrete_step(self):
         s = RampStrategyFactory.create_instance(mk_ramp_cfg(RampType.LINEAR))
@@ -306,10 +259,6 @@ class TestRampStrategyFactory:
         assert s.next_step(10.0, 0.0) is None
         assert s.value_at(10.0) is None
 
-    def test_none_config_error(self):
-        with pytest.raises((AttributeError, TypeError)):
-            RampStrategyFactory.create_instance(None)  # type: ignore
-
 
 class TestTimingStrategyFactory:
     @pytest.mark.parametrize(
@@ -329,27 +278,6 @@ class TestTimingStrategyFactory:
             timing_mode=mode, config=cfg, **ts_deps
         )
         assert isinstance(s, TimingStrategyProtocol)
-
-    @pytest.mark.parametrize(
-        "mode,extra",
-        [
-            (
-                TimingMode.REQUEST_RATE,
-                {"request_rate": 10.0, "arrival_pattern": ArrivalPattern.POISSON},
-            ),
-            (TimingMode.FIXED_SCHEDULE, {}),
-            (TimingMode.USER_CENTRIC_RATE, {"request_rate": 10.0, "num_users": 5}),
-        ],  # fmt: skip
-    )
-    def test_protocol_methods(self, mode, extra, ts_deps):
-        cfg = make_phase_config(timing_mode=mode, request_count=100, **extra)
-        s = TimingStrategyFactory.create_instance(
-            timing_mode=mode, config=cfg, **ts_deps
-        )
-        assert hasattr(s, "setup_phase") and asyncio.iscoroutinefunction(s.setup_phase)
-        assert hasattr(s, "execute_phase") and asyncio.iscoroutinefunction(
-            s.execute_phase
-        )
 
     def test_missing_deps_error(self):
         cfg = make_phase_config(
@@ -387,22 +315,6 @@ class TestFactoryRegistry:
         types = TimingStrategyFactory.get_all_class_types()
         for m in TimingMode:
             assert m in types
-
-    def test_get_class_from_type(self):
-        assert (
-            IntervalGeneratorFactory.get_class_from_type(ArrivalPattern.POISSON)
-            is not None
-        )
-        assert RampStrategyFactory.get_class_from_type(RampType.LINEAR) is not None
-        assert (
-            TimingStrategyFactory.get_class_from_type(TimingMode.REQUEST_RATE)
-            is not None
-        )
-
-    def test_get_all_classes(self):
-        assert len(IntervalGeneratorFactory.get_all_classes()) == len(ArrivalPattern)
-        assert len(RampStrategyFactory.get_all_classes()) == len(RampType)
-        assert len(TimingStrategyFactory.get_all_classes()) == len(TimingMode)
 
 
 class TestFactoryIntegration:

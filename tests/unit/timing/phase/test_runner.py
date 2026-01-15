@@ -339,14 +339,6 @@ class TestRamperCreation:
             cancel,
             cb,
         )
-        r._config = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
-            timing_mode=TimingMode.REQUEST_RATE,
-            total_expected_requests=10,
-            prefill_concurrency=5,
-            prefill_concurrency_ramp_duration_sec=3.0,
-            request_rate=10.0,
-        )
         with patch(
             "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
             return_value=MockStrategy(),
@@ -518,22 +510,6 @@ class TestProgressReporting:
             await task
         assert pub.publish_progress.call_count >= 1
 
-    async def test_progress_loop_handles_cancellation(
-        self,
-        conv_src: MagicMock,
-        pub: MagicMock,
-        router: MagicMock,
-        conc: MagicMock,
-        cancel: MagicMock,
-        cb: MagicMock,
-    ) -> None:
-        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
-        task = asyncio.create_task(r._progress_report_loop())
-        await asyncio.sleep(0.001)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
 
 class TestSeamlessMode:
     async def test_returns_early_for_non_final_phase(
@@ -575,22 +551,7 @@ class TestSeamlessMode:
 
 
 class TestComponentOwnership:
-    def test_owns_scheduler(self, runner: PhaseRunner) -> None:
-        assert runner._scheduler is not None
-
-    def test_owns_lifecycle(self, runner: PhaseRunner) -> None:
-        assert runner._lifecycle is not None
-
-    def test_owns_progress_tracker(self, runner: PhaseRunner) -> None:
-        assert runner._progress is not None
-
-    def test_owns_stop_checker(self, runner: PhaseRunner) -> None:
-        assert runner._stop_checker is not None
-
-    def test_owns_credit_issuer(self, runner: PhaseRunner) -> None:
-        assert runner._credit_issuer is not None
-
-    def test_phase_property(self, runner: PhaseRunner) -> None:
+    def test_phase_property_returns_configured_phase(self, runner: PhaseRunner) -> None:
         assert runner.phase == CreditPhase.PROFILING
 
 

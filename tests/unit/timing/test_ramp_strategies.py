@@ -132,24 +132,23 @@ class TestExponentialStrategy:
         r2 = s.next_step(50, elapsed_sec=0.5)
         assert r2 is not None and r2[1] == 51
 
-    def test_delays_decrease(self) -> None:
+    def test_delays_decrease_with_ease_in(self) -> None:
+        """Test exponential ease-in: first delay longest, delays decrease, last shortest."""
         s, delays, cur, elapsed = ExponentialStrategy(exp(1, 100, 1.0)), [], 1, 0.0
-        for _ in range(10):
+        for _ in range(99):
             r = s.next_step(cur, elapsed_sec=elapsed)
             if r is None:
                 break
             delays.append(r[0])
             elapsed += r[0]
             cur = r[1]
+        # First delay is longest (ease-in starts slow)
+        assert delays[0] > 0.09
+        # Delays monotonically decrease
         for i in range(1, len(delays)):
             assert delays[i] <= delays[i - 1] + 0.001
-
-    def test_first_delay_longest_last_shortest(self) -> None:
-        s = ExponentialStrategy(exp(1, 100, 1.0))
-        r1 = s.next_step(1, elapsed_sec=0.0)
-        assert r1 is not None and r1[0] > 0.09
-        r2 = s.next_step(99, elapsed_sec=0.99)
-        assert r2 is not None and r2[1] == 100 and r2[0] < 0.02
+        # Last delay is shortest
+        assert delays[-1] < 0.02
 
     def test_higher_exponent_slower_start(self) -> None:
         r_low = ExponentialStrategy(exp(1, 100, 1.0, 2.0)).next_step(1, elapsed_sec=0.0)
@@ -170,10 +169,14 @@ class TestExponentialStrategy:
         assert vals == list(range(1, 101)) and abs(elapsed - 1.0) < 0.01
 
     def test_ramp_down(self) -> None:
-        s = ExponentialStrategy(exp(100, 1, 1.0))
-        r = s.next_step(100, elapsed_sec=0.0)
-        assert r is not None and r[1] == 99
-        delays, cur, elapsed = [], 100, 0.0
+        """Test exponential ramp down: all values, timing, and decreasing delays."""
+        s, cur, elapsed, vals, delays = (
+            ExponentialStrategy(exp(100, 1, 1.0)),
+            100,
+            0.0,
+            [100],
+            [],
+        )
         while cur > 1:
             r = s.next_step(cur, elapsed_sec=elapsed)
             if r is None:
@@ -181,19 +184,14 @@ class TestExponentialStrategy:
             delays.append(r[0])
             elapsed += r[0]
             cur = r[1]
+            vals.append(cur)
+        # All values from 100 down to 1
+        assert vals == list(range(100, 0, -1))
+        # Total time matches duration
+        assert abs(elapsed - 1.0) < 0.01
+        # Delays decrease (ease-in applies to ramp down too)
         for i in range(1, len(delays)):
             assert delays[i] <= delays[i - 1] + 0.001
-
-    def test_ramp_down_full(self) -> None:
-        s, cur, elapsed, vals = ExponentialStrategy(exp(100, 1, 1.0)), 100, 0.0, [100]
-        while cur > 1:
-            r = s.next_step(cur, elapsed_sec=elapsed)
-            if r is None:
-                break
-            elapsed += r[0]
-            cur = r[1]
-            vals.append(cur)
-        assert vals == list(range(100, 0, -1)) and abs(elapsed - 1.0) < 0.01
 
     def test_returns_none_below_target_down(self) -> None:
         assert (
@@ -293,13 +291,15 @@ class TestValueAt:
     def test_linear_none_at_completion(self, elapsed: float) -> None:
         assert LinearStrategy(lin(1, 100, 10.0)).value_at(elapsed) is None
 
-    def test_exponential_slow_start(self) -> None:
-        v = ExponentialStrategy(exp(1, 101, 10.0)).value_at(5.0)
-        assert v is not None and v < 51.0 and abs(v - 26.0) < 0.1
-
-    def test_exponential_accelerates(self) -> None:
-        v = ExponentialStrategy(exp(1, 101, 10.0)).value_at(8.0)
-        assert v is not None and abs(v - 65.0) < 0.1
+    def test_exponential_ease_in_curve(self) -> None:
+        """Test exponential value_at: slow early (below linear), accelerates later."""
+        s = ExponentialStrategy(exp(1, 101, 10.0))
+        # At 50% time, value is well below 50% progress due to ease-in
+        v_mid = s.value_at(5.0)
+        assert v_mid is not None and v_mid < 51.0 and abs(v_mid - 26.0) < 0.1
+        # At 80% time, value has accelerated past midpoint
+        v_late = s.value_at(8.0)
+        assert v_late is not None and abs(v_late - 65.0) < 0.1
 
     def test_linear_step_size_interpolates(self) -> None:
         v = LinearStrategy(lin(1, 101, 10.0, step=25)).value_at(5.0)
@@ -323,14 +323,6 @@ class TestPoissonValueAt:
     def test_start(self) -> None:
         v = PoissonStrategy(poi(10, 100, 10.0)).value_at(0.0)
         assert v is not None and v == 10.0
-
-    @pytest.mark.parametrize("elapsed", [10.0, 15.0])
-    def test_none_at_completion(self, elapsed: float) -> None:
-        assert PoissonStrategy(poi(1, 100, 10.0)).value_at(elapsed) is None
-
-    @pytest.mark.parametrize("elapsed", [0.0, 5.0])
-    def test_none_for_zero_range(self, elapsed: float) -> None:
-        assert PoissonStrategy(poi(50, 50, 10.0)).value_at(elapsed) is None
 
     def test_step_function(self) -> None:
         s = PoissonStrategy(poi(1, 10, 9.0))

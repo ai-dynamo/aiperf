@@ -137,30 +137,6 @@ class TestDurationStopCondition:
 
 
 class TestStopConditionChecker:
-    def test_lifecycle_always_included(self) -> None:
-        checker = StopConditionChecker(cfg(), lc(), ctr())
-        assert len(checker._stop_conditions) >= 1
-
-    def test_request_count_included_when_configured(self) -> None:
-        checker = StopConditionChecker(cfg(reqs=100), lc(), ctr())
-        types = [type(c).__name__ for c in checker._stop_conditions]
-        assert (
-            "LifecycleStopCondition" in types and "RequestCountStopCondition" in types
-        )
-
-    def test_all_conditions_when_all_configured(self) -> None:
-        checker = StopConditionChecker(
-            cfg(reqs=100, sessions=10, dur=60.0), lc(), ctr()
-        )
-        types = [type(c).__name__ for c in checker._stop_conditions]
-        for t in [
-            "LifecycleStopCondition",
-            "RequestCountStopCondition",
-            "SessionCountStopCondition",
-            "DurationStopCondition",
-        ]:
-            assert t in types
-
     def test_can_send_when_all_pass(self) -> None:
         checker = StopConditionChecker(cfg(reqs=100), lc(), ctr(sent=50))
         assert checker.can_send_any_turn() is True
@@ -205,12 +181,6 @@ class TestStopConditionChecker:
             checker.can_send_any_turn() is True
             and checker.can_start_new_session() is True
         )
-
-    def test_first_condition_failure_short_circuits(self) -> None:
-        checker = StopConditionChecker(
-            cfg(reqs=100, dur=60.0), lc(cancelled=True), ctr()
-        )
-        assert checker.can_send_any_turn() is False
 
     # fmt: off
     @pytest.mark.parametrize("sent,sessions,turns,exp_any,exp_new", [

@@ -200,7 +200,9 @@ class TestTimingManagerCancelCommand:
         )
 
     @pytest.mark.asyncio
-    async def test_cancel_is_idempotent(self, configured_manager) -> None:
+    async def test_cancel_can_be_called_multiple_times(
+        self, configured_manager
+    ) -> None:
         cmd = ProfileCancelCommand.model_construct(service_id="test-controller")
         await configured_manager._handle_profile_cancel_command(cmd)
         await configured_manager._handle_profile_cancel_command(cmd)
@@ -219,17 +221,25 @@ class TestTimingManagerStartProfilingAndInitialization:
             )
 
     @pytest.mark.asyncio
-    async def test_start_profiling_starts_orchestrator(
+    async def test_start_profiling_calls_orchestrator_start(
         self, create_manager, user_config
     ) -> None:
         mgr = create_manager(user_config)
-        mgr._phase_orchestrator = MagicMock()
-        mgr._phase_orchestrator.start = lambda *a, **kw: asyncio.sleep(0)
+        mock_orchestrator = MagicMock()
+        start_called = asyncio.Event()
+
+        async def mock_start():
+            start_called.set()
+
+        mock_orchestrator.start = mock_start
+        mgr._phase_orchestrator = mock_orchestrator
+
         with patch("aiperf.timing.manager.gc"):
             await mgr._on_start_profiling(
                 CommandMessage.model_construct(service_id="test-controller")
             )
-        assert mgr._phase_orchestrator is not None
+        await asyncio.sleep(0.01)  # Allow execute_async to run
+        assert start_called.is_set()
 
     @pytest.mark.asyncio
     async def test_configure_raises_when_event_set_but_no_metadata(

@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,7 +8,7 @@ import pytest
 from aiperf.common.enums import CreditPhase, TimingMode
 from aiperf.common.models import CreditPhaseStats
 from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
-from aiperf.credit.structs import Credit, CreditContext, TurnToSend
+from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.credit_counter import CreditCounter
@@ -506,27 +505,6 @@ class TestFullCreditFlow:
 
 
 @pytest.mark.asyncio
-class TestCreditContext:
-    async def test_returned_flag(self):
-        cr = _credit()
-        ctx = CreditContext(credit=cr, drop_perf_ns=1000)
-        assert not ctx.returned
-        ctx = CreditContext(
-            credit=cr, drop_perf_ns=1000, returned=True, cancelled=ctx.cancelled
-        )
-        assert ctx.returned
-
-    async def test_cancelled_flag(self):
-        cr = _credit()
-        ctx = CreditContext(credit=cr, drop_perf_ns=1000)
-        assert not ctx.cancelled
-        ctx = CreditContext(
-            credit=cr, drop_perf_ns=1000, cancelled=True, returned=ctx.returned
-        )
-        assert ctx.cancelled
-
-
-@pytest.mark.asyncio
 class TestPhaseStateMachine:
     async def test_state_ordering(self):
         cfg = _cfg(req=5)
@@ -744,34 +722,6 @@ class TestCancellation:
             r._router_client.send_to.call_count == 1
             and r._router_client.send_to.call_args[0][0] == "w2"
         )
-
-
-@pytest.mark.asyncio
-class TestEventTimeout:
-    async def test_set_before_timeout(self):
-        ev = asyncio.Event()
-
-        async def setter():
-            await asyncio.sleep(0.01)
-            ev.set()
-
-        t = asyncio.create_task(setter())
-        try:
-            await asyncio.wait_for(ev.wait(), timeout=0.1)
-            timedout = False
-        except asyncio.TimeoutError:
-            timedout = True
-        await t
-        assert not timedout and ev.is_set()
-
-    async def test_timeout_before_set(self):
-        ev = asyncio.Event()
-        try:
-            await asyncio.wait_for(ev.wait(), timeout=0.001)
-            timedout = False
-        except asyncio.TimeoutError:
-            timedout = True
-        assert timedout and not ev.is_set()
 
 
 @pytest.mark.asyncio

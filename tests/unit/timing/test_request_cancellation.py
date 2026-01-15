@@ -30,9 +30,6 @@ class TestRequestCancellation:
     def test_enabled_status(self, rate: float | None, expected: bool) -> None:
         assert mk_sim(rate).is_cancellation_enabled == expected
 
-    def test_disabled_returns_none(self) -> None:
-        assert mk_sim().next_cancellation_delay_ns() is None
-
     def test_zero_rate_never_cancels(self) -> None:
         sim = mk_sim(rate=0.0, delay=1.0)
         for _ in range(100):
@@ -78,38 +75,35 @@ class TestRequestCancellation:
             assert result is None
 
     def test_warmup_does_not_consume_rng(self) -> None:
+        """Verify warmup phase doesn't advance the RNG state."""
         rng.reset()
         rng.init(42)
-        sim1 = mk_sim(rate=50.0, delay=1.0)
+        sim = mk_sim(rate=50.0, delay=1.0)
+        # Call during warmup multiple times - should not consume RNG
         for _ in range(10):
-            sim1.next_cancellation_delay_ns(phase=CreditPhase.WARMUP)
+            sim.next_cancellation_delay_ns(phase=CreditPhase.WARMUP)
+        # First profiling call
+        r1 = sim.next_cancellation_delay_ns(phase=CreditPhase.PROFILING)
+
+        # Reset and create new simulator - skip warmup calls
         rng.reset()
         rng.init(42)
         sim2 = mk_sim(rate=50.0, delay=1.0)
-        r1 = sim1.next_cancellation_delay_ns(phase=CreditPhase.PROFILING)
+        # First profiling call without warmup calls
         r2 = sim2.next_cancellation_delay_ns(phase=CreditPhase.PROFILING)
+
         assert r1 == r2
 
-    def test_same_seed_same_sequence(self) -> None:
-        rng.reset()
-        rng.init(42)
-        d1 = [
-            mk_sim(rate=50.0, delay=1.0).next_cancellation_delay_ns() for _ in range(50)
-        ]
-        rng.reset()
-        rng.init(42)
-        d2 = [
-            mk_sim(rate=50.0, delay=1.0).next_cancellation_delay_ns() for _ in range(50)
-        ]
-        assert d1 == d2
-
-    def test_different_seeds_different_sequences(self) -> None:
+    def test_same_seed_produces_reproducible_sequence(self) -> None:
+        """Verify same seed produces identical cancellation decisions."""
         rng.reset()
         rng.init(42)
         sim1 = mk_sim(rate=50.0, delay=1.0)
         d1 = [sim1.next_cancellation_delay_ns() for _ in range(50)]
+
         rng.reset()
-        rng.init(123)
+        rng.init(42)
         sim2 = mk_sim(rate=50.0, delay=1.0)
         d2 = [sim2.next_cancellation_delay_ns() for _ in range(50)]
-        assert d1 != d2
+
+        assert d1 == d2

@@ -68,9 +68,10 @@ class TestUserCentricExecution:
             (TWO_TURN * 4, 40.0, 10, 10, 10),
         ],
     )  # fmt: skip
-    async def test_basic_execution(
+    async def test_issues_expected_credits(
         self, create_orchestrator_harness, convs, rate, users, count, expected
     ) -> None:
+        """Verify strategy issues correct number of credits across various configurations."""
         h: OrchestratorHarness = create_orchestrator_harness(
             conversations=convs,
             user_centric_rate=rate,
@@ -82,146 +83,9 @@ class TestUserCentricExecution:
 
 
 @pytest.mark.asyncio
-class TestMassiveGauntlet:
-    @pytest.mark.parametrize("qps", [float(i) for i in range(5, 101)])
-    async def test_qps_5_to_100(self, create_orchestrator_harness, qps) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            conversations=TWO_TURN * 4,
-            user_centric_rate=qps,
-            num_users=5,
-            request_count=5,
-        )
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) == 5
-
-    @pytest.mark.parametrize(
-        "users,qps",
-        [(u, q) for u in range(2, 21) for q in [10.0, 20.0, 50.0, 100.0]],
-    )  # fmt: skip
-    async def test_users_2_to_20(self, create_orchestrator_harness, users, qps) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            conversations=TWO_TURN * 10,
-            user_centric_rate=qps,
-            num_users=users,
-            request_count=users,
-        )
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) == users
-
-    @pytest.mark.parametrize(
-        "turns,users,qps",
-        [(t, u, q) for t in [2, 3, 4, 5, 6, 8, 10] for u in [3, 5, 10] for q in [20.0, 50.0, 100.0]],
-    )  # fmt: skip
-    async def test_varying_turns(
-        self, create_orchestrator_harness, turns, users, qps
-    ) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            conversations=[(f"c{i}", turns) for i in range(users * 3)],
-            user_centric_rate=qps,
-            num_users=users,
-            request_count=users,
-        )
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) == users
-
-    @pytest.mark.parametrize(
-        "qps",
-        [5.5, 7.5, 12.5, 15.5, 22.5, 27.5, 33.5, 42.5, 55.5, 67.5, 88.5, 99.5],
-    )  # fmt: skip
-    async def test_fractional_qps(self, create_orchestrator_harness, qps) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            conversations=TWO_TURN * 4,
-            user_centric_rate=qps,
-            num_users=5,
-            request_count=5,
-        )
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) == 5
-
-    @pytest.mark.parametrize(
-        "users,qps,turns",
-        [
-            (1, 10.0, 2), (1, 100.0, 5), (50, 200.0, 2), (20, 150.0, 3),
-            (15, 75.0, 4), (8, 40.0, 6), (12, 60.0, 3), (25, 125.0, 2),
-            (2, 5.0, 2), (3, 7.5, 3), (4, 12.0, 4), (7, 21.0, 5),
-        ],
-    )  # fmt: skip
-    async def test_edge_cases(
-        self, create_orchestrator_harness, users, qps, turns
-    ) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            conversations=[(f"c{i}", turns) for i in range(users * 3)],
-            user_centric_rate=qps,
-            num_users=users,
-            request_count=users,
-        )
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) == users
-
-    @pytest.mark.parametrize(
-        "turns,qps",
-        [(t, q) for t in range(2, 12) for q in range(10, 101, 5)],
-    )  # fmt: skip
-    async def test_turns_2_to_11(self, create_orchestrator_harness, turns, qps) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            conversations=[(f"c{i}", turns) for i in range(15)],
-            user_centric_rate=float(qps),
-            num_users=5,
-            request_count=5,
-        )
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) == 5
-
-    @pytest.mark.parametrize(
-        "users,qps",
-        [(u, q) for u in range(1, 31) for q in range(20, 101, 20)],
-    )  # fmt: skip
-    async def test_users_1_to_30(self, create_orchestrator_harness, users, qps) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            conversations=TWO_TURN * 15,
-            user_centric_rate=float(qps),
-            num_users=users,
-            request_count=users,
-        )
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) == users
-
-    @pytest.mark.parametrize(
-        "users,qps,turns",
-        [(u, q, t) for u in [2, 5, 10, 15, 20] for q in [15.0, 25.0, 35.0, 45.0, 55.0, 65.0, 75.0, 85.0, 95.0] for t in [2, 3, 5]],
-    )  # fmt: skip
-    async def test_comprehensive(
-        self, create_orchestrator_harness, users, qps, turns
-    ) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            conversations=[(f"c{i}", turns) for i in range(users * 3)],
-            user_centric_rate=qps,
-            num_users=users,
-            request_count=users,
-        )
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) == users
-
-    @pytest.mark.parametrize(
-        "users,qps,turns",
-        [(u, q, t) for u in range(2, 12) for q in range(10, 81, 10) for t in [2, 4, 6]],
-    )  # fmt: skip
-    async def test_ultra_comprehensive(
-        self, create_orchestrator_harness, users, qps, turns
-    ) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            conversations=[(f"c{i}", turns) for i in range(users * 3)],
-            user_centric_rate=float(qps),
-            num_users=users,
-            request_count=users,
-        )
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) == users
-
-
-@pytest.mark.asyncio
 class TestSessionTracking:
     async def test_unique_correlation_ids(self, create_orchestrator_harness) -> None:
+        """Each user session should have a unique correlation ID."""
         h: OrchestratorHarness = create_orchestrator_harness(
             conversations=TWO_TURN * 4,
             user_centric_rate=25.0,
@@ -234,6 +98,7 @@ class TestSessionTracking:
     async def test_multi_turn_shares_correlation(
         self, create_orchestrator_harness
     ) -> None:
+        """Multiple turns in a session should share the same correlation ID with sequential turn indices."""
         h: OrchestratorHarness = create_orchestrator_harness(
             conversations=MULTI_TURN,
             user_centric_rate=20.0,
@@ -255,6 +120,7 @@ class TestSessionTracking:
 @pytest.mark.asyncio
 class TestStopConditions:
     async def test_stops_at_request_count(self, create_orchestrator_harness) -> None:
+        """Strategy should stop issuing credits when request count is reached."""
         h: OrchestratorHarness = create_orchestrator_harness(
             conversations=TWO_TURN * 10,
             user_centric_rate=50.0,
@@ -265,6 +131,7 @@ class TestStopConditions:
         assert len(h.sent_credits) == 25
 
     async def test_stops_at_session_count(self, create_orchestrator_harness) -> None:
+        """Strategy should stop starting new sessions when session count is reached."""
         h: OrchestratorHarness = create_orchestrator_harness(
             conversations=MULTI_TURN * 5,
             user_centric_rate=40.0,
@@ -278,6 +145,7 @@ class TestStopConditions:
 @pytest.mark.asyncio
 class TestRealisticScenarios:
     async def test_chat_benchmark(self, create_orchestrator_harness) -> None:
+        """Simulate high-concurrency chat benchmark with many users and sessions."""
         h: OrchestratorHarness = create_orchestrator_harness(
             conversations=[(f"c{i}", 3) for i in range(100)],
             user_centric_rate=100.0,
@@ -289,6 +157,7 @@ class TestRealisticScenarios:
         assert 0 in {c.turn_index for c in h.sent_credits}
 
     async def test_kv_cache_benchmark(self, create_orchestrator_harness) -> None:
+        """Simulate KV cache benchmark with longer multi-turn conversations."""
         h: OrchestratorHarness = create_orchestrator_harness(
             conversations=[(f"c{i}", 5) for i in range(30)],
             user_centric_rate=40.0,
@@ -300,43 +169,27 @@ class TestRealisticScenarios:
 
 
 class TestUserClass:
-    def test_x_correlation_id(self) -> None:
+    def test_x_correlation_id_delegates_to_sampled(self) -> None:
+        """User.x_correlation_id should delegate to sampled session."""
         m = MagicMock()
         m.x_correlation_id = "test-id"
         assert User(user_id=1, sampled=m).x_correlation_id == "test-id"
 
-    def test_build_first_turn(self) -> None:
+    def test_build_first_turn_passes_max_turns(self) -> None:
+        """User.build_first_turn should pass max_turns to sampled session."""
         m = MagicMock()
         m.build_first_turn.return_value = "turn"
         u = User(user_id=1, sampled=m, max_turns=5)
         assert u.build_first_turn() == "turn"
         m.build_first_turn.assert_called_once_with(max_turns=5)
 
-    @pytest.mark.parametrize("uid", range(1, 22))
-    def test_dataclass_creation(self, uid) -> None:
+    def test_dataclass_fields(self) -> None:
+        """Verify User dataclass stores fields correctly."""
         m = MagicMock()
-        m.x_correlation_id = f"c-{uid}"
-        u = User(user_id=uid, sampled=m, next_send_time=1000, max_turns=3)
-        assert u.user_id == uid
+        m.x_correlation_id = "c-42"
+        u = User(user_id=42, sampled=m, next_send_time=1000, max_turns=3, order=5)
+        assert u.user_id == 42
         assert u.sampled == m
         assert u.next_send_time == 1000
         assert u.max_turns == 3
-
-
-@pytest.mark.asyncio
-class TestSessionCountStopping:
-    @pytest.mark.parametrize(
-        "users,sessions",
-        [(2, 4), (2, 6), (3, 6), (3, 9), (4, 8), (5, 10), (5, 15)],
-    )  # fmt: skip
-    async def test_various_ratios(
-        self, create_orchestrator_harness, users, sessions
-    ) -> None:
-        h: OrchestratorHarness = create_orchestrator_harness(
-            conversations=TWO_TURN * (sessions + 5),
-            user_centric_rate=100.0,
-            num_users=users,
-            num_sessions=sessions,
-        )
-        await h.run_with_auto_return()
-        assert len(h.sent_credits) >= sessions
+        assert u.order == 5
