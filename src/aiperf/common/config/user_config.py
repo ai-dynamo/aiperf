@@ -242,18 +242,15 @@ class UserConfig(BaseConfig):
 
     @model_validator(mode="after")
     def validate_warmup_grace_period(self) -> Self:
-        """Validate warmup grace period is only used when warmup is enabled."""
-        if "warmup_grace_period" in self.loadgen.model_fields_set:
-            warmup_enabled = (
-                self.loadgen.warmup_request_count is not None
-                or self.loadgen.warmup_duration is not None
-                or self.loadgen.warmup_num_sessions is not None
+        """Validate warmup grace period is only used when --warmup-duration is set."""
+        if (
+            "warmup_grace_period" in self.loadgen.model_fields_set
+            and self.loadgen.warmup_duration is None
+        ):
+            raise ValueError(
+                "--warmup-grace-period can only be used when --warmup-duration is set. "
+                "Set --warmup-duration."
             )
-            if not warmup_enabled:
-                raise ValueError(
-                    "--warmup-grace-period can only be used when warmup is enabled. "
-                    "Set --warmup-request-count, --warmup-duration, or --num-warmup-sessions."
-                )
 
         return self
 
@@ -304,17 +301,13 @@ class UserConfig(BaseConfig):
 
         # --request-rate-ramp-duration without --request-rate
         # Rate ramping only works with rate-based scheduling (not user-centric or fixed-schedule)
-        if "request_rate_ramp_duration" in self.loadgen.model_fields_set:
-            if self.loadgen.user_centric_rate is not None:
-                raise ValueError(
-                    "--request-rate-ramp-duration cannot be used with --user-centric-rate. "
-                    "Rate ramping only works with --request-rate scheduling."
-                )
-            if fixed_schedule_enabled:
-                raise ValueError(
-                    "--request-rate-ramp-duration cannot be used with --fixed-schedule. "
-                    "Rate ramping only works with --request-rate scheduling."
-                )
+        if (
+            "request_rate_ramp_duration" in self.loadgen.model_fields_set
+            and self.timing_mode != TimingMode.REQUEST_RATE
+        ):
+            raise ValueError(
+                "--request-rate-ramp-duration can only be used with --request-rate scheduling."
+            )
 
         return self
 

@@ -277,7 +277,7 @@ class LoadGeneratorConfig(BaseConfig):
             description="Enable user-centric rate limiting mode with the specified request rate (QPS). "
             "Each user has a gap = num_users / qps between turns. "
             "Users block on their previous turn (no interleaving within a user). "
-            "When a user finishes, a new user is created to replace it. "
+            "New users are spawned on a fixed schedule to maintain steady-state throughput. "
             "Designed for KV cache benchmarking with realistic multi-user patterns. "
             "Requires --num-users to be set.",
         ),
@@ -291,7 +291,7 @@ class LoadGeneratorConfig(BaseConfig):
         int | None,
         Field(
             ge=1,
-            description="The number of concurrent users to use for --user-centric-rate mode.",
+            description="The number of initial users to use for --user-centric-rate mode.",
         ),
         CLIParameter(
             name=("--num-users",),

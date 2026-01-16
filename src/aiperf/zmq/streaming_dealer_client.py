@@ -13,6 +13,7 @@ from msgspec import Struct
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
+from aiperf.common.environment import Environment
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.protocols import StreamingDealerClientProtocol
@@ -115,6 +116,8 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         )
         self.identity = identity
         self._receiver_handler: RouterToWorkerHandler | None = None
+        self._msg_count: int = 0
+        self._yield_interval: int = Environment.ZMQ.STREAMING_DEALER_YIELD_INTERVAL
 
     def register_receiver(self, handler: RouterToWorkerHandler) -> None:
         """
@@ -170,10 +173,15 @@ class ZMQStreamingDealerClient(BaseZMQClient):
                 message = _decoder.decode(message_bytes)
 
                 if self._receiver_handler:
-                    self.scheduler.schedule_soon(self._receiver_handler(message))
-                    # Yield after each message to allow scheduled handlers to run.
-                    # Without this, rapid message arrival starves the event loop.
-                    # await yield_to_event_loop()
+                    self.execute_async(self._receiver_handler(message))
+                    self._msg_count += 1
+                    # Yield periodically to allow scheduled handlers to run
+                    # and prevent event loop starvation during message bursts.
+                    if (
+                        self._yield_interval > 0
+                        and self._msg_count >= self._yield_interval
+                    ):
+                        await yield_to_event_loop()
                 else:
                     self.warning(
                         f"Received {type(message).__name__} but no handler registered"

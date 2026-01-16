@@ -78,6 +78,8 @@ class ZMQPullClient(BaseZMQClient):
         self.semaphore = DynamicConcurrencyLimit(
             max_pull_concurrency or Environment.ZMQ.PULL_MAX_CONCURRENCY
         )
+        self._msg_count: int = 0
+        self._yield_interval: int = Environment.ZMQ.PULL_YIELD_INTERVAL
 
     @background_task(immediate=True, interval=None)
     async def _pull_receiver(self) -> None:
@@ -100,7 +102,11 @@ class ZMQPullClient(BaseZMQClient):
                     )
                 # Use AUTO-LOOKUP approach (no prefix) - optimal for large messages
                 self.execute_async(self._process_message(message_json_bytes))
-                await yield_to_event_loop()
+                self._msg_count += 1
+                # Yield periodically to allow scheduled handlers to run
+                # and prevent event loop starvation during message bursts.
+                if self._yield_interval > 0 and self._msg_count >= self._yield_interval:
+                    await yield_to_event_loop()
 
             except zmq.Again:
                 self.debug("Pull client receiver task timed out")

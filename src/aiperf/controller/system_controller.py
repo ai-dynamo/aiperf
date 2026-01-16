@@ -642,8 +642,8 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _handle_signal(self, sig: int) -> None:
         """Handle received signals with two-stage cancellation.
 
-        First Ctrl+C: Graceful cancel - stops issuing new credits, waits for
-        in-flight requests to complete, and writes results to files.
+        First Ctrl+C: Graceful cancel - stops issuing new credits, cancels
+        in-flight requests, and writes results to files.
 
         Second Ctrl+C: Force quit - immediately terminates all processes.
         Results may be incomplete or not written.
@@ -677,7 +677,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.print(
             Panel(
                 "[bold yellow]⚠️  BENCHMARK CANCELLED[/bold yellow]\n\n"
-                "Stopping credit issuance and waiting for in-flight requests...\n"
+                "Stopping credit issuance and cancelling in-flight requests...\n"
                 "Results will be written to files.\n\n"
                 "[dim]Press Ctrl+C again to force quit immediately[/dim]\n"
                 "[dim](results may be incomplete or not written)[/dim]",

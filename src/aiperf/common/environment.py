@@ -675,6 +675,54 @@ class _ZMQSettings(BaseSettings):
         default=10.0,
         description="Timeout in seconds for terminating the ZMQ context during shutdown",
     )
+    PULL_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received messages from ZMQ PULL clients. "
+        "Prevents event loop starvation during message bursts. "
+        "0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc.",
+    )
+    REPLY_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received requests from ZMQ ROUTER reply clients. "
+        "Prevents event loop starvation during request bursts. "
+        "0 disables yielding, 1 yields after every request, 10 yields every 10 requests, etc.",
+    )
+    REQUEST_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received responses from ZMQ DEALER request clients. "
+        "Prevents event loop starvation during response bursts. "
+        "0 disables yielding, 1 yields after every response, 10 yields every 10 responses, etc.",
+    )
+    STREAMING_DEALER_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received messages from ZMQ streaming DEALER clients. "
+        "Prevents event loop starvation during message bursts. "
+        "0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc.",
+    )
+    STREAMING_ROUTER_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received messages from ZMQ streaming ROUTER clients. "
+        "Prevents event loop starvation during message bursts. "
+        "0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc.",
+    )
+    SUB_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received messages from ZMQ SUB clients. "
+        "Prevents event loop starvation during message bursts. "
+        "0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc.",
+    )
     PULL_MAX_CONCURRENCY: int = Field(
         ge=1,
         le=10000000,
