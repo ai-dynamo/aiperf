@@ -12,10 +12,31 @@ sequences represent prefix overlap (cache hits).
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from aiperf.common.tokenizer import Tokenizer
+
+
+def _stable_hash(data: str | tuple) -> int:
+    """Compute a stable hash consistent across Python sessions.
+
+    Uses SHA-256 truncated to 64 bits for deterministic hashing.
+    Unlike Python's built-in hash(), this produces identical results
+    across different Python processes and runs.
+
+    Args:
+        data: String or tuple to hash.
+
+    Returns:
+        64-bit integer hash value.
+    """
+    # For tuples, serialize to string first; strings encode directly
+    encoded = data.encode() if isinstance(data, str) else str(data).encode()
+    # Use first 8 bytes of SHA-256 as 64-bit int
+    return int.from_bytes(hashlib.sha256(encoded).digest()[:8], "big")
+
 
 if TYPE_CHECKING:
     from aiperf.dataset.generator import PromptGenerator
@@ -70,11 +91,11 @@ class RollingHasher:
         Returns:
             Unique hash ID for this block in its context.
         """
-        # Compute hash of current block
-        block_hash = hash(block)
+        # Compute stable hash of current block (consistent across Python sessions)
+        block_hash = _stable_hash(block)
 
         # Rolling hash: combine with previous hash for sequential context
-        combined_hash = hash((self._prev_hash, block_hash))
+        combined_hash = _stable_hash((self._prev_hash, block_hash))
 
         # Map to unique ID, creating new ID if not seen before
         if combined_hash not in self._hash_to_id:
@@ -117,8 +138,8 @@ class RollingHasher:
 
         for block in blocks:
             block_tuple = tuple(block) if not isinstance(block, tuple) else block
-            combined = (parent_hash, hash(block_tuple))
-            global_hash = hash(combined)
+            combined = (parent_hash, _stable_hash(block_tuple))
+            global_hash = _stable_hash(combined)
 
             if global_hash not in self._hash_to_id:
                 self._hash_to_id[global_hash] = self._id_counter
