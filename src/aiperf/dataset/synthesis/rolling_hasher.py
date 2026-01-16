@@ -16,6 +16,7 @@ import hashlib
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.tokenizer import Tokenizer
 
 
@@ -53,11 +54,11 @@ class RollingHasher:
     may produce different hash IDs depending on context.
     """
 
-    def __init__(self, block_size: int = 512) -> None:
+    def __init__(self, block_size: int = InputTokensDefaults.BLOCK_SIZE) -> None:
         """Initialize the rolling hasher.
 
         Args:
-            block_size: Number of tokens per block for hashing (default: 512).
+            block_size: Number of tokens per block for hashing.
         """
         self.block_size = block_size
         self._hash_to_id: dict[int, int] = {}  # Maps hash values to unique IDs
@@ -154,7 +155,7 @@ class RollingHasher:
 def texts_to_hashes(
     tokenizer: Tokenizer,
     texts: list[str],
-    block_size: int = 512,
+    block_size: int = InputTokensDefaults.BLOCK_SIZE,
 ) -> list[list[int]]:
     """Convert a list of texts to hash ID sequences.
 
@@ -164,7 +165,7 @@ def texts_to_hashes(
     Args:
         tokenizer: Tokenizer for encoding texts.
         texts: List of input text strings.
-        block_size: Number of tokens per block (default: 512).
+        block_size: Number of tokens per block.
 
     Returns:
         List of hash ID sequences, one per input text.
@@ -191,7 +192,7 @@ def hashes_to_texts(
     prompt_generator: PromptGenerator,
     hash_ids_list: list[list[int]],
     input_lengths: list[int],
-    block_size: int = 512,
+    block_size: int = InputTokensDefaults.BLOCK_SIZE,
 ) -> list[str]:
     """Convert hash ID sequences back to text strings.
 
@@ -203,7 +204,7 @@ def hashes_to_texts(
         prompt_generator: PromptGenerator instance for generating text from hash_ids.
         hash_ids_list: List of hash ID sequences.
         input_lengths: Target input lengths (in tokens) for each sequence.
-        block_size: Number of tokens per block (default: 512).
+        block_size: Number of tokens per block.
 
     Returns:
         List of text strings, one per hash ID sequence.

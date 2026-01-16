@@ -373,11 +373,6 @@ Multiplier for leaf path (unique prompt) lengths.
 
 Maximum input sequence length to include in synthesis.
 
-#### `--synthesis-block-size` `<int>`
-
-KV cache page/block size for hash ID generation.
-<br>_Default: `512`_
-
 ## Conversation Input Options
 
 #### `--conversation-num`, `--num-conversations`, `--num-sessions` `<int>`

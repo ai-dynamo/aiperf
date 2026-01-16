@@ -39,7 +39,6 @@ def synthesis_config() -> SynthesisConfig:
         prefix_len_multiplier=1.0,
         prefix_root_multiplier=1,
         prompt_len_multiplier=1.0,
-        block_size=16,
     )
 
 
@@ -54,6 +53,7 @@ def integration(
         synthesis_config=synthesis_config,
         tokenizer=mock_tokenizer,
         prompt_generator=mock_prompt_generator,
+        block_size=16,  # Matches prompt_config.input_tokens.block_size in production
     )
 
 

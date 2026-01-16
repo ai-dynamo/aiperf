@@ -242,6 +242,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             synthesis_config=synthesis_config,
             tokenizer=self.tokenizer,
             prompt_generator=self._get_prompt_generator(),
+            block_size=self.user_config.input.prompt.input_tokens.block_size,
         )
 
         # Run synthesis

@@ -66,16 +66,6 @@ class SynthesisConfig(BaseConfig):
         CLIParameter(name=("--synthesis-max-isl",), group=_CLI_GROUP),
     ] = None
 
-    block_size: Annotated[
-        int,
-        Field(
-            default=512,
-            ge=1,
-            description="KV cache page/block size for hash ID generation",
-        ),
-        CLIParameter(name=("--synthesis-block-size",), group=_CLI_GROUP),
-    ] = 512
-
     def should_synthesize(self) -> bool:
         """Check if synthesis should be auto-triggered based on non-default values.
 

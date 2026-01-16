@@ -4,6 +4,7 @@
 
 from pydantic import Field
 
+from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.models import AIPerfBaseModel
 
 
@@ -74,4 +75,6 @@ class SynthesisParams(AIPerfBaseModel):
     max_isl: int | None = Field(
         default=None, ge=1, description="Maximum input sequence length filter"
     )
-    block_size: int = Field(default=512, ge=1, description="KV cache page size")
+    block_size: int = Field(
+        default=InputTokensDefaults.BLOCK_SIZE, ge=1, description="KV cache page size"
+    )

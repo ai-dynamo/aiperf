@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import orjson
 
+from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.dataset.synthesis.models import AnalysisStats, MetricStats
 from aiperf.dataset.synthesis.radix_tree import RadixTree
@@ -25,11 +26,11 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
     - Prefix reuse ratios
     """
 
-    def __init__(self, block_size: int = 512) -> None:
+    def __init__(self, block_size: int = InputTokensDefaults.BLOCK_SIZE) -> None:
         """Initialize the analyzer.
 
         Args:
-            block_size: Number of tokens per block for analysis (default: 512).
+            block_size: Number of tokens per block for analysis.
         """
         super().__init__(config=None, tokenizer=None)
         self.block_size = block_size

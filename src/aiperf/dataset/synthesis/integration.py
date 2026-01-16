@@ -8,6 +8,7 @@ import aiofiles
 import orjson
 
 from aiperf.common.config import SynthesisConfig
+from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
@@ -29,6 +30,7 @@ class SynthesisIntegration(AIPerfLoggerMixin):
         synthesis_config: SynthesisConfig,
         tokenizer: Tokenizer,
         prompt_generator: PromptGenerator,
+        block_size: int = InputTokensDefaults.BLOCK_SIZE,
     ) -> None:
         """Initialize synthesis integration.
 
@@ -36,12 +38,15 @@ class SynthesisIntegration(AIPerfLoggerMixin):
             synthesis_config: Configuration for synthesis parameters.
             tokenizer: Tokenizer for text processing.
             prompt_generator: Generator for creating prompts from hash_ids.
+            block_size: KV cache page/block size for hash ID generation.
+                       Should match prompt_config.input_tokens.block_size.
         """
         super().__init__(config=None, tokenizer=tokenizer)
         self.synthesis_config = synthesis_config
         self.tokenizer = tokenizer
         self.prompt_generator = prompt_generator
-        self._rolling_hasher = RollingHasher(block_size=synthesis_config.block_size)
+        self._block_size = block_size
+        self._rolling_hasher = RollingHasher(block_size=block_size)
 
     def synthesize_conversations(
         self,
@@ -73,7 +78,7 @@ class SynthesisIntegration(AIPerfLoggerMixin):
             prefix_root_multiplier=self.synthesis_config.prefix_root_multiplier,
             prompt_len_multiplier=self.synthesis_config.prompt_len_multiplier,
             max_isl=self.synthesis_config.max_isl,
-            block_size=self.synthesis_config.block_size,
+            block_size=self._block_size,
         )
 
         # Run synthesis
@@ -208,7 +213,7 @@ class SynthesisIntegration(AIPerfLoggerMixin):
             List of hash IDs representing text blocks.
         """
         tokens = self.tokenizer.encode(text)
-        block_size = self.synthesis_config.block_size
+        block_size = self._block_size
 
         # Split into blocks
         blocks = []
