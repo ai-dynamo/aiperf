@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Graph utilities for manipulating radix tree structures."""
 
+from dataclasses import asdict
 from typing import Any
 
 import numpy as np
@@ -135,7 +136,7 @@ def get_tree_stats(tree: RadixTree) -> dict[str, Any]:
     Returns:
         Dictionary with tree statistics.
     """
-    stats = tree.get_stats()
+    stats = asdict(tree.get_stats())
     internal_nodes = sum(1 for n in tree.get_all_nodes() if not n.is_leaf())
     stats["internal_nodes"] = internal_nodes
     stats["branching_factor"] = sum(

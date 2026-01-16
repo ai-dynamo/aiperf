@@ -3,7 +3,23 @@
 """Radix tree data structure for representing prefix relationships."""
 
 from dataclasses import dataclass, field
-from typing import Any
+
+
+@dataclass(slots=True)
+class RadixTreeStats:
+    """Statistics about radix tree structure.
+
+    Attributes:
+        num_nodes: Total number of nodes in tree.
+        num_leaves: Number of leaf nodes (nodes with no children).
+        total_visits: Number of paths added to tree.
+        max_depth: Maximum depth from root to leaf.
+    """
+
+    num_nodes: int
+    num_leaves: int
+    total_visits: int
+    max_depth: int
 
 
 @dataclass(slots=True)
@@ -130,23 +146,18 @@ class RadixTree:
         """
         return list(self._nodes_by_id.values())
 
-    def get_stats(self) -> dict[str, Any]:
+    def get_stats(self) -> RadixTreeStats:
         """Get statistics about the tree structure.
 
         Returns:
-            Dictionary with tree statistics.
+            RadixTreeStats with tree statistics.
         """
-        num_nodes = len(self._nodes_by_id)
-        num_leaves = sum(1 for node in self._nodes_by_id.values() if node.is_leaf())
-        # total_visits is the number of paths added (root visit count)
-        total_visits = self._root.visit_count
-
-        return {
-            "num_nodes": num_nodes,
-            "num_leaves": num_leaves,
-            "total_visits": total_visits,
-            "max_depth": self._compute_max_depth(),
-        }
+        return RadixTreeStats(
+            num_nodes=len(self._nodes_by_id),
+            num_leaves=sum(1 for node in self._nodes_by_id.values() if node.is_leaf()),
+            total_visits=self._root.visit_count,
+            max_depth=self._compute_max_depth(),
+        )
 
     def _compute_max_depth(self) -> int:
         """Compute the maximum depth of the tree from root.

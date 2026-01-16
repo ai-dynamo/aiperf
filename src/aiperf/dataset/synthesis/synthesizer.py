@@ -266,6 +266,6 @@ class Synthesizer(AIPerfLoggerMixin):
         """
         return {
             "tree_nodes": len(self._tree.get_all_nodes()),
-            "tree_depth": self._tree.get_stats().get("max_depth", 0),
+            "tree_depth": self._tree.get_stats().max_depth,
             "params": self.params.model_dump(),
         }

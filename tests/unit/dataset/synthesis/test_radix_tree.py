@@ -4,7 +4,7 @@
 
 import pytest
 
-from aiperf.dataset.synthesis import RadixNode, RadixTree
+from aiperf.dataset.synthesis import RadixNode, RadixTree, RadixTreeStats
 
 
 class TestRadixNode:
@@ -118,7 +118,7 @@ class TestRadixTree:
         # Both paths start with [1, 2], so they should share nodes
         stats = tree.get_stats()
         # Should have created nodes for 1, 2, 3, 4 (4 non-root nodes minimum)
-        assert stats["num_nodes"] >= 4
+        assert stats.num_nodes >= 4
 
     def test_add_path_increments_visit_count(self) -> None:
         """Test that adding the same path increments visit count."""
@@ -182,10 +182,11 @@ class TestRadixTree:
         tree = RadixTree()
         stats = tree.get_stats()
 
-        assert stats["num_nodes"] == 1  # Just root
-        assert stats["num_leaves"] == 1  # Root is a leaf
-        assert stats["total_visits"] == 0
-        assert stats["max_depth"] == 0
+        assert isinstance(stats, RadixTreeStats)
+        assert stats.num_nodes == 1  # Just root
+        assert stats.num_leaves == 1  # Root is a leaf
+        assert stats.total_visits == 0
+        assert stats.max_depth == 0
 
     def test_get_stats_single_path(self) -> None:
         """Test statistics for tree with single path."""
@@ -193,9 +194,9 @@ class TestRadixTree:
         tree.add_path([1, 2, 3])
 
         stats = tree.get_stats()
-        assert stats["num_nodes"] >= 4  # Root + 3 nodes
-        assert stats["total_visits"] == 1
-        assert stats["max_depth"] >= 3
+        assert stats.num_nodes >= 4  # Root + 3 nodes
+        assert stats.total_visits == 1
+        assert stats.max_depth >= 3
 
     def test_get_stats_multiple_visits(self) -> None:
         """Test statistics count visits correctly."""
@@ -205,7 +206,7 @@ class TestRadixTree:
         tree.add_path([1, 2, 3])
 
         stats = tree.get_stats()
-        assert stats["total_visits"] == 3
+        assert stats.total_visits == 3
 
     # ============================================================================
     # Tree Structure Tests
@@ -253,8 +254,8 @@ class TestRadixTree:
             tree.add_path(path)
 
         stats = tree.get_stats()
-        assert stats["num_nodes"] > 1
-        assert stats["total_visits"] == 100
+        assert stats.num_nodes > 1
+        assert stats.total_visits == 100
 
     def test_tree_with_single_branch(self) -> None:
         """Test tree with a single long branch."""
@@ -263,4 +264,4 @@ class TestRadixTree:
         tree.add_path(long_path)
 
         stats = tree.get_stats()
-        assert stats["max_depth"] >= 99
+        assert stats.max_depth >= 99

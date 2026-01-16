@@ -26,6 +26,7 @@ from aiperf.dataset.synthesis.prefix_analyzer import (
 from aiperf.dataset.synthesis.radix_tree import (
     RadixNode,
     RadixTree,
+    RadixTreeStats,
 )
 from aiperf.dataset.synthesis.rolling_hasher import (
     RollingHasher,
@@ -43,6 +44,7 @@ __all__ = [
     "PrefixAnalyzer",
     "RadixNode",
     "RadixTree",
+    "RadixTreeStats",
     "RollingHasher",
     "SynthesisIntegration",
     "SynthesisParams",
