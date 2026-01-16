@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aiperf.common.enums import CommandType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.messages.command_messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
@@ -346,3 +346,41 @@ class TestSignalHandling:
             await system_controller._handle_signal(signal.SIGINT)
 
         system_controller._kill.assert_called_once()
+
+
+class TestSSLVerificationWarning:
+    """Test SSL verification warning in SystemController."""
+
+    @pytest.mark.asyncio
+    async def test_warning_logged_when_ssl_verify_disabled(
+        self, system_controller: SystemController, monkeypatch
+    ):
+        """Test that a warning is logged when SSL verification is disabled."""
+        monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", False)
+
+        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+            return_value=[]
+        )
+
+        with patch.object(system_controller, "warning") as mock_warning:
+            await system_controller._profile_configure_all_services()
+
+            mock_warning.assert_called_once()
+            warning_message = mock_warning.call_args[0][0]
+            assert "SSL certificate verification is DISABLED" in warning_message
+
+    @pytest.mark.asyncio
+    async def test_no_warning_logged_when_ssl_verify_enabled(
+        self, system_controller: SystemController, monkeypatch
+    ):
+        """Test that no warning is logged when SSL verification is enabled."""
+        monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", True)
+
+        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+            return_value=[]
+        )
+
+        with patch.object(system_controller, "warning") as mock_warning:
+            await system_controller._profile_configure_all_services()
+
+            mock_warning.assert_not_called()

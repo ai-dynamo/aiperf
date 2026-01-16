@@ -114,6 +114,29 @@ class FactoryCreationError(AIPerfError):
 class InitializationError(AIPerfError):
     """Exception raised when something fails to initialize."""
 
+    @classmethod
+    def from_tokenizer_error(
+        cls,
+        original_error: Exception,
+        tokenizer_name: str,
+    ) -> "InitializationError":
+        """Create InitializationError with helpful guidance for tokenizer failures.
+
+        Args:
+            original_error: The original exception from HuggingFace transformers library.
+            tokenizer_name: The tokenizer name/path that failed to load.
+
+        Returns:
+            InitializationError with actionable user guidance for fixing the issue.
+        """
+        from aiperf.common.error_helpers import create_tokenizer_error_message
+
+        enhanced_msg = create_tokenizer_error_message(
+            original_error=original_error,
+            tokenizer_name=tokenizer_name,
+        )
+        return cls(enhanced_msg)
+
 
 class InferenceClientError(AIPerfError):
     """Exception raised when a inference client encounters an error."""

@@ -607,7 +607,6 @@ Equivalent to --log-level TRACE. Enables the most verbose logging output possibl
 #### `--record-processor-service-count`, `--record-processors` `<int>`
 
 Number of services to spawn for processing records. The higher the request rate, the more services should be spawned in order to keep up with the incoming records. If not specified, the number of services will be automatically determined based on the worker count.
-<br>_Constraints: ≥ 1_
 
 #### `--ui-type`, `--ui` `<str>`
 

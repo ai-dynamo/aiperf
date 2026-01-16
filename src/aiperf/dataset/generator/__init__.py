@@ -19,6 +19,9 @@ from aiperf.dataset.generator.base import (
 from aiperf.dataset.generator.image import (
     ImageGenerator,
 )
+from aiperf.dataset.generator.parallel_decode import (
+    parallel_decode,
+)
 from aiperf.dataset.generator.prompt import (
     DEFAULT_CORPUS_FILE,
     PromptGenerator,
@@ -36,4 +39,5 @@ __all__ = [
     "PromptGenerator",
     "SUPPORTED_BIT_DEPTHS",
     "VideoGenerator",
+    "parallel_decode",
 ]

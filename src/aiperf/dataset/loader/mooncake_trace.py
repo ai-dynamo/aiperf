@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from collections import defaultdict
@@ -12,6 +12,7 @@ from aiperf.common.enums import CustomDatasetType, DatasetSamplingStrategy
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.generator import PromptGenerator
+from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.models import MooncakeTrace
 
@@ -52,6 +53,12 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         self._skipped_traces = 0
         self._start_offset = user_config.input.fixed_schedule_start_offset
         self._end_offset = user_config.input.fixed_schedule_end_offset
+
+        # Store tokenizer name and block size for parallel decode
+        self._tokenizer_name = (
+            user_config.tokenizer.name or user_config.endpoint.model_names[0]
+        )
+        self._block_size = user_config.input.prompt.input_tokens.block_size
 
     @classmethod
     def can_load(
@@ -121,27 +128,82 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
     ) -> list[Conversation]:
         """Convert all the Mooncake trace data to conversation objects.
 
+        Uses a three-phase approach for optimal performance:
+        1. Phase 1: Build token sequences, checking string cache first
+        2. Phase 2: Batch parallel decode for cache misses
+        3. Phase 3: Assemble final conversation objects
+
         Args:
             data: A dictionary of session_id and list of Mooncake trace data.
 
         Returns:
             A list of conversations.
         """
-        conversations = []
-        for session_id, traces in data.items():
-            conversation = Conversation(session_id=session_id)
-            for trace in traces:
-                # Handle both text_input and input_length formats
-                if trace.text_input is not None:
-                    prompt = trace.text_input
-                else:
-                    prompt = self.prompt_generator.generate(
-                        mean=trace.input_length,
-                        stddev=0,
-                        hash_ids=trace.hash_ids
-                        or [],  # Use empty list if hash_ids is None
-                    )
+        # Phase 1: Build token sequences and identify cache misses
+        # pending_decodes: list of (session_id, trace_idx, tokens, cache_key)
+        pending_decodes: list[tuple[str, int, list[int], tuple]] = []
+        # conversations_data: session_id -> list of (trace, prompt or None)
+        conversations_data: dict[str, list[tuple[MooncakeTrace, str | None]]] = {}
 
+        for session_id, traces in data.items():
+            conversations_data[session_id] = []
+            for idx, trace in enumerate(traces):
+                if trace.text_input is not None:
+                    # Already a string, no decode needed
+                    conversations_data[session_id].append((trace, trace.text_input))
+                else:
+                    hash_ids = trace.hash_ids or []
+                    if hash_ids:
+                        # Check string cache first
+                        cache_key = (
+                            tuple(hash_ids),
+                            trace.input_length,
+                            self._block_size,
+                        )
+                        if cache_key in self.prompt_generator._decoded_cache:
+                            # Cache hit - use cached prompt
+                            prompt = self.prompt_generator._decoded_cache[cache_key]
+                            conversations_data[session_id].append((trace, prompt))
+                        else:
+                            # Cache miss - build tokens for batch decode
+                            tokens = self.prompt_generator._build_token_sequence(
+                                trace.input_length, hash_ids, self._block_size
+                            )
+                            pending_decodes.append((session_id, idx, tokens, cache_key))
+                            conversations_data[session_id].append(
+                                (trace, None)
+                            )  # Placeholder
+                    else:
+                        # No hash_ids - use normal generation (already optimized)
+                        prompt = self.prompt_generator.generate(
+                            mean=trace.input_length, stddev=0, hash_ids=[]
+                        )
+                        conversations_data[session_id].append((trace, prompt))
+
+        # Phase 2: Batch parallel decode for all cache misses
+        if pending_decodes:
+            self.debug(
+                lambda: f"Parallel decoding {len(pending_decodes)} prompts "
+                f"({len(data)} conversations)"
+            )
+            token_sequences = [p[2] for p in pending_decodes]
+            decoded_prompts = parallel_decode(token_sequences, self._tokenizer_name)
+
+            # Fill in placeholders and update cache
+            for (session_id, idx, _, cache_key), prompt in zip(
+                pending_decodes, decoded_prompts, strict=True
+            ):
+                # Update decoded cache for future reuse
+                self.prompt_generator._decoded_cache[cache_key] = prompt
+                # Update placeholder in conversations_data
+                trace, _ = conversations_data[session_id][idx]
+                conversations_data[session_id][idx] = (trace, prompt)
+
+        # Phase 3: Build final conversation objects
+        conversations = []
+        for session_id, trace_prompt_pairs in conversations_data.items():
+            conversation = Conversation(session_id=session_id)
+            for trace, prompt in trace_prompt_pairs:
                 turn = Turn(
                     timestamp=trace.timestamp,
                     delay=trace.delay,
@@ -150,4 +212,5 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
                 )
                 conversation.turns.append(turn)
             conversations.append(conversation)
+
         return conversations

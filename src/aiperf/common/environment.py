@@ -266,6 +266,11 @@ class _HTTPSettings(BaseSettings):
         default=True,
         description="Enable DNS cache",
     )
+    SSL_VERIFY: bool = Field(
+        default=True,
+        description="Enable SSL certificate verification. Set to False to disable verification. "
+        "WARNING: Disabling this is insecure and should only be used for testing in a trusted environment.",
+    )
     REQUEST_CANCELLATION_SEND_TIMEOUT: float = Field(
         ge=10.0,
         le=3600.0,

@@ -33,6 +33,7 @@ from aiperf.dataset.generator import (
     ImageGenerator,
     PromptGenerator,
     VideoGenerator,
+    parallel_decode,
 )
 from aiperf.dataset.loader import (
     AIPERF_DATASET_CACHE_DIR,
@@ -108,4 +109,5 @@ __all__ = [
     "encode_image",
     "main",
     "open_image",
+    "parallel_decode",
 ]

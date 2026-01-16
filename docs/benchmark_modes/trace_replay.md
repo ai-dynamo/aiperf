@@ -1,80 +1,111 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Trace Replay
+# Trace Replay with Mooncake Traces
 
-This tutorial takes you through an example trace replay profile. Trace Replay benchmarking helps reproduce performance benchmarking results for validation or testing your system under a specific load pattern.
+This tutorial covers replaying production traces using the Mooncake trace format. Trace replay benchmarking reproduces real-world traffic patterns with precise timing control, enabling performance validation and capacity planning under realistic load.
 
-## Table of Contents
+## When to Use This Tutorial
 
-- [MoonCake Traces](#mooncake-traces)
-- [Profiling using a MoonCake Trace](#profiling-using-a-mooncake-trace)
-- [Real Mooncake Trace Example](#real-mooncake-trace-example)
-  - [Download and Benchmark Mooncake Trace](#download-and-benchmark-mooncake-trace)
+Use this approach when you need to:
+- Replay production traffic patterns captured from real systems
+- Validate performance with industry-standard Mooncake FAST'25 traces
+- Test system behavior under specific temporal load patterns
+- Reproduce benchmark results for regression testing
 
-## MoonCake Traces
+For other use cases:
+- **Custom prompts without timing**: See [Custom Prompt Benchmarking](../tutorials/custom-prompt-benchmarking.md)
+- **Precise timestamp control for any dataset**: See [Fixed Schedule](../tutorials/fixed-schedule.md)
+- **Multi-turn conversations from files**: See [Multi-Turn Conversations](../tutorials/multi-turn.md)
 
-Mooncake provides a specification and sample datasets for [traces](https://github.com/kvcache-ai/Mooncake?tab=readme-ov-file#-open-source-trace) that can be replayed for performance benchmarking.
+## Start a vLLM Server
 
-In AIPerf, the trace must be defined in a jsonl file.
-
-4 keys are available:
-- "timestamp": the timing of request arrivals
-- "input_length": the number of input tokens
-- "output_length": the number of output tokens
-- "hash_ids": [list of block hashes]
-
-
-
-```json
-{
-    "timestamp": 0,
-    "input_length": 655,
-    "output_length": 52,
-    "hash_ids": [46, 47]
-}
-```
-
-
-
-## Profiling using a MoonCake Trace
-
+Launch a vLLM server with a chat model:
 
 ```bash
-echo \
-'{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
-{"timestamp": 10535, "input_length": 672, "output_length": 26, "hash_ids": [46, 47]}
-{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}' \
-> example_trace.jsonl
-
-aiperf profile \
-    -m deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
-	--input-file example_trace.jsonl \
-	--custom-dataset-type mooncake_trace \
-    --fixed-schedule
+docker pull vllm/vllm-openai:latest
+docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B
 ```
 
-The code above will create an example trace file formatted in jsonl. AIPerf will use it to define the dataset and timing to replay the trace.
+Verify the server is ready:
 
-## Real Mooncake Trace Example
+```bash
+curl -s localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+```
 
-For real-world benchmarking, you can use the actual FAST25 production trace data from the Mooncake research paper. This trace contains realistic request patterns from production workloads.
+## Mooncake Trace Format
 
-### Download and Benchmark Mooncake Trace
+Mooncake provides a specification and sample datasets for [trace replay](https://github.com/kvcache-ai/Mooncake?tab=readme-ov-file#-open-source-trace) that can be replayed for performance benchmarking.
 
+Mooncake traces use a JSONL file where each line represents a request with timing information.
+
+Required fields for trace replay:
+- `timestamp`: Request arrival time in milliseconds
+- `input_length`: Number of input tokens
+- `output_length`: Number of output tokens
+- `hash_ids`: List of block hashes (optional)
+
+Example entry:
+
+```json
+{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [0, 1, 2]}
+```
+
+## Profile using a Custom Trace File
+
+Create a trace file with timing information:
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+```bash
+cat > custom_trace.jsonl << 'EOF'
+{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [0, 1, 2]}
+{"timestamp": 10535, "input_length": 672, "output_length": 26, "hash_ids": [0, 3, 4, 5]}
+{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [0, 6, 7]}
+EOF
+```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+Run AIPerf with the trace file:
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --input-file custom_trace.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --fixed-schedule
+```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+The `--fixed-schedule` flag tells AIPerf to send requests at the exact timestamps specified in the trace. This reproduces the original timing pattern.
+
+## Profile using real Mooncake Trace
+
+For real-world benchmarking, use the FAST25 production trace data from the Mooncake research paper:
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Download the Mooncake trace data
 curl -o mooncake_trace.jsonl https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/arxiv-trace/mooncake_trace.jsonl
 
-# Create a subset of the file for quick testing (skip if you want to run the full dataset)
-head -n 5 mooncake_trace.jsonl > mooncake_trace_short.jsonl
+# Create a subset for quick testing
+head -n 10 mooncake_trace.jsonl > mooncake_trace_short.jsonl
 
-# Run a small portion of the trace dataset
+# Run the trace replay
 aiperf profile \
-    -m deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
     --input-file mooncake_trace_short.jsonl \
     --custom-dataset-type mooncake_trace \
     --fixed-schedule
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
