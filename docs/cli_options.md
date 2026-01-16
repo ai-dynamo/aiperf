@@ -288,11 +288,36 @@ The total size of the prefix prompt pool to select prefixes from. If this value 
 
 #### `--prompt-prefix-length`, `--prefix-prompt-length` `<int>`
 
-The number of tokens in each prefix prompt. This is only used if "num" is greater than zero. Note that due to the prefix and us                    if self._yield_interval > 0:
-                        self._msg_count += 1
-                        if self._msg_count >= self._yield_interval:
-                            await yield_to_event_loop()
-                            self._msg_count = 0
+The number of tokens in each prefix prompt. This is only used if "num" is greater than zero. Note that due to the prefix and user prompts being concatenated, the number of tokens in the final prompt may be off by one.
+<br>_Default: `0`_
+
+#### `--shared-system-prompt-length` `<int>`
+
+Length of shared system prompt in tokens. This prompt is identical across all sessions and appears as a system message. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+<br>_Constraints: ≥ 1_
+
+#### `--user-context-prompt-length` `<int>`
+
+Length of per-session user context prompt in tokens. Each dataset entry gets a unique user context prompt. Requires --num-dataset-entries to be specified. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+<br>_Constraints: ≥ 1_
+
+## Rankings Options
+
+#### `--rankings-passages-mean` `<int>`
+
+Mean number of passages per rankings entry (per query)(default 1).
+<br>_Default: `1`_
+
+#### `--rankings-passages-stddev` `<int>`
+
+Stddev for passages per rankings entry (default 0).
+<br>_Default: `0`_
+
+#### `--rankings-passages-prompt-token-mean` `<int>`
+
+Mean number of tokens in a passage entry for rankings (default 550).
+<br>_Default: `550`_
+
 #### `--rankings-passages-prompt-token-stddev` `<int>`
 
 Stddev for number of tokens in a passage entry for rankings (default 0).
@@ -476,10 +501,12 @@ Seconds to wait after the request is fully sent before cancelling. A delay of 0 
 #### `--user-centric-rate` `<float>`
 
 Enable user-centric rate limiting mode with the specified request rate (QPS). Each user has a gap = num_users / qps between turns. Users block on their previous turn (no interleaving within a user). New users are spawned on a fixed schedule to maintain steady-state throughput. Designed for KV cache benchmarking with realistic multi-user patterns. Requires --num-users to be set.
+<br>_Constraints: > 0_
 
 #### `--num-users` `<int>`
 
 The number of initial users to use for --user-centric-rate mode.
+<br>_Constraints: ≥ 1_
 
 #### `--concurrency-ramp-duration` `<float>`
 

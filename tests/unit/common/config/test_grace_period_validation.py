@@ -122,45 +122,47 @@ class TestWarmupGracePeriodValidation:
         assert user_config.loadgen.warmup_duration == 5.0
         assert user_config.loadgen.warmup_grace_period == 10.0
 
-    def test_warmup_grace_period_with_warmup_request_count_valid(self):
-        """Test that warmup grace period is valid when used with warmup request count."""
-        loadgen_config = LoadGeneratorConfig(
-            warmup_request_count=10,
-            warmup_grace_period=15.0,
-            benchmark_duration=30.0,
-        )
-
-        endpoint_config = EndpointConfig(
-            url="http://localhost:8000/test", model_names=["test-model"]
-        )
-
-        user_config = UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
-
-        assert user_config.loadgen.warmup_request_count == 10
-        assert user_config.loadgen.warmup_grace_period == 15.0
-
-    def test_warmup_grace_period_with_warmup_num_sessions_valid(self):
-        """Test that warmup grace period is valid when used with warmup num sessions."""
-        loadgen_config = LoadGeneratorConfig(
-            warmup_num_sessions=5,
-            warmup_grace_period=20.0,
-            benchmark_duration=30.0,
-        )
-
-        endpoint_config = EndpointConfig(
-            url="http://localhost:8000/test", model_names=["test-model"]
-        )
-
-        user_config = UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
-
-        assert user_config.loadgen.warmup_num_sessions == 5
-        assert user_config.loadgen.warmup_grace_period == 20.0
-
-    def test_warmup_grace_period_without_warmup_enabled_invalid(self):
-        """Test that warmup grace period without warmup enabled raises validation error."""
+    def test_warmup_grace_period_with_warmup_request_count_requires_duration(self):
+        """Test that warmup grace period requires warmup duration even with request count."""
         with pytest.raises(
             ValidationError,
-            match=".*--warmup-grace-period can only be used when warmup is enabled.*",
+            match=".*--warmup-grace-period can only be used when --warmup-duration is set.*",
+        ):
+            loadgen_config = LoadGeneratorConfig(
+                warmup_request_count=10,
+                warmup_grace_period=15.0,
+                benchmark_duration=30.0,
+            )
+
+            endpoint_config = EndpointConfig(
+                url="http://localhost:8000/test", model_names=["test-model"]
+            )
+
+            UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
+
+    def test_warmup_grace_period_with_warmup_num_sessions_requires_duration(self):
+        """Test that warmup grace period requires warmup duration even with num sessions."""
+        with pytest.raises(
+            ValidationError,
+            match=".*--warmup-grace-period can only be used when --warmup-duration is set.*",
+        ):
+            loadgen_config = LoadGeneratorConfig(
+                warmup_num_sessions=5,
+                warmup_grace_period=20.0,
+                benchmark_duration=30.0,
+            )
+
+            endpoint_config = EndpointConfig(
+                url="http://localhost:8000/test", model_names=["test-model"]
+            )
+
+            UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
+
+    def test_warmup_grace_period_without_warmup_duration_invalid(self):
+        """Test that warmup grace period without warmup duration raises validation error."""
+        with pytest.raises(
+            ValidationError,
+            match=".*--warmup-grace-period can only be used when --warmup-duration is set.*",
         ):
             loadgen_config = LoadGeneratorConfig(
                 warmup_grace_period=30.0,
@@ -210,7 +212,7 @@ class TestWarmupGracePeriodValidation:
     def test_valid_warmup_grace_period_values(self, grace_period: float):
         """Test various valid warmup grace period values."""
         loadgen_config = LoadGeneratorConfig(
-            warmup_request_count=10,
+            warmup_duration=5.0,
             warmup_grace_period=grace_period,
             benchmark_duration=30.0,
         )

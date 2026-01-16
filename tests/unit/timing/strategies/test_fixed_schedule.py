@@ -45,7 +45,7 @@ def make_strategy(
     scheduler = MagicMock()
     scheduler.schedule_at_perf_ns = MagicMock()
     scheduler.schedule_later = MagicMock()
-    scheduler.schedule_soon = MagicMock()
+    scheduler.execute_async = MagicMock()
     stop_checker = MagicMock()
     stop_checker.can_send_any_turn = MagicMock(return_value=True)
     stop_checker.can_start_new_session = MagicMock(return_value=True)
@@ -208,7 +208,7 @@ class TestFixedScheduleCreditReturn:
         await strategy.handle_credit_return(credit)
         scheduler.schedule_at_perf_sec.assert_not_called()
         scheduler.schedule_later.assert_not_called()
-        scheduler.schedule_soon.assert_not_called()
+        scheduler.execute_async.assert_not_called()
 
     async def test_non_final_turn_schedules_next(self) -> None:
         """Verify non-final turn schedules the next turn in the conversation."""

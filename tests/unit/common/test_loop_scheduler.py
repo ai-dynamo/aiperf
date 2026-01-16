@@ -91,10 +91,10 @@ class TestScheduleLater:
             pytest.param([0, -1.0, -100], id="multiple"),
         ],
     )
-    async def test_zero_or_negative_delay_uses_schedule_soon(
+    async def test_zero_or_negative_delay_uses_execute_async(
         self, scheduler: LoopScheduler, delays: list[float]
     ):
-        """Zero or negative delay delegates to schedule_soon."""
+        """Zero or negative delay delegates to execute_async."""
         executed = []
 
         async def task():
@@ -103,12 +103,14 @@ class TestScheduleLater:
         for delay in delays:
             scheduler.schedule_later(delay, task())
 
-        # schedule_soon IS tracked in pending_count (all handles are now tracked)
-        assert scheduler.pending_count == len(delays)
+        # execute_async creates tasks immediately (no pending handles)
+        assert scheduler.pending_count == 0
+        assert scheduler.running_count == len(delays)
 
         await yield_to_scheduler()
 
         assert len(executed) == len(delays)
+        assert scheduler.running_count == 0
 
     async def test_multiple_tasks_execute_in_order(self, scheduler: LoopScheduler):
         """Multiple tasks execute in delay order."""
@@ -128,8 +130,8 @@ class TestScheduleLater:
         assert order == ["first", "second", "third"]
 
 
-class TestScheduleSoon:
-    """Tests for schedule_soon (immediate scheduling)."""
+class TestExecuteAsync:
+    """Tests for execute_async (immediate task execution)."""
 
     async def test_executes_on_next_iteration(self, scheduler: LoopScheduler):
         """Coroutine executes on next event loop iteration."""
@@ -138,7 +140,7 @@ class TestScheduleSoon:
         async def task():
             executed.append(True)
 
-        scheduler.schedule_soon(task())
+        scheduler.execute_async(task())
         assert executed == []
 
         await yield_to_scheduler()
@@ -146,13 +148,16 @@ class TestScheduleSoon:
         assert executed == [True]
 
     async def test_tracked_in_pending(self, scheduler: LoopScheduler):
-        """schedule_soon tasks are tracked in pending_count (all handles are now cancellable)."""
+        """execute_async tasks are tracked in running_count (no pending handle)."""
 
         async def noop():
             pass
 
-        scheduler.schedule_soon(noop())
-        assert scheduler.pending_count == 1
+        scheduler.execute_async(noop())
+        assert scheduler.pending_count == 0
+        assert scheduler.running_count == 1
+        await yield_to_scheduler()
+        assert scheduler.running_count == 0
 
 
 class TestScheduleAtPerfNs:
@@ -175,8 +180,8 @@ class TestScheduleAtPerfNs:
 
         assert len(executed) == 1
 
-    async def test_past_time_uses_schedule_soon(self, scheduler: LoopScheduler):
-        """Past timestamps delegate to schedule_soon."""
+    async def test_past_time_uses_execute_async(self, scheduler: LoopScheduler):
+        """Past timestamps delegate to execute_async."""
         executed = []
 
         async def task():
@@ -185,12 +190,14 @@ class TestScheduleAtPerfNs:
         past_ns = time.perf_counter_ns() - int(1.0 * NANOS_PER_SECOND)
         scheduler.schedule_at_perf_ns(past_ns, task())
 
-        # Past time → schedule_soon → tracked in pending_count (all handles are now cancellable)
-        assert scheduler.pending_count == 1
+        # Past time → execute_async → no pending handle, task is running
+        assert scheduler.pending_count == 0
+        assert scheduler.running_count == 1
 
         await yield_to_scheduler()
 
         assert executed == [True]
+        assert scheduler.running_count == 0
 
     async def test_multiple_execute_in_order(self, scheduler: LoopScheduler):
         """Multiple tasks scheduled at different perf_ns times execute in order."""
@@ -277,7 +284,7 @@ class TestCancelAllRunning:
                 completed.append("cancelled")
                 raise
 
-        scheduler.schedule_soon(long_task())
+        scheduler.execute_async(long_task())
         await yield_to_scheduler()
         await started.wait()
 
@@ -303,7 +310,7 @@ class TestCancelAllRunning:
                 cleanup_done.append(True)
                 raise
 
-        scheduler.schedule_soon(task_with_cleanup())
+        scheduler.execute_async(task_with_cleanup())
         await yield_to_scheduler()
 
         tasks = scheduler.cancel_all_running()
@@ -326,7 +333,7 @@ class TestCancelAll:
             await asyncio.sleep(100)
             results.append("slow")
 
-        scheduler.schedule_soon(quick_task())
+        scheduler.execute_async(quick_task())
         scheduler.schedule_later(1.0, slow_task())
         scheduler.schedule_later(2.0, slow_task())
 
@@ -383,7 +390,7 @@ class TestStateProperties:
 
         assert scheduler.running_count == 0
 
-        scheduler.schedule_soon(blocking_task())
+        scheduler.execute_async(blocking_task())
         await yield_to_scheduler()
         await started.wait()
 
@@ -433,7 +440,7 @@ class TestExceptionHandling:
         async def failing_task():
             raise ValueError("test error")
 
-        scheduler.schedule_soon(failing_task())
+        scheduler.execute_async(failing_task())
         await yield_to_scheduler(n=3)  # Extra yield for done callback
 
         assert len(exceptions) == 1
@@ -446,7 +453,7 @@ class TestExceptionHandling:
         async def failing_task():
             raise ValueError("test error")
 
-        scheduler.schedule_soon(failing_task())
+        scheduler.execute_async(failing_task())
         await yield_to_scheduler()
 
     async def test_cancelled_tasks_dont_trigger_exception_handler(
@@ -463,7 +470,7 @@ class TestExceptionHandling:
         async def slow_task():
             await asyncio.sleep(100)
 
-        scheduler.schedule_soon(slow_task())
+        scheduler.execute_async(slow_task())
         await yield_to_scheduler()
 
         tasks = scheduler.cancel_all_running()
@@ -500,14 +507,14 @@ class TestEdgeCases:
 
         async def outer():
             order.append("outer_start")
-            scheduler.schedule_soon(inner())
+            scheduler.execute_async(inner())
             order.append("outer_end")
 
         async def inner():
             order.append("inner")
 
-        scheduler.schedule_soon(outer())
-        await yield_to_scheduler(n=4)  # Nested scheduling needs 4 yields
+        scheduler.execute_async(outer())
+        await yield_to_scheduler(n=3)  # Allow outer to run and inner to complete
 
         assert order == ["outer_start", "outer_end", "inner"]
 
@@ -518,7 +525,7 @@ class TestEdgeCases:
         async def increment():
             count[0] += 1
 
-        # Schedule 100 tasks at various times (start at 0.01 to avoid schedule_soon)
+        # Schedule 100 tasks at various times (start at 0.01 to avoid zero-delay execute_async path)
         for i in range(100):
             scheduler.schedule_later((i + 1) * 0.01, increment())
 
