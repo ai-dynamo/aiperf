@@ -75,8 +75,12 @@ from aiperf.dataset.synthesis import (
 )
 from aiperf.dataset.utils import (
     check_file_exists,
+    encode_audio,
     encode_image,
+    encode_video,
+    open_audio,
     open_image,
+    open_video,
 )
 
 __all__ = [
@@ -126,12 +130,16 @@ __all__ = [
     "VideoGenerator",
     "check_file_exists",
     "compute_transition_cdfs",
+    "encode_audio",
     "encode_image",
+    "encode_video",
     "get_tree_stats",
     "hashes_to_texts",
     "main",
     "merge_unary_chains",
+    "open_audio",
     "open_image",
+    "open_video",
     "parallel_decode",
     "remove_leaves",
     "texts_to_hashes",
