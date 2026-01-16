@@ -80,7 +80,7 @@ class TimingManager(BaseComponentService):
             service_id=self.service_id,
         )
         self.attach_child_lifecycle(self.sticky_router)
-        self.event_loop_monitor = EventLoopMonitor()
+        self.event_loop_monitor = EventLoopMonitor(self.service_id)
 
         self._phase_orchestrator: PhaseOrchestrator | None = None
 
