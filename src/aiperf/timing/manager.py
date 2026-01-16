@@ -14,6 +14,7 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.environment import Environment
+from aiperf.common.event_loop_monitor import EventLoopMonitor
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
@@ -79,6 +80,7 @@ class TimingManager(BaseComponentService):
             service_id=self.service_id,
         )
         self.attach_child_lifecycle(self.sticky_router)
+        self.event_loop_monitor = EventLoopMonitor()
 
         self._phase_orchestrator: PhaseOrchestrator | None = None
 
@@ -134,6 +136,9 @@ class TimingManager(BaseComponentService):
         gc.freeze()
         gc.disable()
 
+        # Start event loop health monitoring only during the benchmark
+        self.event_loop_monitor.start()
+
         self.debug("Starting profiling")
         self.execute_async(self._phase_orchestrator.start())
 
@@ -155,15 +160,20 @@ class TimingManager(BaseComponentService):
         """Stop timing manager and re-enable GC."""
         self.debug("Stopping timing manager")
 
+        if self._phase_orchestrator:
+            await self._phase_orchestrator.stop()
+
+        self.event_loop_monitor.stop()
+        self._re_enable_gc()
+
+    def _re_enable_gc(self) -> None:
+        """Re-enable garbage collection."""
         self.debug(
             "Re-enabling garbage collection to allow the timing manager "
             "to clean up resources"
         )
         gc.unfreeze()
         gc.enable()
-
-        if self._phase_orchestrator:
-            await self._phase_orchestrator.stop()
 
 
 def main() -> None:

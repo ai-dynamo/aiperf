@@ -15,6 +15,7 @@ from aiperf.common.enums import (
     ServiceType,
 )
 from aiperf.common.environment import Environment
+from aiperf.common.event_loop_monitor import EventLoopMonitor
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.factories import DatasetClientStoreFactory, ServiceFactory
 from aiperf.common.hooks import (
@@ -146,6 +147,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self.debug(lambda: f"Worker process __init__ (pid: {self._process.pid})")
 
+        self.event_loop_monitor = EventLoopMonitor()
+        self.event_loop_monitor.set_callback(self._on_event_loop_blocked_callback)
+
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
         self.credit_tasks: dict[int, asyncio.Task] = {}
@@ -195,6 +199,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.user_config.loadgen.prefill_concurrency is not None
             or self.user_config.loadgen.warmup_prefill_concurrency is not None
         )
+
+    async def _on_event_loop_blocked_callback(self, delta_ms: float) -> None:
+        """Callback to handle event loop blocking.
+
+        This callback is called when the event loop is blocked for longer than the threshold.
+        """
+        self.warning(f"Event loop is blocked for {delta_ms:.2f}ms")
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
@@ -663,8 +674,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.memory_usage_before_profiling = memory_usage
             self.debug(f"Memory usage before profiling: {memory_usage:.2f} MiB")
 
+        self.event_loop_monitor.start()
+
     @on_stop
     async def _worker_stop(self) -> None:
+        # Clean up dataset client resources using protocol lifecycle
+        if self._dataset_client is not None:
+            dataset_client = self._dataset_client
+            self._dataset_client = None
+            await dataset_client.stop()
+            self.debug("Dataset client stopped")
+
+        self.event_loop_monitor.stop()
+
         self.debug(
             "Re-enabling garbage collection to allow the worker to clean up resources"
         )
@@ -674,13 +696,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.debug(
                 f"Memory usage after profiling: {memory_usage:.2f} MiB (delta: {memory_usage - (self.memory_usage_before_profiling or 0):.2f} MiB)"
             )
-
-        # Clean up dataset client resources using protocol lifecycle
-        if self._dataset_client is not None:
-            dataset_client = self._dataset_client
-            self._dataset_client = None
-            await dataset_client.stop()
-            self.debug("Dataset client stopped")
 
         gc.unfreeze()
         gc.enable()

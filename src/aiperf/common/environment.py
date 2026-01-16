@@ -530,6 +530,27 @@ class _ServiceSettings(BaseSettings):
         default=2.0,
         description="Maximum time in seconds to wait for simple tasks to complete when cancelling",
     )
+    # Event loop health monitoring settings
+    EVENT_LOOP_HEALTH_ENABLED: bool = Field(
+        default=True,
+        description="Enable event loop health monitoring to detect blocked event loops. "
+        "When enabled, TimingManager and Worker services periodically check if the event loop is responsive "
+        "and log warnings when latency exceeds the threshold.",
+    )
+    EVENT_LOOP_HEALTH_INTERVAL: float = Field(
+        ge=0.05,
+        le=10.0,
+        default=0.25,
+        description="Interval in seconds between event loop health checks (default: 250ms). "
+        "The monitor sleeps for this duration and measures actual elapsed time to detect blocking.",
+    )
+    EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS: float = Field(
+        gt=1.0,
+        le=10000.0,
+        default=10.0,
+        description="Warning threshold in milliseconds for event loop latency (default: 10ms). "
+        "If the actual sleep duration exceeds the expected duration by this amount, a warning is logged.",
+    )
 
     @model_validator(mode="after")
     def auto_disable_uvloop_on_windows(self) -> Self:
