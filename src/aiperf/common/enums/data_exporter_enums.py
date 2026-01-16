@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
@@ -8,6 +8,7 @@ class ConsoleExporterType(CaseInsensitiveStrEnum):
     API_ERRORS = "api_errors"
     ERRORS = "errors"
     EXPERIMENTAL_METRICS = "experimental_metrics"
+    HTTP_TRACE = "http_trace"
     INTERNAL_METRICS = "internal_metrics"
     METRICS = "metrics"
     TELEMETRY = "telemetry"

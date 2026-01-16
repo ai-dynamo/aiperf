@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Unit tests for DatasetManager._generate_inputs_json_file method.
@@ -163,7 +163,8 @@ class TestDatasetManagerInputsJsonGeneration:
             "create_instance",
             side_effect=Exception("Factory error"),
         ):
-            await populated_dataset_manager._generate_inputs_json_file()
+            with pytest.raises(Exception, match="Factory error"):
+                await populated_dataset_manager._generate_inputs_json_file()
             assert any(
                 "Error generating inputs.json file" in record.message
                 for record in caplog.records
@@ -177,7 +178,7 @@ class TestDatasetManagerInputsJsonGeneration:
     ):
         """Test error handling when file I/O operation fails."""
         with patch(
-            "aiperf.dataset.dataset_manager.aiofiles.open",
+            "pathlib.Path.write_bytes",
             side_effect=OSError("Permission denied"),
         ):
             await populated_dataset_manager._generate_inputs_json_file()
@@ -205,7 +206,8 @@ class TestDatasetManagerInputsJsonGeneration:
             "create_instance",
             return_value=mock_converter,
         ):
-            await populated_dataset_manager._generate_inputs_json_file()
+            with pytest.raises(Exception, match="Payload conversion error"):
+                await populated_dataset_manager._generate_inputs_json_file()
             assert any(
                 "Error generating inputs.json file" in record.message
                 for record in caplog.records

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for ImageGenerationEndpoint."""
 
@@ -6,12 +6,12 @@ import pytest
 
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Text, Turn
-from aiperf.common.models.record_models import RequestInfo
 from aiperf.endpoints.openai_image_generation import ImageGenerationEndpoint
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_mock_response,
     create_model_endpoint,
+    create_request_info,
 )
 
 
@@ -54,7 +54,7 @@ class TestImageGenerationEndpoint:
             texts=[Text(contents=["A sunset over mountains"])],
             model="dall-e-3",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -72,7 +72,7 @@ class TestImageGenerationEndpoint:
             texts=[Text(contents=["A cat in space"])],
             model="dall-e-3",
         )
-        request_info = RequestInfo(
+        request_info = create_request_info(
             model_endpoint=streaming_model_endpoint, turns=[turn]
         )
 
@@ -101,7 +101,7 @@ class TestImageGenerationEndpoint:
             texts=[Text(contents=["A dog"])],
             model="dall-e-3",
         )
-        request_info = RequestInfo(
+        request_info = create_request_info(
             model_endpoint=model_endpoint_with_extra, turns=[turn]
         )
 
@@ -118,7 +118,7 @@ class TestImageGenerationEndpoint:
             texts=[Text(contents=["A tree"])],
             model="custom-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -126,7 +126,7 @@ class TestImageGenerationEndpoint:
 
     def test_format_payload_no_turns_raises(self, endpoint, model_endpoint):
         """Test that missing turns raises ValueError."""
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
 
         with pytest.raises(ValueError, match="requires at least one turn"):
             endpoint.format_payload(request_info)
@@ -134,7 +134,7 @@ class TestImageGenerationEndpoint:
     def test_format_payload_no_text_raises(self, endpoint, model_endpoint):
         """Test that missing text raises ValueError."""
         turn = Turn(texts=[], model="dall-e-3")
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         with pytest.raises(ValueError, match="requires text prompt"):
             endpoint.format_payload(request_info)
@@ -142,7 +142,7 @@ class TestImageGenerationEndpoint:
     def test_format_payload_empty_text_contents_raises(self, endpoint, model_endpoint):
         """Test that empty text contents raises ValueError."""
         turn = Turn(texts=[Text(contents=[])], model="dall-e-3")
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         with pytest.raises(ValueError, match="requires text prompt"):
             endpoint.format_payload(request_info)

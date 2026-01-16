@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
@@ -61,6 +61,32 @@ class OutputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = OutputDefaults.EXPORT_LEVEL
+
+    export_http_trace: Annotated[
+        bool,
+        Field(
+            description="Include HTTP trace data (timestamps, chunks, headers, socket info) in profile_export.jsonl. "
+            "Computed metrics (http_req_duration, http_req_waiting, etc.) are always included regardless of this setting. "
+            "See the HTTP Trace Metrics guide for details on trace data fields.",
+        ),
+        CLIParameter(
+            name="--export-http-trace",
+            group=_CLI_GROUP,
+        ),
+    ] = OutputDefaults.EXPORT_HTTP_TRACE
+
+    show_trace_timing: Annotated[
+        bool,
+        Field(
+            description="Display HTTP trace timing metrics in the console at the end of the benchmark. "
+            "Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, "
+            "and total duration following k6 naming conventions.",
+        ),
+        CLIParameter(
+            name="--show-trace-timing",
+            group=_CLI_GROUP,
+        ),
+    ] = OutputDefaults.SHOW_TRACE_TIMING
 
     _profile_export_csv_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
     _profile_export_json_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE

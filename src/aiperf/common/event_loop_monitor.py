@@ -16,12 +16,13 @@ from aiperf.common.constants import (
     NANOS_PER_SECOND,
 )
 from aiperf.common.environment import Environment
+from aiperf.common.mixins import AIPerfLoggerMixin
 
 
-class EventLoopMonitor:
+class EventLoopMonitor(AIPerfLoggerMixin):
     """Utility class that monitors event loop health and logs warnings when blocked.
 
-    This mixin adds a background task that periodically checks if the event loop
+    This utility class adds a background task that periodically checks if the event loop
     is responsive by sleeping for a known interval and measuring actual elapsed time.
     If the delta exceeds the configured threshold, it indicates blocking operations.
 
@@ -31,7 +32,9 @@ class EventLoopMonitor:
     - AIPERF_SERVICE_EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS: Warning threshold in ms (default: 10)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, service_id: str, **kwargs) -> None:
+        super().__init__(service_id=service_id, **kwargs)
+        self._service_id = service_id
         self._event_loop_health_task = None
         self._stop_requested = False
         self._callback: Callable[[float], Awaitable] | None = None
@@ -84,7 +87,7 @@ class EventLoopMonitor:
                 )
             if delta_ns > threshold_ns:
                 self.warning(
-                    f"Event loop for {self.service_id} is taking too long to run. Overhead: {delta_ns / NANOS_PER_MILLIS:,.2f}ms"
+                    f"Event loop for {self._service_id} is taking too long to run. Overhead: {delta_ns / NANOS_PER_MILLIS:,.2f}ms"
                 )
                 if self._callback is not None:
                     await self._callback(delta_ns / NANOS_PER_MILLIS)

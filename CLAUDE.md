@@ -1,10 +1,10 @@
 <!--
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 -->
 # AIPerf Dev Guide
 
-Python 3.10+ async AI Benchmarking Tool. 8 services via ZMQ. Update this guide only for major architectural shifts.
+Python 3.10+ async AI Benchmarking Tool. 9 services via ZMQ. Update this guide only for major architectural shifts.
 
 **Principles**: KISS + DRY. Extensibility + Usability + Accuracy + Scalability. One concern per PR. Review own diff first.
 
@@ -56,13 +56,14 @@ async def _handle(self, msg: MyMsg) -> None:
 **Protocol+Factory** (extensibility): Protocol `protocols.py` → Factory `factories.py` → Enum `plugin_enums.py` → `@Factory.register(Enum.TYPE)`
 ```python
 # Registration
-@EndpointFactory.register(EndpointType.OPENAI)
-class OpenAIEndpoint(EndpointProtocol):
-    def __init__(self, model_endpoint: ModelEndpoint) -> None: ...
+@implements_protocol(EndpointProtocol)
+@EndpointFactory.register(EndpointType.CHAT)
+class ChatEndpoint(BaseEndpoint):
+    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None: ...
 
 # Usage
 endpoint = EndpointFactory.create_instance(
-    EndpointType.OPENAI,
+    EndpointType.CHAT,
     model_endpoint=model_endpoint,
 )
 ```
@@ -83,7 +84,7 @@ except Exception as e:
 ## Mixins & Base Classes
 
 **Base Classes:**
-- **BaseComponentService**: Services only. Includes lifecycle, message bus, commands, health. Use for all 8 services.
+- **BaseComponentService**: Services only. Includes lifecycle, message bus, commands, health. Use for all 9 services.
 - **BaseService**: Abstract base for services. Use BaseComponentService instead unless creating new service type.
 
 **Core Mixins** (usually via base class):
@@ -131,12 +132,13 @@ One PR=one goal | Comments only for "why?" not "what" | No persistent mutable st
 **Worker** (N): LLM API calls, conversation state
 **RecordProcessor** (N): metric computation, scales with load
 **RecordsManager**: record aggregation
-**TelemetryManager**: GPU telemetry from DCGM
+**GPUTelemetryManager**: GPU telemetry from DCGM
+**ServerMetricsManager**: server metrics from Prometheus
 
 Communication: ZMQ message bus via `await self.publish(msg)`. Services auto-subscribe based on `@on_message` decorators during `@on_init`.
 
 ## Testing
-pytest. Auto-fixtures: time mocked, RNG=42, singletons reset. Use fixtures+helpers+parametrization: `@pytest.mark.parametrize("x,y", [(1,2)])`. put import statements at the top of the test file. Use `# fmt: skip` for long parameterize blocks.
+pytest. Auto-fixtures: time mocked, RNG=42, singletons reset. Use fixtures+helpers+parametrization: `@pytest.mark.parametrize("x,y", [(1,2)])`. Put import statements at the top of the test file. Use `# fmt: skip` for long parameterize blocks.
 
 ## Python 3.10
 `|` unions: `str | int | None`
@@ -149,7 +151,7 @@ pytest. Auto-fixtures: time mocked, RNG=42, singletons reset. Use fixtures+helpe
 ## Common Tasks
 **Service**: BaseComponentService → enum `service_enums.py` → `@ServiceFactory.register()`
 **Message**: Enum `message_enums.py` → class `messages/` → `@on_message()`
-**Factory**: Protocol `protocols.py` → Factory `factories.py` → Enum `plugin_enums.py` → `@Factory.register()`
+**Factory**: Protocol `protocols.py` → Factory `factories.py` → Enum `plugin_enums.py` → `@implements_protocol` + `@Factory.register()`
 
 ## Rules
 1. BaseComponentService for services; AIPerfLifecycleMixin for components only

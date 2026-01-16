@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import time
@@ -13,8 +13,10 @@ from aiperf_mock_server.models import (
     CompletionRequest,
     EmbeddingRequest,
     HFTEIRerankRequest,
+    ImageGenerationRequest,
     RankingRequest,
     RequestT,
+    SolidoRAGRequest,
     TGIGenerateRequest,
 )
 
@@ -136,10 +138,14 @@ def tokenize_request(request: RequestT) -> TokenizedText:
     prompt_tokens = list(_tokenize(text))
     prompt_token_count = len(prompt_tokens)
 
-    # For embeddings and rankings, only count input tokens (no output generation)
+    # For embeddings, rankings, and images - simple token counting without generation options
     if isinstance(
         request,
-        EmbeddingRequest | RankingRequest | HFTEIRerankRequest | CohereRerankRequest,
+        EmbeddingRequest
+        | RankingRequest
+        | HFTEIRerankRequest
+        | CohereRerankRequest
+        | ImageGenerationRequest,
     ):
         return TokenizedText(
             text=text,
@@ -252,6 +258,10 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
     elif isinstance(request, RankingRequest | HFTEIRerankRequest | CohereRerankRequest):
         text = request.query_text + "\n" + "\n".join(request.passage_texts)
         return text, None
+    elif isinstance(request, ImageGenerationRequest):
+        return request.prompt, None
+    elif isinstance(request, SolidoRAGRequest):
+        return " ".join(request.query), None
     else:
         raise ValueError(f"Unsupported request type: {type(request)}")
 
@@ -365,6 +375,9 @@ def _load_corpus() -> tuple[str, ...] | None:
     Uses PromptGenerator for multi-threaded tokenization if available,
     falls back to character-based chunking otherwise.
     """
+    global CORPUS_TOKENS
+    if CORPUS_TOKENS is not None:
+        return CORPUS_TOKENS
     from aiperf_mock_server.config import server_config
 
     try:
@@ -420,8 +433,8 @@ def _load_corpus() -> tuple[str, ...] | None:
 
     elapsed = time.perf_counter() - start_time
     logger.info(f"Corpus loaded: {len(tokens)} tokens in {elapsed:.2f}s")
-    return tokens
+    CORPUS_TOKENS = tokens
+    return CORPUS_TOKENS
 
 
-# Pre-tokenized corpus loaded at import time
-CORPUS_TOKENS: tuple[str, ...] | None = _load_corpus()
+CORPUS_TOKENS: tuple[str, ...] | None = None

@@ -126,15 +126,6 @@ class AioHttpClient(AIPerfLoggerMixin):
                 ) as response:
                     record.status = response.status
 
-                    # Capture response metadata for trace data
-                    record.trace_data.response_status = response.status
-                    record.trace_data.response_reason = response.reason
-                    try:
-                        record.trace_data.response_headers = dict(response.headers)
-                    except (TypeError, AttributeError):
-                        # Handle cases where headers can't be converted (e.g., in tests with mocks)
-                        record.trace_data.response_headers = None
-
                     # Check for HTTP errors
                     if response.status != 200:
                         error_text = await response.text()

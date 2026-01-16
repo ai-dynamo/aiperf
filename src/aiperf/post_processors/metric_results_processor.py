@@ -143,7 +143,6 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         This will compute the values for the derived metrics, and then create the MetricResult objects for each metric.
         """
-        self.info("Summarizing metric results...")
         await self.update_derived_metrics()
 
         # Compute and return the metric results.
@@ -151,7 +150,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             self._create_metric_result(tag, values)
             for tag, values in self._results.items()
         ]
-        self.info(f"Summarized {len(results)} metric results")
+        self.debug(lambda: f"Summarized {len(results)} metric results")
         return results
 
     async def full_metrics(self) -> MetricResultsDict:

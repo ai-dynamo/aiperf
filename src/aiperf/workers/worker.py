@@ -147,7 +147,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self.debug(lambda: f"Worker process __init__ (pid: {self._process.pid})")
 
-        self.event_loop_monitor = EventLoopMonitor()
+        self.event_loop_monitor = EventLoopMonitor(self.service_id)
         self.event_loop_monitor.set_callback(self._on_event_loop_blocked_callback)
 
         self.task_stats: WorkerTaskStats = WorkerTaskStats()

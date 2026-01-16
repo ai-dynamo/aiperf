@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -148,7 +147,7 @@ class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
     RAW_RECORDS_FOLDER = Path("raw_records")
     LOG_FOLDER = Path("logs")
-    LOG_FILE = Path(f"aiperf_{int(time.time())}.log")
+    LOG_FILE = Path("aiperf.log")
     INPUTS_JSON_FILE = Path("inputs.json")
     PROFILE_EXPORT_AIPERF_CSV_FILE = Path("profile_export_aiperf.csv")
     PROFILE_EXPORT_AIPERF_JSON_FILE = Path("profile_export_aiperf.json")
@@ -166,6 +165,8 @@ class OutputDefaults:
     SERVER_METRICS_EXPORT_CSV_FILE = Path("server_metrics_export.csv")
     SERVER_METRICS_EXPORT_PARQUET_FILE = Path("server_metrics_export.parquet")
     EXPORT_LEVEL = ExportLevel.RECORDS
+    EXPORT_HTTP_TRACE = False
+    SHOW_TRACE_TIMING = False
     SLICE_DURATION = None
 
 

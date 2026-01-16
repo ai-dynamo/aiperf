@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Pytest configuration and shared fixtures for the aiohttp client test suite."""
 
@@ -8,7 +8,11 @@ import aiohttp
 import pytest
 
 from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+from aiperf.common.enums import (
+    ConnectionReuseStrategy,
+    EndpointType,
+    ModelSelectionStrategy,
+)
 from aiperf.common.models import RequestRecord, SSEMessage, TextResponse
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -19,6 +23,20 @@ from aiperf.common.models.model_endpoint_info import (
 from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
 
 
+class MockStreamReader:
+    """Async generator wrapper that mimics aiohttp StreamReader.iter_any()."""
+
+    def __init__(self, chunks: list[bytes]):
+        self._chunks = chunks
+
+    async def iter_any(self):
+        for chunk in self._chunks:
+            yield chunk
+
+    def __aiter__(self):
+        return self.iter_any()
+
+
 def create_model_endpoint_info(
     base_url: str = "http://localhost:8000",
     custom_endpoint: str = "/v1/chat/completions",
@@ -26,6 +44,7 @@ def create_model_endpoint_info(
     model_name: str = "test-model",
     api_key: str | None = None,
     headers: list[tuple[str, str]] | None = None,
+    connection_reuse_strategy: ConnectionReuseStrategy = ConnectionReuseStrategy.POOLED,
 ) -> ModelEndpointInfo:
     """Factory function to create ModelEndpointInfo instances."""
     return ModelEndpointInfo(
@@ -40,6 +59,7 @@ def create_model_endpoint_info(
             streaming=streaming,
             api_key=api_key,
             headers=headers or [],
+            connection_reuse_strategy=connection_reuse_strategy,
         ),
     )
 

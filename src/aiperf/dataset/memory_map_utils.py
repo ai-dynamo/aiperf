@@ -26,6 +26,7 @@ import orjson
 from pydantic import Field, field_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import BYTES_PER_MIB
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import DatasetBackingStoreType, DatasetClientStoreType
 from aiperf.common.environment import Environment
@@ -153,7 +154,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
 
         await self._data_file.close()
         self.info(
-            f"Data file finalized: {len(self._session_ids)} conversations, {self._current_offset} bytes"
+            f"Data file finalized: {len(self._session_ids)} conversations, {self._current_offset / BYTES_PER_MIB:,.2f} MB"
         )
 
         index = MemoryMapDatasetIndex(

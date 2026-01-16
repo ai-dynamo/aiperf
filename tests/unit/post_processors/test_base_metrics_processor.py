@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import Mock
@@ -108,6 +108,8 @@ class TestBaseMetricsProcessor:
             | MetricFlags.SUPPORTS_IMAGE_ONLY
             | MetricFlags.STREAMING_ONLY
             | MetricFlags.GOODPUT
+            | MetricFlags.EXPERIMENTAL
+            | MetricFlags.INTERNAL
         )
 
         # Verify registry calls
@@ -186,7 +188,7 @@ class TestBaseMetricsProcessor:
 
         mock_metric_registry.tags_applicable_to.assert_called_once_with(
             expected_required,
-            expected_disallowed,
+            expected_disallowed | MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL,
             MetricType.RECORD,
         )
 
@@ -226,7 +228,9 @@ class TestBaseMetricsProcessor:
             MetricFlags.SUPPORTS_AUDIO_ONLY
             | MetricFlags.SUPPORTS_IMAGE_ONLY
             | MetricFlags.STREAMING_ONLY
-            | MetricFlags.GOODPUT,
+            | MetricFlags.GOODPUT
+            | MetricFlags.EXPERIMENTAL
+            | MetricFlags.INTERNAL,
             MetricType.RECORD,
             MetricType.AGGREGATE,
             MetricType.DERIVED,

@@ -84,6 +84,7 @@ class HttpBlockedMetric(BaseRecordMetric[int]):
     short_header = "Blocked"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
+    display_order = 2000
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -124,6 +125,7 @@ class HttpConnectionReusedMetric(BaseRecordMetric[int]):
     header = "HTTP Connection Reused"
     short_header = "Conn Reused"
     unit = GenericMetricUnit.RATIO
+    display_order = 2060
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -162,6 +164,7 @@ class HttpConnectingMetric(BaseRecordMetric[int]):
     short_header = "Connecting"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
+    display_order = 2020
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -208,6 +211,7 @@ class HttpDnsLookupMetric(BaseRecordMetric[int]):
     short_header = "DNS"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
+    display_order = 2010
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -263,6 +267,7 @@ class HttpSendingMetric(BaseRecordMetric[int]):
     short_header = "Sending"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
+    display_order = 2030
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -292,7 +297,7 @@ class HttpWaitingMetric(BaseRecordMetric[int]):
     HAR equivalent: wait
 
     This metric measures the time from when the request was fully sent
-    to when the first byte of the response was received. This represents
+    to when the first byte of the response body was received. This represents
     server processing time plus network latency.
 
     Note that this is not the same as the time to first token (TTFT),
@@ -308,6 +313,7 @@ class HttpWaitingMetric(BaseRecordMetric[int]):
     short_header = "TTFB"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
+    display_order = 2040
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -352,6 +358,7 @@ class HttpReceivingMetric(BaseRecordMetric[int]):
     short_header = "Receiving"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
+    display_order = 2050
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -381,14 +388,17 @@ class HttpReceivingMetric(BaseRecordMetric[int]):
 
 
 class HttpDurationMetric(BaseRecordMetric[int]):
-    """Total time for the HTTP request.
+    """Time for HTTP request/response exchange, excluding connection overhead.
 
     Matches: TraceDataExport.duration_ns computed property
     k6 equivalent: http_req_duration
     HAR equivalent: time
 
-    This is the total time from request start to response complete, equal to:
+    This measures only the request/response exchange time:
         duration = sending + waiting + receiving
+
+    EXCLUDES connection overhead (blocked, dns_lookup, connecting).
+    For full end-to-end time including connection setup, use http_req_total.
 
     Formula:
         duration = response_receive_end_perf_ns - request_send_start_perf_ns
@@ -398,10 +408,11 @@ class HttpDurationMetric(BaseRecordMetric[int]):
     """
 
     tag = "http_req_duration"
-    header = "HTTP Duration"
-    short_header = "HTTP Dur"
+    header = "HTTP Duration (excl. conn)"
+    short_header = "Dur (excl)"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
+    display_order = 2120
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -442,6 +453,7 @@ class HttpDataSentMetric(BaseRecordMetric[int]):
     short_header = "Sent"
     unit = MetricSizeUnit.BYTES
     display_unit = MetricSizeUnit.KILOBYTES
+    display_order = 2070
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -471,6 +483,7 @@ class HttpDataReceivedMetric(BaseRecordMetric[int]):
     short_header = "Received"
     unit = MetricSizeUnit.BYTES
     display_unit = MetricSizeUnit.KILOBYTES
+    display_order = 2090
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -502,6 +515,7 @@ class HttpChunksSentMetric(BaseRecordMetric[int]):
     header = "HTTP Chunks Sent"
     short_header = "Chunks Sent"
     unit = GenericMetricUnit.COUNT
+    display_order = 2080
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -524,6 +538,7 @@ class HttpChunksReceivedMetric(BaseRecordMetric[int]):
     header = "HTTP Chunks Received"
     short_header = "Chunks Recv"
     unit = GenericMetricUnit.COUNT
+    display_order = 2100
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
@@ -557,6 +572,7 @@ class HttpConnectionOverheadMetric(BaseRecordMetric[int]):
     short_header = "Conn Overhead"
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
+    display_order = 2110
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
     required_metrics: ClassVar[set[str]] = {
         "http_req_blocked",
@@ -573,3 +589,50 @@ class HttpConnectionOverheadMetric(BaseRecordMetric[int]):
         dns_lookup = record_metrics.get("http_req_dns_lookup", 0)
         connecting = record_metrics.get("http_req_connecting", 0)
         return blocked + dns_lookup + connecting
+
+
+class HttpTotalTimeMetric(BaseRecordMetric[int]):
+    """Sum of all HTTP timing phases from connection pool to last chunk received.
+
+    This metric is computed as the sum of all 6 timing components:
+        total = blocked + dns_lookup + connecting + sending + waiting + receiving
+
+    This ensures the math adds up: the individual timing metrics will sum
+    exactly to this total. Use this when you want a breakdown that reconciles.
+
+    Note: This differs slightly from measuring start-to-end timestamps directly
+    because there may be small gaps between phases (e.g., response finalization
+    after the last chunk). This metric captures only the measured phase times.
+
+    Only available for AioHttpTraceData (requires connection overhead metrics).
+    """
+
+    tag = "http_req_total"
+    header = "HTTP Total Time"
+    short_header = "Total"
+    unit = MetricTimeUnit.NANOSECONDS
+    display_unit = MetricTimeUnit.MILLISECONDS
+    display_order = 2130
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
+    required_metrics: ClassVar[set[str]] = {
+        "http_req_blocked",
+        "http_req_dns_lookup",
+        "http_req_connecting",
+        "http_req_sending",
+        "http_req_waiting",
+        "http_req_receiving",
+    }
+
+    def _parse_record(
+        self,
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> int:
+        return (
+            record_metrics.get("http_req_blocked", 0)
+            + record_metrics.get("http_req_dns_lookup", 0)
+            + record_metrics.get("http_req_connecting", 0)
+            + record_metrics.get("http_req_sending", 0)
+            + record_metrics.get("http_req_waiting", 0)
+            + record_metrics.get("http_req_receiving", 0)
+        )

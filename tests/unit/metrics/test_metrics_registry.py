@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -18,7 +18,7 @@ class TestMetricRegistry:
         assert order == []
 
     def test_create_dependency_order_for_with_tags(self):
-        """Test that the dependency order is created correctly."""
+        """Test that the dependency order is created correctly with all dependencies."""
         order = MetricRegistry.create_dependency_order_for(
             [
                 RequestThroughputMetric.tag,
@@ -26,21 +26,35 @@ class TestMetricRegistry:
                 BenchmarkDurationMetric.tag,
             ]
         )
-        assert order == [
-            RequestCountMetric.tag,
-            BenchmarkDurationMetric.tag,
-            RequestThroughputMetric.tag,
-        ]
+        # The order should include all recursive dependencies
+        # RequestThroughputMetric depends on benchmark_duration and request_count
+        # BenchmarkDurationMetric depends on min_request_timestamp and max_response_timestamp
+        # Those timestamps depend on request_latency
+        assert RequestCountMetric.tag in order
+        assert BenchmarkDurationMetric.tag in order
+        assert RequestThroughputMetric.tag in order
+        # Dependencies should come before dependents
+        assert order.index(RequestCountMetric.tag) < order.index(
+            RequestThroughputMetric.tag
+        )
+        assert order.index(BenchmarkDurationMetric.tag) < order.index(
+            RequestThroughputMetric.tag
+        )
 
-    def test_create_dependency_order_filtered(self):
-        """Test that the dependency order only returns the requested tags."""
+    def test_create_dependency_order_includes_all_dependencies(self):
+        """Test that the dependency order includes all recursive dependencies."""
         assert len(RequestThroughputMetric.required_metrics) > 0, (
             "RequestThroughputMetric must have dependencies, or this test is invalid"
         )
         order = MetricRegistry.create_dependency_order_for(
             tags=[RequestThroughputMetric.tag]
         )
-        assert order == [RequestThroughputMetric.tag]
+        # Should include RequestThroughputMetric and all its recursive dependencies
+        assert RequestThroughputMetric.tag in order
+        for dep in RequestThroughputMetric.required_metrics:
+            assert dep in order, f"Dependency {dep} should be in the order"
+            # Dependencies should come before the dependent
+            assert order.index(dep) < order.index(RequestThroughputMetric.tag)
 
     def test_create_dependency_order_for_circular_dependency(self):
         """Test that a circular dependency raises an error."""

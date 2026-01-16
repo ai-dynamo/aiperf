@@ -54,7 +54,10 @@ class RecordExportResultsProcessor(
         self.show_experimental = (
             Environment.DEV.MODE and Environment.DEV.SHOW_EXPERIMENTAL_METRICS
         )
+        self.export_http_trace = user_config.output.export_http_trace
         self.info(f"Record metrics export enabled: {self.output_file}")
+        if self.export_http_trace:
+            self.info("HTTP trace export enabled (--export-http-trace)")
 
     async def process_result(self, record_data: MetricRecordsData) -> None:
         try:
@@ -67,9 +70,9 @@ class RecordExportResultsProcessor(
             if not display_metrics and not record_data.error:
                 return
 
-            # Convert trace data to export format (wall-clock timestamps)
+            # Convert trace data to export format (wall-clock timestamps) if enabled
             export_trace_data = None
-            if record_data.trace_data:
+            if self.export_http_trace and record_data.trace_data:
                 export_trace_data = record_data.trace_data.to_export()
 
             record_info = MetricRecordInfo(

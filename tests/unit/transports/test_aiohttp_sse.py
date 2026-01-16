@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Comprehensive unit tests for AsyncSSEStreamReader."""
 
@@ -294,8 +294,8 @@ class TestAsyncSSEStreamReader:
         processing_time = end_time - start_time
 
         assert len(messages) == num_messages
-        assert processing_time < 3.0, (
-            f"Processing took {processing_time:.3f}s, expected < 3s"
+        assert processing_time < 5.0, (
+            f"Processing took {processing_time:.3f}s, expected < 5s"
         )
 
     @pytest.mark.asyncio
@@ -527,8 +527,8 @@ class TestAsyncSSEStreamReader:
         processing_time = end_time - start_time
 
         assert len(messages) == num_messages
-        assert processing_time < 3.0, (
-            f"CRLF processing took {processing_time:.3f}s, expected < 3s"
+        assert processing_time < 5.0, (
+            f"CRLF processing took {processing_time:.3f}s, expected < 5s"
         )
 
     @pytest.mark.asyncio

@@ -51,6 +51,11 @@ class BasePhaseStats(AIPerfBaseModel):
         gt=0,
         description="The expected number of user sessions to send to the workers. If None, the phase is not session count based.",
     )
+    expected_grace_period_sec: float | None = Field(
+        default=None,
+        ge=0,
+        description="The expected grace period duration in seconds. If None, there is no grace period limit.",
+    )
 
     # Final count fields
     final_requests_sent: int | None = Field(
