@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
@@ -36,6 +36,9 @@ class CustomDatasetComposer(BaseDatasetComposer):
         if dataset_type is None:
             dataset_type = self._infer_dataset_type(self.config.input.file)
             self.info(f"Auto-detected dataset type: {dataset_type}")
+
+        # Validate synthesis options are only used with mooncake_trace
+        self._validate_synthesis_config(dataset_type)
 
         # Set dataset sampling strategy based on inferred type if not explicitly set
         self._set_sampling_strategy(dataset_type)
@@ -163,6 +166,26 @@ class CustomDatasetComposer(BaseDatasetComposer):
             self.config.input.dataset_sampling_strategy = preferred_strategy
             self.info(
                 f"Using preferred sampling strategy for {dataset_type}: {preferred_strategy}"
+            )
+
+    def _validate_synthesis_config(self, dataset_type: CustomDatasetType) -> None:
+        """Validate that synthesis options are only used with mooncake_trace.
+
+        Args:
+            dataset_type: The determined dataset type.
+
+        Raises:
+            ValueError: If synthesis options are set but dataset type is not mooncake_trace.
+        """
+        if (
+            self.config.input.synthesis.should_synthesize()
+            and dataset_type != CustomDatasetType.MOONCAKE_TRACE
+        ):
+            raise ValueError(
+                f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
+                f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
+                f"are only supported with mooncake_trace datasets, but got {dataset_type.value}. "
+                f"Either remove synthesis options or use --custom-dataset-type mooncake_trace."
             )
 
     def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:

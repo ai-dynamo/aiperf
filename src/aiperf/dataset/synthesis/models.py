@@ -3,8 +3,10 @@
 """Pydantic models for synthesis and analysis data."""
 
 from pydantic import Field
+from typing_extensions import Self
 
 from aiperf.common.config.config_defaults import InputTokensDefaults
+from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.models import AIPerfBaseModel
 
 
@@ -78,3 +80,25 @@ class SynthesisParams(AIPerfBaseModel):
     block_size: int = Field(
         default=InputTokensDefaults.BLOCK_SIZE, ge=1, description="KV cache page size"
     )
+
+    @classmethod
+    def from_synthesis_config(
+        cls, config: SynthesisConfig, block_size: int = InputTokensDefaults.BLOCK_SIZE
+    ) -> Self:
+        """Create SynthesisParams from a SynthesisConfig and block size.
+
+        Args:
+            config: SynthesisConfig from user configuration.
+            block_size: KV cache page size for block-aligned calculations.
+
+        Returns:
+            SynthesisParams instance with matching values.
+        """
+        return cls(
+            speedup_ratio=config.speedup_ratio,
+            prefix_len_multiplier=config.prefix_len_multiplier,
+            prefix_root_multiplier=config.prefix_root_multiplier,
+            prompt_len_multiplier=config.prompt_len_multiplier,
+            max_isl=config.max_isl,
+            block_size=block_size,
+        )

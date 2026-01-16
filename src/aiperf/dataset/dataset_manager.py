@@ -41,9 +41,7 @@ from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import RequestInfo
 from aiperf.common.protocols import DatasetSamplingStrategyProtocol, ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.dataset.generator import PromptGenerator
 from aiperf.dataset.loader import ShareGPTLoader
-from aiperf.dataset.synthesis.integration import SynthesisIntegration
 
 _logger = AIPerfLogger(__name__)
 
@@ -215,63 +213,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         return composer.create_dataset()
 
-    async def _apply_synthesis(
-        self,
-        conversations: list[Conversation],
-    ) -> list[Conversation]:
-        """Apply synthesis transformations to conversations.
-
-        Args:
-            conversations: Input conversations to synthesize.
-
-        Returns:
-            Synthesized conversations.
-        """
-        self.info("Applying trace synthesis transformations")
-
-        synthesis_config = self.user_config.input.synthesis
-        self.info(
-            f"Synthesis params: speedup_ratio={synthesis_config.speedup_ratio}, "
-            f"prefix_len_multiplier={synthesis_config.prefix_len_multiplier}, "
-            f"prefix_root_multiplier={synthesis_config.prefix_root_multiplier}, "
-            f"prompt_len_multiplier={synthesis_config.prompt_len_multiplier}"
-        )
-
-        # Create synthesis integration
-        integration = SynthesisIntegration(
-            synthesis_config=synthesis_config,
-            tokenizer=self.tokenizer,
-            prompt_generator=self._get_prompt_generator(),
-            block_size=self.user_config.input.prompt.input_tokens.block_size,
-        )
-
-        # Run synthesis
-        synthesized_conversations, synthesized_traces = (
-            integration.synthesize_conversations(conversations)
-        )
-
-        # Write synthesized traces to artifacts directory
-        output_path = (
-            self.user_config.output.artifact_directory / "synthesized_trace.jsonl"
-        )
-        await integration.write_synthesized_traces_async(
-            synthesized_traces, output_path
-        )
-
-        self.info(f"Synthesis complete: {len(synthesized_conversations)} conversations")
-        return synthesized_conversations
-
-    def _get_prompt_generator(self) -> PromptGenerator:
-        """Get or create prompt generator for synthesis.
-
-        Returns:
-            PromptGenerator instance.
-        """
-        return PromptGenerator(
-            self.user_config.input.prompt,
-            self.tokenizer,
-        )
-
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
             raise self._service_error("User config is required for dataset manager")
@@ -290,11 +231,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             conversations = self._load_custom_dataset()
         else:
             conversations = self._load_synthetic_dataset()
-
-        # Apply synthesis if needed
-        synthesis_config = self.user_config.input.synthesis
-        if synthesis_config.should_synthesize():
-            conversations = await self._apply_synthesis(conversations)
 
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._session_ids_cache = list(self.dataset.keys())

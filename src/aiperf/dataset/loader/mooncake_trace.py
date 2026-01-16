@@ -15,6 +15,8 @@ from aiperf.dataset.generator import PromptGenerator
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.models import MooncakeTrace
+from aiperf.dataset.synthesis.models import SynthesisParams
+from aiperf.dataset.synthesis.synthesizer import Synthesizer
 
 
 @CustomDatasetFactory.register(CustomDatasetType.MOONCAKE_TRACE)
@@ -116,6 +118,11 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
             )
         self.debug(lambda: f"Loaded {len(data):,} traces from {self.filename}")
 
+        # Apply synthesis if needed
+        synthesis_config = self.user_config.input.synthesis
+        if synthesis_config.should_synthesize():
+            data = self._apply_synthesis(data)
+
         return data
 
     def _timestamp_within_offsets(self, timestamp: int) -> bool:
@@ -214,3 +221,30 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
             conversations.append(conversation)
 
         return conversations
+
+    def _apply_synthesis(
+        self, data: dict[str, list[MooncakeTrace]]
+    ) -> dict[str, list[MooncakeTrace]]:
+        """Apply synthesis transformations to mooncake traces in-memory.
+
+        Args:
+            data: Dictionary of session_id to list of MooncakeTrace objects.
+
+        Returns:
+            Dictionary of session_id to list of synthesized MooncakeTrace objects.
+        """
+        params = SynthesisParams.from_synthesis_config(
+            self.user_config.input.synthesis, block_size=self._block_size
+        )
+
+        # Convert to dicts for synthesizer (exclude discriminator field "type")
+        dict_data = {
+            sid: [t.model_dump(exclude={"type"}, exclude_none=True) for t in traces]
+            for sid, traces in data.items()
+        }
+        synthesized = Synthesizer(params=params).synthesize_grouped_traces(dict_data)
+
+        return {
+            sid: [MooncakeTrace.model_validate(t) for t in traces]
+            for sid, traces in synthesized.items()
+        }

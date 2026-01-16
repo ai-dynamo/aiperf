@@ -136,6 +136,34 @@ class Synthesizer(AIPerfLoggerMixin):
         self.info(f"Generated {len(synthetic_traces)} synthetic traces")
         return synthetic_traces
 
+    def synthesize_grouped_traces(
+        self, data: dict[str, list[dict]]
+    ) -> dict[str, list[dict]]:
+        """Synthesize traces while preserving session grouping.
+
+        Args:
+            data: Dictionary mapping session_id to list of trace dicts.
+
+        Returns:
+            Dictionary mapping session_id to list of synthesized trace dicts.
+        """
+        # Flatten with session_id embedded
+        traces = [
+            {**trace, "session_id": session_id}
+            for session_id, session_traces in data.items()
+            for trace in session_traces
+        ]
+
+        synthesized = self.synthesize_traces(traces)
+
+        # Re-group by session_id (preserve empty sessions from input)
+        result: dict[str, list[dict]] = {sid: [] for sid in data}
+        for trace in synthesized:
+            session_id = trace.pop("session_id", "default")
+            result.setdefault(session_id, []).append(trace)
+
+        return result
+
     def _apply_multipliers(
         self, hash_ids: list[int], input_length: int
     ) -> tuple[list[int], int]:
